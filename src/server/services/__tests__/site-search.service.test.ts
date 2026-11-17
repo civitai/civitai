@@ -537,7 +537,6 @@ describe('user avatars in hits', () => {
     return raw;
   };
   const hitOf = (body: unknown) => (body as { hits: Record<string, any>[] }).hits[0];
-  // A users hit is the user; every other index nests it under `user`.
   const userOf = (index: string, hit: Record<string, any>) =>
     index === USERS_SEARCH_INDEX ? hit : hit.user;
   const docFor = (index: string, nsfwLevel: number) => {
@@ -580,6 +579,42 @@ describe('user avatars in hits', () => {
       expect(userOf(index, hit).image).toBeNull();
     }
   );
+
+  // The caller chooses which fields come back and how the highlight copy is written.
+  it.each(indexes)(
+    '%s: a capped viewer gets no avatar whose rating is missing or unreadable, or in-cap only in the copy',
+    async (index) => {
+      const withPicture = (doc: Record<string, any>, raw: unknown, copy: unknown) => {
+        userOf(index, doc).profilePicture = raw;
+        userOf(index, doc._formatted).profilePicture = copy;
+        return doc;
+      };
+      const { nsfwLevel: _, ...unrated } = pic(NsfwLevel.PG);
+      const cases = [
+        withPicture(docFor(index, NsfwLevel.PG), unrated, unrated),
+        withPicture(
+          docFor(index, NsfwLevel.PG),
+          { ...unrated, nsfwLevel: 'pg' },
+          { ...unrated, nsfwLevel: 'pg' }
+        ),
+        withPicture(docFor(index, NsfwLevel.PG), pic(NsfwLevel.X), { ...unrated, nsfwLevel: '1' }),
+      ];
+      for (const [i, doc] of cases.entries()) {
+        respond({ hits: [doc] });
+        const hit = hitOf((await siteIndexSearch(index, { q: 'x' }, capped)).body);
+        for (const user of [userOf(index, hit), userOf(index, hit._formatted)]) {
+          expect(user.image, `case ${i}`).toBeNull();
+          expect(user.profilePicture, `case ${i}`).toBeNull();
+        }
+      }
+    }
+  );
+
+  it.each(indexes)('%s: a capped response whose hits are not a list sends none', async (index) => {
+    respond({ hits: { 0: docFor(index, NsfwLevel.X) } });
+    const body = (await siteIndexSearch(index, { q: 'x' }, capped)).body as { hits: unknown };
+    expect(body.hits).toEqual([]);
+  });
 
   // Author-less documents (a deleted user) carry no user object.
   it.each(indexes.filter((index) => index !== USERS_SEARCH_INDEX))(

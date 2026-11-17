@@ -17,7 +17,6 @@ import type {
   SiteSearchParams,
 } from '~/server/schema/site-search.schema';
 import { RETIRED_SEARCH_INDEXES } from '~/server/search-index/retired-indexes';
-import { withPublicAvatar } from '~/server/utils/public-avatar';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { Availability } from '~/shared/utils/prisma/enums';
 
@@ -261,19 +260,26 @@ export function hitsNeedShaping(
   return false;
 }
 
-type AvatarHolder = Record<string, unknown> & { profilePicture?: { nsfwLevel: number } | null };
 type AvatarHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
 
 /**
- * Holds the avatar to the cap: `profilePicture` only when its whole rating is inside it, and never
- * `image`, which carries no rating. A users hit is the user itself; every other hit nests it.
+ * The caller shapes what a hit carries (`attributesToRetrieve`, highlight and crop), so the
+ * picture's rating is read from the hit itself, never the copy, and a missing or unreadable one
+ * fails closed. `image` has no rating and is never sent. A users hit is the user itself.
  */
 function capHitAvatar(indexUid: string | undefined, hit: AvatarHit, cap: number): AvatarHit {
+  const userOf = (doc: Record<string, unknown>) =>
+    indexUid === USERS_SEARCH_INDEX ? doc : doc.user;
+  const picture = (holder: unknown) => (isRecord(holder) ? holder.profilePicture : undefined);
+  const raw = picture(userOf(hit));
+  const kept = isRecord(raw) && isRatingWithinCap(raw.nsfwLevel, cap);
   const capHolder = (holder: unknown) =>
-    isRecord(holder) ? withPublicAvatar(holder as AvatarHolder, cap) : holder;
+    isRecord(holder)
+      ? { ...holder, image: null, profilePicture: kept ? holder.profilePicture : null }
+      : holder;
   const capDoc = (doc: Record<string, unknown>) =>
     indexUid === USERS_SEARCH_INDEX
       ? (capHolder(doc) as Record<string, unknown>)
@@ -295,8 +301,9 @@ const AVATAR_INDEXES = [
 ];
 
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
-  if (!Array.isArray(hits) || !hitsNeedShaping(indexUid, viewer)) return hits;
+  if (!hitsNeedShaping(indexUid, viewer)) return hits;
   const cap = viewer.browsingLevelCap;
+  if (!Array.isArray(hits)) return cap === undefined ? hits : [];
   if (cap === undefined || !indexUid || !AVATAR_INDEXES.includes(indexUid))
     return shapeIndexHits(indexUid, hits, viewer);
   const shaped = shapeIndexHits(indexUid, hits, viewer);
