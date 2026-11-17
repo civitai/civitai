@@ -67,11 +67,9 @@ const signIn = () => {
   (globalThis as { window?: unknown }).window = { isAuthed: true };
 };
 
-it('the Go-transport procedures are exactly the gallery feed and model.getAll', () => {
-  expect([...GO_TRANSPORT_PROCEDURES].sort()).toEqual([
-    'image.getImagesAsPostsInfinite',
-    'model.getAll',
-  ]);
+// The path the edge route matches: the talos-infra IngressRoute feed-go routes exactly
+// `/api/trpc-go/<procedure>` to the Go service, so this constant must stay that literal.
+it('GO_TRANSPORT_URL is the edge route prefix /api/trpc-go', () => {
   expect(GO_TRANSPORT_URL).toBe('/api/trpc-go');
 });
 

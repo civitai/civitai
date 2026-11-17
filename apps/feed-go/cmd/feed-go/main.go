@@ -289,7 +289,6 @@ func run(log *slog.Logger) error {
 		Resolver: resolver,
 		Deps:     deps,
 		Models:   models,
-		// FEED_GO_SERVE_MODEL_GETALL (default off): off, the public model.getAll route proxies everything.
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		Hosts:            cfg.Hosts,
 		RegionRules:      cfg.RegionRules,

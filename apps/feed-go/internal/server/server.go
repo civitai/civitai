@@ -317,11 +317,9 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
-// fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
-// procedure (the same middleware runs on both), and so is the cache policy: a signed-out answer
-// carries createContext's public TTL. Node's `edgeCacheIt` on this procedure never reaches the header
-// (its `skipEdgeCache` hands it a copy of ctx.cache), so the header is createContext's default: public
-// signed out, private for a session.
+// fallback/other error. Viewer, domain cap and region rules are read as for the gallery procedure.
+// Cache policy is createContext's, not edgeCacheIt's (model.router.ts's skipEdgeCache hands it a copy
+// of ctx.cache): public TTL signed out, none for a session.
 func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
 	req, signedOut, err := s.prepareModelGetAll(ctx, r)
 	if err != nil {
@@ -1014,7 +1012,8 @@ func bodyDiffers(result string) bool {
 
 // expectedResponseDiff reports whether a header difference is one of the expected differences DESIGN.md
 // §7 lists: x-update-required only from Node (this service never tells a bundle to reload). Every
-// tRPC compute records createContext's signed-out TTL, so a Cache-Control difference is never expected.
+// tRPC compute records createContext's signed-out TTL when there is no session (none with one), so a
+// Cache-Control difference is never expected.
 func expectedResponseDiff(d shadow.Diff) bool {
 	return d.Category == "header:x-update-required" && d.Kind == "missing-in-go"
 }

@@ -150,8 +150,8 @@ func TestExpectedResponseDiff(t *testing.T) {
 	}{
 		{"update required only from node", shadow.Diff{Category: "header:x-update-required", Kind: "missing-in-go"}, true},
 		{"update required only from go", shadow.Diff{Category: "header:x-update-required", Kind: "missing-in-node"}, false},
-		// Every tRPC compute (model.getAll's included) records the signed-out TTL: a cache-control
-		// difference is a real one on every endpoint.
+		// Every tRPC compute (model.getAll's included) records the signed-out TTL when there is no
+		// session: a cache-control difference is a real one on every endpoint.
 		{"cache-control is never expected", cc, false},
 		{"a cache-tag is never expected", shadow.Diff{Category: "header:cache-tag", Kind: "missing-in-go"}, false},
 	} {

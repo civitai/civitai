@@ -656,10 +656,8 @@ path as serving, and compares decoded values:
     answers and a Go side that can answer one.
 
   Expected differences until ported: `header:x-update-required/missing-in-go` (Node tells an
-  outdated web bundle to reload; this service does not). (`model-getall` used to list a public
-  `header:cache-control/value` from Node for signed-out samples; its compute now records
-  createContext's signed-out TTL, §15.8, so that difference is a real one.) They are still counted (as `mismatch`), but a sample whose only differences are these is
-  logged at Debug; a body difference or any other header difference is logged at Info.
+  outdated web bundle to reload; this service does not). They are still counted (as `mismatch`), but
+  a sample whose only differences are these is logged at Debug; a body difference or any other header difference is logged at Info.
   `image.getInfinite` is not on the list: a signed-out unbatched call is cacheable in Node
   (createContext), and its compute carries the same signed-out TTL as the gallery procedure's.
 
@@ -1646,11 +1644,8 @@ the request runs the gallery route's gates in the same order (the API request po
 check, a serve slot from the shared `FEED_GO_MAX_IN_FLIGHT` pool, the request budget) and then
 `computeModelGetAll`; every fallback of §15.2 is proxied, as for the gallery.
 
-Cache policy: Node's `edgeCacheIt({ ttl: 60 })` on this procedure never reaches the response header,
-because `skipEdgeCache` hands it a copy of `ctx.cache` (`model.router.ts`), so the header is
-createContext's default: `public, max-age=60, s-maxage=60, stale-while-revalidate=30` without a session
-user, the private default with one. `computeModelGetAll` records exactly that (the shadow then compares
-it like the gallery's).
+Cache policy: as `computeModelGetAll`'s doc comment states (the shadow compares the header like the
+gallery's).
 
 Two switches gate real traffic, both off by default: this one, and the web client's per-user flag that
 sends a signed-in browser's `model.getAll` to `/api/trpc-go/model.getAll` (an exact-path route in front
