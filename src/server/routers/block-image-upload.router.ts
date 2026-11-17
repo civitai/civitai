@@ -21,10 +21,11 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
  *
  *   - persist — materialise the CF upload into a scannable `Image` (real
  *     `createImage` + `ingestImage`, NO trust-stamp). PRIVATE by default: the row is
- *     stamped `blockUploadedAppId` = the block token's verified appId ONLY when the
- *     app asked to share this one upload (`share: true`) and the host showed the
+ *     stamped `blockSharedUploadAppId` = the block token's verified appId ONLY when
+ *     the app asked to share this one upload (`share: true`) and the host showed the
  *     viewer that it will be visible to the app's other viewers; the app can then
- *     show it to them once scanned (see `persistPickedUploadAppId`).
+ *     show it to them once scanned (see `persistPickedUploadAppId`). Returns
+ *     `shared`: true exactly when that stamp was written.
  *   - gate    — poll the scan; return the moderated id ONLY once scanned-clean,
  *     within the SFW ceiling, and unflagged (else throw). See the service + pure
  *     classifier.
@@ -51,7 +52,7 @@ export const blockImageUploadRouter = router({
       // Not shared unless asked: without `share: true` the token is ignored and the row stays
       // private. A share request with no token is REFUSED, not stored private, so the app's
       // "visible to other viewers" copy is never shown for an image nobody else will see.
-      let pickedForAppId: string | undefined;
+      let sharedWithAppId: string | undefined;
       if (share === true) {
         if (!blockToken) {
           throw new TRPCError({
@@ -59,12 +60,19 @@ export const blockImageUploadRouter = router({
             message: 'sharing an upload requires a block token',
           });
         }
-        pickedForAppId = await persistPickedUploadAppId(blockToken, ctx.user.id);
+        sharedWithAppId = await persistPickedUploadAppId(blockToken, ctx.user.id);
       }
       const { persistBlockUploadImage } = await import(
         '~/server/services/blocks/block-image-upload.service'
       );
-      return persistBlockUploadImage({ input: upload, userId: ctx.user.id, pickedForAppId });
+      const { imageId } = await persistBlockUploadImage({
+        input: upload,
+        userId: ctx.user.id,
+        sharedWithAppId,
+      });
+      // `persistBlockUploadImage` writes the shared stamp whenever `sharedWithAppId` is set
+      // (createImage writes `blockProvenance` or throws), so this is true exactly when stamped.
+      return { imageId, shared: sharedWithAppId !== undefined };
     }),
 
   gate: protectedProcedure.input(gateBlockUploadImageSchema).mutation(async ({ ctx, input }) => {

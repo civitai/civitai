@@ -68,10 +68,13 @@ beforeEach(() => {
 
 describe('blockImageUpload.persist — the provenance stamp is opt-in per upload', () => {
   it('without share or a token: unstamped, and no token is verified (unchanged behaviour)', async () => {
-    await expect(caller({ id: VIEWER }).persist(upload())).resolves.toEqual({ imageId: 9_301 });
+    await expect(caller({ id: VIEWER }).persist(upload())).resolves.toEqual({
+      imageId: 9_301,
+      shared: false,
+    });
     expect(h.authorize).not.toHaveBeenCalled();
     expect(h.persist.mock.calls).toEqual([
-      [{ input: PERSISTED, userId: VIEWER, pickedForAppId: undefined }],
+      [{ input: PERSISTED, userId: VIEWER, sharedWithAppId: undefined }],
     ]);
   });
 
@@ -81,10 +84,12 @@ describe('blockImageUpload.persist — the provenance stamp is opt-in per upload
   ])(
     '🔴 share %s: a valid token is IGNORED and the row stays private (unstamped)',
     async (_label, share) => {
-      await caller({ id: VIEWER }).persist({ ...upload(), blockToken: 'tok_viewer', share });
+      await expect(
+        caller({ id: VIEWER }).persist({ ...upload(), blockToken: 'tok_viewer', share })
+      ).resolves.toEqual({ imageId: 9_301, shared: false });
       expect(h.authorize).not.toHaveBeenCalled();
       expect(h.persist.mock.calls).toEqual([
-        [{ input: PERSISTED, userId: VIEWER, pickedForAppId: undefined }],
+        [{ input: PERSISTED, userId: VIEWER, sharedWithAppId: undefined }],
       ]);
     }
   );
@@ -101,16 +106,18 @@ describe('blockImageUpload.persist — the provenance stamp is opt-in per upload
   });
 
   it('🔴 share with the viewer’s own verified token: stamped with the TOKEN’s appId, never a body field', async () => {
-    await caller({ id: VIEWER }).persist({
-      ...upload(),
-      share: true,
-      blockToken: 'tok_viewer',
-      // Not in the schema: a request cannot name the app to stamp.
-      appId: 'appblk-forged',
-    } as never);
+    await expect(
+      caller({ id: VIEWER }).persist({
+        ...upload(),
+        share: true,
+        blockToken: 'tok_viewer',
+        // Not in the schema: a request cannot name the app to stamp.
+        appId: 'appblk-forged',
+      } as never)
+    ).resolves.toEqual({ imageId: 9_301, shared: true });
     expect(h.authorize.mock.calls).toEqual([['tok_viewer']]);
     expect(h.persist.mock.calls).toEqual([
-      [{ input: PERSISTED, userId: VIEWER, pickedForAppId: TOKEN_APP }],
+      [{ input: PERSISTED, userId: VIEWER, sharedWithAppId: TOKEN_APP }],
     ]);
   });
 

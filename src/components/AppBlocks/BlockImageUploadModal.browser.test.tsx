@@ -352,6 +352,24 @@ describe('BlockImageUploadModal — an upload the app asked to share', () => {
     mocks.persistMutate.mockReset().mockResolvedValue({ imageId: 77 });
   });
 
+  test('🔴 the server’s `shared` answer reaches onAccepted unchanged', async () => {
+    const onAccepted = vi.fn();
+    mocks.persistMutate.mockResolvedValue({ imageId: 78, shared: true });
+    renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({
+      id: 'share-echo-test',
+      component: BlockImageUploadModal,
+      props: {
+        onResolved: vi.fn(),
+        onAccepted,
+        share: { blockToken: 'tok_abc', appName: 'Gen App' },
+      },
+    });
+    await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+    await vi.waitFor(() => expect(onAccepted).toHaveBeenCalledTimes(1));
+    expect(onAccepted.mock.calls[0][0]).toMatchObject({ imageId: 78, shared: true });
+  });
+
   test('🔴 with share: the notice shows BEFORE a pick, and the persist carries share + the token', async () => {
     openWith({ blockToken: 'tok_abc', appName: 'Gen App' });
     await expect.element(page.getByText(SHARE_NOTICE, { exact: true })).toBeVisible();

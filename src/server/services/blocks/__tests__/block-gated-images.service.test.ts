@@ -24,7 +24,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 // stub it so the test doesn't pull that module's env/s3 graph.
 vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
   BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-  BLOCK_UPLOADED_APP_ID_META_KEY: 'blockUploadedAppId',
+  BLOCK_SHARED_UPLOAD_APP_ID_META_KEY: 'blockSharedUploadAppId',
 }));
 
 import {

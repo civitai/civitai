@@ -29,7 +29,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
   BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-  BLOCK_UPLOADED_APP_ID_META_KEY: 'blockUploadedAppId',
+  BLOCK_SHARED_UPLOAD_APP_ID_META_KEY: 'blockSharedUploadAppId',
 }));
 
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';

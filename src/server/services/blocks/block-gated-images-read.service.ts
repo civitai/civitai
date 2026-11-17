@@ -73,8 +73,8 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  *      ceiling by asking. Both transports get the identical number because they
  *      reach this identical line with the identical claim.
  *   4. `getBlockGatedImagesByIds` — the app-scoped read (`blockPublishedAppId` or
- *      `blockUploadedAppId` = this token's `appId`, `postId IS NULL`; uploads held to
- *      scanned + SFW) plus the per-row projection.
+ *      `blockSharedUploadAppId` = this token's `appId`, `postId IS NULL`; shared
+ *      uploads held to scanned + SFW) plus the per-row projection.
  *
  * 🔴 AN ANONYMOUS VIEWER GETS `UNAUTHORIZED` (401 over REST), AND THAT IS PARITY
  * WITH THE BRIDGE RATHER THAN A NEW DECISION. `parseSubjectUserId` returns `null`
@@ -131,7 +131,7 @@ export async function resolveGatedImagesForBlockClaims(input: {
 
   const browsingLevel = resolveViewerBrowsingLevel(input.claims);
 
-  // Scope the read to THIS app's published and uploaded images (claims.appId) + bind the
+  // Scope the read to THIS app's published and shared-upload images (claims.appId) + bind the
   // blocked-users/tags clamp to the viewer (userId).
   return getBlockGatedImagesByIds({
     imageIds: input.imageIds,

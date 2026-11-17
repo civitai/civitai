@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 import type * as TrpcMod from '~/utils/trpc';
 import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
@@ -97,6 +98,22 @@ function openedUpload(requestId: string) {
   return dialogs[0].props as { share?: unknown };
 }
 
+type UploadDialogProps = {
+  onResolved: (r: unknown, meta?: { shared: boolean }) => void;
+  onAccepted?: (h: { imageId: number; url: string; shared?: boolean }) => void;
+};
+const dialogProps = () => useDialogStore.getState().dialogs[0].props as UploadDialogProps;
+const closeDialog = () => useDialogStore.getState().dialogs[0].options?.onClose?.();
+
+/** Distinct from every other number in this file. */
+const MODERATED = {
+  imageId: 9_401,
+  nsfwLevel: 1,
+  contentRating: 'pg',
+  url: 'https://image.civitai.com/xG/9401/width=1200/a.jpeg',
+};
+const PENDING = { imageId: 9_402, url: 'https://image.civitai.com/xG/9402/width=1200/b.jpeg' };
+
 describe('PageBlockHost OPEN_IMAGE_UPLOAD — share is opt-in per upload', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
@@ -148,9 +165,80 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD — share is opt-in per upload', () =>
     const replies = listenForReplies();
     postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_notok', share: true });
     await vi.waitFor(() =>
-      expect(replies.received).toEqual([{ requestId: 'rq_notok', error: 'no block token' }])
+      expect(replies.received).toEqual([
+        { requestId: 'rq_notok', error: 'no block token', shared: false },
+      ])
     );
     expect(useDialogStore.getState().dialogs).toEqual([]);
     replies.stop();
+  });
+
+  describe('the `shared` echo on IMAGE_UPLOAD_RESULT', () => {
+    async function ready(props: Partial<typeof baseProps> = {}) {
+      renderWithProviders(<PageBlockHost {...baseProps} {...props} />);
+      await driveToReady();
+      return listenForReplies();
+    }
+
+    test.each([
+      ['the server stamped the share', true],
+      ['the server did not stamp it', false],
+    ])('🔴 blocking share request: `shared` echoes the server (%s)', async (_label, shared) => {
+      const replies = await ready();
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_b', share: true });
+      dialogProps().onResolved(MODERATED, { shared });
+      closeDialog();
+      await vi.waitFor(() =>
+        expect(replies.received).toEqual([{ requestId: 'rq_b', selected: MODERATED, shared }])
+      );
+      expectReplyKeys('OPEN_IMAGE_UPLOAD', 'success', ['selected', 'shared'], replies.received[0]);
+      replies.stop();
+    });
+
+    test('🔴 async share request: the early pending reply carries the persist-time `shared`', async () => {
+      const replies = await ready();
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_a', share: true, asyncScan: true });
+      dialogProps().onAccepted?.({ ...PENDING, shared: true });
+      closeDialog();
+      await vi.waitFor(() =>
+        expect(replies.received).toEqual([
+          { requestId: 'rq_a', selected: { status: 'pending', ...PENDING }, shared: true },
+        ])
+      );
+      replies.stop();
+    });
+
+    test('a cancelled share request replies `shared: false`', async () => {
+      const replies = await ready();
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_c', share: true });
+      closeDialog();
+      await vi.waitFor(() =>
+        expect(replies.received).toEqual([{ requestId: 'rq_c', shared: false }])
+      );
+      replies.stop();
+    });
+
+    test('🔴 a reply to an UNSHARED request omits `shared` (wire unchanged), whatever the modal reports', async () => {
+      const replies = await ready();
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_u' });
+      // Even a (wrong) `true` from the modal cannot put `shared` on an unshared reply.
+      dialogProps().onResolved(MODERATED, { shared: true });
+      closeDialog();
+      await vi.waitFor(() =>
+        expect(replies.received).toEqual([{ requestId: 'rq_u', selected: MODERATED }])
+      );
+      replies.stop();
+    });
+
+    test('the no-token refusal of a share request carries `shared: false`', async () => {
+      const replies = await ready({ token: null });
+      postFromBlock('OPEN_IMAGE_UPLOAD', { requestId: 'rq_n', share: true });
+      await vi.waitFor(() =>
+        expect(replies.received).toEqual([
+          { requestId: 'rq_n', error: 'no block token', shared: false },
+        ])
+      );
+      replies.stop();
+    });
   });
 });

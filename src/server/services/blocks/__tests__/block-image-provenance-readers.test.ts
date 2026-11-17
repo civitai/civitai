@@ -11,13 +11,15 @@ import { BLOCK_PROVENANCE_METADATA_KEYS } from '~/shared/utils/block-provenance-
  * directions, so adding or removing a reader fails here whether or not its author knew this file
  * existed.
  *
- * 🔴 THE PROPERTY IT EXISTS FOR: `blockUploadedAppId` (an image uploaded through an app) is
- * accepted by exactly two kinds of reader: the POST readers, which bind the row to its owner, and
- * the ONE cross-user gated read, which shows an app's own uploads to its other viewers only once
- * scanned, rated, unflagged and within the viewer's and the SFW ceilings, and never another app's.
- * Any other cross-user reader of the key would bypass those limits. The behaviour of the live
- * readers is pinned against real SQL in `block-image-provenance.behavior.test.ts`; this file pins
- * that there are no others.
+ * 🔴 THE PROPERTY IT EXISTS FOR, TWO HALVES:
+ *   - `blockUploadedAppId` (an app's own `bytes` upload) is accepted by POST readers, which bind
+ *     the row to its owner, and by NOTHING that reads cross-user. A gated read that accepted it
+ *     would let an app read every viewer's bytes uploads with no share and no dialog.
+ *   - `blockSharedUploadAppId` (a viewer-picked upload the app opted in to share, after the host
+ *     told the viewer) is accepted by the ONE cross-user gated read and by nothing else, so it is
+ *     not postable.
+ * The behaviour of the live readers is pinned against real SQL in
+ * `block-image-provenance.behavior.test.ts`; this file pins that there are no others.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
@@ -29,7 +31,9 @@ const POSTABLE = 'BLOCK_POSTABLE_APP_ID_META_KEYS';
 const POST_MARKER = 'BLOCK_POST_APP_ID_META_KEY';
 const POST_ITEM_MARKER = 'BLOCK_POST_SUB_LISTING_ID_META_KEY';
 const GENERATION_SOURCE = 'BLOCK_GENERATION_SOURCE_APP_ID_META_KEY';
+const SHARED_UPLOAD = 'BLOCK_SHARED_UPLOAD_APP_ID_META_KEY';
 const KEY_IDENTIFIERS = new Set([
+  SHARED_UPLOAD,
   PUBLISHED,
   UPLOADED,
   POSTABLE,
@@ -43,6 +47,7 @@ const KEY_LITERALS = new Set([
   'blockPublishedAppId',
   'blockUploadedAppId',
   'blockGenerationSourceAppId',
+  'blockSharedUploadAppId',
   ...POST_ONLY_LITERALS,
 ]);
 
@@ -79,6 +84,8 @@ const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
   'src/server/services/blocks/block-image-upload.service.ts#BLOCK_UPLOADED_APP_ID_META_KEY':
     'declaration',
   'src/server/services/blocks/block-image-upload.service.ts#BLOCK_POSTABLE_APP_ID_META_KEYS':
+    'declaration',
+  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY':
     'declaration',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': 'writer',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage':
@@ -220,24 +227,40 @@ describe('App Blocks image provenance-key sites', () => {
       const tokens = sites.get(site) ?? new Set();
       const acceptsUploaded = tokens.has(UPLOADED) || tokens.has(POSTABLE);
       const acceptsPublished = tokens.has(PUBLISHED) || tokens.has(POSTABLE);
-      expect({ site, acceptsUploaded, acceptsPublished }).toEqual({
+      // A shared upload is visible to the app's viewers, never postable by the app.
+      const acceptsShared = tokens.has(SHARED_UPLOAD) || tokens.has("'blockSharedUploadAppId'");
+      expect({ site, acceptsUploaded, acceptsPublished, acceptsShared }).toEqual({
         site,
         acceptsUploaded: true,
         acceptsPublished: true,
+        acceptsShared: false,
       });
     }
   });
 
-  it('🔴 the ONE gated reader names exactly the published and the uploaded key', () => {
-    // Widened deliberately from the published key alone: an app may show its own SCANNED uploads
-    // to its other viewers. The limits on those rows (scanned only, SFW, no owner pending branch,
-    // equality with the verified appId) are pinned in block-image-provenance.behavior.test.ts.
-    // The postable-set constant must NOT appear here: the gated read spells each key it accepts.
+  it('🔴 the ONE gated reader names the published and the SHARED-upload key, never the bytes key', () => {
+    // An app may show a viewer-picked upload to its other viewers only when it opted in for that
+    // upload (`blockSharedUploadAppId`). Its own bytes uploads (`blockUploadedAppId`) carry no
+    // share and no dialog, so the gated read must not name that key or the postable set. The
+    // limits on shared rows are pinned in block-image-provenance.behavior.test.ts.
     const gated = Object.entries(LEDGER).filter(([, r]) => r === 'gated-reader');
     expect(gated.length).toBe(1);
     for (const [site] of gated) {
-      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED, UPLOADED].sort());
+      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED, SHARED_UPLOAD].sort());
     }
+  });
+
+  it('🔴 the shared-upload key is named only by its declaration, its writer, the gated read and the server-owned list', () => {
+    const naming = [...sites.entries()]
+      .filter(([, tokens]) => tokens.has(SHARED_UPLOAD) || tokens.has("'blockSharedUploadAppId'"))
+      .map(([site]) => site)
+      .sort();
+    expect(naming).toEqual([
+      'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds',
+      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY',
+      'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
+    ]);
   });
 
   it('the image-detail credit reads the PUBLISHED key only', () => {
@@ -250,7 +273,7 @@ describe('App Blocks image provenance-key sites', () => {
     }
   });
 
-  it('only the upload writer stamps the uploaded key (bytes and verified viewer-picked uploads)', () => {
+  it('only the bytes-upload writer stamps the uploaded key', () => {
     const stampers = [...sites.entries()]
       .filter(([site, tokens]) => LEDGER[site] === 'writer' && tokens.has(UPLOADED))
       .map(([site]) => site);
