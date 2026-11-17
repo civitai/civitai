@@ -9,6 +9,7 @@ import * as systemCache from '../system-cache';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { refreshThumbnailCache } from '~/server/redis/caches';
 import { refreshProfilePicturesForImages } from '~/server/services/user.service';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {},
@@ -27,6 +28,10 @@ vi.mock('~/server/services/image.service', () => ({
 // this file exercises only the tag write.
 vi.mock('~/server/services/user.service', () => ({
   refreshProfilePicturesForImages: vi.fn(async () => undefined),
+}));
+
+vi.mock('~/server/services/image-models-reindex.service', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
 }));
 
 vi.mock('../system-cache', () => ({
@@ -301,5 +306,45 @@ describe('profile pictures re-rated by a tag write', () => {
     await upsertTagsOnImageNew([{ imageId: UNRATED_IMAGE, tagId: PLAIN_TAG }]);
 
     expect(refreshProfilePicturesForImages).not.toHaveBeenCalled();
+  });
+});
+
+describe('models-index queue on a tag write', () => {
+  const R_TAG = 301;
+  const PLAIN_TAG = 302;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(systemCache.getTagRules).mockResolvedValue([]);
+    vi.mocked(systemCache.getModeratedTags).mockResolvedValue([
+      { id: R_TAG, name: 'r-tag', nsfwLevel: 4 },
+    ]);
+  });
+
+  const written = [
+    { imageId: 71, tagId: R_TAG },
+    { imageId: 72, tagId: PLAIN_TAG },
+  ];
+
+  it.each([
+    ['insert', insertTagsOnImageNew],
+    ['upsert', upsertTagsOnImageNew],
+    ['delete', deleteTagsOnImageNew],
+  ] as const)('%s hands over the written tags and the re-rated images', async (_, write) => {
+    await write(written);
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledTimes(1);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      tagWrites: written.map((x) => expect.objectContaining(x)),
+      levelImageIds: [71],
+    });
+  });
+
+  it('hands over no re-rated images when no written tag can change a rating', async () => {
+    await upsertTagsOnImageNew([{ imageId: 72, tagId: PLAIN_TAG }]);
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ levelImageIds: [] })
+    );
   });
 });

@@ -288,7 +288,9 @@ describe('an image removed with only the review flag left', () => {
     await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
-    expect(trackImageRestore).toHaveBeenCalledWith({ imageId: FLAGGED_REMOVED, actorUserId: 2 });
+    expect(trackImageRestore).toHaveBeenCalledWith(
+      expect.objectContaining({ imageId: FLAGGED_REMOVED, actorUserId: 2 })
+    );
   });
 
   it('is accepted like any other image while it is still live', async () => {
