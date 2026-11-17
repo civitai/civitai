@@ -45,9 +45,13 @@ function applyAddonExclusions(
 
   input.disableMinor = input.disableMinor || resolved.disableMinor;
 
-  const isOwnScoped =
-    !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    isViewerUsername(viewer, input.username);
+  // Own-scoped on the identifier the feed FILTERS by: a `userId` whenever present (the feeds read
+  // `userId ?? <username lookup>`), so a `userId` naming another creator is their feed whatever
+  // `username` says, and the viewer's own `userId` is their feed even beside a username that does
+  // not match (the profile media page sends a slugified one). Without a `userId`, the `username`.
+  const isOwnScoped = input.userId
+    ? !!(viewer.id && viewer.id === input.userId)
+    : isViewerUsername(viewer, input.username);
   if (!isOwnScoped && resolved.excludedTagIds.length) {
     input.excludedTagIds = [
       ...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds]),
@@ -81,7 +85,7 @@ async function loadBlockedBrowsingContext(input: AddonTarget, viewer: Viewer) {
  *  - W1: re-derives the browsing-settings addon exclusions server-side and
  *    unions them in. Moderators bypass (resolveBrowsingSettingsAddons); a
  *    viewer's own-content feed keeps its tag exclusions off (own POI stays
- *    visible), matching the client's `isOwnImages` behavior.
+ *    visible).
  */
 export async function enforceBlockedBrowsingTags(
   input: AddonTarget & { tags?: number[] },

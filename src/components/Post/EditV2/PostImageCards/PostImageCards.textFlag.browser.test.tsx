@@ -57,4 +57,15 @@ describe('PostImageCards and the storylineText flag', () => {
     renderWithProviders(<PostImageCards />);
     await expect.element(page.getByText('text card')).toBeVisible();
   });
+
+  test('Add text opens a draft card in place of its button; nothing is created yet', async () => {
+    flags.storylineText = true;
+    renderWithProviders(<PostImageCards />);
+    const buttons = page.getByRole('button', { name: 'Add text' });
+    await expect.element(buttons.first()).toBeVisible();
+    const before = buttons.elements().length;
+    await buttons.first().click();
+    await expect.poll(() => page.getByText('text card').elements().length).toBe(2);
+    expect(page.getByRole('button', { name: 'Add text' }).elements().length).toBe(before - 1);
+  });
 });

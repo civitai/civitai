@@ -128,6 +128,11 @@ vi.mock('~/components/Model/model.utils', () => ({
     isRefetching: false,
     isFetching: false,
   }),
+  useSemanticModelFeed: () => ({ models: [], searchKey: undefined }),
+}));
+// /search/models' getServerSideProps pulls server modules into the browser bundle under test.
+vi.mock('~/server/utils/server-side-helpers', () => ({
+  createServerSideProps: () => async () => ({ props: {} }),
 }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
   useBrowsingLevelDebounced: () => 1,

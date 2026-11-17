@@ -86,6 +86,14 @@ let db: PGlite;
 let raw: ReturnType<typeof pgliteRaw>;
 const redis = new Map<string, string>();
 let textModeration: { status: string; blocked: boolean } | null;
+/** A verdict from before verdicts carried a text hash, which the recompute counts as it always did. */
+const legacyVerdict = (blocked: boolean) => ({
+  status: 'Succeeded',
+  blocked,
+  contentHash: null,
+  result: null,
+  updatedAt: new Date('2026-01-01'),
+});
 
 const q = async <T>(sql: string, params: unknown[] = []) => (await db.query<T>(sql, params)).rows;
 
@@ -210,10 +218,10 @@ beforeEach(async () => {
   await db.exec(`TRUNCATE "Article", "Image", "ImageConnection", "ArticleContentLinkHold"`);
   await givenArticle();
   redis.clear();
-  textModeration = { status: 'Succeeded', blocked: false };
+  textModeration = legacyVerdict(false);
   state.clickhouseDown = false;
   createReport.mockClear();
-  redisMock.sysRedis.set.mockImplementation((async (k: string, v: string) => {
+  redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
     redis.set(k, v);
     return 'OK';
   }) as never);
@@ -251,11 +259,11 @@ async function givenArticle(
   );
 }
 function lookupsDown() {
-  redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+  redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
   state.clickhouseDown = true;
 }
 function lookupsUp() {
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
   state.clickhouseDown = false;
 }
@@ -301,7 +309,7 @@ describe('linking a url whose key cannot be proved', () => {
 
   it('with the issue record alone down, defers a key the request log does not hold', async () => {
     await recordUploadKeyOwner(KEY, OTHER);
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     await link();
     expect(await rows()).toEqual([]);
     expect((await hold())?.deferred).toEqual([KEY]);
@@ -405,7 +413,7 @@ describe('settling a held article', () => {
 
   it('returns to what the article was for other reasons, not to public', async () => {
     await recordUploadKeyOwner(KEY, AUTHOR);
-    textModeration = { status: 'Succeeded', blocked: true };
+    textModeration = legacyVerdict(true);
     await recomputeArticleIngestion(ARTICLE_ID);
     expect(await ingestion()).toBe('Blocked');
     await settleContentLinkHolds(at(10 * MINUTE));

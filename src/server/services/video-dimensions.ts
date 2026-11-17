@@ -52,7 +52,7 @@ export async function probeVideoDimensions(url: string): Promise<VideoDimensions
       name: 'video-dimensions-probe',
       message: (e as Error).message,
       url,
-    }).catch(() => null);
+    });
     return null;
   }
 }

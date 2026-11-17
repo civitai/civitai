@@ -8,7 +8,7 @@ import { createRegistryServer } from '~/server/registry-adapter/serve';
  * A request's `filter` is evaluated synchronously, per entity and per poll, on the one event loop
  * that serves every stream. One whose cost is not bounded by its size is refused with
  * `bad_request` (the registry spec's rule 6: applied in full or refused, never ignored), so an
- * anonymous consumer cannot stall the source.
+ * anonymous consumer cannot stall the source. Its patterns run on a linear-time engine.
  */
 
 const APPS = 'urn:schema:apps.civitai.com:app@v1';
@@ -43,8 +43,8 @@ const refused = (res: { status: number; text: string }) => [
   (JSON.parse(res.text) as { error?: unknown }).error,
 ];
 
-async function get(filter: unknown) {
-  server = createRegistryServer(adapter);
+async function get(filter: unknown, source: Adapter = adapter) {
+  server = createRegistryServer(source);
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   const started = performance.now();
@@ -112,5 +112,38 @@ describe('🔴 a filter whose evaluation cost is unbounded by its size is bad_re
   ])('positive control: a %s filter is still applied (the entity is excluded)', async (_n, f) => {
     const res = await get(f);
     expect(res.text.startsWith('event: live')).toBe(true);
+  });
+});
+
+/** A source serving one entity whose `slug` is `slug`. */
+const serving = (slug: string): Adapter => ({
+  ...adapter,
+  // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+  snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [{ ...one, body: { slug } }] }),
+});
+
+describe('🔴 a backtracking pattern is applied in linear time', () => {
+  // `^(a+)+$` against a run of `a` then `b`: the platform RegExp backtracks through every way to
+  // split the run, 2^n of them, so at 20,000 it would never return. These must simply return,
+  // with the entity excluded (no match).
+  it.each([[30], [20_000]])(
+    '^(a+)+$ against %i a then b: applied, the entity excluded, and the stream ends',
+    async (n) => {
+      const res = await get(
+        { properties: { slug: { pattern: '^(a+)+$' } } },
+        serving(`${'a'.repeat(n)}b`)
+      );
+      expect(res.status).toBe(200);
+      expect(res.text.startsWith('event: live')).toBe(true);
+    },
+    20_000
+  );
+
+  it('positive control: the same pattern against a run of a only matches, and is sent', async () => {
+    const res = await get(
+      { properties: { slug: { pattern: '^(a+)+$' } } },
+      serving('a'.repeat(30))
+    );
+    expect(res.text.startsWith('event: upsert')).toBe(true);
   });
 });

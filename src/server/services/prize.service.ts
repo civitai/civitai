@@ -112,7 +112,7 @@ export async function payPrize(prize: Prize): Promise<boolean> {
         name: 'prize-payment-dropped',
         message: `The ledger neither made nor recognised prize ${prize.id}'s payment`,
         prizeId: prize.id,
-      }).catch(() => undefined);
+      });
       return false;
     }
   } catch (error) {
@@ -121,7 +121,7 @@ export async function payPrize(prize: Prize): Promise<boolean> {
       name: 'prize-payment-failed',
       message: error instanceof Error ? error.message : String(error),
       prizeId: prize.id,
-    }).catch(() => undefined);
+    });
     return false;
   }
 

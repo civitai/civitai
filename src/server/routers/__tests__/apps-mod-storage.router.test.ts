@@ -649,12 +649,6 @@ describe('preview attribution', () => {
     await caller().purgeAccount({ userId: TARGET, reason: 'account terminated' });
     expect(previewLines()).toHaveLength(0);
   });
-
-  it('a logging failure never fails the read', async () => {
-    mockLogToAxiom.mockRejectedValueOnce(new Error('log store down'));
-    const out = await caller().preview({ userId: TARGET, appBlockId: APP_A.id });
-    expect(out.apps[0].rowCount).toBe(3);
-  });
 });
 
 // ── 1c. THE INPUT BOUNDARY THE ERASURE REDUCTION RESTS ON ────────────────────

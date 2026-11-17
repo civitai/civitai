@@ -78,6 +78,7 @@ import { refreshDocStoreEnabled } from '~/server/services/apps/doc-store.instanc
 // as zeros rather than as an absent series on every pod that has not received a callback.
 import { ensureRegisterAppBlockBuildMetrics } from '~/server/prom/app-block-build.metrics';
 import { ensureRegisterAppReviewAutodeployMetrics } from '~/server/prom/app-review-autodeploy.metrics';
+import { ensureRegisterFeedbackHqSyncMetrics } from '~/server/prom/feedback-hq-sync.metrics';
 // Side-effect import: installs the fleet-shared store the image-ingestion gauges refresh through.
 // Without it every process runs those queries itself. Here rather than in ~/server/prom/client so
 // that module's graph never loads the redis client.
@@ -94,6 +95,7 @@ ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 ensureRegisterAppBlockBuildMetrics();
 ensureRegisterAppReviewAutodeployMetrics();
+ensureRegisterFeedbackHqSyncMetrics();
 ensureRegisterThreadCpuMetrics();
 
 const labels: Record<string, string> = {};

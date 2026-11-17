@@ -187,6 +187,29 @@ export function recordRefusal(
   track?.action({ type: 'CSAM_Help_Triggered', details: { query, index } }).catch(() => undefined);
 }
 
+/**
+ * One search's query audit: each verdict is counted, tracked and given to `audit`. `context` is read
+ * on every call, so a correction is audited at the level the search has narrowed to by then.
+ */
+export function makeRefusalOf({
+  index,
+  track,
+  context,
+  audit,
+}: {
+  index: string;
+  track?: QueryTracker;
+  context: () => Parameters<typeof semanticQueryRefusal>[1];
+  audit?: { verdict: (refusal: QueryRefusal) => void };
+}) {
+  return async (text: string, stage: QueryStage) => {
+    const refusal = await semanticQueryRefusal(text, context());
+    recordRefusal(track, refusal, text, index, stage);
+    audit?.verdict(refusal);
+    return refusal;
+  };
+}
+
 /** The candidates a refused text search would have served, for its audit row only. */
 export function refusedTextCandidates(
   source: CandidateSource,

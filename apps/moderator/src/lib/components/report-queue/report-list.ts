@@ -19,4 +19,6 @@ export type ReportListItem = {
   /** Moderators' own notes on the report (`ReportNotes`). */
   internalNotes?: string | null;
   additionalReporters?: AdditionalReporter[];
+  /** Filed by an agent account (`AGENT_REPORTER_USER_IDS`). */
+  agentFiled?: boolean;
 };

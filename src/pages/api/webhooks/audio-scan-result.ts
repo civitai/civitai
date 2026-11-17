@@ -14,12 +14,12 @@ export default WebhookEndpoint(async (req, res) => {
   } catch (e) {
     // A failed workflow read or DB error; a 400 has the orchestrator retry it.
     const error = e instanceof Error ? e : new Error(String(e));
-    await logToAxiom({
+    logToAxiom({
       name: 'video-audio-scan',
       type: 'error',
       message: error.message,
       stack: error.stack,
-    }).catch(() => null);
+    });
     return res.status(400).json({ ok: false });
   }
 });

@@ -1863,7 +1863,7 @@ describe("kind:'workflow' in a BATCH estimate", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("kind:'workflow' POLL / CANCEL", () => {
-  const blob = (url: string) => ({ id: url, url, available: true, type: 'image' });
+  const blob = (url: string) => ({ id: url, url, available: true, type: 'image', nsfwLevel: 'pg' });
   function terminalWorkflow(over: Record<string, unknown> = {}) {
     return {
       id: WORKFLOW_ID,
@@ -1909,7 +1909,13 @@ describe("kind:'workflow' POLL / CANCEL", () => {
     // The suppressed step's image is in neither place.
     expect(snapshot.imageUrls).toEqual(['https://img/gen.png']);
     expect(snapshot.steps).toEqual([
-      { name: 'gen', $type: 'imageGen', status: 'succeeded', imageUrls: ['https://img/gen.png'] },
+      {
+        name: 'gen',
+        $type: 'imageGen',
+        status: 'succeeded',
+        imageUrls: ['https://img/gen.png'],
+        outputs: [{ url: 'https://img/gen.png', nsfwLevel: 'pg' }],
+      },
       { name: '$1', $type: 'imageUpscaler', status: 'succeeded', output: { scale: 2 } },
       {
         name: '$2',
@@ -2506,12 +2512,18 @@ describe('inline customComfy — the generation input gate', () => {
   beforeEach(() => {
     const viewer = { id: VIEWER, isModerator: false, email: 'v@example.com', username: 'v' };
     dbMock.dbRead.user.findUnique.mockImplementation((async () => viewer) as never);
-    redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+    // The issue record lives in the cluster client; it shares the in-memory store.
+    redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
+      store.set(k, String(v));
+      return 'OK';
+    }) as never);
+    redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
       keys.map((k) => store.get(k) ?? null)) as never);
   });
   afterEach(() => {
     dbMock.dbRead.user.findUnique.mockReset();
-    redisMock.sysRedis.mGet.mockReset();
+    redisMock.redis.set.mockReset().mockResolvedValue('OK' as never);
+    redisMock.redis.mGet.mockReset();
   });
 
   const inline = (inputs: Record<string, unknown> = {}) => ({
@@ -2580,7 +2592,7 @@ describe('inline customComfy — the generation input gate', () => {
       'store-unreadable',
       async () => {
         await recordUploadKeyOwner(OWN_KEY, VIEWER);
-        redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+        redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       },
     ],
   ])('refuses an own row-less upload (%s) before any orchestrator call', async (reason, given) => {

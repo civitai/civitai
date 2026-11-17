@@ -23,8 +23,8 @@ export const needsCoaching = (answered: number, accuracy: number | null): boolea
 export type Source = 'core' | 'rating' | 'yesno';
 
 /**
- * Which kind of item comes next. The curated core set always comes first; after that yes/no questions are mixed in
- * on a fixed rhythm by the player's answer count, and either kind stands in when the other has run out.
+ * Which kind of item comes next, by the player's answer count: a yes/no pair every `yesNoEvery`th item, core and
+ * harvested images taking turns in the other slots. A kind that has run out is filled in by the others.
  */
 export function chooseSource(input: {
   position: number;
@@ -32,11 +32,13 @@ export function chooseSource(input: {
   rating: boolean;
   yesNo: boolean;
 }): Source | null {
-  if (input.core) return 'core';
-  if (!input.rating && !input.yesNo) return null;
-  if (!input.yesNo) return 'rating';
-  if (!input.rating) return 'yesno';
-  return input.position % APPRENTICE.yesNoEvery === APPRENTICE.yesNoEvery - 1 ? 'yesno' : 'rating';
+  const { position } = input;
+  const imageSlot = input.yesNo ? position - Math.floor(position / APPRENTICE.yesNoEvery) : position;
+  const images: Source[] = imageSlot % 2 === 0 ? ['core', 'rating'] : ['rating', 'core'];
+  const yesNoSlot = position % APPRENTICE.yesNoEvery === APPRENTICE.yesNoEvery - 1;
+  const order: Source[] = yesNoSlot ? ['yesno', ...images] : [...images, 'yesno'];
+  const available = { core: input.core, rating: input.rating, yesno: input.yesNo };
+  return order.find((source) => available[source]) ?? null;
 }
 
 const MILESTONE_COPY: Record<number, string> = {
@@ -54,13 +56,4 @@ export function crossedMilestone(from: number, to: number): { level: number; cop
     if (copy) return { level, copy };
   }
   return null;
-}
-
-/** The milestone before `level`, or 1 (the start) when there is none. */
-export function previousMilestone(level: number): number {
-  let previous = 1;
-  for (const key of Object.keys(MILESTONE_COPY).map(Number)) {
-    if (key < level && key > previous) previous = key;
-  }
-  return previous;
 }

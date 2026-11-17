@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
+import type { AgentReportWhere } from './agent-reporters';
 import { SYSTEM_USER_ID, usersByIds } from './users.service';
 import { rewardReportReporters } from './rewards';
 import { ENQUEUE_SOURCE } from './unpublished-version-posts';
@@ -175,6 +176,8 @@ export type GetReportsParams = {
   entityId?: number;
   /** Only the reports `unpublished-version-posts` filed for this unpublish reason. */
   unpublishedReason?: string;
+  /** Only, or all but, the reports agent accounts filed (`Report.userId`). */
+  agents?: AgentReportWhere;
 };
 
 /**
@@ -190,6 +193,7 @@ function reportQueueBase({
   reportId,
   entityId,
   unpublishedReason,
+  agents,
 }: Omit<GetReportsParams, 'statuses' | 'page' | 'limit'>) {
   const join = reportEntity(type);
   const entityExists =
@@ -214,6 +218,8 @@ function reportQueueBase({
   if (from) base = base.where('Report.createdAt', '>=', from);
   if (to) base = base.where('Report.createdAt', '<', to);
   if (reportId) base = base.where('Report.id', '=', reportId);
+  if (agents)
+    base = base.where('Report.userId', agents.mode === 'only' ? 'in' : 'not in', agents.ids);
   if (unpublishedReason)
     base = base
       .where(sql<string>`"Report".details ->> 'source'`, '=', ENQUEUE_SOURCE)
@@ -268,6 +274,7 @@ export async function getReports({
   reportId,
   entityId: forEntity,
   unpublishedReason,
+  agents,
 }: GetReportsParams): Promise<{
   items: ModeratorReportRow[];
   totalItems: number;
@@ -291,6 +298,7 @@ export async function getReports({
     reportId,
     entityId: forEntity,
     unpublishedReason,
+    agents,
   });
   if (statuses !== 'all') base = base.where('Report.status', 'in', statuses);
 

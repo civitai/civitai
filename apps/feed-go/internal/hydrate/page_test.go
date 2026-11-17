@@ -400,6 +400,46 @@ func TestPageNoEventsNoCosmeticsIsOnePipeline(t *testing.T) {
 	}
 }
 
+// Without the 'profilePictures' include (image.getInfinite), no profile picture is read from the
+// replica (nor queued on the cache pipeline), ProfilePics is an empty map, and every other lookup answers as the full page.
+func TestPageWithoutProfilePictures(t *testing.T) {
+	s, _, db := basePageFixture(t).load()
+	req := pageRequest()
+	req.NoProfilePictures = true
+	got, err := s.Page(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProfilePics == nil || len(got.ProfilePics) != 0 {
+		t.Fatalf("ProfilePics = %#v, want an empty map", got.ProfilePics)
+	}
+	for _, c := range db.Calls {
+		if strings.Contains(c, `u."profilePictureId"`) {
+			t.Fatalf("a profile-picture replica query ran: %s", c)
+		}
+	}
+	// Positive control: the same page with the include reads 1002's from the replica.
+	s2, _, db2 := basePageFixture(t).load()
+	full, err := s2.Page(context.Background(), pageRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full.ProfilePics) != 2 {
+		t.Fatalf("full page profile pictures = %v, want 1001 and 1002", sortedKeys(full.ProfilePics))
+	}
+	ran := false
+	for _, c := range db2.Calls {
+		ran = ran || strings.Contains(c, `u."profilePictureId"`)
+	}
+	if !ran {
+		t.Fatal("control: the full page never queried the replica for a profile picture")
+	}
+	got.ProfilePics, full.ProfilePics = nil, nil
+	if !reflect.DeepEqual(got, full) {
+		t.Fatalf("the rest of the page differs:\n got %#v\nwant %#v", got, full)
+	}
+}
+
 // An empty page reads nothing at all, and answers the same empty maps as the per-lookup methods.
 func TestPageEmptyReadsNothing(t *testing.T) {
 	s, r, db := basePageFixture(t).load()
@@ -473,7 +513,7 @@ func TestBatchOnePipelinePerClient(t *testing.T) {
 	if got := none.Entries(); len(got) != 0 {
 		t.Fatalf("no ids = %#v", got)
 	}
-	if got, err := m.result(); err != nil || !reflect.DeepEqual(got, map[int]Metrics{7: {"Like": 1}}) {
+	if got, err := m.result(context.Background(), s); err != nil || !reflect.DeepEqual(got, map[int]Metrics{7: {"Like": 1}}) {
 		t.Fatalf("metrics = %v, %v", got, err)
 	}
 

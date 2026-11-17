@@ -217,7 +217,7 @@ export async function ownerHeld(
         type: 'error',
         name: 'content-legal-hold-check-failed',
         message: (e as Error).message,
-      }).catch(() => undefined);
+      });
       return null;
     }
   );
@@ -262,7 +262,7 @@ export async function deleteUnlessHeld(
       type: 'error',
       name: 'content-legal-hold-check-failed',
       message: (e as Error).message,
-    }).catch(() => undefined);
+    });
     throw contentKeptError(isModerator);
   });
   if (removed >= expected) return 'deleted';

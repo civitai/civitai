@@ -1,4 +1,4 @@
-// Generates the golden fixtures in as-posts/ and v1-images/ (see README.md).
+// Generates the golden fixtures in as-posts/, v1-images/ and infinite/ (see README.md).
 //
 //   TZ=UTC node apps/feed-go/testdata/golden/gen.mjs
 //
@@ -15,6 +15,9 @@
 //     (packages/civitai-redis/src/cached-array.ts, src/server/redis/caches.ts).
 //   - GET /api/v1/images: handleImagesRequest (src/pages/api/v1/images/index.ts), runImageSearch
 //     (src/server/services/image-search.service.ts), getImagesFromFeedServiceForRest.
+//   - image.getInfinite: getInfiniteImagesHandler (src/server/controllers/image.controller.ts),
+//     getAllImagesIndex / getAllImages, prepareImageFeedRequest and enforceBlockedBrowsingTags
+//     (src/server/services/blocked-browsing-tags.service.ts), stripImageForInfiniteWire.
 // The response is then encoded with the real superjson (tRPC) / JSON.stringify (res.json), and the
 // cache values with the real msgpackr `pack`, so the bytes are what Node writes.
 //
@@ -26,7 +29,7 @@ process.env.TZ = 'UTC';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { importDep, mark, packMarked } from './pack.mjs';
+import { importDep, mark, packMarked, packMarkedCompressed } from './pack.mjs';
 
 if (new Date(0).getTimezoneOffset() !== 0) throw new Error('run with TZ=UTC (the Node pods run in UTC)');
 
@@ -92,6 +95,46 @@ const PROFILE_PICTURES = {
     metadata: { width: 512, height: 512 },
   },
 };
+// Creator-made cosmetics (Cosmetic.createdById set): 303 is listed by its creator but not
+// displayable (withheld), 304's creator listing was approved on review (shown), 305 has no listing and
+// carries CosmeticFlag.Withheld (tombstoned: withheld).
+Object.assign(COSMETICS, {
+  303: { id: 303, name: 'Pending Badge', type: 'Badge', data: { url: uuid(3031) }, source: 'Purchase', flags: 0 },
+  304: { id: 304, name: 'Creator Plate', type: 'NamePlate', data: { color: 'gold', 2: 1 }, source: 'Purchase', flags: 0 },
+  305: { id: 305, name: 'Removed Badge', type: 'Badge', data: { url: uuid(3051) }, source: 'Purchase', flags: 4 },
+});
+const COSMETIC_CREATORS = { 303: 1009, 304: 1009, 305: 1009 };
+
+// ---- The database behind the caches (read by a lookup only when its key is cold) ----------------
+// UserCosmetic rows. The user-cosmetics cache entry of 1002 predates its 304: a cold read finds it
+// (its 303 is withheld, its 305 tombstoned, its 302 owned but not equipped). The frame and event rows
+// agree with FRAMES / EVENT_DECORATIONS, plus a withheld creator frame on 8007 (so 8007 shows none).
+const USER_COSMETIC_ROWS = [
+  { userId: 1001, cosmeticId: 301, data: null, equippedAt: day(1), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 303, data: null, equippedAt: day(2), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 304, data: { color: 'gold', 2: 1, sparkle: { on: true, at: 0.5 } }, equippedAt: day(2), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 305, data: null, equippedAt: day(3), equippedToId: null, equippedToType: null },
+  { userId: 1002, cosmeticId: 302, data: null, equippedAt: null, equippedToId: null, equippedToType: null },
+  { userId: 1001, cosmeticId: 302, data: null, equippedAt: day(3), equippedToId: 8001, equippedToType: 'Image' },
+  { userId: 1009, cosmeticId: 303, data: { lights: 2 }, equippedAt: day(3), equippedToId: 8007, equippedToType: 'Image' },
+  { userId: 1002, cosmeticId: 401, data: null, equippedAt: day(4), equippedToId: 8003, equippedToType: 'Image' },
+];
+// CosmeticShopItem rows: [cosmeticId, addedById, status, meta, rejectionReason].
+const SHOP_ITEMS = [
+  { cosmeticId: 303, addedById: 1009, status: 'PendingReview', meta: {}, rejectionReason: null },
+  { cosmeticId: 304, addedById: 1009, status: 'Draft', meta: { history: [{ kind: 'reviewed', action: 'approve' }] }, rejectionReason: null },
+  { cosmeticId: 304, addedById: 1010, status: 'Rejected', meta: {}, rejectionReason: 'Not theirs' },
+];
+/** A jsonb column's text as Postgres writes it: members ordered by key length then bytes, `", "` and
+ *  `": "` separators. Prisma hands the Node code JSON.parse of exactly this. */
+function jsonbText(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return `[${v.map(jsonbText).join(', ')}]`;
+  const keys = Object.keys(v).sort((a, b) => Buffer.byteLength(a) - Buffer.byteLength(b) || Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  return `{${keys.map((k) => `${JSON.stringify(k)}: ${jsonbText(v[k])}`).join(', ')}}`;
+}
+const prismaJson = (v) => (v === null || v === undefined ? null : JSON.parse(jsonbText(v)));
+
 // The Image frame each image wears (cosmeticEntityCaches.Image raw lookup rows).
 const FRAMES = { 8001: { equippedToId: 8001, cosmeticId: 302, userData: null } };
 // The event decoration each image wears (eventDecorationEntityCaches.Image entries).
@@ -163,6 +206,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7203, 1001, 6401, day(10)],
   [7301, 1002, 6101, day(11)],
   [7401, 1001, 6201, day(11)],
+  [7011, 1002, null, day(6, 12)],
 ])
   POSTS[id] = { id, userId, modelVersionId: versionId, publishedAt };
 
@@ -184,7 +228,7 @@ function image(id, postId, opts = {}) {
     width: type === 'video' ? 1280 : 832,
     height: type === 'video' ? 720 : 1216,
     hash: `UGOLDEN${id}`,
-    hideMeta: false,
+    hideMeta: opts.hideMeta ?? false,
     hasMeta: opts.hasMeta ?? true,
     hasPositivePrompt: opts.hasMeta ?? true,
     onSite: false,
@@ -255,6 +299,27 @@ image(8204, 7203);
 image(8301, 7301, { index: 0 });
 image(8302, 7301, { index: 1, nsfwLevel: 4 });
 image(8401, 7401);
+// An image that hides its meta: the column holds one, the cache and the lookup answer null.
+image(8030, 7011, { hideMeta: true, hasMeta: false });
+
+// Image.meta (jsonb), the generation parameters imageMetaCache serves (withMeta). Each differs; the
+// first holds an integer-like key ("10", listed first in JS, after "a" in jsonb's order), a fraction,
+// a nested array and a null member. An image without an entry has a NULL meta.
+const META = {
+  8001: { prompt: 'golden synthetic prompt one', negativePrompt: 'blurry', cfgScale: 7.5, steps: 30, seed: 4242001, sampler: 'Euler a', 10: 'ten', a: null, resources: [{ name: 'golden-lora', type: 'lora', weight: 0.8 }] },
+  8002: { prompt: 'golden synthetic prompt two', steps: 12, clipSkip: 2 },
+  8003: { prompt: 'golden synthetic prompt three', cfgScale: 4, nested: { deep: { level: 3, list: [1, 'two', false] } }, comfy: null, note: 'ünïcödé ✓' },
+  8004: { prompt: 'golden synthetic prompt four', seed: 9007199254740, Size: '832x1216' },
+  8005: { prompt: 'golden synthetic video', fps: 23.976 },
+  8006: null,
+  8007: { prompt: 'golden synthetic prompt seven', steps: 7 },
+  8030: { prompt: 'golden hidden prompt' },
+};
+// imageMetaCache entries Node wrote before the cache was compressed: plain msgpack, read as is.
+const META_UNCOMPRESSED = new Set([8002]);
+// imageMetaCache notFound markers (the lookup found no row when the entry was written).
+const META_NOT_FOUND = new Set([8009]);
+const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null));
 
 // Video thumbnails (thumbnailCache, keyed by the video's id).
 const THUMBNAILS = {
@@ -298,6 +363,12 @@ const PLACEMENTS = [
     data: { postId: 7201, days: 7, modelVersionIds: [6401], imageIds: [8201], acceptedLevel: 3, endsAt: '2026-06-21T10:00:00.000Z' },
   },
 ];
+// system:blocked-browsing-tags (cache cluster): getBlockedBrowsingTags' list. Synthetic names; the
+// ids are two of BLOCKED_BROWSING_TAG_IDS (src/shared/constants/browsing-settings-addons.ts).
+const BLOCKED_TAGS = [
+  { id: 5161, name: 'blocked_one' },
+  { id: 5351, name: 'blocked_two' },
+];
 // system:browsing-setting-addons (system redis).
 const ADDONS = [
   { type: 'some', nsfwLevels: [4, 8, 16], disableMinor: true, excludedTagIds: [9911] },
@@ -320,6 +391,7 @@ const K = {
   postVersion: 'model:gallery-settings:post-version',
   versionModel: 'model:gallery-settings:version-model',
   session: 'session:data2',
+  meta: 'packed:caches:image-meta',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
 const entry = (v) => ({ ...v, cachedAt: CACHED_AT });
@@ -372,6 +444,9 @@ function worldPacked(prefix, id) {
       return VERSIONS[id] ? entry({ id, modelId: VERSIONS[id] }) : undefined;
     case K.session:
       return SESSIONS[id];
+    case K.meta:
+      if (META_NOT_FOUND.has(id)) return notFound('id', id);
+      return IMAGES[id] ? entry({ id, meta: metaOf(id) }) : undefined;
   }
   throw new Error(`unknown cache ${prefix}`);
 }
@@ -388,6 +463,9 @@ class Trace {
     this.feed = []; // { query, status, body }
     this.posts = new Set(); // post ids whose rows the db fixture must hold
     this.models = new Set();
+    this.cold = new Set(); // "prefix:id" keys the fixture holds absent (a cache miss)
+    this.coldRead = new Set(); // the cold keys the mirror read (each must be)
+    this.writes = new Map(); // key -> what Node writes on the miss ({value, ex})
   }
 }
 let T; // the fixture being traced
@@ -396,22 +474,163 @@ function sizeOf(o) {
   return Object.keys(o).length;
 }
 
-/** createCachedObject.fetch over the world: hits by idKey, notFound markers skipped, cachedAt
- *  stripped. A miss would run the lookup on the database; the fixtures hold every key they read. */
-function cacheFetch(prefix, ids, { appendFn } = {}) {
+/** createCachedObject.fetch over the world (packages/civitai-redis/src/cached-array.ts): hits by
+ *  idKey, notFound markers skipped (or, with `negative` false, read as misses), cachedAt stripped. A
+ *  key the fixture holds cold (absent) is a miss: with `lookup` (the cache's lookupFn, transcribed)
+ *  it is looked up and written back as fetch writes it — `{...result, cachedAt}` with EX `ttl`, or
+ *  the `{[idKey]: id, notFound: true, cachedAt}` marker with EX `notFoundTtl ?? ttl` when `negative`
+ *  — and recorded in T.writes; without one it fails (the fixture must hold every key it reads). */
+function cacheFetch(prefix, ids, { appendFn, lookup, idKey, ttl, notFoundTtl, negative = true } = {}) {
   const out = {};
+  const misses = [];
+  const markers = new Set();
   for (const id of [...new Set(ids)]) {
-    const v = worldPacked(prefix, id);
-    if (v === undefined) throw new Error(`fixture ${T.fixture}: cache miss ${prefix}:${id}`);
-    T.packed.set(`${prefix}:${id}`, v);
-    if (v.notFound) continue;
+    const key = `${prefix}:${id}`;
+    const v = T.cold.has(key) ? undefined : worldPacked(prefix, id);
+    if (v === undefined) {
+      if (!lookup) throw new Error(`fixture ${T.fixture}: cache miss ${key}`);
+      T.coldRead.add(key);
+      misses.push(id);
+      continue;
+    }
+    T.packed.set(key, v);
+    if (v.notFound) {
+      if (!negative && lookup) {
+        markers.add(id);
+        misses.push(id);
+      }
+      continue;
+    }
     if (v.debounce) throw new Error('debounce marker not modelled');
     const { cachedAt: _c, ...rest } = structuredClone(v);
     out[id] = rest;
   }
+  if (misses.length) {
+    const results = lookup(misses);
+    for (const id of misses) {
+      const key = `${prefix}:${id}`;
+      const result = results[id];
+      if (!result) {
+        if (negative && !markers.has(id)) T.writes.set(key, { value: { [idKey]: id, notFound: true, cachedAt: NOW }, ex: notFoundTtl ?? ttl });
+        continue;
+      }
+      // A marker read while `negative` is off is overwritten by Node's plain SET; feed-go's SET NX
+      // leaves it. No fixture world holds that case.
+      if (markers.has(id)) throw new Error(`fixture ${T.fixture}: ${key} marker over a found row is not modelled`);
+      out[id] = result;
+      T.writes.set(key, { value: mark({ ...result, cachedAt: NOW }), ex: ttl });
+    }
+  }
   if (appendFn) appendFn(out);
   return out;
 }
+
+const DAY = 24 * 60 * 60;
+const HOUR = 60 * 60;
+
+// --- the lookupFns (src/server/redis/caches.ts) over the world tables ---------------------------
+function isListingDisplayable(listing) {
+  // packages/civitai-shared/src/knights-shop.ts
+  if (listing.status === 'Published') return true;
+  const meta = listing.meta;
+  if (meta?.takedown) return false;
+  if (meta?.displayApproved !== undefined) return meta.displayApproved;
+  const history = meta?.history ?? [];
+  let index = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].kind === 'reviewed') {
+      index = i;
+      break;
+    }
+  }
+  const approved = index >= 0 ? history[index].action === 'approve' : meta?.lastApprovedAmount != null && !listing.rejectionReason;
+  const DISPLAYED_FIELDS = new Set(['name', 'description', 'artwork', 'offsets', 'slug']);
+  return approved && !history.slice(index + 1).some((entry) => entry.changes?.some((change) => DISPLAYED_FIELDS.has(change.field)));
+}
+
+/** getWithheldCosmeticIds (src/server/services/creator-shop-withheld.ts). */
+function getWithheldCosmeticIds(cosmeticIds) {
+  const withheld = new Set();
+  if (!cosmeticIds.length) return withheld;
+  const unique = [...new Set(cosmeticIds)];
+  const listings = SHOP_ITEMS.filter((x) => unique.includes(x.cosmeticId)).map((x) => ({
+    ...x,
+    meta: prismaJson(x.meta),
+    cosmetic: { createdById: COSMETIC_CREATORS[x.cosmeticId] ?? null },
+  }));
+  const displayable = new Set();
+  for (const { cosmeticId, addedById, cosmetic, status, meta, rejectionReason } of listings) {
+    if (cosmeticId == null || cosmetic?.createdById == null || addedById !== cosmetic.createdById) continue;
+    const shown = isListingDisplayable({ status, meta, rejectionReason });
+    (shown ? displayable : withheld).add(cosmeticId);
+  }
+  for (const id of displayable) withheld.delete(id);
+  const unlisted = unique.filter((id) => !displayable.has(id) && !withheld.has(id));
+  if (unlisted.length) {
+    const tombstoned = unlisted.filter((id) => COSMETIC_CREATORS[id] != null).map((id) => ({ id, flags: COSMETICS[id]?.flags ?? 0 }));
+    for (const { id, flags } of tombstoned) if ((flags | 4) === flags) withheld.add(id);
+  }
+  return withheld;
+}
+
+/** userCosmeticCache's lookupFn. */
+function lookupUserCosmetics(ids) {
+  const equipped = USER_COSMETIC_ROWS.filter((r) => ids.includes(r.userId) && r.equippedAt !== null && r.equippedToId === null).map((r) => ({
+    userId: r.userId,
+    cosmeticId: r.cosmeticId,
+    data: prismaJson(r.data),
+  }));
+  const withheld = getWithheldCosmeticIds(equipped.map((x) => x.cosmeticId));
+  return equipped
+    .filter((x) => !withheld.has(x.cosmeticId))
+    .reduce((acc, { userId, cosmeticId, data }) => {
+      acc[userId] ??= { userId, cosmetics: [] };
+      acc[userId].cosmetics.push({ cosmeticId, data });
+      return acc;
+    }, {});
+}
+
+const isEventData = (data) => !!data && typeof data === 'object' && typeof data.event === 'string';
+
+/** cosmeticEntityCaches.Image's lookupFn (its appendFn is the join getAllImagesUncaptured runs). */
+function lookupImageFrames(ids) {
+  const entityCosmetics = USER_COSMETIC_ROWS.filter(
+    (r) => ids.includes(r.equippedToId) && r.equippedToType === 'Image' && !isEventData(COSMETICS[r.cosmeticId].data)
+  ).map((r) => ({ cosmeticId: r.cosmeticId, equippedToId: r.equippedToId, userData: prismaJson(r.data), createdById: COSMETIC_CREATORS[r.cosmeticId] ?? null }));
+  const withheld = getWithheldCosmeticIds(entityCosmetics.filter((x) => x.createdById != null).map((x) => x.cosmeticId));
+  return Object.fromEntries(entityCosmetics.filter((x) => !withheld.has(x.cosmeticId)).map(({ createdById: _, ...x }) => [x.equippedToId, x]));
+}
+
+/** eventDecorationEntityCaches.Image's lookupFn. */
+function lookupImageEvents(ids) {
+  const rows = USER_COSMETIC_ROWS.filter((r) => ids.includes(r.equippedToId) && r.equippedToType === 'Image' && isEventData(COSMETICS[r.cosmeticId].data));
+  const cosmetics = cacheFetch(K.cosmetics, [...new Set(rows.map((x) => x.cosmeticId))]);
+  const result = {};
+  for (const row of rows) {
+    const cosmetic = cosmetics[row.cosmeticId];
+    if (!cosmetic || !isEventData(cosmetic.data)) continue;
+    result[row.equippedToId] = {
+      id: cosmetic.id,
+      name: cosmetic.name,
+      type: cosmetic.type,
+      source: cosmetic.source,
+      data: cosmetic.data,
+      equippedToId: row.equippedToId,
+      equippedToType: 'Image',
+      userId: row.userId,
+    };
+  }
+  return result;
+}
+
+/** imageMetaCache's lookupFn: `{ id, meta }` per image found, its meta NULL when it hides it. */
+function lookupImageMeta(ids) {
+  return Object.fromEntries(ids.filter((id) => IMAGES[id]).map((id) => [id, { id, meta: metaOf(id) }]));
+}
+
+// frame-cache-negative, as the fixtures run it (feed-go's FEED_GO_FRAME_CACHE_NEGATIVE default):
+// off, so a frame marker is a miss and none is written.
+const FRAME_CACHE_NEGATIVE = false;
 
 const FLAGS = { PG: 1, PG13: 2, R: 4, X: 8, XXX: 16, Blocked: 32 };
 const allBrowsingLevelsFlag = 31;
@@ -446,16 +665,31 @@ function getAddons() {
   return ADDONS;
 }
 
-/** enforceBlockedBrowsingTags (blocked-browsing-tags.service.ts), the addon half, in place. */
+/** getBlockedBrowsingTags (system-cache.ts): the cache key, read raw. Node reads it on every call;
+ *  the trace records it only when a tag scope is stripped against it (the gallery and REST fixtures
+ *  send none, and feed-go reads it only then). */
+function getBlockedTags() {
+  T.raw.set('system:blocked-browsing-tags', JSON.stringify(BLOCKED_TAGS));
+  return BLOCKED_TAGS;
+}
+
+/** enforceBlockedBrowsingTags (blocked-browsing-tags.service.ts), in place: W2 strips blocked ids
+ *  from `tags` (all of them blocked: an empty result), W1 the addon exclusions. */
 function enforceBlockedBrowsingTags(input, viewer) {
+  if (input.tags?.length) {
+    const blocked = new Set(getBlockedTags().map((t) => t.id));
+    const filtered = input.tags.filter((id) => !blocked.has(id));
+    if (!filtered.length) return { emptyResult: true };
+    input.tags = filtered;
+  }
   const addons = getAddons();
   const level = onlySelectableLevels(input.browsingLevel || publicBrowsingLevelsFlag) || publicBrowsingLevelsFlag;
   const resolved = resolveAddons(addons, level, { isModerator: viewer.isModerator });
   input.disablePoi = input.disablePoi || resolved.disablePoi;
   input.disableMinor = input.disableMinor || resolved.disableMinor;
-  const isOwnScoped =
-    !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    (!!viewer.username && !!input.username && viewer.username.toLowerCase() === input.username.toLowerCase());
+  const isOwnScoped = input.userId
+    ? !!(viewer.id && viewer.id === input.userId)
+    : !!viewer.username && !!input.username && viewer.username.toLowerCase() === input.username.toLowerCase();
   if (!isOwnScoped && resolved.excludedTagIds.length)
     input.excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds])];
   return { emptyResult: false };
@@ -500,8 +734,10 @@ function mapSearchInputToFeedQuery(input, mode, caller) {
   const mask = typeof input.browsingLevel === 'number' ? input.browsingLevel : 1;
   const levels = LEVELS.filter((l) => (mask & l) !== 0);
   if (!levels.length) return skip('browsingLevel:0');
+  for (const key of ['tags', 'ids']) if (Array.isArray(input[key]) && input[key].length > 0 && ints(input[key]).length === 0) return skip(`${key}:none`);
   const tags = ints(input.tags);
   const excludedTags = ints(input.excludedTagIds);
+  if (tags.length > 100) return skip('tags>100');
   if (excludedTags.length > 100) return skip('excludedTags>100');
   const types = Array.isArray(input.types) ? input.types.map(String) : [];
   if (types.some((t) => !['image', 'video', 'audio'].includes(t))) return skip(`types:${types.join(',')}`);
@@ -572,6 +808,7 @@ function fetchFeed(query) {
 /** serveFromFeed (feed-primary.service.ts) for a feed without hubs, follows or degrade. */
 function serveFromFeed(input, { hydrate, route }) {
   const mapping = mapSearchInputToFeedQuery(input, 'primary', route);
+  if (!mapping.ok && (mapping.reason === 'tags:none' || mapping.reason === 'ids:none')) return { ok: true, page: { data: [], nextCursor: undefined } };
   if (!mapping.ok) return { ok: false, reason: mapping.reason };
   const answer = fetchFeed(mapping.query);
   if (answer.status !== 200) return { ok: false, reason: `status:${answer.status}` };
@@ -627,6 +864,7 @@ function imageSql(q) {
     if (q.modelVersionId && !RESOURCES[i.id].some((r) => r.modelVersionId === q.modelVersionId)) return false;
     if (!q.modelVersionId && q.modelId && !RESOURCES[i.id].some((r) => VERSIONS[r.modelVersionId] === q.modelId)) return false;
     if (q.userId && i.userId !== q.userId) return false;
+    if (q.tags?.length && !tagIdsOf(i.id).some((t) => q.tags.includes(t))) return false;
     if (q.postId && i.postId !== q.postId) return false;
     if (q.postIds?.length && !q.postIds.includes(i.postId)) return false;
     if (q.excludedUserIds?.length && q.excludedUserIds.includes(i.userId)) return false;
@@ -634,12 +872,22 @@ function imageSql(q) {
     if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
     return true;
   });
+  // A post's own media (`postId` without `modelId`): ORDER BY i."index", i."id", the cursor on the
+  // index (getCursor('i."index"'), inclusive), and the index as the cursor column.
+  const byIndex = !!q.postId && !q.modelId;
   const asc = q.sort === 'Oldest';
-  rows.sort((a, b) => (asc ? a.id - b.id : b.id - a.id));
-  if (q.cursor) rows = rows.filter((r) => (asc ? r.id >= q.cursor : r.id <= q.cursor));
+  if (byIndex) rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
+  else rows.sort((a, b) => (asc ? a.id - b.id : b.id - a.id));
+  if (q.cursor) {
+    // getCursor: a single-field sort's cursor is one integer (parseCursor's parseInt).
+    const c = typeof q.cursor === 'string' ? parseInt(q.cursor, 10) : q.cursor;
+    if (Number.isNaN(c)) throw new NodeError(400, 'cursor');
+    rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : asc ? r.id >= c : r.id <= c));
+  }
   for (const r of rows) T.posts.add(r.postId);
   void viaVersion;
-  return rows.slice(0, q.limit + 1).map((r) => ({ ...structuredClone(r), cursorId: r.id }));
+  const skip = q.skip ?? 0; // OFFSET
+  return rows.slice(skip, skip + q.limit + 1).map((r) => ({ ...structuredClone(r), cursorId: byIndex ? r.index : r.id }));
 }
 
 /** toImageV2Stats(shapeImageMetrics(...)) over MetricService.fetch's parse of the hash. */
@@ -674,8 +922,15 @@ function imageStats(id) {
 
 function getAllImagesUncaptured(input) {
   const viewer = { id: input.user?.id, username: input.user?.username, isModerator: input.user?.isModerator };
-  enforceBlockedBrowsingTags(input, viewer);
+  if (enforceBlockedBrowsingTags(input, viewer).emptyResult) return { nextCursor: undefined, items: [] };
   applyHideChallengesExclusion(input);
+  if (input.username && !input.userId) {
+    // dbRead, then dbWrite; an unknown name is a 404 (the fixtures name known users only).
+    const u = Object.values(USERS).find((x) => x.username === input.username);
+    T.usernames.add(input.username);
+    if (!u) throw new NodeError(404, 'user');
+    input.userId = u.id;
+  }
   const { limit, include = [], includeBaseModel } = input;
   const userId = input.user?.id;
   const isModerator = input.user?.isModerator ?? false;
@@ -704,7 +959,7 @@ function getAllImagesUncaptured(input) {
   const userBasicData = cacheFetch(K.basic, uids);
   let userCosmetics;
   if (includeCosmetics) {
-    const uc = cacheFetch(K.userCosmetics, uids);
+    const uc = cacheFetch(K.userCosmetics, uids, { lookup: lookupUserCosmetics, idKey: 'userId', ttl: DAY });
     const cosmeticIds = [...new Set(Object.values(uc).flatMap((x) => x.cosmetics.map((y) => y.cosmeticId)))];
     const cosmetics = cacheFetch(K.cosmetics, cosmeticIds);
     userCosmetics = Object.fromEntries(Object.values(uc).map((x) => [x.userId, x.cosmetics.map((y) => ({ ...y, cosmetic: cosmetics[y.cosmeticId] }))]));
@@ -712,7 +967,7 @@ function getAllImagesUncaptured(input) {
   const profilePictures = include.includes('profilePictures') ? cacheFetch(K.profile, uids) : undefined;
   let frames;
   if (includeCosmetics) {
-    const recs = cacheFetch(K.frames, ids);
+    const recs = cacheFetch(K.frames, ids, { lookup: lookupImageFrames, idKey: 'equippedToId', ttl: DAY, notFoundTtl: HOUR, negative: FRAME_CACHE_NEGATIVE });
     const cosmeticIds = [...new Set(Object.values(recs).map((x) => x.cosmeticId))];
     const cosmetics = cosmeticIds.length ? cacheFetch(K.cosmetics, cosmeticIds) : {};
     for (const record of Object.values(recs)) {
@@ -735,7 +990,7 @@ function getAllImagesUncaptured(input) {
   const imageResources = includeBaseModel ? cacheFetch(K.resources, ids) : undefined;
   let eventDecorations = {};
   if (ids.length && T.events.size) {
-    const decorations = cacheFetch(K.events, ids);
+    const decorations = cacheFetch(K.events, ids, { lookup: lookupImageEvents, idKey: 'equippedToId', ttl: DAY, notFoundTtl: HOUR });
     for (const [id, d] of Object.entries(decorations))
       if (typeof d.data?.event === 'string' && T.events.has(d.data.event)) {
         const { name, type, source, data, equippedToId, equippedToType } = d;
@@ -787,9 +1042,17 @@ function getAllImagesUncaptured(input) {
 
 function getAllImagesIndex(input) {
   const { user } = input;
-  enforceBlockedBrowsingTags(input, { id: user?.id, username: user?.username, isModerator: user?.isModerator });
+  // prepareImageFeedRequest.
+  if (enforceBlockedBrowsingTags(input, { id: user?.id, username: user?.username, isModerator: user?.isModerator }).emptyResult)
+    return { nextCursor: undefined, items: [] };
   applyHideChallengesExclusion(input);
-  const userId = input.userId;
+  let userId = input.userId;
+  if (userId === undefined && input.username) {
+    const u = Object.values(USERS).find((x) => x.username === input.username);
+    T.usernames.add(input.username);
+    userId = u?.id;
+    if (userId === undefined) throw new NodeError(404, 'User not found');
+  }
   const cursorParsed = input.cursor?.toString().split('|');
   const isNumber = (v) => v !== undefined && v !== '' && !Number.isNaN(Number(v));
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
@@ -803,8 +1066,8 @@ function getAllImagesIndex(input) {
       return getAllImagesUncaptured(structuredCloneInput(q)).items;
     },
   });
-  if (served.ok) return { items: served.page.data, nextCursor: served.page.nextCursor };
-  return answerWithoutFeed(served);
+  if (served.ok) return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
+  return { ...answerWithoutFeed(served), source: 'feed' };
 }
 
 /** Copies an input whose `user` must stay the same object. */
@@ -1099,6 +1362,57 @@ function runAsPosts(spec) {
   return { value: asPostsHandler({ input, ctx: { user, features } }), cacheable: !session };
 }
 
+// --- image.getInfinite ----------------------------------------------------------------------------
+/** requiresImageDbPath (src/server/schema/image.schema.ts), for the inputs these fixtures send. */
+const requiresImageDbPath = (input) => !!input.postId || (!!input.modelId && !input.modelVersionId);
+
+/** getInfiniteImagesHandler (image.controller.ts) without Hat Turf (no fixture sends a hat key),
+ *  hubs or ids; then withSharedFeedUsers, which changes no decoded value (one shared `user` object
+ *  per creator is a superjson referential equality, not a different value). */
+function infiniteHandler({ input, ctx }) {
+  const { user, features } = ctx;
+  const { hatSort: _s, hatTeams: _t, hatTurfMine: _m, hideTurfHats: _h, hideWornHats: _w, ...unhatted } = input;
+  let scopedInput = unhatted;
+  const useIndex = features.imageIndexFeed && !requiresImageDbPath(scopedInput);
+  const moderatorView = !!user?.isModerator;
+  const heldLevel = moderatorView ? undefined : getHeldGalleryLevel(scopedInput);
+  const withheld = moderatorView ? false : isModelGalleryWithheld(scopedInput, user?.id);
+  if (withheld) return { items: [], nextCursor: undefined };
+  if (heldLevel !== undefined) {
+    const browsingLevel = intersection(scopedInput.browsingLevel, heldLevel);
+    if (!browsingLevel) return { items: [], nextCursor: undefined };
+    scopedInput = { ...scopedInput, browsingLevel };
+  }
+  const args = { ...scopedInput, user, include: [...scopedInput.include, 'tagIds'] };
+  if (useIndex) return getAllImagesIndex(structuredCloneInput(args));
+  const result = getAllImages(args);
+  return { ...result, items: result.items, source: 'db' };
+}
+
+function runInfinite(spec) {
+  const session = spec.viewer ? SESSIONS[spec.viewer] : null;
+  if (session) T.packed.set(`${K.session}:${session.id}`, session);
+  const user = session && !session.bannedAt ? { ...session } : undefined;
+  const color = Object.entries(HOST).find(([, h]) => h === spec.host)?.[0] ?? 'blue';
+  const canViewNsfw = color === 'blue' || color === 'red';
+  const cap = !user ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined;
+  const raw = structuredClone(spec.input);
+  if (cap !== undefined) raw.browsingLevel = ((raw.browsingLevel ?? 0) & cap) || cap;
+  const input = {
+    browsingLevel: allBrowsingLevelsFlag,
+    limit: 100,
+    period: 'AllTime',
+    periodMode: 'published',
+    sort: 'Most Reactions',
+    withMeta: false,
+    include: ['cosmetics'],
+    ...raw,
+  };
+  const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed };
+  // createContext's policy, as for the gallery procedure: cacheable without a session.
+  return { value: infiniteHandler({ input, ctx: { user, features } }), cacheable: !session };
+}
+
 // --- GET /api/v1/images ----------------------------------------------------------------------------
 /** Next's req.query: URLSearchParams, a repeated key collected into an array. */
 function nextQuery(search) {
@@ -1171,8 +1485,19 @@ function runV1(spec) {
     browsingLevel: num(query.browsingLevel),
     cursor: query.cursor,
     type: query.type,
+    // commaDelimitedNumberArray(z.number().int().positive().array().min(1).max(IMAGE_IDS_BATCH_MAX)).
+    ids: (() => {
+      if (query.ids === undefined) return undefined;
+      const ids = String(query.ids)
+        .split(',')
+        .map((x) => Number(x.trim()));
+      if (!ids.length || ids.length > 100 || ids.some((n) => !Number.isInteger(n) || n <= 0)) throw new NodeError(400, 'ids');
+      return ids;
+    })(),
+    withMeta: query.withMeta === undefined ? false : booleanString(query.withMeta),
+    flatMeta: query.flatMeta === undefined ? undefined : booleanString(query.flatMeta),
   };
-  const { limit, page, cursor, nsfw, browsingLevel, type, ...data } = p;
+  const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = p;
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
   const usingPaging = page && !cursor;
   if (usingPaging && page * limit > 1000) throw new NodeError(429, 'paging');
@@ -1187,13 +1512,16 @@ function runV1(spec) {
       if (!level) return ok({ items: [], metadata: {} });
     }
   }
-  // runImageSearch (feed path).
-  if (cursor !== undefined && cursor !== '' && !parseFeedCursor(cursor) && !/^(-?\d+)(?:\|[^|]*)?$/.test(cursor)) throw new NodeError(400, 'cursor');
+  // runImageSearch: an `ids` batch takes the legacy path (getAllImages), everything else the feed.
+  const useLegacyMethod = Array.isArray(data.ids) && data.ids.length > 0;
+  if (!useLegacyMethod && cursor !== undefined && cursor !== '' && !parseFeedCursor(cursor) && !/^(-?\d+)(?:\|[^|]*)?$/.test(cursor))
+    throw new NodeError(400, 'cursor');
   const include = ['tagIds', 'profilePictures'];
   const dbQuery = { ...data, types: type ? [type] : undefined, limit, skip, cursor, include, periodMode: 'published', browsingLevel: level, withMeta: false, user, disableMinor: true, disablePoi: true, includeBaseModel: true };
   const searchQuery = { ...data, types: type ? [type] : undefined, limit, skip, cursor, include, periodMode: 'published', browsingLevel: level, withMeta: false, currentUserId: user?.id, isModerator: user?.isModerator, disableMinor: true, disablePoi: true };
   let result;
-  if (searchQuery.limit < 1) result = { items: [], nextCursor: undefined };
+  if (useLegacyMethod) result = getAllImages(dbQuery);
+  else if (searchQuery.limit < 1) result = { items: [], nextCursor: undefined };
   else {
     const input = withoutUnservedFilters(searchQuery);
     enforceBlockedBrowsingTags(input, { id: input.currentUserId, isModerator: input.isModerator });
@@ -1220,6 +1548,12 @@ function runV1(spec) {
       }
     }
   }
+  // imageMetaCache.fetch (5h EX: ttl 4h plus the 1h stale-while-revalidate tail), on a miss its lookup.
+  let imageMetas = {};
+  if (withMeta && result.items.length > 0) {
+    T.metaRead = true;
+    imageMetas = cacheFetch(K.meta, result.items.map((img) => img.id), { lookup: lookupImageMeta, idKey: 'id', ttl: 5 * HOUR });
+  }
   const videoIds = result.items.filter((i) => i.type === 'video').map((i) => i.id);
   const customThumbnails = videoIds.length ? cacheFetch(K.thumbs, videoIds) : {};
   const shaped = result.items.map((image) => {
@@ -1245,7 +1579,12 @@ function runV1(spec) {
         heartCount: image.stats?.heartCountAllTime ?? 0,
         commentCount: image.stats?.commentCountAllTime ?? 0,
       },
-      meta: null,
+      meta: (() => {
+        if (!withMeta) return null;
+        const imageMeta = imageMetas[image.id]?.meta ?? null;
+        const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
+        return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
+      })(),
       username: typeof image.user.username === 'number' ? String(image.user.username) : image.user.username,
       baseModel: image.baseModel,
       modelVersionIds: image.modelVersionIds,
@@ -1499,13 +1838,38 @@ const AS_POSTS = [
     headers: { authorization: 'Bearer golden-not-a-real-key' },
     input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
   },
+  // Cold caches: a key Node finds absent and fills by its lookup (the miss feed-go computes). Each
+  // fixture's expect.writes is what Node's fetch writes for it.
   {
-    name: 'fallback-user-cosmetics-miss',
-    description: 'A creator whose user-cosmetics entry is not cached: Node’s lookup filters withheld cosmetics; not ported.',
-    fallback: 'user-cosmetics-miss',
+    name: 'cold-user-cosmetics',
+    description: 'A creator whose user-cosmetics entry is not cached: the lookup reads their equipped cosmetics and drops the withheld (a creator listing not displayable) and tombstoned ones; the entry is written back for a day.',
     viewer: null,
     host: HOST.green,
-    dropKeys: [`${K.userCosmetics}:1002`],
+    cold: [`${K.userCosmetics}:1002`],
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
+    replies: {
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8003, 8006, 8007] } },
+    },
+  },
+  {
+    name: 'cold-image-frames',
+    description: 'A framed image whose frame entry is not cached: the lookup finds its frame row (written back for a day); with frame-cache-negative off every frame marker is looked up too (8007\'s withheld creator frame shows none) and no marker is written.',
+    viewer: null,
+    host: HOST.green,
+    cold: [`${K.frames}:8001`],
+    input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 3 },
+    replies: {
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8001, 8003, 8008, 8005], ...fc('1718000000000', '8005') } },
+      'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&postIds=7001&sort=reactions&limit=2': { body: { items: [8001] } },
+    },
+  },
+  {
+    name: 'cold-event-decoration',
+    description: 'Two images whose event-decoration entries are not cached: one wears a hat (built from the cosmetic record, written back for a day), the other none (a notFound marker for an hour).',
+    viewer: null,
+    host: HOST.green,
+    events: ['goldentest2026'],
+    cold: [`${K.events}:8003`, `${K.events}:8006`],
     input: { modelId: 5001, modelVersionId: 6001, sort: 'Most Reactions', browsingLevel: 1, limit: 3 },
     replies: {
       'levels=1&excludedTags=9901&versionIds=6001&excludePoi=1&sort=reactions&limit=6': { body: { items: [8003, 8006, 8007] } },
@@ -1628,26 +1992,313 @@ const V1 = [
     replies: { 'levels=1%2C2%2C4%2C8%2C16&excludeMinor=1&excludePoi=1&viewerId=1004&sort=oldest&limit=3': { body: { items: [8001, 8002, 8004], ...fc('1717000000000', '8004') } } },
   },
   {
-    name: 'extra-key-in-next-page',
-    description: 'A key outside the schema is kept in nextPage, in req.query order.',
+    name: 'fallback-unknown-key',
+    description: 'A key outside imagesEndpointSchema: Node strips it (and keeps it in nextPage), but a key the app added after the Go build was generated is one it reads, so feed-go never treats it as absent.',
     query: 'foo=bar&limit=2&sort=Newest',
-    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=newest&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } } },
+    fallback: 'input-unknown-key',
+  },
+  // `ids`: the legacy Postgres path (getAllImages), in its own order, never the request's.
+  {
+    name: 'ids-order-duplicates-unknown',
+    description: '`ids` out of order, one repeated, one unknown: by id descending (the default sort), each once, the unknown one simply absent; createdAt is the image’s own, not its sortAt.',
+    query: 'ids=8003,8001,8999,8007,8001',
+  },
+  {
+    name: 'ids-limit-next-cursor',
+    description: '`ids` with `limit`: the look-ahead row’s id is nextCursor, a NUMBER, and nextPage carries it; the R image is below the requested level.',
+    query: 'ids=8001,8002,8003,8004,8006&browsingLevel=3&limit=2',
+  },
+  {
+    name: 'ids-cursor-page2',
+    description: '`ids` continued by the numeric cursor (inclusive): the last page, no nextCursor.',
+    query: 'ids=8001,8002,8003,8004,8006&browsingLevel=3&limit=2&cursor=8002',
+  },
+  {
+    name: 'ids-page-offset',
+    description: '`ids` with `page=2`: OFFSET (page - 1) * limit, currentPage and pageSize, a numeric nextCursor and nextPage with page=3.',
+    query: 'ids=8001,8002,8003,8006,8007&browsingLevel=3&limit=2&page=2',
+  },
+  {
+    name: 'ids-oldest-videos',
+    description: '`ids` with `sort=Oldest` and `type=video`: ascending ids, videos only; one custom thumbnail allowed, one above the level (a still cut from the video).',
+    query: 'ids=8009,8001,8005,8003&sort=Oldest&type=video',
+  },
+  {
+    name: 'ids-post-index-order',
+    description: '`ids` with `postId`: the post’s own order (its index), and the next cursor is the look-ahead row’s INDEX.',
+    query: 'ids=8011,8012,8013,8014,8003&postId=7005&limit=2',
+  },
+  {
+    name: 'ids-model-version-held',
+    description: '`ids` with an SFW-only model’s version: the level is held to PG|PG-13, the resource join keeps only the version’s images.',
+    query: 'ids=8301,8302,8001&modelVersionId=6101&browsingLevel=31',
+  },
+  {
+    name: 'ids-username-own-signed-in',
+    description: '`ids` with `username` naming the signed-in viewer: resolved to their id; on this path the session username makes it their own feed.',
+    query: 'ids=8001,8003,8007&username=artist_one',
+    viewer: 1001,
+  },
+  {
+    name: 'ids-unknown-only',
+    description: '`ids` naming no image: an empty page, `{ items: [], metadata: {} }`.',
+    query: 'ids=8998,8999',
+  },
+  {
+    name: 'ids-limit-zero',
+    description: '`ids` with `limit=0`: LIMIT 1 reads one row and pops it, so the page is empty but carries a nextCursor and nextPage.',
+    query: 'ids=8001,8003&limit=0',
+  },
+  // withMeta: imageMetaCache (brotli-compressed values), flat on the feed path, `{ id, meta }` on the legacy one.
+  {
+    name: 'ids-with-meta-wrapped',
+    description: '`ids` with `withMeta`: the legacy path wraps each meta as `{ id, meta }`; compressed entries, a plain one written before compression, a cold key read from the database, a hidden meta (null).',
+    query: 'ids=8001,8002,8003,8004,8030&withMeta=true&browsingLevel=7',
+    cold: ['packed:caches:image-meta:8004'],
+  },
+  {
+    name: 'ids-with-meta-flat',
+    description: '`ids` with `withMeta` and `flatMeta=true`: the meta itself; a NULL meta and a notFound marker are both null.',
+    query: 'ids=8001,8006,8009&withMeta=true&flatMeta=true&browsingLevel=3',
+  },
+  {
+    name: 'with-meta-feed-flat',
+    description: '`withMeta` on the feed path: flat by default, in the feed’s order.',
+    query: 'withMeta=true&limit=3',
+    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=reactions&limit=3': { body: { items: [8003, 8001, 8007] } } },
+  },
+  {
+    name: 'with-meta-feed-flat-false',
+    description: '`withMeta` with `flatMeta=false` on the feed path: wrapped as `{ id, meta }`.',
+    query: 'withMeta=true&flatMeta=false&limit=2',
+    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=reactions&limit=2': { body: { items: [8005, 8001], ...fc('1718000000000', '8001') } } },
   },
   // Fallbacks.
-  { name: 'fallback-ids', description: '`ids` takes the legacy Postgres path.', query: 'ids=8001,8003', fallback: 'v1-ids' },
-  { name: 'fallback-with-meta', description: '`withMeta=true` reads the compressed meta cache; not ported.', query: 'withMeta=true&limit=2', fallback: 'v1-with-meta' },
+  { name: 'fallback-ids-hex', description: '`ids` spelled as Number() reads hex: Node takes it, feed-go reads only plain decimals.', query: 'ids=8001,0x1f43', fallback: 'v1-input-ids' },
+  { name: 'fallback-ids-feed-cursor', description: 'A feed cursor on an `ids` batch: getCursor cannot read it (a 400 on Node).', query: 'ids=8001&cursor=feed%3A1%3A2', fallback: 'v1-legacy-cursor' },
   { name: 'fallback-model-only', description: 'A `modelId` without a version takes the legacy Postgres path.', query: 'modelId=5001', fallback: 'v1-model-only' },
   { name: 'fallback-page-limit', description: '`page * limit > 1000` is a 429 on Node.', query: 'page=20&limit=100', fallback: 'v1-page-limit' },
+];
+
+// image.getInfinite: one page of images (the flat shape). The global feed asks the feed service
+// with no scope; the creator and tag scopes are feed queries too; a post's media and a model without
+// a version take the Postgres query (requiresImageDbPath).
+const INFINITE = [
+  {
+    name: 'cold-global-signed-out',
+    description: 'The global feed signed out with a cold frame entry and a cold user-cosmetics entry: the page hydrator computes both misses as on the gallery procedure (Node writes both back).',
+    viewer: null,
+    host: HOST.green,
+    cold: [`${K.frames}:8001`, `${K.userCosmetics}:1002`],
+    input: { sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'global-signed-out-most-reactions',
+    description: 'The global feed signed out (domain cap PG): the feed’s page in its order, its next cursor, a framed image, a video with its thumbnail, no profile pictures (not in include), source feed.',
+    viewer: null,
+    host: HOST.green,
+    input: { sort: 'Most Reactions', period: 'AllTime', browsingLevel: 31, limit: 4 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8005, 8001, 8003, 8007], ...fc('1718000000000', '8007') } },
+    },
+  },
+  {
+    name: 'global-signed-in-blue-newest',
+    description: 'Signed in on an NSFW host: level 31 uncapped, both addons (minor + POI exclusions, viewerId), Newest, the viewer’s own reactions, the last page (no cursor).',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { sort: 'Newest', browsingLevel: 31, limit: 10 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=10': { body: { items: [8204, 8007, 8006, 8004, 8002, 8001] } },
+    },
+  },
+  {
+    name: 'global-signed-in-green-week-capped',
+    description: 'Signed in on an SFW host: 31 capped to PG|PG-13, period Week (periodDays=7), Most Comments, excludedUserIds sent by the client, hideChallenges unioned into the excluded tags.',
+    viewer: 1003,
+    host: HOST.green,
+    input: { sort: 'Most Comments', period: 'Week', browsingLevel: 31, excludedUserIds: [1009], hideChallenges: true, limit: 3 },
+    replies: {
+      'levels=1%2C2&excludedTags=9901%2C676575&excludedUserIds=1009&excludePoi=1&viewerId=1003&sort=comments&periodDays=7&limit=3': { body: { items: [8002, 8001, 8003], ...fc('1717600000000', '8003') } },
+    },
+  },
+  {
+    name: 'global-moderator-oldest',
+    description: 'A moderator: no addons, the moderator SQL (no availability or block clauses), Oldest.',
+    viewer: 1004,
+    host: HOST.blue,
+    input: { sort: 'Oldest', browsingLevel: 31, limit: 3 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&sort=oldest&limit=3': { body: { items: [8001, 8002, 8004], ...fc('1717000000000', '8004') } },
+    },
+  },
+  {
+    name: 'page2-feed-cursor',
+    description: 'Page 2 by the feed’s own cursor (feed:<a>:<b> → cursor=<a>|<b>), the last page.',
+    viewer: null,
+    host: HOST.green,
+    input: { sort: 'Most Reactions', browsingLevel: 1, limit: 4, cursor: 'feed:1718000000000:8007' },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=4&cursor=1718000000000%7C8007': { body: { items: [8006, 8020] } },
+    },
+  },
+  {
+    name: 'page2-offset-entry-newest',
+    description: 'A search-index `offset|entry` cursor under Newest: offset and the entry minute as `before`.',
+    viewer: null,
+    host: HOST.green,
+    input: { sort: 'Newest', browsingLevel: 1, limit: 2, cursor: '100|1718000012345' },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=newest&limit=2&offset=100&before=1717999980000': { body: { items: [8007, 8006], ...fc('1717000000000', '8006') } },
+    },
+  },
+  {
+    name: 'version-held-signed-in',
+    description: 'An SFW-only model’s version for a signed-in viewer on an NSFW host: 31 intersected with the held level 3; the feed scopes the version, the hydrate drops it.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { modelVersionId: 6101, sort: 'Most Reactions', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2&excludedTags=9901&versionIds=6101&excludePoi=1&viewerId=1003&sort=reactions&limit=5': { body: { items: [8301] } },
+    },
+  },
+  {
+    name: 'version-withheld-signed-out',
+    description: 'A taken-down model’s version, signed out: the handler’s own empty page (no source, no feed call).',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5003, modelVersionId: 6201, browsingLevel: 1, limit: 10 },
+    replies: {},
+  },
+  {
+    name: 'user-id-own-feed',
+    description: '`userId` naming the signed-in viewer: their own feed keeps the addon tag exclusions off (POI and minor still on, viewerId), userIds on the feed, the creator filter on the hydrate.',
+    viewer: 1001,
+    host: HOST.blue,
+    input: { userId: 1001, sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1001&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'user-id-other-creator-viewer-username',
+    description: '`userId` naming another creator beside the signed-in viewer’s own `username`: not the viewer’s own feed (every creator identifier must name the viewer), so the addon tag exclusions apply; userIds from the id.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { userId: 1001, username: 'viewer_three', sort: 'Newest', browsingLevel: 31, limit: 5 },
+    replies: {
+      'levels=1%2C2%2C4%2C8%2C16&excludedTags=9911%2C9901&userIds=1001&excludeMinor=1&excludePoi=1&viewerId=1003&sort=newest&limit=5': { body: { items: [8007, 8004, 8001] } },
+    },
+  },
+  {
+    name: 'username-scope-signed-out',
+    description: '`username` resolved to its id on the replica (userIds=1002), the addons applied (not the viewer’s own).',
+    viewer: null,
+    host: HOST.green,
+    input: { username: 'artist_two', sort: 'Most Collected', browsingLevel: 1, limit: 3 },
+    replies: {
+      'levels=1&excludedTags=9901&userIds=1002&excludePoi=1&sort=collected&limit=3': { body: { items: [8006, 8003, 8020], ...fc('1717300000000', '8020') } },
+    },
+  },
+  {
+    name: 'post-scope-first-page',
+    description: 'A post’s own media (`postId`): always the Postgres query, ordered by the image index, its next cursor the look-ahead row’s index, source db.',
+    viewer: null,
+    host: HOST.green,
+    input: { postId: 7005, browsingLevel: 1, limit: 5 },
+    replies: {},
+  },
+  {
+    name: 'post-scope-index-cursor',
+    description: 'The same post from index cursor 5 (inclusive), signed in: its last three images, no next cursor.',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { postId: 7005, browsingLevel: 31, limit: 5, cursor: 5 },
+    replies: {},
+  },
+  {
+    name: 'tag-scope-hydrate-filter',
+    description: '`tags`: sent to the feed after `levels`, and applied again by the hydrate (an id the feed returned that does not carry the tag is dropped); not blocked.',
+    viewer: null,
+    host: HOST.green,
+    input: { tags: [501], sort: 'Most Reactions', browsingLevel: 1, limit: 4 },
+    replies: {
+      'levels=1&tags=501&excludedTags=9901&excludePoi=1&sort=reactions&limit=4': { body: { items: [8001, 8007, 8004, 8104] } },
+    },
+  },
+  {
+    name: 'tag-scope-all-blocked',
+    description: 'A tag scope made only of blocked tags: stripBlockedTagIds empties it, getAllImagesIndex’s own empty page (no source, no feed call).',
+    viewer: null,
+    host: HOST.green,
+    input: { tags: [5161, 5351], browsingLevel: 1, limit: 4 },
+    replies: {},
+  },
+  {
+    name: 'include-profile-pictures',
+    description: '`include: [cosmetics, profilePictures]`: the creators’ profile pictures are read and sent.',
+    viewer: null,
+    host: HOST.green,
+    input: { include: ['cosmetics', 'profilePictures'], browsingLevel: 1, limit: 2 },
+    replies: {
+      'levels=1&excludedTags=9901&excludePoi=1&sort=reactions&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } },
+    },
+  },
+  {
+    name: 'model-only-db-path',
+    description: 'A model without a version: the feed has no model dimension, so the Postgres query (through ModelVersion, irr.imageId DESC), its numeric cursor, source db.',
+    viewer: null,
+    host: HOST.green,
+    input: { modelId: 5001, sort: 'Newest', browsingLevel: 1, limit: 3 },
+    replies: {},
+  },
+  // Fallbacks.
+  {
+    name: 'fallback-hat-turf-sort',
+    description: 'A Hat Turf sort: Node reads the event engine and the turf rank; not ported.',
+    fallback: 'infinite-hat-turf',
+    viewer: 1003,
+    host: HOST.blue,
+    input: { hatSort: 'most', browsingLevel: 31, limit: 10 },
+  },
+  {
+    name: 'fallback-hub',
+    description: 'A hub (`hubId`): its sources are resolved server-side; not ported.',
+    fallback: 'input-hubId',
+    viewer: null,
+    host: HOST.green,
+    input: { hubId: 77, browsingLevel: 1, limit: 10 },
+  },
+  {
+    name: 'fallback-collection',
+    description: 'A collection scope: permissions, item statuses and the collection sorts; not ported.',
+    fallback: 'input-collectionId',
+    viewer: null,
+    host: HOST.green,
+    input: { collectionId: 88, browsingLevel: 1, limit: 10 },
+  },
 ];
 
 // ---------------------------------------------------------------------------------------------
 // Emission
 // ---------------------------------------------------------------------------------------------
-function dbTables() {
+function dbTables({ tags = false, meta = false } = {}) {
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
     .filter((i) => postIds.includes(i.postId))
-    .map((i) => mark({ ...i, _resources: RESOURCES[i.id] }));
+    // `_tags`: the image's TagsOnImageDetails rows (the tag scope's subquery), in infinite/ only.
+    // `_meta`: its meta column as Postgres prints it (the image-meta lookup), in v1-images/ only.
+    .map((i) =>
+      mark({
+        ...i,
+        _resources: RESOURCES[i.id],
+        ...(tags ? { _tags: tagIdsOf(i.id) } : {}),
+        ...(meta ? { _meta: META[i.id] == null ? null : jsonbText(META[i.id]) } : {}),
+      })
+    );
   return {
     images,
     posts: postIds.map((id) => ({ id, modelVersionId: POSTS[id].modelVersionId })),
@@ -1657,7 +2308,21 @@ function dbTables() {
     reactions: REACTIONS,
     placements: PLACEMENTS.map(mark),
     users: Object.values(USERS).map(mark),
+    // Every lookup reads these as text columns (`::text`), so they are written as Postgres prints them.
+    userCosmetics: USER_COSMETIC_ROWS.map((r) => ({ ...r, data: r.data === null ? null : jsonbText(r.data), equippedAt: r.equippedAt !== null })),
+    cosmetics: Object.values(COSMETICS).map((c) => ({ id: c.id, name: c.name, type: c.type, source: c.source, data: jsonbText(c.data), flags: c.flags, createdById: COSMETIC_CREATORS[c.id] ?? null })),
+    cosmeticShopItems: SHOP_ITEMS.map((x) => ({ ...x, meta: jsonbText(x.meta) })),
   };
+}
+
+/** What Node writes on this fixture's misses, as the Go harness compares it. */
+function writeEntries() {
+  for (const key of T.cold) if (!T.coldRead.has(key)) throw new Error(`fixture ${T.fixture}: cold key ${key} never read`);
+  const out = {};
+  for (const [key, w] of [...T.writes.entries()].sort()) {
+    out[key] = { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
+  }
+  return out;
 }
 
 function redisEntries(dropKeys = []) {
@@ -1665,6 +2330,12 @@ function redisEntries(dropKeys = []) {
   for (const [key, value] of [...T.packed.entries()].sort()) {
     if (dropKeys.includes(key)) continue;
     const marked = mark(value);
+    // imageMetaCache is `compress: true`: its values are brotli-compressed at rest, except a notFound
+    // marker (fetch writes it uncompressed) and an entry written before compression was turned on.
+    if (key.startsWith(`${K.meta}:`) && !value.notFound && !META_UNCOMPRESSED.has(value.id)) {
+      out[key] = { value: marked, compressed: true, packed: packMarkedCompressed(marked) };
+      continue;
+    }
     out[key] = { value: marked, packed: packMarked(marked) };
   }
   for (const [key, raw] of [...T.raw.entries()].sort()) if (!key.startsWith('sys:')) out[key] = { raw };
@@ -1692,7 +2363,9 @@ function newTrace(name, spec) {
   T.replies = spec.replies ?? {};
   T.usedReplies = new Set();
   T.events = new Set(spec.events ?? []);
+  T.cold = new Set(spec.cold ?? []);
   T.usernames = new Set();
+  T.metaRead = false;
 }
 
 function checkReplies(spec) {
@@ -1710,7 +2383,7 @@ function emitAsPosts() {
   for (const spec of AS_POSTS) {
     newTrace(spec.name, spec);
     const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
-    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [] };
+    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [], frameCacheNegative: FRAME_CACHE_NEGATIVE };
     const inputEnvelope = JSON.stringify(superjson.serialize(spec.input));
     let expect;
     if (spec.fallback) {
@@ -1722,7 +2395,7 @@ function emitAsPosts() {
     } else {
       const { value, cacheable } = runAsPosts({ ...spec, nodeFlags });
       checkReplies(spec);
-      expect = { envelope: superjson.serialize(value), cacheable };
+      expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     writeFixture(dir, spec.name, {
       name: spec.name,
@@ -1773,15 +2446,56 @@ function emitV1() {
       feed: T.feed,
       redis: redisEntries(),
       sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
-      db: { ...dbTables(), usernames: [...T.usernames] },
+      db: { ...dbTables({ meta: T.metaRead }), usernames: [...T.usernames] },
       expect,
     });
   }
   return V1.length;
 }
 
+function emitInfinite() {
+  const dir = join(HERE, 'infinite');
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  for (const spec of INFINITE) {
+    newTrace(spec.name, spec);
+    const nodeFlags = { ...FLAGS_ON, ...(spec.nodeFlags ?? {}) };
+    const goConfig = { ...GO_ON, ...(spec.goConfig ?? {}), decorationEvents: spec.events ?? [], frameCacheNegative: FRAME_CACHE_NEGATIVE };
+    let expect;
+    if (spec.fallback) {
+      if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
+      expect = { fallback: spec.fallback };
+    } else {
+      const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
+      checkReplies(spec);
+      expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
+    }
+    // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
+    // scope) is one feed-go must drop too, not one the fixture never held.
+    for (const f of T.feed) for (const id of f.body?.items ?? []) if (IMAGES[id]) T.posts.add(IMAGES[id].postId);
+    writeFixture(dir, spec.name, {
+      name: spec.name,
+      description: spec.description,
+      now: NOW.toISOString(),
+      config: goConfig,
+      request: {
+        input: JSON.stringify(superjson.serialize(spec.input)),
+        headers: { host: spec.host, ...(spec.headers ?? {}) },
+        session: spec.viewer ? { userId: spec.viewer } : null,
+      },
+      feed: T.feed,
+      redis: redisEntries(spec.dropKeys),
+      sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
+      db: { ...dbTables({ tags: true }), usernames: [...T.usernames] },
+      expect,
+    });
+  }
+  return INFINITE.length;
+}
+
 const a = emitAsPosts();
 const b = emitV1();
-for (const d of ['as-posts', 'v1-images']) if (!readdirSync(join(HERE, d)).length) throw new Error(`${d} is empty`);
-console.log(`as-posts: ${a} fixtures, v1-images: ${b} fixtures`);
+const c = emitInfinite();
+for (const d of ['as-posts', 'v1-images', 'infinite']) if (!readdirSync(join(HERE, d)).length) throw new Error(`${d} is empty`);
+console.log(`as-posts: ${a} fixtures, v1-images: ${b} fixtures, infinite: ${c} fixtures`);
 void sizeOf;

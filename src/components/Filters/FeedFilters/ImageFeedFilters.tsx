@@ -11,6 +11,7 @@ import {
 import {
   useImageFeedSearchQuery,
   useImageFeedSearchSort,
+  useImageFeedSimilarTo,
 } from '~/components/Image/Infinite/useImageFeedSearch';
 import { Tooltip } from '~/components/MantineOverlays';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
@@ -30,12 +31,14 @@ export function ImageFeedFilters({
 }: GroupProps & { hideMediaTypes?: boolean; hideTools?: boolean }) {
   const currentUser = useCurrentUser();
   const searchQuery = useImageFeedSearchQuery();
+  const similarTo = useImageFeedSimilarTo();
+  const searching = !!searchQuery || !!similarTo;
   const searchSort = useImageFeedSearchSort();
 
   return (
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser &&
-        (searchQuery ? (
+        (searching ? (
           // The search doesn't narrow by audience, so the selector waits until it's cleared.
           <Tooltip label="Clear the search to filter by who posted" withArrow>
             <div>
@@ -52,8 +55,8 @@ export function ImageFeedFilters({
           options={searchSortOptions}
           onClick={(value) => searchSort.setSort(value === 'newest' ? value : undefined)}
         />
-      ) : searchQuery ? (
-        // Without the Newest flag the search ranks by match only; a feed sort would be a promise it
+      ) : searching ? (
+        // Without the Newest flag (and always for "more like this") the search ranks by match only; a feed sort would be a promise it
         // can't keep.
         <Tooltip label="Clear the search to sort the feed" withArrow>
           <div>
@@ -75,7 +78,7 @@ export function ImageFeedFilters({
         hideMediaTypes={hideMediaTypes}
         hideTools={hideTools}
         unavailable={
-          searchQuery
+          searching
             ? {
                 title: 'Not available while searching',
                 reason: IMAGE_FEED_SEARCH_UNAVAILABLE_REASON,

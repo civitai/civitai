@@ -10,15 +10,13 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
   beginSemanticAudit,
-  queryVerdictLevel,
-  recordRefusal,
-  refusedTextCandidates,
   isNonModClampOn,
-  resolveSemanticBrowsingLevel,
-  semanticQueryRefusal,
+  makeRefusalOf,
   type QueryRefusal,
-  type QueryStage,
   type QueryTracker,
+  queryVerdictLevel,
+  refusedTextCandidates,
+  resolveSemanticBrowsingLevel,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
 import type { RefusedCandidates } from '~/server/services/semantic-search-audit.service';
@@ -103,16 +101,16 @@ export async function searchSemanticImages({
     query: input.query,
     firstPage: !input.cursor,
   });
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
+  const refusalOf = makeRefusalOf({
+    index: 'images_semantic',
+    track,
+    context: () => ({
       browsingLevel,
       disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'images_semantic', stage);
-    audit.verdict(refusal);
-    return refusal;
-  };
+    }),
+    audit,
+  });
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   const queryRefused = verdictLevel === 'refuse';

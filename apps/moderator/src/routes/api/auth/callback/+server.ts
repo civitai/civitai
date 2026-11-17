@@ -13,7 +13,7 @@ export const GET: RequestHandler = ({ request, url, getClientAddress }) =>
         outcome,
         host: url.host,
         ...detail,
-      }).catch(() => {}),
+      }),
   });
 
 // getClientAddress throws when the adapter has no address to give; the exchange then goes without one.

@@ -5,6 +5,7 @@
     followTrace,
     interpretTraceLine,
     PHASE_LABEL,
+    traceLineNote,
     traceLineText,
     tracePath,
     type TrainingPhase,
@@ -35,7 +36,12 @@
   let raw = $state<string[]>([]);
   let started = $state(false);
   let seq = 0;
-  let rawLines = $derived(raw.map((text, i) => ({ id: seq - raw.length + i, text: traceLineText(text) })));
+  let rawLines = $derived(
+    raw.map((line, i) => {
+      const text = traceLineText(line);
+      return { id: seq - raw.length + i, text, note: traceLineNote(text) };
+    })
+  );
 
   function ingest(line: string) {
     started = true;
@@ -211,6 +217,7 @@
       >
         {#each rawLines as line (line.id)}
           <div class="whitespace-pre-wrap break-all text-dark-2">{line.text}</div>
+          {#if line.note}<div class="font-sans text-dark-1">↳ {line.note}</div>{/if}
         {/each}
       </div>
     </details>

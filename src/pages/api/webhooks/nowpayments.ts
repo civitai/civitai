@@ -19,7 +19,7 @@ export const config = {
 };
 
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch(() => null);
+  logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data });
 };
 
 const ACTIONABLE_STATUSES = [

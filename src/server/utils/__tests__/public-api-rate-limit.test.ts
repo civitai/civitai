@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 import {
+  checkFixedWindow,
   checkPublicApiRateLimit,
   resolveClientIp,
   PUBLIC_API_RATE_LIMIT_AUTH_MAX,
@@ -132,5 +133,16 @@ describe('checkPublicApiRateLimit', () => {
       family: 'articles',
     });
     expect(res).toEqual({ allowed: true });
+  });
+});
+
+describe('checkFixedWindow', () => {
+  it('refuses on a redis error when the caller asks to fail closed', async () => {
+    mockRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    expect(await checkFixedWindow('k', 10, 60, { failOpen: false })).toEqual({
+      allowed: false,
+      retryAfterSeconds: 60,
+    });
+    expect(await checkFixedWindow('k', 10, 60)).toEqual({ allowed: true });
   });
 });

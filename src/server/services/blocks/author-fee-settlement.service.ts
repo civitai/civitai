@@ -205,7 +205,7 @@ export async function settleBlockAuthorFees(args: {
           limit,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       continue;
     }
     // The day emptied under us — a concurrent run settled it between the two
@@ -327,7 +327,7 @@ export async function settleBlockAuthorFees(args: {
             threw: threw instanceof Error ? threw.message : threw ? String(threw) : null,
           },
           'civitai-prod'
-        ).catch(() => undefined);
+        );
         continue;
       }
 
@@ -366,7 +366,7 @@ export async function settleBlockAuthorFees(args: {
             error: error instanceof Error ? error.message : String(error),
           },
           'civitai-prod'
-        ).catch(() => undefined);
+        );
         flipFailures += 1;
         continue;
       }
@@ -400,7 +400,7 @@ export async function settleBlockAuthorFees(args: {
       flipFailures,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 
   return { buckets, rowsSettled, buzzMinted, daysTruncated, flipFailures };
 }

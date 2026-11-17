@@ -1,6 +1,6 @@
 import { buildKohyaInput, type KohyaRunParams } from './kohya-training';
 import { kohyaDefaults } from './data/kohya';
-import { MODEL_CARDS, versionStepDefault } from './data/trainingModels';
+import { isFlux2, MODEL_CARDS, versionStepDefault } from './data/trainingModels';
 // Client-safe orchestrator reads: everything here takes an already-built SDK client, so it runs
 // in the browser (the web-component build) as well as in the shell's server routes, which wrap
 // these with an env-configured client (lib/server/orchestrator.ts).
@@ -50,11 +50,7 @@ export function resolveCurrencies(
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 export const RETENTION_DAYS = 30;
 
-/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
- *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
-export function isFlux2(engine?: string): boolean {
-  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
-}
+export { isFlux2 };
 
 const isHtmlPage = (body: string) => /^\s*<(!doctype|html)/i.test(body);
 
@@ -343,7 +339,8 @@ export interface TrainingWhatIfInput extends Partial<KohyaRunParams> {
   version?: string;
   /** An edit LoRA (`isEditTraining`), priced as the submit will run it. */
   editTraining?: boolean;
-  /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
+  /** Omitted, the orchestrator prices its per-ecosystem default step budget, which need not be the
+   *  Review step's default (`versionStepDefault`). */
   steps?: number;
   /** Saved-checkpoint count — it moves the real price (~±5⚡ per checkpoint around the default 10). */
   epochs?: number;

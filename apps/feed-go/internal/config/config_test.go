@@ -33,6 +33,46 @@ func TestParseRegionRulesEndOfDay(t *testing.T) {
 	}
 }
 
+// REGION_BLOCK_CONFIG: the variable wins when set (the app's `process.env.REGION_BLOCK_CONFIG ? … :
+// DEFAULT_REGION_BLOCK_CONFIG`); unset or empty is the app's default list from apipolicy.json.
+func TestRegionBlockRules(t *testing.T) {
+	set, err := RegionBlockRules("FR:2026-08-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []browsing.RegionRule{{Region: "FR", Effective: time.Date(2026, 8, 1, 23, 59, 59, int(999*time.Millisecond), time.UTC)}}
+	if !reflect.DeepEqual(set, want) {
+		t.Fatalf("set: rules = %+v, want %+v", set, want)
+	}
+	def, err := RegionBlockRules("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gb := browsing.RegionRule{Region: "GB", Effective: time.Date(2025, 7, 24, 23, 59, 59, int(999*time.Millisecond), time.UTC)}
+	found := false
+	for _, r := range def {
+		found = found || r == gb
+	}
+	if !found {
+		t.Fatalf("default: rules = %+v, want GB:2025-07-24 in them", def)
+	}
+	if _, err := RegionBlockRules("GB"); err == nil {
+		t.Fatal("an entry without a date must fail, as the app throws")
+	}
+	// Load reads it.
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("REGION_BLOCK_CONFIG", "FR:2026-08-01")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c.RegionBlockRules, want) {
+		t.Fatalf("Load: RegionBlockRules = %+v, want %+v", c.RegionBlockRules, want)
+	}
+}
+
 func TestHostFromURL(t *testing.T) {
 	cases := map[string]string{
 		"https://Civitai.Example":         "civitai.example",
@@ -90,6 +130,40 @@ func TestLoadFeedServiceMirrors(t *testing.T) {
 	}
 }
 
+// model.getAll's flag mirrors: unset, each is its flag's production value (on); each one is read from
+// its own variable, so turning one off moves that one alone.
+func TestLoadModelGetAllMirrors(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	vars := []string{"FEED_GO_BASE_MODEL_FEED_METRICS", "FEED_GO_MODEL_IMAGES_SLIM", "FEED_GO_GENERATION_COVERAGE_NEXT", "FEED_GO_GENERATION_LOADING_OPEN_TO_ALL"}
+	read := func(c *Config) [4]bool {
+		return [4]bool{c.BaseModelFeedMetrics, c.ModelImagesSlim, c.CoverageNext, c.LoadingOpenToAll}
+	}
+	for _, v := range vars {
+		t.Setenv(v, "")
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read(c); got != [4]bool{true, true, true, true} {
+		t.Fatalf("defaults %v, want all on", got)
+	}
+	for i, v := range vars {
+		t.Setenv(v, "false")
+		if c, err = Load(); err != nil {
+			t.Fatal(err)
+		}
+		want := [4]bool{true, true, true, true}
+		want[i] = false
+		if got := read(c); got != want {
+			t.Fatalf("%s=false: %v, want %v", v, got, want)
+		}
+		t.Setenv(v, "")
+	}
+}
+
 func TestLoadPprofDefaultsOff(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -102,6 +176,33 @@ func TestLoadPprofDefaultsOff(t *testing.T) {
 		}
 		if c.Pprof != want {
 			t.Errorf("FEED_GO_PPROF=%q -> %v, want %v", in, c.Pprof, want)
+		}
+	}
+}
+
+// SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
+// surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
+// package's own env-switch.test.ts.
+func TestLoadRevocationMarkerCacheSwitch(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	off := []string{"off", "OFF", "Off", "0", "false", "FALSE", "False", " off ", "\tfalse\n"}
+	on := []string{"", " ", "on", "true", "1", "no", "offf", "disabled", "00", "false!"}
+	for _, in := range append(off, on...) {
+		t.Setenv("SESSION_REVOCATION_CACHE", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := true
+		for _, o := range off {
+			if in == o {
+				want = false
+			}
+		}
+		if c.RevocationMarkerCache != want {
+			t.Errorf("SESSION_REVOCATION_CACHE=%q -> %v, want %v", in, c.RevocationMarkerCache, want)
 		}
 	}
 }
@@ -155,6 +256,123 @@ func TestLoadServingLimits(t *testing.T) {
 		if cfg.RequestBudget != c.wantBudget || cfg.CompletionConcurrency != c.wantConcurrency || cfg.JWKSRefresh != c.wantJWKS {
 			t.Errorf("budget=%q concurrency=%q jwks=%q -> %v %d %v, want %v %d %v", c.budget, c.concurrency, c.jwks,
 				cfg.RequestBudget, cfg.CompletionConcurrency, cfg.JWKSRefresh, c.wantBudget, c.wantConcurrency, c.wantJWKS)
+		}
+	}
+}
+
+// The miss computation is on by default, write-back and the frame negative-cache mirror off; write-back
+// needs the primary (DATABASE_URL), which is read only then.
+func TestLoadCacheMissSettings(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_FRAME_CACHE_NEGATIVE", "DATABASE_URL"} {
+		t.Setenv(k, "")
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.ComputeMisses || c.CacheWriteBack || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" {
+		t.Fatalf("defaults: compute %v, writeback %v, frame negative %v, primary %q; want true, false, false, unset",
+			c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	if c, _ = Load(); c.PrimaryDatabaseURL != "" {
+		t.Fatalf("primary %q read with write-back off", c.PrimaryDatabaseURL)
+	}
+
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "true")
+	t.Setenv("DATABASE_URL", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("write-back without DATABASE_URL loaded")
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
+	t.Setenv("FEED_GO_FRAME_CACHE_NEGATIVE", "true")
+	if c, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if c.ComputeMisses || !c.CacheWriteBack || !c.FrameCacheNegative || c.PrimaryDatabaseURL != "x://primary" {
+		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	}
+}
+
+// The ClickHouse reader is configured only from feed-go's own variables: the miss computation on and
+// both FEED_GO_CLICKHOUSE_HOST and FEED_GO_CLICKHOUSE_USERNAME set (Node's shouldConnect over those).
+// The app's own CLICKHOUSE_HOST / CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD, which the shared app
+// config carries into this service's environment with the app's read-write login, never configure
+// it, alone or alongside. Its timeout defaults to 2 s and is held to half the request budget; its
+// read cap defaults to 4.
+func TestLoadClickHouse(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CLICKHOUSE_TIMEOUT_MS", "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT",
+		"FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD",
+		"FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
+		t.Setenv(k, "")
+	}
+	load := func() *Config {
+		t.Helper()
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if c := load(); c.ClickHouseURL != "" || c.ClickHouseTimeout != 2*time.Second || c.ClickHouseMaxInFlight != 4 {
+		t.Fatalf("defaults: url %q timeout %v cap %d; want unset, 2s, 4", c.ClickHouseURL, c.ClickHouseTimeout, c.ClickHouseMaxInFlight)
+	}
+	// The app's variables alone: no reader.
+	t.Setenv("CLICKHOUSE_HOST", "https://app-ch.example.test:8443")
+	t.Setenv("CLICKHOUSE_USERNAME", "app-writer")
+	t.Setenv("CLICKHOUSE_PASSWORD", "app-pw")
+	if c := load(); c.ClickHouseURL != "" || c.ClickHouseUsername != "" || c.ClickHousePassword != "" {
+		t.Fatalf("app variables only: %q %q %q, want no reader (the app's login is never used)", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_HOST", "https://ch.example.test:8443")
+	if c := load(); c.ClickHouseURL != "" {
+		t.Fatalf("host without username (the app's username set): url %q, want unset", c.ClickHouseURL)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_USERNAME", "feed-go-reader")
+	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "" {
+		t.Fatalf("own host and username, no own password: %q %q %q; want the app's password not taken", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_PASSWORD", "feed-go-pw")
+	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "feed-go-pw" {
+		t.Fatalf("set: %q %q %q", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
+	if c := load(); c.ClickHouseURL != "" {
+		t.Fatalf("compute off: url %q, want unset", c.ClickHouseURL)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", "900")
+	t.Setenv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "7")
+	if c := load(); c.ClickHouseTimeout != 900*time.Millisecond || c.ClickHouseMaxInFlight != 7 {
+		t.Fatalf("explicit: %v %d, want 900ms 7", c.ClickHouseTimeout, c.ClickHouseMaxInFlight)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", "5000")
+	t.Setenv("FEED_GO_REQUEST_BUDGET_MS", "3000")
+	if c := load(); c.ClickHouseTimeout != 1500*time.Millisecond {
+		t.Fatalf("past half the budget: %v, want 1.5s", c.ClickHouseTimeout)
+	}
+}
+
+// FEED_GO_MAX_IN_FLIGHT: a positive integer is an explicit cap; anything else (unset, zero, negative,
+// junk) is 0, "not set", which the server resolves to the pool's ceiling — never an unlimited pod.
+func TestLoadMaxInFlight(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]int{"": 0, "0": 0, "-3": 0, "junk": 0, "1": 1, "7": 7, "64": 64} {
+		t.Setenv("FEED_GO_MAX_IN_FLIGHT", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.MaxInFlight != want {
+			t.Errorf("FEED_GO_MAX_IN_FLIGHT=%q -> %d, want %d", in, c.MaxInFlight, want)
 		}
 	}
 }

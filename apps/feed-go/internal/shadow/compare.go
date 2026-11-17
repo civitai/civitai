@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -321,14 +322,33 @@ func walk(r *Report, g, n any, path []string) {
 	}
 }
 
-// sameNumber compares numerically, so 1 and 1.0 (jsonb vs JS formatting) are equal.
+// sameNumber compares numerically, so 1 and 1.0 (jsonb vs JS formatting) are equal. Two integer
+// literals compare exactly: as float64 every integer above 2^53 has neighbours it cannot tell apart
+// (an id or a bigint-sized count would match its off-by-one), and the relative tolerance below would
+// also equate large integers that differ by one.
 func sameNumber(a, b json.Number) bool {
 	if a == b {
 		return true
 	}
+	if isIntegerLiteral(a) && isIntegerLiteral(b) {
+		ia, errA := strconv.ParseInt(string(a), 10, 64)
+		ib, errB := strconv.ParseInt(string(b), 10, 64)
+		if errA == nil && errB == nil {
+			return ia == ib
+		}
+		// Past int64: exactly, as big integers.
+		x, okA := new(big.Int).SetString(string(a), 10)
+		y, okB := new(big.Int).SetString(string(b), 10)
+		return okA && okB && x.Cmp(y) == 0
+	}
 	fa, errA := a.Float64()
 	fb, errB := b.Float64()
 	return errA == nil && errB == nil && (fa == fb || math.Abs(fa-fb) < 1e-12*math.Max(math.Abs(fa), math.Abs(fb)))
+}
+
+// isIntegerLiteral: a JSON number written without a fraction or an exponent.
+func isIntegerLiteral(n json.Number) bool {
+	return n != "" && !strings.ContainsAny(string(n), ".eE")
 }
 
 // ItemOrder returns the postId sequences of both sides' items, for the "same posts, different order"
@@ -377,6 +397,44 @@ func classifyOrder(g, n []string) string {
 		return "order"
 	}
 	return "membership"
+}
+
+// flatItemIDs returns the `json.items[].id` sequence of a superjson envelope whose items are keyed by
+// their own `id` (a flat page: image.getInfinite's images, model.getAll's models), not posts.
+func flatItemIDs(env []byte) ([]string, error) {
+	var e struct {
+		JSON struct {
+			Items []struct {
+				ID json.Number `json:"id"`
+			} `json:"items"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal(env, &e); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(e.JSON.Items))
+	for i, it := range e.JSON.Items {
+		out[i] = it.ID.String()
+	}
+	return out, nil
+}
+
+// ClassifyFlat is Classify for a superjson envelope of a flat page (image.getInfinite's images,
+// model.getAll's models): its items are keyed by their own `id`, so match, order (same items,
+// different order), membership (different items), fields (same items in the same order, field
+// differences). The report itself is Compare's: the same annotation handling, and categories over the
+// flat shape (`items.*.<field>`, `items.*.user.<field>`, `nextCursor`, `source`), truncated at the same
+// opaque keys.
+func ClassifyFlat(r *Report, goEnv, nodeEnv []byte) string {
+	if r.Match {
+		return "match"
+	}
+	g, errG := flatItemIDs(goEnv)
+	n, errN := flatItemIDs(nodeEnv)
+	if errG != nil || errN != nil {
+		return "fields"
+	}
+	return classifyOrder(g, n)
 }
 
 // CompareJSON compares two plain-JSON response bodies (Go's, Node's): the public REST endpoints answer

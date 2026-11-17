@@ -44,6 +44,7 @@ import { retryAfterHeader } from '~/server/trpc/retry-after-header';
 import {
   beginFeedGoShadow,
   finishFeedGoShadow,
+  probeFeedGoShadow,
   runWithFeedGoShadow,
 } from '~/server/trpc/feed-go-shadow';
 
@@ -277,7 +278,7 @@ const trpcHandler = createNextApiHandler({
       // its `errorRef`, and the router's own log line doesn't carry one.
       const errorRef = getClientSafeError(error)?.errorRef;
       if (!wasServerFaultLogged(error) || errorRef) {
-        await logToAxiom(
+        logToAxiom(
           {
             path,
             trpcType: type,
@@ -340,11 +341,18 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // The response write format (superjson vs devalue) is decided per request from the
   // client headers — see `~/server/trpc/response-write-format`.
   //
-  // feed-go shadow (flag `feed-go-shadow`, default off): a sampled `image.getImagesAsPostsInfinite`
-  // request runs with a capture scope, and after the handler has written the response its input,
-  // the headers the answer depends on and the captured body are POSTed to feed-go's internal
-  // compare endpoint from `setImmediate`, never awaited. See `~/server/trpc/feed-go-shadow`.
+  // feed-go shadow (flags `feed-go-shadow`, `feed-go-shadow-infinite` and
+  // `feed-go-shadow-model-getall`, default off): a sampled `image.getImagesAsPostsInfinite`,
+  // `image.getInfinite` or `model.getAll` request runs with a capture scope, and
+  // after the handler has written the response its input, the headers the answer depends on and
+  // the captured body are POSTed to feed-go's internal compare endpoint for that procedure from
+  // `setImmediate`, never awaited. See `~/server/trpc/feed-go-shadow`.
+  //
+  // Go-first probe (flag `feed-go-gofirst-probe`, default off): for a sampled request, BEFORE the
+  // handler computes the page, feed-go is asked which caches a Go-first serve would find cold. It
+  // must run here, ahead of the handler: the handler's own cache fills would hide the misses.
   const shadow = beginFeedGoShadow(req);
+  probeFeedGoShadow(shadow);
   try {
     await runWithResponseWriteFormat(req.headers, () =>
       runWithSerializeCtx(serializeCtxFromRequest(req), () =>
@@ -352,6 +360,7 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
       )
     );
   } finally {
-    if (shadow) finishFeedGoShadow(shadow, res.statusCode);
+    // With the status and the response headers responseMeta set (Cache-Control, Cache-Tag, …).
+    if (shadow) finishFeedGoShadow(shadow, res.statusCode, res);
   }
 }) as NextApiHandler;

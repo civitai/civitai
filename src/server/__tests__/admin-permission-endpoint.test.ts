@@ -44,6 +44,13 @@ describe('/api/admin/permission', () => {
     expect(addSystemPermission).toHaveBeenCalledWith('textScanPromptPublish', [4]);
   });
 
+  it('grants textScanPromptPublishIntent instead of skipping it', async () => {
+    const body = await grant('textScanPromptPublishIntent');
+
+    expect(body.skipped).toEqual([]);
+    expect(addSystemPermission).toHaveBeenCalledWith('textScanPromptPublishIntent', [4]);
+  });
+
   it('skips a key that is not a permission (control)', async () => {
     const body = await grant('notARealPermissionKey');
 
