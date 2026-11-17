@@ -95,7 +95,10 @@ import {
   allBrowsingLevelsFlag,
   getNsfwLevelDeprecatedReverseMapping,
 } from '~/shared/constants/browsingLevel.constants';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import {
   BlockImageReason,
@@ -385,7 +388,7 @@ export const setTosViolationHandler = async ({
  * A held gallery is shown whole to a moderator, signed in or on a full-access key: the same
  * credentials the moderator procedures accept, so an app a moderator authorised does not get it.
  */
-const moderatorView = (ctx: Context) => !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
+const moderatorView = (ctx: Context) => credentialViews(ctx).asModerator;
 
 /** The owner a taken-down model's gallery is shown to, on the same credentials as `moderatorView`. */
 const galleryOwnerId = (ctx: Context) =>
@@ -575,8 +578,7 @@ export const getInfiniteImagesHandler = async ({
     }
     const dbInput = {
       user,
-      asModerator: moderatorView(ctx),
-      asOwner: isSessionOrFullUserKey(ctx),
+      ...credentialViews(ctx),
       domain: getRequestBoardDomainColor(ctx.req),
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...scopedInput.include, 'tagIds' as const],
@@ -648,8 +650,7 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImagesIndex({
         ...scopedInput,
         user,
-        asModerator: moderatorView(ctx),
-        asOwner: isSessionOrFullUserKey(ctx),
+        ...credentialViews(ctx),
         holdExempt: moderatorView(ctx),
         galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
@@ -670,8 +671,7 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImages({
         ...scopedInput,
         user,
-        asModerator: moderatorView(ctx),
-        asOwner: isSessionOrFullUserKey(ctx),
+        ...credentialViews(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -821,8 +821,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
-        asModerator: moderatorView(ctx),
-        asOwner: isSessionOrFullUserKey(ctx),
+        ...credentialViews(ctx),
         // Fetch the posts whole and narrow them with filterPinnedImagesToVersion
         // below. The ImageResourceNew join that modelVersionId triggers is an
         // inner join, so filtering it here drops media with no resource-detection
@@ -875,8 +874,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: sponsoredImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
-        asModerator: moderatorView(ctx),
-        asOwner: isSessionOrFullUserKey(ctx),
+        ...credentialViews(ctx),
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
@@ -910,8 +908,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       domain: getRequestBoardDomainColor(ctx.req),
       ids: fetchHidden ? versionHiddenImages : undefined,
       user,
-      asModerator: moderatorView(ctx),
-      asOwner: isSessionOrFullUserKey(ctx),
+      ...credentialViews(ctx),
       eventDecorationViewer: eventViewer,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
       include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
