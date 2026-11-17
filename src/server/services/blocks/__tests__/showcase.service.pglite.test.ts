@@ -17,6 +17,7 @@ const PUBLISHED = 1000;
 const DRAFT = 1001;
 const SCHEDULED = 1002;
 const PRIVATE = 1003;
+const UNSEARCHABLE = 1004;
 const PG = 1;
 
 const CLEAN = 1;
@@ -50,7 +51,8 @@ beforeAll(async () => {
       (${PUBLISHED}, now() - interval '1 day', 'Public'),
       (${DRAFT}, NULL, 'Public'),
       (${SCHEDULED}, now() + interval '1 day', 'Public'),
-      (${PRIVATE}, now() - interval '1 day', 'Private');
+      (${PRIVATE}, now() - interval '1 day', 'Private'),
+      (${UNSEARCHABLE}, now() - interval '1 day', 'Unsearchable');
   `);
   dbMock.dbRead.imageResourceNew.findMany.mockImplementation(((
     ...args: Parameters<typeof harness.prisma.imageResourceNew.findMany>
@@ -89,5 +91,11 @@ describe('getModelShowcaseImages: which images the block may serve', () => {
     await image(CLEAN, PUBLISHED, null);
     await image(EXCLUDED, postId, needsReview, tos);
     expect(await servedIds()).toEqual([CLEAN]);
+  });
+
+  it('still serves an image in a published Unsearchable post', async () => {
+    await image(CLEAN, PUBLISHED, null);
+    await image(EXCLUDED, UNSEARCHABLE, null);
+    expect(await servedIds()).toEqual([CLEAN, EXCLUDED]);
   });
 });
