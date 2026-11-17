@@ -54,6 +54,20 @@ describe('resolveForgejoOrgs', () => {
     expect(r.error).toBe(`Forgejo org config refused: ${key} names the production org ${value}`);
   });
 
+  it('refuses a production org name in another case (Forgejo names are case-insensitive)', () => {
+    const r = resolveForgejoOrgs({ ...PREVIEW, FORGEJO_REVIEW_ORG: 'Civitai-Apps-Review' });
+    expect(r.error).toBe(
+      'Forgejo org config refused: FORGEJO_REVIEW_ORG names the production org Civitai-Apps-Review'
+    );
+  });
+
+  it('refuses two flows sharing an org that differ only in case', () => {
+    const r = resolveForgejoOrgs({ ...PREVIEW, FORGEJO_REVIEW_ORG: 'Civitai-Apps-Preview' });
+    expect(r.error).toBe(
+      'Forgejo org config refused: FORGEJO_APPS_ORG, FORGEJO_REVIEW_ORG and FORGEJO_SRC_ORG must be distinct'
+    );
+  });
+
   it('refuses two flows sharing an org (review snapshots would overwrite build repos)', () => {
     const r = resolveForgejoOrgs({ ...PREVIEW, FORGEJO_REVIEW_ORG: PREVIEW.FORGEJO_APPS_ORG });
     expect(r.error).toBe(

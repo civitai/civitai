@@ -50,6 +50,21 @@ export { FORGEJO_ORG, FORGEJO_REVIEW_ORG, FORGEJO_SOURCE_ORG };
 export type CollaboratorOrg = typeof FORGEJO_ORG | typeof FORGEJO_SOURCE_ORG;
 
 /**
+ * The names are env-derived strings now, so the type above no longer restricts anything at compile
+ * time; this does at run time. Never the review org: a developer with write there could rewrite
+ * the snapshot a moderator reviews.
+ */
+function collaboratorOrg(org: string | undefined): string {
+  const o = org ?? FORGEJO_ORG;
+  if (o !== FORGEJO_ORG && o !== FORGEJO_SOURCE_ORG) {
+    throw new Error(
+      `collaborator rows may change only in ${FORGEJO_ORG} or ${FORGEJO_SOURCE_ORG}, not ${o}`
+    );
+  }
+  return o;
+}
+
+/**
  * Public URL pointer for the in-review repo of a slug. Used by the
  * UI to deep-link mods into Forgejo's diff view from /apps/review.
  *
@@ -75,6 +90,10 @@ export function repoCommitUrl(slug: string, ref: string): string {
 }
 
 function getBaseUrl(): string {
+  // Every request URL is built here (fjFetch, getRawFile, mintForgejoUserToken), so a refused org
+  // config (forgejo-orgs.ts) stops every call before it reaches Forgejo: with it, a call could land
+  // in an org this environment was never meant to write.
+  if (FORGEJO_ORGS.error) throw new Error(FORGEJO_ORGS.error);
   const u = env.FORGEJO_BASE_URL;
   if (!u) throw new Error('FORGEJO_BASE_URL not configured');
   return u.replace(/\/$/, '');
@@ -115,9 +134,6 @@ async function fjFetch(
   init?: RequestInit,
   timeoutMs: number = apiTimeoutMs()
 ): Promise<Response> {
-  // A refused org config (forgejo-orgs.ts) must not reach Forgejo at all: with it, a call could
-  // land in an org this environment was never meant to write.
-  if (FORGEJO_ORGS.error) throw new Error(FORGEJO_ORGS.error);
   const url = `${getBaseUrl()}${path}`;
   const res = await fetch(url, {
     ...init,
@@ -367,7 +383,7 @@ export async function addCollaborator(opts: {
 }): Promise<AddCollaboratorResult> {
   const requested = opts.permission ?? 'write';
   const requestedRank = COLLABORATOR_PERMISSION_RANK[requested];
-  const org = opts.org ?? FORGEJO_ORG;
+  const org = collaboratorOrg(opts.org);
 
   const current = await readCollaboratorPermission(opts.slug, opts.username, org);
 
@@ -461,7 +477,7 @@ export async function removeCollaborator(opts: {
   org?: CollaboratorOrg;
 }): Promise<void> {
   const res = await fjFetch(
-    `/api/v1/repos/${opts.org ?? FORGEJO_ORG}/${opts.slug}/collaborators/${encodeURIComponent(
+    `/api/v1/repos/${collaboratorOrg(opts.org)}/${opts.slug}/collaborators/${encodeURIComponent(
       opts.username
     )}`,
     { method: 'DELETE' }

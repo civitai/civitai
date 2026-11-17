@@ -66,7 +66,8 @@ export function resolveForgejoOrgs(e: OrgEnv): ForgejoOrgs {
   for (const [key, value] of given) {
     if (!ORG_NAME.test(value!))
       return refuse(`Forgejo org config refused: ${key} is not a valid org name`);
-    if (PRODUCTION_NAMES.includes(value!)) {
+    // Forgejo matches org names case-insensitively, so every comparison here does too.
+    if (PRODUCTION_NAMES.includes(value!.toLowerCase())) {
       return refuse(`Forgejo org config refused: ${key} names the production org ${value}`);
     }
   }
@@ -75,7 +76,7 @@ export function resolveForgejoOrgs(e: OrgEnv): ForgejoOrgs {
     review: set.FORGEJO_REVIEW_ORG!,
     source: set.FORGEJO_SRC_ORG!,
   };
-  if (new Set(Object.values(orgs)).size !== 3) {
+  if (new Set(Object.values(orgs).map((o) => o.toLowerCase())).size !== 3) {
     return refuse(
       'Forgejo org config refused: FORGEJO_APPS_ORG, FORGEJO_REVIEW_ORG and FORGEJO_SRC_ORG must be distinct'
     );

@@ -125,6 +125,35 @@ describe('preview orgs', () => {
     expect(calls).toEqual([]);
   });
 
+  it('a refused org config also stops the direct-fetch paths (raw file, token mint)', async () => {
+    const { getRawFile, mintForgejoUserToken } = await load({
+      ...PREVIEW_ORGS,
+      FORGEJO_SRC_ORG: undefined,
+    });
+
+    await expect(getRawFile({ slug: 'my-app', ref: 'abc', path: 'a.txt' })).rejects.toThrow(
+      /Forgejo org config refused/
+    );
+    await expect(
+      mintForgejoUserToken({ username: 'dev-1', password: 'p', name: 'n', scopes: [] })
+    ).rejects.toThrow(/Forgejo org config refused/);
+    expect(calls).toEqual([]);
+  });
+
+  it('collaborator rows cannot be written in the review org', async () => {
+    const { addCollaborator, removeCollaborator, FORGEJO_REVIEW_ORG } = await load(PREVIEW_ORGS);
+
+    await expect(
+      addCollaborator({ slug: 'my-app', username: 'dev-1', org: FORGEJO_REVIEW_ORG })
+    ).rejects.toThrow(
+      'collaborator rows may change only in civitai-apps-preview or civitai-apps-preview-src, not civitai-apps-preview-review'
+    );
+    await expect(
+      removeCollaborator({ slug: 'my-app', username: 'dev-1', org: FORGEJO_REVIEW_ORG })
+    ).rejects.toThrow(/collaborator rows may change only/);
+    expect(calls).toEqual([]);
+  });
+
   it('per-developer git identities fail with the reason on a non-admin token', async () => {
     const { createForgejoUser } = await load(PREVIEW_ORGS);
     enqueue(403, { message: 'user should be an admin' });
