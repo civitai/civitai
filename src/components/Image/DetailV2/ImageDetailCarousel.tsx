@@ -165,19 +165,21 @@ export function ImageDetailCarousel({
   // `scrollTo` emits 'select' synchronously, which would echo straight back into
   // `navigate` and run the whole onChange side-effect chain a second time.
   const syncingRef = useRef(false);
-  // The provider also announces on every reInit, which keeps embla's slide: passing that on would
-  // overwrite an index the carousel has yet to follow (a cold `?text=` load's text slide arriving).
-  const selectedRef = useRef(startIndexRef.current);
+  // Embla announces its slide on every reInit too (a slide added or removed, a resize), and a
+  // reInit keeps the slide it had. Writing that back is not a move: it lands after any index the
+  // parent has set but not yet rendered (a cold `?text=` load names the text from an effect, in
+  // the commit after the slide arrived) and undoes it. Only a slide that changed is passed on.
+  const announcedRef = useRef(index);
   const handleSlideChange = (slideIndex: number) => {
-    const moved = slideIndex !== selectedRef.current;
-    selectedRef.current = slideIndex;
+    const moved = slideIndex !== announcedRef.current;
+    announcedRef.current = slideIndex;
     if (moved && !syncingRef.current) navigate?.(slideIndex);
   };
 
   const followIndex = (api: EmblaCarouselType) => {
     syncingRef.current = true;
-    // A slide added in the same commit as the index that names it is not embla's yet, and its
-    // own reinit would announce the old slide and write it back through `navigate`.
+    // A slide added in the same commit as the index that names it is not embla's yet: scrolling
+    // there would miss it, so reInit embla onto it instead.
     if (index >= api.slideNodes().length && index < slideCount) api.reInit({ startIndex: index });
     else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
@@ -205,11 +207,12 @@ export function ImageDetailCarousel({
   const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
+  // The slide the last commit settled on, seeded like `settledIndex`.
+  const committedRef = useRef(index);
 
   useEffect(() => {
     if (!embla) return;
     let fallback: ReturnType<typeof setTimeout> | undefined;
-    let committed = embla.selectedScrollSnap();
 
     const commit = () => {
       if (fallback) {
@@ -217,16 +220,16 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
-      committed = current;
+      committedRef.current = current;
       setSettledIndex(current);
       onSettleRef.current?.(current);
     };
 
-    // A reInit that kept its slide with no swipe outstanding (slides added, a resize) is no settle:
-    // announcing it would write that slide back over an index the carousel has yet to follow,
-    // e.g. a cold `?text=` load whose text slide arrived in the same commit.
-    const commitReInit = () => {
-      if (fallback || embla.selectedScrollSnap() !== committed) commit();
+    // A reInit keeps embla's slide, so one that left it where the last commit did owes no settle.
+    // Committing it anyway would announce the slide being left as the one landed on: the URL
+    // would move back to it while the carousel goes on to the index the parent just set.
+    const commitIfMoved = () => {
+      if (embla.selectedScrollSnap() !== committedRef.current) commit();
     };
 
     // 'settle' only fires from the animation loop, so anything that destroys the
@@ -238,10 +241,10 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    embla.on('settle', commit).on('reInit', commitReInit).on('select', armFallback);
+    embla.on('settle', commit).on('reInit', commitIfMoved).on('select', armFallback);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla.off('settle', commit).off('reInit', commitReInit).off('select', armFallback);
+      embla.off('settle', commit).off('reInit', commitIfMoved).off('select', armFallback);
     };
   }, [embla]);
 
