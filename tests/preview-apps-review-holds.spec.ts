@@ -215,6 +215,20 @@ async function withdrawOffsite(request: APIRequestContext, slug: string) {
 test.describe('App review holds (mod, nothing approved)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
+  // The pipeline log is the only artifact this tier returns, so a failure prints where the page was.
+  test.afterEach(async ({ page }, testInfo) => {
+    if (testInfo.status === testInfo.expectedStatus) return;
+    try {
+      const text = await page.evaluate(() => (document.body?.innerText ?? '').slice(0, 1500));
+      console.log(`[review-holds diag] test: ${testInfo.title}`);
+      console.log(`[review-holds diag] url: ${page.url()}`);
+      console.log(`[review-holds diag] error: ${testInfo.error?.message?.slice(0, 1500)}`);
+      console.log(`[review-holds diag] body text:\n${text}`);
+    } catch (err) {
+      console.log(`[review-holds diag] could not read the page: ${String(err)}`);
+    }
+  });
+
   test('on-site: a hold shows in the queue and on the review page, then clears', async ({
     page,
   }) => {
