@@ -89,7 +89,7 @@ afterEach(() => {
   state.played = 0;
 });
 
-let rerender = () => {};
+let rerender: () => void = () => undefined;
 const mount = (hook: () => void) => {
   function Probe() {
     hook();
