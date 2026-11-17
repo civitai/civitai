@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead, mockGetImageMetricsObject } = vi.hoisted(() => ({
   mockDbRead: {
     imageResourceNew: { findMany: vi.fn() },
+    modelVersion: { findUnique: vi.fn() },
   },
   mockGetImageMetricsObject: vi.fn(),
 }));
@@ -31,6 +32,18 @@ import { getModelShowcaseImages } from '../showcase.service';
 
 beforeEach(() => {
   mockDbRead.imageResourceNew.findMany.mockReset();
+  mockDbRead.modelVersion.findUnique.mockResolvedValue({
+    status: 'Published',
+    availability: 'Public',
+    model: {
+      status: 'Published',
+      availability: 'Public',
+      mode: null,
+      minor: false,
+      sfwOnly: false,
+      gallerySettings: {},
+    },
+  });
   mockGetImageMetricsObject.mockReset();
   // Derive reaction totals from the last findMany result. Each image's fixture
   // `metrics: [{ reactionCount }]` becomes reactionLike (the service sums the

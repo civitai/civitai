@@ -40,6 +40,19 @@ const SCHEMA = `
     minor boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
     "blockedFor" text
   );
+  CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished',
+    'UnpublishedViolation', 'GatherInterest', 'Deleted');
+  CREATE TYPE "ModelModifier" AS ENUM ('Archived', 'TakenDown');
+  CREATE TABLE "Model" (
+    id int PRIMARY KEY, status "ModelStatus" NOT NULL DEFAULT 'Published',
+    availability "Availability" NOT NULL DEFAULT 'Public', mode "ModelModifier",
+    minor boolean NOT NULL DEFAULT false, "sfwOnly" boolean NOT NULL DEFAULT false,
+    "gallerySettings" jsonb NOT NULL DEFAULT '{}'
+  );
+  CREATE TABLE "ModelVersion" (
+    id int PRIMARY KEY, "modelId" int NOT NULL, status "ModelStatus" NOT NULL DEFAULT 'Published',
+    availability "Availability" NOT NULL DEFAULT 'Public'
+  );
   CREATE TABLE "ImageResourceNew" (
     "imageId" int NOT NULL, "modelVersionId" int NOT NULL, strength int,
     detected boolean NOT NULL DEFAULT false, PRIMARY KEY ("imageId", "modelVersionId")
@@ -57,6 +70,9 @@ beforeAll(async () => {
       (${PRIVATE}, now() - interval '1 day', 'Private'),
       (${UNSEARCHABLE}, now() - interval '1 day', 'Unsearchable');
   `);
+  dbMock.dbRead.modelVersion.findUnique.mockImplementation(((
+    ...args: Parameters<typeof harness.prisma.modelVersion.findUnique>
+  ) => harness.prisma.modelVersion.findUnique(...args)) as never);
   dbMock.dbRead.imageResourceNew.findMany.mockImplementation(((
     ...args: Parameters<typeof harness.prisma.imageResourceNew.findMany>
   ) => harness.prisma.imageResourceNew.findMany(...args)) as never);
@@ -64,7 +80,12 @@ beforeAll(async () => {
 afterAll(() => harness.stop());
 
 beforeEach(async () => {
-  await harness.pg.exec(`DELETE FROM "ImageResourceNew"; DELETE FROM "Image";`);
+  await harness.pg.exec(`
+    DELETE FROM "ImageResourceNew"; DELETE FROM "Image";
+    DELETE FROM "ModelVersion"; DELETE FROM "Model";
+    INSERT INTO "Model" (id) VALUES (1);
+    INSERT INTO "ModelVersion" (id, "modelId") VALUES (${VERSION}, 1);
+  `);
 });
 
 async function image(id: number, postId: number, needsReview: string | null, tos = false) {
@@ -136,5 +157,39 @@ describe('getModelShowcaseImages: which images the block may serve', () => {
     await image(CLEAN, PUBLISHED, null);
     await image(EXCLUDED, UNSEARCHABLE, null);
     expect(await servedIds()).toEqual([CLEAN, EXCLUDED]);
+  });
+});
+
+describe('getModelShowcaseImages: the version and its model', () => {
+  // A signed-in viewer on the red domain asking for R, X and XXX.
+  const MATURE_VIEWER = { userId: 7, browsingLevel: 28, domain: 'red' as const };
+  const servedMature = async () =>
+    (await getModelShowcaseImages(VERSION, MATURE_VIEWER)).map((i) => i.id);
+
+  beforeEach(async () => {
+    await image(EXCLUDED, PUBLISHED, null);
+    await harness.pg.exec(`UPDATE "Image" SET "nsfwLevel" = ${R}`);
+  });
+
+  it('serves an R image of a published model to a viewer who asks for it', async () => {
+    expect(await servedMature()).toEqual([EXCLUDED]);
+  });
+
+  it.each([
+    ['a minor model', `UPDATE "Model" SET minor = true`],
+    ['a SFW-only model', `UPDATE "Model" SET "sfwOnly" = true`],
+    ['a taken-down model', `UPDATE "Model" SET mode = 'TakenDown'`],
+    ['an unpublished model', `UPDATE "Model" SET status = 'Unpublished'`],
+    ['a Private model', `UPDATE "Model" SET availability = 'Private'`],
+    ['an unpublished version', `UPDATE "ModelVersion" SET status = 'Unpublished'`],
+    ['a Private version', `UPDATE "ModelVersion" SET availability = 'Private'`],
+  ])('serves nothing mature for %s', async (_label, sql) => {
+    await harness.pg.exec(sql);
+    expect(await servedMature()).toEqual([]);
+  });
+
+  it('serves nothing for a version that does not exist', async () => {
+    await harness.pg.exec(`DELETE FROM "ModelVersion"`);
+    expect(await servedMature()).toEqual([]);
   });
 });

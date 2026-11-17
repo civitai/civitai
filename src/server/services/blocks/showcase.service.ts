@@ -2,10 +2,13 @@ import { dbRead } from '~/server/db/client';
 import { publicPostImageWhere } from '~/server/selectors/image.selector';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
 import {
   domainBrowsingCeiling,
+  heldGalleryLevel,
   onlySelectableLevels,
   parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
@@ -125,6 +128,10 @@ export interface ShowcaseImage {
  *   - per row, `classifyGatedImageForViewer`: the moderation flags the other
  *     public block reads hide on.
  *
+ * Nothing is served for a version or model that is not published, is Private,
+ * or is taken down; a minor or SFW-only model's images are held to its gallery
+ * level, as on the model page.
+ *
  * Returns an empty array when the version has no images yet — block UI
  * renders a "no preview images" state rather than crashing.
  */
@@ -132,7 +139,43 @@ export async function getModelShowcaseImages(
   modelVersionId: number,
   viewer?: ShowcaseViewer
 ): Promise<ShowcaseImage[]> {
-  const allowedBrowsingLevel = resolveAllowedBrowsingLevel(viewer);
+  const version = await dbRead.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: {
+      status: true,
+      availability: true,
+      model: {
+        select: {
+          status: true,
+          availability: true,
+          mode: true,
+          minor: true,
+          sfwOnly: true,
+          gallerySettings: true,
+        },
+      },
+    },
+  });
+  const model = version?.model;
+  if (
+    !version ||
+    !model ||
+    version.status !== ModelStatus.Published ||
+    model.status !== ModelStatus.Published ||
+    version.availability === Availability.Private ||
+    model.availability === Availability.Private ||
+    isModelWithheld(model)
+  )
+    return [];
+
+  let allowedBrowsingLevel = resolveAllowedBrowsingLevel(viewer);
+  if (model.minor || model.sfwOnly) {
+    const stored = (model.gallerySettings as { level?: unknown } | null)?.level;
+    allowedBrowsingLevel = Flags.intersection(
+      allowedBrowsingLevel,
+      heldGalleryLevel(typeof stored === 'number' ? stored : undefined, model)
+    );
+  }
   // ImageResourceNew is the live table; the legacy ImageResource was fully
   // migrated and is now empty (verified 2026-05-25: 0 rows vs 417M).
   const rows = await dbRead.imageResourceNew.findMany({
