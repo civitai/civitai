@@ -4,6 +4,7 @@ import {
   offersImageSearch,
   resolveSearchTarget,
   feedSearchPathname,
+  pageSearchFor,
   isProfileFeedPathname,
   searchSectionFromPath,
   profileFeedSection,
@@ -136,5 +137,22 @@ describe('searchSectionFromPath', () => {
     expect(searchSectionFromPath('/user/RisingV/posts')).toBe('user');
     expect(searchSectionFromPath('/articles/123/slug')).toBe('articles');
     expect(searchSectionFromPath('/')).toBeUndefined();
+  });
+});
+
+describe('pageSearchFor', () => {
+  it("gives a page that searches its own content the header bar, under that page's flag", () => {
+    expect(pageSearchFor({ semanticChallengeSearch: true }, '/challenges')).toEqual({
+      placeholder: 'Search challenges',
+    });
+    expect(pageSearchFor({ pageSearch: true }, '/shop')).toEqual({
+      placeholder: 'Search the shop',
+    });
+  });
+
+  it('leaves the index search everywhere else, and on a page whose flag is off', () => {
+    expect(pageSearchFor({ pageSearch: true }, '/models')).toBeUndefined();
+    expect(pageSearchFor({}, '/shop')).toBeUndefined();
+    expect(pageSearchFor({ pageSearch: true }, '/challenges')).toBeUndefined();
   });
 });

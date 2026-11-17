@@ -123,3 +123,27 @@ export function legacyImageSearchDestination(
   if (!features.imageSearch) return 'models-search';
   return undefined;
 }
+
+type PageSearchFlags = Partial<
+  Pick<
+    FeatureAccess,
+    'semanticChallengeSearch' | 'semanticCrucibleSearch' | 'servicesFeedSearch' | 'pageSearch'
+  >
+>;
+
+// Pages outside the search indexes that answer their own `?query=`, each behind a flag: there the
+// header bar is a plain search of that page, whatever the page does with the text.
+const PAGE_SEARCH: Record<string, { flag: keyof PageSearchFlags; placeholder: string }> = {
+  '/challenges': { flag: 'semanticChallengeSearch', placeholder: 'Search challenges' },
+  '/crucibles': { flag: 'semanticCrucibleSearch', placeholder: 'Search crucibles' },
+  '/services': { flag: 'servicesFeedSearch', placeholder: 'Search services' },
+  '/shop': { flag: 'pageSearch', placeholder: 'Search the shop' },
+  '/apps/store': { flag: 'pageSearch', placeholder: 'Search apps' },
+  '/changelog': { flag: 'pageSearch', placeholder: 'Search updates' },
+};
+
+/** The header bar's search on a page that answers its own `?query=`, or undefined elsewhere. */
+export function pageSearchFor(features: PageSearchFlags, pathname: string) {
+  const page = PAGE_SEARCH[pathname];
+  return page && features[page.flag] ? { placeholder: page.placeholder } : undefined;
+}

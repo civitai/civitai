@@ -67,6 +67,7 @@ import {
   offersImageSearch,
   resolveSearchTarget,
   feedSearchPathname,
+  pageSearchFor,
   profileFeedSection,
   searchSectionFromPath,
   searchesFeedInPlace,
@@ -87,6 +88,7 @@ import classes from './AutocompleteSearch.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { truncate } from 'lodash-es';
 import { usePathname } from 'next/navigation';
+import { PageSearchBar } from '~/components/AutocompleteSearch/PageSearchBar';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
@@ -272,7 +274,25 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
 
 AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
 
-export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
+const IndexSearch = withSearchBrowsingScope(AutocompleteSearchInner);
+
+/** The header bar: a plain search of the page on pages that search their own content, else the index search. */
+export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>((props, ref) => {
+  const features = useFeatureFlags();
+  const page = pageSearchFor(features, usePathname());
+  if (!page) return <IndexSearch {...props} ref={ref} />;
+  return (
+    <PageSearchBar
+      ref={ref}
+      placeholder={page.placeholder}
+      className={props.className}
+      variant={props.variant}
+      onClear={props.onClear}
+      onSubmit={props.onSubmit}
+    />
+  );
+});
+AutocompleteSearch.displayName = 'AutocompleteSearch';
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;

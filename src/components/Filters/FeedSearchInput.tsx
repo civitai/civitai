@@ -16,11 +16,14 @@ export const useFeedSearchQuery = () => {
  * it writes the URL only on Enter, blur or clear, never as you type: each applied query is a
  * semantic search.
  */
-export function FeedSearchInput({ placeholder }: { placeholder: string }) {
+/**
+ * The text of a box that edits the page's `query` param: committed (a history entry) only on
+ * Enter, blur or clear, and following the URL when Back, a link or another control changes it.
+ */
+export function useFeedSearchText() {
   const router = useRouter();
   const current = useFeedSearchQuery();
   const [value, setValue] = useState(current ?? '');
-  // Back, a shared link or another control changed the query: show it.
   useEffect(() => setValue(current ?? ''), [current]);
 
   const commit = (text: string) => {
@@ -28,6 +31,11 @@ export function FeedSearchInput({ placeholder }: { placeholder: string }) {
     if (next)
       void router.push({ pathname: router.pathname, query: next }, undefined, { shallow: true });
   };
+  return { value, setValue, commit };
+}
+
+export function FeedSearchInput({ placeholder }: { placeholder: string }) {
+  const { value, setValue, commit } = useFeedSearchText();
 
   return (
     <TextInput
