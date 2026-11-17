@@ -2098,11 +2098,10 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   holdExempt?: boolean;
   // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
   galleryOwnerId?: number;
-  // Server-only: whether the request may act as a moderator (a session or full-scope key);
-  // defaults to the user's.
+  // Server-only: whether the request reads with a moderator's view, and with the owner's view of
+  // the user's own unpublished, private and held images. Both default to false, so a caller that
+  // names neither reads as a plain viewer; pass `credentialViews(ctx)`.
   asModerator?: boolean;
-  // Server-only: whether the request may see the user's own unpublished, private and held images;
-  // default true. False for a narrow-scope key.
   asOwner?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
@@ -2258,11 +2257,11 @@ function feedViewer(input: {
   asModerator?: boolean;
   asOwner?: boolean;
 }) {
-  const owner = input.asOwner !== false;
+  const owner = input.asOwner === true;
   return {
     id: owner ? input.user?.id : undefined,
     username: owner ? input.user?.username ?? undefined : undefined,
-    isModerator: input.asModerator ?? input.user?.isModerator ?? false,
+    isModerator: input.asModerator === true && !!input.user?.isModerator,
   };
 }
 
@@ -2383,8 +2382,8 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  const isModerator = input.asModerator ?? user?.isModerator ?? false;
-  const ownerId = input.asOwner === false ? undefined : userId;
+  const isModerator = input.asModerator === true && !!user?.isModerator;
+  const ownerId = input.asOwner === true ? userId : undefined;
   // Moderators opting into the "pending review" collection filter get the same
   // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
@@ -3577,10 +3576,8 @@ export async function getImagesFromFeedServiceForRest(
   if (searchInput.limit < 1) return { items: [], nextCursor: undefined };
 
   const input = withoutUnservedFilters(searchInput);
-  const prepared = await prepareImageFeedRequest(input, {
-    id: input.currentUserId,
-    isModerator: input.isModerator,
-  });
+  // The hydrate's viewer and views: an own-scoped feed keeps its exclusions off only for the owner.
+  const prepared = await prepareImageFeedRequest(input, feedViewer(hydrateInput));
   if (prepared.blocked) return { items: [], nextCursor: undefined };
   const { userId } = prepared;
   // An unknown username is an empty page, not a 404, as the search index answered it.

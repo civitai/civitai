@@ -54,6 +54,9 @@ async function statementFor(
   extra: { pending?: boolean; reviewCollectionId?: number; userId?: number }
 ) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'stats',
@@ -201,6 +204,9 @@ describe("a collection's image feed", () => {
     vi.clearAllMocks();
     queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
     await getAllImages({
+      // The session views the feed grants a session or full-access key.
+      asModerator: true,
+      asOwner: true,
       limit: 20,
       period: 'AllTime',
       periodMode: 'stats',

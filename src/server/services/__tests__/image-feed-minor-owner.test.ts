@@ -86,6 +86,9 @@ const POSTS_MINOR = /\(i\."minor" = false OR i\."minor" IS NULL(?: OR i\."userId
 
 async function getAllImagesMinor(viewer: Viewer, profileUserId?: number) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'published',

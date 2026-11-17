@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/auth/full-user-credential';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
@@ -136,6 +137,9 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
+  // A bearer request's credential, as getServerAuthSession recorded it; a session has none.
+  const credential = (req as { context?: Parameters<typeof credentialViews>[0] }).context ?? {};
+  const views = credentialViews({ ...credential, user });
   const {
     limit,
     skip,
@@ -265,6 +269,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     user,
+    ...views,
     disableMinor: true,
     disablePoi: true,
     includeBaseModel: true,
@@ -281,7 +286,7 @@ export async function runImageSearch(
     browsingLevel,
     withMeta: false,
     currentUserId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator: views.asModerator,
     disableMinor: true,
     disablePoi: true,
     actor,

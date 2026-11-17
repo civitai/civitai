@@ -51,7 +51,8 @@ const queryRaw = dbMock.dbRead.$queryRaw;
 const levels = { browsingLevel: 1 };
 
 /** The viewer, as the service takes them — it reads `user.id` for everything. */
-const viewer = (id: number) => ({ user: { id } as never });
+// A session's views: a scoped key reads the book as anyone would.
+const viewer = (id: number) => ({ user: { id } as never, asOwner: true });
 
 /** The profile whose book is being asked for. */
 const creatorWithSettings = (settings: Record<string, unknown> | null) =>
@@ -317,6 +318,23 @@ describe('getStickerBook — what leaves the server', () => {
 
     expect(book.received).toEqual([]);
     expect(book.placed).toEqual([]);
+  });
+
+  it.each([
+    ['a scoped key', false],
+    ['a session (control)', true],
+  ])("reads the owner's own book on %s with the owner's view: %s", async (_, owner) => {
+    const book = await getStickerBook({
+      username: 'creator',
+      user: { id: CREATOR } as never,
+      asOwner: owner,
+      ...levels,
+    });
+
+    expect(book.isOwner).toBe(owner);
+    expect(book.earnedBuzz === null).toBe(!owner);
+    for (const [args] of allImages.mock.calls)
+      expect(args).toMatchObject({ asOwner: owner, asModerator: false });
   });
 
   it('reports the Buzz the ledger actually paid the owner', async () => {

@@ -20,7 +20,11 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { maybeRecordOauthScopeUsage } from '~/server/services/oauth/oauth-scope-audit';
-import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+  type BearerCredential,
+} from '~/server/auth/full-user-credential';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -44,13 +48,7 @@ export function auditStatusFromError(error: unknown): number {
   return 500;
 }
 
-/** Whether the request came from a session or carries a bearer credential `isFullScopeUserKey` accepts. */
-export function isSessionOrFullUserKey(ctx: BearerCredential & { apiKeyId?: number | null }) {
-  // Unlike req.context, createContext defaults tokenScope to Full for sessions,
-  // so it is not a bearer marker.
-  const presentedBearer = ctx.apiKeyId != null || ctx.subject != null || ctx.apiKeyType != null;
-  return !presentedBearer || isFullScopeUserKey(ctx);
-}
+export { credentialViews, isSessionOrFullUserKey };
 
 /** Throws FORBIDDEN unless `isSessionOrFullUserKey`. */
 export function assertSessionOrFullUserKey(
