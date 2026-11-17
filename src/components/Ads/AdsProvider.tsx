@@ -3,6 +3,7 @@ import Script from 'next/script';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { SparteoTag } from '~/components/Ads/SparteoTag';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -239,6 +240,7 @@ export function AdsProvider({
       }}
     >
       {children}
+      <SparteoTag />
       {adsEnabled && !useDirectAds && isDev && (
         <Script
           id="snigel-ads-domain-spoof"
