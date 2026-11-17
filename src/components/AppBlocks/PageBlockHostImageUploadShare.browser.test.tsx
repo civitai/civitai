@@ -16,12 +16,19 @@ import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
  * it); its notice and persist are covered in BlockImageUploadModal.browser.test.tsx.
  */
 
+const h = vi.hoisted(() => ({
+  // The scan gate the host-mounted poller calls after an async accept: never settles, so the
+  // poller stays pending and the test measures only the early reply.
+  gate: vi.fn(() => new Promise(() => undefined)),
+}));
+
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
   trpc: makeTrpcProxy({
+    'blockImageUpload.gate': { useMutation: () => ({ mutateAsync: h.gate }) },
     'apps.shared': makeInertSubRouter(),
     'apps.storage': makeInertSubRouter(),
   }),
@@ -205,6 +212,8 @@ describe('PageBlockHost OPEN_IMAGE_UPLOAD — share is opt-in per upload', () =>
           { requestId: 'rq_a', selected: { status: 'pending', ...PENDING }, shared: true },
         ])
       );
+      // The poller for the accepted image is running against the stubbed gate.
+      await vi.waitFor(() => expect(h.gate).toHaveBeenCalledWith({ imageId: PENDING.imageId }));
       replies.stop();
     });
 
