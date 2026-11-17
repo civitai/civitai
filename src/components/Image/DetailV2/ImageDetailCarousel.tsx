@@ -171,8 +171,8 @@ export function ImageDetailCarousel({
 
   const followIndex = (api: EmblaCarouselType) => {
     syncingRef.current = true;
-    // A slide added in the same commit as the index that names it is not embla's yet, and its
-    // own reinit would announce the old slide and write it back through `navigate`.
+    // A slide added in the same commit as the index that names it is not embla's yet, so
+    // `scrollTo` would stop at the last slide it does know.
     if (index >= api.slideNodes().length && index < slideCount) api.reInit({ startIndex: index });
     else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
