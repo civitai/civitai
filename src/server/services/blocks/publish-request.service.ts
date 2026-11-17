@@ -64,6 +64,10 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 // AppBlock→AppListing mapper consumes (see the (3b) auto-create block in
 // approveRequest). The mapper VALUE itself is dynamically imported at use.
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
+import type {
+  ActionsRunSource,
+  ReviewSourceProvenance,
+} from '~/server/schema/blocks/actions-run-source.schema';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import type { ListingMediaSplitDecision } from '~/shared/utils/listing-media-split';
 import {
@@ -209,6 +213,14 @@ export type SubmitVersionParams = {
    * asserted DIRTY. `false` and unknown are different answers — never `?? false`.
    */
   sourceDirty?: boolean;
+  /**
+   * A GitHub Actions OIDC token for the submitting run, ALREADY FILTERED BY THE FLAG: the routes
+   * pass it through `actionsOidcTokenForSubmit`, which drops it when
+   * `app-blocks-oidc-verified-submit` is off. Present ⇒ verified before any side effect, and a
+   * token that fails refuses the submit (`GithubActionsOidcRefusal`). Absent ⇒ today's behaviour.
+   * 🔴 A credential: never logged or echoed.
+   */
+  githubOidcToken?: string;
 };
 
 export type SubmitVersionResult = {
@@ -233,6 +245,12 @@ export type SubmitVersionResult = {
    * nothing covers is not a warning: the submit is refused (`StorageMigrationRefusal`).
    */
   storageMigrationWarnings?: string[];
+  /**
+   * Set only when the submit carried a GitHub Actions OIDC token that verified: `true` when the
+   * run's repository, tag and commit were stored on the request, `false` when they could not be
+   * (the manual-apply columns are not there yet). Absent when no token was verified.
+   */
+  actionsRunSourceRecorded?: boolean;
 };
 
 /**
@@ -1102,8 +1120,14 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       import('~/server/utils/app-block-ids'),
       import('~/server/schema/blocks/publish-request.schema'),
     ]);
-  const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
-    params;
+  const {
+    bundleBuffer,
+    submittedByUserId,
+    submitterIsModerator,
+    sourceCommit,
+    sourceDirty,
+    githubOidcToken,
+  } = params;
 
   const { assertAcceptedAppDeveloperTerms } = await import('./app-developer-terms.service');
   await assertAcceptedAppDeveloperTerms(submittedByUserId);
@@ -1395,6 +1419,20 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     });
   }
 
+  // GITHUB ACTIONS OIDC — verified HERE: after every validation gate above (so a submit refused
+  // for another reason never spends the token's one-use `jti`) and before the first side effect
+  // (the upload), so a refused token leaves nothing behind. The token is present only when the
+  // flag is on (the routes filter it). A token that fails refuses the submit: a bad token means a
+  // broken pipeline, not something to skip silently.
+  let actionsRunSource: ActionsRunSource | null = null;
+  if (githubOidcToken) {
+    const { verifyGithubActionsOidcToken } = await import('./github-actions-oidc.service');
+    actionsRunSource = await verifyGithubActionsOidcToken(githubOidcToken, {
+      manifestVersion: version,
+      sourceCommit,
+    });
+  }
+
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
   // retry after an upstream error reuses the same key safely.
   const key = await storeBundle(bundleBuffer, bundleSha256);
@@ -1484,6 +1522,19 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       );
     }
     throw err;
+  }
+
+  // The verified GitHub Actions run, stored on the request it submitted. No-type columns, so a
+  // raw UPDATE after the create rather than a field on it; best-effort (never throws), because the
+  // request row already exists. `false` = not recorded (the manual-apply columns are missing).
+  let actionsRunSourceRecorded: boolean | undefined;
+  if (actionsRunSource) {
+    const { writeActionsRunSource } = await import('./actions-run-source.service');
+    actionsRunSourceRecorded = await writeActionsRunSource(
+      dbWrite,
+      publishRequestId,
+      actionsRunSource
+    );
   }
 
   // FORK PROVENANCE — copy the app's own server-written fork pair (if any) from its block row
@@ -1579,6 +1630,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     manifestDiffSummary,
     listing,
     storageMigrationWarnings: storageMigrations.warnings,
+    ...(actionsRunSourceRecorded === undefined ? {} : { actionsRunSourceRecorded }),
   };
 }
 
@@ -3000,6 +3052,9 @@ export async function listPendingRequests(
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The client's provenance CLAIM, shown beside the checked Actions run as "claimed".
+      sourceCommit: true,
+      sourceDirty: true,
       // The review preview lifecycle (`preview-*`) — projected to `previewState` below and
       // NOT spread as `deployState`, which the queue reads as the APPROVED-row deploy shape.
       // `deployDetail` is read ONLY for the preview's build-start time (the expiry rule) and
@@ -3014,17 +3069,23 @@ export async function listPendingRequests(
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
   const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
-  const [listingFacts, agentSummaries, liveFingerprints, holdCounts] = await Promise.all([
-    listingFactsForRequests(items as ListingJoinSubject[]),
-    opts.includeAgentReview
-      ? agentReviewSummariesForRequests(items.map((r) => r.id))
-      : Promise.resolve(null),
-    opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
-    getOpenHoldCountsBySlug(
-      dbRead,
-      items.map((r) => r.slug)
-    ),
-  ]);
+  const { readActionsRunSourcesForRender } = await import('./actions-run-source.service');
+  const [listingFacts, agentSummaries, liveFingerprints, holdCounts, actionsRuns] =
+    await Promise.all([
+      listingFactsForRequests(items as ListingJoinSubject[]),
+      opts.includeAgentReview
+        ? agentReviewSummariesForRequests(items.map((r) => r.id))
+        : Promise.resolve(null),
+      opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
+      getOpenHoldCountsBySlug(
+        dbRead,
+        items.map((r) => r.slug)
+      ),
+      readActionsRunSourcesForRender(
+        dbRead,
+        items.map((r) => r.id)
+      ),
+    ]);
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft
   // or pending listing is edited in place); a stale check never fast-lanes the row.
   const withStaleness = (id: string) => {
@@ -3041,9 +3102,20 @@ export async function listPendingRequests(
   const now = Date.now();
   return {
     items: items.map(
-      ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
+      ({
+        deployState,
+        deployDetail,
+        deployUpdatedAt,
+        sourceCommit,
+        sourceDirty,
+        ...r
+      }: (typeof rows)[number]) => ({
         ...r,
         ...listingFacts(r.id),
+        sourceProvenance: reviewSourceProvenance(
+          { sourceCommit, sourceDirty },
+          actionsRuns.get(r.id)
+        ),
         // null: the holds could not be read (shown as unknown, never as clean).
         openHoldCount: holdCounts ? holdCounts.get(r.slug) ?? 0 : null,
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
@@ -6087,6 +6159,22 @@ export async function resolveReviewRequestTarget(
 }
 
 /**
+ * The review's provenance block: the client's CLAIM (`source_commit` / `source_dirty`) and the
+ * checked GitHub Actions run, kept as two separate fields so the UI can label them "claimed" and
+ * "verified". Neither is derived from the other.
+ */
+function reviewSourceProvenance(
+  claim: { sourceCommit: string | null; sourceDirty: boolean | null },
+  actionsRun: ActionsRunSource | undefined
+): ReviewSourceProvenance {
+  return {
+    claimedCommit: claim.sourceCommit,
+    claimedDirty: claim.sourceDirty,
+    actionsRun: actionsRun ?? null,
+  };
+}
+
+/**
  * Single-request fetch for the review PAGE. Returns the SAME hydrated shape one
  * item of `listPending/Approved/RejectedRequests` returns (so the extracted
  * `OnsiteReviewModalBody` renders identically to the modal path), plus the
@@ -6123,6 +6211,9 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // The client's provenance CLAIM, shown beside the checked Actions run as "claimed".
+      sourceCommit: true,
+      sourceDirty: true,
       submittedBy: { select: reviewUserChipSelect },
       reviewedBy: { select: reviewUserChipSelect },
     },
@@ -6134,11 +6225,16 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
   // Match the list builders' row mapping exactly (bundle bigint → string,
   // Forgejo review-repo deep link, push-row canonical-commit link, and the
   // slug-joined store-listing facts the review surfaces render).
-  const { status, ...rest } = r;
-  const listingFacts = await listingFactsForRequests([r as ListingJoinSubject]);
+  const { status, sourceCommit, sourceDirty, ...rest } = r;
+  const { readActionsRunSourcesForRender } = await import('./actions-run-source.service');
+  const [listingFacts, actionsRuns] = await Promise.all([
+    listingFactsForRequests([r as ListingJoinSubject]),
+    readActionsRunSourcesForRender(dbRead, [r.id]),
+  ]);
   const request = {
     ...rest,
     ...listingFacts(r.id),
+    sourceProvenance: reviewSourceProvenance({ sourceCommit, sourceDirty }, actionsRuns.get(r.id)),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:
