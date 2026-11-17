@@ -832,11 +832,14 @@ describe('the query audit and the browsing level', () => {
   });
 
   it("refuses a blocked word from a moderator's scoped key, as from anyone", async () => {
-    h.getBlockedNsfwWords.mockReturnValue(['blocked']);
-    const { result, calls } = await run({ browsingLevel: ALL_LEVELS }, MOD, {
-      asModerator: false,
-      asOwner: false,
-    });
+    const { result, calls } = await run(
+      { query: blockedWordQuery, browsingLevel: ALL_LEVELS },
+      MOD,
+      {
+        asModerator: false,
+        asOwner: false,
+      }
+    );
     expect(result.items).toEqual([]);
     expect(calls).toHaveLength(0);
   });

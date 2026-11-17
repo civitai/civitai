@@ -5,7 +5,7 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const moderator = { id: 5, isModerator: true };
 const member = { id: 6, isModerator: false };
-const userKey = (tokenScope: number) => ({
+const userKey = (tokenScope: bigint) => ({
   apiKeyId: 9,
   apiKeyType: ApiKeyType.User,
   subject: { type: 'apiKey' as const, id: 9 },

@@ -39,7 +39,7 @@ vi.mock('~/server/services/image.service', () => ({
 import { runImageSearch } from '../image-search.service';
 
 const moderator = { id: 5, isModerator: true };
-const key = (tokenScope: number) => ({
+const key = (tokenScope: bigint) => ({
   apiKeyId: 9,
   apiKeyType: ApiKeyType.User,
   subject: { type: 'apiKey', id: 9 },

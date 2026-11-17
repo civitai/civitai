@@ -124,6 +124,9 @@ async function getAllImagesStatement(
     include: [],
     disableMinor: false,
     user: viewer ? { isModerator: false, ...viewer } : undefined,
+    // A session's views (credentialViews); the feed reads neither without them.
+    asModerator: true,
+    asOwner: true,
     userId: profileUserId,
   } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
   expect(queryWithTimeoutMock, 'the build no longer reaches queryWithTimeout').toHaveBeenCalled();
