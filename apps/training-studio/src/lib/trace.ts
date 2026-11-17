@@ -201,6 +201,19 @@ export function traceLineText(line: string): string {
   }
 }
 
+// sd-scripts stamps its git commit into each checkpoint's metadata and logs a WARNING when the Kohya
+// worker image has no `git`, right after "saving checkpoint:". The save is unaffected, but testers
+// read the warning as a failed save. Rich wraps the message at the worker's console width, so match
+// what stays on its first line (level, opening words, source path) rather than the word "git".
+const KOHYA_GIT_WARNING = /WARNING\s+Could not\b.*\bsai_model_spec\.py:\d+/;
+
+/** An explanation to show under a readable trace line (`traceLineText`) that only looks like a problem. */
+export function traceLineNote(text: string): string | null {
+  return KOHYA_GIT_WARNING.test(text)
+    ? "Harmless: the trainer couldn't record its own version in the checkpoint's metadata. The checkpoint saved normally."
+    : null;
+}
+
 /** Interpret one trace line into a structured status signal. The `step` event's own `epoch` field is the
  *  worker's internal dataset-epoch counter (44, 49, …), which differs from the checkpoint epoch the user
  *  sees (10); only `attempt`/`phase`/`epoch` events carry the checkpoint epoch, so step signals don't. */
