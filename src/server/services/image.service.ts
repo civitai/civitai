@@ -2492,6 +2492,8 @@ const getAllImagesUncaptured = async (
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
+  // Whatever the viewer's settings; also the feed service's hydrate, which reads through here.
+  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi
@@ -4544,7 +4546,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     return records;
   },
   appendFn: async (records, { bypassLocal }) => {
-    // Entries cached before the lookup left these out still carry them.
+    // Entries cached before getImagesForModelVersion left out restricted minor images carry them.
     for (const entry of records) entry.images = entry.images.filter((i) => !isMinorMatureImage(i));
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
     // Passed on so the models search index, which fetches with bypassLocal, writes Redis-fresh tag

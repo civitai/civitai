@@ -27,7 +27,7 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
   getFilesByEntity: vi.fn(async () => []),
 }));
 
-import { getArticleById, getArticles } from '~/server/services/article.service';
+import { getArticleById, getArticles, getCivitaiNews } from '~/server/services/article.service';
 import { ArticleSort } from '~/server/common/enums';
 import {
   ArticleIngestionStatus,
@@ -160,5 +160,30 @@ describe.each([
     const image = cover(4, true, OTHER_IMAGE_OWNER);
     expect(await coverFor(image, viewers['the owner'])).toBeUndefined();
     expect((await coverFor(image, { id: OTHER_IMAGE_OWNER }))?.id).toBe(COVER);
+  });
+});
+
+describe('getCivitaiNews, a public list with no viewer', () => {
+  async function newsCover(image: ReturnType<typeof cover>) {
+    (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { collection: 'Newsroom', id: 1, coverId: COVER, content: '', userId: OWNER, summary: 's' },
+    ]);
+    dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.image.findMany.mockImplementation((async (args: {
+      select?: { minor?: boolean };
+    }) => (args.select?.minor ? [image] : [])) as never);
+    dbMock.dbRead.pressMention.findMany.mockResolvedValue([] as never);
+    const { articles } = await getCivitaiNews();
+    return articles[0]?.coverImage;
+  }
+
+  it('leaves out a minor-flagged cover rated R or above', async () => {
+    expect(await newsCover(cover(4, true))).toBeUndefined();
+  });
+
+  it('keeps a minor-flagged cover rated PG-13, without the flag', async () => {
+    const shown = await newsCover(cover(2, true));
+    expect(shown?.id).toBe(COVER);
+    expect(shown).not.toHaveProperty('minor');
   });
 });
