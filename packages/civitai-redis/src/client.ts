@@ -13,6 +13,11 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import {
+  isSysReadonlyRetryAllowed,
+  withoutSysReadonlyRetry,
+  withSysReadonlyRetry,
+} from './sys-readonly-retry';
 import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
@@ -1016,6 +1021,8 @@ export type RedisMetricsBridge = {
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
+  // sys READONLY retry outcome counter (./sys-readonly-retry), same bridge and label shape.
+  redisSysReadonlyRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
 };
 
 function getRedisMetrics(): RedisMetricsBridge | undefined {
@@ -1204,6 +1211,10 @@ export interface InstrumentCommandsOptions {
   sysDeadlineMs?: number;
   /** Sys client: reject new commands while this many are already in flight. <= 0 disables. */
   sysInflightCap?: number;
+  /** Sys client: retry writes rejected with READONLY (./sys-readonly-retry). */
+  sysReadonlyRetryEnabled?: boolean;
+  /** Sys client: delay before each READONLY retry (ms). */
+  sysReadonlyRetryBackoffMs?: readonly number[];
 }
 
 /**
@@ -1344,6 +1355,21 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
   const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
+  // Sentinel client only: it re-resolves the master when a command fails with READONLY, so a
+  // retry can reach the new primary. A single-node client keeps its one connection, so READONLY
+  // there means it points at a replica and retrying the same address cannot help.
+  const sysReadonlyRetry =
+    clientLabel === 'sys' &&
+    isClusterClient &&
+    (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
+  // A pipeline that hits READONLY may already have applied earlier writes, so this wrapper never
+  // retries one.
+  if (sysReadonlyRetry && typeof self._executePipeline === 'function') {
+    const originalPipeline = self._executePipeline;
+    self._executePipeline = function (this: any, ...args: any[]) {
+      return withoutSysReadonlyRetry(() => originalPipeline.apply(this, args));
+    };
+  }
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
@@ -1385,6 +1411,14 @@ export function instrumentCommands(
           backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        })
+      : sysReadonlyRetry && isSysReadonlyRetryAllowed()
+      ? withSysReadonlyRetry(runOnce, {
+          backoffMs: opts.sysReadonlyRetryBackoffMs,
+          onResult: (result, retries) => {
+            getRedisMetrics()?.redisSysReadonlyRetryCounter?.inc({ result });
+            log(`sysRedis READONLY retry ${result} after ${retries} retries`);
+          },
         })
       : runOnce();
 
