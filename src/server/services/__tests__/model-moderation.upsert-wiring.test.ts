@@ -306,6 +306,22 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
       expect(result?.meta).toMatchObject({ showcaseCollectionId: null });
     });
 
+    it('a refused add leaves a showcase set since then alone', async () => {
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        ...storedModel,
+        meta: { showcaseCollectionId: 12 },
+      });
+      vi.mocked(saveItemInCollections).mockRejectedValueOnce(
+        new Error('You do not have permission to add to this collection')
+      );
+
+      await create();
+
+      const writes = mockDbWrite.model.update.mock.calls;
+      expect(writes).toHaveLength(1);
+      expect(writes[0][0].data.meta).toMatchObject({ showcaseCollectionId: 12 });
+    });
+
     it('keeps a showcase the add accepted (control)', async () => {
       vi.mocked(saveItemInCollections).mockResolvedValueOnce('added' as never);
 
