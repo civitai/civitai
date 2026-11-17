@@ -170,7 +170,7 @@ func (c *MissCompute) flightLookup(ctx context.Context, cache string, ids []int,
 		return lookup(ctx, ids)
 	}
 	kept := make(map[int]jspack.Obj, len(ids))
-	rest := ids // MUTANT M2: no recheck of recent inside the flight
+	rest := c.fromRecent(cache, ids, kept)
 	if len(rest) == 0 {
 		return kept, nil
 	}
