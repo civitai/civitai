@@ -15,7 +15,10 @@ import {
   assertBlockWorkflowMintedForViewer,
   assertBlockWorkflowTaggedForApp,
 } from '~/server/services/blocks/block-workflow-access';
-import { snapshotFromWorkflow } from '~/server/services/blocks/workflow.service';
+import {
+  projectAppWorkflowWithPositions,
+  snapshotFromWorkflow,
+} from '~/server/services/blocks/workflow.service';
 import type { BlockOutputView } from '~/server/services/blocks/block-output-mint';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -255,6 +258,22 @@ export type OutputUnlockDeps = {
   liftRestriction: () => Promise<{ outcome: 'lifted' | 'insufficient-funds' | 'no-response' }>;
   /** The per-workflow lock; `null` when another unlock holds it. */
   acquireLock: () => Promise<(() => Promise<void>) | null>;
+  /**
+   * A WARN for support and the moderation count: the lift charged, and the output was not
+   * released. Never an error path; the reply already reports the charge.
+   */
+  warnChargedNotReleased: (entry: ChargedNotReleased) => void;
+};
+
+/** One charged-but-not-released unlock, as `warnChargedNotReleased` records it. */
+export type ChargedNotReleased = {
+  userId: number;
+  workflowId: string;
+  position: number;
+  unlockBuzz: number;
+  /** The output's browsing level when the unlock was planned, and after the lift. */
+  plannedLevel: number | null;
+  servedLevel: number | null;
 };
 
 export type OutputUnlockRequest = {
@@ -347,6 +366,21 @@ export async function unlockBlockOutput(
     deps.assertUnlockAllowed();
     await deps.assertUnlockReleasesOutput();
 
+    // Re-plan on a fresh read, still inside the lock, immediately before the charge: a rescan
+    // since the first read must not be charged for. What is left is the lift's own round trip,
+    // which the reply below reports honestly.
+    const fresh = await deps.readWorkflow();
+    const replan = planBlockOutputUnlock(fresh, request.claims, request.position, request.view);
+    if (replan.kind === 'not-restricted') {
+      return { outcome: 'not-restricted', snapshot: replan.snapshot, charged: NOTHING_CHARGED };
+    }
+    if (replan.kind !== 'pay') {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: replan.message });
+    }
+    if (replan.unlockBuzz !== total) {
+      throw new TRPCError({ code: 'CONFLICT', message: OUTPUT_UNLOCK_PRICE_CHANGED_MESSAGE });
+    }
+
     const lifted = await deps.liftRestriction();
     if (lifted.outcome === 'no-response') {
       keepLock = true;
@@ -365,24 +399,45 @@ export async function unlockBlockOutput(
         message: OUTPUT_UNLOCK_INSUFFICIENT_FUNDS_MESSAGE,
       };
     }
+    // The lift was taken: every outcome from here reports the charge.
+    const charged = { unlockBuzz: total };
+    const afterWorkflow = await deps.readWorkflow();
     const after = outputAt(
-      await deps.readWorkflow(),
+      afterWorkflow,
       blockOutputCeilingFromClaims(request.claims),
       request.position,
       request.view
     );
 
     if (!after.output || !isUnrestrictedOutput(after.output)) {
+      deps.warnChargedNotReleased({
+        userId: request.viewerUserId,
+        workflowId: request.workflowId,
+        position: request.position,
+        unlockBuzz: total,
+        plannedLevel: levelAt(fresh, request.position),
+        servedLevel: levelAt(afterWorkflow, request.position),
+      });
       return {
         outcome: 'not-released',
         snapshot: after.snapshot,
-        charged: NOTHING_CHARGED,
+        charged,
         message: OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE,
       };
     }
 
-    return { outcome: 'unlocked', snapshot: after.snapshot, charged: { unlockBuzz: total } };
+    return { outcome: 'unlocked', snapshot: after.snapshot, charged };
   } finally {
     if (!keepLock) await release();
   }
+}
+
+/** The browsing level the orchestrator reports for the output at `position`; never sent to the app. */
+function levelAt(workflow: Workflow, position: number): number | null {
+  const { positions } = projectAppWorkflowWithPositions(workflow, {
+    maxBrowsingLevel: allBrowsingLevelsFlag,
+    serving: false,
+    mint: null,
+  });
+  return positions[position]?.image.nsfwLevel ?? null;
 }

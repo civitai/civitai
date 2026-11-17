@@ -63,6 +63,10 @@ const LEDGER: Record<string, string> = {
   // `outputAt` builds the view: the request's serving rules, minted only for what is shown.
   'src/server/services/blocks/block-output-unlock.service.ts::snapshotAt::snapshotFromWorkflow':
     'view',
+  // Diagnostics only: the raw level at a position for the charged-but-not-released WARN; never
+  // reaches the app.
+  'src/server/services/blocks/block-output-unlock.service.ts::levelAt::projectAppWorkflowWithPositions':
+    '{maxBrowsingLevel:allBrowsingLevelsFlag,serving:false,mint:null}',
   'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
     '{...blockOutputCeilingFromClaims({}),serving:false,mint:null}',
 };
