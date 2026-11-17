@@ -61,6 +61,8 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
@@ -2498,7 +2500,9 @@ export const getPostContestCollectionDetails = async ({
 export const updatePostCollectionTagId = async ({
   id,
   collectionTagId,
-}: UpdatePostCollectionTagIdInput) => {
+  userId,
+  isModerator,
+}: UpdatePostCollectionTagIdInput & { userId: number; isModerator?: boolean }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2510,8 +2514,24 @@ export const updatePostCollectionTagId = async ({
 
   if (!collection || collection?.mode !== CollectionMode?.Contest) return;
 
-  if (!collection.tags.find((t) => t.id === collectionTagId))
-    throw throwBadRequestError('Invalid tag');
+  // Category tags only, and only on entries that have none or a category tag: the rest (judging
+  // state and the like) is the system's, as `setCollectionItemsTag` keeps it.
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.id);
+  if (!categoryTagIds.includes(collectionTagId)) throw throwBadRequestError('Invalid tag');
+
+  // An entrant changes their category only while submissions are open; managers and moderators
+  // can at any time.
+  const { manage } = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  if (!manage) {
+    const { submissionEndDate } = (collection.metadata ?? {}) as CollectionMetadataSchema;
+    if (submissionEndDate && new Date(submissionEndDate) < new Date())
+      throw throwBadRequestError('Submissions for this contest are closed');
+    if (await isContestBanned(userId)) throw throwBadRequestError(CONTEST_BANNED_MESSAGE);
+  }
 
   const isImageCollection = collection.type === CollectionType.Image;
 
@@ -2526,6 +2546,7 @@ export const updatePostCollectionTagId = async ({
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }],
     },
     data: {
       tagId: collectionTagId,

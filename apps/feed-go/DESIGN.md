@@ -640,7 +640,8 @@ path as serving, and compares decoded values:
   needs both. Each difference is counted in `feed_go_shadow_field_diffs_total` under category
   `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is what the
   public route writes: its Cache-Control is `trpc.ResultCacheControl`, the one function
-  `trpc.WriteResult` also calls. Noise rules (`shadow.CompareResponse`):
+  `trpc.WriteResult` also calls, and its Vary is `trpc.Vary` (`trpc-accept, accept`, the value tRPC's
+  `resolveResponse` sets on every answer). Noise rules (`shadow.CompareResponse`):
   - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
     `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
   - An empty value is absent.
