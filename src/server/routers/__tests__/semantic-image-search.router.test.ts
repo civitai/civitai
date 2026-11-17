@@ -232,6 +232,22 @@ describe('semanticImageSearch router — own-images answer time', () => {
     expect((await run.done).items).toEqual(items);
   });
 
+  it('holds a failed search until the jittered floor too', async () => {
+    h.search.mockRejectedValue(new Error('search service unavailable'));
+    let settled = false;
+    const done = caller()
+      .search({ query: 'kuro', usernames: ['fox'] })
+      .then(
+        () => 'resolved',
+        (error: Error) => error.message
+      )
+      .finally(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(hold - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await done).toBe('search service unavailable');
+  });
+
   it('does not hold a search that took longer than the floor', async () => {
     after(hold + 300);
     const run = start();

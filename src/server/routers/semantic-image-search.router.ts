@@ -65,11 +65,15 @@ const ownImagesRateLimit = rateLimit(
   { sharedKey: 'semanticImageSearch:search:own' }
 );
 
-// Every own-images answer, whatever it found, waits until a jittered floor after the search began.
+// Every own-images answer, whatever it found and even an error, waits until a jittered floor after the search began.
 // shortcut: own-images latency is not measured yet. Searches scoped to a username ran p25/p50/p75
 // 45/217/899 ms over a week in 2026-11 (n=54); re-derive from the `ownImages` log rows.
 export const OWN_IMAGES_FLOOR_MS = 200;
 export const OWN_IMAGES_JITTER_MS = 500;
+const holdOwnImages = async (started: number) => {
+  const wait = started + OWN_IMAGES_FLOOR_MS + Math.random() * OWN_IMAGES_JITTER_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+};
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
@@ -96,6 +100,9 @@ export const semanticImageSearchRouter = router({
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
         refuseNarrowing: !!ownImagesOf,
+      }).catch(async (error) => {
+        if (ownImagesOf) await holdOwnImages(started);
+        throw error;
       });
       const latencyMs = Date.now() - started;
 
@@ -119,9 +126,7 @@ export const semanticImageSearchRouter = router({
 
       // The picker reads one page and shows neither a correction nor a timing.
       if (ownImagesOf) {
-        const wait =
-          started + OWN_IMAGES_FLOOR_MS + Math.random() * OWN_IMAGES_JITTER_MS - Date.now();
-        if (wait > 0) await sleep(wait);
+        await holdOwnImages(started);
         return {
           items: result.items,
           nextCursor: undefined,
