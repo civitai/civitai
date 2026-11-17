@@ -799,9 +799,8 @@ function ImageDetail2Content() {
                       </AlertWithIcon>
                     )}
                     {!text && isOwner && <OwnerBlockedImageNotice image={image} />}
-                    {/* Only `image.get` returns `restricted`, so an image opened from a feed row (a moderator's own upload) shows no notice. */}
                     {!text &&
-                      currentUser?.isModerator &&
+                      (isOwner || currentUser?.isModerator) &&
                       'restricted' in image &&
                       image.restricted === true && (
                         <AlertWithIcon
@@ -812,9 +811,9 @@ function ImageDetail2Content() {
                           radius={0}
                           px="md"
                         >
-                          Hidden from feeds, galleries and search (its uploader still sees it where
-                          the page is built for them), because {RESTRICTED_IMAGE_REASON}. Moderators
-                          can still open it by id.
+                          {isOwner
+                            ? `Hidden from everyone else, because ${RESTRICTED_IMAGE_REASON}. You still see it on pages built for you, such as your profile.`
+                            : `Hidden from feeds, galleries and search (its uploader still sees it where the page is built for them), because ${RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.`}
                         </AlertWithIcon>
                       )}
                     {!text && image.poi && (

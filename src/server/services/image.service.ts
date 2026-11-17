@@ -1999,6 +1999,8 @@ type GetAllImagesRaw = {
   availability: Availability;
   minor: boolean;
   acceptableMinor: boolean;
+  // Mature and made with a base model that restricts mature images; true for the uploader too.
+  restricted: boolean;
   poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
@@ -2941,6 +2943,7 @@ const getAllImagesUncaptured = async (
       i.minor,
       i.poi,
       i."acceptableMinor",
+      ${imageRestrictedSql()} AS "restricted",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${Prisma.raw(
         collectionId
@@ -2969,13 +2972,9 @@ const getAllImagesUncaptured = async (
       return rows as Row[];
     },
     'getAllImages',
-    // Bumped v1 -> v2 when `p."model3dId"` was added to the SELECT. The query
-    // hash already changes with the new column (so old entries fall out of the
-    // keyspace on their own), but the explicit version bump abandons the stale
-    // keyspace immediately rather than leaving model3dId-less rows resident
-    // until their TTL — keeps the feed-modal chip from silently lacking the
-    // field on a warm cache after deploy.
-    'v2'
+    // Bump whenever the SELECT gains a column: the query hash changes anyway, but the bump abandons
+    // the old keyspace at once, so a warm cache never serves rows missing the new field.
+    'v3'
   );
   let rawImages: GetAllImagesRaw[];
   try {
@@ -4079,8 +4078,6 @@ export async function filterPinnedImagesToVersion<T extends { id: number }>(
 }
 
 type GetImageRaw = GetAllImagesRaw & {
-  // Mature and made with a base model that restricts mature images; true for the uploader too.
-  restricted: boolean;
   reactions?: ReviewReactions[];
   postId?: number | null;
   // User fields from JOIN (not in GetAllImagesRaw since main query uses cache)

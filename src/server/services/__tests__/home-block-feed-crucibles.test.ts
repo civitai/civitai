@@ -29,6 +29,7 @@ type Row = {
     nsfwLevel: number;
     needsReview?: string | null;
     tosViolation?: boolean;
+    modelRestricted?: boolean;
   };
   takenDownAt: Date | null;
 };

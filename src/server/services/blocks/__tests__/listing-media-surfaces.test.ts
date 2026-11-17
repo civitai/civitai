@@ -20,23 +20,28 @@ vi.mock('~/client-utils/edge-url', () => ({
 }));
 
 import { NsfwLevel } from '~/server/common/enums';
+import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import { projectPostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 
 const { PG, R } = NsfwLevel;
 
 type Img = ReturnType<typeof img>;
 
-function img(url: string, nsfwLevel: number, over: Record<string, unknown> = {}) {
+function img(
+  url: string,
+  nsfwLevel: number,
+  over: Record<string, unknown> = {}
+): ListingMediaImage {
   return {
     url,
     nsfwLevel,
     ingestion: 'Scanned',
-    needsReview: null as string | null,
+    needsReview: null,
     poi: false,
     minor: false,
     tosViolation: false,
     acceptableMinor: false,
-    blockedFor: null as string | null,
+    blockedFor: null,
     modelRestricted: false,
     ...over,
   };

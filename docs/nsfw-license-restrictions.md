@@ -40,7 +40,7 @@ All readers go through these, never a copied list:
   the image), which returns `row` with the image at `key` set to null when the viewer may not see it
   (`src/server/common/image-visibility.ts`);
   `isRestrictedImage` and `RESTRICTED_IMAGE_REASON` (`src/shared/utils/restricted-image.ts`). `apps/feed-go`
-  keeps its own copy of the image predicate (`internal/feed/query.go`), without the uploader exception.
+  keeps its own copy of the image predicate (`internal/feed/query.go`), uploader exception included.
 
 ## Hiding images is one-way
 

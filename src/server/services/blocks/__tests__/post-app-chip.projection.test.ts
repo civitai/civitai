@@ -59,7 +59,10 @@ import { postSelect } from '~/server/selectors/post.selector';
 import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
 import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
-import { listingMediaImageSelect } from '~/server/services/blocks/listing-media-audience';
+import {
+  listingMediaImageSelect,
+  type ListingMediaImage,
+} from '~/server/services/blocks/listing-media-audience';
 import {
   listingIdsInChipRow,
   postAppChipQuery,
@@ -122,11 +125,11 @@ type Listing = {
   kind: string;
   contentRating: string | null;
   revisionOfId: string | null;
-  icon: ReturnType<typeof scannedPgIcon> | null;
+  icon: ListingMediaImage | null;
 };
 
 /** A listing icon as `listingMediaImageSelect` reads it: scanned, unflagged, PG. */
-function scannedPgIcon(url: string | null) {
+function scannedPgIcon(url: string): ListingMediaImage {
   return {
     url,
     nsfwLevel: 1,

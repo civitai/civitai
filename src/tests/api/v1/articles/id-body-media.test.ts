@@ -153,15 +153,18 @@ describe('GET /api/v1/articles/[id] body media', () => {
     ['pending a scan', { ingestion: 'Pending' }],
     ['a violation', { tosViolation: true }],
     ['mature on a restricted base model', { nsfwLevel: R, modelRestricted: true }],
-  ])('🔴 an image %s is stripped for every caller, its author included', async (_, extra) => {
-    serve([state(PG_UUID, PG), state(R_UUID, PG, extra)]);
+  ] as const)(
+    '🔴 an image %s is stripped for every caller, its author included',
+    async (_, extra) => {
+      serve([state(PG_UUID, PG), state(R_UUID, PG, extra)]);
 
-    for (const session of [null, keyHolder(PG | R), keyHolder(PG | R, AUTHOR)]) {
-      const { body } = await call(session);
-      expect(body).not.toContain(R_UUID);
-      expect(body).toContain(PG_UUID);
+      for (const session of [null, keyHolder(PG | R), keyHolder(PG | R, AUTHOR)]) {
+        const { body } = await call(session);
+        expect(body).not.toContain(R_UUID);
+        expect(body).toContain(PG_UUID);
+      }
     }
-  });
+  );
 
   it('🔴 an unrated image, or one with no linked row, is stripped', async () => {
     serve([state(PG_UUID, PG), state(R_UUID, 0)]);

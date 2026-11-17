@@ -6,6 +6,7 @@ import {
   imageNotRestrictedWhere,
   imageRestrictedSql,
   isImageNotRestricted,
+  type RestrictableImage,
 } from '~/server/common/image-visibility';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { NsfwLevel } from '~/server/common/enums';
@@ -78,7 +79,10 @@ describe('isImageNotRestricted', () => {
       nsfwLevel: number;
       modelRestricted: boolean | null;
     }>(`SELECT * FROM "Image" ORDER BY id`);
-    const shown = rows.filter((row) => isImageNotRestricted(row, viewerId)).map((row) => row.id);
+    // The column is NOT NULL in production; the NULL rows here deliberately pin the twin's fail-closed arm.
+    const shown = rows
+      .filter((row) => isImageNotRestricted(row as RestrictableImage, viewerId))
+      .map((row) => row.id);
     expect(shown).toEqual(await ids(imageNotRestrictedSql({ viewerId })));
   });
 
