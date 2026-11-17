@@ -5116,6 +5116,27 @@ describe('a storyline started from an image', () => {
         });
       });
 
+      it('starts a new one when its chapter 1 is written while this start looks it up', async () => {
+        // Answers as Postgres would: a `setFirstChapter` that committed after the first lookup is
+        // seen by any later statement.
+        let chapterOneWritten = false;
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+          if (!strings.join('?').includes('"sparkImageId" =')) return Promise.resolve([]);
+          const rows = chapterOneWritten ? [] : [{ id: 9, title: 'First try' }];
+          chapterOneWritten = true;
+          return Promise.resolve(rows);
+        }) as never);
+
+        await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(w.storyline.update).not.toHaveBeenCalled();
+        expect(w.storyline.create).toHaveBeenCalledOnce();
+        expect(
+          w.$queryRaw.mock.calls.some(([strings]) =>
+            (strings as unknown as string[]).join('?').endsWith('FOR NO KEY UPDATE')
+          )
+        ).toBe(true);
+      });
+
       it('still starts a new one when a published post is chapter 1', async () => {
         w.post.findUnique.mockResolvedValue(publishedPost({ userId: OWNER }) as never);
         w.storylineChapter.create.mockResolvedValue({ id: 20 } as never);
