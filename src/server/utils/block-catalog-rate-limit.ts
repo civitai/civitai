@@ -798,7 +798,8 @@ export async function checkBlockSubmitUserRateLimit(
  * because the viewer opted in — per (viewer, app). The only bound on how fast an opted-in app
  * can spend inside the viewer's daily limit, so unlike every bucket above it FAILS CLOSED: a
  * store error or a bad reply refuses, and the host then asks for that job. Atomic
- * (`SET NX EX` + `INCR` in one MULTI), so concurrent consents cannot overshoot.
+ * (`SET NX EX` + `INCR` in one MULTI), so concurrent consents cannot overshoot. Not
+ * `claimRateLimitAttempt`: it exempts moderators, the first audience of this feature.
  */
 export const BLOCK_STANDING_CONSENT_RATE_LIMIT_MAX = 5;
 export const BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS = 60;

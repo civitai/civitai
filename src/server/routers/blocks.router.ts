@@ -15278,9 +15278,9 @@ async function consentQuoteGrantFor(
 }
 
 /**
- * The step preview's answer to "may this run without a prompt?" (`standing`) and "should the
- * confirm offer the opt-in?" (`standingOffer`). Both false on any error, so the host draws
- * today's dialog. A private run never qualifies: its spend has no daily-limit reservation.
+ * `standing`: may this job run without a prompt; `standingOffer`: should the confirm offer the
+ * opt-in. Both false on any error (the host draws the per-job confirm). A private run never
+ * qualifies: its spend has no daily-limit reservation.
  */
 async function previewStandingConsent(
   claims: BlockClaims,
@@ -16208,9 +16208,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   body: PassThroughStepBody & { quoteId: string };
 }) {
   const { ctx, claims, body } = opts;
-  // Set by the preflight, read by the plan and the ceiling.
   let capOutput = false;
-  // The viewer's opt-in ceiling, read again here so switching it off reaches the next submit.
+  // Read again at submit so switching the opt-in off reaches the next job.
   let standingMaxJob: number | null = null;
   return submitConfirmedQuoteWorkflow({
     ctx,

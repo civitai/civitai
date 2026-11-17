@@ -845,15 +845,10 @@ export type AppUserScopeGrant = {
    */
   buzz_budget_per_day: number | null;
   /**
-   * The viewer opted in to running this app's above-budget jobs without a per-job
-   * confirm: the highest job price, in Buzz, that may run unasked (the price of the job
-   * they opted in on), while each job also fits what is left of `buzzBudgetPerDay`
-   * today. NULL = not opted in. Set only from the viewer's own session; cleared by any
-   * revoke of spending, any re-consent, any budget write through `recordScopeGrant`,
-   * and the viewer's own switch on /apps/activity.
-   * MANUALLY APPLIED (migration 20271116180000_app_user_scope_grant_confirm_within_limit).
-   * Read only through `readConfirmWithinLimit`, never in a shared grant select: before
-   * the migration it reads as not opted in and every other grant read is untouched.
+   * Highest job price, in Buzz, the viewer lets this app run without a per-job confirm
+   * (within `buzzBudgetPerDay`); NULL = not opted in. MANUALLY APPLIED (migration
+   * 20271116180000). Read only through `readConfirmWithinLimit`, never in a shared grant
+   * select, so a database without it breaks no other grant read.
    */
   confirm_within_limit_max_job: number | null;
 };

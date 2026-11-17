@@ -25,9 +25,9 @@ import { capitalize } from '~/utils/string-helpers';
  *      viewer's own daily limit for the app — all server-resolved;
  *   2. if the job would exceed what remains of that daily limit, shows WHY and where
  *      to raise it, and replies `daily-limit-exceeded` — there is no confirm to click;
- *   3. otherwise, when the preview reports `standing` (the viewer opted in for this app),
- *      records a standing consent instead of asking, falling back to the confirm on any
- *      error; else shows the price in a host-chrome confirm;
+ *   3. otherwise, when the preview reports `standing`, records a standing consent instead of
+ *      asking; one that errors falls back to the confirm, never to running; else shows the
+ *      price in a host-chrome confirm;
  *   4. on confirm, records the viewer's confirmation (`blocks.consentQuoteGrant`,
  *      session-required) and THEN submits the body (`blocks.submitWorkflow`);
  *   5. replies `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`.
