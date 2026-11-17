@@ -4965,7 +4965,8 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
   const items = page.map((r) => ({
     ...r,
     listingEditCheck: checks?.get(r.id) ?? null,
-    openHoldCount: holdCounts.get(r.slug) ?? 0,
+    // null: the holds could not be read (shown as unknown, never as clean).
+    openHoldCount: holdCounts ? holdCounts.get(r.slug) ?? 0 : null,
   }));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

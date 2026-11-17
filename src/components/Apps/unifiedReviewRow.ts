@@ -187,8 +187,11 @@ export type UnifiedReviewRow = {
    * an approved app's listing edit. Absent / null = not checked (no identity change).
    */
   listingEditCheck?: ListingEditCheckSummary | null;
-  /** PENDING rows: open review holds on the app; approving needs an override while above 0. */
-  openHoldCount?: number;
+  /**
+   * PENDING rows: open review holds on the app; approving needs an override while above 0.
+   * `null` = the holds could not be read: shown as unknown and kept out of the fast lane.
+   */
+  openHoldCount?: number | null;
 };
 
 export type ReviewRowSignals = {
@@ -293,7 +296,7 @@ export function onsiteRequestToUnifiedRow(
     submitter: req.submittedBy,
     submittedAt: toDate(reviewedAt ?? req.submittedAt),
     onReview: () => openOnsiteReview(req),
-    openHoldCount: req.openHoldCount ?? 0,
+    openHoldCount: req.openHoldCount === undefined ? 0 : req.openHoldCount,
     // Carried for code+media pairing + the combined surface.
     appBlockId: req.appBlockId,
     onsiteRequest: req,
@@ -349,7 +352,7 @@ export type OffsiteReviewRequest = {
   reviewMedia?: ListingReviewMedia | null;
   /** PENDING queue only: the impersonation check on an approved app's listing edit. */
   listingEditCheck?: ListingEditCheckSummary | null;
-  openHoldCount?: number;
+  openHoldCount?: number | null;
 };
 
 /**
@@ -417,7 +420,7 @@ export function offsiteRequestToUnifiedRow(
     coverUrl: req.coverUrl ?? null,
     reviewMedia: req.reviewMedia ?? null,
     listingEditCheck: req.listingEditCheck ?? null,
-    openHoldCount: req.openHoldCount ?? 0,
+    openHoldCount: req.openHoldCount === undefined ? 0 : req.openHoldCount,
   };
 }
 
@@ -493,7 +496,10 @@ function combineCodeAndMediaRows(
       signals: code.signals,
       listingEditCheck: media.listingEditCheck ?? null,
       // Holds are per app, so both halves report the same count.
-      openHoldCount: Math.max(code.openHoldCount ?? 0, media.openHoldCount ?? 0),
+      openHoldCount:
+        code.openHoldCount === null || media.openHoldCount === null
+          ? null
+          : Math.max(code.openHoldCount ?? 0, media.openHoldCount ?? 0),
     });
   }
 
@@ -545,6 +551,9 @@ export function reviewRowLane(
   const result = agentReviewLane(signals.agentReview);
   if (result.lane === 'agent-clean' && (row.openHoldCount ?? 0) > 0) {
     return { lane: 'flagged', reasons: ['the app has an open review hold'] };
+  }
+  if (result.lane === 'agent-clean' && row.openHoldCount === null) {
+    return { lane: 'flagged', reasons: ["the app's review holds could not be read"] };
   }
   if (result.lane === 'agent-clean' && listingEditCheckBadge(row.listingEditCheck)) {
     return { lane: 'flagged', reasons: ['the listing edit hit the impersonation check'] };

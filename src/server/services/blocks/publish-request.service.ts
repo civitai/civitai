@@ -3044,7 +3044,8 @@ export async function listPendingRequests(
       ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
         ...r,
         ...listingFacts(r.id),
-        openHoldCount: holdCounts.get(r.slug) ?? 0,
+        // null: the holds could not be read (shown as unknown, never as clean).
+        openHoldCount: holdCounts ? holdCounts.get(r.slug) ?? 0 : null,
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),

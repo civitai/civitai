@@ -118,7 +118,7 @@ describe('placing and clearing', () => {
       clearHold(raw, { holdId: hold.id, actorUserId: AGENT, reason: '' })
     ).rejects.toThrow(/reason/);
     await clearHold(raw, { holdId: hold.id, actorUserId: HUMAN, reason: 'check finished, clean' });
-    expect((await getOpenHoldCountsBySlug(raw, ['app-a'])).get('app-a')).toBeUndefined();
+    expect((await getOpenHoldCountsBySlug(raw, ['app-a']))?.get('app-a')).toBeUndefined();
     await expect(
       clearHold(raw, { holdId: hold.id, actorUserId: HUMAN, reason: 'check finished, clean' })
     ).rejects.toThrow(/already cleared/);
@@ -224,7 +224,7 @@ describe('approve', () => {
     await expect(
       tx((t) => resolveHoldsAtApprove(t, { ...decision, actorUserId: HUMAN }))
     ).rejects.toThrow(/placed after this review was loaded/);
-    expect((await getOpenHoldCountsBySlug(raw, ['app-a'])).get('app-a')).toBe(2);
+    expect((await getOpenHoldCountsBySlug(raw, ['app-a']))?.get('app-a')).toBe(2);
     expect((await db.query('SELECT 1 FROM "ModActivity"')).rows).toHaveLength(0);
   });
 
@@ -250,7 +250,7 @@ describe('approve', () => {
         shownHoldIds: [hb.id],
       })
     );
-    expect((await getOpenHoldCountsBySlug(raw, ['app-a', 'app-b'])).get('app-a')).toBe(1);
+    expect((await getOpenHoldCountsBySlug(raw, ['app-a', 'app-b']))?.get('app-a')).toBe(1);
   });
 
   it('🔴 a cleared or overridden hold stops blocking', async () => {
@@ -280,7 +280,7 @@ describe('approve', () => {
 });
 
 describe('with the table absent', () => {
-  it('approve fails closed and the queue count fails open', async () => {
+  it('approve fails closed and the queue count reads as unknown', async () => {
     const bare = new PGlite();
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
@@ -288,7 +288,7 @@ describe('with the table absent', () => {
       await expect(checkHoldsBeforeApprove(r, { slug: 'app-a' })).rejects.toThrow(
         /approve is refused/
       );
-      expect((await getOpenHoldCountsBySlug(r, ['app-a'])).size).toBe(0);
+      expect(await getOpenHoldCountsBySlug(r, ['app-a'])).toBeNull();
     } finally {
       quiet.mockRestore();
       await bare.close();

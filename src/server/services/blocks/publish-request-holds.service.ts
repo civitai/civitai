@@ -120,14 +120,13 @@ export async function listHoldsBySlug(
 }
 
 /**
- * Open-hold counts per slug for the review queue. Fails open (returns an empty map) so the queue
- * still loads where the table has not been applied; the approve paths read the table directly
- * and fail closed.
+ * Open-hold counts per slug for the review queue, or `null` when they cannot be read: the queue
+ * then shows the hold state as unknown and keeps those apps out of the fast lane, never as clean.
  */
 export async function getOpenHoldCountsBySlug(
   db: RawClient,
   slugs: string[]
-): Promise<Map<string, number>> {
+): Promise<Map<string, number> | null> {
   const counts = new Map<string, number>();
   if (!slugs.length) return counts;
   try {
@@ -136,11 +135,12 @@ export async function getOpenHoldCountsBySlug(
       WHERE slug = ANY(${slugs}::text[]) AND cleared_at IS NULL
       GROUP BY slug`;
     for (const r of rows) counts.set(r.slug, r.n);
+    return counts;
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[publish-request-holds] open-hold count read failed', err);
+    return null;
   }
-  return counts;
 }
 
 async function liveClaimExists(tx: RawClient, slug: string): Promise<boolean> {

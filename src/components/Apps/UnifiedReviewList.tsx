@@ -423,6 +423,22 @@ function ListingEditCheckBadge({ row }: { row: UnifiedReviewRow }) {
 }
 
 function HoldBadge({ row }: { row: UnifiedReviewRow }) {
+  if (row.openHoldCount === null) {
+    return (
+      <Badge
+        size="sm"
+        variant="light"
+        color="yellow"
+        styles={FULL_LABEL_BADGE_STYLES}
+        leftSection={<IconHandStop size={11} />}
+        data-signal="hold"
+        data-state="unknown"
+        title="This app's review holds could not be read. Open it before approving."
+      >
+        Holds unknown
+      </Badge>
+    );
+  }
   const n = row.openHoldCount ?? 0;
   if (n === 0) return null;
   return (
@@ -446,7 +462,11 @@ function RowSignals({ row }: { row: UnifiedReviewRow }) {
   if (!signals) {
     // A listing-only row: no code signals, but an approved app's listing edit may carry an
     // impersonation-check badge. Nothing to show → the dash, exactly as before.
-    if (listingEditCheckBadge(row.listingEditCheck) || (row.openHoldCount ?? 0) > 0) {
+    if (
+      listingEditCheckBadge(row.listingEditCheck) ||
+      row.openHoldCount === null ||
+      (row.openHoldCount ?? 0) > 0
+    ) {
       return (
         <Group gap={4} wrap="wrap" data-testid={`apps-unified-review-signals-${row.key}`}>
           <HoldBadge row={row} />
