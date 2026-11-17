@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 )
@@ -212,5 +213,119 @@ func TestParseInfinitePrioritizedAndPendingInvalid(t *testing.T) {
 		if _, err := Parse(parseObj(t, m)); fallback.Reason(err) != want {
 			t.Errorf("gallery Parse %s: reason %q, want %q", m, fallback.Reason(err), want)
 		}
+	}
+}
+
+func TestParseInfiniteReadsPrioritizedAndPending(t *testing.T) {
+	in, err := ParseInfinite(carouselInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in.PrioritizedUserIDs, []int{5}) || !in.Pending || in.IncludeCosmetics || in.IncludeProfilePictures ||
+		in.ModelVersionID != 60 || in.Limit != 3 {
+		t.Fatalf("parsed = %+v", in)
+	}
+	// Absent, null (superjson's undefined) and empty are all "not sent".
+	for _, m := range []map[string]any{{}, {"prioritizedUserIds": nil, "pending": nil}, {"prioritizedUserIds": []any{}, "pending": false}} {
+		in, err := ParseInfinite(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.prioritized() || in.Pending || !in.IncludeCosmetics {
+			t.Fatalf("%v parsed as prioritized %v pending %v cosmetics %v", m, in.prioritized(), in.Pending, in.IncludeCosmetics)
+		}
+	}
+	// requiresImageDbPath: prioritizedUserIds only with a model or version scope.
+	for _, c := range []struct {
+		in   InfiniteInput
+		want bool
+	}{
+		{InfiniteInput{PrioritizedUserIDs: []int{5}, Input: Input{ModelVersionID: 60}}, true},
+		{InfiniteInput{PrioritizedUserIDs: []int{5}, Input: Input{ModelID: 50, ModelVersionID: 60}}, true},
+		{InfiniteInput{PrioritizedUserIDs: []int{5}, Input: Input{ModelID: 50}}, true},
+		{InfiniteInput{PrioritizedUserIDs: []int{5}}, false},
+		{InfiniteInput{PrioritizedUserIDs: []int{5}, UserID: 5}, false},
+		{InfiniteInput{Pending: true, Input: Input{ModelVersionID: 60}}, false},
+	} {
+		if got := c.in.dbPath(); got != c.want {
+			t.Errorf("dbPath(%+v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// `include: []` reaches the hydration as no cosmetics; the default include keeps them.
+func TestServeInfiniteIncludeWithoutCosmetics(t *testing.T) {
+	f := newCarouselFixture(t)
+	f.rows = []RawImage{infRow(31, 700)}
+	if _, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.hydrator.req.NoCosmetics || !f.hydrator.req.NoProfilePictures {
+		t.Fatalf("include [] hydrated with %+v", f.hydrator.req)
+	}
+	m := carouselInput()
+	delete(m, "include")
+	if _, _, _, err := serveInf(t, f, m, InfiniteRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if f.hydrator.req.NoCosmetics {
+		t.Fatal("the default include (['cosmetics']) hydrated without cosmetics")
+	}
+}
+
+// `use-model-version-cache-for-images` mirrored on: the cache-ordered branch is Node's.
+func TestServeInfinitePrioritizedVersionCacheFallsBack(t *testing.T) {
+	f := newCarouselFixture(t)
+	f.deps.Config.PrioritizedVersionCache = true
+	_, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{})
+	if got := fallback.Reason(err); got != "prioritized-version-cache" {
+		t.Fatalf("reason %q (%v), want prioritized-version-cache", got, err)
+	}
+	// The flag is read only on the prioritized Postgres path: the feed path's empty page is unchanged.
+	j, _, _, err := serveInf(t, f, map[string]any{"prioritizedUserIds": []any{num("5")}}, InfiniteRequest{})
+	if err != nil || j["source"] != "feed" {
+		t.Fatalf("feed path with the mirror on: %v %v", j, err)
+	}
+}
+
+func TestBuildPrioritized(t *testing.T) {
+	// A model alone: no model scope at all (no join, no version clause), only the creators.
+	b := (&ImagesQuery{Limit: 5, Sort: SortMostReactions, BrowsingLevel: 1, ModelID: 50, PrioritizedUserIDs: []int{5, 6}}).Build()
+	for _, absent := range []string{`ImageResourceNew`, `mv."modelId"`, `p."modelVersionId" =`} {
+		if strings.Contains(b.SQL, absent) {
+			t.Errorf("a prioritized model-only query carries %q", absent)
+		}
+	}
+	mustContain(t, b.SQL, `i."userId" = ANY($`, `i."id" "cursorId"`, `ORDER BY (i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`)
+	if b.CacheTTL != 0 || b.CacheTags != nil {
+		t.Fatalf("prioritizedUserIds is personalized (never cached): ttl %v tags %v", b.CacheTTL, b.CacheTags)
+	}
+	// Oldest: the order is still the prioritized one; the cursor column is the sort's.
+	b = (&ImagesQuery{Limit: 5, Sort: SortOldest, BrowsingLevel: 1, ModelVersionID: 60, PrioritizedUserIDs: []int{5}}).Build()
+	if strings.Contains(b.SQL, `ORDER BY i."id" ASC`) {
+		t.Fatal("prioritizedUserIds replaces the sort's order")
+	}
+	mustContain(t, b.SQL, `i."id" "cursorId"`, `p."modelVersionId" = $`)
+	// A post's media: the cursor column stays the index (getCursor ran on i."index").
+	b = (&ImagesQuery{Limit: 5, BrowsingLevel: 1, PostID: 7, IndexOrder: true, PrioritizedUserIDs: []int{5}}).Build()
+	mustContain(t, b.SQL, `i."index" "cursorId"`, `ORDER BY (i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`)
+
+	// Pending signed out is not personalized: a version gallery stays cacheable, without the publish clause.
+	b = (&ImagesQuery{Limit: 5, BrowsingLevel: 1, ModelVersionID: 60, Pending: true}).Build()
+	if b.CacheTTL != 10*time.Minute || strings.Contains(b.SQL, `p."publishedAt" < now()`) {
+		t.Fatalf("signed-out pending: ttl %v, publish clause %v", b.CacheTTL, strings.Contains(b.SQL, `p."publishedAt" < now()`))
+	}
+	// The pending view (signed in, or a moderator) is.
+	for _, q := range []ImagesQuery{
+		{Limit: 5, BrowsingLevel: 1, ModelVersionID: 60, Pending: true, ViewerID: 9},
+		{Limit: 5, BrowsingLevel: 1, ModelVersionID: 60, Pending: true, ViewerID: 9, IsModerator: true},
+	} {
+		if b := q.Build(); b.CacheTTL != 0 || b.CacheTags != nil {
+			t.Errorf("pending view (moderator %v) cached: %v %v", q.IsModerator, b.CacheTTL, b.CacheTags)
+		}
+	}
+	// Positive control: the same version gallery without pending keeps its publish clause.
+	if b := (&ImagesQuery{Limit: 5, BrowsingLevel: 1, ModelVersionID: 60}).Build(); !strings.Contains(b.SQL, `(p."publishedAt" < now())`) {
+		t.Fatal("control: the publish clause is missing without pending")
 	}
 }
