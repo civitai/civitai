@@ -52,7 +52,7 @@ export default AuthedEndpoint(
         username: user.username,
         image: user.image ?? null,
         status,
-        tokenScope,
+        tokenScope: Number(tokenScope),
         subject,
       });
 

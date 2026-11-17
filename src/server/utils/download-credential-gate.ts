@@ -1,4 +1,5 @@
 import type { NextApiRequest } from 'next';
+import { env } from '~/env/server';
 import {
   isFullScopeUserKey,
   withholdsModerator,
@@ -105,7 +106,11 @@ export async function scopeRefusalMode(
   route: DownloadRoute,
   requirement: Requirement
 ): Promise<DownloadScopeMode> {
-  const mode = await getDownloadScopeGateMode().catch((): DownloadScopeMode => 'off');
+  // REST_SCOPE_ENFORCE=enforce enforces these routes too, whatever their own flag says.
+  const mode: DownloadScopeMode =
+    env.REST_SCOPE_ENFORCE === 'enforce'
+      ? 'enforce'
+      : await getDownloadScopeGateMode().catch((): DownloadScopeMode => 'off');
   if (mode === 'off') return mode;
   const context = (req as NextApiRequest & { context?: Context }).context;
   const fields = credentialLogFields(getRequestCredential(req));

@@ -73,8 +73,9 @@ async function call(handler: (req: never, res: never) => unknown, { bearer = tru
       res.body = body;
       return res;
     }),
+    // As Next sends it: a body JSON cannot serialize fails here as it would in production.
     send: vi.fn((body: unknown) => {
-      res.body = body;
+      res.body = JSON.parse(JSON.stringify(body));
       return res;
     }),
     setHeader: vi.fn(),
@@ -102,7 +103,7 @@ describe('/api/v1/me by token scope', () => {
       username: USER.username,
       image: USER.image,
       status: 'active',
-      tokenScope: TokenScope.None,
+      tokenScope: 0,
       subject: { type: 'oauth', id: 'client-2' },
     });
   });
