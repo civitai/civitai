@@ -418,6 +418,8 @@ describe('archive-csam-reports and the separate archiver', () => {
     loggingMock.logToAxiom.mock.calls
       .map(([arg]) => arg as Record<string, unknown>)
       .filter((arg) => arg?.subType === subType);
+  const pl = (t: Record<string, unknown>) =>
+    t.payload as { tickId: string; inAppOn: boolean; readable: boolean };
 
   beforeEach(() => mocks.getCsamsToArchive.mockResolvedValue(withUsers));
 
@@ -491,7 +493,7 @@ describe('archive-csam-reports and the separate archiver', () => {
     await archiveJob!.run({}).result;
 
     expect(archived()).toEqual([8801, 8802, 8803]);
-    expect(logs('archive-tick').map((t) => [t.phase, t.inAppOn, t.readable])).toEqual([
+    expect(logs('archive-tick').map((t) => [t.phase, pl(t).inAppOn, pl(t).readable])).toEqual([
       ['start', true, false],
       ['end', true, false],
     ]);
@@ -530,8 +532,11 @@ describe('archive-csam-reports and the separate archiver', () => {
 
     const ticks = logs('archive-tick');
     expect(ticks.map((t) => t.phase)).toEqual(['start', 'end']);
-    expect(ticks.every((t) => t.inAppOn === false && t.readable === true)).toBe(true);
-    expect(ticks[0].tickId).toBe(ticks[1].tickId);
-    expect(ticks[0].tickId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ticks.every((t) => pl(t).inAppOn === false && pl(t).readable === true)).toBe(true);
+    expect(pl(ticks[0]).tickId).toBe(pl(ticks[1]).tickId);
+    expect(pl(ticks[0]).tickId).toMatch(/^[0-9a-f-]{36}$/);
+    // civitai-prod is at Axiom's field cap: a new top-level key would be dropped on ingest.
+    for (const t of ticks)
+      expect(Object.keys(t).sort()).toEqual(['name', 'payload', 'phase', 'pod', 'subType', 'type']);
   });
 });

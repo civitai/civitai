@@ -206,6 +206,15 @@ async function wasStamped(reportId: number) {
 
 type Tick = { tickId: string; pod: string | null; inAppOn: boolean; readable: boolean };
 
+/**
+ * The tick's own keys go under `payload`, a map field: civitai-prod is at Axiom's field cap, so a new
+ * top-level key is dropped on ingest. `pod` is already a dataset field and stays top level.
+ */
+const tickFields = (tick: Tick) => ({
+  pod: tick.pod,
+  payload: { tickId: tick.tickId, inAppOn: tick.inAppOn, readable: tick.readable },
+});
+
 async function archiveTick(tick: Tick) {
   try {
     const removed = await sweepArchiveScratchDirs();
@@ -255,8 +264,7 @@ async function archiveTick(tick: Tick) {
           name: 'csam-report',
           type: 'error',
           subType: 'archive-flag-unreadable',
-          tickId: tick.tickId,
-          pod: tick.pod,
+          ...tickFields(tick),
           reportId: report.id,
         });
     } catch (e) {
@@ -296,15 +304,14 @@ const archiveCsamReportDataJob = createJob(
       type: 'info',
       subType: 'archive-tick',
       phase: 'start',
-      ...tick,
+      ...tickFields(tick),
     });
     if (!readable)
       logToAxiom({
         name: 'csam-report',
         type: 'error',
         subType: 'archive-flag-unreadable',
-        tickId: tick.tickId,
-        pod: tick.pod,
+        ...tickFields(tick),
       });
     try {
       await archiveTick(tick);
@@ -314,7 +321,7 @@ const archiveCsamReportDataJob = createJob(
         type: 'info',
         subType: 'archive-tick',
         phase: 'end',
-        ...tick,
+        ...tickFields(tick),
       });
     }
   },
