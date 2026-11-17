@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import superjson from 'superjson';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { imagesEndpointSchema } from '~/server/schema/images-endpoint.schema';
 import {
   FEED_GO_SHADOW_ENDPOINTS,
   recordFeedGoProbeOutcome,
@@ -749,8 +750,19 @@ export type FeedGoV1ShapeInput = {
 };
 
 /**
+ * The query keys feed-go's ParseV1 accepts: imagesEndpointSchema's (the keys its generated
+ * allow-list, apps/feed-go/internal/inputschema/schemas.json, is projected from and held to by the
+ * schema-drift test) plus `token`, the API key. Any other key is `input-unknown-key` there.
+ */
+const V1_ACCEPTED_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(imagesEndpointSchema.shape),
+  'token',
+]);
+
+/**
  * The shape class of one `/api/v1/images` request, from its parsed query (null when it did not
- * parse) and its final status, in feed-go's own fallback order (ParseV1). Pure and cheap.
+ * parse), its raw query (zod strips an unknown key, so only `req.query` shows one) and its final
+ * status, in feed-go's own fallback order (ParseV1). Pure and cheap.
  */
 export function feedGoV1ShapeClass(
   req: ShadowRequestLike,
@@ -763,6 +775,7 @@ export function feedGoV1ShapeClass(
     if (data.imageId !== undefined) return 'unported_imageId';
     if (data.tags !== undefined) return 'unported_tags';
     if (data.baseModels !== undefined) return 'unported_baseModels';
+    if (Object.keys(req.query).some((k) => !V1_ACCEPTED_KEYS.has(k))) return 'unported_unknownKey';
     if (data.modelId && !data.modelVersionId) return 'unported_modelId_only';
     if (data.withTags) return 'unported_withTags';
     return 'ported';

@@ -1991,10 +1991,10 @@ const V1 = [
     replies: { 'levels=1%2C2%2C4%2C8%2C16&excludeMinor=1&excludePoi=1&viewerId=1004&sort=oldest&limit=3': { body: { items: [8001, 8002, 8004], ...fc('1717000000000', '8004') } } },
   },
   {
-    name: 'extra-key-in-next-page',
-    description: 'A key outside the schema is kept in nextPage, in req.query order.',
+    name: 'fallback-unknown-key',
+    description: 'A key outside imagesEndpointSchema: Node strips it (and keeps it in nextPage), but a key the app added after the Go build was generated is one it reads, so feed-go never treats it as absent.',
     query: 'foo=bar&limit=2&sort=Newest',
-    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=newest&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } } },
+    fallback: 'input-unknown-key',
   },
   // `ids`: the legacy Postgres path (getAllImages), in its own order, never the request's.
   {

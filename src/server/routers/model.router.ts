@@ -86,6 +86,7 @@ import {
   updateGallerySettingsSchema,
   upsertCreatorGalleryHiddenUserSchema,
   removeCreatorGalleryHiddenUserSchema,
+  getAllModelsInputSchema,
 } from '~/server/schema/model.schema';
 import {
   addCreatorGalleryHiddenUser,
@@ -279,7 +280,7 @@ export const modelRouter = router({
    */
   getAll: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getAllModelsSchema.extend({ page: z.never().optional() }))
+    .input(getAllModelsInputSchema)
     .use(skipEdgeCache)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(getModelsInfiniteHandler),

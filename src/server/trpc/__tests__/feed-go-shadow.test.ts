@@ -7,6 +7,8 @@
  * pins one decision. The end-to-end path through the real route and transformer is
  * `src/server/__tests__/trpc-feed-go-shadow.test.ts`.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import superjson from 'superjson';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -995,6 +997,64 @@ describe('feedGoV1ShapeClass', () => {
     ['a 503', { modelVersionId: 9 }, 503, 'non200'],
   ] as const)('%s is %s', (_name, data, status, want) => {
     expect(feedGoV1ShapeClass(req, data, status)).toBe(want);
+  });
+
+  // zod strips a key outside imagesEndpointSchema, so the parsed data never shows one: the class is
+  // read from the raw query, in ParseV1's order (after imageId/tags/baseModels, before the rest).
+  it.each([
+    [
+      'an unknown key',
+      { modelVersionId: '9', utm_source: 'x' },
+      { modelVersionId: 9 },
+      'unported_unknownKey',
+    ],
+    ['an unknown key with no value', { ids: '1', foo: '' }, { ids: [1] }, 'unported_unknownKey'],
+    ['the API key alone is not unknown', { token: 'K' }, {}, 'api_key'],
+    [
+      'schema keys only',
+      { modelVersionId: '9', limit: '2', sort: 'Newest' },
+      { modelVersionId: 9 },
+      'ported',
+    ],
+    ['tags wins over an unknown key', { tags: '5', foo: '1' }, { tags: [5] }, 'unported_tags'],
+    [
+      'imageId wins over an unknown key',
+      { imageId: '3', foo: '1' },
+      { imageId: 3 },
+      'unported_imageId',
+    ],
+    [
+      'an unknown key wins over a model without a version',
+      { modelId: '3', foo: '1' },
+      { modelId: 3 },
+      'unported_unknownKey',
+    ],
+    [
+      'an unknown key wins over withTags',
+      { withTags: 'true', foo: '1' },
+      { withTags: true },
+      'unported_unknownKey',
+    ],
+  ] as const)('raw query: %s is %s', (_name, query, data, want) => {
+    expect(feedGoV1ShapeClass(restRequest({ query }), data, 200)).toBe(want);
+  });
+
+  // The seam with feed-go: every key of the generated allow-list Go reads (schemas.json) is accepted
+  // here too, so the two cannot disagree about which query keys are unknown.
+  it('accepts every key of the allow-list feed-go embeds', () => {
+    const embedded = JSON.parse(
+      readFileSync(
+        join(__dirname, '../../../../apps/feed-go/internal/inputschema/schemas.json'),
+        'utf8'
+      )
+    ) as { imagesEndpointSchema: { keys: string[] } };
+    expect(embedded.imagesEndpointSchema.keys.length).toBe(21);
+    for (const key of embedded.imagesEndpointSchema.keys) {
+      expect([key, feedGoV1ShapeClass(restRequest({ query: { [key]: '1' } }), {}, 200)]).toEqual([
+        key,
+        'ported',
+      ]);
+    }
   });
 
   it('a query that did not parse is non200, an API credential is api_key', () => {
