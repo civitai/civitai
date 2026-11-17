@@ -55,9 +55,13 @@ vi.mock('~/server/redis/caches', () => ({
 vi.mock('~/server/search-index/bounties.search-index', () => ({
   bountiesSearchIndex: { queueUpdate: vi.fn() },
 }));
+vi.mock('~/server/search-index/SearchIndexUpdate', () => ({
+  SearchIndexUpdate: { queueUpdate: vi.fn() },
+}));
 
 import {
   addBenefactorUnitAmount,
+  applyBountyContentChange,
   updateBountyById,
   upsertBounty,
 } from '~/server/services/bounty.service';
@@ -65,6 +69,7 @@ import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { bountyNsfwFlagLevel, ratedLevel } from '~/server/services/bounty-rated-level';
 import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import {
   checkEntityImageKeys,
   createEntityImages,
@@ -259,7 +264,7 @@ describe('updateBountyById — a moderator rating against a new nsfw flag', () =
 
 // An unflagged bounty is served at its stored level, which updateBountyNsfwLevels' SQL computes.
 // Here the edit's own write, its raw queries and its job enqueue all land on real tables.
-describe('updateBountyById on real rows: the stored level after an nsfw toggle', () => {
+describe('on real rows: the stored level after the nsfw flag moves', () => {
   type Row = { nsfw: boolean; moderatorNsfwLevel: number | null; nsfwLevel: number };
   const pg = { db: null as unknown as PGlite };
   const onPg = (query: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
@@ -298,7 +303,8 @@ describe('updateBountyById on real rows: the stored level after an nsfw toggle',
         "id" integer PRIMARY KEY,
         "nsfw" boolean NOT NULL DEFAULT false,
         "nsfwLevel" integer NOT NULL DEFAULT 0,
-        "moderatorNsfwLevel" integer
+        "moderatorNsfwLevel" integer,
+        "description" text
       );
       CREATE TABLE "Image" ("id" integer PRIMARY KEY, "nsfwLevel" integer NOT NULL);
       CREATE TABLE "ImageConnection" ("imageId" integer, "entityType" text, "entityId" integer);
@@ -336,6 +342,8 @@ describe('updateBountyById on real rows: the stored level after an nsfw toggle',
     }) as never);
   });
   afterEach(() => {
+    // A once-implementation left unconsumed by a failing test would read a closed PGlite later.
+    vi.mocked(SearchIndexUpdate.queueUpdate).mockReset();
     mockDbWrite.$queryRaw.mockImplementation(saved.queryRaw as never);
     mockDbWrite.$executeRaw.mockImplementation(saved.executeRaw as never);
   });
@@ -370,6 +378,35 @@ describe('updateBountyById on real rows: the stored level after an nsfw toggle',
 
     await edit(true);
     expect((await readRow()).nsfw).toBe(true);
+    expect(await queued()).toBe(1);
+  });
+
+  it('reindexes at R or above when a blurb edit trips the profanity gate over a PG-13 rating', async () => {
+    await pg.db.exec(`
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13});
+    `);
+    const stored = await readRow();
+    mockDbWrite.bounty.findUnique.mockResolvedValueOnce({
+      ...stored,
+      name: 'A bounty',
+      lockedProperties: [],
+      details: null,
+    });
+    mockEvaluateContent.mockReturnValue({
+      shouldMarkNSFW: true,
+      matchedWords: ['x'],
+      reason: 'r',
+      metrics: { matchCount: 1 },
+    });
+    let indexedLevel: number | undefined;
+    vi.mocked(SearchIndexUpdate.queueUpdate).mockImplementationOnce((async () => {
+      indexedLevel = (await readRow()).nsfwLevel;
+    }) as never);
+
+    await applyBountyContentChange({ id: BOUNTY_ID, description: 'blurb text' });
+
+    expect(ratedLevel(indexedLevel ?? 0)).toBeGreaterThanOrEqual(NsfwLevel.R);
     expect(await queued()).toBe(1);
   });
 });

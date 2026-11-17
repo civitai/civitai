@@ -1036,17 +1036,31 @@ export async function applyBountyContentChange({
     } as Prisma.InputJsonObject;
     // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
     // the jsonb + text[] binds is where that trade stops being worth it.
-    await dbWrite.bounty.update({
-      where: { id },
-      data: flagged.lock
-        ? {
-            nsfw: true,
-            ...staleRatingRaise(stored, true),
-            lockedProperties: uniq([...stored.lockedProperties, 'nsfw']),
-            details,
-          }
-        : { details },
+    // One transaction with the retry job: the next fan-out pass sees nsfw already set and would
+    // never recompute a stored level left stale by a failed enqueue.
+    await dbWrite.$transaction(async (tx) => {
+      await tx.bounty.update({
+        where: { id },
+        data: flagged.lock
+          ? {
+              nsfw: true,
+              ...staleRatingRaise(stored, true),
+              lockedProperties: uniq([...stored.lockedProperties, 'nsfw']),
+              details,
+            }
+          : { details },
+      });
+      if (flagged.lock)
+        await enqueueJobs(
+          [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
+          tx
+        );
     });
+    // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
+    if (flagged.lock)
+      await updateBountyNsfwLevels([id]).catch((e) =>
+        handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
+      );
   }
 
   await queueBountySearchIndexUpdate(id);
