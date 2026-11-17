@@ -10,10 +10,9 @@ import {
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getResourceData } from '~/server/services/generation/generation.service';
-import {
-  resolveCatalogBrowsingLevel,
-  resourceExceedsCatalogCeiling,
-} from '~/server/utils/block-catalog-maturity';
+import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
+import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -97,7 +96,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  // The VIEWER's level held to the domain cap (the main site's rule), never the domain
+  // alone: a viewer with mature content off on a mature domain is served SFW here too.
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
+  const isSfwCeiling = allowMatureContentForCeiling(browsingLevel) === false;
 
   try {
     // Anon read (like models.ts, the viewer is NOT threaded — the clamp is the
