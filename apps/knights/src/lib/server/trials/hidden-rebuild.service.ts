@@ -73,6 +73,28 @@ export function retireIdsQuery(
     .where('id', 'not in', agreed(db, excludeImageIds));
 }
 
+/**
+ * The retire for a run by hand, as one transaction that commits only if exactly `ids` were retired: the check divides
+ * by zero on any other count, which aborts the transaction.
+ */
+export function checkedRetireSql(db: Executor, input: RebuildInput & { ids: number[] }): string {
+  const update = inlineSql(retireIdsQuery(db, input).compile());
+  const check = inlineSql(
+    db
+      .selectFrom('KnightsReferenceImage')
+      .select(
+        sql<number>`1 / (CASE WHEN count(*) = ${input.ids.length} THEN 1 ELSE 0 END)`.as(
+          'retired_as_planned'
+        )
+      )
+      .where('id', 'in', input.ids)
+      .where('status', '=', REFERENCE_STATUS.retired)
+      .where('updatedAt', '=', utc(input.now))
+      .compile()
+  );
+  return ['BEGIN;', `${update};`, `${check};`, 'COMMIT;'].join('\n');
+}
+
 /** Live harvested hidden checks, and how many a run would keep and retire. Reads only. */
 export async function planHiddenRebuild(
   db: Executor,

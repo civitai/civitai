@@ -2,11 +2,11 @@ import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 import {
+  checkedRetireSql,
   inlineSql,
   offlineDb,
   parseRebuildArgs,
   planHiddenRebuild,
-  retireIdsQuery,
   retirableIdsQuery,
   retireUnagreedHiddenChecks,
 } from '../src/lib/server/trials/hidden-rebuild.service';
@@ -16,7 +16,7 @@ import {
  * - `pnpm run rebuild:hidden-checks [--exclude <imageId,...>]`: dry run against the local database.
  * - `... --apply`: retire in one transaction, local database only.
  * - `... --print-sql [--exclude ...]`: print the SELECT of the ids to retire; with `--ids <id,...>` (that SELECT's
- *   result), print the UPDATE of exactly those ids. Pass the same `--exclude` to both. Values are written in, and
+ *   result), print a transaction that retires exactly those ids and commits only if it did. Pass the same `--exclude` to both. Values are written in, and
  *   nothing connects to a database.
  */
 async function main() {
@@ -25,10 +25,11 @@ async function main() {
 
   if (args.printSql) {
     const db = offlineDb();
-    const statement = args.ids
-      ? retireIdsQuery(db, { ...input, ids: args.ids }).compile()
-      : retirableIdsQuery(db, input).compile();
-    console.log(`${inlineSql(statement)};`);
+    console.log(
+      args.ids
+        ? checkedRetireSql(db, { ...input, ids: args.ids })
+        : `${inlineSql(retirableIdsQuery(db, input).compile())};`
+    );
     console.log(`-- excluded image ids: ${args.excludeImageIds.join(',') || 'none'}`);
     if (args.ids) console.log(`-- expect exactly ${args.ids.length} rows updated`);
     return;

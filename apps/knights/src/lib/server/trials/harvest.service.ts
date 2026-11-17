@@ -22,7 +22,13 @@ const DAY_MS = 86_400_000;
 /** The lock reason the moderator image queue records (apps/moderator image-queue.ts); not used as a grading reference. */
 export const MODERATOR_QUEUE_RATING_REASON = 'Moderator queue rating';
 
-export type HarvestResult = { scanned: number; added: number; retired: number };
+export type HarvestResult = {
+  scanned: number;
+  added: number;
+  retired: number;
+  /** Rulings past the cursor that were already older than the window, e.g. after a long pause; never harvested. */
+  skippedStale: number;
+};
 
 /**
  * The harvest job. While paused it takes in no rulings and the cursor holds where it was, but references whose ruling
@@ -53,6 +59,7 @@ export async function harvestRulings(
   let lastActivityId = cursor?.lastActivityId ?? 0;
   let scanned = 0;
   let added = 0;
+  const skippedStale = cursor ? await countStaleSinceCursor(db, lastActivityId, cutoff) : 0;
 
   for (let batch = 0; batch < config.maxBatches; batch++) {
     const activities = await db
@@ -142,7 +149,19 @@ export async function harvestRulings(
   }
 
   const retired = await retireStale(db, now, config);
-  return { scanned, added, retired };
+  return { scanned, added, retired, skippedStale };
+}
+
+async function countStaleSinceCursor(db: Kysely<DB>, lastActivityId: number, cutoff: Date) {
+  const row = await db
+    .selectFrom('ModActivity')
+    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .where('id', '>', lastActivityId)
+    .where('activity', '=', MODERATOR_RULING_ACTIVITY)
+    .where('entityType', '=', 'image')
+    .where('createdAt', '<', utc(cutoff))
+    .executeTakeFirstOrThrow();
+  return Number(row.n);
 }
 
 async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Promise<number> {

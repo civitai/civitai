@@ -280,6 +280,29 @@ describe('harvest defaults and the job switch', () => {
   });
 });
 
+describe('resuming past the window', () => {
+  it('counts the rulings it skips because they aged out while it was paused', async () => {
+    await image(1);
+    await image(2);
+    await pg.query(
+      `INSERT INTO "KnightsHarvestCursor" ("name","lastActivityId") VALUES ('trials',0)`
+    );
+    await ruling(1, { ageDays: 20 });
+    await ruling(2, { ageDays: 1 });
+
+    const result = await harvestRulings(db, { now: NOW });
+
+    expect(result).toMatchObject({ added: 1, skippedStale: 1 });
+    expect(await references()).toMatchObject([{ imageId: 2 }]);
+  });
+
+  it('reports nothing skipped on a first run, before any cursor exists', async () => {
+    await image(1);
+    await ruling(1, { ageDays: 20 });
+    expect((await harvestRulings(db, { now: NOW })).skippedStale).toBe(0);
+  });
+});
+
 describe('the paused harvest job', () => {
   it('still retires a reference whose ruling no longer stands', async () => {
     await image(1, { level: 8 });

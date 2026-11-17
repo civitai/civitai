@@ -2,12 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { HARVEST, harvestSettings } from './config';
 
 describe('harvestSettings', () => {
-  it('runs only when unset or on, so a mistyped value pauses rather than runs', () => {
-    for (const value of [undefined, '', ' ON ']) {
-      expect(harvestSettings({ KNIGHTS_HARVEST: value }).paused).toBe(false);
+  it('runs when unset, on, true or 1, in any case', () => {
+    for (const value of [undefined, '', ' ON ', 'true', 'TRUE', '1']) {
+      expect(harvestSettings({ KNIGHTS_HARVEST: value })).toMatchObject({ paused: false });
+      expect(harvestSettings({ KNIGHTS_HARVEST: value }).unrecognized).toBeUndefined();
     }
-    for (const value of ['off', ' OFF ', 'false', '0', 'paused', 'of']) {
-      expect(harvestSettings({ KNIGHTS_HARVEST: value }).paused).toBe(true);
+  });
+
+  it('pauses on off, false or 0', () => {
+    for (const value of ['off', ' OFF ', 'false', '0']) {
+      expect(harvestSettings({ KNIGHTS_HARVEST: value })).toMatchObject({ paused: true });
+      expect(harvestSettings({ KNIGHTS_HARVEST: value }).unrecognized).toBeUndefined();
+    }
+  });
+
+  it('pauses on anything else, and names the value so it can be reported', () => {
+    for (const value of ['paused', 'of', 'yes', '2']) {
+      expect(harvestSettings({ KNIGHTS_HARVEST: value })).toMatchObject({
+        paused: true,
+        unrecognized: value,
+      });
     }
   });
 

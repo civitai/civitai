@@ -6,6 +6,7 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
 import {
+  checkedRetireSql,
   inlineSql,
   offlineDb,
   planHiddenRebuild,
@@ -231,5 +232,32 @@ describe('the SQL printed for a run by hand', () => {
     expect(ids).toHaveLength(2);
     expect(affectedRows).toBe(1);
     expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired', 3: 'active' });
+  });
+
+  it('prints a transaction that commits only when exactly the planned ids were retired', async () => {
+    await reference(1, '4', agree(5, 5));
+    await reference(2, '4', []);
+    await reference(3, '4', []);
+    const ids = (await planHiddenRebuild(db, { excludeImageIds: [] })).ids;
+    const block = checkedRetireSql(offlineDb(), { now: NOW, excludeImageIds: [], ids });
+    expect(block).toMatch(/^BEGIN;\n[\s\S]*\nCOMMIT;$/);
+    expect(block).not.toMatch(/\$\d/);
+
+    await pg.exec(block);
+
+    expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired', 3: 'retired' });
+  });
+
+  it('rolls the whole transaction back when the count differs from the plan', async () => {
+    await reference(1, '4', []);
+    await reference(2, '4', []);
+    const ids = (await planHiddenRebuild(db, { excludeImageIds: [] })).ids;
+    await pg.query(`UPDATE "KnightsReferenceImage" SET status='retired' WHERE "imageId"=1`); // retired elsewhere since
+    const block = checkedRetireSql(offlineDb(), { now: NOW, excludeImageIds: [], ids });
+
+    await expect(pg.exec(block)).rejects.toThrow(/division by zero/);
+    await pg.exec('ROLLBACK');
+
+    expect(await statusOf()).toEqual({ 1: 'retired', 2: 'active' });
   });
 });
