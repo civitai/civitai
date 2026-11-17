@@ -713,6 +713,38 @@ async function buildFlagSummary(
   return summary;
 }
 
+export type OpenFlagCrucible = { id: number; endAt: Date };
+
+/**
+ * The flag Crucible open for entries now, whose top places become the next day's flags. Its own
+ * lookup, not a FlagSummary field: a frozen summary is cached for minutes and straddles the 22:00Z
+ * handover, when the open Crucible changes.
+ */
+export async function getOpenFlagCrucible(
+  eventName: string,
+  now = new Date()
+): Promise<OpenFlagCrucible | null> {
+  const { flags: config } = await readFlagRaceConfig(eventName);
+  if (!config?.on) return null;
+  const [row] = await dbRead.$queryRaw<OpenFlagCrucible[]>`
+    SELECT cr.id, cr."endAt" FROM "Crucible" cr
+    WHERE cr.status = 'Active'::"CrucibleStatus"
+      AND cr."eventTags" @> ARRAY[${flagCrucibleTag(eventName)}]::text[]
+      AND cr."startAt" <= ${now} AND cr."endAt" > ${now}
+    ORDER BY cr."endAt" ASC LIMIT 1
+  `;
+  return row ?? null;
+}
+
+/** The event whose Flag Race shows this Collection's items, if any. */
+export async function getFlagRaceEventForCollection(collectionId: number): Promise<string | null> {
+  for (const event of await loadEvents()) {
+    const { flags } = await readFlagRaceConfig(event.name);
+    if (flags?.on && flags.homeCollectionId === collectionId) return event.name;
+  }
+  return null;
+}
+
 // Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.
 export const REACTION_EARNS_MS = 1_500;
 
