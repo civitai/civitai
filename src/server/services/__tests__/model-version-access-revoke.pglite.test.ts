@@ -1,9 +1,9 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
-import type * as LoggingClient from '~/server/logging/client';
 
 /**
  * A moderator's revoke of one buyer's early access, against grants held in PGlite. Ids are invented.
@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
   },
   bustMvCache: vi.fn(),
   trackModActivity: vi.fn(),
-  logToAxiom: vi.fn(),
 }));
 // Any Buzz call from the revoke would land on these.
 vi.mock('~/server/services/buzz.service', () => mocks.buzz);
@@ -31,11 +30,6 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: mocks.trackModActivity,
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mocks.logToAxiom,
 }));
 
 const { moderatorRevokeEarlyAccess } = await import(
@@ -153,7 +147,7 @@ describe('moderatorRevokeEarlyAccess', () => {
         accessorType: 'User',
       },
     ]);
-    expect(mocks.logToAxiom).toHaveBeenCalledWith(
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'moderator-revoke-early-access',
         moderatorId: MODERATOR,
@@ -193,7 +187,7 @@ describe('moderatorRevokeEarlyAccess', () => {
         accessorType: 'User',
       },
     ]);
-    expect(mocks.logToAxiom).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
     expect(mocks.bustMvCache).not.toHaveBeenCalled();
   });
@@ -202,7 +196,7 @@ describe('moderatorRevokeEarlyAccess', () => {
     // The pre-read still sees the grant; the delete finds nothing.
     await expect(revokeA()).resolves.toEqual({ revoked: false });
 
-    expect(mocks.logToAxiom).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
     expect(mocks.bustMvCache).not.toHaveBeenCalled();
   });
