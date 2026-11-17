@@ -110,8 +110,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
         important: true,
         message: 'actioning the reports on filed images failed',
         userId,
-        reportedById,
         error: (e as Error)?.message,
+        payload: { reportedById },
       })
     );
   } else if (type === 'TrainingData') {
@@ -139,8 +139,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           message: 'training deny failed; report filed and account still removed',
           modelVersionId,
           userId,
-          reportedById,
           error: (e as Error)?.message,
+          payload: { reportedById },
         });
       }
     }
@@ -207,8 +207,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
           important: true,
           message: 'strikes review failed after the report was filed and the account removed',
           userId,
-          reportedById,
           error: (e as Error)?.message,
+          payload: { reportedById },
         });
       }
     }

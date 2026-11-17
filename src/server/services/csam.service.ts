@@ -264,7 +264,7 @@ export async function createCsamReport({
               subType: 'fold-skip-claimed',
               message: `report ${claimedId} is being sent; filed as report ${created.id}`,
               reportId: claimedId,
-              newReportId: created.id,
+              payload: { newReportId: created.id },
             });
           return created;
         };
