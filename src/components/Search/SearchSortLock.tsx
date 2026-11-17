@@ -3,10 +3,7 @@ import { Tooltip } from '~/components/MantineOverlays';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useTapTooltip } from '~/hooks/useTapTooltip';
 
-/**
- * A feed control greyed out while the feed answers a search, with the reason on hover and on tap.
- * A hover-only tooltip never shows on a phone, so the tap would look like it did nothing.
- */
+/** A feed control greyed out while the feed answers a search, with the reason on hover and on tap. */
 export function SearchLock({ reason, children }: { reason: string; children: ReactNode }) {
   const { opened, ref, triggerProps } = useTapTooltip<HTMLDivElement>();
 

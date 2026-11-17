@@ -3,7 +3,6 @@ import { page } from 'vitest/browser';
 import { PHONE_VIEWPORT, renderAtViewport } from '../../../test/geometry-setup';
 import { SearchSortLock } from './SearchSortLock';
 
-// Some browsers drop a tap on a disabled button, so the reason opens only if the wrapper is hit.
 test('a tap on the locked sort lands on the wrapper, not the disabled button', async () => {
   await renderAtViewport(<SearchSortLock />, PHONE_VIEWPORT);
   const button = page.getByRole('button', { name: 'Best match' });
