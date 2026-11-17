@@ -744,11 +744,15 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      ClickHouse reader is configured (the five per-image caches above too with it off) — or before hydration the session user
      (`session-cache-miss` / `-cleared`), the gallery settings (`gallery-settings-miss` /
      `-stale`) or, for `image.getInfinite`, the blocked-tag list (`blocked-tags-miss` / `-stale`);
-   - `raced`: as `would_serve`, but some present entry was filled at or after the request began
-     (its `cachedAt`, or a metric hash's `_populatedAt`, is at least `startedAt` −
-     `RaceSkewMargin`, 100 ms): most likely by the Node request this probe races, so a Go-first
-     serve would have found it missing. `feed_go_gofirst_raced_total{feed_endpoint,cache}` counts
-     the probes with a raced entry per cache. Not served: it is not in the numerator of the served
+   - `raced`: as `would_serve`, but a present entry of a cache Go falls back on
+     (`Sources.MissReason` non-empty) was filled at or after the request began (its `cachedAt`, or
+     a metric hash's `_populatedAt`, is at least `startedAt` − `RaceSkewMargin`, 100 ms): most
+     likely by the Node request this probe races, so a Go-first serve would have found it missing
+     and fallen back. A raced entry on a cache Go answers itself does not make the probe `raced`:
+     a Go-first serve would have answered it as it answers a miss there, so it stays `would_serve`
+     and its lookup is costed instead (the cost gate, below).
+     `feed_go_gofirst_raced_total{feed_endpoint,cache}` counts the probes with a raced entry per
+     cache, every cache, whatever the result. Not served: it is not in the numerator of the served
      share. `would_miss` wins over it (a miss was seen anyway);
    - `unsupported`: Go falls back for any other reason (an input shape, a bearer token, a sponsored
      post it cannot decide, the request budget); the reason is on
@@ -774,8 +778,10 @@ cache of every served fixture emptied, and require the same verdict; the `cold-*
 cache, and costed (below). The probe never computes a miss.
 
 **The cost gate.** A miss Go answers itself (replica path or computed) is served, but each costs a
-database query a warm cache does not. Per served probe (`would_serve`, `raced`), the probe counts
-one query per page and cache with such misses, `feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
+database query a warm cache does not; so does a raced entry on such a cache, which a Go-first serve
+would have found missing. Per served probe (`would_serve`, `raced`), the probe counts one query per
+page and cache with such a miss or raced entry (once when that page's cache has both),
+`feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
 (a lower bound: the user-cosmetics and frame computations, image and model, can each add the
 withheld-cosmetic check's two queries, and a computed tag-ids miss counts one read, its tag-records
 query for the tags `basic-tags` misses not included), over the pages it checked,
@@ -827,8 +833,10 @@ MGET plus a miss query, which is the margin.
 against Node's time to its first fill on the same procedure (the route's hydration span). It
 crosses two pods' clocks; a negative difference is recorded as 0. It shows timing only, not
 whether the race was lost: that is the `raced` result. Where the probe loses the race it reads an
-entry Node just filled; the entry's own fill stamp says so, and the probe is `raced`, not
-`would_serve`. What the stamp cannot catch: an entry with no stamp (a frame record, a profile
+entry Node just filled; the entry's own fill stamp says so. On a cache Go falls back on the probe is
+then `raced`, not `would_serve`; on a cache Go answers itself it stays `would_serve`, with that
+entry's lookup counted in the cost gate (it is what a cold miss there costs). What the stamp cannot
+catch: an entry with no stamp (a frame record, a profile
 picture, a watcher-fed metric hash), and a fill by another request just before ours outside the
 margin (which a Go-first serve would have found anyway). Later pages of one request (the page loop,
 the post completions) are checked later than the first, which makes a lost race on them likelier.
