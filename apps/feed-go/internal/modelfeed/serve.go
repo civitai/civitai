@@ -293,7 +293,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 			}
 			coll.done, coll.read = true, read
 		}
-		if !coll.read && false { // MUTANT A: serve an unreadable collection
+		if !coll.read {
 			return &page{items: []any{}}, nil
 		}
 	}

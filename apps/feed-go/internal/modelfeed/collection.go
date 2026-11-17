@@ -71,7 +71,7 @@ func readGranted(read string, ownerID int, perms []string, viewerID int) bool {
 		return true
 	}
 	for _, p := range perms {
-		if p != "" { // MUTANT B: any contributor permission reads
+		if p == "VIEW" {
 			return true
 		}
 	}
