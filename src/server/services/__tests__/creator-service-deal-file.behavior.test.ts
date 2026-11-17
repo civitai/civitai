@@ -1679,7 +1679,15 @@ describe('video previews', () => {
     preview.scanCopy.mockClear();
     video.build.mockResolvedValue({ data: MARKED, mimeType: 'video/mp4', width: 480 });
     s3.uploadImageBufferToStore.mockImplementation(async () => ({ key: randomKey() }));
-    s3.imageStoreSend.mockResolvedValue(body(MARKED));
+    // Only the clip that was scanned may be read back for publishing.
+    s3.imageStoreSend.mockImplementation(async (command: { input: { Key: string } }) => {
+      const [row] = await q<{ id: number }>(
+        `SELECT id FROM "ServiceDealFile" WHERE "scanKey" = $1`,
+        [command.input.Key]
+      );
+      if (!row) throw new Error(`not the scan copy: ${command.input.Key}`);
+      return body(MARKED);
+    });
     images.createImage.mockImplementation(async ({ url }: { url: string }) => {
       const [row] = await q<{ id: number }>(`INSERT INTO "Image" (url) VALUES ($1) RETURNING id`, [
         url,
@@ -1732,6 +1740,9 @@ describe('video previews', () => {
     expect(video.build).toHaveBeenCalledWith(ORIGINAL, 'video/mp4');
     expect(preview.scanCopy).not.toHaveBeenCalled();
     const scanned = await fileRow(fileId);
+    // The bytes scanned are the marked clip, not the original.
+    expect(s3.uploadImageBufferToStore).toHaveBeenCalledTimes(1);
+    expect(s3.uploadImageBufferToStore.mock.calls[0][0]).toBe(MARKED);
     expect(images.createImage.mock.calls[0][0]).toMatchObject({
       url: scanned.scanKey,
       type: 'video',
@@ -1761,10 +1772,57 @@ describe('video previews', () => {
     const seen = (await list(dealId, BUYER)).find((file) => file.id === fileId)!;
     expect(seen.mimeType).toBe('video/mp4');
     expect(seen.previewUrl).toContain(published.watermarkedKey);
+    expect(seen.previewUrl).toMatch(/\.mp4/);
     expect(seen.previewUrl).not.toContain(published.s3Key);
 
     await files.deleteScanCopies();
     expect((await fileRow(fileId)).watermarkedKey).toBe(published.watermarkedKey);
+  });
+
+  it('keeps a passed clip until it is published, so publishing never loses what was scanned', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+
+    expect(await files.deleteScanCopies()).toBe(0);
+    expect(await files.publishPreviews()).toBe(1);
+    expect(await files.deleteScanCopies()).toBe(1);
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Ready', scanKey: null });
+  });
+
+  it('retries, never falls back to the image path, if the scanned clip is gone', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    await q(`UPDATE "ServiceDealFile" SET "scanKey" = NULL WHERE id = $1`, [fileId]);
+
+    expect(await files.publishPreviews()).toBe(0);
+    expect(preview.build).not.toHaveBeenCalled();
+    expect(await fileRow(fileId)).toMatchObject({ status: 'Processing', watermarkedKey: null });
+  });
+
+  it('gives up on a video still not transcoded after 45 minutes, before the image give-up', async () => {
+    const { fileId } = await videoPreview();
+    await q(
+      `UPDATE "ServiceDealFile" SET "uploadedAt" = now() - interval '46 minutes' WHERE id = $1`,
+      [fileId]
+    );
+    await files.settlePreviewScans();
+    expect(await fileRow(fileId)).toMatchObject({
+      status: 'Failed',
+      failReason: 'This video could not be prepared. Upload a shorter or smaller one.',
+    });
+  });
+
+  it('takes one video per run, beside the images', async () => {
+    const first = await videoPreview();
+    const second = await videoPreview();
+    expect(await files.startPreviewScans({ limit: 3 })).toBe(1);
+    expect(video.build).toHaveBeenCalledTimes(1);
+    const rows = [await fileRow(first.fileId), await fileRow(second.fileId)];
+    expect(rows.filter((row) => row.imageId !== null)).toHaveLength(1);
   });
 
   it('fails the file with the reason when the video cannot be transcoded', async () => {

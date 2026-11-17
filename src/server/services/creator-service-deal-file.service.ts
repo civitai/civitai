@@ -29,10 +29,7 @@ import {
   buildWatermarkedPreview,
   PreviewRejectedError,
 } from '~/server/utils/service-deal-preview';
-import {
-  buildWatermarkedVideoPreview,
-  isVideoPreviewMime,
-} from '~/server/services/creator-service-deal-video-preview';
+import { buildWatermarkedVideoPreview } from '~/server/services/creator-service-deal-video-preview';
 import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
@@ -47,9 +44,11 @@ import {
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
+  SERVICE_PREVIEW_VIDEO_GIVE_UP_MS,
   SERVICE_PREVIEW_VIDEO_MAX_BYTES,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
   SERVICE_ZIP_MAX_IMAGE_BYTES,
+  isVideoPreviewMime,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealFileKind,
@@ -1159,16 +1158,6 @@ async function readImageStoreObject(key: string) {
   return Buffer.from(await response.Body.transformToByteArray());
 }
 
-/**
- * A video is marked before it is scanned, unlike an image: the transcode is the only place a mark
- * can be burned in, and running it twice per preview to scan a clean copy buys nothing, since the
- * marked clip is exactly what the buyer would see.
- */
-async function videoScanCopy(original: Buffer, mimeType: string) {
-  const marked = await buildWatermarkedVideoPreview(original, mimeType);
-  return { ...marked, height: null, frames: 0, type: 'video' as const };
-}
-
 const logPreview = (message: string, fields: Record<string, unknown>, type = 'info') =>
   logToAxiom({ name: 'creator-service-preview', type, message, ...fields });
 
@@ -1211,10 +1200,12 @@ export async function createScanImage(
 
 /** Step 1: the hidden scan copy, for previews that have none yet. */
 export async function startPreviewScans({ limit = 5 } = {}) {
-  const claimed = await claimPreviews(
-    Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`,
-    limit
-  );
+  const unscanned = Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`;
+  // One video per run: each holds the run for a transcode wait, and the claim goes stale in 10 min.
+  const claimed = [
+    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" NOT LIKE 'video/%'`, limit)),
+    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" LIKE 'video/%'`, 1)),
+  ];
   let started = 0;
   for (const preview of claimed) {
     const began = Date.now();
@@ -1229,8 +1220,15 @@ export async function startPreviewScans({ limit = 5 } = {}) {
       }
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
+        // A video is scanned already marked: the transcode is the only place a mark can be burned
+        // in, and the marked clip is exactly what the buyer would see.
         const copy = isVideoPreviewMime(preview.mimeType)
-          ? await videoScanCopy(original, preview.mimeType)
+          ? {
+              ...(await buildWatermarkedVideoPreview(original, preview.mimeType)),
+              height: null,
+              frames: 0,
+              type: 'video' as const,
+            }
           : await buildScanCopy(original);
         frames = copy.frames;
         let scanKey = preview.scanKey;
@@ -1298,7 +1296,15 @@ export async function settlePreviewScans() {
       "failReason" = 'This preview could not be prepared. Upload it again.'
     WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
       AND "uploadedAt" < now() - (${SERVICE_PREVIEW_GIVE_UP_MS}::int * interval '1 millisecond')`;
-  return { passed, rejected, unchecked, timedOut };
+  // Each retry of an unfinished transcode is a new paid one, so a video gets far less time.
+  const videoTimedOut = await dbWrite.$executeRaw`
+    UPDATE "ServiceDealFile"
+    SET "status" = 'Failed'::"ServiceDealFileStatus",
+      "failReason" = 'This video could not be prepared. Upload a shorter or smaller one.'
+    WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
+      AND "imageId" IS NULL AND "mimeType" LIKE 'video/%'
+      AND "uploadedAt" < now() - (${SERVICE_PREVIEW_VIDEO_GIVE_UP_MS}::int * interval '1 millisecond')`;
+  return { passed, rejected, unchecked, timedOut: timedOut + videoTimedOut };
 }
 
 /** Step 3: mark and publish the previews that passed. Ready only when the mark is on. */
@@ -1311,15 +1317,15 @@ export async function publishPreviews({ limit = 5 } = {}) {
   for (const preview of claimed) {
     const began = Date.now();
     try {
-      // The video's scan copy is already marked; it is copied because step 4 deletes the copy.
-      const result =
-        isVideoPreviewMime(preview.mimeType) && preview.scanKey
-          ? {
-              data: await readImageStoreObject(preview.scanKey),
-              mimeType: 'video/mp4',
-              frames: 0,
-            }
-          : await buildWatermarkedPreview(await readObject(await getBucket(), preview.s3Key));
+      let result: { data: Buffer; mimeType: string; frames: number };
+      if (isVideoPreviewMime(preview.mimeType)) {
+        // Published from the scanned clip only, copied because step 4 deletes the scan copy.
+        if (!preview.scanKey) throw new Error('Video preview has no scanned clip to publish');
+        const data = await readImageStoreObject(preview.scanKey);
+        result = { data, mimeType: 'video/mp4', frames: 0 };
+      } else {
+        result = await buildWatermarkedPreview(await readObject(await getBucket(), preview.s3Key));
+      }
       const { key } = await uploadImageBufferToStore(result.data, { contentType: result.mimeType });
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile"
@@ -1350,7 +1356,10 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
   const rows = await dbWrite.$queryRaw<{ id: number; imageId: number }[]>`
     SELECT "id", "imageId" FROM "ServiceDealFile"
     WHERE "imageId" IS NOT NULL
-      AND ("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+      AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+          -- A video publishes by copying its scan copy, so the copy waits for that.
+          AND ("mimeType" NOT LIKE 'video/%' OR "watermarkedKey" IS NOT NULL
+            OR "status" = 'Failed'::"ServiceDealFileStatus"))
         OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
           AND "status" = 'Failed'::"ServiceDealFileStatus"))
     ORDER BY "id" LIMIT ${limit}::int`;

@@ -25,10 +25,10 @@ import {
   sellerFileStatus,
   serviceDealDownloadHref,
   sortPicked,
-  isVideoPreview,
   previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import { isVideoPreviewMime } from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -312,7 +312,7 @@ function PartyFiles({
 
 function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
   if (!file.previewUrl) return null;
-  if (isVideoPreview(file.mimeType))
+  if (isVideoPreviewMime(file.mimeType))
     return (
       <video
         src={file.previewUrl}

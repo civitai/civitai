@@ -12,16 +12,12 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { PreviewRejectedError, watermarkTilePng } from '~/server/utils/service-deal-preview';
 import {
   SERVICE_PREVIEW_VIDEO_MAX_SECONDS,
-  SERVICE_PREVIEW_VIDEO_MIME_TYPES,
   SERVICE_PREVIEW_VIDEO_WIDTH,
 } from '~/shared/constants/creator-services.constants';
 
-export const isVideoPreviewMime = (mime: string | null | undefined) =>
-  !!mime && (SERVICE_PREVIEW_VIDEO_MIME_TYPES as readonly string[]).includes(mime);
-
 const TRANSCODE_WAIT_SECONDS = 90;
 
-export function videoPreviewWorkflow(sourceUrl: string, tile: Buffer): WorkflowTemplate {
+function videoPreviewWorkflow(sourceUrl: string, tile: Buffer): WorkflowTemplate {
   const step: TranscodeStepTemplate = {
     $type: 'transcode',
     input: {
@@ -47,7 +43,7 @@ async function uploadSourceBlob(data: Buffer, mimeType: string) {
   const response = await fetch(presign.uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': mimeType },
-    body: new Uint8Array(data),
+    body: new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength),
   });
   if (response.status === 400 || response.status === 415)
     throw new PreviewRejectedError('This video could not be read. Upload an MP4 or WebM file.');
