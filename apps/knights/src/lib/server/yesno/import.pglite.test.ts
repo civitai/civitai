@@ -457,6 +457,25 @@ describe('importYesNo', () => {
       const states = async () =>
         (await items()).map((i) => [i.externalId, i.status, i.reason] as const);
 
+      beforeEach(() => seedImage(pg, 10));
+
+      it('leaves the closed copy closed when its image can no longer be served', async () => {
+        await seedImage(pg, 11);
+        await importYesNo(db, load(line({ id: 'a', image: '11' })));
+        await retireByModerator('a');
+        await copy('a:r1', 'a', 'Open', null);
+        await importYesNo(db, [], { retire: ['a'] });
+        await pg.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE "id" = 11`);
+
+        const again = await importYesNo(db, load(line({ id: 'a', image: '10' })));
+
+        expect(again).toMatchObject({ revived: 0 });
+        expect(await states()).toEqual([
+          ['a', 'Closed', 'moderator-retired'],
+          ['a:r1', 'Closed', 'retired'],
+        ]);
+      });
+
       it('brings back the copy the withdrawal closed, leaving the original retired', async () => {
         await importYesNo(db, load(line({ id: 'a' })));
         await retireByModerator('a');

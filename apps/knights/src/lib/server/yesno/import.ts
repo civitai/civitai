@@ -389,6 +389,16 @@ async function reviveReworded(db: Kysely<DB>, skipped: YesNoRow[]): Promise<numb
       .where('status', '=', 'Closed')
       .where('reason', '=', 'retired')
       .where('voteCount', '=', 0)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('Image as img')
+            .innerJoin('Post as p', 'p.id', 'img.postId')
+            .select('img.id')
+            .whereRef('img.id', '=', 'KnightsQueueItem.imageId')
+            .where(servableImage)
+        )
+      )
       .executeTakeFirst();
     revived += Number(reopened.numUpdatedRows);
   }
