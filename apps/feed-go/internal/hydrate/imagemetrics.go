@@ -478,8 +478,8 @@ func (s *Sources) heartbeatMetricLocks(ctx context.Context, ids []int) func() {
 				return
 			case <-ticks:
 				_, _ = s.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
-					for _, id := range ids {
-						p.Expire(ctx, metricLockKey(id), metricLockTTL)
+					for range ids {
+						// MUTANT: re-arm disabled
 					}
 					return nil
 				})
