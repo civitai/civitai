@@ -71,20 +71,30 @@ func TestShadowComparesHeaders(t *testing.T) {
 		return v
 	}
 	public := "public, max-age=60, s-maxage=60, stale-while-revalidate=30"
+	// The Vary tRPC's resolveResponse sets on every answer: Go's served answer carries it too, so it
+	// compares equal (not ignored).
+	const vary = "trpc-accept, accept"
 
-	postResponseSample(t, s, map[string]string{"cache-control": public})
+	postResponseSample(t, s, map[string]string{"cache-control": public, "vary": vary})
 	waitFor(t, "a matching response", response("match", 1))
 	if got := logs.String(); strings.Contains(got, "shadow diff") {
 		t.Fatalf("a full match logged a diff: %s", got)
 	}
 
-	postResponseSample(t, s, map[string]string{"cache-control": "max-age=0, private, no-cache", "cache-tag": "images"})
-	waitFor(t, "a mismatching response", response("mismatch", 1))
+	// Vary is compared, not ignored: a Node Vary Go does not send is a counted value difference.
+	postResponseSample(t, s, map[string]string{"cache-control": public, "vary": "accept-encoding"})
+	waitFor(t, "a Vary mismatch", response("mismatch", 1))
+	if diff("header:vary", "value") != 1 {
+		t.Fatalf("header:vary value diff = %v, want 1", diff("header:vary", "value"))
+	}
+
+	postResponseSample(t, s, map[string]string{"cache-control": "max-age=0, private, no-cache", "vary": vary, "cache-tag": "images"})
+	waitFor(t, "a mismatching response", response("mismatch", 2))
 	if diff("header:cache-control", "value") != 1 || diff("header:cache-tag", "missing-in-go") != 1 {
 		t.Fatalf("header diffs: cache-control=%v cache-tag=%v, want 1 and 1", diff("header:cache-control", "value"), diff("header:cache-tag", "missing-in-go"))
 	}
-	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); v != 2 {
-		t.Fatalf("body match count = %v, want 2 (a header difference is not a body difference)", v)
+	if v, _ := metricValue(t, reg, "feed_go_shadow_compare_total", map[string]string{"feed_endpoint": EndpointAsPosts, "result": "match"}); v != 3 {
+		t.Fatalf("body match count = %v, want 3 (a header difference is not a body difference)", v)
 	}
 	if got := logs.String(); !strings.Contains(got, "level=INFO msg=\"shadow diff\"") {
 		t.Fatalf("an unexpected header diff was not logged at Info: %s", got)
@@ -92,8 +102,8 @@ func TestShadowComparesHeaders(t *testing.T) {
 
 	// A known difference is counted, and logged at Debug only.
 	before := logs.String()
-	postResponseSample(t, s, map[string]string{"cache-control": public, "x-update-required": "true"})
-	waitFor(t, "an expected mismatch", response("mismatch", 2))
+	postResponseSample(t, s, map[string]string{"cache-control": public, "vary": vary, "x-update-required": "true"})
+	waitFor(t, "an expected mismatch", response("mismatch", 3))
 	if diff("header:x-update-required", "missing-in-go") != 1 {
 		t.Fatalf("x-update-required diff = %v, want 1", diff("header:x-update-required", "missing-in-go"))
 	}
