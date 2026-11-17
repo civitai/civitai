@@ -4,7 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 import { parseCsv } from '../src/lib/server/yesno/csv';
 import {
-  dropMissingImages,
+  dropUnservableImages,
   formatImportSummary,
   importYesNo,
   toYesNoRows,
@@ -44,9 +44,13 @@ async function main() {
   });
   try {
     const badImage = skipped['bad-image'] ?? 0;
-    const kept = await dropMissingImages(db, rows, skipped, spares);
+    const kept = await dropUnservableImages(db, rows, skipped, spares);
     const missing = (skipped['bad-image'] ?? 0) - badImage;
     if (missing > 0) console.log(`${missing} more skipped as bad-image: the image does not exist.`);
+    const unservable = skipped['unservable-image'] ?? 0;
+    if (unservable > 0) {
+      console.log(`${unservable} skipped as unservable-image: the public feeds would not show it.`);
+    }
     const result = await importYesNo(db, kept, { retire });
     console.log(formatImportSummary(result));
   } finally {
