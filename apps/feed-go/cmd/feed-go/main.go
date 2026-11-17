@@ -286,9 +286,9 @@ func run(log *slog.Logger) error {
 		Users: sources,
 	}
 	srv := &server.Server{
-		Resolver: resolver,
-		Deps:     deps,
-		Models:   models,
+		Resolver:         resolver,
+		Deps:             deps,
+		Models:           models,
 		ServeModelGetAll: cfg.ServeModelGetAll,
 		Hosts:            cfg.Hosts,
 		RegionRules:      cfg.RegionRules,
