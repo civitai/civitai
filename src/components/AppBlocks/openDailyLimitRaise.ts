@@ -62,6 +62,7 @@ export async function openDailyLimitRaise(opts: {
         appName,
         limit: data.limit,
         spentToday: data.spentToday,
+        confirmWithinLimitMaxJob: data.confirmWithinLimitMaxJob,
         onRaised: () => {
           raised = true;
         },

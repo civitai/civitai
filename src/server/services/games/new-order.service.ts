@@ -2,6 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import type { NewOrderDamnedReason } from '~/server/common/enums';
 import {
   NewOrderImageRatingStatus,
@@ -1636,10 +1637,19 @@ export async function addImageToQueue({
   const images = (
     await dbRead.image.findMany({
       where: { id: { in: imageIds } },
-      select: { id: true, url: true, nsfwLevel: true, metadata: true, needsReview: true },
+      select: {
+        id: true,
+        url: true,
+        nsfwLevel: true,
+        metadata: true,
+        needsReview: true,
+        ingestion: true,
+        blockedFor: true,
+      },
     })
   ).filter((image) => {
-    if (!isHeldForReview(image)) return true;
+    // A blocked image is refused whatever the caller saw: no sample may carry one.
+    if (!isHeldForReview(image) && !hasBlockMarker(image)) return true;
     heldIds.push(image.id);
     return false;
   });

@@ -43,6 +43,7 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
   if (flagCounting(summary))
     return (
       <Badge
+        tt="none"
         variant="light"
         color="gray"
         size="lg"
@@ -60,6 +61,7 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
     return (
       <Group gap={6} wrap="wrap" data-testid="flag-race-header">
         <Badge
+          tt="none"
           variant="light"
           color="gray"
           size="lg"
@@ -70,6 +72,7 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
         </Badge>
         {won.map(([team, points]) => (
           <Badge
+            tt="none"
             key={team}
             size="lg"
             radius="xl"
@@ -84,6 +87,7 @@ export function FlagRaceHeader({ summary }: { summary: FlagSummary }) {
   }
   return (
     <Badge
+      tt="none"
       variant="light"
       color={clock.phase === 'final' ? 'yellow' : 'blue'}
       size="lg"

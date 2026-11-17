@@ -50,7 +50,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     const message = added
       ? 'Image inserted into queue successfully'
       : heldIds.length > 0
-      ? 'Not inserted: held for review'
+      ? 'Not inserted: held for review or blocked'
       : 'bonk';
     return res.status(200).json({ message, heldImageIds: heldIds });
   }

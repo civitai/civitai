@@ -6,110 +6,57 @@ import { getImagesForModelVersionCache } from '~/server/services/image.service';
 import { getCoverImages } from '~/server/services/model-cover.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import type { SessionUser } from '~/types/session';
+import {
+  MODEL,
+  OWNER,
+  VERSION,
+  cardImage,
+  modelRow,
+  resetModelRow,
+  stubPackedRedis,
+} from './getall-feed-harness';
 
-redisMock.redis.packed.get.mockImplementation(async () => null);
-redisMock.redis.packed.set.mockImplementation(async () => undefined);
+stubPackedRedis();
 
-const OWNER = 7;
-const MODEL = 100;
-const VERSION = 200;
-
-vi.mock('~/server/services/image.service', () => ({
-  getImagesForModelVersion: vi.fn(),
-  getImagesForModelVersionCache: vi.fn(),
-  queueImageSearchIndexUpdate: vi.fn(),
-}));
-vi.mock('~/server/flipt/client', () => ({
-  isFlipt: vi.fn().mockResolvedValue(false),
-  FLIPT_FEATURE_FLAGS: {},
-}));
+vi.mock('~/server/services/image.service', async () =>
+  (await import('./getall-feed-harness')).imageServiceModule()
+);
+vi.mock('~/server/flipt/client', async () =>
+  (await import('./getall-feed-harness')).fliptClientModule()
+);
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
-}));
-const { modelRow } = vi.hoisted(() => ({
-  modelRow: { nsfw: false, minor: false, sfwOnly: false },
 }));
 vi.mock('~/server/db/pgDb', () => ({
   pgDbRead: {
     cancellableQuery: async () => ({
-      result: async () => [
-        {
-          id: 100,
-          userId: 7,
-          name: 'model',
-          type: 'LORA',
-          nsfw: modelRow.nsfw,
-          minor: modelRow.minor,
-          sfwOnly: modelRow.sfwOnly,
-          nsfwLevel: 31,
-          status: 'Published',
-          mode: null,
-          rank: {},
-          meta: null,
-          cursorId: null,
-        },
-      ],
+      result: async () => (await import('./getall-feed-harness')).feedModelRows(),
     }),
   },
   pgDbWrite: {},
   pgDbReadLong: {},
 }));
-vi.mock('~/server/redis/caches', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  userBasicCache: { fetch: vi.fn(async () => ({ 7: { username: 'owner' } })) },
-  dataForModelsCache: {
-    fetch: vi.fn(async () => ({
-      100: {
-        versions: [
-          {
-            id: 200,
-            status: 'Published',
-            availability: 'Public',
-            nsfwLevel: 31,
-            baseModel: 'SDXL 1.0',
-            flags: 0,
-          },
-        ],
-        tags: [],
-        hashes: [],
-      },
-    })),
-  },
-}));
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getProfilePicturesForUsers: vi.fn(async () => ({})),
-  getCosmeticsForUsers: vi.fn(async () => ({})),
-}));
-vi.mock('~/server/services/cosmetic.service', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getCosmeticsForEntity: vi.fn(async () => ({})),
-  getEventDecorationsForEntity: vi.fn(async () => ({})),
-}));
-vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  getModelPaidAccessGates: vi.fn(async () => new Map()),
-}));
-vi.mock('~/server/services/model-cover.service', () => ({
-  getCoverImages: vi.fn(async () => new Map()),
-}));
-vi.mock('~/server/services/generation/coverage-source', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  nextCoverageEnabled: vi.fn(async () => false),
-}));
+vi.mock('~/server/redis/caches', async (importOriginal) =>
+  (await import('./getall-feed-harness')).cachesModule(importOriginal)
+);
+vi.mock('~/server/services/user.service', async (importOriginal) =>
+  (await import('./getall-feed-harness')).userServiceModule(importOriginal)
+);
+vi.mock('~/server/services/cosmetic.service', async (importOriginal) =>
+  (await import('./getall-feed-harness')).cosmeticServiceModule(importOriginal)
+);
+vi.mock('~/server/services/paid-access.service', async (importOriginal) =>
+  (await import('./getall-feed-harness')).paidAccessServiceModule(importOriginal)
+);
+vi.mock('~/server/services/model-cover.service', async () =>
+  (await import('./getall-feed-harness')).modelCoverServiceModule()
+);
+vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =>
+  (await import('./getall-feed-harness')).coverageSourceModule(importOriginal)
+);
 
-const image = (id: number, nsfwLevel: number, extra: { poi?: boolean; minor?: boolean } = {}) => ({
-  id,
-  userId: OWNER,
-  modelVersionId: VERSION,
-  nsfwLevel,
-  url: `u${id}`,
-  hash: `h${id}`,
-  poi: false,
-  minor: false,
-  tags: [],
-  ...extra,
-});
+const image = (id: number, nsfwLevel: number, extra: { poi?: boolean; minor?: boolean } = {}) =>
+  cardImage(id, { nsfwLevel, ...extra });
 
 async function cardImages(
   browsingLevel: number,
@@ -137,9 +84,7 @@ async function cardImages(
 
 describe('getModelsWithImagesAndModelVersions card images', () => {
   beforeEach(() => {
-    modelRow.nsfw = false;
-    modelRow.minor = false;
-    modelRow.sfwOnly = false;
+    resetModelRow();
     redisMock.redis.get.mockResolvedValue(null);
     vi.mocked(getCoverImages).mockResolvedValue(new Map());
     vi.mocked(getImagesForModelVersionCache).mockResolvedValue({

@@ -161,6 +161,8 @@ export type BlockActionDetail = {
   /** For a `limit.change`: the daily limit before and after; `null` means no limit. */
   previousLimit?: number | null;
   limit?: number | null;
+  /** For a confirmed-step submit: a per-job confirm (`click`) or the viewer's standing opt-in. */
+  consentKind?: 'click' | 'standing';
 };
 
 /**
