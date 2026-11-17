@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import { mergeDetailItems } from '~/components/Image/Detail/detail-items';
 import {
   buildSubwayStops,
+  getPathTexts,
   canonAheadForkStops,
   getForkShare,
   getPathImagesPaging,
@@ -68,6 +70,30 @@ describe('getStorylineWalk', () => {
     ]);
     expect(walk.firstImageIdByChapterId.has(2)).toBe(false);
   });
+
+  it('starts a chapter that opens with a text on that text, anchored on the image before it', () => {
+    const chapters = [visible(1, 0, 100), visible(2, 1, 200), visible(3, 2, 300)];
+    const images = [
+      { id: 10, postId: 100, index: 0 },
+      { id: 20, postId: 200, index: 0 },
+      { id: 30, postId: 300, index: 0 },
+    ];
+    // Chapter 2 opens with a text; chapter 3 has a text after its image.
+    const texts = [
+      { id: 7, postId: 200, index: -1, nsfwLevel: 1 },
+      { id: 8, postId: 300, index: 0, nsfwLevel: 1 },
+    ];
+    const walk = getStorylineWalk(
+      chapters,
+      images,
+      mergeDetailItems(images, texts, [100, 200, 300])
+    );
+    expect([...walk.startByChapterId]).toEqual([
+      [1, { imageId: 10 }],
+      [2, { imageId: 10, textId: 7 }],
+      [3, { imageId: 30 }],
+    ]);
+  });
 });
 
 describe('parseIdParam', () => {
@@ -111,14 +137,14 @@ describe('hideHiddenUsersChapters', () => {
 });
 
 describe('resolvePendingContinue', () => {
-  const first = new Map([[5, 50]]);
+  const first = new Map([[5, { imageId: 50 }]]);
   it('waits while the path still ends at the previous chapter', () => {
     expect(
       resolvePendingContinue({
         pendingChapterId: 5,
         pathEndId: 4,
         imagesFetching: false,
-        firstImageIdByChapterId: first,
+        startByChapterId: first,
       })
     ).toEqual({ kind: 'wait' });
   });
@@ -128,19 +154,27 @@ describe('resolvePendingContinue', () => {
         pendingChapterId: 5,
         pathEndId: 5,
         imagesFetching: true,
-        firstImageIdByChapterId: new Map(),
+        startByChapterId: new Map(),
       })
     ).toEqual({ kind: 'wait' });
   });
-  it("opens the branch's first image once it has arrived", () => {
+  it("opens the branch's first slide once it has arrived", () => {
     expect(
       resolvePendingContinue({
         pendingChapterId: 5,
         pathEndId: 5,
         imagesFetching: false,
-        firstImageIdByChapterId: first,
+        startByChapterId: first,
       })
     ).toEqual({ kind: 'open', imageId: 50 });
+    expect(
+      resolvePendingContinue({
+        pendingChapterId: 5,
+        pathEndId: 5,
+        imagesFetching: false,
+        startByChapterId: new Map([[5, { imageId: 40, textId: 3 }]]),
+      })
+    ).toEqual({ kind: 'open', imageId: 40, textId: 3 });
   });
   it('shows the end-of-chapter view for a branch with nothing this reader can see', () => {
     expect(
@@ -148,7 +182,7 @@ describe('resolvePendingContinue', () => {
         pendingChapterId: 5,
         pathEndId: 5,
         imagesFetching: false,
-        firstImageIdByChapterId: new Map(),
+        startByChapterId: new Map(),
       })
     ).toEqual({ kind: 'end' });
   });
@@ -494,5 +528,38 @@ describe('storylinePositionLabel', () => {
     expect(
       storylinePositionLabel({ number: 2, length: undefined, path: [{ onMain: false }] })
     ).toBe('Chapter 2');
+  });
+});
+
+describe('getPathTexts', () => {
+  const stub = (id: number, postId: number, index = 0) => ({ id, postId, index, nsfwLevel: 1 });
+
+  it("reads each chapter's texts in its place, and none from a chapter the reader cannot see", () => {
+    // Chapter 2 (post 20) shows only text to this reader; chapter 3 is hidden (no post).
+    const chapters = [
+      { post: { id: 10 } },
+      { post: { id: 20 } },
+      { post: null },
+      { post: { id: 40 } },
+    ];
+    const { texts, postOrder } = getPathTexts(chapters, [
+      stub(1, 10, 0),
+      stub(2, 20),
+      stub(3, 30),
+      stub(4, 40, -1),
+    ]);
+    const images = [
+      { id: 100, postId: 10, index: 0 },
+      { id: 101, postId: 10, index: 1 },
+      { id: 400, postId: 40, index: 0 },
+    ];
+    expect(mergeDetailItems(images, texts, postOrder).map((item) => item.key)).toEqual([
+      'img:100',
+      'txt:1',
+      'img:101',
+      'txt:2',
+      'txt:4',
+      'img:400',
+    ]);
   });
 });

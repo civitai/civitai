@@ -35,15 +35,29 @@ name: tRPC server parity
 # with no checkout, install or service containers:
 #   - a PR that will get no image fails red in seconds, with the reason;
 #   - a PR whose image is not built yet passes with a notice and the parity job is skipped. No
-#     runner waits for the build: when the preview pipeline marks the commit `preview / deploy`
-#     = success, the `status` trigger below runs parity for that commit and reports on it as the
+#     runner waits for the build: when the preview pipeline has deployed and verified the preview
+#     (the moment it marks the commit `preview / deploy` = success), it also creates a GitHub
+#     Deployment in environment `preview` for that commit, straight in state `success`. The
+#     `deployment_status` trigger below runs parity for that commit and reports on it as the
 #     `tRPC parity` commit status;
 #   - a PR whose image is already there runs the parity job straight away.
 #
-# `status` runs use this file as it is on the DEFAULT branch, never the PR's copy (GitHub runs a
-# `status` workflow from the default branch). Only the path list is read from the PR's own copy.
-# So a PR that changes this workflow's logic is tested by its `pull_request` run (when its image
-# is already there) or by a manual dispatch on its branch, never by the `status` run:
+# Why `deployment_status` and not the `status` event: GitHub cannot filter `status` at the
+# trigger, so EVERY commit status in the repository started a run of this workflow, nearly all
+# of them skipped. Deployments here come from the preview pipeline (once per verified preview)
+# and production deploys.
+#
+# 🔴 A `deployment_status` run uses this file as it is on the DEPLOYED commit (the PR head), not
+# the default branch's copy. So:
+#   - a branch whose head predates this trigger gets no deployment run; it is tested once it
+#     merges main (or by its `pull_request` run / a dispatch);
+#   - the preview pipeline creates the Deployment only for a head branch IN this repository whose
+#     PR passed its member + `preview` label gate, never for a fork. Pushing such a branch already
+#     lets its author run any workflow with this repository's secrets (`pull_request` and
+#     `workflow_dispatch` runs use the branch's copy too), so running the branch's copy here
+#     grants no one anything new;
+#   - a PR that changes this workflow's logic is tested by its own deployment run, as well as by
+#     its `pull_request` run (when its image is already there) or by a manual dispatch:
 #   gh workflow run trpc-server-parity.yml --ref <branch> -f image=<image ref>
 on:
   pull_request:
@@ -66,6 +80,7 @@ on:
       - 'src/pages/api/live.ts'
       - 'src/pages/api/health.ts'
       - 'src/pages/api/ready.ts'
+      - 'src/pages/api/readyz.ts'
       - 'src/pages/api/metrics.ts'
       - 'src/pages/api/internal/image-delivery/**'
       - 'src/server/services/image-delivery.service.ts'
@@ -92,9 +107,11 @@ on:
           other reference (e.g. a digest) is tested as given.
         required: true
         type: string
-  # Commit statuses fire for every context and state; the gate job's `if:` drops all but
-  # `preview / deploy` = success before a runner starts (each still lists as a skipped run).
-  status:
+  # Every deployment state change fires (queued, in_progress, success, failure; not inactive),
+  # for every environment. The gate job's `if:` keeps only environment `preview` in state
+  # `success`; the preview pipeline posts exactly that, once per verified preview, and production
+  # deploys list as skipped runs.
+  deployment_status:
 
 # `packages: read` lets the job's token pull the preview image, if the package grants this
 # repository read access.
@@ -103,21 +120,22 @@ permissions:
   packages: read
 
 # A run may only cancel an older run testing the SAME thing:
-#   - status: keyed on the commit, and only for `preview / deploy` = success. Every other status
-#     event gets a key of its own (the run id), so the stream of other statuses on the same commit
-#     cannot cancel its parity run. (Every status run has github.ref = the default branch, so a
-#     ref key would make them all cancel each other.)
+#   - deployment_status: keyed on the commit, and only for `preview` = success. Every other
+#     deployment event gets a key of its own (the run id), so a production deploy cannot cancel a
+#     parity run. (A deployment of a bare sha has an empty github.ref, so a ref key would make
+#     them all cancel each other.)
 #   - dispatch: keyed on branch and image; one for another commit's image (even one that only
 #     skips) must not cancel a run testing this one.
 #   - pull_request: keyed on the PR's ref.
-# The three never share a key, so a status, a dispatch and a PR run for one head commit run side
-# by side.
+# The three never share a key, so a deployment, a dispatch and a PR run for one head commit run
+# side by side.
 concurrency:
   group: >-
     trpc-server-parity-${{
-      github.event_name == 'status' && (
-        (github.event.context == 'preview / deploy' && github.event.state == 'success')
-          && format('status-{0}', github.event.sha)
+      github.event_name == 'deployment_status' && (
+        (github.event.deployment.environment == 'preview'
+          && github.event.deployment_status.state == 'success')
+          && format('deployment-{0}', github.event.deployment.sha)
           || format('ignored-{0}', github.run_id)
       )
       || format('{0}-{1}', github.ref, inputs.image)
@@ -129,18 +147,19 @@ jobs:
   gate:
     name: Preview image for parity
     runs-on: ubuntu-latest
-    # Draft PRs run ESLint only (lint.yml's header); a status run checks draft in its scope step.
-    # A status run starts a runner only for `preview / deploy` = success.
+    # Draft PRs run ESLint only (lint.yml's header); a deployment run checks draft in its scope
+    # step. A deployment run starts a runner only for environment `preview` in state `success`.
     if: >-
       (github.event_name == 'pull_request' && !github.event.pull_request.draft)
       || github.event_name == 'workflow_dispatch'
-      || (github.event_name == 'status'
-          && github.event.context == 'preview / deploy' && github.event.state == 'success')
+      || (github.event_name == 'deployment_status'
+          && github.event.deployment.environment == 'preview'
+          && github.event.deployment_status.state == 'success')
     timeout-minutes: 5
     outputs:
       run: ${{ steps.image.outputs.run }}
       image: ${{ steps.image.outputs.image }}
-      # The commit tested and reported on (dispatch and status runs; empty for a PR run).
+      # The commit tested and reported on (dispatch and deployment runs; empty for a PR run).
       sha: ${{ steps.scope.outputs.sha }}
     steps:
       # Whether the preview pipeline will build an image for this PR at all: the head branch is in
@@ -175,10 +194,10 @@ jobs:
             exit 1
           fi
 
-      # Dispatch and status runs name a commit, not a PR event. Test it only if:
+      # Dispatch and deployment runs name a commit, not a PR event. Test it only if:
       #   - it is still the head of its branch / open PR (otherwise the newer commit brings its
       #     own run, and this one would report on the wrong commit);
-      #   - (status) that PR is open, not a draft, from this repository, against main;
+      #   - (deployment) that PR is open, not a draft, from this repository, against main;
       #   - the PR / branch changes something listed under `on.pull_request.paths`, read from the
       #     commit's own copy of this file (so the list has one copy, and a PR that widens it is
       #     judged by its widened list), or from the running copy when the commit has none (a
@@ -192,18 +211,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
           IMAGE: ${{ inputs.image }}
-          # status: the commit the status is on. dispatch: the dispatched branch's head.
-          SHA: ${{ github.event.sha || github.sha }}
+          # deployment: the deployed commit. dispatch: the dispatched branch's head.
+          SHA: ${{ github.event.deployment.sha || github.sha }}
           REPO: ${{ github.repository }}
-          # The commit this workflow file was read from (for a status run, the default branch).
+          # The commit this workflow file was read from (for a deployment run, the deployed one).
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           out() { echo "$1" >> "$GITHUB_OUTPUT"; }
           skip() { echo "::notice::$1"; out in-scope=false; exit 0; }
           out "sha=$SHA"
           base=main
-          if [ "$EVENT" = status ]; then
-            # The status event names a commit only; find the open PR it heads.
+          if [ "$EVENT" = deployment_status ]; then
+            # The deployment names a commit only; find the open PR it heads.
             pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --jq "[.[] | select(.state == \"open\"
                 and .head.sha == \"$SHA\" and .head.repo.full_name == \"$REPO\"
                 and .base.ref == \"main\")] | first // empty")
@@ -250,7 +269,7 @@ jobs:
           skip "This change touches nothing parity covers (on.pull_request.paths); nothing to test."
 
       # Is the image already pushed? One registry lookup, no waiting: a PR whose image is still
-      # being built is tested by the status run once its preview is deployed.
+      # being built is tested by the deployment run once its preview is deployed.
       - name: Is the preview image there?
         id: image
         if: github.event_name == 'pull_request' || steps.scope.outputs.in-scope == 'true'
@@ -258,6 +277,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
           IMAGE: ${{ steps.scope.outputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # The template above puts the full sha in the tag; the pipeline uses the first 7.
           case "$IMAGE" in
@@ -279,7 +299,17 @@ jobs:
               if [ "${{ github.event_name }}" != pull_request ]; then
                 echo "::error::$IMAGE does not exist"; exit 1
               fi
-              echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              # The later run is a deployment run, which uses the HEAD's copy of this file (this
+              # run uses the merge commit's). A head older than the `deployment_status` trigger
+              # gets no such run, so say so rather than promise one.
+              wf=.github/workflows/trpc-server-parity.yml
+              head_has=$(gh api "repos/${{ github.repository }}/contents/$wf?ref=$HEAD_SHA" --jq .content 2>/dev/null \
+                | base64 -d | yq -r '.on | has("deployment_status")' 2>/dev/null || echo unknown)
+              if [ "$head_has" = false ]; then
+                echo "::warning::The preview image for this commit is not built yet, and this branch's copy of $wf predates its \`deployment_status\` trigger, so NO parity run will follow the preview deploy. Merge main into the branch to get one."
+              else
+                echo "::notice::The preview image for this commit is not built yet. Parity runs when the preview pipeline has pushed it, and reports on this commit as the \`tRPC parity\` status."
+              fi
               echo "run=false" >> "$GITHUB_OUTPUT"; exit 0
             fi
             sleep $((attempt * 5))
@@ -292,7 +322,8 @@ jobs:
     needs: gate
     if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
-    # `statuses: write`: a dispatch or status run reports on its commit as the `tRPC parity` status.
+    # `statuses: write`: a dispatch or deployment run reports on its commit as the `tRPC parity`
+    # status.
     permissions:
       contents: read
       packages: read
@@ -317,7 +348,7 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
     env:
       IMAGE: ${{ needs.gate.outputs.image }}
-      # Dispatch and status runs: the commit under test, which the status is posted on.
+      # Dispatch and deployment runs: the commit under test, which the status is posted on.
       SHA: ${{ needs.gate.outputs.sha }}
       MUTANT_IMAGE: trpc-server-parity:mutant
       API_MUTANT_IMAGE: trpc-server-parity:api-mutant
@@ -325,8 +356,8 @@ jobs:
       CANDIDATE_IMAGE: trpc-server-parity:candidate
       STATUS_CONTEXT: tRPC parity
     steps:
-      # A dispatch or status run's check is not listed on the PR (a status run's is not even on
-      # the commit), so it reports as a commit status: pending now, the verdict at the end.
+      # A dispatch or deployment run is not a pull_request run, so its check is not reliably
+      # shown as the PR's own; it reports as a commit status: pending now, the verdict at the end.
       - name: Report pending on the head commit
         if: github.event_name != 'pull_request'
         env:
@@ -340,11 +371,11 @@ jobs:
       - name: Work directory
         run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
 
-      # A status run's own ref is the default branch: check out the commit under test instead.
+      # A deployment run has no branch ref: check out the commit under test by sha.
       # (A dispatch run's default is already its head; a PR run keeps its merge commit.)
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'status' && needs.gate.outputs.sha || '' }}
+          ref: ${{ github.event_name == 'deployment_status' && needs.gate.outputs.sha || '' }}
           submodules: true
 
       # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
@@ -429,7 +460,7 @@ jobs:
           printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/api-mutant/Dockerfile"
           docker build -q -t "$API_MUTANT_IMAGE" "$WORK/api-mutant"
           docker run --rm --entrypoint cat "$API_MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/api-mutant/server.cjs"
-          # The candidate: the image with this checkout's server.cjs. A pull_request or status run
+          # The candidate: the image with this checkout's server.cjs. A pull_request or deployment run
           # tests its own commit's image, so the copy must already be the image's (the run fails if
           # not). A dispatch run may test a branch's copy on top of an older image, which is how a
           # deliberately broken copy is tested without an image build; it says so in the log.

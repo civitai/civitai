@@ -39,7 +39,6 @@ function makeBlock(id: string, name: string): AvailableBlock {
 
 const emptyMaps = {
   subsByBlock: new Map(),
-  earningsByAppBlockId: new Map<string, number>(),
 };
 
 /**

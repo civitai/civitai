@@ -138,4 +138,26 @@ describe('/api/generation/data media viewer', () => {
     expect(mediaViewer.features).toBe(flags);
     expect(mediaViewer.req.headers).toEqual({});
   });
+
+  it("forwards the request's credential, so a token is judged as a token", async () => {
+    const credential = {
+      apiKeyId: 9,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 9 },
+      tokenScope: 2,
+    };
+    mockSession.mockImplementation(async ({ req }: { req: { context?: unknown } }) => {
+      req.context = credential;
+      return { user: nsfwUser };
+    });
+    mockFeatureFlagsLazy.mockReturnValue({ canViewNsfw: false });
+
+    await (generationDataHandler as unknown as Handler)(
+      makeReq({ type: 'image', id: '1' }),
+      makeRes()
+    );
+
+    const { mediaViewer } = mockGetGenerationData.mock.calls[0][0];
+    expect(mediaViewer).toMatchObject(credential);
+  });
 });

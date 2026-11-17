@@ -21,7 +21,7 @@ export interface CreateBuzzCharge {
 
 const log = async (data: MixedObject) => {
   try {
-    await logToAxiom({ name: 'emerchantpay-service', type: 'error', ...data }).catch();
+    logToAxiom({ name: 'emerchantpay-service', type: 'error', ...data });
   } catch (error) {
     console.error('Failed to log to Axiom:', error);
   }

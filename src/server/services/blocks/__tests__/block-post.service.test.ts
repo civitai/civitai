@@ -47,6 +47,8 @@ const ACTOR = {
   appId: APP_ID,
   appBlockId: 'apb_alpha',
   browsingLevel: BROWSING,
+  // Every browsing level, so no fixture output is restricted.
+  outputCeiling: { maxBrowsingLevel: 31, serving: false },
 };
 
 /** A row shaped like the raw `Image` SELECT, scanned-clean and within the ceiling. */
@@ -387,6 +389,7 @@ describe('resolveOwnedWorkflowOutputs', () => {
       appBlockId: ACTOR.appBlockId,
       workflowId: WORKFLOW_ID,
       getWorkflow,
+      ceiling: ACTOR.outputCeiling,
     });
   }
 
@@ -525,7 +528,10 @@ describe('resolveOwnedWorkflowOutputs', () => {
     const out = await call(getWorkflow);
     expect(out).toHaveLength(2);
     expect(out[0]).toBeNull();
-    expect(out[1]?.url).toContain('orchestration.civitai.com');
+    // A usable slot (not `null`, not `{ restricted: true }`) carries the url.
+    expect(out[1] && 'url' in out[1] ? out[1].url : undefined).toContain(
+      'orchestration.civitai.com'
+    );
   });
 });
 
@@ -707,6 +713,182 @@ describe('an off-allowlist output REFUSES the index that named it — never subs
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 a RESTRICTED output keeps its position, and naming it is REFUSED', () => {
+  /**
+   * `imageIndexes` are positions in `AppWorkflow.outputs`, which keeps a restricted
+   * output in its slot. Output 0 is R on a workflow whose paying pool refused mature
+   * content; output 1 is PG and is the one the block saw at index 1.
+   */
+  const RESTRICTED_URL = 'https://orchestration.civitai.com/v2/blobs/r.jpg';
+  const OK_URL = 'https://orchestration.civitai.com/v2/blobs/ok.jpg';
+  function workflowWith(firstRating: string | undefined) {
+    return {
+      status: 'succeeded',
+      allowMatureContent: false,
+      tags: [`app-block:${APP_ID}`],
+      steps: [
+        {
+          $type: 'textToImage',
+          output: {
+            images: [
+              {
+                url: RESTRICTED_URL,
+                available: true,
+                width: 7,
+                height: 9,
+                ...(firstRating ? { nsfwLevel: firstRating } : {}),
+              },
+              { url: OK_URL, available: true, width: 2, height: 3, nsfwLevel: 'pg' },
+            ],
+          },
+        },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    OWNED_WORKFLOW.mockResolvedValue(true);
+  });
+
+  it('(a) a rating that lands late never moves an index: index 1 is the same output before and after', async () => {
+    const resolve = (wf: unknown) =>
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [1] }],
+        actor: ACTOR,
+        getWorkflow: vi.fn().mockResolvedValue(wf),
+      });
+    // Output 0 not rated yet: not restricted.
+    const before = await resolve(workflowWith(undefined));
+    // Output 0 now rated R on the restricted workflow: restricted, still in its slot.
+    const after = await resolve(workflowWith('r'));
+    expect(before).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
+    expect(after).toStrictEqual(before);
+  });
+
+  it('(b) naming the restricted position is REFUSED, never resolved to another output', async () => {
+    await expectRejection(
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [0] }],
+        actor: ACTOR,
+        getWorkflow: vi.fn().mockResolvedValue(workflowWith('r')),
+      }),
+      'BAD_REQUEST',
+      'output 0 is restricted'
+    );
+  });
+
+  describe('🔴 serving on: the post refuses what the poll restricts', () => {
+    const SERVING_ACTOR = { ...ACTOR, outputCeiling: { maxBrowsingLevel: 31, serving: true } };
+    const neverRatedVideo = () => ({
+      status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
+      steps: [
+        {
+          $type: 'videoGen',
+          name: 'block-step',
+          input: { engine: 'kling' },
+          output: { video: { id: 'v', type: 'video', url: RESTRICTED_URL, available: true } },
+        },
+      ],
+    });
+    const post = (actor: typeof ACTOR, workflow: unknown, imageIndexes: number[]) =>
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes }],
+        actor,
+        getWorkflow: vi.fn().mockResolvedValue(workflow),
+      });
+
+    it('an output rated `na` is refused', async () => {
+      await expectRejection(
+        post(SERVING_ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [0]),
+        'BAD_REQUEST',
+        'output 0 is restricted'
+      );
+    });
+
+    it('an unrated video from a never-rated engine is refused', async () => {
+      await expectRejection(
+        post(SERVING_ACTOR, neverRatedVideo(), [0]),
+        'BAD_REQUEST',
+        'output 0 is restricted'
+      );
+    });
+
+    it('CONTROL: the rated output beside it posts', async () => {
+      const out = await post(SERVING_ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [
+        1,
+      ]);
+      expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
+    });
+
+    it('CONTROL: with serving off the `na` output posts', async () => {
+      const out = await post(ACTOR, { ...workflowWith('na'), allowMatureContent: true }, [0]);
+      expect(out).toStrictEqual([{ kind: 'workflow', url: RESTRICTED_URL, width: 7, height: 9 }]);
+    });
+  });
+
+  it('an OMITTED imageIndexes skips the restricted output and posts the rest', async () => {
+    const out = await resolveBlockPostSources({
+      sources: [{ kind: 'workflow', workflowId: 'wf_1' }],
+      actor: ACTOR,
+      getWorkflow: vi.fn().mockResolvedValue(workflowWith('r')),
+    });
+    expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
+  });
+
+  it('🔴 F1: a position still being rated is refused by name, and "every output" waits for it', async () => {
+    for (const imageIndexes of [[0], undefined]) {
+      await expectRejection(
+        resolveBlockPostSources({
+          sources: [
+            { kind: 'workflow', workflowId: 'wf_1', ...(imageIndexes ? { imageIndexes } : {}) },
+          ],
+          actor: ACTOR,
+          getWorkflow: vi.fn().mockResolvedValue(workflowWith(undefined)),
+        }),
+        'BAD_REQUEST',
+        'output 0 is still being rated, try again shortly'
+      );
+    }
+  });
+
+  it('F3: a BLOCKED position keeps its slot and naming it is refused', async () => {
+    const wf = workflowWith('pg');
+    (wf.steps[0].output.images[0] as Record<string, unknown>).blockedReason = 'Moderated';
+    await expectRejection(
+      resolveBlockPostSources({
+        sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [0] }],
+        actor: ACTOR,
+        getWorkflow: vi.fn().mockResolvedValue(wf),
+      }),
+      'BAD_REQUEST',
+      'workflow has no available outputs to post'
+    );
+    const out = await resolveBlockPostSources({
+      sources: [{ kind: 'workflow', workflowId: 'wf_1', imageIndexes: [1] }],
+      actor: ACTOR,
+      getWorkflow: vi.fn().mockResolvedValue(wf),
+    });
+    expect(out).toStrictEqual([{ kind: 'workflow', url: OK_URL, width: 2, height: 3 }]);
+  });
+
+  it('resolveOwnedWorkflowOutputs marks the restricted slot with NO url', async () => {
+    const slots = await resolveOwnedWorkflowOutputs({
+      userId: VIEWER_USER_ID,
+      appId: APP_ID,
+      appBlockId: ACTOR.appBlockId,
+      workflowId: 'wf_1',
+      getWorkflow: vi.fn().mockResolvedValue(workflowWith('r')),
+      ceiling: ACTOR.outputCeiling,
+    });
+    expect(slots).toStrictEqual([
+      { restricted: true },
+      { url: OK_URL, width: 2, height: 3, nsfwLevel: 1 },
+    ]);
+    expect(JSON.stringify(slots)).not.toContain(RESTRICTED_URL);
+  });
+});
+
 describe('resolveBlockPostSources — the image cap REFUSES rather than truncating', () => {
   function workflowWith(n: number) {
     return {

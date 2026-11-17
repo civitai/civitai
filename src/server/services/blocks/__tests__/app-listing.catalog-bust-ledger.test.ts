@@ -547,7 +547,7 @@ const LEDGER = [
   'src/server/services/blocks/offsite-moderation.service.ts::resetOnsiteListingToPending',
   'src/server/services/blocks/offsite-moderation.service.ts::unpublishOwnListing',
   // Onsite approve mints/flips the AppListing to `approved`.
-  'src/server/services/blocks/publish-request.service.ts::approveRequest',
+  'src/server/services/blocks/publish-request.service.ts::approveRequestUnderClaim',
 ].sort();
 
 /**
@@ -595,6 +595,10 @@ const EXEMPT: Record<string, string> = {
     'BAR 2 (CALLER-BUSTS): it DOES move `content_rating`, up or down, inside its caller’s ' +
     'transaction. Its one caller busts after the commit; the caller set is pinned in ' +
     '`CALLER_BUSTS`.',
+  'src/server/services/blocks/publish-request-finalise.service.ts::finaliseOnsiteApprove':
+    'BAR 2 (CALLER-BUSTS): on a late hold it puts the on-site listing back (status, ' +
+    '`category`, `content_rating`, `name`, `app_block_id`) inside its caller’s transaction. ' +
+    'Its one caller busts after the commit; the caller set is pinned in `CALLER_BUSTS`.',
   'src/server/services/blocks/app-ownership-transfer.service.ts::acceptTransfer':
     'writes only `userId`; the cached statement never reads ownership and no sort or ' +
     'filter keys on it (same argument `claimListing` makes for its own inert bust).',
@@ -651,6 +655,9 @@ const CALLER_BUSTS: Record<string, string[]> = {
   ].sort(),
   reDeriveListingRatingInTx: [
     'src/server/services/blocks/app-listing-rating-rederive.service.ts::reDeriveListingRatingsForModeratedImage',
+  ],
+  finaliseOnsiteApprove: [
+    'src/server/services/blocks/publish-request.service.ts::approveRequestUnderClaim',
   ],
 };
 
@@ -834,7 +841,7 @@ const PINNED_RECORD_KEYS: ReadonlyArray<
   [
     'CALLER_BUSTS',
     CALLER_BUSTS,
-    ['reDeriveContentRatingForModLiveEdit', 'reDeriveListingRatingInTx'],
+    ['reDeriveContentRatingForModLiveEdit', 'reDeriveListingRatingInTx', 'finaliseOnsiteApprove'],
   ],
   ['RAW_HELPER_BUSTS', RAW_HELPER_BUSTS, ['applyVisibility']],
 ];

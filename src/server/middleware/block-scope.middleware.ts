@@ -2,6 +2,7 @@ import { decodeProtectedHeader, jwtVerify } from 'jose';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
+  blockClaimsAppLabel,
   blockRequestResult,
   ensureRegisterAppBlockRuntimeMetrics,
   recordBlockConsentMarkerUnavailable,
@@ -112,6 +113,12 @@ export interface BlockTokenClaims {
    * widen to mature catalog content.
    */
   maxBrowsingLevel?: number;
+  /**
+   * The viewer's own browsing level intersected with `maxBrowsingLevel`, stamped
+   * at mint. Absent on tokens minted before it existed: consumers fail closed to
+   * PG (`resolveViewerBrowsingLevel`).
+   */
+  viewerBrowsingLevel?: number;
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
   domain?: string;
   /**
@@ -1031,15 +1038,23 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // parseInts without going through parseSubjectUserId.
       if (!isValidSubject(claims.sub)) return null;
       // Maturity claim shape guard. The claim is optional (absent on legacy
-      // tokens), but if present it MUST be a finite number — a forged token
-      // carrying a non-numeric / NaN / Infinity maxBrowsingLevel is rejected
+      // tokens), but if present it MUST be a non-negative integer — a token
+      // carrying a non-numeric / NaN / Infinity / negative maxBrowsingLevel is rejected
       // outright so the generation clamp never coerces a junk ceiling into an
       // unintended (wider) maturity. (Consumers ALSO fail closed on absence;
       // this is the upstream belt that keeps a malformed claim from ever
       // reaching them.) Same for the advisory `domain` string.
       if (
         claims.maxBrowsingLevel !== undefined &&
-        (typeof claims.maxBrowsingLevel !== 'number' || !Number.isFinite(claims.maxBrowsingLevel))
+        // A non-negative integer: an all-bits value like -1 would widen to every level.
+        !(Number.isInteger(claims.maxBrowsingLevel) && claims.maxBrowsingLevel >= 0)
+      ) {
+        return null;
+      }
+      if (
+        claims.viewerBrowsingLevel !== undefined &&
+        // A non-negative integer: an all-bits value like -1 would pass AND-ing unchanged.
+        !(Number.isInteger(claims.viewerBrowsingLevel) && claims.viewerBrowsingLevel >= 0)
       ) {
         return null;
       }
@@ -1447,6 +1462,7 @@ async function resolveDevTunnelHubClaims(args: {
     parseManifestBuzzBudget,
     resolveDevBuzzBudget,
     FORCED_SFW_CEILING,
+    forcedSfwViewerLevel,
   } = await import('~/server/services/blocks/dev-scoped-mint.service');
   const source = dev
     ? tunnel.grantedScopes ?? []
@@ -1474,6 +1490,7 @@ async function resolveDevTunnelHubClaims(args: {
     dev: true,
     ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     maxBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(userId),
   };
 }
 
@@ -1519,6 +1536,9 @@ async function resolveHubTokenClaims(
   const scopes = partitionByConsent(declared, granted).signable;
 
   const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
+  const { viewerEffectiveBrowsingLevel } = await import(
+    '~/server/services/blocks/viewer-browsing-level'
+  );
   const host = req.headers.host ?? '';
   const domainColor = getRequestDomainColor(req);
   const maxBrowsingLevel =
@@ -1545,6 +1565,11 @@ async function resolveHubTokenClaims(
       : {}),
     ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
     maxBrowsingLevel,
+    viewerBrowsingLevel: viewerEffectiveBrowsingLevel({
+      req,
+      sessionUser: session.user,
+      maxBrowsingLevel,
+    }),
   };
 }
 
@@ -1630,7 +1655,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // gated. Bucket ALL dev tokens (real-id or synthetic) to the single stable
     // label 'dev' so that vector is closed while real per-app attribution is
     // preserved for non-dev tokens.
-    const appBlockIdLabel = claims.dev === true ? 'dev' : claims.appBlockId;
+    const appBlockIdLabel = blockClaimsAppLabel(claims);
 
     // ONE resolver for `opts.endpoint`, used by BOTH readers of it below (the RED
     // metric labels and the `not_found` log line). It was open-coded at the metric
@@ -1743,7 +1768,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // added the guard said "seven" — which double-counted `blocks/me.ts`, a route that declares
     // `requiredScope: 'user:read:self'` and is therefore not in this population at all. At the
     // time of writing the derivation yields
-    // `blocks/{gated-images,generation-resources,images,models,tools,user-checkpoint/set}.ts`;
+    // `blocks/{gated-images,generation-resources,generation-samplers,images,models,resource-intent,tools,user-checkpoint/set}.ts`;
     // `no-unguarded-block-rest-token.test.ts` re-derives it and the number here is prose. They declare no
     // `requiredScope` and, enumerated, reference `claims.scopes` NOWHERE: they authorize on
     // token validity alone and derive their only authority from `claims.maxBrowsingLevel`. So a
@@ -2301,6 +2326,9 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   // could fragment the `endpoint` column.
   'gated-images',
   'generation-resources',
+  // `/api/v1/blocks/generation-samplers` — the per-family sampler catalog. Static: it takes no
+  // parameters at all, so there is no `:seg` position on this route.
+  'generation-samplers',
   'images',
   'increment',
   'item',
@@ -2358,6 +2386,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'user-checkpoint',
   'vote',
   'withdraw',
+  'workflow-media',
   'workflows',
 ]);
 

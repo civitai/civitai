@@ -41,7 +41,7 @@ export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', 
       blockedByRunCap: result.blocked.creatorRun,
       blockedByCreatorCap: result.blocked.creatorWindow,
       blockedByCollectionCap: result.blocked.collectionWindow,
-    }).catch(() => null);
+    });
 
   return result;
 });

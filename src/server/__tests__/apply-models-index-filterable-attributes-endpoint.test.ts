@@ -41,7 +41,6 @@ vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }))
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: { index },
-  metricsSearchClient: null,
 }));
 
 const handler = (await import('~/pages/api/admin/temp/apply-models-index-filterable-attributes'))

@@ -40,7 +40,7 @@ export const runBluePaidAccessJob = (
         type: name.endsWith('-reported') ? 'info' : 'warning',
         name,
         ...data,
-      }).catch(() => undefined),
+      }),
   });
 
 /** Keep in step with RUN_INTERVAL_HOURS (detect.ts). */

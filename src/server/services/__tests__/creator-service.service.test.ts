@@ -18,7 +18,11 @@ import {
   SERVICES_TERMS_VERSION,
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
-import { ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ServiceOfferingIngestionStatus,
+  ServiceOfferingStatus,
+} from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
@@ -32,6 +36,20 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(async () => undefined),
 }));
+const checks = vi.hoisted(() => ({
+  scanServiceOffering: vi.fn(async () => undefined),
+  requeueBlockedServiceOffering: vi.fn(async () => undefined),
+  updateServiceOfferingNsfwLevels: vi.fn(async () => undefined),
+  isImageOwner: vi.fn(async () => true),
+}));
+vi.mock('~/server/services/service-offering-moderation.adapter', () => ({
+  scanServiceOffering: checks.scanServiceOffering,
+  requeueBlockedServiceOffering: checks.requeueBlockedServiceOffering,
+}));
+vi.mock('~/server/services/nsfwLevels.service', () => ({
+  updateServiceOfferingNsfwLevels: checks.updateServiceOfferingNsfwLevels,
+}));
+vi.mock('~/server/services/util.service', () => ({ isImageOwner: checks.isImageOwner }));
 
 const SELLER = 7;
 const fields = {
@@ -391,6 +409,22 @@ describe('storefront read', () => {
           status: ServiceOfferingStatus.Active,
           seller: { bannedAt: null, deletedAt: null, muted: false },
           maxNsfwLevel: { lte: NsfwLevel.PG13 },
+          ingestion: ServiceOfferingIngestionStatus.Scanned,
+          AND: [
+            {
+              OR: [
+                { coverImageId: null },
+                {
+                  coverImage: {
+                    ingestion: ImageIngestionStatus.Scanned,
+                    needsReview: null,
+                    tosViolation: false,
+                    nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
+                  },
+                },
+              ],
+            },
+          ],
         },
       })
     );
@@ -522,33 +556,44 @@ describe('storefront ratings', () => {
     expect(isMatureServiceLevel(NsfwLevel.R)).toBe(true);
   });
 
-  it('rates a new offering PG-13 by default, and leaves the rating alone on an update without one', async () => {
+  it("stores the seller's rating on create, PG-13 by default, and leaves it alone on an update without one", async () => {
     seller();
     const input = upsertServiceOfferingSchema.parse({ ...fields });
     await upsertServiceOffering({ sellerId: SELLER, input });
     expect(dbMock.dbWrite.serviceOffering.create.mock.calls.at(-1)?.[0]?.data).toMatchObject({
-      maxNsfwLevel: NsfwLevel.PG13,
+      declaredNsfwLevel: NsfwLevel.PG13,
+    });
+    await upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...input, declaredNsfwLevel: NsfwLevel.X },
+    });
+    expect(dbMock.dbWrite.serviceOffering.create.mock.calls.at(-1)?.[0]?.data).toMatchObject({
+      declaredNsfwLevel: NsfwLevel.X,
     });
 
     dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      ...fields,
       status: ServiceOfferingStatus.Active,
+      ingestion: ServiceOfferingIngestionStatus.Scanned,
+      coverImageId: null,
     } as never);
     await upsertServiceOffering({ sellerId: SELLER, input: { ...input, id: 3 } });
     const data = dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0]?.data;
+    expect(data?.declaredNsfwLevel).toBeUndefined();
     expect(data?.maxNsfwLevel).toBeUndefined();
   });
 
   it('accepts one rating bit and refuses Blocked or a mask with a 400', () => {
     const base = { ...fields };
     // Omitted stays omitted: an update must not reset a mature offering to PG-13.
-    expect(upsertServiceOfferingSchema.parse(base).maxNsfwLevel).toBeUndefined();
+    expect(upsertServiceOfferingSchema.parse(base).declaredNsfwLevel).toBeUndefined();
     expect(
-      upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: NsfwLevel.X }).success
+      upsertServiceOfferingSchema.safeParse({ ...base, declaredNsfwLevel: NsfwLevel.X }).success
     ).toBe(true);
     for (const bad of [NsfwLevel.Blocked, NsfwLevel.PG | NsfwLevel.R, 0, 3])
-      expect(upsertServiceOfferingSchema.safeParse({ ...base, maxNsfwLevel: bad }).success).toBe(
-        false
-      );
+      expect(
+        upsertServiceOfferingSchema.safeParse({ ...base, declaredNsfwLevel: bad }).success
+      ).toBe(false);
   });
 });
 
@@ -607,5 +652,95 @@ describe("a seller's own offerings", () => {
         sellerId: SELLER,
         status: { not: ServiceOfferingStatus.Removed },
       });
+  });
+});
+
+describe("an offering's content checks on save", () => {
+  const saved = (over: Record<string, unknown> = {}) =>
+    dbMock.dbWrite.serviceOffering.findFirst.mockResolvedValue({
+      ...fields,
+      status: ServiceOfferingStatus.Active,
+      sellerAffirmation: null,
+      ingestion: ServiceOfferingIngestionStatus.Scanned,
+      coverImageId: null,
+      ...over,
+    } as never);
+  const update = (input: Record<string, unknown> = {}) =>
+    upsertServiceOffering({
+      sellerId: SELLER,
+      input: { ...fields, id: 3, publish: false, ...input },
+    });
+  const lastData = () => dbMock.dbWrite.serviceOffering.updateMany.mock.calls.at(-1)?.[0]?.data;
+
+  beforeEach(() => seller());
+
+  it('checks a new offering and recomputes its rating', async () => {
+    await upsertServiceOffering({ sellerId: SELLER, input: { ...fields, publish: false } });
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledWith([1]);
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(1);
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledTimes(1);
+    expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends edited text back to its check, and leaves unchanged text as it was', async () => {
+    saved();
+    await update({ price: 5000 });
+    expect(lastData()?.ingestion).toBeUndefined();
+    expect(checks.scanServiceOffering).not.toHaveBeenCalled();
+    expect(checks.updateServiceOfferingNsfwLevels).toHaveBeenCalledWith([3]);
+
+    await update({ description: 'Two animated badges.' });
+    expect(lastData()).toMatchObject({
+      ingestion: ServiceOfferingIngestionStatus.Pending,
+      scanWorkflowId: null,
+    });
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(3);
+    expect(checks.scanServiceOffering).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not undo a block that landed while new text was being saved', async () => {
+    saved();
+    // The row is Blocked by now; the write only matches the state it was read in.
+    dbMock.dbWrite.serviceOffering.updateMany.mockImplementationOnce((async ({
+      where,
+    }: {
+      where: { ingestion?: string };
+    }) => ({
+      count: where.ingestion === undefined || where.ingestion === 'Blocked' ? 1 : 0,
+    })) as never);
+    await expect(update({ description: 'Two animated badges.' })).rejects.toThrow(
+      'This service changed while you were editing it. Reload and try again.'
+    );
+    expect(checks.scanServiceOffering).not.toHaveBeenCalled();
+  });
+
+  it('hands a held offering with new text to the guarded requeue, then checks the text', async () => {
+    saved({ ingestion: ServiceOfferingIngestionStatus.Blocked });
+    await update({ price: 5000 });
+    expect(checks.requeueBlockedServiceOffering).not.toHaveBeenCalled();
+    await update({ title: 'Custom badges' });
+    expect(lastData()?.ingestion).toBeUndefined();
+    expect(checks.requeueBlockedServiceOffering).toHaveBeenCalledWith(3);
+    expect(checks.scanServiceOffering).toHaveBeenCalledWith(3);
+  });
+
+  it("refuses another user's image as the cover, and keeps the current cover without asking", async () => {
+    saved({ coverImageId: 55 });
+    const image = { id: 99, url: 'k', type: 'image' as const };
+    checks.isImageOwner.mockResolvedValueOnce(false);
+    expect(await rejects(update({ coverImage: image }))).toBe('Invalid cover image');
+    expect(checks.isImageOwner).toHaveBeenCalledWith({
+      userId: SELLER,
+      imageId: 99,
+      allowMods: false,
+    });
+
+    checks.isImageOwner.mockClear();
+    await update({ coverImage: { ...image, id: 55 } });
+    expect(checks.isImageOwner).not.toHaveBeenCalled();
+    expect(lastData()?.coverImageId).toBe(55);
+
+    await update({ coverImage: null });
+    expect(lastData()?.coverImageId).toBeNull();
   });
 });

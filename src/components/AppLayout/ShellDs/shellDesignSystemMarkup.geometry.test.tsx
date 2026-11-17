@@ -550,6 +550,7 @@ describe('shell design-system markup: the literal contract', () => {
     const expected: Array<[string, string, string | null, string | null]> = [
       ['Terms of Service', '/content/tos', null, null],
       ['Privacy', '/content/privacy', null, null],
+      ['Remove Intimate Images', '/content/take-it-down', null, null],
       ['Safety', '/safety', null, null],
       ['API', 'https://developer.civitai.com/', '_blank', 'nofollow noreferrer'],
       ['Status', 'https://status.civitai.com', '_blank', 'nofollow noreferrer'],

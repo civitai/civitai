@@ -89,6 +89,8 @@ describe('when HQ intake is configured', () => {
     ['a script link', { ...TASK, url: 'javascript:alert(1)' }],
     ['an id with markup', { ...TASK, id: '<img src=x>' }],
     ['an over-long id', { ...TASK, id: 'x'.repeat(101) }],
+    // Same origin, so only the shared id pattern can refuse it: HQ issues lower-case ids.
+    ['an upper-case id', { id: 'T_UPPER', url: `${HQ_ORIGIN}/tasks/T_UPPER` }],
   ])('records nothing when HQ answers 201 with %s', async (_, reply) => {
     fetchMock.mockResolvedValue(created(reply));
     await fileFeedbackToHq(report());
@@ -135,13 +137,6 @@ describe('a failed filing never reaches the caller', () => {
 
     expect(loggedStatuses()).toEqual([status]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
-  });
-
-  it('resolves when recording the task fails and so does the log', async () => {
-    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
-    loggingMock.logToAxiom.mockRejectedValue(new Error('axiom down'));
-
-    await expect(fileFeedbackToHq(report())).resolves.toBeUndefined();
   });
 });
 

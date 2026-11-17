@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -24,6 +25,7 @@ import { getImagesSpanMaxHeight } from '~/components/Image/Infinite/images-span'
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
+import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
 import { toSemanticImageSearchInput } from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
@@ -31,6 +33,9 @@ import type { SearchRefusal } from '~/components/Search/search-refusal';
 import { ImageFeedSearchSummary } from '~/components/Image/Infinite/ImageFeedSearchSummary';
 import {
   useImageFeedSearchQuery,
+  useImageFeedSearchSort,
+  useImageFeedSimilarTo,
+  useSearchPeriod,
   useSemanticImageFeed,
 } from '~/components/Image/Infinite/useImageFeedSearch';
 import type { ImageGetInfinite } from '~/types/router';
@@ -86,15 +91,28 @@ export function ImagesInfiniteContent(props: ImagesInfiniteProps) {
 // Only a feed that can be searched pays for the flag lookup and the query checks.
 function SearchableImagesFeed(props: ImagesInfiniteProps) {
   const query = useImageFeedSearchQuery();
+  const similarTo = useImageFeedSimilarTo();
+  const { sort } = useImageFeedSearchSort();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
   const { refusal, profanityMatches } = useSearchRefusal(query, 'images_semantic');
-  return <ImagesFeed {...props} feedSearch={{ query, refusal, profanityMatches }} />;
+  const period = useSearchPeriod(!!query || !!similarTo);
+  return (
+    <ImagesFeed
+      {...props}
+      feedSearch={{ query, similarTo, sort, refusal, profanityMatches, period }}
+    />
+  );
 }
 
 type FeedSearch = {
   query?: string;
+  /** "More like this": the image to match while no query is set. */
+  similarTo?: number;
+  sort?: ImageFeedSearchSort;
   refusal?: SearchRefusal;
   profanityMatches: string[];
+  /** The saved feed period while `useSearchPeriod` is still writing it. */
+  period?: MetricTimeframe;
 };
 
 function ImagesFeed({
@@ -114,12 +132,23 @@ function ImagesFeed({
 }: ImagesInfiniteProps & { feedSearch?: FeedSearch }) {
   const features = useFeatureFlags();
   const imageFilters = useImageFilters(filterType);
-  const { query: rawSearchQuery, ...computedFilters } = removeEmpty({
-    ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
+  const {
+    query: rawSearchQuery,
+    similarTo: _similarTo,
+    ...computedFilters
+  } = removeEmpty({
+    ...(disableStoreFilters
+      ? filterOverrides
+      : {
+          ...imageFilters,
+          ...(feedSearch?.period && { period: feedSearch.period }),
+          ...filterOverrides,
+        }),
     withTags,
   });
   const refusal = rawSearchQuery ? feedSearch?.refusal : undefined;
   const searchQuery = rawSearchQuery && !refusal ? feedSearch?.query : undefined;
+  const similarTo = rawSearchQuery ? undefined : feedSearch?.similarTo;
   // Stabilize identity so effects/query keys only fire on real content change.
   const filtersRef = useRef(computedFilters);
   if (!isEqual(filtersRef.current, computedFilters)) filtersRef.current = computedFilters;
@@ -142,12 +171,19 @@ function ImagesFeed({
     : rawBrowsingLevel;
   const searchInput = useMemo(
     () =>
-      searchQuery
-        ? toSemanticImageSearchInput({ query: searchQuery, filters, browsingLevel })
+      searchQuery || similarTo
+        ? toSemanticImageSearchInput({
+            query: searchQuery,
+            imageId: similarTo,
+            filters,
+            browsingLevel,
+            sort: feedSearch?.sort,
+          })
         : undefined,
-    [searchQuery, filters, browsingLevel]
+    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort]
   );
   const search = useSemanticImageFeed(searchInput);
+  useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;
   const searching = !!searchInput && !searchFailed;
@@ -278,6 +314,7 @@ function ImagesFeed({
       {searchInput && (
         <ImageFeedSearchSummary
           query={searchInput.query ?? ''}
+          similarTo={searchInput.imageId}
           correctedQuery={searching ? search.correctedQuery : undefined}
           filters={filters}
           failed={searchFailed}

@@ -1,4 +1,5 @@
 import type { Logger } from '@civitai/next-axiom';
+import { requestVerifiedCrawler } from '~/server/utils/browsing-level';
 import { withAxiom } from '@civitai/next-axiom';
 import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
@@ -111,7 +112,7 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
   logToAxiom(
     { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -121,8 +122,8 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
  * RELOCATES the driver text rather than destroying it. But it must not land on
  * the error board, and one status makes that concrete rather than theoretical.
  *
- * 🔴 The only Prisma codes that reach **408** are `P1008` / `P2024` — connection
- * pool exhaustion. That is wave-shaped: during an incident every affected public
+ * 🔴 The only Prisma code that reaches **408** is `P1008` — an engine operation
+ * timeout (`P2024`, pool exhaustion, is a 503 with a generic message). That is wave-shaped: during an incident every affected public
  * request would add an error-severity line, on routes that previously logged
  * nothing at all. It is the same "fires in high-volume waves" property for which
  * `isRestServerFault` excludes 503 from the error stream.
@@ -148,7 +149,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
       ...(route ? { route } : null),
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -171,7 +172,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
  *
  *     🔴 That used to be stated without the "usually", and as written it was
  *     FALSE — civitai#3845 investigation 3. `throwDbError` maps a large slice of
- *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P2024→408) while
+ *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P1008→408) while
  *     copying the driver's own `message` verbatim, so a 4xx body could be a raw
  *     `Invalid \`prisma.<model>.<method>()\` invocation` dump disclosing the table,
  *     the column or the constraint name. Those are now caught by a SECOND
@@ -297,6 +298,8 @@ function withApiMetrics(
   });
 }
 
+const TOKEN_HEADER = 'x-webhook-token';
+
 /**
  * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
  * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
@@ -323,10 +326,13 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    const { bearer, queryToken } = presentedTokens(req);
+    // `x-webhook-token` is what the Knights app sends. When it is present it is the only credential
+    // read, so a wrong header is refused even if `?token=` is right.
+    const { bearer, queryToken, header } = presentedTokens(req);
+    const headerOk = header !== undefined && timingSafeEqualStrings(token, header);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
-    if (!bearerOk && !queryOk) {
+    if (header !== undefined ? !headerOk : !bearerOk && !queryOk) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -342,9 +348,11 @@ export function TokenSecuredEndpoint(
  * arrives as an array and is refused rather than read.
  */
 function presentedTokens(req: NextApiRequest) {
+  const header = req.headers[TOKEN_HEADER];
   return {
     bearer: req.headers.authorization?.match(/^Bearer (.+)$/)?.[1],
     queryToken: typeof req.query.token === 'string' ? req.query.token : undefined,
+    header: typeof header === 'string' && header !== '' ? header : undefined,
   };
 }
 
@@ -416,11 +424,14 @@ function webhookTokenEndpoint(
       return;
     }
 
-    const { bearer, queryToken } = presentedTokens(req);
+    const { bearer, queryToken, header } = presentedTokens(req);
+    // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
     const slot =
-      matchWebhookToken(bearer) ??
-      matchWebhookToken(queryToken) ??
-      (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+      header !== undefined
+        ? matchWebhookToken(header)
+        : matchWebhookToken(bearer) ??
+          matchWebhookToken(queryToken) ??
+          (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
     if (!slot) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
@@ -641,7 +652,9 @@ export function PublicEndpoint(
     // are not flushed until it responds, and last write wins. That is what keeps
     // the `no-store` error arms (`handleEndpointError`, and the 503 sheds in
     // `v1/images`/`v1/users`) authoritative.
-    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    // A verified crawler's answer can differ from a signed-out visitor's at the same URL.
+    if (credentialed || requestVerifiedCrawler(req) !== null)
+      res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res, maxAge);
 
     await handler(req, res);
@@ -714,7 +727,8 @@ export function MixedAuthEndpoint(
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    if (credentialed || requestVerifiedCrawler(req) !== null)
+      res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
 
     // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
@@ -767,9 +781,12 @@ export function PartnerEndpoint(
 
 export function ModEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  /** `noStore`: `private, no-store` on every answer, this wrapper's own refusals included. */
+  { noStore = false }: { noStore?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (noStore) res.setHeader('cache-control', 'private, no-store');
     if (!req.method || !allowedMethods.includes(req.method)) {
       res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
@@ -942,7 +959,7 @@ export function OrchestratorEndpoint(
         route: req.url?.split('?')[0],
         requiredScope,
         ...credentialLogFields(credential),
-      }).catch(() => undefined);
+      });
       return res
         .status(403)
         .json({ error: 'Your API key does not have the required scope for this action' });

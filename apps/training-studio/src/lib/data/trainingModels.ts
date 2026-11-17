@@ -119,6 +119,12 @@ export interface ModelCard {
   versions: ModelVersionInfo[];
 }
 
+/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
+ *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
+export function isFlux2(engine?: string): boolean {
+  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
+}
+
 export const MODEL_CARDS: ModelCard[] = [
   // ---- Image · captions ----
   {
@@ -918,6 +924,13 @@ export const catalogFlagKeys = (): string[] => [
     )
   ),
 ];
+
+/** The Kohya engine's gate. Same fail-closed semantics as a catalog gate: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const KOHYA_FLAG_KEY = 'training-studio-kohya';
+
+/** Every gate a host evaluates for the flow: the catalog's, then the Kohya engine's. */
+export const hostFlagKeys = (): string[] => [...catalogFlagKeys(), KOHYA_FLAG_KEY];
 
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see
  *  one. Null when a pair card is ungated, so nothing gates them. */

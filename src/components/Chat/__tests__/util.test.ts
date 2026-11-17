@@ -6,43 +6,49 @@ import { createElement, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import {
+  chatLinkifyOptions,
   chatPreviewText,
   getLinkHref,
-  linkifyOptions,
+  isChatLink,
   MODERATOR_BADGE_COSMETIC_ID,
-  renderLink,
   showsChatModeratorMark,
-  validateLink,
+  stripMarkdownForPreview,
 } from '~/components/Chat/util';
+import { groupRenamedNote } from '~/shared/utils/chat';
 
-// linkify only turns a URL into a link when validateLink.url passes; this is the
+// Every host our sites answer on, as `getOwnHosts` reads it from the domain config.
+const ownHosts = ['civitai.com', 'civitai.red', 'civitai.green'];
+const linkifyOptions = chatLinkifyOptions(ownHosts);
+const renderLink = linkifyOptions.render as (ir: unknown) => ReactElement;
+
+// linkify only turns a URL into a link when isChatLink passes; this is the
 // gate the fix actually flips, so a revert (dropping `civitai.red` from
 // externalRegex) makes the first assertion below fail.
-describe('validateLink.url', () => {
+describe('isChatLink', () => {
   it('accepts civitai.red URLs so they get linkified in chat', () => {
-    expect(validateLink.url('https://civitai.red/models/123')).toBe(true);
-    expect(validateLink.url('https://civitai.red/user/someone')).toBe(true);
+    expect(isChatLink('https://civitai.red/models/123', ownHosts)).toBe(true);
+    expect(isChatLink('https://civitai.red/user/someone', ownHosts)).toBe(true);
   });
 
   it('accepts education.civitai.com URLs so guide links get linkified in chat', () => {
     expect(
-      validateLink.url('https://education.civitai.com/civitais-guide-to-resource-types/#Loras')
+      isChatLink('https://education.civitai.com/civitais-guide-to-resource-types/#Loras', ownHosts)
     ).toBe(true);
-    expect(validateLink.url('education.civitai.com')).toBe(true);
+    expect(isChatLink('education.civitai.com', ownHosts)).toBe(true);
   });
 
   it('still accepts existing allowlist domains and civitai.com/AIR', () => {
-    expect(validateLink.url('https://github.com/civitai/civitai')).toBe(true);
-    expect(validateLink.url('https://civitai.com/models/123')).toBe(true);
-    expect(validateLink.url('civitai:123@456')).toBe(true);
+    expect(isChatLink('https://github.com/civitai/civitai', ownHosts)).toBe(true);
+    expect(isChatLink('https://civitai.com/models/123', ownHosts)).toBe(true);
+    expect(isChatLink('civitai:123@456', ownHosts)).toBe(true);
   });
 
   it('rejects a look-alike host that only prefixes civitai.red', () => {
     // Without the domain boundary this would validate and then be server-side
     // fetched by unfurl() as if it were the trusted .red domain.
-    expect(validateLink.url('https://civitai.red.evil.com/x')).toBe(false);
-    expect(validateLink.url('https://example.com/x')).toBe(false);
-    expect(validateLink.url('https://education.civitai.com.evil.com/x')).toBe(false);
+    expect(isChatLink('https://civitai.red.evil.com/x', ownHosts)).toBe(false);
+    expect(isChatLink('https://example.com/x', ownHosts)).toBe(false);
+    expect(isChatLink('https://education.civitai.com.evil.com/x', ownHosts)).toBe(false);
   });
 
   // Hosts are matched exactly on the parsed URL, so a name that merely starts with an
@@ -60,8 +66,8 @@ describe('validateLink.url', () => {
     'https://www.github.com.example.org/x',
     'https://notgithub.com/x',
   ])('rejects the look-alike host %s', (url) => {
-    expect(validateLink.url(url)).toBe(false);
-    expect(getLinkHref(url)).toBeUndefined();
+    expect(isChatLink(url, ownHosts)).toBe(false);
+    expect(getLinkHref(url, ownHosts)).toBeUndefined();
   });
 
   it.each([
@@ -74,8 +80,8 @@ describe('validateLink.url', () => {
     'https://education.civitai.com:x@other.host/',
     'https://user:pass@github.com/x',
   ])('rejects a URL carrying credentials: %s', (url) => {
-    expect(validateLink.url(url)).toBe(false);
-    expect(getLinkHref(url)).toBeUndefined();
+    expect(isChatLink(url, ownHosts)).toBe(false);
+    expect(getLinkHref(url, ownHosts)).toBeUndefined();
   });
 
   it.each([
@@ -94,8 +100,8 @@ describe('validateLink.url', () => {
     'https://civitai.red/models/123?sort=new',
     'https://education.civitai.com/guide/#Loras',
   ])('accepts the genuine URL %s', (url) => {
-    expect(validateLink.url(url)).toBe(true);
-    expect(getLinkHref(url)).toBeDefined();
+    expect(isChatLink(url, ownHosts)).toBe(true);
+    expect(getLinkHref(url, ownHosts)).toBeDefined();
   });
 });
 
@@ -153,28 +159,126 @@ describe('a chat message through Linkify', () => {
 
 describe('getLinkHref', () => {
   it('preserves the full off-site URL for civitai.red so it opens on the .red domain', () => {
-    expect(getLinkHref('https://civitai.red/models/123')).toBe('https://civitai.red/models/123');
+    expect(getLinkHref('https://civitai.red/models/123', ownHosts)).toBe(
+      'https://civitai.red/models/123'
+    );
   });
 
   it('rewrites civitai.com links to an internal relative path', () => {
-    expect(getLinkHref('https://civitai.com/models/123')).toBe('/models/123');
+    expect(getLinkHref('https://civitai.com/models/123', ownHosts)).toBe('/models/123');
   });
 
   it('keeps the query and fragment of a civitai.com link, and drops a port', () => {
-    expect(getLinkHref('https://civitai.com/models/123?modelVersionId=4#gallery')).toBe(
+    expect(getLinkHref('https://civitai.com/models/123?modelVersionId=4#gallery', ownHosts)).toBe(
       '/models/123?modelVersionId=4#gallery'
     );
-    expect(getLinkHref('https://civitai.com:443/models/123')).toBe('/models/123');
-    expect(getLinkHref('https://civitai.com')).toBe('/');
+    expect(getLinkHref('https://civitai.com:443/models/123', ownHosts)).toBe('/models/123');
+    expect(getLinkHref('https://civitai.com', ownHosts)).toBe('/');
   });
 
   it('resolves AIR URNs to a model URL', () => {
-    expect(getLinkHref('civitai:123@456')).toContain('/models/123');
+    expect(getLinkHref('civitai:123@456', ownHosts)).toContain('/models/123');
   });
 
   it('returns undefined for an empty href', () => {
-    expect(getLinkHref(undefined)).toBeUndefined();
+    expect(getLinkHref(undefined, ownHosts)).toBeUndefined();
   });
+});
+
+describe('a civitai.com link whose path starts with two slashes', () => {
+  // A browser reads an href of "//host/x" as another host, so these must never become one.
+  const shapes = [
+    'https://civitai.com//example.org/x',
+    'civitai.com//example.org/x',
+    'https://civitai.com/.//example.org/x',
+    'https://civitai.com/a/..//example.org/x',
+    'https://civitai.com/\\example.org/x',
+    '/.//example.org/x',
+  ];
+
+  it.each(shapes)('gives %s no href', (href) => {
+    expect(getLinkHref(href, ownHosts)).toBeUndefined();
+    expect(isChatLink(href, ownHosts)).toBe(false);
+  });
+
+  it.each(shapes.slice(0, 5))('renders %s in a message without a link', (text) => {
+    const html = renderMessage(`see ${text}`);
+    expect(html).not.toContain('href="//');
+    expect(html).not.toContain('<a');
+  });
+
+  it('still links a normal civitai.com path, and keeps an encoded slash on the site', () => {
+    expect(getLinkHref('https://civitai.com/models/1', ownHosts)).toBe('/models/1');
+    expect(getLinkHref('civitai.com/models/1', ownHosts)).toBe('/models/1');
+    expect(getLinkHref('https://civitai.com/%2F%2Fexample.org', ownHosts)).toBe(
+      '/%2F%2Fexample.org'
+    );
+    expect(
+      getLinkHref('https://civitai.com/models/1?back=https://civitai.com/x#//y', ownHosts)
+    ).toBe('/models/1?back=https://civitai.com/x#//y');
+    expect(renderMessage('see civitai.com/models/1')).toContain('href="/models/1"');
+  });
+});
+
+describe('a link to another of our sites', () => {
+  const anchorFor = (text: string, hosts: string[]) => {
+    const html = renderToStaticMarkup(
+      createElement(
+        MantineProvider,
+        null,
+        createElement(Linkify, { options: chatLinkifyOptions(hosts) }, text)
+      )
+    );
+    const href = html.match(/<a [^>]*href="([^"]*)"/)?.[1] ?? null;
+    return { href, newTab: /<a [^>]*target="_blank"/.test(html) };
+  };
+
+  it.each([
+    ['https://civitai.green/models/1', 'https://civitai.green/models/1'],
+    ['https://civitai.red/models/1', 'https://civitai.red/models/1'],
+    ['https://www.civitai.red/models/1', 'https://www.civitai.red/models/1'],
+  ])('links %s as written, in a new tab', (text, href) => {
+    expect(anchorFor(text, ownHosts)).toEqual({ href, newTab: true });
+  });
+
+  it('links a bare civitai.green host too, in a new tab', () => {
+    const { href, newTab } = anchorFor('civitai.green/models/1', ownHosts);
+    expect(href).toContain('civitai.green/models/1');
+    expect(newTab).toBe(true);
+  });
+
+  it('links any host in ownHosts, aliases included, and none outside it', () => {
+    expect(anchorFor('https://green.example.org/a', [...ownHosts, 'green.example.org'])).toEqual({
+      href: 'https://green.example.org/a',
+      newTab: true,
+    });
+    expect(anchorFor('https://civitai.green/models/1', []).href).toBeNull();
+  });
+
+  it('leaves www.civitai.com unlinked, as before', () => {
+    expect(anchorFor('https://www.civitai.com/models/1', ownHosts).href).toBeNull();
+  });
+
+  it('still opens a civitai.com link on the site being read', () => {
+    expect(anchorFor('https://civitai.com/models/1', ownHosts)).toEqual({
+      href: '/models/1',
+      newTab: false,
+    });
+  });
+
+  it('hands our other sites to the server-side link preview', () => {
+    const links = findLinks('https://civitai.green/models/1 https://example.com/x', linkifyOptions);
+    expect(links.map((l) => l.href)).toEqual(['https://civitai.green/models/1']);
+  });
+});
+
+describe('a group-rename note in the chat list preview', () => {
+  it.each(['Weekend_crew!', 'Art (WIP)', '[Open] <x> \\ #~|', '[a](b)', '**x**', '__x__', '`x`'])(
+    'shows %s as typed',
+    (name) => {
+      expect(stripMarkdownForPreview(groupRenamedNote(name))).toBe(`Group renamed to "${name}"`);
+    }
+  );
 });
 
 describe('chatPreviewText', () => {

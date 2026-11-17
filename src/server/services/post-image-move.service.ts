@@ -143,10 +143,14 @@ export async function moveImagesToPost({
       };
     }
 
+    // After the destination's last item, its storyline text items included.
     const {
-      _max: { index: maxIndex },
+      _max: { index: maxImageIndex },
     } = await tx.image.aggregate({ where: { postId: destination.id }, _max: { index: true } });
-    const firstIndex = (maxIndex ?? -1) + 1;
+    const {
+      _max: { index: maxTextIndex },
+    } = await tx.postText.aggregate({ where: { postId: destination.id }, _max: { index: true } });
+    const firstIndex = Math.max(maxImageIndex ?? -1, maxTextIndex ?? -1) + 1;
     for (const [i, id] of imageIds.entries()) {
       // Image rows are not locked, so the write re-checks what the refusal read.
       const { count } = await tx.image.updateMany({
@@ -205,7 +209,7 @@ export async function moveImagesToPost({
   ]);
   const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failures.length)
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'move-images-to-post-followup-failed',
       message: 'Images moved, but a follow-up step failed',
@@ -213,7 +217,7 @@ export async function moveImagesToPost({
       fromPostId,
       toPostId: targetPostId,
       errors: failures.map((f) => safeError(f.reason)),
-    }).catch(() => undefined);
+    });
 
   return { postId: targetPostId };
 }

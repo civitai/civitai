@@ -72,7 +72,7 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(200).json({ ok: true });
   } catch (e: unknown) {
     const error = e as Error;
-    await logToAxiom({
+    logToAxiom({
       name: 'scanner-policy-result',
       type: 'error',
       message: error.message,
@@ -80,7 +80,7 @@ export default WebhookEndpoint(async (req, res) => {
       runId,
       rowIdx,
       candidateId,
-    }).catch(() => undefined);
+    });
     return res.status(500).json({ error: error.message });
   }
 });

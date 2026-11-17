@@ -27,6 +27,7 @@ describe('the content gate', () => {
       filter: { gate } as CandidateFilter,
       offset: 0,
       limit: 10,
+      viewer: { isModerator: false },
     });
 
   const challenge: ViewerGate = {
@@ -69,6 +70,19 @@ describe('the content gate', () => {
     expect(sent[0].must).toContainEqual({ key: 'nsfwLevel', match: { any: [1, 2] } });
   });
 
+  it("requires a 3D model's thumbnail level too, and drops a point written without it", async () => {
+    await search('models3d', { kind: 'level', nsfwLevels: [1] });
+    // Qdrant's must/match-any, applied to stored payloads: a missing field matches nothing.
+    const served = (payload: Record<string, number[]>) =>
+      (sent[0].must as { key: string; match: { any: number[] } }[]).every((c) =>
+        (payload[c.key] ?? []).some((v) => c.match.any.includes(v))
+      );
+    expect(served({ nsfwLevel: [1], thumbnailNsfwLevel: [1] })).toBe(true);
+    // A PG model whose thumbnail was re-rated R.
+    expect(served({ nsfwLevel: [1], thumbnailNsfwLevel: [4] })).toBe(false);
+    expect(served({ nsfwLevel: [1] })).toBe(false);
+  });
+
   it('requires both levels of a challenge, and keeps user challenges to their domain', async () => {
     await search('challenges', challenge);
     expect(sent[0].must).toEqual(
@@ -95,6 +109,17 @@ describe('the content gate', () => {
     expect(sent[0].must).toContainEqual({ key: 'coverNsfwLevel', match: { any: [1] } });
     expect(sent[0].must_not).toContainEqual({ key: 'textNsfw', match: { value: true } });
     expect(sent[1].must_not).not.toContainEqual({ key: 'textNsfw', match: { value: true } });
+  });
+
+  it('ranks only within an id list when one is given', async () => {
+    await searchServiceSource('articles')({
+      query: { text: 'x' },
+      filter: { gate: { kind: 'level', nsfwLevels: [1] }, ids: [3, 5] },
+      offset: 0,
+      limit: 10,
+      viewer: { isModerator: false },
+    });
+    expect(sent[0].must).toContainEqual({ has_id: [3, 5] });
   });
 });
 

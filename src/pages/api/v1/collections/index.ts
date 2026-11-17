@@ -24,7 +24,8 @@ import { booleanString } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/collections — public, edge-cacheable list/search over collections.
+ * GET /api/v1/collections — public list/search over collections, edge-cacheable except at
+ * `?nsfw=true`, whose body depends on the caller's region and is `private, no-store`.
  *
  * Wraps the EXISTING `getAllCollections` service (no reimplemented business
  * logic). This endpoint serves PUBLIC data only: privacy is pinned to `[Public]`
@@ -103,6 +104,8 @@ export default MixedAuthEndpoint(async function handler(
   const region = getRegion(req);
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
+  // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+  if (nsfw) res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     // Public discovery. The keyset cursor is id-based, which only tracks the

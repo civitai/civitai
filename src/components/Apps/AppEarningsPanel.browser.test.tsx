@@ -13,9 +13,40 @@ import type { AppEarningsResult } from '~/server/services/blocks/app-collaborato
  * promise TRUE. Props-only view; the container's tRPC wiring is out of frame.
  */
 
-function bucket(count: number, shareCents: number) {
-  return { count, grossCents: shareCents * 2, shareCents };
-}
+const FEES = {
+  paidWindowDays: 90,
+  accrued: { count: 2, feeBuzz: 3, byBuzzType: { yellow: 3 } },
+  settled: { count: 2, feeBuzz: 12, byBuzzType: { blue: 4, yellow: 8 } },
+  byApp: [
+    {
+      appBlockId: 'ab_1',
+      accrued: { count: 2, feeBuzz: 3, byBuzzType: { yellow: 3 } },
+      settled: { count: 2, feeBuzz: 12, byBuzzType: { blue: 4, yellow: 8 } },
+    },
+  ],
+  recent: [
+    {
+      id: 'bafa_1',
+      appBlockId: 'ab_1',
+      feeBuzz: 8,
+      buzzType: 'yellow',
+      status: 'settled',
+      accruedAt: new Date('2026-11-09T10:00:00Z'),
+      settledAt: new Date('2026-11-10T02:30:00Z'),
+    },
+  ],
+};
+const GOODS = {
+  sales: {
+    count: 1,
+    grossBuzz: 10,
+    shareBuzz: 7,
+    shareUsdCents: 0,
+    grossUsdCents: 1,
+    blueGrossBuzz: 0,
+  },
+  refunded: { count: 0, grossBuzz: 0 },
+};
 
 function ok(over: Partial<Extract<AppEarningsResult, { ok: true }>> = {}): AppEarningsResult {
   return {
@@ -23,27 +54,81 @@ function ok(over: Partial<Extract<AppEarningsResult, { ok: true }>> = {}): AppEa
     appListingId: 'apl_1',
     appBlockId: 'ab_1',
     role: 'owner',
-    summary: {
-      pending: bucket(2, 1234),
-      confirmed: bucket(3, 5000),
-      paidOut: bucket(4, 9900),
-      voided: { count: 1, grossCents: 250 },
-    },
+    authorFees: FEES,
+    goods: GOODS,
     ...over,
   } as AppEarningsResult;
 }
 
+/** The card-purchase share's labels. That share is recorded but never paid out. */
+const CARD_SHARE_LABELS = ['Pending', 'Confirmed (unpaid)', 'Paid out', 'Voided'];
+
 describe('AppEarningsPanelView', () => {
-  test('renders the four buckets with the SHARE figure, formatted as dollars', async () => {
+  test('renders the app’s author fees and goods sales', async () => {
     renderWithProviders(<AppEarningsPanelView data={ok()} />);
     await expect.element(page.getByTestId('apps-earnings-panel')).toBeInTheDocument();
-    // 🔴 `shareCents`, not `grossCents` — the fixture makes gross exactly 2x share, so a
-    // mutant reading the wrong field renders $24.68 here and this assertion catches it.
-    await expect.element(page.getByTestId('apps-earnings-pending')).toHaveTextContent('$12.34');
-    await expect.element(page.getByTestId('apps-earnings-confirmed')).toHaveTextContent('$50.00');
-    await expect.element(page.getByTestId('apps-earnings-paidOut')).toHaveTextContent('$99.00');
-    // Voided is the one bucket with no share — it reports GROSS by design.
-    await expect.element(page.getByTestId('apps-earnings-voided')).toHaveTextContent('$2.50');
+    await expect.element(page.getByTestId('author-fees-pending-buzz')).toHaveTextContent(/^3$/);
+    await expect.element(page.getByTestId('author-fees-paid-buzz')).toHaveTextContent(/^12$/);
+    await expect.element(page.getByTestId('goods-share-buzz')).toHaveTextContent(/^7$/);
+    // One app: no per-app list, and the recent table has no App column.
+    expect(page.getByTestId('author-fees-by-app').elements()).toHaveLength(0);
+    const header = page.getByTestId('author-fees-recent').getByRole('row').elements()[0];
+    expect(header.textContent).toBe('DateFeeBuzz typeStatus');
+  });
+
+  test('does NOT render the card-purchase share, even if the payload carries it', async () => {
+    const legacy: Record<string, unknown> = {
+      ...ok(),
+      summary: {
+        pending: { count: 2, grossCents: 2468, shareCents: 1234 },
+        confirmed: { count: 3, grossCents: 10000, shareCents: 5000 },
+        paidOut: { count: 4, grossCents: 19800, shareCents: 9900 },
+        voided: { count: 1, grossCents: 250 },
+      },
+    };
+    renderWithProviders(<AppEarningsPanelView data={legacy as AppEarningsResult} />);
+    await expect.element(page.getByTestId('apps-earnings-panel')).toBeInTheDocument();
+    for (const label of CARD_SHARE_LABELS)
+      expect(page.getByText(label, { exact: true }).elements(), label).toHaveLength(0);
+    for (const dollars of ['$12.34', '$50.00', '$99.00', '$2.50'])
+      expect(page.getByText(dollars).elements(), dollars).toHaveLength(0);
+  });
+
+  test('an app with no fees and no sales says so for the APP, not "attributed to you"', async () => {
+    const zero = {
+      accrued: { count: 0, feeBuzz: 0, byBuzzType: {} },
+      settled: { count: 0, feeBuzz: 0, byBuzzType: {} },
+      byApp: [],
+      recent: [],
+      paidWindowDays: 90,
+    };
+    const noGoods = {
+      sales: { ...GOODS.sales, count: 0, grossBuzz: 0, shareBuzz: 0, grossUsdCents: 0 },
+      refunded: { count: 0, grossBuzz: 0 },
+    };
+    renderWithProviders(
+      <AppEarningsPanelView data={ok({ role: 'editor', authorFees: zero, goods: noGoods })} />
+    );
+    await expect
+      .element(page.getByTestId('author-fees-empty'))
+      .toHaveTextContent(/^No author fees on this app\.$/);
+    await expect
+      .element(page.getByText('No digital goods sales on this app yet.'))
+      .toBeInTheDocument();
+    expect(page.getByText(/attributed to you/).elements()).toHaveLength(0);
+    // An empty window is not "never earned": the note says which period was read.
+    await expect.element(page.getByTestId('author-fees-window')).toHaveTextContent(/^Last 90 days/);
+  });
+
+  test('an older API payload without authorFees/goods says could-not-load, never zero', async () => {
+    const payload: Record<string, unknown> = { ...ok() };
+    delete payload.authorFees;
+    delete payload.goods;
+    renderWithProviders(<AppEarningsPanelView data={payload as AppEarningsResult} />);
+    await expect.element(page.getByTestId('author-fees-unavailable')).toBeInTheDocument();
+    await expect.element(page.getByTestId('goods-unavailable')).toBeInTheDocument();
+    expect(page.getByTestId('author-fees-empty').elements()).toHaveLength(0);
+    expect(page.getByTestId('goods-share-buzz').elements()).toHaveLength(0);
   });
 
   test('an EDITOR is told the figures are shared with everyone seated on the app', async () => {
@@ -79,7 +164,7 @@ describe('AppEarningsPanelView', () => {
         await expect.element(alert).toHaveTextContent(earningsUnavailableMessage(reason));
         // The commit proof above makes this absence an observation, not a race.
         expect(page.getByTestId('apps-earnings-panel').elements()).toHaveLength(0);
-        expect(page.getByTestId('apps-earnings-pending').elements()).toHaveLength(0);
+        expect(page.getByTestId('author-fees-card').elements()).toHaveLength(0);
       });
     }
 

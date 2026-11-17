@@ -199,6 +199,10 @@ export const createCrucibleInputBaseSchema = z.object({
       message: 'Unsupported maximum clip length',
     })
     .nullish(),
+  // Minted by the client once per creation and resent on its retries: the setup fee's and the
+  // seed's ledger ids derive from it, so a retry after an unanswered request charges each once.
+  // Optional for clients from before keys, which get new ids per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 type CrucibleSettings = {
@@ -278,6 +282,10 @@ export type SubmitEntrySchema = z.infer<typeof submitEntrySchema>;
 export const submitEntrySchema = z.object({
   crucibleId: z.number(),
   imageId: z.number(),
+  // Minted by the client once per entry and resent on its retries: the entry fee's ledger ids
+  // derive from it, so a retry after an unanswered submit cannot charge the fee again. Optional
+  // for clients from before keys, which get a new id per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type CheckCrucibleEntryEligibilitySchema = z.infer<
@@ -320,6 +328,16 @@ export const submitVoteSchema = z
 
 // Schema for getting a judging pair
 export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
+export type DismissJudgingPairSchema = z.infer<typeof dismissJudgingPairSchema>;
+export const dismissJudgingPairSchema = z
+  .object({
+    crucibleId: z.number(),
+    entryIds: z.tuple([z.number().int(), z.number().int()]),
+  })
+  .refine(({ entryIds: [a, b] }) => a !== b, {
+    message: 'A pair needs two different entries',
+    path: ['entryIds'],
+  });
 export type GetJudgingProgressSchema = z.infer<typeof getJudgingProgressSchema>;
 export const getJudgingProgressSchema = z.object({
   crucibleId: z.number(),

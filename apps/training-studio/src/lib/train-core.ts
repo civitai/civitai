@@ -1,3 +1,6 @@
+import { buildKohyaInput } from './kohya-training';
+import { engineTakesRepeats, expandRepeats, isRepeatExt, MAX_REPEATS } from './repeats';
+import { kohyaFamily, type KohyaOptions, type KohyaInput } from './data/kohya';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // Client-safe training submit builders: pure body construction + SDK calls against a provided
 // client. Env-derived concerns are parameters — the shell's server wrappers (lib/server/train.ts)
@@ -7,7 +10,6 @@ import {
   Air,
   deleteWorkflow,
   getResource,
-  getWorkflow,
   headBlob,
   submitWorkflow,
   updateWorkflow,
@@ -17,6 +19,8 @@ import {
   type WorkflowTemplate,
 } from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -26,6 +30,8 @@ import {
   forEachPooled,
   isTrainingDataNotReady,
   isFlux2,
+  queryRecentWorkflows,
+  readWorkflow,
   resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
@@ -56,8 +62,10 @@ import {
 } from '$lib/data/trainingModels';
 import {
   blockedRunMessage,
+  FLUX2_UNAVAILABLE_REASON,
   type RunModelRef,
   type TrainingServiceStatus,
+  UNAVAILABLE_LABEL,
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
@@ -65,14 +73,18 @@ import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/data
 import { slugify } from '$lib/slug';
 import type { TrainingTextCheck } from '$lib/training-text';
 
-/** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
- *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
+/** Captions remain raw until the engine-specific submit builder applies the trigger word. */
 export interface TrainingItem {
   air: string;
   caption: string;
-  /** Edit training only: where the blob sits in the dataset AI-Toolkit reads — `control_1/<name>` for a
-   *  pair's starting image, `main/<name>` (same name, captioned with the instruction) for its result. */
+  /** Edit training only (the submit also sets one on each repeat copy): where the blob sits in the
+   *  dataset AI-Toolkit reads — `control_1/<name>` for a pair's starting image, `main/<name>` (same
+   *  name, captioned with the instruction) for its result. */
   path?: string;
+  /** Non-edit only: train this image `repeats` times (2..MAX_REPEATS). The submit expands it into that
+   *  many copies, each staged under its own path, which needs the file extension `ext`. */
+  repeats?: number;
+  ext?: string;
 }
 
 /** Everything the client assembles for one training run. Params arrive as the numbers the orchestrator
@@ -82,8 +94,10 @@ export interface TrainingRunInput {
   modelVariant?: string;
   /** Ecosystem version selector (e.g. qwen's `version`). */
   version?: string;
-  /** Non-default engine (Flux.2 = `flux2-dev`); when set, the run uses the imageResourceTraining shape. */
+  /** Defaults to AI Toolkit. Kohya uses `training`; Flux.2 uses `imageResourceTraining`. */
   engine?: string;
+  kohya?: KohyaOptions;
+  negativePrompt?: string;
   /** Base checkpoint AIR — required by the flux2 path. */
   model?: string;
   /** The `Custom…` base: a Civitai model AIR to train on, overriding the ecosystem's default base. */
@@ -124,6 +138,13 @@ export interface TrainingRunInput {
   /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
    *  charged in Yellow (after Blue when `currencies` spends Blue). */
   matureAck?: boolean;
+  /**
+   * One per run per Start attempt, minted by the flow (`newSubmitKey`) and REUSED when the user
+   * starts the same batch again. It rides on the workflow as a tag, so a submit whose response was
+   * lost can be found instead of charged a second time. Absent (an older client), nothing can be
+   * reconciled and a submit is sent as before.
+   */
+  submitKey?: string;
   meta: TrainingStudioMeta;
 }
 
@@ -142,7 +163,13 @@ export interface SubmitOptions {
   datasetRating?: DatasetRating;
   /** Told how each dataset maturity count was made, for the run's log line. */
   onMatureCount?: (count: MatureCount) => void;
+  /** Whether this user may train with Kohya (the `KOHYA_FLAG_KEY` gate). Anything but true refuses a
+   *  Kohya run before any orchestrator call, and a Kohya continuation once its source run is read. */
+  kohyaAllowed?: boolean;
 }
+
+export const KOHYA_UNAVAILABLE = 'Kohya training is not available right now.';
+export const FLUX2_UNAVAILABLE = `Flux.2 is ${UNAVAILABLE_LABEL.toLowerCase()} for training. ${FLUX2_UNAVAILABLE_REASON}`;
 
 /** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
 export function unavailableRunMessage(
@@ -200,22 +227,30 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
   return out;
 }
 
-/** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
- *  blobs for every engine; the SDK types imageResourceTraining's `trainingData` as a string, so that path
- *  is cast). The Flux.2 (imageResourceTraining) engine takes no hyperparameters — only the base model +
- *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
- *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
+/** Build one run's training step. The `imageResourceTraining` branch is unreachable while Flux.2 is
+ *  refused (`FLUX2_UNAVAILABLE`): the orchestrator takes its `trainingData` only as one zip URL, not
+ *  the blob list built here. Ai-toolkit hyperparameters are extra input fields the minimal SDK type
+ *  doesn't declare, hence the cast. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
   // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
   // edit dataset places items by path instead, where one starting image may serve several pairs.
+  // Repeat copies are expanded after it, so they are never collapsed.
   const seen = new Set<string>();
-  const items = run.items.filter((item) => {
-    const key = item.path ?? trainingBlobKey(item.air);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  const trainingData = { type: 'blobs', items };
+  const items = expandRepeats(
+    run.items.filter((item) => {
+      const key = item.path ?? trainingBlobKey(item.air);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+  );
+  const trainingData = { type: 'blobs' as const, items };
+  if (run.engine === 'kohya')
+    return {
+      $type: 'training',
+      priority: 'normal',
+      input: buildKohyaInput(run, trainingData, traceMode),
+    } as unknown as WorkflowStepTemplate;
   const optimizerType = run.optimizer.toLowerCase();
   // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
   // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0 (TE off), and an ecosystem
@@ -289,6 +324,23 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
 // (for finding it). This prefix is the one place the tag shape is written and matched.
 const NAME_TAG_PREFIX = 'name:';
 
+/** The tag a submit key rides on; hex only, so it needs no escaping anywhere. */
+const SUBMIT_KEY_TAG_PREFIX = 'submit:';
+const SUBMIT_KEY = /^[0-9a-f]{16,64}$/;
+/** A submit that has not answered in this long is abandoned and reconciled by its key. */
+export const SUBMIT_TIMEOUT_MS = 30_000;
+const SUBMIT_LOOKUP_TIMEOUT_MS = 10_000;
+
+/** The id of the training workflow already submitted under `key`, if any. Throws when it can't tell. */
+async function findSubmittedRun(client: OrchestratorClient, key: string) {
+  const items = await queryRecentWorkflows(
+    client,
+    [CIVITAI_TAG, TRAINING_TAG, `${SUBMIT_KEY_TAG_PREFIX}${key}`],
+    { signal: AbortSignal.timeout(SUBMIT_LOOKUP_TIMEOUT_MS) }
+  );
+  return items.find((w) => w.id)?.id ?? undefined;
+}
+
 /** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. A
  *  `callbacks` entry registers the orchestrator push that emits live `workflow-update` signals for this run. */
 export async function submitTraining(
@@ -298,26 +350,64 @@ export async function submitTraining(
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
-  const { data, error, response } = await submitWorkflow({
-    client,
-    body: {
-      tags: slug
-        ? [CIVITAI_TAG, TRAINING_TAG, `${NAME_TAG_PREFIX}${slug}`]
-        : [CIVITAI_TAG, TRAINING_TAG],
-      metadata: metadata as Record<string, unknown>,
-      ...trainingSteps(run, traceMode, run.matureAck === true),
-      ...(callbacks ? { callbacks } : {}),
-    },
-    query: { wait: 0 },
-  });
-  if (!data?.id && isTrainingDataNotReady(error, response?.status))
-    throw new FilesProcessingError();
-  if (!data?.id)
-    throw new TrainingSubmitError(
-      chargeFailureReason(describeSubmitError(error), run.matureAck === true),
-      response?.status
-    );
-  return data.id;
+  const key = run.submitKey && SUBMIT_KEY.test(run.submitKey) ? run.submitKey : undefined;
+
+  // A second Start of the same batch (the user retrying after an error) returns the run the first
+  // one created rather than charging again. If we cannot ask, we do not submit: fail closed.
+  if (key) {
+    let existing: string | undefined;
+    try {
+      existing = await findSubmittedRun(client, key);
+    } catch {
+      throw new TrainingSubmitError(
+        'the training service did not respond, so nothing was started',
+        undefined
+      );
+    }
+    if (existing) return existing;
+  }
+
+  const tags = [CIVITAI_TAG, TRAINING_TAG];
+  if (slug) tags.push(`${NAME_TAG_PREFIX}${slug}`);
+  if (key) tags.push(`${SUBMIT_KEY_TAG_PREFIX}${key}`);
+
+  let result: Awaited<ReturnType<typeof submitWorkflow>> | undefined;
+  let thrown: unknown;
+  try {
+    result = await submitWorkflow({
+      client,
+      body: {
+        tags,
+        metadata: metadata as Record<string, unknown>,
+        ...trainingSteps(run, traceMode, run.matureAck === true),
+        ...(callbacks ? { callbacks } : {}),
+      },
+      query: { wait: 0 },
+      signal: AbortSignal.timeout(SUBMIT_TIMEOUT_MS),
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  const data = result?.data as { id?: string | null } | undefined;
+  // The SDK's success variant has no `error` field, so narrow before reading it.
+  const error = result && 'error' in result ? result.error : undefined;
+  const status = result?.response?.status;
+  if (data?.id) return data.id;
+  if (!thrown && isTrainingDataNotReady(error, status)) throw new FilesProcessingError();
+
+  // No answer, a timeout, or a 5xx: the orchestrator may have created (and charged) the workflow
+  // anyway. Look for it by key before reporting a failure the user would answer by retrying.
+  const mayHaveLanded =
+    thrown !== undefined || status === undefined || status >= 500 || status === 408;
+  if (key && mayHaveLanded) {
+    const landed = await findSubmittedRun(client, key).catch(() => undefined);
+    if (landed) return landed;
+  }
+  if (thrown !== undefined) throw thrown;
+  throw new TrainingSubmitError(
+    chargeFailureReason(describeSubmitError(error), run.matureAck === true),
+    status
+  );
 }
 
 /** The step and charge fields of a training submit; the readiness whatif sends the same. */
@@ -404,7 +494,13 @@ const POSITIVE_NUMBER_FIELDS = [
 ] as const;
 const OPTIONAL_NON_NEGATIVE_FIELDS = ['keepTokens', 'minSnrGamma', 'noiseOffset'] as const;
 const OPTIONAL_BOOLEAN_FIELDS = ['shuffleTokens', 'flipAugmentation'] as const;
-const OPTIONAL_STRING_FIELDS = ['modelVariant', 'version', 'engine', 'model'] as const;
+const OPTIONAL_STRING_FIELDS = [
+  'modelVariant',
+  'version',
+  'engine',
+  'model',
+  'negativePrompt',
+] as const;
 const AIR_FIELDS = ['customModel', 'continueFrom'] as const;
 
 /** Refuse a malformed run before it costs an orchestrator round-trip. The wire types are a cast, so
@@ -423,7 +519,7 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isNonEmptyString(run.lrScheduler))
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
-  if (!isProdigy(run.optimizer)) {
+  if (run.engine !== 'kohya' && !isProdigy(run.optimizer)) {
     // A locked TE rate is sent as 0 whatever it holds, so a stale one is no reason to refuse.
     const lrKeys = teTrainingUnsupportedReason(run.ecosystem)
       ? (['unetLr'] as const)
@@ -459,6 +555,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     if (!isNonEmptyString(item.air))
       fail(`${field}.items[${i}].air`, 'must be a non-empty string.');
     if (!isString(item.caption)) fail(`${field}.items[${i}].caption`, 'must be a string.');
+    if (item.repeats !== undefined) {
+      if (!engineTakesRepeats(run.engine, !!run.editTraining))
+        fail(`${field}.items[${i}].repeats`, 'are not supported for this model.');
+      if (!Number.isInteger(item.repeats) || item.repeats < 2 || item.repeats > MAX_REPEATS)
+        fail(`${field}.items[${i}].repeats`, `must be an integer from 2 to ${MAX_REPEATS}.`);
+      if (!isRepeatExt(item.ext))
+        fail(`${field}.items[${i}].ext`, 'must be a media file extension.');
+    } else if (item.ext !== undefined)
+      fail(`${field}.items[${i}].ext`, 'is only sent with repeats.');
   });
   if (!Array.isArray(run.prompts) || run.prompts.some((p) => !isString(p)))
     fail(`${field}.prompts`, 'must be an array of strings.');
@@ -491,15 +596,30 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     fail(`${field}.meta.name`, 'must be a string.');
   // A sweep row or restored selection can still carry one; submitting it would bill a run that
   // trains on the official base.
-  if (run.customModel !== undefined && !ecosystemAllowsCustomBase(run.ecosystem))
+  if (
+    run.customModel !== undefined &&
+    !ecosystemAllowsCustomBase(run.ecosystem) &&
+    !(run.engine === 'kohya' && kohyaFamily(run.ecosystem))
+  )
     fail(`${field}.customModel`, 'is not supported for this model.');
   // A restored selection or sweep row can still name a retired card's base.
   if (isNonEmptyString(run.model) && isRetiredBaseAir(run.model))
     fail(`${field}.model`, 'is no longer offered for training.');
   if (isRetiredEcosystem(run.ecosystem))
     fail(`${field}.ecosystem`, 'is no longer offered for training.');
+  if (run.engine && run.engine !== 'ai-toolkit' && run.engine !== 'kohya' && !isFlux2(run.engine))
+    fail(`${field}.engine`, 'is not supported.');
+  if (run.engine === 'kohya') {
+    try {
+      buildKohyaInput(run, { type: 'blobs', items: run.items }, 'none');
+    } catch (error) {
+      fail(field, error instanceof Error ? error.message : 'Invalid Kohya settings.');
+    }
+  }
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
+  // Also refuses a Flux.2 base no catalog card names, which the status check can't see.
+  if (isFlux2(run.engine)) throw new TrainingBatchValidationError(FLUX2_UNAVAILABLE);
 }
 
 // `control_1/pair_0001.png`, `main/pair_0001.jpg`: a folder AI-Toolkit reads, then a plain file name.
@@ -542,6 +662,10 @@ async function assertCustomModelTrainable(
       throw new TrainingBatchValidationError(`${field}.customModel: model could not be found.`);
     throw new Error(`custom model lookup failed (${response?.status ?? 'no response'})`);
   }
+  // The orchestrator's AIR is resolved from the version, so it names the model the version belongs to
+  // even when the submitted AIR pairs that version with another model id.
+  if (isBlockedCustomModel(data.air))
+    throw new TrainingBatchValidationError(`${field}.customModel: ${BLOCKED_CUSTOM_MODEL_MESSAGE}`);
   if (!isSafeTensorFormat(data.fileFormat))
     throw new TrainingBatchValidationError(
       `${field}.customModel: ${NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE}`
@@ -584,7 +708,8 @@ async function assertMatureAcked(
 
 export interface SubmittedBatch {
   workflowIds: string[];
-  /** Why the runs after `workflowIds` did not start; set only when some runs landed and a later one failed. */
+  /** Why the runs after `workflowIds` were not confirmed (they may still have started); set only when
+   *  some runs landed and a later one failed. */
   failure?: string;
 }
 
@@ -608,6 +733,8 @@ export async function submitTrainingBatch(
   if (!Array.isArray(runs) || runs.length === 0)
     throw new TrainingBatchValidationError('runs must be a non-empty array.');
   runs.forEach((run, i) => validateRun(run, `runs[${i}]`));
+  if (opts.kohyaAllowed !== true && runs.some((run) => run.engine === 'kohya'))
+    throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
   for (const run of runs) {
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
@@ -766,13 +893,18 @@ function sourceMatureCount(
   return count;
 }
 
-/** Reconstruct the submit body for a "keep training" continuation from the source run's own training step
- *  (ai-toolkit only), plus `continueFrom` and the added epochs. Shared by the real submit and the whatif so
- *  the quoted price matches what gets charged. `steps` is the continuation's step budget (for ETA). */
+/** Quote and submit share continuation training parameters; mature-content charging fields can differ. */
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
-  { callbacks, traceMode = 'events', status, datasetRating, onMatureCount }: SubmitOptions
+  {
+    callbacks,
+    traceMode = 'events',
+    status,
+    datasetRating,
+    onMatureCount,
+    kohyaAllowed,
+  }: SubmitOptions
 ): Promise<{
   body: WorkflowTemplate;
   steps: number | undefined;
@@ -780,10 +912,7 @@ async function buildContinuation(
   matureCount: number;
 }> {
   const addEpochs = Math.min(20, Math.max(1, Math.round(opts.addEpochs)));
-  const { data: wf, error: getError } = await getWorkflow({
-    client,
-    path: { workflowId: opts.workflowId },
-  });
+  const { data: wf, error: getError } = await readWorkflow(client, opts.workflowId);
   if (!wf)
     throw new Error(`keep training: source run not found (${describeSubmitError(getError)})`);
 
@@ -791,15 +920,22 @@ async function buildContinuation(
     wf.steps?.find((s) => (s as { $type?: string }).$type === 'training') ?? wf.steps?.[0];
   const input = (step as { input?: Record<string, unknown> } | undefined)?.input;
   const output = (step as { output?: { epochs?: EpochOutput[] } } | undefined)?.output;
-  if (!input || input.engine !== 'ai-toolkit')
-    throw new Error('keep training: only ai-toolkit runs can continue from a checkpoint');
+  if (!input || (input.engine !== 'ai-toolkit' && input.engine !== 'kohya'))
+    throw new Error('keep training: this engine cannot continue from a checkpoint');
+  if (input.engine === 'kohya' && kohyaAllowed !== true)
+    throw new TrainingBatchValidationError(KOHYA_UNAVAILABLE);
 
   const epoch = (output?.epochs ?? []).find(
     (e) => e.epochNumber === opts.fromEpoch && epochModelKey(e.model) !== undefined
   );
   const modelKey = epochModelKey(epoch?.model);
   if (!modelKey) throw new Error('keep training: that checkpoint has no downloadable weights yet');
-  const ecosystem = typeof input.ecosystem === 'string' ? input.ecosystem : '';
+  const ecosystem =
+    input.engine === 'kohya' && typeof input.model === 'string'
+      ? Air.parseSafe(input.model)?.ecosystem ?? ''
+      : typeof input.ecosystem === 'string'
+      ? input.ecosystem
+      : '';
   if (!ecosystem)
     throw new Error('keep training: source run has no ecosystem to reference the checkpoint by');
   // A retired card can share a live ecosystem (Hunyuan trains as `wan`), so check the base too.
@@ -821,7 +957,7 @@ async function buildContinuation(
   if (unavailable) throw new TrainingBatchValidationError(unavailable);
   const continueFrom = continueFromAir(ecosystem, modelKey);
 
-  const origEpochs = Number(input.epochs) || 10;
+  const origEpochs = Number(input.engine === 'kohya' ? input.maxTrainEpochs : input.epochs) || 10;
   const origSteps = Number(input.steps) || 0;
   // Keep the per-epoch step density of the source run for the added epochs.
   const steps = origSteps
@@ -829,9 +965,14 @@ async function buildContinuation(
     : undefined;
 
   const srcMeta = (wf.metadata ?? {}) as TrainingStudioMeta;
-  const airs = ((input.trainingData as { items?: { air?: unknown }[] } | undefined)?.items ?? [])
-    .map((i) => i.air)
-    .filter((a): a is string => typeof a === 'string' && a.length > 0);
+  // Deduped: a repeated image is on the wire once per copy.
+  const airs = [
+    ...new Set(
+      ((input.trainingData as { items?: { air?: unknown }[] } | undefined)?.items ?? [])
+        .map((i) => i.air)
+        .filter((a): a is string => typeof a === 'string' && a.length > 0)
+    ),
+  ];
   // A stamped positive count is trusted (it can only ask the user to confirm); 0 or none is re-checked.
   const matureCount =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
@@ -853,36 +994,39 @@ async function buildContinuation(
 
   // Only the fields we submit (mirrors buildStep) — never the server-computed read-only ones the orch echoes
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
-  const continuedInput = {
-    engine: 'ai-toolkit',
-    ecosystem: input.ecosystem,
-    // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
-    // on the ecosystem's default base and publishes as that base.
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
-    ...(input.version ? { version: input.version } : {}),
-    // Without it the pair dataset would continue as a plain LoRA dataset.
-    ...(input.isEditTraining === true ? { isEditTraining: true } : {}),
-    ...(steps ? { steps } : {}),
-    epochs: addEpochs,
-    batchSize: input.batchSize,
-    lr: input.lr,
-    // Runs submitted before the lock still carry TE on; don't continue them with it.
-    ...(teTrainingUnsupportedReason(ecosystem)
-      ? { textEncoderLr: 0, trainTextEncoder: false }
-      : { textEncoderLr: input.textEncoderLr, trainTextEncoder: input.trainTextEncoder }),
-    lrScheduler: input.lrScheduler,
-    optimizerType: input.optimizerType,
-    networkDim: input.networkDim,
-    networkAlpha: input.networkAlpha,
-    resolution: input.resolution,
-    ...pick(input, EXTRA_PARAM_FIELDS),
-    triggerWord: input.triggerWord,
-    continueFrom,
-    ...(traceMode !== 'none' ? { trace: traceMode } : {}),
-    trainingData: input.trainingData,
-    samples: input.samples,
-  };
+  const continuedInput =
+    input.engine === 'kohya'
+      ? continueKohyaInput(input, addEpochs, steps, continueFrom, traceMode)
+      : {
+          engine: 'ai-toolkit',
+          ecosystem: input.ecosystem,
+          // The source's base pin (see buildStep): without it an Illustrious/Pony/custom-SDXL run continues
+          // on the ecosystem's default base and publishes as that base.
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
+          ...(input.version ? { version: input.version } : {}),
+          // Without it the pair dataset would continue as a plain LoRA dataset.
+          ...(input.isEditTraining === true ? { isEditTraining: true } : {}),
+          ...(steps ? { steps } : {}),
+          epochs: addEpochs,
+          batchSize: input.batchSize,
+          lr: input.lr,
+          // Runs submitted before the lock still carry TE on; don't continue them with it.
+          ...(teTrainingUnsupportedReason(ecosystem)
+            ? { textEncoderLr: 0, trainTextEncoder: false }
+            : { textEncoderLr: input.textEncoderLr, trainTextEncoder: input.trainTextEncoder }),
+          lrScheduler: input.lrScheduler,
+          optimizerType: input.optimizerType,
+          networkDim: input.networkDim,
+          networkAlpha: input.networkAlpha,
+          resolution: input.resolution,
+          ...pick(input, EXTRA_PARAM_FIELDS),
+          triggerWord: input.triggerWord,
+          continueFrom,
+          ...(traceMode !== 'none' ? { trace: traceMode } : {}),
+          trainingData: input.trainingData,
+          samples: input.samples,
+        };
   const continuedStep = {
     $type: 'training',
     priority: 'normal',
@@ -900,8 +1044,63 @@ async function buildContinuation(
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
-    triggerWord: String(input.triggerWord ?? ''),
+    triggerWord: String(input.engine === 'kohya' ? srcMeta.trigger ?? '' : input.triggerWord ?? ''),
     matureCount,
+  };
+}
+
+const KOHYA_CONTINUE_KEYS = [
+  'model',
+  'numRepeats',
+  'trainBatchSize',
+  'resolution',
+  'enableBucket',
+  'shuffleCaption',
+  'keepTokens',
+  'clipSkip',
+  'flipAugmentation',
+  'unetLR',
+  'textEncoderLR',
+  'trainTextEncoder',
+  'lrScheduler',
+  'lrSchedulerNumCycles',
+  'minSnrGamma',
+  'networkDim',
+  'networkAlpha',
+  'noiseOffset',
+  'optimizerType',
+  'seed',
+  'fp8Base',
+  'blocksToSwap',
+  'vParameterization',
+  'zeroTerminalSnr',
+  'trainingData',
+  'samples',
+  'clipLModel',
+  'textEncoderModel',
+  'vaeModel',
+] as const satisfies readonly (keyof KohyaInput)[];
+
+function continueKohyaInput(
+  input: Record<string, unknown>,
+  epochs: number,
+  steps: number | undefined,
+  continueFrom: string,
+  trace: string
+) {
+  if (epochs > 20 || (steps !== undefined && steps > TARGET_STEPS.max))
+    throw new Error(
+      'keep training: Kohya supports at most 20 checkpoints and 10,000 steps per run.'
+    );
+  return {
+    ...Object.fromEntries(
+      KOHYA_CONTINUE_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]])
+    ),
+    engine: 'kohya',
+    maxTrainEpochs: epochs,
+    ...(steps ? { steps } : {}),
+    continueFrom,
+    trace,
   };
 }
 
@@ -952,7 +1151,7 @@ export async function renameTraining(
   workflowId: string,
   name: string
 ): Promise<void> {
-  const { data: current, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  const { data: current, error: getError } = await readWorkflow(client, workflowId);
   if (!current) throw new Error(`rename: workflow not found (${describeSubmitError(getError)})`);
 
   const trimmed = name.trim();
@@ -983,11 +1182,7 @@ export async function deleteTraining(
   client: OrchestratorClient,
   workflowId: string
 ): Promise<void> {
-  const {
-    data: current,
-    error: getError,
-    response,
-  } = await getWorkflow({ client, path: { workflowId } });
+  const { data: current, error: getError, response } = await readWorkflow(client, workflowId);
   // Already gone (another tab, a double click) is the outcome the caller asked for.
   if (response?.status === 404) return;
   if (!current) throw new Error(`delete: workflow not found (${describeSubmitError(getError)})`);

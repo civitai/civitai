@@ -18,6 +18,6 @@ export async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promi
       name: 'app-sub-listing-shared-sync-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
   }
 }

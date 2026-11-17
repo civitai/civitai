@@ -259,6 +259,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
+    //   the four `NewOrderPlayer.payout*` columns: `20261209120000_knights_new_order_player_and_link_review`
     //   `StorylineCollaborator.acceptedAt`: `20261215120000_storyline_collaborator_accepted`
     //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
@@ -273,14 +274,21 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
     //   `ModActivity.credential`: `20261231180000_mod_activity_credential`
+    //   `ModActivity.reviewBatchId` / `.reviewTier` / `.declaredSuspect`: `20271114200000_mod_activity_review_batch`
     //   `app_listings.issue_tracker_url`: `20270103120000_app_listing_issue_tracker` — drop this
     //     entry once it is applied in every writable environment, together with the probe and
     //     fallback in `app-listing-issue-tracker.service.ts` (see its RETIREMENT note).
     //   `Feedback.appSourceCommit` / `.appSourceDirty`: `20270104120000_feedback_app_source_commit`
     //     — no-type, raw SQL in `app-feedback.service.ts`, which degrades while it is unapplied.
+    //   `Article.systemCategoryId`: `20271112120000_article_system_category`
+    //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
+    //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
     const inFlightColumns = new Set([
       'BoxOpening.guaranteed',
       'ModActivity.credential',
+      'ModActivity.reviewBatchId',
+      'ModActivity.reviewTier',
+      'ModActivity.declaredSuspect',
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
       'app_blocks.fork_of_app_block_id',
@@ -301,6 +309,13 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ModActivity.host',
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
+      'NewOrderPlayer.payoutBlockedAt',
+      'NewOrderPlayer.payoutBlockReason',
+      'NewOrderPlayer.payoutBlockedBy',
+      'NewOrderPlayer.payoutReleaseFrom',
+      'NewOrderPlayer.goldPending',
+      'NewOrderPlayer.goldEarned',
+      'NewOrderPlayer.goldConverted',
       'StorylineCollaborator.acceptedAt',
       'Crucible.takenDownAt',
       'Crucible.takenDownById',
@@ -323,6 +338,12 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ResourceReview.releasedAt',
       'Feedback.appSourceCommit',
       'Feedback.appSourceDirty',
+      'ServiceOffering.declaredNsfwLevel',
+      'ServiceOffering.scanWorkflowId',
+      'ServiceOffering.scannedAt',
+      'Article.systemCategoryId',
+      'Image.nsfwAxes',
+      'app_user_scope_grants.confirm_within_limit_max_job',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

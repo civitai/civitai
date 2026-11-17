@@ -167,7 +167,7 @@ async function save(
       alertId: record.id,
       activity,
       userId: moderator.id,
-    }).catch(() => undefined);
+    });
 
   const cutoff = Date.now() - KEEP_ENDED_MS;
   await readRecords()

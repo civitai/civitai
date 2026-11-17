@@ -35,6 +35,7 @@ import { env } from '~/env/server';
  */
 
 import type { Subject, SubjectType } from '~/server/schema/api-key.schema';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 export type { Subject, SubjectType };
 
 const baseUrl = () => env.ORCHESTRATOR_ENDPOINT ?? '';
@@ -58,7 +59,11 @@ async function orchestratorFetch(path: string, init?: RequestInit) {
     Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
     ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
   };
-  return fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+  return outboundFetch(url, {
+    timeoutMs: 30_000,
+    ...init,
+    headers: { ...headers, ...init?.headers },
+  });
 }
 
 /**

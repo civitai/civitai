@@ -7,9 +7,22 @@ import { createLagTracker, type AugmentedPool } from '@civitai/db';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getRedis } from './clients/redis';
 import { notifDbRead, notifDbWrite } from './clients/db';
+import { withRedisErrorCount } from './cache';
+
+// The flag reads and writes are counted like every other redis call here (operation="lag"), so a failing
+// lag flag shows up in notifications_redis_errors_total and the /health redis signal.
+function lagStore() {
+  const redis = getRedis();
+  if (!redis) return null;
+  return {
+    get: (key: RedisKeyTemplateCache) => withRedisErrorCount('lag', () => redis.get(key)),
+    set: (key: RedisKeyTemplateCache, value: string, opts: { EX: number }) =>
+      withRedisErrorCount('lag', () => redis.set(key, value, opts)),
+  };
+}
 
 const tracker = createLagTracker<RedisKeyTemplateCache>({
-  store: getRedis,
+  store: lagStore,
   delaySeconds: Number(process.env.REPLICATION_LAG_DELAY ?? 0),
 });
 

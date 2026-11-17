@@ -281,7 +281,7 @@ describe('mod actions — error mapping via mapOffsiteError', () => {
     );
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await expect(
-      caller.claimListing({ appListingId: 'apl_1', targetUserId: 999999, reason: REASON })
+      caller.claimListing({ appListingId: 'apl_1', targetUserId: 990999999, reason: REASON })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringContaining('target user'),

@@ -18,7 +18,12 @@ export async function getSpendableBuzz(
   userId: number
 ): Promise<{ yellow: number; green: number; blue: number } | null> {
   try {
-    const accounts = await getBuzz().getUserAccounts(userId, ['yellow', 'green', 'blue']);
+    // Every navigation awaits this in the layout load: a hung service costs 1.5s once, then the
+    // header renders without the balance. No retry; the next navigation is the retry.
+    const accounts = await getBuzz().getUserAccounts(userId, ['yellow', 'green', 'blue'], {
+      timeoutMs: 1_500,
+      retries: 0,
+    });
     const yellow = accounts['User'] ?? accounts['user'] ?? accounts['yellow'] ?? 0;
     const green = accounts['Green'] ?? accounts['green'] ?? 0;
     const blue = accounts['Generation'] ?? accounts['generation'] ?? accounts['blue'] ?? 0;

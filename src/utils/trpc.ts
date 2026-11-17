@@ -37,6 +37,7 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
+import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
 
 const url = '/api/trpc';
 
@@ -247,7 +248,9 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getTeamScores',
   'event.getWornHat',
   'generation.checkResourcesCoverage',
+  'hatTurf.getFlagRaceForCollection',
   'hatTurf.getFlags',
+  'hatTurf.getOpenFlagCrucible',
   'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
@@ -353,6 +356,24 @@ export function shouldBatch(op: {
 }
 
 /**
+ * Send this operation over the Go transport only when ALL hold:
+ *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
+ *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
+ *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`),
+ *  - we're in an authenticated browser — signed-out responses are edge-cached under the
+ *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
+ *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
+ */
+export function shouldUseGoTransport(op: { type: string; path: string; input: unknown }) {
+  return (
+    op.type === 'query' &&
+    isGoTransportEnabledFor(op.path) &&
+    isAuthedBrowser() &&
+    !shouldSendQueryAsPost(op)
+  );
+}
+
+/**
  * Shared terminating link. Authenticated-browser queries (flag-gated) go out batched via
  * `httpBatchStreamLink` (results stream as they resolve, so the fastest query in a batch
  * isn't blocked by the slowest); everything else — anonymous traffic, mutations, large
@@ -366,7 +387,7 @@ function terminatingLink({
   url: string;
   headers: ReturnType<typeof getHeaders>;
 }): TRPCLink<AppRouter> {
-  return splitLink({
+  const defaultLink: TRPCLink<AppRouter> = splitLink({
     condition: shouldBatch,
     true: splitLink({
       // `trpcUnifiedBatchWindow`: both browser clients send through ONE batch link, so the React
@@ -377,6 +398,11 @@ function terminatingLink({
       false: batchStreamLink({ url, headers }),
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
+  });
+  return splitLink({
+    condition: shouldUseGoTransport,
+    true: httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
+    false: defaultLink,
   });
 }
 

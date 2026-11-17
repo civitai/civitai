@@ -137,7 +137,12 @@ const m = vi.hoisted(() => ({
   /** Every `revokeScopes.mutate` payload, in order. The confirm gate is measured on its LENGTH. */
   revokeCalls: [] as { appBlockId: string; scopes: string[] }[],
   /** Set to drive the error arms. `null` = the mutation succeeds. */
-  revokeError: null as null | { code: string; message: string },
+  /**
+   * `recorded` sets the server's `data.consentRevokeRecorded` flag, which `errorFormatter` lifts off
+   * the post-write marker-failure throw. A 503 WITHOUT it is the database being unreachable before
+   * anything was written (`mapDbUnavailable`), so the two must be driveable separately.
+   */
+  revokeError: null as null | { code: string; message: string; recorded?: boolean },
   invalidateSpy: undefined as unknown as ReturnType<typeof vi.fn>,
   /**
    * 🔴 HOLDS THE MUTATION OPEN so the PENDING state is observable. Without it the promise settles
@@ -244,7 +249,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       m.revokeCalls.push(vars);
       const settle = () =>
         m.revokeError
-          ? Promise.reject({ data: { code: m.revokeError.code }, message: m.revokeError.message })
+          ? Promise.reject({
+              data: {
+                code: m.revokeError.code,
+                ...(m.revokeError.recorded ? { consentRevokeRecorded: true } : {}),
+              },
+              message: m.revokeError.message,
+            })
           : Promise.resolve({ ok: true });
       // Gated: return a promise that does not settle until the arm calls `release()`, so the
       // PENDING window is observable. See `m.gated`.
@@ -525,6 +536,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
     // when the half governing every future mint was.
     m.revokeError = {
       code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
       message:
         'The permission was removed and will not be granted again, but an already-open app ' +
         'session may keep using it for a few more minutes. Reload the app to be sure.',
@@ -573,6 +585,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
      */
     m.revokeError = {
       code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
       message: 'removed, but an open session may keep using it briefly',
     };
     render();
@@ -608,6 +621,69 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       (m.grants[0] as { revokedScopes: string[] }).revokedScopes,
       'the fixture mutated — this arm no longer proves the latch did the work'
     ).toEqual(['collections:read:private']);
+  });
+
+  /**
+   * 🔴 A BARE 503 IS NOT A REMOVAL. `mapDbUnavailable` (`src/server/trpc.ts`) answers an unreachable
+   * database with a 503 — including on `revokeScopes`' reads BEFORE it writes (the app lookup, the
+   * held-scopes read, the service's own read), where nothing was removed. The hook used to read every
+   * 503 as "recorded, only the marker lagged": the viewer was told "Permission removed" and lost the
+   * Remove control while the grant stayed live. Only the server's `consentRevokeRecorded` flag, set
+   * by the post-write throw alone, means the row moved.
+   *
+   * MUTATION THAT MUST KILL IT: `isRevokeRecordedButLagging` back to `code === 'SERVICE_UNAVAILABLE'`.
+   */
+  test('🔴 a 503 WITHOUT the recorded flag (database unreachable) is NOT reported as removed', async () => {
+    m.revokeError = {
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'This service is temporarily unavailable. Please try again.',
+    };
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    const scope = revokableScopesOnScreen()[0];
+    expect(scope, 'the fixture has no revokable scope').toBeTruthy();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    const notice = page.getByTestId('scope-revoke-failure');
+    await expect.element(notice).toBeVisible();
+    await expect.element(notice).toHaveTextContent(m.revokeError.message);
+    expect(
+      document.querySelector('[data-testid="scope-revoke-failure"]')?.getAttribute('data-degraded'),
+      `${name}: an unreachable-database 503 was rendered as "removed, enforcement lagging"`
+    ).toBe('false');
+    expect(
+      m.notify.warning,
+      `${name}: announced "Permission removed" for a revoke that wrote nothing`
+    ).not.toHaveBeenCalled();
+    expect(m.notify.success, name).not.toHaveBeenCalled();
+    // The control stays, so the viewer can retry — the grant is still live.
+    expect(
+      revokableScopesOnScreen(),
+      `${name}: hid the Remove control on ${scope} while the grant is still live`
+    ).toContain(scope);
+    expect(
+      document.querySelectorAll('[data-testid="scope-revoked-mark"]').length,
+      `${name}: marked ${scope} removed`
+    ).toBe(GRANT.revokedScopes.length);
+    // Ambiguous about the row, like any non-412 failure, so the list is re-read.
+    expect(m.invalidateSpy, name).toHaveBeenCalled();
+  });
+
+  test('🔴 the recorded flag on a code other than 503 is NOT reported as removed', async () => {
+    // Both halves of `isRevokeRecordedButLagging` are required. This arm kills the mutant that
+    // drops the code check and reads the flag alone.
+    m.revokeError = { code: 'BAD_REQUEST', recorded: true, message: 'cannot revoke: …' };
+    render();
+    await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
+    await page.getByTestId('scope-revoke-button').first().click();
+    await page.getByRole('button', { name: 'Remove permission' }).click();
+    await expect.element(page.getByTestId('scope-revoke-failure')).toBeVisible();
+    expect(
+      document.querySelector('[data-testid="scope-revoke-failure"]')?.getAttribute('data-degraded'),
+      name
+    ).toBe('false');
+    expect(m.notify.warning, name).not.toHaveBeenCalled();
+    expect(revokableScopesOnScreen(), name).toContain(GRANT.revokableScopes[0]);
   });
 
   test('🔴 a SUSPENDED app can still be revoked from — there is no status gate in the UI either', async () => {
@@ -902,7 +978,7 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
      * The inline declaration is what the component sets, and it is readable here because it is an
      * attribute rather than a resolved value.
      */
-    const read = async (err: { code: string; message: string }) => {
+    const read = async (err: { code: string; message: string; recorded?: boolean }) => {
       m.revokeError = err;
       render();
       await expect.element(page.getByTestId('scope-consent-list')).toBeInTheDocument();
@@ -914,7 +990,11 @@ describe.each(SURFACES)('per-scope revoke — $name', ({ name, render, element }
       await cleanup();
       return colour;
     };
-    const degradedColour = await read({ code: 'SERVICE_UNAVAILABLE', message: 'removed, lagging' });
+    const degradedColour = await read({
+      code: 'SERVICE_UNAVAILABLE',
+      recorded: true,
+      message: 'removed, lagging',
+    });
     const refusedColour = await read({ code: 'PRECONDITION_FAILED', message: 'nothing changed' });
     // A POSITIVE CONTROL FIRST: both must carry a real declaration, or comparing them is comparing
     // two empty strings — the reassuring-zero shape in a style read, which is exactly what the

@@ -9,6 +9,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { booleanString } from '~/utils/zod-helpers';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const BAD_HASH = 'U00000fQfQfQfQfQfQfQfQfQfQfQfQfQfQfQ';
 
@@ -73,7 +74,7 @@ export default WebhookEndpoint(async (req, res) => {
             transcode: true,
             anim: false,
           });
-          const response = await fetch(frameUrl);
+          const response = await outboundFetch(frameUrl, { timeoutMs: 30_000 });
           if (!response.ok) {
             console.error(`Failed to fetch frame for image ${frameUrl}: ${response.status}`);
             failed++;

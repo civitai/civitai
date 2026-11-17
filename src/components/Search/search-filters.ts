@@ -40,6 +40,19 @@ export function buildBrowsingLevelClause(
   return levels.map((value) => `${attribute}=${value}`).join(' OR ');
 }
 
+/**
+ * The browsing level a 'subset' clause from buildBrowsingLevelClause allows, read back out of a
+ * filter string: every bit not listed after NOT IN; undefined when the filter has no such clause.
+ */
+export function readSubsetBrowsingLevel(filters: string | undefined, attribute = 'nsfwLevel') {
+  if (!filters?.includes(`${attribute} IS NOT EMPTY`)) return undefined;
+  const notIn = filters.match(new RegExp(`\\b${attribute} NOT IN \\[([\\d,\\s]*)\\]`));
+  const outside = (notIn?.[1] ?? '').split(',').reduce((acc, v) => acc | (Number(v) || 0), 0);
+  return (
+    LEVEL_BITS.filter((bit) => !(bit & outside)).reduce((acc, bit) => acc | bit, 0) || undefined
+  );
+}
+
 /** The browsing-level clause for a Meilisearch index uid; `null` for an index with no level. */
 export function indexBrowsingLevelClause(indexUid: string, browsingLevel: number) {
   const indexKey = reverseSearchIndexMap[indexUid as ReverseSearchIndexKey];

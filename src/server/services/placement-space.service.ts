@@ -576,7 +576,7 @@ export async function bustPlacementSpaceRow({
       entityType,
       entityId,
       error: e instanceof Error ? e.message : String(e),
-    }).catch(() => undefined);
+    });
   try {
     await redis.packed.set(spaceWriteKey(surface, level), Date.now(), {
       EX: SPACE_ROW_WRITE_MARK_TTL,

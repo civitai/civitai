@@ -25,7 +25,7 @@ export function getDocStoreViewerData(): DocStoreViewerData {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

@@ -6,7 +6,14 @@
   import type { EpochTrace } from '$lib/data/trainingRows';
   import { saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
-  import { followTrace, interpretTraceLine, traceLineText, traceLogText, tracePath } from '$lib/trace';
+  import {
+    followTrace,
+    interpretTraceLine,
+    traceLineNote,
+    traceLineText,
+    traceLogText,
+    tracePath,
+  } from '$lib/trace';
 
   // The live panel only exists while training, so a finished run's log is read back from its epochs'
   // traces here.
@@ -131,7 +138,9 @@
           {#if section.text.length}
             <div class="sticky top-0 bg-dark-8 py-1 text-dark-1">Epoch {section.epoch}</div>
             {#each section.text as text, i (i)}
+              {@const note = traceLineNote(text)}
               <div class="whitespace-pre-wrap break-all text-dark-2">{text}</div>
+              {#if note}<div class="font-sans text-dark-1">↳ {note}</div>{/if}
             {/each}
           {/if}
         {/each}

@@ -87,7 +87,9 @@ With it on:
 
 - On /images the header bar filters the feed on Enter or blur (`?query=`), answered by
   `semanticImageSearch.search`. The feed's filters the index can apply carry into the search; the
-  rest are greyed under "Not available while searching". Sort is locked to Best match.
+  rest are greyed under "Not available while searching". Sort is locked to Best match, unless
+  `imageSearchNewestSort` (Flipt key `image-search-newest-sort`, dark) is on: then the sort menu
+  also offers Newest matches, the best matches by date (`?searchSort=newest`), sent as `sort: 'newest'`.
 - /search/images redirects to /images with its query, user, base model and tags.
 - A refused query (illegal, profane on green, real people with POI off, blocked words) is never
   searched, typed or arriving by link; the feed shows the search page's warning instead.
@@ -96,6 +98,16 @@ With it on:
 Code: `src/components/Image/Infinite/` (`image-feed-search.ts`, `useImageFeedSearch.ts`,
 `ImageFeedSearchSummary.tsx`), `src/components/AutocompleteSearch/useFeedSearchSync.ts` and
 `src/components/Search/search-refusal.ts`.
+
+Other feeds search in place the same way, each behind its own flag (`FEED_SEARCH` in
+`src/components/Search/search-target.ts`): models (`modelFeedSearch`, see
+`semantic-model-search.md`) and articles (`articleFeedSearch`, Flipt `search-v3-articles`). Articles
+reuse `semanticArticleSearch.search`, which also takes the feed's tags, period (as a published-since
+bound), followed, bookmarks, hidden and collection; /search/articles redirects to /articles. Both
+share `FeedSearchSummary` and `SearchSortLock`. Articles read `?query=` only on their own page
+(`useFeedSearchQuery`), since other pages share the article filter params. Followed narrows the
+index to the viewer's follows (up to 1,000); bookmarks, hidden and collection apply at hydration
+only, so a narrow list can leave a page sparse.
 
 ## Feedback and logging
 

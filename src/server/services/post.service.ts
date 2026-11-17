@@ -4,7 +4,7 @@ import {
   onStorySparkPostsHidden,
   onStorySparkPostsRestored,
 } from '~/server/events/points/hooks';
-import { uniq } from 'lodash-es';
+import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -61,6 +61,8 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
@@ -80,6 +82,7 @@ import {
   createImage,
   createImageResources,
   deleteImageFromS3,
+  purgesAllVersions,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
   getImagesForPosts,
@@ -115,6 +118,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { heldPostTextPostIds, heldTextError } from '~/server/services/post-text-hold';
 import {
   Availability,
   CollectionMode,
@@ -154,6 +158,10 @@ import type {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
+import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
+import { flagImagesOnRestrictedVersions } from '~/server/services/restricted-images.service';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -286,15 +294,26 @@ export const getPostsInfinite = async ({
   disableMinor,
   poiOnly,
   minorOnly,
+  asModerator,
+  asOwner = true,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
+  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  asModerator?: boolean;
+  /** Whether the request may see the user's own drafts, Private and scheduled posts; default true. */
+  asOwner?: boolean;
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const cacheTags: string[] = [];
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
-  const isModerator = user?.isModerator ?? false;
+  // One value for every moderator branch below: a narrow-scope key is not a moderator here.
+  const isModerator = asModerator ?? user?.isModerator ?? false;
+  // A narrow-scope key is not the owner of its posts here: the post owner branches read `ownerId`.
+  // Collection permissions (and the contributor read) still follow `user.id`: a scoped key keeps
+  // collection ownership and membership.
+  const ownerId = asOwner ? userId : undefined;
   const includeCosmetics = !!include?.includes('cosmetics');
 
   let targetUser: number | undefined;
@@ -312,7 +331,7 @@ export const getPostsInfinite = async ({
     cacheTags.push(`posts-user:${targetUser}`);
   }
 
-  const isOwnerRequest = !!userId && targetUser === userId;
+  const isOwnerRequest = !!ownerId && targetUser === ownerId;
 
   if (!isOwnerRequest && !isModerator) {
     // Makes it so private posts are not shown to the public
@@ -345,7 +364,14 @@ export const getPostsInfinite = async ({
       where: { id: modelVersionId },
       select: { model: { select: { poi: true, userId: true } } },
     });
-    if (version && !canViewPoiModel(version.model.poi, version.model.userId, user))
+    if (
+      version &&
+      !canViewPoiModel(
+        version.model.poi,
+        version.model.userId,
+        user && { ...user, isModerator, id: ownerId ?? null }
+      )
+    )
       return { items: [] };
 
     AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
@@ -357,11 +383,11 @@ export const getPostsInfinite = async ({
   let collectionJoined = false;
   let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
-    if (scheduled && userId) {
+    if (scheduled && ownerId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
       // the image service carve-out (image.service.ts ~line 4060).
       AND.push(
-        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${ownerId} AND p."publishedAt" > NOW()))`
       );
     } else {
       AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
@@ -408,13 +434,16 @@ export const getPostsInfinite = async ({
   else if (jump?.direction === 'after')
     AND.push(Prisma.sql`p."publishedAt" >= ${new Date(jump.startMs)}`);
 
+  // An empty level is no level asked for: read as public, as `getAllImages` does, so the posts, their
+  // images and the image exclusions below are all served at the same level.
+  if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   if (browsingLevel) {
-    if (pending && (isModerator || userId)) {
+    if (pending && (isModerator || ownerId)) {
       if (isModerator) {
         AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
-      } else if (userId) {
+      } else if (ownerId) {
         AND.push(
-          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${ownerId}))`
         );
       }
     } else {
@@ -439,8 +468,8 @@ export const getPostsInfinite = async ({
       return { items: [] };
     }
 
-    const displayReviewItems = user?.id
-      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+    const displayReviewItems = ownerId
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${ownerId})`
       : '';
 
     // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
@@ -544,8 +573,37 @@ export const getPostsInfinite = async ({
     if (nextItem) nextCursor = encodePostCursor(nextItem, singleColumnCursor);
   }
 
+  // Images follow the viewer's hidden tags and the browsing-settings exclusions at the request's
+  // level, whatever the request sent. Resolved onto a target of its own, which names no owner, so
+  // none of it is skipped; the image's own creator keeps every image, and moderators resolve to none.
+  const imageRules: {
+    browsingLevel?: number;
+    excludedTagIds?: number[];
+    disablePoi?: boolean;
+    disableMinor?: boolean;
+  } = { browsingLevel };
+  await enforceBlockedBrowsingTags(imageRules, {
+    id: user?.id,
+    username: user?.username,
+    isModerator,
+  });
+  const excludedImageTagIds = new Set([
+    ...(imageRules.excludedTagIds ?? []),
+    ...(excludedTagIds ?? []),
+  ]);
+  const showsImage = (image: {
+    userId: number;
+    poi?: boolean | null;
+    minor?: boolean | null;
+    tagIds?: number[];
+  }) =>
+    (!!ownerId && image.userId === ownerId) ||
+    (!(imageRules.disablePoi && image.poi) &&
+      !(imageRules.disableMinor && image.minor) &&
+      !(image.tagIds ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
+
   // Filter to published model versions:
-  const filterByPermissionContent = !isOwnerRequest && !user?.isModerator;
+  const filterByPermissionContent = !isOwnerRequest && !isModerator;
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
   // Get user data
   const userIds = postsRaw.map((i) => i.userId);
@@ -557,7 +615,9 @@ export const getPostsInfinite = async ({
           ? getImagesForPosts({
               postIds: postsRaw.map((x) => x.id),
               // excludedIds: excludedImageIds,
-              user,
+              // Images are fetched with the request's own rights: a scoped key (no `ownerId`) as
+              // a signed-out viewer, so it gets no owner carve-out either.
+              user: ownerId !== undefined && user ? { ...user, isModerator } : undefined,
               browsingLevel,
               pending,
               disablePoi,
@@ -602,7 +662,7 @@ export const getPostsInfinite = async ({
         // remove unlisted resources the user has no access to:
         .filter((p) => {
           // Allow mods and owners to view all.
-          if (user?.isModerator || p.userId === user?.id) return true;
+          if (isModerator || (!!ownerId && p.userId === ownerId)) return true;
 
           // Hide posts from unpublished model versions:
           if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
@@ -626,7 +686,7 @@ export const getPostsInfinite = async ({
         // a per-item field — no consumer reads `item.cursorId`. Dropping it
         // removes one field (a superjson-typed Date/number node) PER POST.
         .map(({ userId: creatorId, cursorId: _cursorId, ...post }) => {
-          const _images = images.filter((x) => x.postId === post.id);
+          const _images = images.filter((x) => x.postId === post.id && showsImage(x));
           const { username, image, deletedAt } = userData[creatorId] || {};
 
           return {
@@ -732,12 +792,16 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 
 export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
 export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type PostEditTextDetail = PostDetailEditable['texts'][number];
 export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
-  const editImages = await getPostEditImages({ id, user });
+  const [editImages, texts] = await Promise.all([
+    getPostEditImages({ id, user }),
+    getPostEditTexts(id),
+  ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
 
   let collectionTagId: null | number = null;
@@ -764,6 +828,7 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     parentModelName: model?.name ?? null,
     collectionTagId,
     images,
+    texts,
     collectionItemExists,
     ownModelId: model?.userId === post.user.id ? model.id : null,
   };
@@ -879,6 +944,19 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
 }
 
 export type PostImageEditable = AsyncReturnType<typeof getPostEditImages>[number];
+/**
+ * The post's storyline text items for its editor, whatever the `storylineText` flag: the editor
+ * places new items by index among them, so it needs every row the author has.
+ */
+async function getPostEditTexts(postId: number) {
+  const db = await getDbWithoutLag('postImages', postId);
+  return db.postText.findMany({
+    where: { postId },
+    select: { id: true, index: true, content: true },
+    orderBy: [{ index: 'asc' }, { id: 'asc' }],
+  });
+}
+
 export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
@@ -1027,6 +1105,7 @@ export const createPost = async ({
     collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
+    texts: [] as PostDetailEditable['texts'],
     collectionItemExists,
     // A fresh post has never been unpublished — supply the
     // PostUnpublishContext defaults so the type matches getPostEditDetail
@@ -1298,7 +1377,11 @@ export const deletePost = async ({
   id,
   isModerator,
   deletedById,
-}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
+  viewerIsModerator = isModerator,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number; viewerIsModerator?: boolean }) => {
+  // The delete trigger on "PostText" refuses it too; this refuses it with a message.
+  if ((await heldPostTextPostIds({ postIds: [id] })).length)
+    throw heldTextError(viewerIsModerator, 'Text in this post');
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
@@ -1429,6 +1512,7 @@ export const deletePost = async ({
           deleteImageFromS3({
             id: image.id,
             url: image.url,
+            allVersions: purgesAllVersions(image, !!viewerIsModerator),
             keepShopArtwork: isPlainOwnerDelete(
               { ...image, openReport: reported.has(image.id) },
               deletedById
@@ -1521,7 +1605,7 @@ export const removePostTag = ({ tagId, id: postId }: RemovePostTagInput) => {
 };
 
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'post-service', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'post-service', type: 'error', ...data });
 };
 
 const DETAIL_LIMIT = 10;
@@ -1536,7 +1620,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
   let respJson;
   try {
-    const response = await fetch(src);
+    const response = await outboundFetch(src, { timeoutMs: 10_000 });
     respJson = await response.json();
   } catch (e) {
     return log({ user, message: 'Failure fetching JSON data from external URL.', domain: src });
@@ -1670,6 +1754,20 @@ export const addPostImage = async ({
   }
 
   const { generationWorkflowId, ...imageProps } = props;
+  // On a post with storyline text items, a new image goes after the last item whatever index the
+  // client sent: an editor without text items counts only images.
+  const lastText = await dbWrite.postText.findFirst({
+    where: { postId: props.postId },
+    orderBy: { index: 'desc' },
+    select: { index: true },
+  });
+  if (lastText) {
+    const imageEnd = await dbWrite.image.aggregate({
+      where: { postId: props.postId },
+      _max: { index: true },
+    });
+    imageProps.index = Math.max(lastText.index, imageEnd._max.index ?? -1) + 1;
+  }
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
     provenance: (meta?.extra as { provenance?: unknown } | undefined)?.provenance,
@@ -1776,22 +1874,57 @@ export async function bustCachesForPosts(postIds: number | number[]) {
     .map((x) => x.modelVersionId as number);
   if (!showcaseVersionIds.length) return;
 
-  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
-  // .com cover, which only the level computation re-checks.
   const showcaseModelIds = [
     ...new Set(
       results.filter((x) => x.isShowcase && x.modelId != null).map((x) => x.modelId as number)
     ),
   ];
-  await refreshSfwFaceLevels(showcaseModelIds);
+  await refreshModelShowcases(showcaseVersionIds, showcaseModelIds);
+}
+
+/**
+ * After every image of an account is blocked: the showcases and search documents of the models it
+ * owns. Bounded by that account's own models and versions, in chunks of `SHOWCASE_CHUNK`.
+ */
+export async function refreshShowcasesForUserModels(userId: number) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+    SELECT mv.id AS "modelVersionId", m.id AS "modelId"
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    WHERE m."userId" = ${userId}
+  `;
+  if (!rows.length) return;
+  await refreshModelShowcases(
+    rows.map((r) => r.modelVersionId),
+    uniq(rows.map((r) => r.modelId))
+  );
+}
+
+const SHOWCASE_CHUNK = 500;
+
+async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
+  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
+  // .com cover, which only the level computation re-checks.
+  await refreshSfwFaceLevels(modelIds);
 
   // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss
   // path) routes to primary during the replication window. Then refresh
   // instead of bust — refresh actively repopulates from primary, so a
   // concurrent reader can't poison the cache with `images: []` during the
   // bust debounce window.
-  await preventReplicationLagBatch('modelVersion', showcaseVersionIds);
-  await imagesForModelVersionsCache.refresh(showcaseVersionIds);
+  for (const batch of chunk(versionIds, SHOWCASE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', batch);
+    await imagesForModelVersionsCache.refresh(batch);
+  }
+
+  // The models sync re-picks a model only when `Model.updatedAt` moves, so a showcase image that
+  // stops qualifying would stay in its search document. Call-site import: models.search-index
+  // imports image.service, which imports this module.
+  const { modelsSearchIndex } = await import('~/server/search-index/models.search-index');
+  for (const batch of chunk(modelIds, SHOWCASE_CHUNK))
+    await modelsSearchIndex.queueUpdate(
+      batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -1975,6 +2108,10 @@ export async function creditResourcesToImages({
   });
 
   if (createdResources.length > 0) {
+    await flagImagesOnRestrictedVersions({
+      modelVersionIds: uniq(createdResources.map((x) => x.modelVersionId)),
+      imageIds: uniq(createdResources.map((x) => x.imageId)),
+    });
     await queueImageSearchIndexUpdate({
       ids: uniq(createdResources.map((x) => x.imageId)),
       action: SearchIndexUpdateQueueAction.Update,
@@ -2055,10 +2192,36 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {
-  const transaction = await dbWrite.$transaction(
-    imageIds.map((id, index) => dbWrite.image.update({ where: { id, postId }, data: { index } }))
-  );
+/**
+ * Without `items` (an editor from before text items, or with them off), a post that has text keeps
+ * every text row where it is: the listed images take, in order, the indexes those images already hold.
+ */
+async function imageOnlyReorder(postId: number, imageIds: number[]) {
+  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
+  if (!hasText) return imageIds.map((id, index) => ({ id, index }));
+  const held = await dbWrite.image.findMany({
+    where: { postId, id: { in: imageIds } },
+    select: { index: true },
+  });
+  const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
+  return imageIds.slice(0, indexes.length).map((id, i) => ({ id, index: indexes[i] }));
+}
+
+export const reorderPostImages = async ({
+  id: postId,
+  imageIds,
+  items,
+}: ReorderPostImagesInput) => {
+  const writes = items
+    ? items.map(({ type, id }, index) =>
+        type === 'image'
+          ? dbWrite.image.update({ where: { id, postId }, data: { index } })
+          : dbWrite.postText.update({ where: { id, postId }, data: { index } })
+      )
+    : (await imageOnlyReorder(postId, imageIds)).map(({ id, index }) =>
+        dbWrite.image.update({ where: { id, postId }, data: { index } })
+      );
+  const transaction = await dbWrite.$transaction(writes);
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);
@@ -2196,7 +2359,7 @@ export const getPostResourceCovers = async ({
         type: 'error',
         message: 'post resource covers unavailable',
         error: error.message,
-      }).catch();
+      });
       return undefined;
     });
   if (!byVersion) return covers;
@@ -2337,7 +2500,9 @@ export const getPostContestCollectionDetails = async ({
 export const updatePostCollectionTagId = async ({
   id,
   collectionTagId,
-}: UpdatePostCollectionTagIdInput) => {
+  userId,
+  isModerator,
+}: UpdatePostCollectionTagIdInput & { userId: number; isModerator?: boolean }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2349,8 +2514,24 @@ export const updatePostCollectionTagId = async ({
 
   if (!collection || collection?.mode !== CollectionMode?.Contest) return;
 
-  if (!collection.tags.find((t) => t.id === collectionTagId))
-    throw throwBadRequestError('Invalid tag');
+  // Category tags only, and only on entries that have none or a category tag: the rest (judging
+  // state and the like) is the system's, as `setCollectionItemsTag` keeps it.
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.id);
+  if (!categoryTagIds.includes(collectionTagId)) throw throwBadRequestError('Invalid tag');
+
+  // An entrant changes their category only while submissions are open; managers and moderators
+  // can at any time.
+  const { manage } = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  if (!manage) {
+    const { submissionEndDate } = (collection.metadata ?? {}) as CollectionMetadataSchema;
+    if (submissionEndDate && new Date(submissionEndDate) < new Date())
+      throw throwBadRequestError('Submissions for this contest are closed');
+    if (await isContestBanned(userId)) throw throwBadRequestError(CONTEST_BANNED_MESSAGE);
+  }
 
   const isImageCollection = collection.type === CollectionType.Image;
 
@@ -2365,6 +2546,7 @@ export const updatePostCollectionTagId = async ({
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }],
     },
     data: {
       tagId: collectionTagId,

@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { civitaiAppUrl } from './civitai-url';
+import { civitaiAppUrl, civitaiLinkUrl } from './civitai-url';
+import { getIsSafeBrowsingLevel } from '@civitai/shared';
 import { sql } from '@civitai/db/kysely';
 import { violationUserMessage } from '$lib/violations';
 import { deprecatedNsfwName } from '$lib/nsfw-levels';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
 import { isSafeToRetry } from '@civitai/buzz';
+import type { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { dbRead } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
-import { syncSearchIndex } from './search-index';
+import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
@@ -86,10 +89,12 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
   const rows = await dbRead
     .selectFrom('Post as p')
     .leftJoin('ModelVersion as mv', 'mv.id', 'p.modelVersionId')
+    .leftJoin('Model as m', 'm.id', 'mv.modelId')
     .select([
       'p.modelVersionId as modelVersionId',
       'mv.modelId as modelId',
       'p.model3dId as model3dId',
+      sql<boolean>`m."userId" = p."userId"`.as('isShowcase'),
     ])
     .where('p.id', 'in', ids)
     .execute();
@@ -111,6 +116,13 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
     tags.length ? bustCacheTag(tags) : Promise.resolve(),
     bustCachedObject(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION, modelVersionIds),
   ]);
+
+  // The models sync re-picks a model only when `Model.updatedAt` moves; a showcase image that stops
+  // qualifying would otherwise stay in its search document.
+  const showcaseModelIds = [
+    ...new Set(rows.filter((r) => r.isShowcase && r.modelId != null).map((r) => r.modelId!)),
+  ];
+  await syncSearchIndexBulk({ entityType: 'model', entityIds: showcaseModelIds, action: 'update' });
 }
 
 // Keep pHash as the full-precision string: it's a signed 64-bit value that overflows JS `number`
@@ -266,11 +278,12 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
 export async function trackImageRestore(input: {
   imageId: number;
   actorUserId: number;
+  db?: Kysely<DB>;
 }): Promise<void> {
-  const { imageId, actorUserId } = input;
+  const { imageId, actorUserId, db = dbRead } = input;
   try {
     const [image, tags] = await Promise.all([
-      dbRead
+      db
         .selectFrom('Image')
         .select(['userId', 'nsfwLevel'])
         .where('id', '=', imageId)
@@ -375,7 +388,7 @@ export async function applyBlockSideEffects(
       name: 'image-notice-under-review',
       imageId,
       userId: img.userId,
-    }).catch(() => undefined);
+    });
   await Promise.all([
     bestEffort('blocklist', imageId, () =>
       addImagesToBlocklist([
@@ -493,13 +506,27 @@ export async function emailAppealResolution(input: {
   imageIds: number[];
 }): Promise<void> {
   if (!input.imageIds.length) return;
-  const base = civitaiAppUrl();
   try {
+    // civitai.com will not show a mature, mixed or unrated image; those, a missing row and a failed
+    // read all link to .red.
+    const rows = await dbRead
+      .selectFrom('Image')
+      .select(['id', 'nsfwLevel'])
+      .where('id', 'in', input.imageIds)
+      .execute()
+      .catch(() => []);
+    const comSafe = new Set(
+      rows.filter((r) => getIsSafeBrowsingLevel(r.nsfwLevel)).map((r) => r.id)
+    );
+    const base = (id: number) => (comSafe.has(id) ? civitaiAppUrl() : civitaiLinkUrl());
     await appealResolutionEmail.send({
       to: input.to,
       username: input.username,
       approved: input.approved,
-      items: input.imageIds.map((id) => ({ url: `${base}/images/${id}`, label: `Image #${id}` })),
+      items: input.imageIds.map((id) => ({
+        url: `${base(id)}/images/${id}`,
+        label: `Image #${id}`,
+      })),
     });
   } catch (e) {
     console.error('emailAppealResolution failed', {

@@ -2,6 +2,7 @@ import {
   GENERATION_TIP_TRANSACTION_PREFIX,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
+import { getDisplayName } from '~/utils/string-helpers';
 
 // Generation tips are stored as Compensation (peak/pool accounting reads that type), so the
 // transactions page tells them apart by the externalTransactionId prefix, display only.
@@ -17,9 +18,37 @@ export function isGenerationTip(row: DisplayRow) {
   );
 }
 
-export function getTransactionBadgeLabel(row: DisplayRow) {
-  return isGenerationTip(row) ? GENERATION_TIP_LABEL : TransactionType[row.type];
+/** "App Author Fee", not the enum key "AppAuthorFee". */
+export function getTransactionTypeLabel(type: TransactionType) {
+  return getDisplayName(TransactionType[type]);
 }
+
+export function getTransactionBadgeLabel(row: DisplayRow) {
+  return isGenerationTip(row) ? GENERATION_TIP_LABEL : getTransactionTypeLabel(row.type);
+}
+
+const typeFilter = (type: TransactionType) => ({
+  value: TransactionType[type],
+  label: getTransactionTypeLabel(type),
+});
+
+/** The `/user/transactions` type filter. Each `value` goes through `getServerTransactionType`. */
+export const TRANSACTION_TYPE_FILTER_OPTIONS: { value: string; label: string }[] = [
+  typeFilter(TransactionType.Tip),
+  typeFilter(TransactionType.Reward),
+  typeFilter(TransactionType.Generation),
+  typeFilter(TransactionType.Refund),
+  typeFilter(TransactionType.Training),
+  typeFilter(TransactionType.Purchase),
+  typeFilter(TransactionType.Bounty),
+  typeFilter(TransactionType.Sell),
+  typeFilter(TransactionType.Compensation),
+  { value: GENERATION_TIP_FILTER, label: GENERATION_TIP_FILTER },
+  typeFilter(TransactionType.Donation),
+  typeFilter(TransactionType.Bid),
+  typeFilter(TransactionType.Redeemable),
+  typeFilter(TransactionType.AppAuthorFee),
+];
 
 // The good/collected-content rewards are stored as "Buzz Reward: Content that you posted was
 // liked/collected…" (base.reward.ts adds the prefix), and the page rewrites "Content" to name the

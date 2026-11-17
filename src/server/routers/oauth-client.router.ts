@@ -311,7 +311,7 @@ export const oauthClientRouter = router({
             message: 'rotate-token-expiry-failed',
             clientId: input.id,
             error: error.message,
-          }).catch(() => undefined)
+          })
         );
       await revokeLinksOfRevokedCredentials([credential]);
 

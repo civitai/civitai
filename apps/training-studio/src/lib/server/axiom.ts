@@ -9,7 +9,7 @@ type LogData = Record<string, unknown>;
 // `app` separates these events from the main app's in the shared datastream. The datastream is a literal
 // so the root axiom-datastream-ledger test can check it is provisioned.
 export function logToAxiom(data: LogData) {
-  return logger.logToAxiom({ app: 'training-studio', ...data }, 'civitai-prod').catch(() => {});
+  return logger.logToAxiom({ app: 'training-studio', ...data }, 'civitai-prod');
 }
 
 export { safeError };

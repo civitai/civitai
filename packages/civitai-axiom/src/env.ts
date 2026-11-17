@@ -118,6 +118,10 @@ const schema = z.object({
   AXIOM_EXTRA_DATASTREAMS: z.string().optional(),
   PODNAME: z.string().optional(),
   LOG_ERRORS_TO_STDOUT: booleanString.default(false),
+  // `true` makes the promise `logToAxiom` returns settle only after the dual-write's outcome,
+  // bounded by the 2 s budget. Unset = it settles once the stderr line is written. It only
+  // affects a caller that awaits the call.
+  AXIOM_AWAIT_UPLOADS: booleanString.default(false),
 });
 
 // Normalized, env-derived defaults. The factory accepts a Partial<AxiomConfig> to
@@ -141,6 +145,7 @@ function buildEnv() {
     ),
     podName: parsed.data.PODNAME,
     logErrorsToStdout: parsed.data.LOG_ERRORS_TO_STDOUT,
+    awaitUploads: parsed.data.AXIOM_AWAIT_UPLOADS,
     // NODE_ENV is a universal Node convention (not Next-specific), so it's fine for a package.
     isProd: process.env.NODE_ENV === 'production',
   };

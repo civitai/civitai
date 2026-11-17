@@ -73,6 +73,7 @@ export function installFakeCacheRedis() {
     write(key, value, options)
   );
   r.get.mockImplementation(async (key: string) => read(key));
+  r.mGet.mockImplementation(async (keys: string[]) => keys.map(read));
   r.set.mockImplementation(async (key: string, value: unknown, options?: SetOptions) =>
     write(key, value, options)
   );

@@ -199,6 +199,16 @@ describe('logToAxiom structured-stderr sink (always-on for Loki)', () => {
 describe('logToAxiom Axiom dual-write containment', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
+  // `logToAxiom` no longer waits for the dual-write; the outcome is recorded in the background.
+  // These cases are about that outcome (the report, the counter), so each call also awaits
+  // `flush`, which resolves once the outcome is recorded.
+  const settled =
+    (logger: ReturnType<typeof createAxiomLogger>) =>
+    async (data: Record<string, unknown>, datastream?: string) => {
+      await logger.logToAxiom(data, datastream);
+      await logger.flush();
+    };
+
   beforeEach(() => {
     h.ingestEvents.mockReset().mockResolvedValue(undefined);
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -225,7 +235,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
 
   it('CONTAINMENT: a rejecting ingest resolves the caller and reports the failure once', async () => {
     h.ingestEvents.mockRejectedValue(new Error('ECONNREFUSED'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await expect(logToAxiom(ERR)).resolves.toBeUndefined();
 
@@ -238,27 +248,27 @@ describe('logToAxiom Axiom dual-write containment', () => {
     });
   });
 
-  it('BUDGET: a hanging ingest does not hold the caller past AXIOM_INGEST_TIMEOUT_MS', async () => {
+  it('BUDGET: a hanging ingest is reported as a timeout once AXIOM_INGEST_TIMEOUT_MS passes', async () => {
     vi.useFakeTimers();
-    // Never settles — the black-holed-endpoint case. Attach a sink so the abandoned promise
-    // cannot register as unhandled if the implementation regresses to leaving it bare.
+    // Never settles: the black-holed-endpoint case.
     h.ingestEvents.mockReturnValue(new Promise(() => {}));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logger = createAxiomLogger(PROD_CONFIGURED);
 
-    let settled = false;
-    const call = logToAxiom(ERR).then(() => {
-      settled = true;
+    // The caller is not held at all (./nonBlocking.test.ts pins that in real time).
+    await logger.logToAxiom(ERR);
+    let flushed = false;
+    const flush = logger.flush().then(() => {
+      flushed = true;
     });
 
-    // Advance to just under the budget: still waiting.
+    // Just under the budget: no outcome yet.
     await vi.advanceTimersByTimeAsync(1_999);
-    expect(settled).toBe(false);
+    expect(flushed).toBe(false);
+    expect(reports(errorSpy)).toEqual([]);
 
-    // Cross it: the caller is released even though the ingest never resolves.
+    // Cross it: reported as a timeout though the ingest never resolves.
     await vi.advanceTimersByTimeAsync(2);
-    await call;
-    expect(settled).toBe(true);
-
+    await flush;
     expect(reports(errorSpy)[0]).toMatchObject({ name: 'axiom-ingest-failed', reason: 'timeout' });
   });
 
@@ -273,7 +283,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
       h.ingestEvents.mockReturnValue(
         new Promise((_resolve, reject) => setTimeout(() => reject(new Error('late')), 10_000))
       );
-      const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+      const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
       const call = logToAxiom(ERR);
       await vi.advanceTimersByTimeAsync(2_001);
@@ -292,7 +302,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
 
   it('THROTTLE: an outage reports on the 1st and every 500th failure, not once per event', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     for (let i = 0; i < 501; i++) await logToAxiom(ERR);
 
@@ -301,7 +311,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   it('RECOVERY: the next success reports the outage total and resets the counter', async () => {
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     h.ingestEvents.mockRejectedValue(new Error('down'));
     await logToAxiom(ERR);
@@ -323,7 +333,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   it('HEALTHY PATH IS SILENT: a successful ingest emits no outage report', async () => {
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
     await logToAxiom(ERR);
     expect(reports(errorSpy)).toEqual([]);
   });
@@ -340,7 +350,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
    */
   it('the failure report is queryable as an ERROR and attributable to a pod', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await logToAxiom(ERR);
 
@@ -353,7 +363,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
   });
 
   it('the recovery report is INFO — good news must not page as an error', async () => {
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
     h.ingestEvents.mockRejectedValue(new Error('down'));
     await logToAxiom(ERR);
     h.ingestEvents.mockResolvedValue(undefined);
@@ -378,8 +388,8 @@ describe('logToAxiom Axiom dual-write containment', () => {
    */
   it('SHARED COUNTER: separate loggers on one datastream continue the same outage', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const a = createAxiomLogger(PROD_CONFIGURED);
-    const b = createAxiomLogger(PROD_CONFIGURED);
+    const a = { logToAxiom: settled(createAxiomLogger(PROD_CONFIGURED)) };
+    const b = { logToAxiom: settled(createAxiomLogger(PROD_CONFIGURED)) };
 
     await a.logToAxiom(ERR);
     await b.logToAxiom(ERR);
@@ -403,7 +413,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
 
   it('a DIFFERENT datastream is a different transport with its own count', async () => {
     h.ingestEvents.mockRejectedValue(new Error('down'));
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await logToAxiom(ERR);
     await logToAxiom(ERR, 'some-other-stream');
@@ -420,7 +430,7 @@ describe('logToAxiom Axiom dual-write containment', () => {
    */
   it('clears the budget timer when the ingest wins', async () => {
     vi.useFakeTimers();
-    const { logToAxiom } = createAxiomLogger(PROD_CONFIGURED);
+    const logToAxiom = settled(createAxiomLogger(PROD_CONFIGURED));
 
     await logToAxiom(ERR);
 

@@ -158,15 +158,13 @@ export function nextFeedSearchQuery(
   const nextUsername =
     username ?? (typedUsername && currentUsername === typedUsername ? undefined : currentUsername);
   if (query === currentQuery && nextUsername === currentUsername) return null;
-  return removeEmpty({ ...current, query, username: nextUsername }) as ParsedUrlQuery;
+  // A typed query replaces a "more like this".
+  const similarTo = query ? undefined : current.similarTo;
+  return removeEmpty({ ...current, query, username: nextUsername, similarTo }) as ParsedUrlQuery;
 }
 
-/**
- * The feed a header search lands on, for an index whose feed answers `?query=` (images so far);
- * null for the rest, which still open their search page.
- */
-export function buildFeedSearchUrl(index: SearchIndexKey, search: string) {
-  if (index !== 'images') return null;
+/** The feed URL a header search lands on, given the feed that answers `?query=` for its index. */
+export function buildFeedSearchUrl(pathname: string, search: string) {
   const queryString = QS.stringify(parseFeedSearch(search));
-  return queryString ? `/images?${queryString}` : '/images';
+  return queryString ? `${pathname}?${queryString}` : pathname;
 }

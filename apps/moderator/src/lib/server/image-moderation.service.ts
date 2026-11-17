@@ -33,6 +33,7 @@ import {
   setAsideState,
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -69,6 +70,59 @@ const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
+  await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
+};
+
+// The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
+// its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to the
+// scanner, as the main app's rescanUnratedImages does. An image with tags, live or disabled by this
+// ruling, or with an earlier moderator review, is left as it is: a rescan would re-audit it over the
+// moderator's decision. This accept's own review row is written after this runs, so it does not
+// count. One out of rescan retries goes to Error instead.
+const IMAGE_RESCAN_RETRY_LIMIT = 9; // the main app's IMAGE_RESCAN_RETRY_LIMIT (image-scan-failure.ts)
+const rescanIfUnrated = async (imageId: number) => {
+  // Read first: most restores are rated, and need neither the tag check nor the write.
+  const image = await dbWrite
+    .selectFrom('Image')
+    .select(['ingestion', 'nsfwLevel', 'blockedFor'])
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  if (!image || image.ingestion !== 'Scanned' || image.nsfwLevel !== 0 || image.blockedFor) return;
+  const tagged = await sql<{ one: number }>`
+    SELECT 1 AS one FROM "TagsOnImageDetails" WHERE "imageId" = ${imageId} LIMIT 1`.execute(
+    dbWrite
+  );
+  if (tagged.rows.length) return;
+  const { rows } = await sql<{ retryCount: number | null }>`
+    SELECT ("scanJobs"->>'retryCount')::int AS "retryCount" FROM "Image" WHERE id = ${imageId}`.execute(
+    dbWrite
+  );
+  const outOfRetries = (rows[0]?.retryCount ?? 0) >= IMAGE_RESCAN_RETRY_LIMIT;
+  const updated = await dbWrite
+    .updateTable('Image')
+    .set({ ingestion: outOfRetries ? 'Error' : 'Rescan' })
+    .where('id', '=', imageId)
+    .where('ingestion', '=', 'Scanned')
+    .where('nsfwLevel', '=', 0)
+    .where('blockedFor', 'is', null)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('ModActivity')
+            .select(sql<number>`1`.as('one'))
+            .where('entityType', '=', 'image')
+            .where('entityId', '=', imageId)
+            .where('activity', '=', 'review')
+        )
+      )
+    )
+    .executeTakeFirst();
+  if (outOfRetries || !updated.numUpdatedRows) return;
+  await dbWrite
+    .insertInto('JobQueue')
+    .values({ type: 'ImageScan', entityType: 'Image', entityId: imageId })
+    .onConflict((oc) => oc.columns(['entityType', 'entityId', 'type']).doNothing())
+    .execute();
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
@@ -88,6 +142,20 @@ export class RemovedImageNotRestorableError extends Error {
   }
 }
 
+/** An explicit restore that left the image removed: it is lifted only through its own review. */
+export class ImageNotRestoredError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not restored`);
+  }
+}
+
+/** An explicit restore of an image that does not exist. */
+export class ImageNotFoundError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not found`);
+  }
+}
+
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
@@ -100,15 +168,24 @@ export async function acceptImage({
   userId: number;
   deferAppealEmail?: boolean;
   /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
-   *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. */
+   *  left cannot come back live from one; they throw `RemovedImageNotRestorableError` instead. Not even
+   *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
-  const img = await dbRead
-    .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
-    .where('id', '=', imageId)
-    .executeTakeFirst();
-  if (!img) return;
+  const readImage = (db: Kysely<DB>) =>
+    db
+      .selectFrom('Image')
+      .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
+      .where('id', '=', imageId)
+      .executeTakeFirst();
+  // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
+  const fromReplica = await readImage(dbRead);
+  const reader = fromReplica ? dbRead : dbWrite;
+  const img = fromReplica ?? (await readImage(dbWrite));
+  if (!img) {
+    if (restoreRemoved) throw new ImageNotFoundError(imageId);
+    return;
+  }
   const nr = img.needsReview;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
@@ -119,7 +196,7 @@ export async function acceptImage({
       : sql`"metadata" - 'ruleId' - 'ruleReason'`;
 
   // Refused in the statement itself, not off the replica read above.
-  const { numUpdatedRows } = await dbWrite
+  const updated = await dbWrite
     .updateTable('Image')
     .set({
       needsReview: null,
@@ -139,18 +216,28 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .$if(!restoreRemoved, (qb) =>
-      qb.where(NOT_FLAG_ONLY_REMAINING).where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
-    )
+    .where('blockedFor', 'is distinct from', BLOCKED_REASON_CSAM)
+    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
+    // Only a minor-queue accept reads the flag back. A subquery in RETURNING reads the statement's
+    // snapshot, so `wasMinor` is the value this update replaced, from the primary, not the replica.
+    .returning([
+      'id',
+      sql<boolean | null>`${nr === 'minor' ? sql`"minor"` : sql`NULL`}`.as('minor'),
+      sql<boolean | null>`${
+        nr === 'minor'
+          ? sql`(SELECT pre."minor" FROM "Image" pre WHERE pre."id" = ${imageId})`
+          : sql`NULL`
+      }`.as('wasMinor'),
+    ])
     .executeTakeFirst();
-  if (!numUpdatedRows) {
-    if (restoreRemoved) return;
+  if (!updated) {
+    if (restoreRemoved) throw new ImageNotRestoredError(imageId);
     throw new RemovedImageNotRestorableError(imageId);
   }
   await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
-  const reviewTags = await dbRead
+  const reviewTags = await reader
     .selectFrom('ImageTagForReview')
     .select('tagId')
     .where('imageId', '=', imageId)
@@ -170,13 +257,23 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
   if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
-    await trackImageRestore({ imageId, actorUserId: userId });
+    await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
+  // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows
+  // which queue it came from and whether it lifted the flag.
+  if (nr === 'minor')
+    await recordModActivity({
+      userId,
+      entityType: 'image',
+      entityId: imageId,
+      activity: updated.wasMinor && !updated.minor ? 'clearMinor' : 'minorQueueAccept',
+    });
 
   await applyAcceptSideEffects(img, imageId);
 
@@ -712,6 +809,7 @@ export async function resolveImageAppeal({
       await resetBlockedNsfwLevel(imageId);
     }
     await recompute(imageId);
+    await rescanIfUnrated(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {

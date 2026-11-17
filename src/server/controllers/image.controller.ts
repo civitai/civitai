@@ -1,3 +1,4 @@
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
 import { TRPCError } from '@trpc/server';
 import {
@@ -51,7 +52,9 @@ import {
   keepPendingAppealFlags,
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
-import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { getRequestBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { resolveStrictestPoiMinor } from '~/shared/constants/browsing-settings-addons';
+import { filterImagesForViewer } from '~/server/utils/model-getall-images';
 import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
@@ -60,6 +63,7 @@ import {
   getHeldGalleryLevel,
   isModelGalleryWithheld,
   getHeldLevelsByPost,
+  holdShowcaseImages,
 } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
@@ -87,7 +91,10 @@ import {
 } from '~/server/utils/image-media-visibility';
 import { getEventDecorationsForEntity } from '~/server/services/cosmetic.service';
 import { eventViewerOf } from '~/server/events/event-viewer';
-import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  getNsfwLevelDeprecatedReverseMapping,
+} from '~/shared/constants/browsingLevel.constants';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { Flags } from '~/shared/utils/flags';
 import {
@@ -185,7 +192,11 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
+    const image = await deleteImageById({
+      ...input,
+      deletedById: ctx.user.id,
+      moderatorDelete: !!ctx.user.isModerator,
+    });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -389,16 +400,60 @@ export const getImagesForModelVersionHandler = async ({
   ctx: Context;
 }) => {
   if (await isGalleryWithheldFrom(ctx, { modelVersionId: input.id })) return {};
-  const byVersion = await getImagesForModelVersionCache([input.id]);
+  const [byVersion, version] = await Promise.all([
+    getImagesForModelVersionCache([input.id]),
+    dbRead.modelVersion.findUnique({
+      where: { id: input.id },
+      select: { modelId: true, model: { select: { userId: true, minor: true, sfwOnly: true } } },
+    }),
+  ]);
+  // A minor or SFW-only model's showcase is held at its gallery level, as in the gallery.
+  const wholeShowcase =
+    moderatorView(ctx) || (!!version && galleryOwnerId(ctx) === version.model.userId);
+  // A version with no row has no model to clear it, so it serves none of its images.
+  const shown = wholeShowcase
+    ? byVersion
+    : !version
+    ? {}
+    : await holdShowcaseImages(
+        byVersion,
+        new Map([
+          [
+            input.id,
+            {
+              modelId: version.modelId,
+              minor: version.model.minor,
+              sfwOnly: version.model.sfwOnly,
+            },
+          ],
+        ])
+      );
+  // Not resolved at the viewer's own level (the request carries none), so at the strictest level
+  // a viewer here could pick.
+  const settings = resolveStrictestPoiMinor(
+    await getBrowsingSettingAddons(),
+    requestServableLevels(ctx),
+    { isModerator: moderatorView(ctx) }
+  );
+  // Moderator and owner exemptions on the same credentials as the hold.
+  const exemptViewer = galleryOwnerId(ctx) !== undefined ? ctx.user : undefined;
   // Any version id can be asked for, so the cap applies per image.
   keepCrawlerAnswerOutOfEdgeCache(ctx);
   return Object.fromEntries(
-    Object.entries(byVersion).map(([versionId, entry]) => [
+    Object.entries(shown).map(([versionId, entry]) => [
       versionId,
       {
         ...entry,
-        images: entry.images.filter((image) =>
-          canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+        images: filterImagesForViewer(
+          entry.images.filter((image) =>
+            canViewImageMedia(ctx, { nsfwLevel: image.nsfwLevel, user: { id: image.userId } })
+          ),
+          {
+            browsingLevel: allBrowsingLevelsFlag,
+            disablePoi: settings.disablePoi,
+            disableMinor: settings.disableMinor,
+            viewer: exemptViewer,
+          }
         ),
       },
     ])
@@ -517,6 +572,8 @@ export const getInfiniteImagesHandler = async ({
     }
     const dbInput = {
       user,
+      asModerator: moderatorView(ctx),
+      asOwner: isSessionOrFullUserKey(ctx),
       domain: getRequestBoardDomainColor(ctx.req),
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...scopedInput.include, 'tagIds' as const],
@@ -588,6 +645,8 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImagesIndex({
         ...scopedInput,
         user,
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         holdExempt: moderatorView(ctx),
         galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
@@ -608,6 +667,8 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImages({
         ...scopedInput,
         user,
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...scopedInput.include, 'tagIds'],
@@ -757,6 +818,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         // Fetch the posts whole and narrow them with filterPinnedImagesToVersion
         // below. The ImageResourceNew join that modelVersionId triggers is an
         // inner join, so filtering it here drops media with no resource-detection
@@ -809,6 +872,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: sponsoredImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
@@ -842,6 +907,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       domain: getRequestBoardDomainColor(ctx.req),
       ids: fetchHidden ? versionHiddenImages : undefined,
       user,
+      asModerator: moderatorView(ctx),
+      asOwner: isSessionOrFullUserKey(ctx),
       eventDecorationViewer: eventViewer,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
       include: [...input.include, 'tagIds' as const, 'profilePictures' as const],
@@ -1128,7 +1195,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
           name: 'image-get-event-decoration',
           message: (error as Error).message,
           imageId: input.id,
-        }).catch(() => undefined);
+        });
         return {} as Awaited<ReturnType<typeof getEventDecorationsForEntity>>;
       }),
     ]);
@@ -1151,7 +1218,7 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
         name: 'image-get-held-level',
         message: (error as Error).message,
         imageId: input.id,
-      }).catch(() => undefined);
+      });
       return [];
     });
     const servable = canSeeMedia && !!heldChecked.length;
@@ -1359,7 +1426,8 @@ export async function handleUpdateImageNsfwLevel({
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
 
     if (isModerator) {
-      // Update knights of new order pending votes and remove it from new order queue
+      // Update knights of new order pending votes and remove it from new order queue. Not gated on the
+      // cutover: it settles v1 votes still pending while the old game drains, and is removed with it.
       await updatePendingImageRatings({ imageId: input.id, rating: input.nsfwLevel });
       await leaveQueuesAfterModeratorRating(input.id);
     }

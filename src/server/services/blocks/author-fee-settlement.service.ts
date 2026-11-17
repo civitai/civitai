@@ -205,7 +205,7 @@ export async function settleBlockAuthorFees(args: {
           limit,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       continue;
     }
     // The day emptied under us — a concurrent run settled it between the two
@@ -256,16 +256,11 @@ export async function settleBlockAuthorFees(args: {
       // stay `accrued` and the next run re-derives the same key, so money is
       // never at risk — only this bucket's timeliness.
       //
-      // ⚠️ AN EARLIER REVISION SAID THE CLIENT'S "retry allowlist covers only
-      // connection-level errors — a 5xx or a 504 throws on the first response".
-      // THAT IS FALSE, and false in the reassuring direction. `createTransactions`
-      // calls `post` with no options, so `shouldRetry` is undefined, and the
-      // client's `withRetries` reads `shouldRetry ? predicate(...) : true` under a
-      // comment saying "Absent predicate keeps the historical behaviour: retry
-      // everything". `isSafeToRetry` is exported but never applied on this path.
-      // So a 5xx is retried at the client default (3), and a run with N payable
-      // buckets can issue up to 4N POSTs during an outage rather than N. Size any
-      // timeout or alert against that number, not against N.
+      // The client retries a write only when `isSafeToRetry` says it never left
+      // (connection refused / DNS); a 5xx or a timeout throws on the first
+      // response. So a run with N payable buckets issues at most N POSTs that
+      // reach the service, plus refused-connection retries that never arrived.
+      // The batch call has no client deadline: it waits for Buzz's answer.
       let mint: Awaited<ReturnType<typeof createBuzzTransactionMany>> | null = null;
       let threw: unknown = null;
       try {
@@ -332,7 +327,7 @@ export async function settleBlockAuthorFees(args: {
             threw: threw instanceof Error ? threw.message : threw ? String(threw) : null,
           },
           'civitai-prod'
-        ).catch(() => undefined);
+        );
         continue;
       }
 
@@ -371,7 +366,7 @@ export async function settleBlockAuthorFees(args: {
             error: error instanceof Error ? error.message : String(error),
           },
           'civitai-prod'
-        ).catch(() => undefined);
+        );
         flipFailures += 1;
         continue;
       }
@@ -405,7 +400,7 @@ export async function settleBlockAuthorFees(args: {
       flipFailures,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 
   return { buckets, rowsSettled, buzzMinted, daysTruncated, flipFailures };
 }

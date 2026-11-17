@@ -34,7 +34,7 @@ import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 const log = createLogger('prepare-bounties', 'blue');
 
 const logJob = (data: MixedObject) => {
-  logToAxiom({ name: 'prepare-bounties', type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom({ name: 'prepare-bounties', type: 'error', ...data }, 'webhooks');
 };
 
 const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => {
@@ -345,7 +345,7 @@ async function settleExpiredBounty({
           bountyId: id,
         },
         'webhooks'
-      ).catch();
+      );
 
     if (user) {
       bountyRefundedEmail

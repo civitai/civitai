@@ -165,6 +165,18 @@ describe('usePostResourceReviews', () => {
     );
   });
 
+  it("leaves out resources whose model belongs to the post's owner", async () => {
+    client.setQueryData(key, [row(1, { modelUserId: 7 }), row(2, { modelUserId: 8 })]);
+    const [a] = renderHooks(useSubject);
+    expect(a.current.reviews.map((r) => r.modelVersionId)).toEqual([2]);
+    expect(a.current.byModelVersionId.has(1)).toBe(false);
+    expect(a.current.counts).toEqual({ rated: 0, total: 1 });
+    await act(async () => {
+      expect(await a.current.rate(1, true)).toBe('ignored');
+    });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it('rolls back and notifies when the save fails', async () => {
     upsert.mockRejectedValue(new Error('nope'));
     const [a] = renderHooks(useSubject);

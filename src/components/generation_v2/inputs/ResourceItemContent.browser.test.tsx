@@ -410,8 +410,8 @@ describe('ResourceItemContent (render)', () => {
     expect(countIcon('shield')).toBe(0);
   });
 
-  // The shield is the generator's SFW-only marker on .red: it also covers resources on a base whose
-  // licence bars mature content, with copy about posting, since generation is not refused there.
+  // The shield is the generator's SFW-only marker on .red: it also covers resources on a base that
+  // caps generation to PG-13.
   const hoverShield = async () => {
     const shield = document.querySelector('.tabler-icon-shield');
     expect(shield, 'shield rendered').toBeTruthy();
@@ -419,7 +419,7 @@ describe('ResourceItemContent (render)', () => {
   };
 
   test.each(['Ideogram 4.5', 'SD 3.5 Large', 'SDXL Turbo'])(
-    '%s checkpoint (domain not green) renders the shield with the posting copy',
+    '%s checkpoint (domain not green) renders the shield with the generation copy',
     async (baseModel) => {
       const r = makeResource({ baseModel, model: { id: 1, name: 'M', type: 'Checkpoint' } });
       renderWithProviders(<ResourceItemContent resource={r} />);
@@ -428,25 +428,10 @@ describe('ResourceItemContent (render)', () => {
       expect(countIcon('shield')).toBe(1);
       await hoverShield();
       await expect
-        .element(page.getByText("Mature content can't be posted with this base model."))
+        .element(page.getByText('This resource cannot be used to generate mature content'))
         .toBeInTheDocument();
     }
   );
-
-  test('sfwOnly on a restricted base keeps the sfwOnly copy', async () => {
-    const r = makeResource({
-      baseModel: 'SDXL Turbo',
-      model: { id: 1, name: 'M', type: 'Checkpoint', sfwOnly: true },
-    });
-    renderWithProviders(<ResourceItemContent resource={r} />);
-
-    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
-    expect(countIcon('shield')).toBe(1);
-    await hoverShield();
-    await expect
-      .element(page.getByText('This resource cannot be used to generate mature content'))
-      .toBeInTheDocument();
-  });
 
   test.each(['Illustrious', 'SDXL 1.0', 'Flux.2 D'])(
     '%s checkpoint renders no shield',

@@ -101,14 +101,13 @@ const defaults: Required<UserAppCapsDeps> = {
 };
 
 /**
- * The plan caps of the user's tier, and the user (null when it could not be read, which serves
- * the strictest tier's caps). No opt-in lookup. Never throws: a failed config read serves the
- * code defaults.
+ * The usage-limit config and the user (null when it could not be read). Never throws: a failed
+ * config read serves the code defaults.
  */
-async function resolvePlan(
+async function resolveSubject(
   userId: number,
   d: Required<UserAppCapsDeps>
-): Promise<{ plan: PlanCaps; user: SessionUser | null }> {
+): Promise<{ config: UsageLimitConfig; user: SessionUser | null }> {
   let config: UsageLimitConfig = defaultUsageLimitConfig;
   try {
     config = await d.getConfig();
@@ -121,8 +120,58 @@ async function resolvePlan(
   } catch {
     user = null;
   }
+  return { config, user };
+}
+
+/**
+ * The plan caps of the user's tier, and the user (null when it could not be read, which serves
+ * the strictest tier's caps). No opt-in lookup. Never throws: a failed config read serves the
+ * code defaults.
+ */
+async function resolvePlan(
+  userId: number,
+  d: Required<UserAppCapsDeps>
+): Promise<{ plan: PlanCaps; user: SessionUser | null }> {
+  const { config, user } = await resolveSubject(userId, d);
   if (!user) return { plan: strictestPlanCaps(config), user: null };
   return { plan: planCapsForTier(config, user.tier), user };
+}
+
+/** How many sleeping (hibernated) apps, and how many archive bytes, one user may keep. */
+export type SleepingAppLimits = { apps: number; bytes: number };
+
+export const SLEEPING_APP_LIMIT_IDS = {
+  apps: 'apps.sleeping-count',
+  bytes: 'apps.sleeping-bytes',
+} as const;
+
+/** The sleeping-app limits of `tier` (no tier, or an unknown one, reads as free). Pure. */
+export function sleepingLimitsForTier(
+  config: UsageLimitConfig,
+  tier: string | null | undefined
+): SleepingAppLimits {
+  return {
+    apps: capFor(config, SLEEPING_APP_LIMIT_IDS.apps, tier),
+    bytes: capFor(config, SLEEPING_APP_LIMIT_IDS.bytes, tier),
+  };
+}
+
+/**
+ * One user's sleeping-app limits, from their membership tier, through the same resolution as the
+ * other `apps.*` caps (overridable from the `usage-limits` KeyValue row). Never throws: a failed
+ * or empty user read serves the strictest tier's limits.
+ */
+export async function sleepingAppLimits(
+  userId: number,
+  deps: UserAppCapsDeps = {}
+): Promise<SleepingAppLimits> {
+  const { config, user } = await resolveSubject(userId, { ...defaults, ...deps });
+  if (user) return sleepingLimitsForTier(config, user.tier);
+  const all = usageLimitTiers.map((tier) => sleepingLimitsForTier(config, tier));
+  return {
+    apps: Math.min(...all.map((l) => l.apps)),
+    bytes: Math.min(...all.map((l) => l.bytes)),
+  };
 }
 
 /**

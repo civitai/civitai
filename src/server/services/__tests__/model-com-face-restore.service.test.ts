@@ -4,14 +4,16 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
 
-const { mockPreviewComFaceIntent, mockBust } = vi.hoisted(() => ({
+const { mockPreviewComFaceIntent, mockPreviewTextScanNsfw, mockBust } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
+  mockPreviewTextScanNsfw: vi.fn(),
   mockBust: vi.fn(),
 }));
 
 vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanPreview>()),
   previewComFaceIntent: mockPreviewComFaceIntent,
+  previewTextScanNsfw: mockPreviewTextScanNsfw,
 }));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionService>()),
@@ -95,8 +97,10 @@ beforeEach(() => {
   db.keyValue.findMany.mockImplementation(
     (async () => (await pg.query(`SELECT key, value FROM "KeyValue"`)).rows) as never
   );
-  db.modelVersion.findMany.mockResolvedValue([{ trainedWords: ['trigger'] }] as never);
+  db.modelVersion.findMany.mockResolvedValue([{ name: 'v1', trainedWords: ['trigger'] }] as never);
   db.modActivity.create.mockResolvedValue({} as never);
+  // The version names and trigger words rate PG.
+  mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 1, reason: '' });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -137,6 +141,29 @@ describe('the .com face restore check', () => {
     expect(await meta()).toEqual({ other: 'kept', comFaceRemoved: MARKER });
     expect(db.modActivity.create).not.toHaveBeenCalled();
     expect(await restoreRows()).toBe(0);
+  });
+
+  it('keeps the marker while the version names or trigger words still rate mature', async () => {
+    await seed();
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'ok', level: 4, reason: '' });
+
+    const counts = await editThenRun();
+
+    expect(counts.kept).toBe(1);
+    expect(await meta()).toEqual({ other: 'kept', comFaceRemoved: MARKER });
+    expect(db.modActivity.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps the marker when the version rating gives no verdict', async () => {
+    await seed();
+    mockPreviewComFaceIntent.mockResolvedValue(intent(false));
+    mockPreviewTextScanNsfw.mockResolvedValue({ status: 'unavailable' });
+
+    const counts = await editThenRun();
+
+    expect(counts.unavailable).toBe(1);
+    expect(await meta()).toEqual({ other: 'kept', comFaceRemoved: MARKER });
   });
 
   it('keeps the marker when the check gives no verdict', async () => {
