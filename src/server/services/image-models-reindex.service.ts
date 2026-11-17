@@ -4,6 +4,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 const CHILD_TAG_IDS = [...childBrowsingTagIds];
 const childTagIds = new Set<number>(CHILD_TAG_IDS);
@@ -20,15 +21,22 @@ type ImageChildTagChanges = {
  * cached tags and showcase images from the primary. The models sync re-picks a model only when
  * `Model.updatedAt` moves, so a change to an image's child browsing tags or nsfwLevel reaches its
  * document only through here.
- * Never throws: it runs after the tag or level write has committed.
+ * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once.
  */
 export async function queueModelsForImageChildTagChanges(changes: ImageChildTagChanges) {
-  try {
-    await queueModels(changes);
-  } catch (e) {
-    logError(e);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await queueModels(changes);
+    } catch (e) {
+      logError(e);
+      if (attempt >= ATTEMPTS) return;
+      await sleep(RETRY_DELAY_MS);
+    }
   }
 }
+
+const ATTEMPTS = 2;
+const RETRY_DELAY_MS = 1000;
 
 function logError(e: unknown) {
   const error = e as Error;
@@ -72,14 +80,14 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
     import('~/server/search-index/models.search-index'),
   ]);
   // The index reads both caches. Refresh reads the primary; after a bust the next reader could
-  // refill them from a lagging replica. A failure here must not cost the queue below.
-  try {
-    await tagIdsForImagesCache.refresh([...imageIds]);
-    await imagesForModelVersionsCache.refresh([...new Set(rows.map((r) => r.modelVersionId))]);
-  } catch (e) {
-    logError(e);
-  }
-  // Parks the ids in Postgres rather than throwing when Redis refuses them.
+  // refill them from a lagging replica. A failure here must not cost the other refresh or the queue.
+  await Promise.all([
+    tagIdsForImagesCache.refresh([...imageIds]).catch(logError),
+    imagesForModelVersionsCache
+      .refresh([...new Set(rows.map((r) => r.modelVersionId))])
+      .catch(logError),
+  ]);
+  // Doesn't throw when Redis refuses.
   await modelsSearchIndex.queueUpdate(
     [...new Set(rows.map((r) => r.modelId))].map((id) => ({
       id,

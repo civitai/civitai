@@ -115,14 +115,36 @@ describe('queueModelsForImageChildTagChanges', () => {
     await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
 
     expect(queued()).toEqual([500]);
+    expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([5000]);
   });
 
-  it('does not throw when the queue fails, so the committed write is not reported as failed', async () => {
+  it('retries a failed lookup once, then queues', async () => {
+    vi.useFakeTimers();
     arm({ models: [500] });
-    vi.mocked(modelsSearchIndex.queueUpdate).mockRejectedValueOnce(new Error('redis down'));
+    dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('connection reset'));
 
-    await expect(
-      queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] })
-    ).resolves.toBeUndefined();
+    const run = queueModelsForImageChildTagChanges({
+      tagWrites: [{ imageId: 7, tagId: CHILD_TAG }],
+    });
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    expect(queued()).toEqual([500]);
+  });
+
+  it('does not throw when every attempt fails, so the committed write is not reported as failed', async () => {
+    vi.useFakeTimers();
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('connection reset'));
+
+    const run = queueModelsForImageChildTagChanges({
+      tagWrites: [{ imageId: 7, tagId: CHILD_TAG }],
+    });
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+
+    await expect(run).resolves.toBeUndefined();
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
 });
