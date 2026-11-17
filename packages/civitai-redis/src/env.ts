@@ -55,6 +55,9 @@ export const redisEnvSchema = z
     // command the app's withSysReadDeadline (REDIS_SYS_READ_TIMEOUT_MS, 1s) does not wrap. MUST stay above
     // REDIS_SYS_SELFHEAL_SUSTAINED_MS (see superRefine). 0 = off.
     REDIS_SYS_COMMAND_TIMEOUT_MS: z.coerce.number().default(30000),
+    // Retry sys writes rejected with READONLY during a primary failover (./sys-readonly-retry).
+    // Only the literal string 'false' disables it.
+    REDIS_SYS_READONLY_RETRY_ENABLED: z.preprocess((x) => x !== 'false', z.boolean().default(true)),
     // Keepalive PING interval. Kept comfortably below the socketTimeout — client.ts clamps
     // it to min(this, socketTimeout/2) so a healthy idle socket never spuriously fires.
     REDIS_PING_INTERVAL_MS: z.coerce.number().default(5000),
@@ -257,6 +260,7 @@ function buildEnv() {
     sysSocketTimeoutMs: parsed.data.REDIS_SYS_SOCKET_TIMEOUT_MS,
     sysCommandsQueueMaxLength: parsed.data.REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH,
     sysCommandTimeoutMs: parsed.data.REDIS_SYS_COMMAND_TIMEOUT_MS,
+    sysReadonlyRetryEnabled: parsed.data.REDIS_SYS_READONLY_RETRY_ENABLED,
     pingIntervalMs: parsed.data.REDIS_PING_INTERVAL_MS,
     clusterCommandTimeoutMs: parsed.data.REDIS_CLUSTER_COMMAND_TIMEOUT_MS,
     clusterSelfHealEnabled: parsed.data.REDIS_CLUSTER_SELFHEAL_ENABLED,

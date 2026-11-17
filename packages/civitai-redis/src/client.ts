@@ -13,6 +13,11 @@ import {
   createThrottle,
 } from './cluster-reconnect';
 import { withClusterRoutingRetry } from './cluster-routing-retry';
+import {
+  isSysReadonlyRetryAllowed,
+  withoutSysReadonlyRetry,
+  withSysReadonlyRetry,
+} from './sys-readonly-retry';
 import { createClusterPipelinedGet } from './cluster-pipelined-get';
 import { ClusterSelfHealWatchdog } from './cluster-selfheal';
 import type { ClusterSelfHealTrigger } from './cluster-selfheal';
@@ -1204,6 +1209,10 @@ export interface InstrumentCommandsOptions {
   sysDeadlineMs?: number;
   /** Sys client: reject new commands while this many are already in flight. <= 0 disables. */
   sysInflightCap?: number;
+  /** Sys client: retry writes rejected with READONLY (./sys-readonly-retry). */
+  sysReadonlyRetryEnabled?: boolean;
+  /** Sys client: delay before each READONLY retry (ms). */
+  sysReadonlyRetryBackoffMs?: readonly number[];
 }
 
 /**
@@ -1344,6 +1353,18 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
   const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
+  const sysReadonlyRetry =
+    clientLabel === 'sys' &&
+    (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
+  // A pipeline that hits READONLY may already have applied earlier writes, so it is never retried.
+  // Only the Sentinel client routes pipelines through `_execute`; the single-node client's pipelines
+  // bypass `sendCommand` and are never wrapped.
+  if (sysReadonlyRetry && isClusterClient && typeof self._executePipeline === 'function') {
+    const originalPipeline = self._executePipeline;
+    self._executePipeline = function (this: any, ...args: any[]) {
+      return withoutSysReadonlyRetry(() => originalPipeline.apply(this, args));
+    };
+  }
   self[methodName] = function (this: any, ...args: any[]) {
     if (sysInflightCap > 0 && getSysInflight() >= sysInflightCap) {
       return Promise.reject(
@@ -1385,6 +1406,12 @@ export function instrumentCommands(
           backoffMs: [routingRetryBackoffMs, routingRetryBackoffMaxMs],
           rediscover: () => triggerTopologyRediscovery(self, 'routing-retry'),
           onResult: (result) => getRedisMetrics()?.redisRoutingRetryCounter?.inc({ result }),
+        })
+      : sysReadonlyRetry && isSysReadonlyRetryAllowed()
+      ? withSysReadonlyRetry(runOnce, {
+          backoffMs: opts.sysReadonlyRetryBackoffMs,
+          onResult: (result, retries) =>
+            log(`sysRedis READONLY retry ${result} after ${retries} retries`),
         })
       : runOnce();
 
