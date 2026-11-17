@@ -124,9 +124,9 @@ function ListServiceButton() {
 
   if (eligibility.data && !eligibility.data.canSell)
     return (
-      <Popover width={360} position="bottom-start" withArrow shadow="md" padding={0}>
+      <Popover width={360} position="bottom-start" withArrow shadow="md">
         <Popover.Target>{button()}</Popover.Target>
-        <Popover.Dropdown>
+        <Popover.Dropdown p={0}>
           <SellGate eligibility={eligibility.data} />
         </Popover.Dropdown>
       </Popover>
