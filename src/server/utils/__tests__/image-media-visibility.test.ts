@@ -286,3 +286,17 @@ describe('canViewImageMedia owner and moderator exemption from the domain cap', 
     expect(canSee({})).toBe(false);
   });
 });
+
+describe('canViewImageMedia on a capped domain', () => {
+  const stranger = { ...green, user: { id: 6 } } as never;
+  const rated = (nsfwLevel: number) => ({ nsfwLevel, user: { id: KEY_OWNER } });
+
+  it('keeps a mixed rating wholly inside the cap', () => {
+    expect(canViewImageMedia(stranger, rated(NsfwLevel.PG | NsfwLevel.PG13))).toBe(true);
+  });
+
+  it('withholds an unrated image and a mixed rating that reaches above the cap', () => {
+    expect(canViewImageMedia(stranger, rated(0))).toBe(false);
+    expect(canViewImageMedia(stranger, rated(NsfwLevel.PG | NsfwLevel.R))).toBe(false);
+  });
+});

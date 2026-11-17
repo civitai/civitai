@@ -112,6 +112,25 @@ describe('shapeModelHit', () => {
     expect(shaped._formatted?.images).toEqual([{ id: 11, nsfwLevel: NsfwLevel.PG }]);
     expect(shapeModelHit({ id: 3, name: 'M', images }, redViewer).images).toEqual(images);
   });
+
+  it("an uncapped site gets the hit's highlight copy as sent", () => {
+    const copies = [{ id: 10, nsfwLevel: NsfwLevel.X }, { nsfwLevel: NsfwLevel.PG }];
+    const shaped = shapeModelHit(
+      { id: 3, name: 'M', images: [], _formatted: { images: copies } },
+      redViewer
+    );
+    expect(shaped._formatted?.images).toEqual(copies);
+  });
+
+  it('a capped site gets no images when the hit or its copy does not send a list', () => {
+    const notAList = { 0: { id: 10, nsfwLevel: NsfwLevel.X } };
+    const shaped = shapeModelHit(
+      { id: 3, name: 'M', images: notAList, _formatted: { images: notAList } },
+      comViewer
+    );
+    expect(shaped.images).toEqual([]);
+    expect(shaped._formatted?.images).toEqual([]);
+  });
 });
 
 describe('highlight copies follow the hit', () => {
@@ -123,6 +142,8 @@ describe('highlight copies follow the hit', () => {
   // The copy's numbers arrive as strings, and its ratings are not trusted.
   const tampered = images.map((i) => ({ ...i, id: String(i.id), nsfwLevel: '1' }));
   const ids = (list: { id: unknown }[]) => list.map((i) => String(i.id));
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it('a model hit keeps only the copies of the images it kept', () => {
     const shaped = shapeModelHit(
@@ -148,7 +169,6 @@ describe('highlight copies follow the hit', () => {
     const { body } = await siteIndexSearch(BOUNTIES_SEARCH_INDEX, { q: 'x' }, capped);
     const [hit] = (body as { hits: { _formatted: { images: { id: unknown }[] } }[] }).hits;
     expect(ids(hit._formatted.images)).toEqual(['11']);
-    vi.unstubAllGlobals();
   });
 });
 

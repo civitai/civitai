@@ -122,9 +122,13 @@ type ModelHit = Record<string, unknown> & {
 
 type RatedImage = { id?: unknown; nsfwLevel?: unknown };
 
-/** Drops the images the site may not serve; the hit-level cap does not reach them. */
+/**
+ * Drops the images the site may not serve; the hit-level cap does not reach them. Under a cap, a
+ * value that is not a list is dropped whole, since its ratings cannot be read.
+ */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
-  if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
+  if (browsingLevelCap === undefined) return images;
+  if (!Array.isArray(images)) return [];
   return images.filter((image: RatedImage) =>
     isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
   );
@@ -136,7 +140,7 @@ function capImages(images: unknown, browsingLevelCap: number | undefined) {
  * its numbers as strings.
  */
 function keepCopiesOf(copies: unknown, kept: unknown) {
-  if (!Array.isArray(copies)) return copies;
+  if (!Array.isArray(copies)) return [];
   const keptIds = new Set(
     (Array.isArray(kept) ? (kept as RatedImage[]) : [])
       .filter((image) => image?.id != null)
