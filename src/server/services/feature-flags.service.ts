@@ -500,6 +500,12 @@ const featureFlags = createFeatureFlags({
   semanticModel3DSearch: { availability: [], fliptKey: 'semantic-model3d-search' },
   // The semantic storyline search endpoint. Dark: Flipt is its only switch.
   semanticStorylineSearch: { availability: [], fliptKey: 'semantic-storyline-search' },
+  // The semantic collection and bounty search endpoints. Dark: Flipt is their only switch.
+  semanticCollectionSearch: { availability: [], fliptKey: 'semantic-collection-search' },
+  semanticBountySearch: { availability: [], fliptKey: 'semantic-bounty-search' },
+  // The crucibles feed's search box, answered from the semantic search. Off, the feed has no
+  // search box. Dark: Flipt is its only switch.
+  semanticCrucibleSearch: { availability: [], fliptKey: 'semantic-crucible-search' },
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -514,6 +520,10 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
+  // Kill switch for the main app's retracted-media route and the UI that loads from it. On for
+  // moderators at deploy: an absent Flipt key falls through to ['mod']. Create
+  // `mod-retracted-media` in Flipt, disabled, to turn it off.
+  modRetractedMedia: { availability: ['mod'], fliptKey: 'mod-retracted-media' },
   appealReports: isDev ? ['mod'] : ['granted'],
   moderateTags: ['granted'],
   chat: {
@@ -806,6 +816,7 @@ const featureFlags = createFeatureFlags({
   // Lets a moderator or script feed the Knights of New Order queue through /api/mod/knights/enqueue.
   knightsEnqueue: ['granted'],
   textScanPromptPublish: ['granted'],
+  textScanPromptPublishIntent: ['granted'],
   // App Blocks (Phase 1) — gates the BlockSlot mount on model pages. Off by
   // default until we ship publisher install UX + moderator approval workflow.
   // When off, BlockSlot renders nothing and no token-issuance traffic fires.

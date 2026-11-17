@@ -19,7 +19,7 @@ import type { ImageModelWithIngestion } from '../selectors/image.selector';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { publicBountyDetails } from '~/server/utils/bounty-details';
 
 const READ_BATCH_SIZE = 1000; // 10 items per bounty are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -181,7 +181,7 @@ export const transformData = async ({
 
       return {
         ...bounty,
-        details: bounty.details && filterSensitiveProfanityData(bounty.details, false),
+        details: bounty.details && publicBountyDetails(bounty.details, false),
         nsfwLevel: parseBitwiseBrowsingLevel(nsfwLevel),
         tags: tags || [],
         images,

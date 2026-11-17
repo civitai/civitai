@@ -44,7 +44,6 @@ function renderHook<T>(useHook: () => T) {
 
 const assigned = (variant: string) => ({
   hatTurfFeedCard: { variant, assignment: 'rule' },
-  hatTurfImageDetail: { variant: 'control', assignment: 'rule' },
 });
 
 describe('useExperiment', () => {
@@ -59,7 +58,7 @@ describe('useExperiment', () => {
   it.each([
     [
       'the server does not know the experiment',
-      { hatTurfImageDetail: { variant: 'control', assignment: 'rule' } },
+      { retiredExperiment: { variant: 'control', assignment: 'rule' } },
       false,
     ],
     ['the request failed', undefined, true],

@@ -64,14 +64,14 @@ const (
 )
 
 // model.getAll's caches (internal/hydrate/models.go). Its probe runs the serving path itself and
-// reports the cache its fallback names; a miss Go computes (the model frames, hydrate.MissCaches) is
-// recorded instead (hydrate.WithPresence).
+// reports the cache its fallback names; a miss Go computes (the model frames and decorations, the
+// version showcases, hydrate.MissCaches) is recorded instead (hydrate.WithPresence).
 const (
 	CacheModelData          = "model-data"
 	CacheModelTags          = "model-tags"
 	CacheModelFrames        = hydrate.MissModelFrames
-	CacheModelDecorations   = "model-decorations"
-	CacheVersionImages      = "version-images"
+	CacheModelDecorations   = hydrate.MissModelDecorations
+	CacheVersionImages      = hydrate.MissVersionImages
 	CacheCreatorMemberships = "creator-memberships"
 )
 
@@ -82,8 +82,8 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
-	// model.getAll's hydration falls back on each of these cache misses (on a frame miss only
-	// without the miss computation).
+	// model.getAll's hydration falls back on each of these cache misses (on a frame, decoration or
+	// showcase miss only without the miss computation).
 	"model-data-miss":       CacheModelData,
 	"model-tags-miss":       CacheModelTags,
 	"model-frame-miss":      CacheModelFrames,
@@ -179,7 +179,7 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	if err != nil {
 		return err
 	}
-	ireq, err := s.prepareInfinite(ctx, r)
+	ireq, _, err := s.prepareInfinite(ctx, r)
 	if err != nil {
 		return err
 	}
@@ -189,14 +189,10 @@ func (s *Server) probeInfinite(ctx context.Context, req ProbeRequest, rec *hydra
 	return err
 }
 
-// probeModelGetAll resolves a model.getAll page by running its serving path (prepareModelGetAll,
-// modelfeed.Serve) over the deployment's own deps, under hydrate.WithPresence(rec): a miss Go
-// computes (the model frames, and the version images' tag ids) is recorded on rec with its one
-// lookup query and answered as no entry, never looked up or written back; every other cache miss
-// falls back, so the fallback reason names the first cache Go falls back on that it found cold.
-// Each model page counts as a page checked. The path writes no other cache (no page-query cache)
-// and does query the replica as serving does (the page query, the basic users and profile pictures
-// on a miss): those replica reads are not counted, and no raced entry is recorded.
+// probeModelGetAll runs model.getAll's serving path under hydrate.WithPresence(rec): misses Go
+// computes are recorded on rec and never looked up, except the version showcases (read on the
+// replica: a model without images is dropped); any other cache miss falls back, and its reason is the
+// presence answer. Replica reads are not counted.
 func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hydrate.PresenceProbe) error {
 	ctx = hydrate.WithPresence(ctx, rec)
 	r, err := SyntheticModelGetAllRequest(ctx, ShadowRequest{Input: req.Input, Headers: req.Headers})

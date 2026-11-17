@@ -10,9 +10,11 @@ describe('crucible payload, against the real query', () => {
     await pg.exec(`
       CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
       CREATE TYPE "MediaType" AS ENUM ('image', 'video', 'audio');
-      CREATE TABLE "User" (id int PRIMARY KEY, username text);
+      CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp,
+        "deletedAt" timestamp);
       CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int, ingestion text,
-        "needsReview" text, "tosViolation" boolean DEFAULT false);
+        "needsReview" text, "tosViolation" boolean DEFAULT false, minor boolean DEFAULT false,
+        "blockedFor" text, poi boolean DEFAULT false);
       CREATE TABLE "Crucible" (id int PRIMARY KEY, name text, description text,
         status "CrucibleStatus", "contentType" "MediaType", "nsfwLevel" int, "textNsfw" boolean,
         "buzzType" text, "userId" int, "imageId" int, ingestion text, "takenDownAt" timestamp);

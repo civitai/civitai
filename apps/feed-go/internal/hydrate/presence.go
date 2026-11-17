@@ -364,8 +364,9 @@ type presenceKey struct{}
 // WithPresence is ctx for a Go-first probe that runs a serving path itself (model.getAll, whose
 // hydration is not the page hydrator PresenceProbe stands in for): under it a miss the computation
 // would answer (Sources.fill) is recorded on p, its ids and one database read, and answered as no
-// entry, never looked up or written; and each model page (ModelPage) counts as a page checked. A
-// cache Go falls back on still falls back.
+// entry, never looked up or written (a version showcase miss is looked up, on the replica, as its
+// answer decides the page's rows: lookupSpec.probeLooksUp); and each model page (ModelPage) counts as
+// a page checked. A cache Go falls back on still falls back.
 func WithPresence(ctx context.Context, p *PresenceProbe) context.Context {
 	return context.WithValue(ctx, presenceKey{}, p)
 }

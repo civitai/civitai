@@ -9,7 +9,7 @@ import {
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { DISMISS_FAILED } from '$lib/notice-copy';
-import { requireMember } from '$lib/server/membership';
+import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
@@ -115,6 +115,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
   ]);
+  await requireConsent(locals.user.id);
   const now = queueDeps.now();
   const [resetNotice, notices, seen, examples] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
@@ -303,6 +304,7 @@ export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
     if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(event.locals.user.id))) return consentFailure();
     const parsed = await readVote(event);
     if ('failure' in parsed) return parsed.failure;
     const outcome = await voteGate.guard(
@@ -319,6 +321,7 @@ export const actions: Actions = {
   // again. Every kind of item is handled and answered alike, so a skip does not show what the item was.
   skip: async ({ request, locals }) => {
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(locals.user.id))) return consentFailure();
     const token = (await request.formData()).get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
@@ -378,6 +381,7 @@ export const actions: Actions = {
 
   apprentice: async ({ request, locals }) => {
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(locals.user.id))) return consentFailure();
     const form = await request.formData();
     const kind = form.get('kind');
     const referenceId = Number(form.get('referenceId'));

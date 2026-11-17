@@ -613,6 +613,8 @@ func TestCacheMissCounter(t *testing.T) {
 		"event-decorations/computed": 0, "event-decorations/error": 0,
 		"image-meta/computed": 0, "image-meta/error": 0,
 		"tag-ids/computed": 0, "tag-ids/error": 0, "model-frames/computed": 0, "model-frames/error": 0,
+		"version-images/computed": 0, "version-images/error": 0,
+		"model-decorations/computed": 0, "model-decorations/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)
@@ -672,8 +674,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 18 {
-		t.Fatalf("checked %d per-endpoint families, want 18 (a family was renamed or lost)", checked)
+	if checked != 19 {
+		t.Fatalf("checked %d per-endpoint families, want 19 (a family was renamed or lost)", checked)
 	}
 }
 

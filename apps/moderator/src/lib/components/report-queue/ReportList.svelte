@@ -1,4 +1,5 @@
 <script lang="ts" generics="R extends ReportListItem">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
   import type { Snippet } from 'svelte';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
@@ -151,6 +152,7 @@
                   ? ` +${r.alsoReportedByCount}`
                   : ''} · {dateTime(r.createdAt)}
               </span>
+              {#if r.agentFiled}<AgentBadge />{/if}
               {#if canRule}
                 <div class="ml-auto">
                   <ReportStatusButtons
@@ -175,7 +177,7 @@
                   <a href={userLookupUrl(r.reportedByUsername)} class="link">{r.reportedByUsername}</a>
                 {:else}
                   —
-                {/if}{r.reason === 'Ownership' && r.reportedByEmail
+                {/if}{#if r.agentFiled}{' '}<AgentBadge />{/if}{r.reason === 'Ownership' && r.reportedByEmail
                   ? ` (${r.reportedByEmail})`
                   : ''}{r.alsoReportedByCount ? `, and ${r.alsoReportedByCount} more` : ''}, {dateTime(
                   r.createdAt

@@ -559,29 +559,69 @@ export async function triageFeedback(input: {
    * anchors the platform service's reopen count, so re-stamping it for a note would restart that count.
    */
   resolution?: PlatformResolutionWrite;
+  /**
+   * Text added BELOW the stored note, in the same statement — the triage API's note, which must never
+   * replace what a moderator wrote. Mutually exclusive with `note`.
+   */
+  noteAppend?: string;
+  /** The HQ task tracking this report, recorded as `context.hq` (the shape the panel links). */
+  hqTask?: { id: string; url: string };
+  /**
+   * Scope the write on the handler too, not just the status: `null` matches only an unhandled row,
+   * `undefined` does not check. For an automated caller that decided from a handler it read — a
+   * moderator's same-status save re-stamps `handledById` without moving the status.
+   */
+  expectedHandledById?: number | null;
   moderatorId: number;
 }): Promise<TriageResult> {
+  if (input.note !== undefined && input.noteAppend !== undefined)
+    throw new Error('triageFeedback: pass note or noteAppend, not both');
   const handled = input.status !== 'new';
   const resolutionOnly = input.resolution !== undefined && input.status === input.expectedStatus;
+  /**
+   * 🔴 SAME STATUS = ANNOTATE, NOT RE-DECIDE. A call that keeps the status and only adds a resolution,
+   * an appended note or the HQ link leaves `handledById`/`handledAt` alone: they say who reached the
+   * verdict and when, and `handledAt` anchors the platform service's reopen count. `note` alone is
+   * deliberately not in this list — the queue's own same-status note save behaves as it always has.
+   */
+  const annotateOnly =
+    input.status === input.expectedStatus &&
+    (input.resolution !== undefined ||
+      input.noteAppend !== undefined ||
+      input.hqTask !== undefined);
   const now = new Date();
+  const resolutionContext =
+    input.resolution === undefined
+      ? undefined
+      : platformResolutionContext(input.resolution, { moderatorId: input.moderatorId, at: now });
+  const nextContext = input.hqTask
+    ? sql`jsonb_set(${resolutionContext ?? sql`${sql.ref('context')}`}, '{hq}', ${JSON.stringify({
+        id: input.hqTask.id,
+        url: input.hqTask.url,
+      })}::jsonb, true)`
+    : resolutionContext;
+  const triageNote = sql.ref('triageNote');
   let update = dbWrite
     .updateTable('Feedback')
     .set({
-      ...(resolutionOnly
+      ...(annotateOnly
         ? {}
         : {
             status: input.status,
             handledById: handled ? input.moderatorId : null,
             handledAt: handled ? now : null,
           }),
-      ...(input.note === undefined ? {} : { triageNote: input.note }),
+      ...(input.note !== undefined
+        ? { triageNote: input.note }
+        : input.noteAppend !== undefined
+        ? {
+            triageNote: sql<string>`CASE WHEN COALESCE(${triageNote}, '') = '' THEN ${
+              input.noteAppend
+            }::text ELSE ${triageNote} || ${'\n\n'}::text || ${input.noteAppend}::text END`,
+          }
+        : {}),
       // `server.changedAt`, for the moderator change feed: see `stampPlatformChange`.
-      context: stampPlatformChange(
-        now,
-        input.resolution === undefined
-          ? undefined
-          : platformResolutionContext(input.resolution, { moderatorId: input.moderatorId, at: now })
-      ),
+      context: stampPlatformChange(now, nextContext),
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
       //
       // Clearing it on the way back to `new` was tried and reverted. It reads as symmetric with
@@ -599,6 +639,11 @@ export async function triageFeedback(input: {
     })
     .where('id', '=', input.id)
     .where('status', '=', input.expectedStatus);
+  if (input.expectedHandledById !== undefined)
+    update =
+      input.expectedHandledById === null
+        ? update.where('handledById', 'is', null)
+        : update.where('handledById', '=', input.expectedHandledById);
   /**
    * 🔴 Area, `server` and the resolution being edited are checked in the same statement, never taken
    * from the form: a resolution on another area is a stray key nothing reads, `jsonb_set` under a
@@ -616,7 +661,11 @@ export async function triageFeedback(input: {
    * carries a triage note, which must still land.
    */
   const sameAsStored =
-    resolutionOnly && resolution?.kind === 'set' && input.note === undefined
+    resolutionOnly &&
+    resolution?.kind === 'set' &&
+    input.note === undefined &&
+    input.noteAppend === undefined &&
+    input.hqTask === undefined
       ? sql<boolean>`(("context"->'server'->'resolution'->'fixedIn') IS NOT DISTINCT FROM ${
           resolution.fixedIn ? JSON.stringify(resolution.fixedIn) : null
         }::jsonb AND ("context"->'server'->'resolution'->>'publicNote') IS NOT DISTINCT FROM ${

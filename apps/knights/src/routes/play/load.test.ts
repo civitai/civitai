@@ -11,6 +11,8 @@ const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
 const lockoutFor = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
+const burstDue = vi.hoisted(() => vi.fn());
+const servedHistory = vi.hoisted(() => vi.fn());
 const yesNoSettings = vi.hoisted(() => ({ share: 0.7, stretch: 8 }));
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
@@ -18,6 +20,12 @@ const queueDeps = vi.hoisted(() => ({
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({ db: {} }));
+// Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
+vi.mock('$lib/server/membership', async (original) => ({
+  ...(await original<typeof import('$lib/server/membership')>()),
+  consented: vi.fn(async () => true),
+  requireConsent: vi.fn(async () => undefined),
+}));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
@@ -40,6 +48,11 @@ vi.mock('$lib/server/hidden/hidden.service', () => ({
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
+vi.mock('$lib/server/yesno/cadence', () => ({
+  burstDue,
+  burstRoller: () => () => 0,
+  servedHistory,
+}));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
 vi.mock('$lib/server/apprenticeship/runtime', () => ({
@@ -84,7 +97,13 @@ beforeEach(() => {
   skipList.list.mockReset();
   skipList.list.mockResolvedValue([]);
   seenStore.get.mockReset();
-  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: true, whatsNew: true });
+  seenStore.get.mockResolvedValue({
+    rank: 'Knight',
+    level: 5,
+    guide: true,
+    whatsNew: true,
+    consent: true,
+  });
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
@@ -99,6 +118,10 @@ beforeEach(() => {
   lockoutFor.mockReset();
   pickYesNo.mockReset();
   pickYesNo.mockResolvedValue(null);
+  burstDue.mockReset();
+  burstDue.mockReturnValue(true);
+  servedHistory.mockReset();
+  servedHistory.mockResolvedValue([]);
   yesNoSettings.share = 0.7;
 });
 
@@ -500,7 +523,7 @@ describe('play load yes/no questions', () => {
     expect(JSON.stringify(page)).not.toContain('90417');
   });
 
-  it('offers a hidden check before rolling for a question, so its rate holds whatever the yes/no share', async () => {
+  it('serves a due question before rolling for a hidden check, and rolls the check only on a rating slot', async () => {
     pickHiddenCheck.mockResolvedValue({
       referenceId: 5,
       question: { key: 'q', kind: 'choice', prompt: 'Rate', options: [] },
@@ -510,12 +533,29 @@ describe('play load yes/no questions', () => {
     });
     pickYesNo.mockResolvedValue(offer);
 
-    const page = await run();
+    expect((await run()).item.src).toBe('key-41');
+    expect(pickHiddenCheck).not.toHaveBeenCalled();
 
+    burstDue.mockReturnValue(false);
+    pickYesNo.mockClear();
+    const page = await run();
     expect(page.item.src).toBe('key-9');
     expect(page.banner).toBeNull();
     expect(page.category).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
+  });
+
+  it('serves the rating while no burst is due, asking the cadence with the player’s history', async () => {
+    const history = [{ yesno: false, key: 'r1' }];
+    servedHistory.mockResolvedValue(history);
+    burstDue.mockReturnValue(false);
+    pickYesNo.mockResolvedValue(offer);
+
+    const page = await run();
+    expect(page.question.key).toBe('q');
+    expect(pickYesNo).not.toHaveBeenCalled();
+    expect(servedHistory).toHaveBeenCalledWith(expect.anything(), 7, undefined);
+    expect(burstDue).toHaveBeenCalledWith(history, expect.any(Function));
   });
 
   it('falls back to the rating, with no banner, when no question is offered', async () => {
@@ -525,7 +565,7 @@ describe('play load yes/no questions', () => {
     expect(page.category).toBeNull();
     expect(pickYesNo).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: 7, rank: 'Knight', share: 0.7, stretch: 8, force: false })
+      expect.objectContaining({ userId: 7, rank: 'Knight', stretch: 8, force: true })
     );
   });
 
@@ -653,6 +693,7 @@ describe('play progress actions', () => {
       level: 12,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
   });
 
