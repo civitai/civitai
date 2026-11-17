@@ -42,6 +42,7 @@ const mocks = vi.hoisted(() => ({
   assets: { data: undefined as unknown, isError: false },
   assetsQuery: vi.fn(),
   holds: [] as unknown[],
+  approveResult: undefined as unknown,
 }));
 
 const showError = vi.fn();
@@ -53,11 +54,11 @@ vi.mock('~/utils/notifications', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const mutation =
     (name: string) =>
-    (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
+    (opts?: { onSuccess?: (r?: unknown) => void; onError?: (e: { message: string }) => void }) => ({
       mutate: (vars: unknown) => {
         mocks.mutate(name, vars);
         if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
-        else void opts?.onSuccess?.();
+        else void opts?.onSuccess?.(name === 'approve' ? mocks.approveResult : undefined);
       },
       mutateAsync: vi.fn(),
       isPending: mocks.pending,
@@ -402,6 +403,30 @@ describe('ReviewActionBar — modal busyRef + page onStatusChange observers', ()
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(onStatusChange).toHaveBeenCalledWith('error');
+  });
+
+  test('🔴 an approve a late hold re-suspended reports "error", not "approved", and says why', async () => {
+    const onStatusChange = vi.fn();
+    mocks.approveResult = { lateHoldIds: [5] };
+    try {
+      await renderWithProviders(
+        <ReviewActionBar
+          selection={{ request: PENDING, mode: 'pending' }}
+          onClose={vi.fn()}
+          onStatusChange={onStatusChange}
+        />
+      );
+      await page.getByRole('button', { name: 'Approve + build' }).click();
+      expect(onStatusChange).toHaveBeenCalledWith('error');
+      expect(onStatusChange).not.toHaveBeenCalledWith('approved');
+      expect(showError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'App suspended: a review hold was placed during the approve',
+        })
+      );
+    } finally {
+      mocks.approveResult = undefined;
+    }
   });
 
   test('the sticky variant wraps the controls in a labelled action group', async () => {

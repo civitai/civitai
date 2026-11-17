@@ -58,6 +58,22 @@ import {
  * so it stays browser-testable and never drags the tRPC server graph into the client bundle.
  */
 
+type LateHoldNotice = { title: string; message: string };
+
+/** The notice for an approve a late hold re-suspended (no build; the request stays pending). */
+function lateHoldNotice(
+  request: { slug: string; version: string },
+  result: { lateHoldIds?: number[]; liveNote?: string } | null | undefined
+): LateHoldNotice | null {
+  if (!result?.lateHoldIds?.length) return null;
+  return {
+    title: 'App suspended: a review hold was placed during the approve',
+    message:
+      `${request.slug} v${request.version} was not built. It stays suspended and off the store until the hold is cleared and this version is approved again.` +
+      (result.liveNote ? ` ${result.liveNote}` : ''),
+  };
+}
+
 export type ReviewActionStatus = 'idle' | 'submitting' | 'approved' | 'rejected' | 'error';
 
 export function ReviewActionBar({
@@ -138,20 +154,16 @@ export function ReviewActionBar({
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async (result) => {
-      if (result?.lateHoldIds?.length) {
-        showErrorNotification({
-          title: 'App suspended: a review hold was placed during the approve',
-          error: new Error(
-            `${request.slug} v${request.version} was not built. It stays suspended and off the store until the hold is cleared and this version is approved again.` +
-              (result.liveNote ? ` ${result.liveNote}` : '')
-          ),
-        });
+      const lateHold = lateHoldNotice(request, result);
+      if (lateHold) {
+        showErrorNotification({ title: lateHold.title, error: new Error(lateHold.message) });
       } else {
         showSuccessNotification({
           message: `Approved ${request.slug} v${request.version}. Build started.`,
         });
       }
-      onStatusChange?.('approved');
+      // A late hold leaves the request pending: the approve did not take.
+      onStatusChange?.(lateHold ? 'error' : 'approved');
       await utils.blocks.listPendingRequests.invalidate();
       await utils.blocks.listApprovedRequests.invalidate();
       await onActioned?.();
@@ -203,13 +215,19 @@ export function ReviewActionBar({
     if (delayedApproveFired.current) return;
     delayedApproveFired.current = true;
     const input = approveInput();
+    let lateHold: LateHoldNotice | null = null;
     const accepted = enqueueReviewApproval({
       id: request.id,
       label: `${request.slug} v${request.version}`,
       // `keepalive`: this send may start from `pagehide` (the tab closing), and a plain fetch
       // is cancelled with the page. Same procedure, input and wire format as the bar's own
       // immediate approve.
-      commit: () => trpcKeepalive.blocks.approveRequest.mutate(input),
+      commit: async () => {
+        const result = await trpcKeepalive.blocks.approveRequest.mutate(input);
+        lateHold = lateHoldNotice(request, result);
+        return result;
+      },
+      committedNotice: () => lateHold,
       onCommitted: async () => {
         await Promise.all([
           utils.blocks.listPendingRequests.invalidate(),
