@@ -42,6 +42,14 @@ async function bestEffort(
     await run();
   } catch (error) {
     void logAxiomError(error, { event: 'image moderation side effect failed', step, imageId });
+    if (error instanceof BlocklistCheckError) throw error;
+  }
+}
+
+/** The blocklist could not be checked, so nothing was written: the caller sees it and can retry. */
+export class BlocklistCheckError extends Error {
+  constructor(cause: unknown) {
+    super('The image blocklist could not be checked; nothing was written to it.', { cause });
   }
 }
 
@@ -130,17 +138,24 @@ type BlockableImage = {
  */
 async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
   if (!hashes.length) return new Set();
-  const resultSet = await getClickhouse().query({
-    query: `SELECT DISTINCT toString(hash) AS hash FROM "blocked_images" WHERE hash IN (${hashes.join(
-      ','
-    )}) AND reason = 'CSAM'`,
-    format: 'JSONEachRow',
-  });
-  const rows = await resultSet.json<{ hash: string }>();
-  return new Set(rows.map((row) => row.hash));
+  try {
+    const resultSet = await getClickhouse().query({
+      query: `SELECT DISTINCT toString(hash) AS hash FROM "blocked_images" WHERE hash IN (${hashes.join(
+        ','
+      )}) AND reason = 'CSAM' AND disabled = false`,
+      format: 'JSONEachRow',
+    });
+    const rows = await resultSet.json<{ hash: string }>();
+    return new Set(rows.map((row) => row.hash));
+  } catch (error) {
+    throw new BlocklistCheckError(error);
+  }
 }
 
-/** A hash with a CSAM entry keeps it: other reasons are not written over it. */
+/**
+ * A hash with a CSAM entry keeps it: other reasons are not written over it. CSAM rows are written
+ * first and never wait on that lookup; if the lookup fails, the rest throw unwritten.
+ */
 export async function addImagesToBlocklist(
   images: (BlockableImage & { csam?: boolean })[]
 ): Promise<void> {
@@ -150,13 +165,18 @@ export async function addImagesToBlocklist(
       hash: i.pHash,
       reason: i.csam ? 'CSAM' : reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
     }));
-  if (!candidates.length) return;
-  const csam = await csamBlockedHashes(
-    candidates.filter((v) => v.reason !== 'CSAM').map((v) => v.hash)
-  );
-  const values = candidates.filter((v) => v.reason === 'CSAM' || !csam.has(v.hash));
-  if (!values.length) return;
-  await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
+  const write = async (values: typeof candidates) => {
+    if (values.length)
+      await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
+  };
+
+  const csamRows = candidates.filter((v) => v.reason === 'CSAM');
+  await write(csamRows);
+  const inBatch = new Set(csamRows.map((v) => v.hash));
+  const others = candidates.filter((v) => v.reason !== 'CSAM' && !inBatch.has(v.hash));
+  if (!others.length) return;
+  const csam = await csamBlockedHashes(others.map((v) => v.hash));
+  await write(others.filter((v) => !csam.has(v.hash)));
 }
 
 /** Disables the live entries of these hashes, except a hash with a CSAM entry. */

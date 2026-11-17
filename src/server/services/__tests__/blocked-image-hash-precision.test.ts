@@ -15,6 +15,8 @@ const capturedQueries: string[] = [];
 let queryResult: any[] = [];
 /** What the CSAM-entry lookup returns; every other query gets `queryResult`. */
 let csamQueryResult: any[] = [];
+let csamLookupFails = false;
+let clientAbsent = false;
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -60,20 +62,26 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
+const fakeClickhouse = vi.hoisted(() => ({ client: undefined as unknown }));
 vi.mock('~/server/clickhouse/client', () => ({
-  clickhouse: makePermissive({
-    insert: async (args: { table: string; values: any[] }) => {
-      capturedInserts.push({ table: args.table, values: args.values });
-    },
-    $query: (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const query = Array.isArray(strings)
-        ? strings.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '')
-        : String(strings);
-      capturedQueries.push(query);
-      return Promise.resolve(query.includes("reason = 'CSAM'") ? csamQueryResult : queryResult);
-    },
-  }),
+  get clickhouse() {
+    return clientAbsent ? undefined : fakeClickhouse.client;
+  },
 }));
+fakeClickhouse.client = makePermissive({
+  insert: async (args: { table: string; values: any[] }) => {
+    capturedInserts.push({ table: args.table, values: args.values });
+  },
+  $query: (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const query = Array.isArray(strings)
+      ? strings.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '')
+      : String(strings);
+    capturedQueries.push(query);
+    if (!query.includes("reason = 'CSAM'")) return Promise.resolve(queryResult);
+    if (csamLookupFails) return Promise.reject(new Error('Socket hang up'));
+    return Promise.resolve(csamQueryResult);
+  },
+});
 
 const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await import(
   '../image.service'
@@ -133,6 +141,8 @@ describe('a hash with a CSAM entry keeps it', () => {
     capturedQueries.length = 0;
     queryResult = [];
     csamQueryResult = [];
+    csamLookupFails = false;
+    clientAbsent = false;
   });
 
   it('an unblock disables none of its rows and still disables an unrelated hash', async () => {
@@ -178,5 +188,57 @@ describe('a hash with a CSAM entry keeps it', () => {
     await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] });
 
     expect(capturedInserts[0]?.values).toEqual([{ hash: HASH.toString(), reason: 'CSAM' }]);
+  });
+
+  it('a failed lookup refuses the unblock: it throws and disables nothing', async () => {
+    csamLookupFails = true;
+    queryResult = [{ hash: OTHER.toString(), reason: 'TOS' }];
+
+    await expect(bulkRemoveBlockedImages([OTHER])).rejects.toThrow('Socket hang up');
+    expect(capturedInserts).toHaveLength(0);
+  });
+
+  it('a failed lookup throws the TOS block unwritten, after the CSAM row lands', async () => {
+    csamLookupFails = true;
+
+    await expect(
+      bulkAddBlockedImages({
+        data: [
+          { hash: HASH, reason: 'CSAM' as any },
+          { hash: OTHER, reason: 'TOS' as any },
+        ],
+      })
+    ).rejects.toThrow('Socket hang up');
+    expect(capturedInserts.map((i) => i.values)).toEqual([
+      [{ hash: HASH.toString(), reason: 'CSAM' }],
+    ]);
+  });
+
+  it('a CSAM block throws without a client instead of passing as a no-op', async () => {
+    clientAbsent = true;
+
+    await expect(
+      bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] })
+    ).rejects.toThrow('no ClickHouse client');
+  });
+
+  it('a TOS row in the same batch as a CSAM row for its hash is not written', async () => {
+    await bulkAddBlockedImages({
+      data: [
+        { hash: HASH, reason: 'CSAM' as any },
+        { hash: HASH, reason: 'TOS' as any },
+      ],
+    });
+
+    expect(capturedInserts.map((i) => i.values)).toEqual([
+      [{ hash: HASH.toString(), reason: 'CSAM' }],
+    ]);
+  });
+
+  it('counts only a live CSAM entry: a disabled one no longer blocks the hash', async () => {
+    await bulkAddBlockedImages({ data: [{ hash: OTHER, reason: 'TOS' as any }] });
+
+    const lookup = capturedQueries.find((q) => q.includes("reason = 'CSAM'"));
+    expect(lookup).toContain('disabled = false');
   });
 });

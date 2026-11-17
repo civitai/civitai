@@ -83,6 +83,9 @@ const resetBlockedNsfwLevel = (imageId: number) =>
     .where('nsfwLevel', '=', NsfwLevel.Blocked)
     .execute();
 
+// pHash is a signed 64-bit value; the Kysely clients parse INT8 as a float, which rounds it.
+const pHashText = sql<string | null>`"pHash"::text`.as('pHash');
+
 /** An accept refused because the image is removed and a review queue cannot put it back. */
 export class RemovedImageNotRestorableError extends Error {
   constructor(readonly imageId: number) {
@@ -123,7 +126,7 @@ export async function acceptImage({
   const readImage = (db: Kysely<DB>) =>
     db
       .selectFrom('Image')
-      .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
+      .select(['needsReview', pHashText, 'postId', 'ingestion', 'blockedFor'])
       .where('id', '=', imageId)
       .executeTakeFirst();
   // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
@@ -298,7 +301,7 @@ export async function blockImage({
     .selectFrom('Image')
     .select([
       'needsReview',
-      'pHash',
+      pHashText,
       'blockedFor',
       'postId',
       'nsfwLevel',
@@ -735,7 +738,7 @@ export async function resolveImageAppeal({
 
   const img = await dbRead
     .selectFrom('Image')
-    .select(['postId', 'pHash'])
+    .select(['postId', pHashText])
     .where('id', '=', imageId)
     .executeTakeFirst();
 

@@ -14,7 +14,10 @@ vi.mock('../db', () => {
   });
   return { dbRead: chain, dbWrite: chain };
 });
-vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ insert, query: vi.fn() }) }));
+const { query } = vi.hoisted(() => ({
+  query: vi.fn(async (_args: { query: string }) => ({ json: async () => [] as unknown[] })),
+}));
+vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ insert, query }) }));
 vi.mock('../axiom', () => ({ logAxiomError, logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('../notifications', () => ({ getNotifications: vi.fn() }));
 vi.mock('../redis', () => ({
@@ -25,7 +28,7 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../buzz', () => ({ getBuzz: vi.fn() }));
 vi.mock('../cache', () => ({ bustCacheTag: vi.fn(), bustCachedObject: vi.fn() }));
 
-const { applyBlockSideEffects } = await import('../image-moderation-effects');
+const { applyBlockSideEffects, BlocklistCheckError } = await import('../image-moderation-effects');
 
 const HASH = '-1234567890123456789';
 const block = () =>
@@ -75,5 +78,29 @@ describe('the blocklist insert on an image block', () => {
       JSON.stringify(args.values).includes(HASH)
     );
     expect(otherWrites).toHaveLength(1);
+  });
+});
+
+describe('the blocklist check on a non-CSAM block', () => {
+  const tosBlock = () =>
+    applyBlockSideEffects(
+      { pHash: HASH, needsReview: null, blockedFor: null, nsfwLevel: 1, postId: null, userId: 42 },
+      { imageId: 7, actorUserId: 9 }
+    );
+
+  it('writes the hash when the check succeeds (control)', async () => {
+    await tosBlock();
+    expect(blocklistInserts()).toHaveLength(1);
+  });
+
+  it('fails the action when the check fails, writes nothing, and logs the step', async () => {
+    query.mockRejectedValueOnce(new Error('Socket hang up'));
+
+    await expect(tosBlock()).rejects.toBeInstanceOf(BlocklistCheckError);
+    expect(blocklistInserts()).toHaveLength(0);
+    expect(logAxiomError).toHaveBeenCalledWith(
+      expect.any(BlocklistCheckError),
+      expect.objectContaining({ step: 'blocklist' })
+    );
   });
 });

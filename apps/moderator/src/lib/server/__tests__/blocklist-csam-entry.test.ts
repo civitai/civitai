@@ -9,23 +9,25 @@ const ch = vi.hoisted(() => ({
   inserts: [] as { table: string; values: unknown[] }[],
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
+  lookupFails: false,
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$lib/server/notifications', () => ({ getNotifications: () => ({}) }));
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
-    query: async ({ query }: { query: string }) => ({
-      json: async () =>
-        query.includes("reason = 'CSAM'") ? ch.csamHashes.map((hash) => ({ hash })) : ch.liveRows,
-    }),
+    query: async ({ query }: { query: string }) => {
+      if (!query.includes("reason = 'CSAM'")) return { json: async () => ch.liveRows };
+      if (ch.lookupFails) throw new Error('Socket hang up');
+      return { json: async () => ch.csamHashes.map((hash) => ({ hash })) };
+    },
     insert: async ({ table, values }: { table: string; values: unknown[] }) => {
       ch.inserts.push({ table, values });
     },
   }),
 }));
 
-const { addImagesToBlocklist, removeImagesFromBlocklist } = await import(
+const { addImagesToBlocklist, removeImagesFromBlocklist, BlocklistCheckError } = await import(
   '../image-moderation-effects'
 );
 
@@ -37,6 +39,7 @@ beforeEach(() => {
   ch.inserts = [];
   ch.liveRows = [];
   ch.csamHashes = [CSAM_HASH];
+  ch.lookupFails = false;
 });
 
 describe('a hash with a CSAM entry keeps it', () => {
@@ -64,5 +67,30 @@ describe('a hash with a CSAM entry keeps it', () => {
     await addImagesToBlocklist([{ ...tosImage(CSAM_HASH), csam: true }]);
 
     expect(ch.inserts[0]?.values).toEqual([{ hash: CSAM_HASH, reason: 'CSAM' }]);
+  });
+
+  it('a failed lookup refuses the unblock: it throws and disables nothing', async () => {
+    ch.lookupFails = true;
+    ch.liveRows = [{ hash: OTHER, reason: 'TOS' }];
+
+    await expect(removeImagesFromBlocklist([OTHER])).rejects.toBeInstanceOf(BlocklistCheckError);
+    expect(ch.inserts).toEqual([]);
+  });
+
+  it('a failed lookup throws the other block unwritten, after the CSAM row lands', async () => {
+    ch.lookupFails = true;
+
+    await expect(
+      addImagesToBlocklist([{ ...tosImage(CSAM_HASH), csam: true }, tosImage(OTHER)])
+    ).rejects.toBeInstanceOf(BlocklistCheckError);
+    expect(ch.inserts.map((i) => i.values)).toEqual([[{ hash: CSAM_HASH, reason: 'CSAM' }]]);
+  });
+
+  it('a row in the same batch as a CSAM row for its hash is not written', async () => {
+    ch.csamHashes = [];
+
+    await addImagesToBlocklist([{ ...tosImage(OTHER), csam: true }, tosImage(OTHER)]);
+
+    expect(ch.inserts.map((i) => i.values)).toEqual([[{ hash: OTHER, reason: 'CSAM' }]]);
   });
 });

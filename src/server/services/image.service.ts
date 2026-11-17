@@ -7056,50 +7056,67 @@ export async function getImagesByUserIdForModeration(
  * so a later row of any other reason would replace that entry.
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
-  if (hashes.length === 0 || !clickhouse) return new Set();
-  const rows = await clickhouse.$query<{ hash: string }>`
+  if (hashes.length === 0) return new Set();
+  const rows = await blocklistClient().$query<{ hash: string }>`
     SELECT DISTINCT toString(hash) AS hash
     FROM "blocked_images"
-    WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND reason = 'CSAM'
+    WHERE hash IN (${hashes
+      .map(toClickhouseInt64)
+      .join(',')}) AND reason = 'CSAM' AND disabled = false
   `;
   return new Set(rows.map((row) => row.hash));
+}
+
+/** Blocklist writes throw without a client rather than pass as a no-op. */
+function blocklistClient() {
+  if (!clickhouse) throw new Error('blocked_images: no ClickHouse client');
+  return clickhouse;
 }
 
 export function addBlockedImage({ hash, reason }: { hash: bigint; reason: BlockImageReason }) {
   return bulkAddBlockedImages({ data: [{ hash, reason }] });
 }
 
-/** A hash with a CSAM entry keeps it: other reasons are not written over it. */
+/**
+ * A hash with a CSAM entry keeps it: other reasons are not written over it. CSAM rows are written
+ * first and never wait on that lookup; if the lookup fails, the rest throw unwritten.
+ */
 export async function bulkAddBlockedImages({
   data,
 }: {
   data: { hash: bigint; reason: BlockImageReason }[];
 }) {
-  if (data.length === 0 || !clickhouse) return;
+  if (data.length === 0) return;
+  const client = blocklistClient();
+  const write = (rows: typeof data) =>
+    rows.length
+      ? client.insert({
+          table: 'blocked_images',
+          values: rows.map(({ hash, reason }) => ({
+            hash: toClickhouseInt64(hash),
+            reason: reason.toString(),
+          })),
+          format: 'JSONEachRow',
+        })
+      : undefined;
 
-  const csam = await csamBlockedHashes(
-    data.filter(({ reason }) => reason !== BlockImageReason.CSAM).map(({ hash }) => hash)
+  const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
+  await write(csamRows);
+  const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
+  const others = data.filter(
+    ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
   );
-  const values = data
-    .filter(({ hash, reason }) => reason === BlockImageReason.CSAM || !csam.has(hash.toString()))
-    .map(({ hash, reason }) => ({
-      hash: toClickhouseInt64(hash),
-      reason: reason.toString(),
-    }));
-  if (!values.length) return;
-
-  return clickhouse.insert({
-    table: 'blocked_images',
-    values,
-    format: 'JSONEachRow',
-  });
+  if (!others.length) return;
+  const csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+  await write(others.filter(({ hash }) => !csam.has(hash.toString())));
 }
 
 /** Disables the live entries of these hashes, except a hash with a CSAM entry. */
 export async function bulkRemoveBlockedImages(hashes: bigint[]) {
-  if (hashes.length === 0 || !clickhouse) return;
+  if (hashes.length === 0) return;
+  const client = blocklistClient();
   const [blocked, csam] = await Promise.all([
-    clickhouse.$query<{ hash: string; reason: string }>`
+    client.$query<{ hash: string; reason: string }>`
       SELECT toString(hash) AS hash, reason
       FROM "blocked_images"
       WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
@@ -7116,7 +7133,7 @@ export async function bulkRemoveBlockedImages(hashes: bigint[]) {
     }));
   if (!values.length) return;
 
-  return await clickhouse.insert({
+  return await client.insert({
     table: 'blocked_images',
     values,
     format: 'JSONEachRow',

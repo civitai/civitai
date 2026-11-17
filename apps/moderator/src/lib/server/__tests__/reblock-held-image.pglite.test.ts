@@ -387,3 +387,25 @@ describe('a bulk appeal approval over an image blocked for CSAM and another', ()
     }
   );
 });
+
+describe('the blocklist hash', () => {
+  it('is the exact 64-bit pHash, not a rounded float', async () => {
+    const EXACT = '-4276845791567733103';
+    await db.query(`UPDATE "Image" SET "pHash" = $1 WHERE id = $2`, [EXACT, OTHER_REASON]);
+    // The app's Kysely clients parse INT8 with parseFloat (packages/civitai-db kysely.ts); PGlite's
+    // default parser would hand back the exact value and hide a rounded read.
+    const asInProduction = {
+      query: (sql: string, params?: unknown[]) =>
+        db.query(sql, params, { parsers: { 20: (value: string) => parseFloat(value) } }),
+    } as unknown as PGlite;
+    const primary = dbHandle.current;
+    dbHandle.current = new Kysely({ dialect: pgliteDialect(asInProduction) });
+    try {
+      await block(OTHER_REASON);
+    } finally {
+      dbHandle.current = primary;
+    }
+
+    expect(Object.keys(blocklistReasons())).toEqual([EXACT]);
+  });
+});
