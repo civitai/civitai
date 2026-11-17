@@ -42,6 +42,9 @@ export const finalizeCruciblesJob = createJob(
     const activated = await activateScheduledCrucibles();
     if (activated > 0) log(`Activated ${activated} scheduled crucibles`);
 
+    // Every minute, not only when a crucible finalizes: a cut flag day shows "Counting…" until frozen.
+    await freezeAllFlagDays().catch((error) => log(`Flag freeze failed: ${error}`));
+
     // Get all crucibles that need finalization
     const crucibleIds = await getCruciblesForFinalization();
 
@@ -103,7 +106,6 @@ export const finalizeCruciblesJob = createJob(
     // A finished flag Crucible becomes the home row's flags now, not at the next turf reconcile.
     // swapAllFlagDays logs its own failures and never throws for one event.
     if (results.success.length) await swapAllFlagDays();
-    await freezeAllFlagDays();
 
     return {
       finalized: results.success.length,
