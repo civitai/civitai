@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  imageNotRestrictedSql,
   imageReviewedSql,
   minorMatureImageVisibleSql,
   notHeldForReviewSql,
@@ -105,6 +106,7 @@ export function imageVisibilityConditions({
     notHeldForReviewSql(),
     minorMatureImageVisibleSql({ userId }),
     ...imageBlockedForConditions({ userId }),
+    imageNotRestrictedSql({ viewerId: userId }),
   ];
 }
 

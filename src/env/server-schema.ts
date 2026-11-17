@@ -1244,6 +1244,14 @@ export const serverSchema = z
     FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
     FORGEJO_ADMIN_TOKEN: z.string().optional(),
     FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+    // The three Forgejo orgs App Blocks writes to: build (canonical app repos), review (in-review
+    // snapshots) and source (developer git history). Unset = production's orgs. Set ALL THREE or
+    // none, each distinct and none a production org name; PR previews point them at preview-only
+    // orgs that their scoped bot token can write. Read only through
+    // `src/server/services/blocks/forgejo-orgs.ts`, which enforces those rules.
+    FORGEJO_APPS_ORG: z.string().optional(),
+    FORGEJO_REVIEW_ORG: z.string().optional(),
+    FORGEJO_SRC_ORG: z.string().optional(),
     // Client-side abort timeouts for Forgejo API calls. The cheap metadata calls
     // (get repo/version, add collaborator, list tree, branch lookup) are
     // sub-second and use FORGEJO_API_TIMEOUT_MS so an in-cluster reachability

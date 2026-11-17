@@ -27,6 +27,7 @@ const HOST = 'civitai.com';
 
 const appRow = (listingStatus = 'approved') => ({
   name: 'Game Frame Client',
+  connectListings: [],
   appBlocks: [
     {
       status: 'approved',

@@ -63,7 +63,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, minor boolean NOT NULL DEFAULT false, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
       "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
       "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}',
-      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+      "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,
@@ -187,6 +188,10 @@ const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['rated Blocked', { image: { '"nsfwLevel"': '32' } }],
   ['unrated', { image: { '"nsfwLevel"': '0' } }],
   ['flagged acceptableMinor', { image: { '"acceptableMinor"': 'true' } }],
+  [
+    'rated R on a restricted base model',
+    { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
+  ],
   // Another review state, not one of the held ones below: the owner keeps it.
   ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
   ['in an unpublished post', { post: { '"publishedAt"': 'NULL' } }],

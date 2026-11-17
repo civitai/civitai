@@ -54,6 +54,8 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import {
   hasBlockMarker,
   hasBlockMarkerSql,
+  imageNotRestrictedSql,
+  imageRestrictedSql,
   imageReviewedSql,
   isMinorMatureImage,
   keepPermanentScanFailureSql,
@@ -258,7 +260,6 @@ import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
   browsingLevels as selectableBrowsingLevels,
-  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -2121,6 +2122,8 @@ type GetAllImagesRaw = {
   availability: Availability;
   minor: boolean;
   acceptableMinor: boolean;
+  // Mature and made with a base model that restricts mature images; true for the uploader too.
+  restricted: boolean;
   poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
@@ -3036,12 +3039,7 @@ const getAllImagesUncaptured = async (
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
-      -- Filter out images with NSFW level that are linked to license-restricted base models
-      -- Images with nsfwLevel >= 4 (R-XXX) cannot use base models with restricted licenses
-      AND (
-        (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-        OR NOT i."modelRestricted"
-      )
+      AND ${imageNotRestrictedSql({ viewerId: ownerId })}
   `;
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
@@ -3094,6 +3092,7 @@ const getAllImagesUncaptured = async (
       i.minor,
       i.poi,
       i."acceptableMinor",
+      ${imageRestrictedSql()} AS "restricted",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${Prisma.raw(
         collectionId
@@ -3122,13 +3121,9 @@ const getAllImagesUncaptured = async (
       return rows as Row[];
     },
     'getAllImages',
-    // Bumped v1 -> v2 when `p."model3dId"` was added to the SELECT. The query
-    // hash already changes with the new column (so old entries fall out of the
-    // keyspace on their own), but the explicit version bump abandons the stale
-    // keyspace immediately rather than leaving model3dId-less rows resident
-    // until their TTL — keeps the feed-modal chip from silently lacking the
-    // field on a warm cache after deploy.
-    'v2'
+    // Bump whenever the SELECT gains a column: the query hash changes anyway, but the bump abandons
+    // the old keyspace at once, so a warm cache never serves rows missing the new field.
+    'v3'
   );
   let rawImages: GetAllImagesRaw[];
   try {
@@ -4267,6 +4262,7 @@ export const getImage = async ({
       i.minor,
       i.poi,
       i."acceptableMinor",
+      ${imageRestrictedSql()} AS "restricted",
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -4525,10 +4521,7 @@ export const getImagesForModelVersion = async ({
         WHERE (p."userId" = m."userId" OR m."userId" = -1)
           AND p."modelVersionId" = full_mv.id
           AND ${Prisma.join(imageWhere, ' AND ')}
-          AND (
-            (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-            OR NOT i."modelRestricted"
-          )
+          AND ${imageNotRestrictedSql({ viewerId: userId })}
         ORDER BY i."postId", i.index, i.id
         LIMIT ${imagesPerVersion}
       ) i
@@ -4842,10 +4835,7 @@ export const getImagesForPosts = async ({
       i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
-      AND (
-        (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-        OR NOT i."modelRestricted"
-      )
+      AND ${imageNotRestrictedSql({ viewerId: userId })}
     ORDER BY i.index ASC, i.id
   `;
   const imageIds = images.map((i) => i.id);
@@ -5037,6 +5027,7 @@ export const getImagesByEntity = async ({
     AND.push(notHeldForReviewSql());
   }
   AND.push(...imageBlockedForConditions({ userId, isModerator }));
+  AND.push(imageNotRestrictedSql({ viewerId: userId }));
   AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
@@ -5634,11 +5625,8 @@ export const getEntityCoverImage = async ({
     ' AND '
   );
 
-  // An image on a restricted base model is not shown at R or above.
-  const baseModelAllowed = Prisma.sql`(
-    (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-    OR NOT i."modelRestricted"
-  )`;
+  // A mature image on a restricted base model is its uploader's alone.
+  const baseModelAllowed = imageNotRestrictedSql({ viewerId: signedIn ? viewerId : null });
 
   // A taken-down model's images are its owner's and moderators' alone. Also true with no model
   // (a NULL mode), so the image and post arms keep images on no model version.
@@ -5794,6 +5782,7 @@ export const getEntityCoverImage = async ({
           AND ${coverRated}
           AND ${modelNotWithheld}
           AND ${withinHeldGallery}
+          AND ${baseModelAllowed}
 
         UNION
         -- ARTICLES
@@ -5914,6 +5903,7 @@ export const getEntityCoverImage = async ({
             AND ${imageNotFlagged}
             AND ${coverRated}
             AND ${withinHeldGallery}
+            AND ${baseModelAllowed}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')
             AND (
