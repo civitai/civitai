@@ -328,13 +328,14 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
     });
 
     it.each([
-      ['a collection the model is already in, without write access', { id: 1 }],
-      ['a private collection the caller is not a member of', null],
-    ])('keeps no showcase on %s', async (_, listed) => {
+      // Past the first check, refused only because the model is already listed.
+      ['a collection the model is already in, with review-only access', { id: 1 }, true],
+      ['a private collection the caller is not a member of', null, false],
+    ])('keeps no showcase on %s', async (_, listed, writeReview) => {
       vi.mocked(getUserCollectionPermissionsById).mockResolvedValue({
         write: false,
         manage: false,
-        writeReview: false,
+        writeReview,
       } as never);
       mockDbWrite.collectionItem.findFirst.mockResolvedValue(listed as never);
 
