@@ -3,8 +3,12 @@
  *
  * Vitest's own `--shard` sorts files by a path hash and cuts the list into equal-COUNT slices. This
  * suite's per-file cost is bimodal (a file either reaches the big core-service import graph or it
- * does not), so equal counts are not equal time: the slowest of four shards ran 1.30x the fastest
- * on Lint run 44028570277 (941s vs 1220s).
+ * does not), so equal counts are not equal cost: on the 2026-11-17 cost table the count split's
+ * heaviest shard carries 1.08x the mean at 4 shards, 1.19x at 6, 1.26x at 8.
+ *
+ * ⚠️ That is the smaller half of the spread CI shows. Runner speed varies ~1.65x within one run,
+ * and no assignment can fix it; see the unit job's comment in .github/workflows/lint.yml for what
+ * this split measurably buys once that noise is counted (a few percent, growing with N).
  *
  * The split is greedy longest-processing-time: files with a recorded cost go heaviest first, each
  * onto the shard with the least cost so far. Files with NO recorded cost (new, renamed, or the data
