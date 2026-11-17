@@ -144,6 +144,17 @@ async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
   }
 }
 
+export const CSAM_BLOCKLIST_RETRY =
+  'The image was blocked, but its CSAM blocklist entry could not be written. Block it again to retry.';
+
+/** A block that committed, but whose CSAM blocklist entry was not written. */
+export class CsamBlocklistWriteError extends Error {
+  readonly status = 502;
+  constructor(readonly imageId: number) {
+    super(CSAM_BLOCKLIST_RETRY);
+  }
+}
+
 /** Who and what a blocklist write is for, so a write left undone can be traced and counted. */
 export type BlocklistWriteContext = { step: string; imageId?: number; actorUserId?: number };
 
@@ -470,20 +481,31 @@ export async function applyBlockSideEffects(
       imageId,
       userId: img.userId,
     });
+  const csam = !!(heldImage || underReview);
+  const writeBlocklist = () =>
+    addImagesToBlocklist(
+      [{ pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor, csam }],
+      { step: 'block', imageId, actorUserId }
+    );
+  let csamBlocklistFailed = false;
   await Promise.all([
-    bestEffort('blocklist', imageId, () =>
-      addImagesToBlocklist(
-        [
-          {
-            pHash: img.pHash,
-            needsReview: img.needsReview,
-            blockedFor: img.blockedFor,
-            csam: heldImage || underReview,
-          },
-        ],
-        { step: 'block', imageId, actorUserId }
-      )
-    ),
+    // A CSAM entry is not best-effort: its failure is reported to the caller once the rest has run.
+    csam
+      ? writeBlocklist().catch((error: unknown) => {
+          csamBlocklistFailed = true;
+          void logToAxiom({
+            type: 'error',
+            name: 'csam-blocklist-write-failed',
+            message: 'the CSAM blocklist entry for a block was not written',
+            payload: {
+              step: 'block',
+              imageCount: 1,
+              actorUserId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        })
+      : bestEffort('blocklist', imageId, writeBlocklist),
     trackImageDeleteTos({
       imageId,
       ownerId: img.userId,
@@ -509,6 +531,7 @@ export async function applyBlockSideEffects(
     bestEffort('invalidate-existence', imageId, () => invalidateImagesExistence([imageId])),
     bestEffort('visibility', imageId, () => applyVisibilitySideEffects(imageId, img.postId)),
   ]);
+  if (csamBlocklistFailed) throw new CsamBlocklistWriteError(imageId);
 }
 
 export async function applyAcceptSideEffects(

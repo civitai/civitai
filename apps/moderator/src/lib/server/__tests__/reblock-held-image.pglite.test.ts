@@ -436,3 +436,52 @@ describe('the blocklist hash', () => {
     expect(Object.keys(blocklistReasons())).toEqual([EXACT]);
   });
 });
+
+describe('a CSAM blocklist write that fails', () => {
+  const failBlocklistInsert = () =>
+    clickhouseInsert.mockImplementationOnce(async ({ table }) => {
+      if (table === 'blocked_images') throw new Error('Socket hang up');
+    });
+
+  it('fails the block action with a retry message, the block and its report still landing', async () => {
+    failBlocklistInsert();
+
+    const result = await block(FLAGGED_LIVE);
+
+    expect(result).toMatchObject({
+      status: 502,
+      data: { error: expect.stringContaining('CSAM blocklist') },
+    });
+    expect(await row(FLAGGED_LIVE)).toMatchObject({ ingestion: 'Blocked' });
+    expect(actionedReports()).toEqual([report(FLAGGED_LIVE)]);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'csam-blocklist-write-failed' })
+    );
+  });
+
+  it('a non-CSAM blocklist write that fails is still swallowed (control)', async () => {
+    failBlocklistInsert();
+
+    const result = await block(OTHER_REASON);
+
+    expect(result).toEqual({ success: true, imageId: OTHER_REASON });
+    expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Blocked' });
+  });
+
+  it('a bulk block still blocks and actions the others, then names the image to retry', async () => {
+    // Only the CSAM row fails: the two blocks run concurrently, so a fail-once could hit either.
+    clickhouseInsert.mockImplementation(async ({ table, values }) => {
+      if (table === 'blocked_images' && values.some((v) => v.reason === 'CSAM'))
+        throw new Error('Socket hang up');
+    });
+    const ids = [FLAGGED_LIVE, OTHER_REASON];
+
+    const result = await imageQueueActions
+      .bulkBlock(event({ imageIds: ids.join(','), reportIds: ids.map(report).join(',') }))
+      .finally(() => clickhouseInsert.mockImplementation(async () => undefined));
+
+    expect(result).toMatchObject({ status: 502, data: { imageIds: [FLAGGED_LIVE] } });
+    expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Blocked' });
+    expect(actionedReports().sort()).toEqual([report(FLAGGED_LIVE), report(OTHER_REASON)].sort());
+  });
+});
