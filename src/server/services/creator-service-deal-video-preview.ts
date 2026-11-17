@@ -1,14 +1,12 @@
-import {
-  getConsumerBlobUploadUrl,
-  handleError,
-  submitWorkflow,
-} from '@civitai/orchestration-client';
+import { handleError, submitWorkflow } from '@civitai/orchestration-client';
 import type {
   Blob as OrchestratorBlob,
   TranscodeStepTemplate,
   WorkflowTemplate,
 } from '@civitai/orchestration-client';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import { PreviewRejectedError, watermarkTilePng } from '~/server/utils/service-deal-preview';
 import {
   SERVICE_PREVIEW_VIDEO_MAX_SECONDS,
@@ -36,10 +34,11 @@ function videoPreviewWorkflow(sourceUrl: string, tile: Buffer): WorkflowTemplate
   return { tags: ['creator-service-preview'], currencies: [], steps: [step] };
 }
 
-// The transcode fails on a plain https source; it reads its own blobs.
-async function uploadSourceBlob(data: Buffer, mimeType: string) {
-  const { data: presign } = await getConsumerBlobUploadUrl({ client: internalOrchestratorClient });
-  if (!presign) throw new Error('Video preview blob presign failed');
+// The transcode fails on a plain https source; it reads its own blobs. The seller's media goes up
+// under the seller's token, as every consumer upload does. A muted seller can still deliver.
+async function uploadSourceBlob(data: Buffer, mimeType: string, sellerId: number) {
+  const token = await getOrchestratorToken(sellerId, undefined, { allowRestricted: true });
+  const presign = await getConsumerBlobUploadUrlService({ token });
   const response = await fetch(presign.uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': mimeType },
@@ -58,8 +57,12 @@ async function uploadSourceBlob(data: Buffer, mimeType: string) {
  * burned into every frame. A transcode that fails is put on the file (the seller can upload
  * something else); one that has not finished within the wait throws, and the job retries it.
  */
-export async function buildWatermarkedVideoPreview(original: Buffer, mimeType: string) {
-  const sourceUrl = await uploadSourceBlob(original, mimeType);
+export async function buildWatermarkedVideoPreview(
+  original: Buffer,
+  mimeType: string,
+  sellerId: number
+) {
+  const sourceUrl = await uploadSourceBlob(original, mimeType, sellerId);
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { wait: TRANSCODE_WAIT_SECONDS },

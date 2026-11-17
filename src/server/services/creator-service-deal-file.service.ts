@@ -1230,7 +1230,7 @@ export async function startPreviewScans({ limit = 5 } = {}) {
         // in, and the marked clip is exactly what the buyer would see.
         const copy = isVideoPreviewMime(preview.mimeType)
           ? {
-              ...(await buildWatermarkedVideoPreview(original, preview.mimeType)),
+              ...(await buildWatermarkedVideoPreview(original, preview.mimeType, preview.sellerId)),
               height: null,
               frames: 0,
               type: 'video' as const,

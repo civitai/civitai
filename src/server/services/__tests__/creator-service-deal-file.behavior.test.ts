@@ -1737,7 +1737,7 @@ describe('video previews', () => {
     const { dealId, fileId } = await videoPreview();
 
     expect(await files.startPreviewScans()).toBe(1);
-    expect(video.build).toHaveBeenCalledWith(ORIGINAL, 'video/mp4');
+    expect(video.build).toHaveBeenCalledWith(ORIGINAL, 'video/mp4', SELLER);
     expect(preview.scanCopy).not.toHaveBeenCalled();
     const scanned = await fileRow(fileId);
     // The bytes scanned are the marked clip, not the original.

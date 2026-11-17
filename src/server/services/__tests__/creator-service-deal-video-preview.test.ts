@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestrationClient from '@civitai/orchestration-client';
+import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
 
 const orchestrator = vi.hoisted(() => ({
   submitWorkflow: vi.fn(),
@@ -10,11 +11,18 @@ vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
   ...orchestrator,
 }));
 
+const tokens = vi.hoisted(() => ({ getOrchestratorToken: vi.fn(async () => 'seller-token') }));
+vi.mock('~/server/orchestrator/get-orchestrator-token', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorToken>()),
+  ...tokens,
+}));
+
 const { buildWatermarkedVideoPreview } = await import(
   '~/server/services/creator-service-deal-video-preview'
 );
 const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
 
+const SELLER = 42;
 const BLOB_URL = 'https://orchestration.example/v2/consumer/blobs/source.mp4?sig=x';
 const OUTPUT_URL = 'https://orchestration.example/v2/consumer/blobs/out.mp4?sig=y';
 const fetchMock = vi.fn();
@@ -43,9 +51,13 @@ describe('buildWatermarkedVideoPreview', () => {
   it('transcodes from an uploaded blob to a 480px, 15s, metadata-free clip with the mark burned in', async () => {
     orchestrator.submitWorkflow.mockResolvedValue(workflow('succeeded'));
 
-    const result = await buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4');
+    const result = await buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4', SELLER);
 
     expect(result.data.toString()).toBe('marked clip');
+    // The seller's media is uploaded under the seller's own token, never the system credentials.
+    expect(tokens.getOrchestratorToken).toHaveBeenCalledWith(SELLER, undefined, {
+      allowRestricted: true,
+    });
     const [uploadUrl, upload] = fetchMock.mock.calls[0];
     expect(uploadUrl).toBe('https://orchestration.example/upload?sig=z');
     expect(upload).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'video/mp4' } });
@@ -62,23 +74,25 @@ describe('buildWatermarkedVideoPreview', () => {
   it('puts a failed transcode on the file, for the seller to replace', async () => {
     orchestrator.submitWorkflow.mockResolvedValue(workflow('failed', null));
     await expect(
-      buildWatermarkedVideoPreview(Buffer.from('not a video'), 'video/mp4')
+      buildWatermarkedVideoPreview(Buffer.from('not a video'), 'video/mp4', SELLER)
     ).rejects.toBeInstanceOf(PreviewRejectedError);
   });
 
   it('rejects a file the blob upload refuses, without submitting a transcode', async () => {
     fetchMock.mockResolvedValueOnce(new Response('bad media', { status: 400 }));
     await expect(
-      buildWatermarkedVideoPreview(Buffer.from('not a video'), 'video/mp4')
+      buildWatermarkedVideoPreview(Buffer.from('not a video'), 'video/mp4', SELLER)
     ).rejects.toBeInstanceOf(PreviewRejectedError);
     expect(orchestrator.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('throws a retryable error, not a rejection, when the transcode is still running', async () => {
     orchestrator.submitWorkflow.mockResolvedValue(workflow('processing', null));
-    const error = await buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4').catch(
-      (e) => e
-    );
+    const error = await buildWatermarkedVideoPreview(
+      Buffer.from('original'),
+      'video/mp4',
+      SELLER
+    ).catch((e) => e);
     expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(PreviewRejectedError);
   });
