@@ -109,12 +109,19 @@ describe('getModelShowcaseImages: which images the block may serve', () => {
   });
 
   it('serves a SFW image to a SFW viewer even past 50 mature ones', async () => {
-    // Ids above the mature ones: with no ORDER BY, rows come back in key order here.
-    const SFW = 500;
+    // The oldest id: newest-first, the 50 mature ones fill the fetch before it.
+    const SFW = 1;
     for (let id = 100; id < 150; id++) await image(id, PUBLISHED, null);
     await harness.pg.exec(`UPDATE "Image" SET "nsfwLevel" = ${R}`);
     await image(SFW, PUBLISHED, null);
     expect(await servedIds()).toEqual([SFW]);
+  });
+
+  it('takes the newest images first, so the served set is stable', async () => {
+    // Equal reactions keep the fetch order, so the six served are the six highest ids.
+    for (let id = 1; id <= 8; id++) await image(id, PUBLISHED, null);
+    const images = await getModelShowcaseImages(VERSION);
+    expect(images.map((i) => i.id)).toEqual([8, 7, 6, 5, 4, 3]);
   });
 
   it('still serves an image in a published Unsearchable post', async () => {

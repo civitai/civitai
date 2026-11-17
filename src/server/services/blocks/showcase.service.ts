@@ -168,6 +168,9 @@ export async function getModelShowcaseImages(
     // showed up under multiple ImageResource rows (e.g. an image that
     // used both this version's checkpoint and a LoRA from the same
     // model) before slicing. Cap at 50 to bound the query cost.
+    // Newest first, so the 50 are the same on every request (served by the
+    // (modelVersionId, imageId) index, no sort).
+    orderBy: { imageId: 'desc' },
     take: 50,
   });
 
