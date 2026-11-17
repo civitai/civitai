@@ -581,6 +581,25 @@ describe('user avatars in hits', () => {
     }
   );
 
+  // Author-less documents (a deleted user) carry no user object.
+  it.each(indexes.filter((index) => index !== USERS_SEARCH_INDEX))(
+    '%s: a capped hit with no user, or a null one, comes back unchanged',
+    async (index) => {
+      const hits = [
+        { id: 1 },
+        { id: 2, user: null },
+        { id: 3, user: null, _formatted: { id: '3' } },
+      ];
+      respond({ hits });
+      const body = (await siteIndexSearch(index, { q: 'x' }, capped)).body as {
+        hits: Record<string, unknown>[];
+      };
+      expect(body.hits.map(({ id, user, _formatted }) => ({ id, user, _formatted }))).toEqual(
+        hits.map(({ id, user, _formatted }: Record<string, unknown>) => ({ id, user, _formatted }))
+      );
+    }
+  );
+
   it.each(indexes)('%s: an uncapped viewer gets the avatar as indexed', async (index) => {
     const doc = docFor(index, NsfwLevel.X);
     respond({ hits: [doc] });
