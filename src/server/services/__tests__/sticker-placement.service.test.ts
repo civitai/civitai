@@ -1398,13 +1398,6 @@ describe('getPendingStickerPlacements paging', () => {
   });
 });
 
-/**
- * The queue carries no browsing level by design — an owner has to see what is
- * waiting on them — so the payload is the only thing standing between an
- * above-ceiling asset and a SFW client. Unlike the remix gallery the image here
- * is the owner's OWN upload, which changes who is being protected from what but
- * not whether the domain may be sent it.
- */
 describe('sticker queues mark moving placements', () => {
   const LEVELS = { domainLevels: allBrowsingLevelsFlag, viewerLevels: allBrowsingLevelsFlag };
   const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
@@ -1463,6 +1456,13 @@ describe('sticker queues mark moving placements', () => {
   });
 });
 
+/**
+ * The queue carries no browsing level by design — an owner has to see what is
+ * waiting on them — so the payload is the only thing standing between an
+ * above-ceiling asset and a SFW client. Unlike the remix gallery the image here
+ * is the owner's OWN upload, which changes who is being protected from what but
+ * not whether the domain may be sent it.
+ */
 describe('getPendingStickerPlacements domain ceiling', () => {
   const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
 
