@@ -1,5 +1,5 @@
 import { RE2JS } from 're2js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   FILTER_PATTERN_DFA_BYTES,
   FILTER_PATTERN_MAX_LENGTH,
@@ -20,6 +20,24 @@ import { ProtocolError } from '~/server/registry-adapter/protocol';
  * A filter's `pattern` and `patternProperties` run on a linear-time engine (RE2, via re2js) with
  * ECMA-262's meaning, or are refused with `bad_request`; never silently evaluated otherwise.
  */
+
+// First in the file. A pattern run by the platform RegExp backtracks, and a backtracking match is
+// synchronous, so no test timeout can interrupt it: this fails instead, and the backtracking case
+// below is short enough that the platform RegExp would still return.
+describe('🔴 a compiled pattern runs on re2js, not the platform RegExp', () => {
+  it('compileFilterPattern returns no RegExp, and its test is RE2JS#test', () => {
+    const rx = compileFilterPattern('^(a+)+$');
+    expect(rx).not.toBeInstanceOf(RegExp);
+    // Spied after the compile, whose self-test matches through re2js too.
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect([rx.test('aab'), rx.test('aa')]).toEqual([false, true]);
+      expect(re2Test).toHaveBeenCalledTimes(2);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+});
 
 /** Patterns whose meaning must equal the platform's ECMA-262 (`u` flag) on every input below. */
 const PATTERNS = [
@@ -368,8 +386,10 @@ describe('🔴 a re2js that does not keep the DFA bound makes every pattern bad_
 });
 
 describe('🔴 a backtracking pattern runs in linear time', () => {
-  // The platform RegExp takes time exponential in the run of `a`s here; these finish at once.
-  it.each([[30], [20_000]])('^(a+)+$ against %i a then b: no match, and it returns', (n) => {
+  // Linear time is what re2js gives; that the pattern runs on re2js is the first test in this
+  // file. The run here is short enough that the platform RegExp, which takes time exponential in
+  // it, would still return at once, so a regression fails that test rather than hanging here.
+  it.each([[20]])('^(a+)+$ against %i a then b: no match, and it returns', (n) => {
     const rx = compileFilterPattern('^(a+)+$');
     expect(rx.test(`${'a'.repeat(n)}b`)).toBe(false);
     expect(rx.test('a'.repeat(n))).toBe(true);

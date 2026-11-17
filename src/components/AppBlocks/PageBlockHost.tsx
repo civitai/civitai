@@ -103,6 +103,7 @@ import { TrainingConsentBody } from './TrainingConsentBody';
 import {
   buildConfirmedStepConsentCopy,
   buildConfirmedStepDailyLimitCopy,
+  buildConfirmedStepStandingOfferCopy,
   CONFIRMED_STEP_UNCONFIRMED_NOTICE,
   confirmedStepReplyFromResult,
   isDailyLimitRefusal,
@@ -113,6 +114,7 @@ import {
   ConfirmedStepConsentBody,
   ConfirmedStepDailyLimitBody,
   ConfirmedStepNoticeBody,
+  type ConfirmedStepStandingChoice,
 } from './ConfirmedStepConsentBody';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import GuardedConfirmDialog from './GuardedConfirmDialog';
@@ -4227,14 +4229,22 @@ export function PageBlockHost({
 
   // A generation source the viewer uploads (the `generationSource` picker, a single
   // OPEN_MEDIA_UPLOAD image) lands as a consumer blob. While `app-block-source-scanned-rows` is on
-  // the generation gate refuses that blob for an app, so the server copies it into a private
-  // scanned row and the app gets that instead (`toGenerationSource`). The token is read when the
-  // copy is made, as a batch reads it.
+  // for this app the generation gate refuses that blob, so the server copies it into a private
+  // scanned row and the app gets that instead (`toGenerationSource`). The flag is evaluated per
+  // app, for the app the block token names, so the path query sends the token too. The token is
+  // read when each call is made, as a batch reads it.
   const scannedSourcePath = useMemo<ScannedRowsPath>(
     () => ({
       usesScannedRows: async () =>
-        (await trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query())
-          ?.scannedRows === true,
+        (
+          await callWithCurrentToken(
+            () => blockTokenRef.current,
+            (blockToken) =>
+              trpcUtils.client.blockImageUpload.generationSourceUsesScannedRows.query({
+                blockToken,
+              })
+          )
+        )?.scannedRows === true,
       persist: (url) =>
         callWithCurrentToken(
           () => blockTokenRef.current,
@@ -6016,7 +6026,69 @@ export function PageBlockHost({
           showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
           return;
         }
+        // After a consent (click or standing): submit once and relay the outcome.
+        const submitConsented = async () => {
+          let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+          try {
+            result = await submitWorkflowMutation.mutateAsync({
+              blockToken: token,
+              // Schema-validated server-side and checked against the quote's
+              // body hash; the host never renders or trusts it.
+              body: body as never,
+            });
+          } catch (err) {
+            if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
+            // Never resent: the quote is spent once.
+            const failed = trainingSubmitReplyFromError(err);
+            settlement.reply(failed);
+            if ('error' in failed && failed.error === 'submission-unconfirmed') {
+              showUnconfirmedNotice(requestId);
+            }
+            return;
+          }
+          if (!reviewMode) {
+            reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
+          }
+          const reply = confirmedStepReplyFromResult(result);
+          settlement.reply(reply);
+          refreshBuzzCapNotice();
+          // The outcome is unknown and a retry would be a new, separately charged
+          // job: say so in host chrome, not only to the block.
+          if ('error' in reply && reply.error === 'submission-unconfirmed') {
+            showUnconfirmedNotice(requestId);
+          }
+          // The day's spend moved between preview and submit: tell the viewer
+          // the same thing the preview would have.
+          if (isDailyLimitRefusal(result.snapshot)) {
+            showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+          }
+        };
+
+        if (preview.standing) {
+          let consented = false;
+          try {
+            await trpcUtils.client.blocks.consentQuoteGrantStanding.mutate({
+              blockToken: token,
+              quoteId,
+            });
+            consented = true;
+          } catch {
+            // Any refusal (limit moved, burst bound, flag off, an older server): ask instead.
+          }
+          if (consented) {
+            settlement.markConsented();
+            try {
+              await submitConsented();
+            } catch (err) {
+              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+            }
+            return;
+          }
+        }
+
         const copy = buildConfirmedStepConsentCopy({ appName, preview });
+        const standingOffer = buildConfirmedStepStandingOfferCopy({ appName, preview });
+        let standingChoice: ConfirmedStepStandingChoice = { checked: false };
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
             ? () =>
@@ -6034,7 +6106,15 @@ export function PageBlockHost({
           props: {
             title: copy.title,
             message: (
-              <ConfirmedStepConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />
+              <ConfirmedStepConsentBody
+                copy={copy}
+                preview={preview}
+                onBuyBuzz={openBuyBuzz}
+                standingOffer={standingOffer}
+                onStandingChange={(choice) => {
+                  standingChoice = choice;
+                }}
+              />
             ),
             labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
             confirmProps: { color: 'blue' },
@@ -6044,45 +6124,23 @@ export function PageBlockHost({
               // able to claim `declined` for a job that is being submitted.
               settlement.markConsented();
               try {
+                if (standingChoice.checked) {
+                  // The opt-in is a preference: if it does not save, this job still runs
+                  // on the click, and the next one asks again.
+                  await trpcUtils.client.blocks.optInConfirmWithinLimit
+                    .mutate({
+                      appBlockId,
+                      maxJobBuzz: preview.total,
+                      buzzBudgetPerDay: standingChoice.limit,
+                    })
+                    .catch(() => undefined);
+                }
                 await trpcUtils.client.blocks.consentQuoteGrant.mutate({
                   kind: 'step',
                   blockToken: token,
                   quoteId,
                 });
-                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
-                try {
-                  result = await submitWorkflowMutation.mutateAsync({
-                    blockToken: token,
-                    // Schema-validated server-side and checked against the quote's
-                    // body hash; the host never renders or trusts it.
-                    body: body as never,
-                  });
-                } catch (err) {
-                  if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
-                  // Never resent: the quote is spent once.
-                  const failed = trainingSubmitReplyFromError(err);
-                  settlement.reply(failed);
-                  if ('error' in failed && failed.error === 'submission-unconfirmed') {
-                    showUnconfirmedNotice(requestId);
-                  }
-                  return;
-                }
-                if (!reviewMode) {
-                  reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
-                }
-                const reply = confirmedStepReplyFromResult(result);
-                settlement.reply(reply);
-                refreshBuzzCapNotice();
-                // The outcome is unknown and a retry would be a new, separately charged
-                // job: say so in host chrome, not only to the block.
-                if ('error' in reply && reply.error === 'submission-unconfirmed') {
-                  showUnconfirmedNotice(requestId);
-                }
-                // The day's spend moved between preview and submit: tell the viewer
-                // the same thing the preview would have.
-                if (isDailyLimitRefusal(result.snapshot)) {
-                  showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
-                }
+                await submitConsented();
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }

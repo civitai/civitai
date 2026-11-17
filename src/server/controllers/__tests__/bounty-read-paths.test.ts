@@ -9,7 +9,10 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as UserService from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { NsfwLevel } from '~/server/common/enums';
+import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const {
   mockAssert,
@@ -18,6 +21,7 @@ const {
   mockGetEntryById,
   mockGetEntryFiles,
   mockUpsertBounty,
+  mockUpsertEntry,
   mockDeleteBounty,
   mockBountyImages,
   mockImagesForBounties,
@@ -29,6 +33,7 @@ const {
   mockGetEntryById: vi.fn(async () => ({ id: 3, user: { id: 5 } })),
   mockGetEntryFiles: vi.fn(async () => []),
   mockUpsertBounty: vi.fn(),
+  mockUpsertEntry: vi.fn(async (_input: Record<string, unknown>) => ({ id: 3 })),
   mockDeleteBounty: vi.fn(),
   mockBountyImages: vi.fn(async (): Promise<unknown[]> => []),
   mockImagesForBounties: vi.fn(async (): Promise<Record<number, unknown[]>> => ({})),
@@ -51,6 +56,7 @@ vi.mock('~/server/services/bountyEntry.service', async (importOriginal) => ({
   getEntryById: mockGetEntryById,
   getBountyEntryFilteredFiles: mockGetEntryFiles,
   getBountyEntryEarnedBuzz: vi.fn(async () => []),
+  upsertBountyEntry: mockUpsertEntry,
 }));
 vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BountyService>()),
@@ -78,6 +84,17 @@ vi.mock('~/server/services/user-preferences.service', async (importOriginal) => 
   BlockedUsers: emptyPreference,
   BlockedByUsers: emptyPreference,
 }));
+
+vi.mock('~/server/services/system-cache', async (importOriginal) => {
+  const { DEFAULT_BROWSING_SETTINGS_ADDONS } = await import(
+    '~/shared/constants/browsing-settings-addons'
+  );
+  return {
+    ...(await importOriginal<object>()),
+    getBlockedBrowsingTags: vi.fn(async () => []),
+    getBrowsingSettingAddons: vi.fn(async () => DEFAULT_BROWSING_SETTINGS_ADDONS),
+  };
+});
 
 // event-engine-common is a git submodule a fresh checkout does not have; image.service imports it.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -220,6 +237,59 @@ describe('bounty write responses', () => {
     const modCtx = { ...(ctx as object), user: { id: 5, isModerator: true } } as never;
     const asMod = await upsertBountyHandler({ input: { id: 9 } as never, ctx: modCtx });
     expect(asMod).toEqual({ id: 9, name: 'B', details });
+  });
+
+  // The headless submit never reads the entry's images, so its edit replaces the set; the web
+  // form's edit removes only what it was shown.
+  it.each([
+    ['submit', true],
+    ['upsert', undefined],
+  ])('an entry edit through %s replaces its images: %s', async (path, replaceImages) => {
+    const editor = {
+      user: { id: 5 },
+      ...uncapped,
+      track: { bountyEntry: vi.fn(async () => undefined) },
+    } as never;
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 99,
+      complete: false,
+      entries: [],
+    } as never);
+    const file = { url: 'https://example.com/f.zip', name: 'f.zip', sizeKB: 1 };
+    if (path === 'submit')
+      await submitBountyEntryHandler({
+        input: { id: 3, bountyId: 9, files: [file], imageUuids: ['u'] } as never,
+        ctx: editor,
+      });
+    else await upsertBountyEntryHandler({ input: { id: 3, bountyId: 9 } as never, ctx: editor });
+    expect(mockUpsertEntry.mock.calls[0][0]).toMatchObject({ replaceImages });
+  });
+
+  // Replace is decided by the route; a client that sends it to upsert gets the shown-ids rule.
+  it('the upsert route ignores a replaceImages sent by the client', async () => {
+    const sent = {
+      id: 3,
+      bountyId: 9,
+      files: [{ url: 'https://example.com/f.zip', name: 'f.zip', sizeKB: 1, metadata: {} }],
+      images: [],
+      replaceImages: true,
+    };
+    expect(upsertBountyEntryInputSchema.parse(sent)).not.toHaveProperty('replaceImages');
+
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 99,
+      complete: false,
+      entries: [],
+    } as never);
+    const editor = {
+      user: { id: 5 },
+      ...uncapped,
+      track: { bountyEntry: vi.fn(async () => undefined) },
+    } as never;
+    await upsertBountyEntryHandler({ input: sent as never, ctx: editor });
+    expect(mockUpsertEntry.mock.calls[0][0].replaceImages).toBeUndefined();
   });
 
   it('delete never returns meta', async () => {
@@ -389,16 +459,12 @@ describe('bounty images on a capped site', () => {
     expect(result.images).toEqual([]);
   });
 
-  // The edit form is filled from this read and saves back only the images it was shown.
   it.each([
     ['the owner', { user: { id: OWNER }, features: { canViewNsfw: false } }],
     ['a moderator', { user: { id: 77, isModerator: true }, features: { canViewNsfw: false } }],
-  ])(
-    'the detail page keeps every image for %s, whose edit saves back what it is shown',
-    async (_l, ctx) => {
-      expect(await detail(ctx)).toEqual([10, 11]);
-    }
-  );
+  ])('the detail page caps %s like any other viewer', async (_l, ctx) => {
+    expect(await detail(ctx)).toEqual([10]);
+  });
 
   it('entry lists and entry detail send a capped viewer no image above the cap', async () => {
     mockGetEntries.mockResolvedValue([{ id: 3, user: { id: OWNER } }] as never);
@@ -413,11 +479,11 @@ describe('bounty images on a capped site', () => {
     expect(ids(entry.images)).toEqual([30]);
   });
 
-  it('entry detail keeps every image for the entry owner, whose edit saves back what it is shown', async () => {
+  it('entry detail caps the entry owner like any other viewer', async () => {
     mockImagesByEntity.mockResolvedValue([image(30, NsfwLevel.PG, 3), image(31, NsfwLevel.X, 3)]);
     const ctx = { user: { id: OWNER }, features: { canViewNsfw: false } };
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
-    expect(ids(entry.images)).toEqual([30, 31]);
+    expect(ids(entry.images)).toEqual([30]);
   });
 
   it('an uncapped viewer keeps every image', async () => {
@@ -437,7 +503,12 @@ describe('bounty images on a capped site', () => {
 
 describe('entry detail image count', () => {
   const OWNER = 5;
-  const twelve = Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, entityId: 3, nsfwLevel: 1 }));
+  const twelve = Array.from({ length: 12 }, (_, i) => ({
+    id: 100 + i,
+    entityId: 3,
+    nsfwLevel: 1,
+    tags: [],
+  }));
   const entryImageCount = async (ctx: object) => {
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
     return entry.images.length;
@@ -458,5 +529,114 @@ describe('entry detail image count', () => {
 
   it('still gives other viewers 10', async () => {
     expect(await entryImageCount(stranger as object)).toBe(10);
+  });
+});
+
+describe('bounty images and browsing-tag rules', () => {
+  const CHILD_TAG = childBrowsingTagIds[0];
+  const OTHER_TAG = 999001;
+  const mature = {
+    id: 6,
+    isModerator: false,
+    showNsfw: true,
+    browsingLevel: allBrowsingLevelsFlag,
+  };
+  const matureViewer = { user: mature, ...uncapped };
+  const modViewer = { user: { ...mature, isModerator: true }, ...uncapped };
+  const image = (id: number, tagId: number) => ({
+    id,
+    userId: 5,
+    nsfwLevel: NsfwLevel.R,
+    nsfwLefel: NsfwLevel.R,
+    tags: [{ id: tagId, name: 't' }],
+  });
+  const ids = (images: { id: number }[]) => images.map((i) => i.id);
+
+  const feedIds = async (ctx: object) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      { id: 1, name: 'B', nsfw: false, nsfwLevel: NsfwLevel.R, tags: [], user: { id: 5 } },
+    ]);
+    mockImagesForBounties.mockResolvedValue({ 1: [image(10, CHILD_TAG), image(11, OTHER_TAG)] });
+    const { items } = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx: ctx as never,
+    });
+    return ids(items[0].images);
+  };
+  const detailIds = async (ctx: object) => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    mockBountyImages.mockResolvedValue([image(10, CHILD_TAG), image(11, OTHER_TAG)]);
+    return ids((await getBountyHandler({ input: { id: 9 }, ctx: ctx as never })).images);
+  };
+
+  const entryIds = async (ctx: object) => {
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: 5 } }] as never);
+    mockImagesByEntity.mockResolvedValue([
+      { ...image(30, CHILD_TAG), entityId: 3 },
+      { ...image(31, OTHER_TAG), entityId: 3 },
+    ]);
+    const list = await getBountyEntriesHandler({ input: { id: 9 } as never, ctx: ctx as never });
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
+    return { list: ids(list.items[0].images), entry: ids(entry.images) };
+  };
+
+  beforeEach(() => mockAssert.mockResolvedValue(undefined));
+
+  it('drops a child-tagged image for a mature non-moderator, keeping other mature images', async () => {
+    expect(await feedIds(matureViewer)).toEqual([11]);
+    expect(await detailIds(matureViewer)).toEqual([11]);
+    expect(await entryIds(matureViewer)).toEqual({ list: [31], entry: [31] });
+  });
+
+  it('serves a moderator every image', async () => {
+    expect(await feedIds(modViewer)).toEqual([10, 11]);
+    expect(await detailIds(modViewer)).toEqual([10, 11]);
+    expect(await entryIds(modViewer)).toEqual({ list: [30, 31], entry: [30, 31] });
+  });
+
+  it('drops a POI or minor-flagged image for a mature non-moderator', async () => {
+    const flagged = (id: number, flag: object, entityId = 0) => ({
+      ...image(id, OTHER_TAG),
+      ...flag,
+      entityId,
+    });
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([
+      { id: 1, name: 'B', nsfw: false, nsfwLevel: NsfwLevel.R, tags: [], user: { id: 5 } },
+    ]);
+    mockImagesForBounties.mockResolvedValue({
+      1: [flagged(10, { poi: true }), flagged(11, { minor: true }), flagged(12, {})],
+    });
+    const feed = await getInfiniteBountiesHandler({
+      input: { limit: 10, period: 'AllTime', sort: 'Newest' } as never,
+      ctx: matureViewer as never,
+    });
+    expect(ids(feed.items[0].images)).toEqual([12]);
+
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: 5 } }] as never);
+    mockImagesByEntity.mockResolvedValue([
+      flagged(30, { poi: true }, 3),
+      flagged(31, { minor: true }, 3),
+      flagged(32, {}, 3),
+    ]);
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: matureViewer as never });
+    expect(ids(entry.images)).toEqual([32]);
+    const modEntry = await getBountyEntryHandler({ input: { id: 3 }, ctx: modViewer as never });
+    expect(ids(modEntry.images)).toEqual([30, 31, 32]);
+  });
+
+  it('reads tags for entry detail images', async () => {
+    await entryIds(matureViewer);
+    expect(mockImagesByEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3, include: ['tags'] })
+    );
   });
 });

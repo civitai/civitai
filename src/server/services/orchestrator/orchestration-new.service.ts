@@ -80,7 +80,7 @@ import {
   assertGenerationInputsUsable,
   generationInputUrlsIn,
 } from '~/server/services/generation-input-urls';
-import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
+import type { GenerationInputCaller } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
 import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
@@ -222,7 +222,7 @@ export type GenerateOptions = {
  * is for server-composed input whose urls the calling route already checked (comics, iterate).
  */
 export type GenerationInputGate =
-  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | (GenerationInputCaller & { isApiCaller: boolean })
   | 'checked-by-caller';
 
 const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;

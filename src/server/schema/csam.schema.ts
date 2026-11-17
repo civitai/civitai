@@ -66,6 +66,11 @@ export const getCsamContextCandidatesSchema = z.object({
   imageIds: z.number().int().positive().array().max(1000),
 });
 
+export type ReadHeldCsamContextTextSchema = z.infer<typeof readHeldCsamContextTextSchema>;
+export const readHeldCsamContextTextSchema = getCsamContextCandidatesSchema.extend({
+  postTextId: z.number().int().positive(),
+});
+
 export type GetCsamSupplementalPreviewSchema = z.infer<typeof getCsamSupplementalPreviewSchema>;
 export const getCsamSupplementalPreviewSchema = z.object({
   userId: z.number().int().positive(),

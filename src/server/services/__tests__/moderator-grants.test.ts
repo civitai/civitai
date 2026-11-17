@@ -23,11 +23,30 @@ vi.mock('~/server/db/kyselyDb', () => {
   return { kyselyWrite: { selectFrom: () => query } };
 });
 
-import { hasModeratorGrant } from '~/server/services/moderator-grants';
+import { hasModeratorGrant, hasModeratorPageAccess } from '~/server/services/moderator-grants';
 
 beforeEach(() => {
   vi.clearAllMocks();
   row.value = undefined;
+});
+
+// The page grant `/admin` writes is the row keyed by the page's own path (`allows` in access.ts).
+describe('hasModeratorPageAccess', () => {
+  it('allows a role on the page row, reading the row for that path', async () => {
+    row.value = { roles: ['moderator:reports'] };
+    expect(await hasModeratorPageAccess({ roles: ['moderator:reports'] }, '/reports')).toBe(true);
+    expect(where).toHaveBeenCalledWith('app', '=', 'moderator');
+    expect(where).toHaveBeenCalledWith('path', '=', '/reports');
+  });
+
+  it('refuses a role not on the row, and everyone but admin with no row', async () => {
+    row.value = { roles: ['moderator:reports'] };
+    expect(await hasModeratorPageAccess({ roles: ['moderator:triage'] }, '/reports')).toBe(false);
+    row.value = undefined;
+    expect(await hasModeratorPageAccess({ roles: ['moderator:reports'] }, '/reports')).toBe(false);
+    expect(await hasModeratorPageAccess({ roles: ['moderator:admin'] }, '/reports')).toBe(true);
+    expect(await hasModeratorPageAccess({}, '/reports')).toBe(false);
+  });
 });
 
 describe('hasModeratorGrant', () => {

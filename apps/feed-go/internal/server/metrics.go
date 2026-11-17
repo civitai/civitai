@@ -61,12 +61,13 @@ type Metrics struct {
 	JWKSStale prometheus.Counter
 	// FallbackProxyErrors counts fallback requests the proxy answered 502 because the Node app failed
 	// before a response started, by reason (upstream | canceled). A failure mid-body aborts the
-	// response with http.ErrAbortHandler and is not counted. Not per endpoint: only the as-posts
-	// procedure is served, and so proxied.
+	// response with http.ErrAbortHandler and is not counted. Not per endpoint.
 	FallbackProxyErrors *prometheus.CounterVec
 	// ServeInFlight is the public requests computing now, each holding a serve slot (at most
-	// Server.MaxInFlight; one past it is the `bulkhead` fallback). Per endpoint; only as-posts is served.
-	ServeInFlight prometheus.Gauge
+	// Server.MaxInFlight across every public route; one past it is the `bulkhead` fallback), by the
+	// feed_endpoint of the route holding it: one gauge per served endpoint, resolved here so the serve
+	// path does no label lookup.
+	ServeInFlight map[string]prometheus.Gauge
 	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
 	// error), per missed id. Not per endpoint: hydration is shared by both.
 	CacheMisses *prometheus.CounterVec
@@ -185,11 +186,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	serveInFlight := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "feed_go_serve_in_flight",
-		Help: "Public requests computing now, each holding a serve slot; at FEED_GO_MAX_IN_FLIGHT the next one is not computed but proxied to the Node app (feed_go_fallback_total{reason=\"bulkhead\"}).",
+		Help: "Public requests computing now, by the route holding the serve slot; the slots are shared by every public route, and at FEED_GO_MAX_IN_FLIGHT the next one is not computed but proxied to the Node app (feed_go_fallback_total{reason=\"bulkhead\"}).",
 	}, []string{EndpointLabel})
-	m.ServeInFlight = serveInFlight.WithLabelValues(EndpointAsPosts)
-	// A pod that never shed reads 0 rather than an absent series.
-	m.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", "bulkhead")
+	// A pod that never shed reads 0 rather than an absent series, on each served endpoint.
+	m.ServeInFlight = map[string]prometheus.Gauge{}
+	for _, e := range []string{EndpointAsPosts, EndpointModelGetAll} {
+		m.ServeInFlight[e] = serveInFlight.WithLabelValues(e)
+		m.Fallbacks.WithLabelValues(e, "serve", "bulkhead")
+	}
 	// Seed the dropped counter per endpoint, and the panic and refresh counters, so "none" reads 0
 	// rather than an absent series.
 	for _, e := range Endpoints {

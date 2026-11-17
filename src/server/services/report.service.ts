@@ -333,6 +333,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.GameFrameGame]: 'gameFrameGame',
   [ReportEntity.Storyline]: 'storyline',
   [ReportEntity.ServiceOffering]: 'serviceOffering',
+  [ReportEntity.PostText]: 'postText',
 };
 
 const reportTypeConnectionMap = {
@@ -356,6 +357,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.GameFrameGame]: 'gameFrameGameId',
   [ReportEntity.Storyline]: 'storylineId',
   [ReportEntity.ServiceOffering]: 'serviceOfferingId',
+  [ReportEntity.PostText]: 'postTextId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -475,6 +477,26 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
+  // Read here for the author guard; the words it also yields are stamped below the dedupe, as the
+  // announcement's are.
+  const readReportedText = () =>
+    // primary: the author guard, and the text may have been written a moment ago.
+    dbWrite.postText.findUnique({
+      where: { id },
+      select: {
+        postId: true,
+        userId: true,
+        index: true,
+        content: true,
+        post: { select: { userId: true } },
+      },
+    });
+  const reportedText = type === ReportEntity.PostText ? await readReportedText() : null;
+  if (type === ReportEntity.PostText) {
+    if (!reportedText) throw throwNotFoundError('That text no longer exists.');
+    if (reportedText.userId === userId || reportedText.post.userId === userId)
+      throw throwBadRequestError('You cannot report your own text.');
+  }
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
   // An image's or a model's mature-content report casts tag votes, unless its reporter may not vote
@@ -497,12 +519,15 @@ export const createReport = async ({
     type === ReportEntity.GameFrameGame ||
     type === ReportEntity.Storyline ||
     type === ReportEntity.ServiceOffering ||
+    type === ReportEntity.PostText ||
     castsNoTagVotes;
   // Decides who is paid when the report is actioned, so it is the server's, whatever the client sent.
   // Stamped before the dedupe so a folded-in reporter's `additionalReports` entry carries it too.
   const details = data.details as MixedObject;
   if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
   else delete details[NO_REPORT_REWARD_KEY];
+  // The server's snapshot of a reported text (stamped below); never one the reporter sent.
+  delete details.postText;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -511,8 +536,14 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
-          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue. A
+          // text can be edited after a ruling, so a later report on it is filed afresh, with the words
+          // it is about now.
+          pendingOnly:
+            castsNoTagVotes ||
+            reportsStorylineChapter ||
+            type === ReportEntity.PostText ||
+            foldIntoPendingOnly,
           tx: callerTx,
         })
       : null;
@@ -537,6 +568,15 @@ export const createReport = async ({
     };
   }
 
+  // The words as reported, from the row and never from `details` (the reporter's to write): the
+  // author can still edit or delete the text, and the moderator and a CSAM hold need what was reported.
+  if (reportedText)
+    (data.details as MixedObject).postText = {
+      content: reportedText.content,
+      index: reportedText.index,
+      postId: reportedText.postId,
+    };
+
   let recomputeArticleNsfwLevelId: number | null = null;
 
   const writeReport = async (tx: Prisma.TransactionClient) => {
@@ -559,6 +599,7 @@ export const createReport = async ({
         [type]: {
           create: {
             [reportTypeConnectionMap[type]]: id,
+            ...(reportedText ? { postId: reportedText.postId } : {}),
           },
         },
       },

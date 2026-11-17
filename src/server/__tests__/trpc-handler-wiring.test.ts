@@ -244,6 +244,7 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
     'apps.storage.get',
     'apps.storage.getQuota',
     'apps.storage.list',
+    'blockImageUpload.generationSourceUsesScannedRows',
     'blocks.listMyWorkflows',
   ] as const;
 

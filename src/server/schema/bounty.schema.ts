@@ -8,7 +8,7 @@ import {
 import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
-import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
+import { comfylessImageSchema } from '~/server/schema/image.schema';
 import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
@@ -53,7 +53,12 @@ export const bountyDetailsSchema = z.object({
     .optional(),
 });
 
+// May be empty when the domain's cap hides every image; updateEntityImages enforces one stays linked.
+export const bountyImagesSchema = z.array(comfylessImageSchema);
+export const shownImageIdsSchema = z.number().array().optional();
+
 export type CreateBountyInput = z.infer<typeof createBountyInputSchema>;
+
 export const createBountyInputSchema = z.object({
   name: z.string().trim().nonempty(),
   description: getSanitizedStringSchema({ allowBlurbs: true }).refine(
@@ -88,13 +93,7 @@ export const createBountyInputSchema = z.object({
   poi: z.boolean().optional(),
   ownRights: z.boolean().optional(),
   files: z.array(baseFileSchema).optional(),
-  images: z
-    .array(
-      imageReferenceInputSchema.extend({
-        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
-      })
-    )
-    .min(1, 'At least one example image must be uploaded'),
+  images: bountyImagesSchema.min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
   // Minted by the client once per new bounty and resent on its retries, with the time it was
   // minted (epoch ms): the creation charge's ledger prefix derives from both, so a retry after an
@@ -117,11 +116,12 @@ export const updateBountyInputSchema = createBountyInputSchema
     poi: true,
     nsfw: true,
     ownRights: true,
-    images: true,
     entryLimit: true,
   })
   .extend({
     id: z.number(),
+    images: bountyImagesSchema,
+    shownImageIds: shownImageIdsSchema,
     startsAt: z.coerce.date(),
     expiresAt: stringToDate(
       z
@@ -137,6 +137,8 @@ export const updateBountyInputSchema = createBountyInputSchema
 export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
 export const upsertBountyInputSchema = createBountyInputSchema.extend({
   id: z.number().optional(),
+  images: bountyImagesSchema,
+  shownImageIds: shownImageIdsSchema,
   startsAt: z.string(),
   expiresAt: z.string(),
   lockedProperties: z.string().array().optional(),

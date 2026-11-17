@@ -5,6 +5,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { hasEmptyViewerLevel } from '~/server/services/blocks/block-viewer-ceiling';
 import type { BlockGatedImage } from '~/server/services/blocks/block-gated-images.service';
 
 /**
@@ -117,6 +118,7 @@ export async function resolveGatedImagesForBlockClaims(input: {
   // App-blocks runtime/visibility gate (the token subject) — NOT the author
   // gate: a viewer of the app can read images the app published.
   await assertAppBlocksEnabledForTokenUser(userId);
+  if (hasEmptyViewerLevel(input.claims)) return { images: [] };
 
   // Dynamic, matching how the bridge procedure has always reached this module: it
   // keeps `dbRead` + the image-upload provenance graph off the import graph of
