@@ -149,6 +149,13 @@ export const getAllModelsSchema = z.object({
   minorOnly: z.boolean().optional(),
 });
 
+/**
+ * `model.getAll`'s input: the listing filters, with `page` refused (that procedure pages by cursor).
+ * The router and scripts/feed-go-input-schemas.ts both read this one object, so feed-go's generated
+ * allow-list follows a change to it.
+ */
+export const getAllModelsInputSchema = getAllModelsSchema.extend({ page: z.never().optional() });
+
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
