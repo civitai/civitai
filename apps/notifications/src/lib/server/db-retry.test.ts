@@ -5,8 +5,10 @@ import type * as Db from './clients/db';
 // These cases drive the read paths and createNotification against fake pools that fail that way first.
 
 const h = vi.hoisted(() => ({
-  /** Errors the next statements throw, in order; empty = statements succeed. */
+  /** Errors the next checkouts throw, in order; empty = checkouts succeed. */
   failures: [] as unknown[],
+  /** Errors the next statements' `result()` rejects with (checkout succeeded), in order. */
+  resultFailures: [] as unknown[],
   statements: [] as string[],
   rows: [] as unknown[],
 }));
@@ -18,7 +20,14 @@ vi.mock('./clients/db', async (importOriginal) => {
       h.statements.push(sql);
       const failure = h.failures.shift();
       if (failure) throw failure;
-      return { result: async () => h.rows, cancel: async () => undefined };
+      return {
+        result: async () => {
+          const resultFailure = h.resultFailures.shift();
+          if (resultFailure) throw resultFailure;
+          return h.rows;
+        },
+        cancel: async () => undefined,
+      };
     },
   };
   return { ...actual, notifDbWrite: () => pool, notifDbRead: () => pool, mainDbRead: () => pool };
@@ -34,7 +43,13 @@ vi.mock('./clients/axiom', async (importOriginal) => ({
 
 import { markDbConnectError } from '@civitai/db';
 import { createNotification } from './create';
-import { notificationExists, queryNotifications } from './operations';
+import {
+  countInFlight,
+  countNotifications,
+  notificationExists,
+  queryNotifications,
+} from './operations';
+import { logToAxiom } from './clients/axiom';
 import { DB_RETRY_BACKOFF_MS, withDbRetry } from './db-retry';
 
 const pgError = (code: string, message: string, severity = 'FATAL') =>
@@ -55,7 +70,10 @@ async function settle<T>(p: Promise<T>) {
 beforeEach(() => {
   vi.useFakeTimers();
   h.failures = [];
+  h.resultFailures = [];
   h.statements = [];
+  countInFlight.clear();
+  vi.mocked(logToAxiom).mockClear();
   h.rows = [];
 });
 afterEach(() => {
@@ -88,6 +106,84 @@ describe('read paths survive a switchover', () => {
 
     expect(r).toEqual({ ok: true, value: [{ id: 1 }] });
     expect(h.statements).toHaveLength(3);
+  });
+});
+
+describe('a connection lost during the statement is retried', () => {
+  it('queryNotifications retries when result() rejects with a dropped connection', async () => {
+    h.resultFailures = [new Error('Connection terminated unexpectedly')];
+    h.rows = [{ id: 2 }];
+
+    const r = await settle(queryNotifications({ userId: 5, limit: 10 }));
+
+    expect(r).toEqual({ ok: true, value: [{ id: 2 }] });
+    expect(h.statements).toHaveLength(2);
+  });
+
+  it('countNotifications retries when result() rejects with an admin shutdown', async () => {
+    h.resultFailures = [adminShutdown()];
+    h.rows = [{ category: 'Comment', count: '3' }];
+
+    const r = await settle(countNotifications({ userId: 5, unread: false }));
+
+    expect(r).toEqual({ ok: true, value: [{ category: 'Comment', count: '3' }] });
+    expect(h.statements).toHaveLength(2);
+  });
+
+  it('createNotification retries the UPDATE when its result() rejects', async () => {
+    // Opt-out SELECT result succeeds; the UPDATE's result() is lost once; the retried UPDATE finds no
+    // row and the INSERT runs.
+    h.resultFailures = [undefined, adminShutdown()];
+
+    const r = await settle(
+      createNotification({
+        key: 'c:2',
+        type: 'comment',
+        category: 'Comment',
+        details: {},
+        userId: 7,
+      })
+    );
+
+    expect(r).toEqual({ ok: true, value: { queued: 1 } });
+    const kinds = h.statements.map((s) => s.trim().split(/\s/)[0]);
+    expect(kinds).toEqual(['SELECT', 'UPDATE', 'UPDATE', 'INSERT']);
+  });
+
+  it('logs one line per recovered retry, without the error message', async () => {
+    h.resultFailures = [new Error('Connection terminated unexpectedly')];
+    h.rows = [{ exists: 1 }];
+
+    await settle(notificationExists('k2'));
+
+    const lines = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([d]) => d as Record<string, unknown>)
+      .filter((d) => d.name === 'notification.dbRetry');
+    expect(lines).toEqual([
+      expect.objectContaining({ type: 'info', outcome: 'recovered', retries: 1 }),
+    ]);
+    expect(JSON.stringify(lines)).not.toContain('Connection terminated');
+  });
+
+  it('logs one line when the retries are exhausted', async () => {
+    h.failures = Array.from({ length: DB_RETRY_BACKOFF_MS.length + 1 }, adminShutdown);
+
+    const r = await settle(notificationExists('k3'));
+
+    expect(r.ok).toBe(false);
+    const lines = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([d]) => d as Record<string, unknown>)
+      .filter((d) => d.name === 'notification.dbRetry');
+    expect(lines).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        outcome: 'exhausted',
+        retries: DB_RETRY_BACKOFF_MS.length,
+        cause: { name: 'Error', code: '57P01' },
+      }),
+    ]);
   });
 });
 
@@ -132,7 +228,7 @@ describe('createNotification survives a switchover', () => {
 });
 
 describe('withDbRetry', () => {
-  const run = (errors: unknown[]) => {
+  const run = (errors: unknown[], random = () => 0.5) => {
     const sleeps: number[] = [];
     let calls = 0;
     const p = withDbRetry(
@@ -141,7 +237,7 @@ describe('withDbRetry', () => {
         if (e) throw e;
         return 'ok';
       },
-      { sleep: async (ms) => void sleeps.push(ms) }
+      { sleep: async (ms) => void sleeps.push(ms), random }
     );
     return { p, sleeps, calls: () => calls };
   };
@@ -168,6 +264,16 @@ describe('withDbRetry', () => {
     ['a unique violation', pgError('23505', 'duplicate key value', 'ERROR')],
     ['a syntax error', pgError('42601', 'syntax error at or near "SELEC"', 'ERROR')],
     ['a pool wait timeout', new Error('timeout exceeded when trying to connect')],
+    [
+      "pg's connect timeout",
+      markDbConnectError(new Error('Connection terminated due to connection timeout')),
+    ],
+    [
+      "pg's connect timeout as the cause of a wrapper",
+      new Error('query failed', {
+        cause: new Error('Connection terminated due to connection timeout'),
+      }),
+    ],
     ['an auth code without a server severity', Object.assign(new Error('x'), { code: '28P01' })],
     ['a plain error', new Error('boom')],
   ])('does not retry %s', async (_name, error) => {
@@ -183,5 +289,16 @@ describe('withDbRetry', () => {
     await expect(r.p).rejects.toBe(errors.at(-1));
     expect(r.calls()).toBe(DB_RETRY_BACKOFF_MS.length + 1);
     expect(r.sleeps).toEqual([100, 250, 500]);
+  });
+
+  it('jitters each delay by up to ±50% of its base', async () => {
+    const errors = Array.from({ length: DB_RETRY_BACKOFF_MS.length + 1 }, adminShutdown);
+    const low = run(errors, () => 0);
+    await expect(low.p).rejects.toBe(errors.at(-1));
+    expect(low.sleeps).toEqual([50, 125, 250]);
+
+    const high = run(errors, () => 0.999);
+    await expect(high.p).rejects.toBe(errors.at(-1));
+    expect(high.sleeps).toEqual([150, 375, 750]);
   });
 });
