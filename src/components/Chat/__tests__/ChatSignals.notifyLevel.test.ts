@@ -15,6 +15,7 @@ const CHAT = 42;
 type Unread = { chatId: number; cnt: number }[];
 
 const state = vi.hoisted(() => ({
+  user: { id: 7, username: 'me' },
   handlers: {} as Record<string, (payload: unknown) => void>,
   /** what the getAllByUser cache holds right now; undefined = not loaded */
   cached: undefined as unknown[] | undefined,
@@ -28,7 +29,7 @@ const state = vi.hoisted(() => ({
   played: 0,
 }));
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7, username: 'me' }) }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => state.user }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({ chat: true }) }));
 vi.mock('use-sound', () => ({ default: () => [() => state.played++] }));
 vi.mock('~/components/Signals/SignalsProvider', () => ({
@@ -76,6 +77,7 @@ let root: ReturnType<typeof createRoot> | undefined;
 afterEach(() => {
   act(() => root?.unmount());
   root = undefined;
+  state.user = { id: ME, username: 'me' };
   state.handlers = {};
   state.cached = undefined;
   state.server = [];
@@ -87,13 +89,15 @@ afterEach(() => {
   state.played = 0;
 });
 
+let rerender = () => {};
 const mount = (hook: () => void) => {
   function Probe() {
     hook();
     return null;
   }
   root = createRoot(document.createElement('div'));
-  act(() => root!.render(createElement(Probe)));
+  rerender = () => act(() => root!.render(createElement(Probe)));
+  rerender();
 };
 
 const members = (level: string) => [
@@ -190,6 +194,27 @@ describe('a new message before the chat list has loaded', () => {
     receive(SignalMessages.ChatNewMessage, message());
     act(() => root?.unmount());
     root = undefined;
+    await settle();
+
+    expect(state.played).toBe(0);
+    expect(unreadFor(CHAT)).toBe(0);
+  });
+  it('does nothing when another user signed in mid-fetch', async () => {
+    state.server = chatList('All');
+    mount(useChatNewMessageSignal);
+    receive(SignalMessages.ChatNewMessage, message());
+    state.user = { id: 8, username: 'other' };
+    rerender();
+    await settle();
+
+    expect(state.played).toBe(0);
+    expect(unreadFor(CHAT)).toBe(0);
+  });
+
+  it('stays silent when the member is missing from the chat it loaded', async () => {
+    state.server = [{ id: CHAT, chatMembers: [members('All')[0]], messages: [] }];
+    mount(useChatNewMessageSignal);
+    receive(SignalMessages.ChatNewMessage, message());
     await settle();
 
     expect(state.played).toBe(0);
