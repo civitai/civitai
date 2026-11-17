@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModelVersionService from '~/server/services/model-version.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
+import type * as LoggingClient from '~/server/logging/client';
 
 /**
  * A moderator's revoke of one buyer's early access, against grants held in PGlite. Ids are invented.
@@ -19,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   },
   bustMvCache: vi.fn(),
   trackModActivity: vi.fn(),
+  logToAxiom: vi.fn(),
 }));
 // Any Buzz call from the revoke would land on these.
 vi.mock('~/server/services/buzz.service', () => mocks.buzz);
@@ -29,6 +31,11 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: mocks.trackModActivity,
+}));
+
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: mocks.logToAxiom,
 }));
 
 const { moderatorRevokeEarlyAccess } = await import(
@@ -86,16 +93,23 @@ beforeEach(async () => {
   dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({ modelId: MODEL_ID } as never);
 });
 
-const seed = (versionId: number, accessorId: number) =>
-  db.query(`INSERT INTO "EntityAccess" VALUES ($1, 'ModelVersion', $2, 'User', 3, '{}'::jsonb)`, [
+const seed = (
+  versionId: number,
+  accessorId: number,
+  accessToType = 'ModelVersion',
+  accessorType = 'User'
+) =>
+  db.query(`INSERT INTO "EntityAccess" VALUES ($1, $2, $3, $4, 3, '{}'::jsonb)`, [
     versionId,
+    accessToType,
     accessorId,
+    accessorType,
   ]);
 
 const grants = async () =>
   (
-    await db.query<{ accessToId: number; accessorId: number }>(
-      `SELECT "accessToId", "accessorId" FROM "EntityAccess" ORDER BY 1, 2`
+    await db.query<Record<string, unknown>>(
+      `SELECT "accessToId", "accessToType", "accessorId", "accessorType" FROM "EntityAccess" ORDER BY 1, 2, 4, 3`
     )
   ).rows;
 
@@ -112,13 +126,42 @@ describe('moderatorRevokeEarlyAccess', () => {
     await seed(VERSION_ID, BUYER_A);
     await seed(VERSION_ID, BUYER_B);
     await seed(OTHER_VERSION_ID, BUYER_A);
+    // The same ids under other entity and accessor types are other grants.
+    await seed(VERSION_ID, BUYER_A, 'Model');
+    await seed(VERSION_ID, BUYER_A, 'ModelVersion', 'Club');
 
     await expect(revokeA()).resolves.toEqual({ revoked: true, permissions: 3 });
 
     expect(await grants()).toEqual([
-      { accessToId: VERSION_ID, accessorId: BUYER_B },
-      { accessToId: OTHER_VERSION_ID, accessorId: BUYER_A },
+      { accessToId: VERSION_ID, accessToType: 'Model', accessorId: BUYER_A, accessorType: 'User' },
+      {
+        accessToId: VERSION_ID,
+        accessToType: 'ModelVersion',
+        accessorId: BUYER_A,
+        accessorType: 'Club',
+      },
+      {
+        accessToId: VERSION_ID,
+        accessToType: 'ModelVersion',
+        accessorId: BUYER_B,
+        accessorType: 'User',
+      },
+      {
+        accessToId: OTHER_VERSION_ID,
+        accessToType: 'ModelVersion',
+        accessorId: BUYER_A,
+        accessorType: 'User',
+      },
     ]);
+    expect(mocks.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'moderator-revoke-early-access',
+        moderatorId: MODERATOR,
+        userId: BUYER_A,
+        modelVersionId: VERSION_ID,
+        reason: 'bought the wrong version',
+      })
+    );
     expect(mocks.trackModActivity).toHaveBeenCalledWith(MODERATOR, {
       entityType: 'modelVersion',
       activity: 'revokeEarlyAccess',
@@ -142,7 +185,15 @@ describe('moderatorRevokeEarlyAccess', () => {
 
     await expect(revokeA()).resolves.toEqual({ revoked: false });
 
-    expect(await grants()).toEqual([{ accessToId: VERSION_ID, accessorId: BUYER_B }]);
+    expect(await grants()).toEqual([
+      {
+        accessToId: VERSION_ID,
+        accessToType: 'ModelVersion',
+        accessorId: BUYER_B,
+        accessorType: 'User',
+      },
+    ]);
+    expect(mocks.logToAxiom).not.toHaveBeenCalled();
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
     expect(mocks.bustMvCache).not.toHaveBeenCalled();
   });
@@ -151,7 +202,23 @@ describe('moderatorRevokeEarlyAccess', () => {
     // The pre-read still sees the grant; the delete finds nothing.
     await expect(revokeA()).resolves.toEqual({ revoked: false });
 
+    expect(mocks.logToAxiom).not.toHaveBeenCalled();
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
     expect(mocks.bustMvCache).not.toHaveBeenCalled();
+  });
+
+  it('still busts and records the revoke when one step after the delete fails', async () => {
+    await seed(VERSION_ID, BUYER_A);
+    mocks.bustMvCache.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(revokeA()).resolves.toEqual({ revoked: true, permissions: 3 });
+    expect(mocks.trackModActivity).toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    await seed(VERSION_ID, BUYER_A);
+    mocks.trackModActivity.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(revokeA()).resolves.toEqual({ revoked: true, permissions: 3 });
+    expect(mocks.bustMvCache).toHaveBeenCalledWith(VERSION_ID, MODEL_ID, BUYER_A);
   });
 });

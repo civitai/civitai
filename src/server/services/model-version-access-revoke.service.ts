@@ -36,11 +36,8 @@ export async function moderatorRevokeEarlyAccess({
   const removed = await revokeModelVersionAccess({ userId, modelVersionId });
   if (removed === 0) return { revoked: false as const };
 
-  await trackModActivity(moderatorId, {
-    entityType: 'modelVersion',
-    activity: 'revokeEarlyAccess',
-    entityId: modelVersionId,
-  });
+  // The row is already gone, so a retry is a no-op that never reaches anything below: the log goes
+  // first, and the bust and the activity row are guarded so neither can skip the other.
   logToAxiom({
     type: 'info',
     name: 'moderator-revoke-early-access',
@@ -51,19 +48,28 @@ export async function moderatorRevokeEarlyAccess({
     // One string, not new keys: the dataset is at its field limit.
     details: JSON.stringify(grant),
   });
-  // The purchase path's bust, so the revoked user stops being served the version. Guarded: the row is
-  // already gone, so a retry would be a no-op and never reach this bust again.
-  try {
-    await bustMvCache(modelVersionId, version?.modelId, userId);
-  } catch (error) {
-    logToAxiom({
-      type: 'error',
-      name: 'moderator-revoke-early-access-bust',
-      error: safeError(error),
-      modelVersionId,
-      userId,
-    });
-  }
+  const afterRevoke = async (step: string, run: () => Promise<unknown>) => {
+    try {
+      await run();
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: `moderator-revoke-early-access-${step}`,
+        error: safeError(error),
+        modelVersionId,
+        userId,
+      });
+    }
+  };
+  // The purchase path's bust, so the revoked user stops being served the version.
+  await afterRevoke('bust', () => bustMvCache(modelVersionId, version?.modelId, userId));
+  await afterRevoke('activity', () =>
+    trackModActivity(moderatorId, {
+      entityType: 'modelVersion',
+      activity: 'revokeEarlyAccess',
+      entityId: modelVersionId,
+    })
+  );
 
   return { revoked: true as const, permissions: grant?.permissions ?? null };
 }
