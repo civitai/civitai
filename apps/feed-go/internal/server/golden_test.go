@@ -1508,40 +1508,45 @@ type goldenCollectionFilter struct {
 	TagID        *int `json:"tagId"`
 }
 
+// goldenCollectionClauses are the CollectionItem semi-join's bound comparisons, each capturing the
+// placeholder it binds.
+var goldenCollectionClauses = []struct {
+	name string
+	re   *regexp.Regexp
+	want func(*goldenCollectionFilter) *int
+}{
+	{`ci."collectionId"`, regexp.MustCompile(`ci\."collectionId" = \$(\d+)`), func(f *goldenCollectionFilter) *int { return &f.CollectionID }},
+	{`ci."addedById"`, regexp.MustCompile(`ci\."addedById" = \$(\d+)`), func(f *goldenCollectionFilter) *int { return f.AddedByID }},
+	{`ci."tagId"`, regexp.MustCompile(`ci\."tagId" = \$(\d+)`), func(f *goldenCollectionFilter) *int { return f.TagID }},
+}
+
 // goldenCheckCollectionFilter checks a page query against the CollectionItem semi-join Node built for
 // the page: no collection clause where Node had none, and otherwise each value Node bound (the
-// collection, the viewer's in-review carve-out, the collection tag) bound by feed-go, with no
-// carve-out or tag clause where Node had none.
+// collection, the viewer's in-review carve-out, the collection tag) at the placeholder of the
+// clause that binds it in feed-go's query, with no carve-out or tag clause where Node had none.
 func goldenCheckCollectionFilter(want *goldenCollectionFilter, sql string, args []any) error {
-	clauses := map[string]bool{
-		`ci."collectionId" = $`: strings.Contains(sql, `ci."collectionId" = $`),
-		`ci."addedById" = $`:    strings.Contains(sql, `ci."addedById" = $`),
-		`ci."tagId" = $`:        strings.Contains(sql, `ci."tagId" = $`),
-	}
-	if want == nil {
-		for c, has := range clauses {
-			if has {
-				return fmt.Errorf("node filters by no collection; feed-go's page query has %s", c)
-			}
+	for _, c := range goldenCollectionClauses {
+		m := c.re.FindAllStringSubmatch(sql, -1)
+		var v *int
+		if want != nil {
+			v = c.want(want)
 		}
-		return nil
-	}
-	bound := func(v int) bool {
-		for _, a := range args {
-			if n, ok := a.(int); ok && n == v {
-				return true
-			}
-		}
-		return false
-	}
-	for clause, v := range map[string]*int{`ci."collectionId" = $`: &want.CollectionID, `ci."addedById" = $`: want.AddedByID, `ci."tagId" = $`: want.TagID} {
 		switch {
-		case v == nil && clauses[clause]:
-			return fmt.Errorf("node's collection filter has no %s; feed-go's has", clause)
-		case v != nil && !clauses[clause]:
-			return fmt.Errorf("node's collection filter has %s%d; feed-go's has none", clause, *v)
-		case v != nil && !bound(*v):
-			return fmt.Errorf("node binds %d for %s; feed-go's arguments are %v", *v, clause, args)
+		case want == nil && len(m) > 0:
+			return fmt.Errorf("node filters by no collection; feed-go's page query has %s", m[0][0])
+		case v == nil && len(m) > 0:
+			return fmt.Errorf("node's collection filter has no %s; feed-go's has %s", c.name, m[0][0])
+		case v == nil:
+			continue
+		case len(m) != 1:
+			return fmt.Errorf("node's collection filter binds %s = %d; feed-go's page query has %d such clause(s)", c.name, *v, len(m))
+		}
+		n, err := strconv.Atoi(m[0][1])
+		if err != nil || n < 1 || n > len(args) {
+			return fmt.Errorf("feed-go's %s has placeholder $%s; its query has %d argument(s)", c.name, m[0][1], len(args))
+		}
+		if got, ok := args[n-1].(int); !ok || got != *v {
+			return fmt.Errorf("node binds %s = %d; feed-go binds $%d = %v", c.name, *v, n, args[n-1])
 		}
 	}
 	return nil
