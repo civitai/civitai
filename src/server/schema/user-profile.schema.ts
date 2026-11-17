@@ -115,6 +115,13 @@ export const setShowcaseSectionsSchema = z.object({
     ),
 });
 
+export type AddToShowcaseSectionSchema = z.infer<typeof addToShowcaseSectionSchema>;
+export const addToShowcaseSectionSchema = z.object({
+  sectionId: showcaseSectionSchema.shape.id,
+  entityType: z.literal('Image'),
+  entityId: z.number().int().positive(),
+});
+
 export type ShowcaseItemSchema = z.infer<typeof showcaseItemSchema>;
 
 export const showcaseItemSchema = z.object({

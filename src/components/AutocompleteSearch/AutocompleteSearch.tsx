@@ -93,7 +93,7 @@ import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
 import { imageIdFromDrop, mayCarryImage } from '~/components/AutocompleteSearch/image-drop';
-import { moreLikeThisHref } from '~/components/Image/MoreLikeThisButton';
+import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
 
@@ -565,7 +565,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   };
 
   const dropsImages =
-    offersImageSearch(features) && isImageSearchIndex(searchIndexMap[indexNameProp]);
+    offersMoreLikeThis(features) && isImageSearchIndex(searchIndexMap[indexNameProp]);
   const handleDragOver = (event: React.DragEvent) => {
     if (dropsImages && mayCarryImage(event.dataTransfer.types)) event.preventDefault();
   };
