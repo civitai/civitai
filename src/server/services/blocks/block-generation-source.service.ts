@@ -8,7 +8,7 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputRules } from '~/server/services/blocks/block-output-mint';
 import {
   BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_GENERATION_SOURCE_REF_META_KEY,
@@ -162,10 +162,11 @@ export async function persistBlockGenerationSource(input: {
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
   /**
-   * The token's output ceiling (`blockOutputCeilingFromClaims(claims)`): decides which
-   * output positions are restricted. `imageIndex` is a position in `AppWorkflow.outputs`.
+   * The token's output rules (`resolveBlockOutputRules(claims)`): decide which output
+   * positions are restricted, as the poll does. `imageIndex` is a position in
+   * `AppWorkflow.outputs`.
    */
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
   /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
   budgetMs?: number;
 }): Promise<PersistedGenerationSource> {
@@ -203,7 +204,7 @@ async function persistWithin(input: {
   workflowId: string;
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
   deadline: number;
   signal: AbortSignal;
 }): Promise<PersistedGenerationSource> {
