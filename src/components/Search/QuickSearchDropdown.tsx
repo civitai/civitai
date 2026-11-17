@@ -56,7 +56,7 @@ const meilisearch = withUserHydration(
   createResilientSearchClient(createInstantMeiliSearch({ primaryKey: 'id' }))
 );
 // The semantic search is flag-protected on the server: without `imageSearch` it rejects, and the
-// resilient wrapper turns that into an empty dropdown. Images go to Meili for everyone else.
+// resilient wrapper turns that into an empty dropdown. Meilisearch has no images index.
 const semanticMeilisearch = withUserHydration(
   createResilientSearchClient(
     withSemanticComicSearch(
@@ -190,11 +190,10 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   placeholder?: string;
   disableInitialSearch?: boolean;
   /**
-   * Keeps images on Meilisearch even when semantic image search is on. For a caller whose
-   * `filters` scope images to one owner: the semantic search ignores the `filters` string, so it
-   * would offer everyone's images, and it answers nothing for an empty query.
+   * Scopes the Images search to this username's images. The semantic image search ignores the
+   * `filters` string, so the scope goes as a `user.username` facet, which it applies server-side.
    */
-  imagesFromIndex?: boolean;
+  imageOwner?: string;
   /**
    * The ids currently on offer, whenever that set changes. OPTIONAL and inert by default.
    *
@@ -212,7 +211,7 @@ const QuickSearchDropdownInner = ({
   startingIndex,
   disableInitialSearch,
   showIndexSelect = true,
-  imagesFromIndex,
+  imageOwner,
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
@@ -250,6 +249,11 @@ const QuickSearchDropdownInner = ({
     filters,
     buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
   ].filter(isDefined);
+  const ownerScopedImages = !!imageOwner && indexName === IMAGES_SEARCH_INDEX;
+  const facetFilters = useMemo(
+    () => (ownerScopedImages ? [`user.username:${imageOwner}`] : undefined),
+    [ownerScopedImages, imageOwner]
+  );
 
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
   // once here because the render below reads it twice — as `data`, and in the `value` expression
@@ -330,7 +334,8 @@ const QuickSearchDropdownInner = ({
         searchClient={
           disableInitialSearch
             ? searchClient
-            : features.imageSearch && !imagesFromIndex
+            : // With an owner scope, only Images: the other semantic searches ignore `filters`.
+            features.imageSearch && (!imageOwner || ownerScopedImages)
             ? semanticMeilisearch
             : meilisearch
         }
@@ -340,6 +345,7 @@ const QuickSearchDropdownInner = ({
         <BrowsingLevelFilter
           indexKey={targetIndex}
           filters={indexFilters}
+          facetFilters={facetFilters}
           hitsPerPage={dropdownItemLimit}
         />
 
