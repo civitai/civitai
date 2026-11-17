@@ -44,7 +44,7 @@ export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
 
   // An image can also go to one of the owner's Images sections.
   const offersSections = entityType === 'Image' && features.profileShowcases && !!currentUser;
-  const { data: user } = trpc.userProfile.get.useQuery(
+  const { data: user, isLoading } = trpc.userProfile.get.useQuery(
     { username: currentUser?.username ?? '' },
     { enabled: offersSections }
   );
@@ -66,6 +66,8 @@ export function AddToShowcaseMenuItem({ entityType, entityId }: Props) {
         onClick();
       }}
       key="add-to-showcase"
+      // Until the sections load, a click can't tell which add it means.
+      disabled={offersSections && isLoading}
     >
       Add to Showcase
     </Menu.Item>

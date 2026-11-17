@@ -46,7 +46,7 @@ const store = (showcaseSections: ShowcaseSectionSchema[]) => {
   db.userProfile.upsert.mockResolvedValue({ showcaseSections } as never);
 };
 const saved = () =>
-  (db.userProfile.update.mock.calls.at(-1)?.[0] as { data: { showcaseSections: unknown } }).data
+  (db.userProfile.updateMany.mock.calls.at(-1)?.[0] as { data: { showcaseSections: unknown } }).data
     .showcaseSections;
 
 const add = (entityId: number, sectionId = 's-img') =>
@@ -60,7 +60,7 @@ beforeEach(() => {
     ids(where)
       .filter((id) => matches(id, where))
       .map((id) => ({ id }))) as never);
-  db.userProfile.update.mockImplementation((async ({ data }: { data: unknown }) => data) as never);
+  db.userProfile.updateMany.mockResolvedValue({ count: 1 } as never);
   store([]);
 });
 
@@ -77,13 +77,13 @@ describe('addToShowcaseSection', () => {
   it('refuses another user’s image and writes nothing', async () => {
     store([section([])]);
     await expect(add(STRANGER_IMAGE)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(db.userProfile.update).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 
   it('refuses the owner’s image when it could not be shown, and writes nothing', async () => {
     store([section([])]);
     await expect(add(OWN_UNSHOWABLE_IMAGE)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(db.userProfile.update).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 
   it('asks for a published, reviewed, unblocked image', async () => {
@@ -106,14 +106,14 @@ describe('addToShowcaseSection', () => {
   it('is a no-op for an image already in the section', async () => {
     store([section([OWN_IMAGE])]);
     await expect(add(OWN_IMAGE)).resolves.toMatchObject({ added: false });
-    expect(db.userProfile.update).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 
   it('refuses a full section instead of dropping an item', async () => {
     const full = Array.from({ length: 32 }, (_, i) => 1000 + i);
     store([section(full)]);
     await expect(add(OWN_IMAGE)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-    expect(db.userProfile.update).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -122,7 +122,7 @@ describe('addToShowcaseSection', () => {
   ])('refuses %s', async (_name, sections, sectionId) => {
     store(sections);
     await expect(add(OWN_IMAGE, sectionId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect(db.userProfile.update).not.toHaveBeenCalled();
+    expect(db.userProfile.updateMany).not.toHaveBeenCalled();
   });
 
   it('reads only the caller’s own profile', async () => {
@@ -131,8 +131,21 @@ describe('addToShowcaseSection', () => {
     expect(db.userProfile.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: OWNER_ID } })
     );
-    expect(db.userProfile.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: OWNER_ID } })
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ userId: OWNER_ID }) })
+    );
+  });
+
+  it('saves only over the sections it read, and refuses if they changed meanwhile', async () => {
+    const read = [section([5])];
+    store(read);
+    db.userProfile.updateMany.mockResolvedValue({ count: 0 } as never);
+
+    await expect(add(OWN_IMAGE)).rejects.toMatchObject({ code: 'CONFLICT' });
+    expect(db.userProfile.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: OWNER_ID, showcaseSections: { equals: read } },
+      })
     );
   });
 });

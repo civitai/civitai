@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   addToSection: vi.fn(),
   openModal: vi.fn(),
   onClose: vi.fn(),
+  showError: vi.fn(),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -29,6 +30,11 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 }));
 vi.mock('~/components/Dialog/triggers/add-to-showcase', () => ({
   openAddToShowcaseModal: state.openModal,
+}));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  showErrorNotification: state.showError,
+  showSuccessNotification: vi.fn(),
 }));
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: state.onClose, zIndex: 200 }),
@@ -64,20 +70,26 @@ const profileWith = (showcaseSections: unknown[], showcaseItems: unknown[] = [])
 beforeEach(() => {
   state.profileShowcases = true;
   state.user = profileWith([section('a', [1])]);
-  for (const fn of [state.addToTop, state.addToSection, state.openModal, state.onClose])
+  for (const fn of [
+    state.addToTop,
+    state.addToSection,
+    state.openModal,
+    state.onClose,
+    state.showError,
+  ])
     fn.mockReset();
   state.addToTop.mockResolvedValue({});
   state.addToSection.mockResolvedValue({ added: true, sections: [] });
 });
 
-const renderMenuItem = () =>
+const renderMenuItem = (entityType: 'Image' | 'Model' = 'Image') =>
   renderWithProviders(
     <Menu opened>
       <Menu.Target>
         <button>menu</button>
       </Menu.Target>
       <Menu.Dropdown>
-        <AddToShowcaseMenuItem entityType="Image" entityId={IMAGE} />
+        <AddToShowcaseMenuItem entityType={entityType} entityId={IMAGE} />
       </Menu.Dropdown>
     </Menu>
   );
@@ -105,6 +117,16 @@ describe('Add to Showcase on an image', () => {
     );
     expect(state.openModal).not.toHaveBeenCalled();
   });
+});
+
+test('on a model, it adds to the top showcase even with Images sections', async () => {
+  renderMenuItem('Model');
+  await userEvent.click(page.getByRole('menuitem', { name: 'Add to Showcase' }));
+
+  await vi.waitFor(() =>
+    expect(state.addToTop).toHaveBeenCalledWith({ entityType: 'Model', entityId: IMAGE })
+  );
+  expect(state.openModal).not.toHaveBeenCalled();
 });
 
 describe('the section picker', () => {
@@ -152,7 +174,9 @@ describe('the section picker', () => {
     renderWithProviders(<AddToShowcaseModal imageId={IMAGE} username="fox" />);
     await userEvent.click(row(/Section open/));
 
-    await vi.waitFor(() => expect(state.addToSection).toHaveBeenCalled());
+    // The close would follow the refusal, so wait for the refusal's notification first.
+    await vi.waitFor(() => expect(state.showError).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(state.onClose).not.toHaveBeenCalled();
   });
 });

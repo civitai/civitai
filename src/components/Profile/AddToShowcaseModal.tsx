@@ -22,10 +22,13 @@ export default function AddToShowcaseModal({ imageId, username }: Props) {
   const { data: user } = trpc.userProfile.get.useQuery({ username });
   const topShowcase = useAddToTopShowcase('Image');
   const addToSection = trpc.userProfile.addToShowcaseSection.useMutation({
-    onSuccess: ({ sections }) =>
+    onSuccess: async ({ sections }) => {
       utils.userProfile.get.setData({ username }, (old) =>
         old ? { ...old, profile: { ...old.profile, showcaseSections: sections } } : old
-      ),
+      );
+      // The profile page may have cached it under another spelling of the username.
+      await utils.userProfile.get.invalidate();
+    },
   });
   const isPending = topShowcase.isPending || addToSection.isPending;
 

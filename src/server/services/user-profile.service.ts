@@ -45,6 +45,7 @@ import {
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
@@ -330,7 +331,12 @@ const toShowcaseItems = (sections: ShowcaseSectionSchema[]): ShowcaseItemSchema[
 export const setShowcaseSections = async ({
   userId,
   sections,
-}: SetShowcaseSectionsSchema & { userId: number }) => {
+  ifUnchangedFrom,
+}: SetShowcaseSectionsSchema & {
+  userId: number;
+  /** Save only if the stored sections still equal these; refused as a conflict otherwise. */
+  ifUnchangedFrom?: ShowcaseSectionSchema[];
+}) => {
   await throwOnBlockedUserContent(
     sections.flatMap(({ title, button }) => [title, button?.label, button?.url]),
     { surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
@@ -354,16 +360,27 @@ export const setShowcaseSections = async ({
     allowedTypes: [...showcaseSectionTypes],
   });
 
-  const updated = await dbWrite.userProfile.update({
-    where: { userId },
-    data: { showcaseSections: sections },
-    select: { showcaseSections: true },
-  });
+  let saved: ShowcaseSectionSchema[];
+  if (ifUnchangedFrom) {
+    const { count } = await dbWrite.userProfile.updateMany({
+      where: { userId, showcaseSections: { equals: ifUnchangedFrom } },
+      data: { showcaseSections: sections },
+    });
+    if (!count) throw throwConflictError('Your showcase changed while saving. Try again.');
+    saved = sections;
+  } else {
+    const updated = await dbWrite.userProfile.update({
+      where: { userId },
+      data: { showcaseSections: sections },
+      select: { showcaseSections: true },
+    });
+    saved = updated.showcaseSections as ShowcaseSectionSchema[];
+  }
   // Every save. scanEntity skips the submit when the profile's combined text hashes the same as
   // its last successful scan, or as one still in flight.
   queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
-  return updated.showcaseSections as ShowcaseSectionSchema[];
+  return saved;
 };
 
 /** Adds one of the caller's images to the front of one of their Images sections. */
@@ -405,6 +422,7 @@ export const addToShowcaseSection = async ({
   const updated = await setShowcaseSections({
     userId,
     sections: sections.map((s) => (s === section ? { ...s, items: [entityId, ...s.items] } : s)),
+    ifUnchangedFrom: sections,
   });
   return { added: true, sections: updated };
 };
