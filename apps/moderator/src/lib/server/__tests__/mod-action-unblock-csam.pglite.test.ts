@@ -162,6 +162,7 @@ describe('imageModerate unblock when the replica has not caught up', () => {
   it('reads the primary for the image, its review tags and the restore event', async () => {
     await db.exec(`INSERT INTO "ImageTagForReview" ("imageId", "tagId") VALUES (${MODERATED}, 5);`);
     replicaHandle.current = new Kysely({ dialect: pgliteDialect(laggingReplica) });
+    vi.mocked(trackImageRestore).mockClear();
 
     await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
     expect(await row(MODERATED)).toEqual({
@@ -175,6 +176,7 @@ describe('imageModerate unblock when the replica has not caught up', () => {
     ]);
     expect(pending.rows).toHaveLength(0);
     // By identity: vitest's deep equality calls any two Kysely instances equal.
+    expect(trackImageRestore).toHaveBeenCalledTimes(1);
     const restoreEvent = vi.mocked(trackImageRestore).mock.lastCall?.[0];
     expect(restoreEvent?.imageId).toBe(MODERATED);
     expect(restoreEvent?.db).toBe(dbHandle.current);
