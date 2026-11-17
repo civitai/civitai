@@ -569,8 +569,8 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     id: string,
     media: { iconId: number | null; coverId: number | null } = { iconId: 11, coverId: 22 }
   ) {
-    return async (args: { where?: Record<string, unknown> }) => {
-      const w = args?.where ?? {};
+    return async (...a: unknown[]) => {
+      const w = (a[0] as { where?: Record<string, unknown> } | undefined)?.where ?? {};
       if (w.status === 'draft' && w.appBlockId === null) return { id, ...media };
       return null;
     };
@@ -758,8 +758,8 @@ describe('approveRequest — its re-rate lookups are the shared where-builders',
 describe('approveRequest — on-site publish floor (icon + cover)', () => {
   /** A findFirst that answers ONE of approve's two go-live lookups with `row`. */
   function answer(which: 'draft' | 'reset', row: Record<string, unknown>) {
-    return async (args: { where?: Record<string, unknown> }) => {
-      const w = args?.where ?? {};
+    return async (...a: unknown[]) => {
+      const w = (a[0] as { where?: Record<string, unknown> } | undefined)?.where ?? {};
       if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
       if (which === 'reset' && w.status === 'pending' && w.appBlockId === 'apb_1') return row;
       return null;
