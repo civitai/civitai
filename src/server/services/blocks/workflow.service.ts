@@ -158,9 +158,13 @@ export function snapshotFromWorkflow(
      * correct, and inventing one would report a fee as if it were the price.
      */
     additionalCostBuzz?: number;
+    /** The clock for the rating hold's deadline ({@link isRatingHoldExpired}); tests only. */
+    now?: number;
   }
 ): BlockWorkflowSnapshot {
-  const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+  // The orchestrator's status. The app is told `appWorkflowStatus(...)` of it instead.
+  const status = orchestratorBlockStatus(workflow);
+  const holdExpired = isRatingHoldExpired(workflow, extra?.now ?? Date.now());
   const imageUrls: string[] = [];
   const outputs: BlockWorkflowOutput[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
@@ -181,7 +185,7 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
-      const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
+      const stepOutputList = classifyOutputs(extracted.media, step, workflow, view, holdExpired);
       const stepUrls = unrestrictedUrls(stepOutputList);
       if (!member.suppressOutput) {
         imageUrls.push(...stepUrls);
@@ -212,7 +216,7 @@ export function snapshotFromWorkflow(
       continue;
     }
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
-    const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
+    const stepOutputList = classifyOutputs(extracted.media, step, workflow, view, holdExpired);
     const stepUrls = unrestrictedUrls(stepOutputList);
     imageUrls.push(...stepUrls);
     outputs.push(...stepOutputList);
@@ -277,7 +281,7 @@ export function snapshotFromWorkflow(
     // treats estimate results as a cost quote only and never polls on this id
     // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
-    status,
+    status: appWorkflowStatus(status, outputs),
     ...(typeof total === 'number'
       ? { cost: { total, ...(addedAuthorFee !== undefined ? { authorFee: addedAuthorFee } : {}) } }
       : {}),
@@ -316,7 +320,9 @@ function classifyOutputs(
   slots: readonly StepOutputSlot[],
   step: { $type: string; status?: string; output?: unknown; metadata?: unknown; input?: unknown },
   workflow: Workflow,
-  view: BlockOutputView
+  view: BlockOutputView,
+  /** {@link isRatingHoldExpired} for this workflow, computed once by the producer. */
+  holdExpired: boolean
 ): BlockWorkflowOutput[] {
   const neverRatedVideo = isBlockNeverRatedVideoStep(step, workflow);
   const mintStep = view.mint
@@ -334,6 +340,7 @@ function classifyOutputs(
       // one is delivered — neither held nor locked — whatever the ceiling. A rating
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
+      holdExpired,
     });
     if (view.mint && mintStep) {
       return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
@@ -498,6 +505,86 @@ export function propagateMeshRating(
     // will ever come.
     return s.nsfwLevel ? s : { ...s, nsfwLevel: null, neverRated: true as const };
   });
+}
+
+/**
+ * 🔴 HOW LONG A FINISHED WORKFLOW MAY STILL BE REPORTED `processing` WHILE AN OUTPUT
+ * WAITS FOR ITS RATING, measured from the workflow's completion
+ * ({@link ratingHoldAnchorMs}). After it, a held output is reported restricted
+ * (`'unrated'`) and the workflow its real terminal status, so no app polls forever.
+ *
+ * WHY 5 MINUTES. The orchestrator's blob scan latency histogram
+ * (`orchestration_blob_scan_latency_seconds`, the 7 days to 2026-11-17) puts the median
+ * near 2.5s and p99 near 8s, with about 99.85% of scans done within 100s, 99.90% within
+ * 250s and 99.92% within 500s. Past that the tail is long and flat, so a longer hold
+ * buys little and only keeps the app waiting. `@civitai/blocks-react` `watch` gives up
+ * after 10 minutes by default, so the hold stays well inside it.
+ */
+export const RATING_HOLD_MAX_MS = 5 * 60_000;
+
+/**
+ * When the workflow finished, in epoch ms: its `completedAt`, else its latest step
+ * `completedAt`, else its `createdAt` — so a workflow missing every completion stamp is
+ * still bounded. `null` only when none of them parses.
+ */
+function ratingHoldAnchorMs(workflow: Workflow): number | null {
+  const candidates: Array<string | null | undefined> = [workflow.completedAt];
+  if (!workflow.completedAt) {
+    for (const step of workflow.steps ?? []) {
+      candidates.push((step as { completedAt?: string | null }).completedAt);
+    }
+  }
+  let anchor: number | null = null;
+  for (const c of candidates) {
+    const t = typeof c === 'string' ? Date.parse(c) : NaN;
+    if (Number.isFinite(t) && (anchor === null || t > anchor)) anchor = t;
+  }
+  if (anchor !== null) return anchor;
+  const created = Date.parse(workflow.createdAt);
+  return Number.isFinite(created) ? created : null;
+}
+
+/**
+ * Whether the rating hold has run out for this workflow: it is terminal and finished at
+ * least {@link RATING_HOLD_MAX_MS} before `now`. A record with no parseable timestamp
+ * at all (`createdAt` is required on every orchestrator workflow, so only a malformed
+ * one) is never run out: its output stays held, which never hands out a url.
+ */
+export function isRatingHoldExpired(workflow: Workflow, now: number): boolean {
+  if (!TERMINAL_SNAPSHOT_STATUSES.has(orchestratorBlockStatus(workflow))) return false;
+  const anchor = ratingHoldAnchorMs(workflow);
+  return anchor !== null && now - anchor >= RATING_HOLD_MAX_MS;
+}
+
+/**
+ * The workflow's REAL block-contract status, before {@link appWorkflowStatus}. For the
+ * host's own bookkeeping (the read model, settle, the post terminality gate), which must
+ * not wait on a rating the way an app is told to.
+ */
+export function orchestratorBlockStatus(
+  workflow: Pick<Workflow, 'status'>
+): BlockWorkflowSnapshot['status'] {
+  return ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+}
+
+/**
+ * 🔴 THE STATUS AN APP IS TOLD, for every snapshot and listing producer — the one place
+ * this rule lives. A `succeeded` workflow with an output still held for its rating
+ * (`{ pending: true }`) is reported `processing`.
+ *
+ * WHY. Apps built on `@civitai/app-sdk` before `ratingPending` existed stop polling at
+ * the first `succeeded` and keep whatever `imageUrls` it carried, so an output held for
+ * its rating was lost for good although the viewer paid for it. Every app already keeps
+ * polling on `processing`, and newer SDKs (`watch`) keep polling on it too. The hold is
+ * bounded: after {@link RATING_HOLD_MAX_MS} the output is restricted and the real status
+ * returns. `failed` / `expired` / `canceled` are passed through: no app keeps outputs on
+ * them as a success, and the cancel and refund paths key on them.
+ */
+export function appWorkflowStatus(
+  status: BlockWorkflowSnapshot['status'],
+  outputs: readonly BlockWorkflowOutput[]
+): BlockWorkflowSnapshot['status'] {
+  return status === 'succeeded' && anyPending(outputs) ? 'processing' : status;
 }
 
 /** True when any entry is held for its rating — what sets `ratingPending`. */
@@ -1038,7 +1125,9 @@ export function appBlockInstanceTag(blockInstanceId: string): string {
  *           NOT an index space — indexes are positions in `outputs`.
  *   cost:   the workflow's realized/estimated buzz total, or null when absent.
  *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
- *           unassigned/preparing/scheduled all collapse to `pending`.
+ *           unassigned/preparing/scheduled all collapse to `pending`, and a
+ *           `succeeded` workflow still holding an output for its rating reads
+ *           `processing` ({@link appWorkflowStatus}).
  *   trainedEpochs: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.trainedEpochs`. Absent unless an approved
  *           pass-through training run has a ready checkpoint.
@@ -1084,8 +1173,12 @@ export type AppWorkflow = {
  * calling token's ceiling and serving rules, so the positions a block indexed are the
  * positions the server resolves its `imageIndexes` against.
  */
-export function projectAppWorkflow(workflow: Workflow, view: BlockOutputView): AppWorkflow {
-  return projectAppWorkflowWithPositions(workflow, view).workflow;
+export function projectAppWorkflow(
+  workflow: Workflow,
+  view: BlockOutputView,
+  opts?: { now?: number }
+): AppWorkflow {
+  return projectAppWorkflowWithPositions(workflow, view, opts).workflow;
 }
 
 /**
@@ -1107,16 +1200,19 @@ export type AppWorkflowOutputPosition = { image: AppWorkflowImage; output: Block
  */
 export function projectAppWorkflowWithPositions(
   workflow: Workflow,
-  view: BlockOutputView
+  view: BlockOutputView,
+  /** `now`: the clock for the rating hold's deadline ({@link isRatingHoldExpired}); tests only. */
+  opts?: { now?: number }
 ): { workflow: AppWorkflow; positions: AppWorkflowOutputPosition[] } {
-  const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
+  const status = orchestratorBlockStatus(workflow);
+  const holdExpired = isRatingHoldExpired(workflow, opts?.now ?? Date.now());
   // Every output position (surfaceable and blocked), in order, and its verdict —
   // classified PER STEP, the same call `snapshotFromWorkflow` makes.
   const available: StepOutputSlot[] = [];
   const outputs: BlockWorkflowOutput[] = [];
   const add = (step: Parameters<typeof classifyOutputs>[1], slots: readonly StepOutputSlot[]) => {
     available.push(...slots);
-    outputs.push(...classifyOutputs(slots, step, workflow, view));
+    outputs.push(...classifyOutputs(slots, step, workflow, view, holdExpired));
   };
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
@@ -1199,7 +1295,7 @@ export function projectAppWorkflowWithPositions(
       // A real LIST/GET item always carries an id; empty-string only if the
       // orchestrator ever omits it (never for a persisted workflow).
       workflowId: workflow.id ?? '',
-      status,
+      status: appWorkflowStatus(status, outputs),
       images,
       cost: typeof total === 'number' ? total : null,
       createdAt: workflow.createdAt,

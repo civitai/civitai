@@ -376,7 +376,11 @@ describe.each(CASES)('restricted outputs never reach %s', (_label, maxBrowsingLe
 describe('🔴 F1 — an output still being rated is held, and naming it is refused', () => {
   /** The middle output has no rating yet; an SFW token's rating could still restrict it. */
   function unratedMiddle() {
-    const workflow = restrictedWorkflow({ allowMatureContent: undefined });
+    // Just finished: inside the rating hold (`isRatingHoldExpired`).
+    const workflow = restrictedWorkflow({
+      allowMatureContent: undefined,
+      completedAt: new Date().toISOString(),
+    });
     const blobs = (workflow.steps[0].output as { blobs: Array<Record<string, unknown>> }).blobs;
     delete blobs[1].nsfwLevel;
     return workflow;
@@ -395,6 +399,8 @@ describe('🔴 F1 — an output still being rated is held, and naming it is refu
       { url: OK_B, nsfwLevel: 'pg13' },
     ]);
     expect(snapshot.ratingPending).toBe(true);
+    // The orchestrator says succeeded; an app is told processing, so an old SDK keeps polling.
+    expect(snapshot.status).toBe('processing');
     expect(JSON.stringify(snapshot)).not.toContain(SECRET);
   });
 
