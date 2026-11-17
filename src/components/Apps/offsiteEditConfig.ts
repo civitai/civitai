@@ -5,7 +5,7 @@ import {
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
 import { SENSITIVE_TOKEN_SCOPES } from '~/shared/constants/token-scope.constants';
-import type { UpdateListingPatch } from '~/server/schema/blocks/offsite-listing.schema';
+import type { UpdateListingPatchInput } from '~/server/schema/blocks/offsite-listing.schema';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 
@@ -328,7 +328,7 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     // drops any non-sensitive (or no-longer-allowed) key — no dangling rationale.
     scopeJustifications: pruneJustificationsToMask(
       ctx.connectScopeJustifications ?? {},
-      derivedScopes & SENSITIVE_TOKEN_SCOPES
+      BigInt(derivedScopes) & SENSITIVE_TOKEN_SCOPES
     ),
   };
 }
@@ -422,9 +422,9 @@ function shallowEqualStringMap(a: Record<string, string>, b: Record<string, stri
 export function buildScalarPatch(
   ctx: ListingEditContext,
   current: OffsiteSubmitFormValues
-): UpdateListingPatch {
+): UpdateListingPatchInput {
   const original = editContextToForm(ctx);
-  const patch: UpdateListingPatch = {};
+  const patch: UpdateListingPatchInput = {};
 
   const name = current.name.trim();
   if (name !== original.name.trim()) patch.name = name;
@@ -536,6 +536,6 @@ export function buildScalarPatch(
 }
 
 /** True when the scalar patch has at least one changed field (a save is needed). */
-export function hasScalarChanges(patch: UpdateListingPatch): boolean {
+export function hasScalarChanges(patch: UpdateListingPatchInput): boolean {
   return Object.keys(patch).length > 0;
 }

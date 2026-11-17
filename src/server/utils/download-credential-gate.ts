@@ -7,8 +7,7 @@ import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { countDownloadScopeRefused } from '~/server/prom/download-scope.metrics';
 import { matchWebhookToken } from '~/server/utils/webhook-token';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
 export type DownloadScopeMode = 'off' | 'log' | 'enforce';
@@ -25,7 +24,7 @@ export const DOWNLOAD_SCOPE_REFUSED = {
 };
 
 type Context = BearerCredential & { apiKeyId?: number | null };
-type Requirement = { requiredScope: number } | { anyOfScopes: number[] };
+type Requirement = { requiredScope: bigint } | { anyOfScopes: bigint[] };
 
 export async function getDownloadScopeGateMode(): Promise<DownloadScopeMode> {
   const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.DOWNLOAD_SCOPE_GATE);
@@ -81,8 +80,8 @@ export function downloadCredentialGate(
   const required =
     'requiredScope' in requirement ? [requirement.requiredScope] : requirement.anyOfScopes;
   const allowed =
-    typeof scope === 'number' &&
-    (scope === TokenScope.Full || required.some((bit) => Flags.hasFlag(scope, bit)));
+    typeof scope === 'bigint' &&
+    (scope === TokenScope.Full || required.some((bit) => hasScope(scope, bit)));
   return { outcome: allowed ? 'allowed' : 'refused', effectiveUser };
 }
 
@@ -117,12 +116,14 @@ export async function scopeRefusalMode(
     type: 'info',
     mode,
     route,
-    requiredScope:
+    // Numbers: the log line is JSON, which has no bigint (every bit is below 2^53).
+    requiredScope: Number(
       'requiredScope' in requirement
         ? requirement.requiredScope
-        : requirement.anyOfScopes.reduce((all, bit) => all | bit, 0),
+        : requirement.anyOfScopes.reduce((all, bit) => all | bit, 0n)
+    ),
     ...fields,
-    tokenScope: context?.tokenScope ?? null,
+    tokenScope: context?.tokenScope == null ? null : Number(context.tokenScope),
     apiKeyId: context?.apiKeyId ?? null,
   });
   return mode;

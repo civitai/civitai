@@ -37,7 +37,8 @@ export const oauthConsentRouter = router({
         description: consent.client.description,
         logoUrl: consent.client.logoUrl,
         isVerified: consent.client.isVerified,
-        scope: consent.scope,
+        // A JSON number on the tRPC wire (every scope bit is below 2^53).
+        scope: Number(consent.scope),
         buzzLimit: consent.buzzLimit as BuzzLimit | null,
         authorizedAt: consent.createdAt,
       }));

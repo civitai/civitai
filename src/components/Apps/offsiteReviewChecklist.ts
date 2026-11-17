@@ -87,8 +87,8 @@ export function unjustifiedSensitiveScopeKeys(data: {
   connectRequestedScopes?: number | null;
   connectScopeJustifications?: Record<string, string> | null;
 }): string[] {
-  const sensitiveRequested = (data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
-  if (sensitiveRequested === 0) return [];
+  const sensitiveRequested = BigInt(data.connectRequestedScopes ?? 0) & SENSITIVE_TOKEN_SCOPES;
+  if (sensitiveRequested === 0n) return [];
   const justifications = data.connectScopeJustifications ?? {};
   return tokenScopeMaskToList(sensitiveRequested)
     .filter(({ key }) => {

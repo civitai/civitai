@@ -428,15 +428,23 @@ export function isDetailsStepComplete(values: OffsiteSubmitFormValues): boolean 
 // OAuth client). Client-side mirror of the SERVICE checks
 // (`loadConnectClientForListing` / `assertConnectScopesValid`) so the CREATE form
 // surfaces inline errors before the round-trip; the SERVER stays source of truth.
+//
+// The masks here are form state, held as the JSON numbers tRPC carries; each one is widened to a
+// bigint before any bitwise operation (a `number` bitwise operator is 32-bit).
 // ---------------------------------------------------------------------------
 
 /** The enum-key for a scope bit (used as the justification-map key). */
-export function scopeKeyForBit(bit: number): string {
-  return tokenScopeKeyByBit(bit) ?? String(bit);
+export function scopeKeyForBit(bit: number | bigint): string {
+  return tokenScopeKeyByBit(BigInt(bit)) ?? String(bit);
 }
 
 /** One expanded scope row from a mask: `{ bit, key, label }`. */
 export type ScopeEntry = { bit: number; key: string; label: string };
+
+const toScopeEntry = (s: { bit: bigint; key: string; label: string }): ScopeEntry => ({
+  ...s,
+  bit: Number(s.bit),
+});
 
 /**
  * Split a requested-scope mask into SENSITIVE vs NON-SENSITIVE rows (each
@@ -446,14 +454,14 @@ export type ScopeEntry = { bit: number; key: string; label: string };
  * Justified`) and the mod-review `ConnectScopesPanel` use, so the author sees
  * exactly the scopes that will require a justification before approval. PURE.
  */
-export function partitionScopesBySensitivity(mask: number): {
+export function partitionScopesBySensitivity(mask: number | bigint): {
   sensitive: ScopeEntry[];
   nonSensitive: ScopeEntry[];
 } {
-  const scopes = tokenScopeMaskToList(mask);
+  const scopes = tokenScopeMaskToList(BigInt(mask));
   return {
-    sensitive: scopes.filter((s) => isSensitiveTokenScope(s.bit)),
-    nonSensitive: scopes.filter((s) => !isSensitiveTokenScope(s.bit)),
+    sensitive: scopes.filter((s) => isSensitiveTokenScope(s.bit)).map(toScopeEntry),
+    nonSensitive: scopes.filter((s) => !isSensitiveTokenScope(s.bit)).map(toScopeEntry),
   };
 }
 
@@ -477,9 +485,9 @@ export function missingSensitiveJustifications(values: OffsiteSubmitFormValues):
  */
 export function shapeSensitiveJustifications(
   justifications: Record<string, string>,
-  mask: number
+  mask: number | bigint
 ): Record<string, string> {
-  return shapeScopeJustifications(justifications, mask & SENSITIVE_TOKEN_SCOPES);
+  return shapeScopeJustifications(justifications, BigInt(mask) & SENSITIVE_TOKEN_SCOPES);
 }
 
 /**
@@ -508,9 +516,9 @@ export function scopeJustificationError(values: OffsiteSubmitFormValues): string
  */
 export function pruneJustificationsToMask(
   justifications: Record<string, string>,
-  mask: number
+  mask: number | bigint
 ): Record<string, string> {
-  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
     if (keys.has(key)) out[key] = text;
@@ -544,9 +552,9 @@ export function deriveScopesFromClient(
  */
 export function shapeScopeJustifications(
   justifications: Record<string, string>,
-  mask: number
+  mask: number | bigint
 ): Record<string, string> {
-  const keys = new Set(tokenScopeMaskToList(mask).map((s) => s.key));
+  const keys = new Set(tokenScopeMaskToList(BigInt(mask)).map((s) => s.key));
   const out: Record<string, string> = {};
   for (const [key, text] of Object.entries(justifications)) {
     const trimmed = text.trim();
@@ -571,7 +579,7 @@ export function validateConnectFields(
     errors.connectClientId = 'Choose one of your OAuth apps.';
   }
 
-  if (!connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes)) {
+  if (!connectScopesSubsetOfCeiling(BigInt(values.requestedScopes), BigInt(allowedScopes))) {
     errors.requestedScopes = 'A requested scope is not allowed by this OAuth app.';
   }
 
@@ -617,7 +625,7 @@ export function isClientStepComplete(
 ): boolean {
   return (
     !!values.connectClientId &&
-    connectScopesSubsetOfCeiling(values.requestedScopes, allowedScopes) &&
+    connectScopesSubsetOfCeiling(BigInt(values.requestedScopes), BigInt(allowedScopes)) &&
     scopeJustificationError(values) === undefined
   );
 }

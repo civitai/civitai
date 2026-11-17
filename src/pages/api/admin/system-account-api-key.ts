@@ -24,14 +24,14 @@ const MAX_EXPIRY_DAYS = 365;
 
 // Any named scope inside Full. The opt-in bits above Full are left out; NON_USER_SCOPES among them
 // may only be minted by their own grants, never onto a User key.
-const GRANTABLE_SCOPES = Object.fromEntries(
+const GRANTABLE_SCOPES: Record<string, bigint> = Object.fromEntries(
   Object.entries(TokenScope).filter(
-    ([name, bit]) => bit !== 0 && name !== 'Full' && (TokenScope.Full & bit) === bit
+    ([name, bit]) => bit !== 0n && name !== 'Full' && (TokenScope.Full & bit) === bit
   )
-) as Record<string, number>;
+);
 
 const scopeMask = (names: string[]) =>
-  names.reduce((mask, name) => mask | (GRANTABLE_SCOPES[name] ?? 0), 0);
+  names.reduce((mask, name) => mask | (GRANTABLE_SCOPES[name] ?? 0n), 0n);
 
 // Without `scopes` a key stays read-only.
 const DEFAULT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;
@@ -123,7 +123,15 @@ export default HeaderTokenSecuredEndpoint(
     logToAxiom({
       type: minted instanceof Error || !auditRecorded ? 'error' : 'info',
       name: 'system-account-api-key-minted',
-      details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId, auditRecorded },
+      details: {
+        userId,
+        keyId,
+        name,
+        // Numbers in JSON (no bigint there; every scope bit is below 2^53).
+        tokenScope: Number(tokenScope),
+        asserted_actor: actorUserId,
+        auditRecorded,
+      },
     });
 
     // Never throws. The outcome is read from the table rather than from deleteApiKeys' result.
@@ -171,7 +179,7 @@ export default HeaderTokenSecuredEndpoint(
       userId,
       keyId: minted.id,
       name,
-      tokenScope,
+      tokenScope: Number(tokenScope),
       expiresAt: minted.expiresAt,
       rotated,
       auditRecorded,

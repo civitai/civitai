@@ -8,9 +8,8 @@ import {
 } from '~/server/services/download-link/download-link.store';
 import { getRequestCredential } from '~/server/auth/request-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
-import { Flags } from '~/shared/utils/flags';
 
 const BEARER_RE = /^Bearer\s+(\S+)\s*$/i;
 
@@ -35,7 +34,7 @@ export async function resolveDownloadLinkMinter(req: NextApiRequest): Promise<Mi
     const credential: DownloadLinkCredential = { kind: 'client', id: String(session.subject.id) };
     if (
       session.apiKeyType !== ApiKeyType.Access ||
-      !Flags.hasFlag(session.tokenScope, TokenScope.DownloadLink) ||
+      !hasScope(session.tokenScope, TokenScope.DownloadLink) ||
       !isAllowlistedMinter(credential)
     )
       return { ok: false, status: 403 };

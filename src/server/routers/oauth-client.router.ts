@@ -100,13 +100,14 @@ export const oauthClientRouter = router({
         },
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
-      return client;
+      // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
+      return { ...client, allowedScopes: Number(client.allowedScopes) };
     }),
 
   // Get all clients owned by the current user
   getAll: protectedProcedure.meta({ requiredScope: TokenScope.UserRead }).query(async ({ ctx }) => {
     if (ctx.user.id === constants.system.user.id) return [];
-    return dbRead.oauthClient.findMany({
+    const clients = await dbRead.oauthClient.findMany({
       where: { userId: ctx.user.id },
       select: {
         id: true,
@@ -124,6 +125,8 @@ export const oauthClientRouter = router({
       },
       orderBy: { createdAt: 'desc' },
     });
+    // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
+    return clients.map((client) => ({ ...client, allowedScopes: Number(client.allowedScopes) }));
   }),
 
   // MODERATOR-ONLY global OAuth-client search (App-Blocks external-submit mod picker).
@@ -192,7 +195,9 @@ export const oauthClientRouter = router({
         nextCursor = nextItem?.id;
       }
 
-      return { items: rows, nextCursor };
+      // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
+      const items = rows.map((row) => ({ ...row, allowedScopes: Number(row.allowedScopes) }));
+      return { items, nextCursor };
     }),
 
   // Register a new OAuth client
@@ -275,7 +280,8 @@ export const oauthClientRouter = router({
             };
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
-      return result;
+      // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
+      return { ...result, allowedScopes: Number(result.allowedScopes) };
     }),
 
   // Rotate client secret

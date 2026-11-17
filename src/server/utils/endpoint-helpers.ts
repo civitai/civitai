@@ -15,8 +15,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
@@ -943,21 +942,22 @@ export function OrchestratorEndpoint(
     token: string
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[],
-  requiredScope: number
+  requiredScope: bigint
 ) {
   return AuthedEndpoint(async (req, res, user) => {
     // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
     const credential = getRequestCredential(req);
     if (
       credential.tokenScope !== TokenScope.Full &&
-      !Flags.hasFlag(credential.tokenScope, requiredScope)
+      !hasScope(credential.tokenScope, requiredScope)
     ) {
       // No user, key or IP.
       logToAxiom({
         name: 'orchestrator-endpoint-scope-refused',
         type: 'info',
         route: req.url?.split('?')[0],
-        requiredScope,
+        // A number: the log line is JSON, which has no bigint (every scope bit is below 2^53).
+        requiredScope: Number(requiredScope),
         ...credentialLogFields(credential),
       });
       return res

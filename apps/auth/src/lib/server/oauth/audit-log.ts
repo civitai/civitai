@@ -23,7 +23,7 @@ interface OAuthAuditEvent {
   type: OAuthEventType;
   userId?: number;
   clientId?: string;
-  scope?: number;
+  scope?: bigint;
   ip?: string;
   metadata?: Record<string, unknown>;
 }
@@ -40,6 +40,8 @@ export function logOAuthEvent(event: OAuthAuditEvent): void {
   const entry = {
     timestamp: new Date().toISOString(),
     ...event,
+    // A number: the log line is JSON, which has no bigint (every scope bit is below 2^53).
+    scope: event.scope === undefined ? undefined : Number(event.scope),
   };
 
   // Dual-write to Loki (via the @civitai/axiom stderr line) + Axiom. Fire-and-forget — never blocks the

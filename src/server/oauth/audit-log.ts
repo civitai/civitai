@@ -16,7 +16,7 @@ interface OAuthAuditEvent {
   type: OAuthEventType;
   userId?: number;
   clientId?: string;
-  scope?: number;
+  scope?: bigint;
   ip?: string;
   metadata?: Record<string, unknown>;
 }
@@ -33,6 +33,8 @@ export function logOAuthEvent(event: OAuthAuditEvent): void {
   const entry = {
     timestamp: new Date().toISOString(),
     ...event,
+    // A number: JSON has no bigint (every scope bit is below 2^53).
+    scope: event.scope === undefined ? undefined : Number(event.scope),
   };
 
   // Log as structured JSON for log aggregation (Axiom, etc.)
