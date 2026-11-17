@@ -198,6 +198,9 @@ describe('fileCsamReport', () => {
     expect(createCsamReport).toHaveBeenCalledWith(
       expect.objectContaining({ writeBlocklist: false })
     );
+    const [removedAt] = softDeleteUser.mock.invocationCallOrder;
+    const writtenAt = vi.mocked(bulkAddBlockedImages).mock.invocationCallOrder.at(-1)!;
+    expect(removedAt).toBeLessThan(writtenAt);
   });
 
   it('still writes the hashes when the account removal throws, then throws its error', async () => {
