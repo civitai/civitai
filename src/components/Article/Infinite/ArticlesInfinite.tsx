@@ -21,18 +21,11 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function ArticlesInfinite({ searchable, ...props }: Props & { searchable?: boolean }) {
-  if (props.searchText) return <SearchableArticlesFeed {...props} />;
-  return searchable ? <PageQueryArticlesFeed {...props} /> : <ArticlesFeed {...props} />;
-}
-
-// Only a feed that can be searched pays for the flag lookup and reads the page's `?query=`.
-function PageQueryArticlesFeed(props: Props) {
+export function ArticlesInfinite({ searchable, ...props }: Props) {
   const features = useFeatureFlags();
-  const feedQuery = useFeedSearchQuery();
-  const searchText = features.articleFeedSearch ? feedQuery : undefined;
-  return searchText ? (
-    <SearchableArticlesFeed {...props} searchText={searchText} />
+  // Only a searchable feed with the flag reads the page's `?query=` and pays for the query checks.
+  return searchable && features.articleFeedSearch ? (
+    <SearchableArticlesFeed {...props} />
   ) : (
     <ArticlesFeed {...props} />
   );
@@ -52,26 +45,33 @@ function useInfiniteArticleFilters({ filters: filterOverrides = {}, disableStore
 
 function SearchableArticlesFeed(props: Props) {
   const filters = useInfiniteArticleFilters(props);
+  const searchText = useFeedSearchQuery();
   // A ?query= can arrive by link or redirect, past the search bar's own checks.
-  const { refusal, profanityMatches } = useSearchRefusal(props.searchText, 'articles_semantic');
-  const search = useSemanticArticleFeed(filters, refusal ? undefined : props.searchText);
+  const { refusal, profanityMatches } = useSearchRefusal(searchText, 'articles_semantic');
+  const search = useSemanticArticleFeed(filters, refusal ? undefined : searchText);
   useScrollToTopOnChange(search.searchKey);
   if (refusal) return <SearchRefusalNotice refusal={refusal} profanityMatches={profanityMatches} />;
-  return <ArticlesFeed {...props} search={search} />;
+  return searchText ? (
+    <ArticlesFeed {...props} search={{ text: searchText, ...search }} />
+  ) : (
+    <ArticlesFeed {...props} />
+  );
 }
+
+type FeedSearch = ReturnType<typeof useSemanticArticleFeed> & { text: string };
 
 function ArticlesFeed({
   showEof = false,
   showEmptyCta,
   search,
   ...props
-}: Props & { search?: ReturnType<typeof useSemanticArticleFeed> }) {
+}: Props & { search?: FeedSearch }) {
   const filters = useInfiniteArticleFilters(props);
   const searchFailed = !!search?.isError;
   const searching = !!search && !searchFailed;
   const feed = useQueryArticles(
     // The feed's own query is a title match, used only as the fallback.
-    { ...filters, query: search ? props.searchText : undefined },
+    { ...filters, query: search?.text },
     { keepPreviousData: true, enabled: !searching }
   );
   const { articles, fetchNextPage, hasNextPage, isRefetching, isFetching } =
@@ -79,10 +79,10 @@ function ArticlesFeed({
 
   return (
     <>
-      {search && props.searchText && (
+      {search && (
         <FeedSearchSummary
           noun="Articles"
-          query={props.searchText}
+          query={search.text}
           correctedQuery={searching ? search.correctedQuery : undefined}
           failed={searchFailed}
           onRetry={() => search.refetch()}
@@ -132,6 +132,6 @@ type Props = {
   showEof?: boolean;
   showEmptyCta?: boolean;
   disableStoreFilters?: boolean;
-  /** Text to search the feed by; without it, `searchable` reads the page's `?query=`. */
-  searchText?: string;
+  /** The feed answers the page's `?query=` with the semantic search, under articleFeedSearch. */
+  searchable?: boolean;
 };
