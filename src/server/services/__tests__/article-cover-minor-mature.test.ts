@@ -56,12 +56,18 @@ const viewers: Record<string, Viewer> = {
   'a moderator': { id: MOD, isModerator: true },
 };
 
-const cover = (nsfwLevel: number, minor: boolean | null, imageOwner = OWNER) => ({
+const cover = (
+  nsfwLevel: number,
+  minor: boolean | null,
+  imageOwner = OWNER,
+  modelRestricted = false
+) => ({
   id: COVER,
   userId: imageOwner,
   url: 'u',
   nsfwLevel,
   minor,
+  modelRestricted,
   ingestion: 'Scanned',
   needsReview: null,
   meta: null,
@@ -201,7 +207,15 @@ describe("getArticleById and a withheld cover's legacy key", () => {
     }
   );
 
+  it.each(['a signed-out viewer', 'a stranger'])(
+    '🔴 clears it for %s when the cover is restricted by its base model',
+    async (who) => {
+      expect(await legacyCover(cover(4, false, OWNER, true), viewers[who])).toBeNull();
+    }
+  );
+
   it.each(['the owner', 'a moderator'])('keeps it for %s (control)', async (who) => {
+    expect(await legacyCover(cover(4, false, OWNER, true), viewers[who])).toBe('cover-key');
     expect(await legacyCover(cover(4, true), viewers[who])).toBe('cover-key');
     withheldByItsModel();
     expect(await legacyCover(cover(1, null), viewers[who])).toBe('cover-key');
@@ -247,6 +261,7 @@ describe('getArticleById body images', () => {
     url: BODY_UUID,
     nsfwLevel,
     minor,
+    modelRestricted: false,
     userId: OWNER,
     ingestion: 'Scanned',
     needsReview: null,

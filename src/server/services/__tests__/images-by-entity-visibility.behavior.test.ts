@@ -47,7 +47,8 @@ beforeAll(async () => {
       hash text, "hideMeta" boolean DEFAULT false, meta jsonb, "createdAt" timestamp DEFAULT now(),
       "mimeType" text, type text DEFAULT 'image', metadata jsonb, "scannedAt" timestamp,
       "needsReview" text, "blockedFor" text, "userId" int DEFAULT ${OWNER}, index int DEFAULT 0,
-      poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned'
+      poi boolean, minor boolean, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
+      "modelRestricted" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES

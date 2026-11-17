@@ -129,7 +129,8 @@ export async function searchSemanticArticles({
     namedUserIds && followedIds
       ? namedUserIds.filter((id) => followedIds.includes(id))
       : namedUserIds ?? followedIds;
-  // A named user or tag that does not exist, no one followed, or an empty list can match nothing.
+  // Matches nothing: any unknown tag; usernames none of which exist (or none followed); an empty list.
+  // An unknown username among known ones is dropped.
   if (userIds && !userIds.length) return none;
   if (listedIds && !listedIds.length) return none;
   if (namedTagIds && namedTagIds.length < new Set(input.tagNames).size) return none;

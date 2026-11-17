@@ -30,7 +30,7 @@ export function resolveSearchTarget(
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
 type FeedSearchFlags = Partial<
-  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch'>
+  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch' | 'servicesFeedSearch'>
 >;
 
 /**
@@ -78,6 +78,8 @@ export function searchesFeedInPlace(
   pathname: string,
   section?: unknown
 ) {
+  // /services has no search index, so there only the bar's default target (`models`) filters it.
+  if (pathname === '/services') return !!features.servicesFeedSearch && index === 'models';
   const feed = FEED_SEARCH[index as keyof typeof FEED_SEARCH];
   if (!feed || !features[feed.flag]) return false;
   if (pathname === feed.pathname) return true;
