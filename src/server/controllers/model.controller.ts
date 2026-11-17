@@ -40,6 +40,7 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
@@ -121,7 +122,12 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
-import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
+import {
+  canSeeCollectionDetails,
+  getCollectionById,
+  getCollectionItemCount,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -2563,7 +2569,13 @@ export async function copyGalleryBrowsingLevelHandler({
   }
 }
 
-export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
+export async function getModelCollectionShowcaseHandler({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetByIdInput;
+}) {
   try {
     const model = await readModelMetaViaKysely(
       await getKyselyWithoutLag('model', input.id),
@@ -2574,7 +2586,15 @@ export async function getModelCollectionShowcaseHandler({ input }: { input: GetB
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
+    const permissions = await getUserCollectionPermissionsById({
+      id: modelMeta.showcaseCollectionId,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
+    if (!canSeeCollectionDetails(permissions)) return null;
+
     const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    if (!canReadCollectionItems(permissions)) return { ...collection, itemCount: null };
     const [itemCount] = await getCollectionItemCount({
       collectionIds: [collection.id],
       status: CollectionItemStatus.ACCEPTED,
