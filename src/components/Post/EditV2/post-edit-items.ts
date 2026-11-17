@@ -67,3 +67,34 @@ export function imageOnlyReorderIndexes(
   if (!hasText) return reordered.map((_, i) => i);
   return reordered.map((image) => image.index ?? 0).sort((a, b) => a - b);
 }
+
+export type SavedPosition = { type: 'image' | 'text'; id: number; index: number };
+
+/**
+ * The editor's images and texts with the indexes the server saved (`reorderPostImages`). Those can
+ * differ from the editor's own when the post has images the editor does not show, which keep their
+ * place; a text added next takes its index from these.
+ */
+export function withSavedPositions(
+  images: ControlledImage[],
+  texts: PostEditTextDetail[],
+  positions: SavedPosition[]
+) {
+  const saved = (type: SavedPosition['type']) =>
+    new Map(positions.filter((p) => p.type === type).map((p) => [p.id, p.index]));
+  const imageIndex = saved('image');
+  const textIndex = saved('text');
+  return {
+    images: images.map((image) =>
+      image.type === 'added' && imageIndex.has(image.data.id)
+        ? ({
+            ...image,
+            data: { ...image.data, index: imageIndex.get(image.data.id)! },
+          } as ControlledImage)
+        : image
+    ),
+    texts: texts.map((text) =>
+      textIndex.has(text.id) ? { ...text, index: textIndex.get(text.id)! } : text
+    ),
+  };
+}

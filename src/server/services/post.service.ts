@@ -2203,35 +2203,69 @@ export const removeResourceFromPostImage = async ({
 };
 
 /**
+ * The indexes of the post's images the editor did not list: held for review, or above the
+ * request's level cap (`getPostEditImages`). A reorder leaves them where they are, so a hidden
+ * image keeps its place in the version's first 20 (`imageDerivedVersionLevelSql`).
+ */
+async function hiddenImageIndexes(postId: number, listedImageIds: number[]) {
+  const hidden = await dbWrite.image.findMany({
+    where: { postId, id: { notIn: listedImageIds } },
+    select: { index: true },
+  });
+  return new Set(hidden.map((image) => image.index ?? 0));
+}
+
+/** `count` indexes from 0 up, skipping the `taken` ones. */
+function freeIndexes(count: number, taken: Set<number>) {
+  const indexes: number[] = [];
+  for (let index = 0; indexes.length < count; index++) if (!taken.has(index)) indexes.push(index);
+  return indexes;
+}
+
+/**
  * Without `items` (an editor from before text items, or with them off), a post that has text keeps
- * every text row where it is: the listed images take, in order, the indexes those images already hold.
+ * every text row where it is: the listed images take, in order, the indexes those images already
+ * hold. Otherwise they are numbered from 0, around the images the editor did not list.
  */
 async function imageOnlyReorder(postId: number, imageIds: number[]) {
   const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
-  if (!hasText) return imageIds.map((id, index) => ({ id, index }));
+  if (!hasText) {
+    const indexes = freeIndexes(imageIds.length, await hiddenImageIndexes(postId, imageIds));
+    return imageIds.map((id, i) => ({ type: 'image' as const, id, index: indexes[i] }));
+  }
   const held = await dbWrite.image.findMany({
     where: { postId, id: { in: imageIds } },
     select: { index: true },
   });
   const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
-  return imageIds.slice(0, indexes.length).map((id, i) => ({ id, index: indexes[i] }));
+  return imageIds
+    .slice(0, indexes.length)
+    .map((id, i) => ({ type: 'image' as const, id, index: indexes[i] }));
 }
 
+/** The editor's whole reading order, numbered from 0 around the images it did not list. */
+async function itemsReorder(postId: number, items: NonNullable<ReorderPostImagesInput['items']>) {
+  const imageIds = items.filter((item) => item.type === 'image').map((item) => item.id);
+  const indexes = freeIndexes(items.length, await hiddenImageIndexes(postId, imageIds));
+  return items.map(({ type, id }, i) => ({ type, id, index: indexes[i] }));
+}
+
+/** Writes the editor's order and returns the index each listed item now has. */
 export const reorderPostImages = async ({
   id: postId,
   imageIds,
   items,
 }: ReorderPostImagesInput) => {
-  const writes = items
-    ? items.map(({ type, id }, index) =>
-        type === 'image'
-          ? dbWrite.image.update({ where: { id, postId }, data: { index } })
-          : dbWrite.postText.update({ where: { id, postId }, data: { index } })
-      )
-    : (await imageOnlyReorder(postId, imageIds)).map(({ id, index }) =>
-        dbWrite.image.update({ where: { id, postId }, data: { index } })
-      );
-  const transaction = await dbWrite.$transaction(writes);
+  const positions = items
+    ? await itemsReorder(postId, items)
+    : await imageOnlyReorder(postId, imageIds);
+  await dbWrite.$transaction(
+    positions.map(({ type, id, index }) =>
+      type === 'image'
+        ? dbWrite.image.update({ where: { id, postId }, data: { index } })
+        : dbWrite.postText.update({ where: { id, postId }, data: { index } })
+    )
+  );
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);
@@ -2240,7 +2274,7 @@ export const reorderPostImages = async ({
     { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
   ]);
 
-  return transaction;
+  return positions;
 };
 
 /**

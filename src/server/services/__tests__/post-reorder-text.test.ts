@@ -16,6 +16,8 @@ describe('reorderPostImages with storyline text items', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     w.$transaction.mockResolvedValue([] as never);
+    // No image hidden from the editor unless a test says so.
+    w.image.findMany.mockResolvedValue([] as never);
   });
 
   it('writes the position of every item, images and text, when given `items`', async () => {
@@ -67,6 +69,7 @@ describe('reorderPostImages with storyline text items', () => {
 
     vi.clearAllMocks();
     w.$transaction.mockResolvedValue([] as never);
+    w.image.findMany.mockResolvedValue([] as never);
     w.postText.count.mockResolvedValue(0 as never);
     await reorderPostImages({ id: POST, imageIds: [12, 10] });
     expect(imageIndexes().map(([, index]) => index)).toEqual(

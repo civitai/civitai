@@ -19,6 +19,7 @@ import {
   imageOnlyReorderIndexes,
   mergeEditorItems,
   reorderPayload,
+  withSavedPositions,
 } from '~/components/Post/EditV2/post-edit-items';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -251,16 +252,22 @@ function SortableImage({ image, sortableId }: ItemProps) {
 export function ReorderImagesButton() {
   const queryUtils = trpc.useUtils();
   const textOn = !!useFeatureFlags().storylineText;
-  const [post, images, texts, isReordering, toggleReordering] = usePostEditStore((state) => [
-    state.post,
-    state.images,
-    state.texts,
-    state.isReordering,
-    state.toggleReordering,
-  ]);
+  const [post, images, texts, isReordering, toggleReordering, setImages, setTexts] =
+    usePostEditStore((state) => [
+      state.post,
+      state.images,
+      state.texts,
+      state.isReordering,
+      state.toggleReordering,
+      state.setImages,
+      state.setTexts,
+    ]);
 
   const { mutate, isPending: isLoading } = trpc.post.reorderImages.useMutation({
-    async onSuccess() {
+    async onSuccess(positions) {
+      // The saved indexes, not the editor's guess: they differ around images the editor hides.
+      setImages((current) => withSavedPositions(current, [], positions).images);
+      setTexts((current) => withSavedPositions([], current, positions).texts);
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();
     },
