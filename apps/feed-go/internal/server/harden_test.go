@@ -674,8 +674,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 18 {
-		t.Fatalf("checked %d per-endpoint families, want 18 (a family was renamed or lost)", checked)
+	if checked != 19 {
+		t.Fatalf("checked %d per-endpoint families, want 19 (a family was renamed or lost)", checked)
 	}
 }
 

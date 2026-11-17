@@ -12,6 +12,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/inputschema"
 )
 
 // Sort values (ImageSort in src/server/common/enums.ts).
@@ -59,12 +60,43 @@ type Input struct {
 	IncludeProfilePictures bool
 }
 
+// imagesSchema is getInfiniteImagesSchema's allow-list and defaults (why: the inputschema package doc).
+var imagesSchema = inputschema.Get(inputschema.InfiniteImages)
+
+// imagesDefaults are the schema defaults parseInput and ParseV1 start from, decoded once at package
+// init (a schemas.json without one panics at startup, not on a request).
+var imagesDefaults = struct {
+	limit                    int
+	sort, period, periodMode string
+}{
+	limit: imagesSchema.DefaultInt("limit"), sort: imagesSchema.DefaultString("sort"),
+	period: imagesSchema.DefaultString("period"), periodMode: imagesSchema.DefaultString("periodMode"),
+}
+
+// trpcTransportKeys are keys the site's tRPC client adds to every input and zod strips: `authed`
+// (authedCacheBypassLink, signed in) and `direction` (an infinite query's paging direction).
+var trpcTransportKeys = map[string]bool{"authed": true, "direction": true}
+
+// parsedKeys are the schema keys parseInput reads; ignoredKeys the ones neither page source reads
+// (hat*, includePG13, remixesOnly, nonRemixesOnly, hideAutoResources, hideManualResources — the
+// feed-service path drops the last four in withoutUnservedFilters). With unsupportedKeys they are
+// every key of the schema (TestInputKeyLedger), so a key added to it must be classified.
+var (
+	parsedKeys = []string{
+		"limit", "cursor", "sort", "period", "periodMode", "browsingLevel", "preCapBrowsingLevel",
+		"modelId", "modelVersionId", "model3dId", "types", "generation", "withMeta", "requiringMeta",
+		"remixOfId", "fromPlatform", "disablePoi", "disableMinor", "hideChallenges", "excludedTagIds",
+		"excludedUserIds", "include",
+	}
+	ignoredKeys = []string{
+		"hatSort", "hatTeams", "hatTurfMine", "hideTurfHats", "hideWornHats", "includePG13",
+		"remixesOnly", "nonRemixesOnly", "hideAutoResources", "hideManualResources",
+	}
+)
+
 // unsupportedKeys are input keys that change the query in ways not ported yet. Present with a
-// non-empty value, they make the request fall back. Keys outside the schema are ignored (zod strips
-// them), and so are schema keys neither page source reads (hat*, includePG13, remixesOnly,
-// nonRemixesOnly, hideAutoResources, hideManualResources — the feed-service path drops the last four
-// in withoutUnservedFilters). `requiringMeta` and `remixOfId` are read only on the feed-service path,
-// where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
+// non-empty value, they make the request fall back. `requiringMeta` and `remixOfId` are read only on
+// the feed-service path, where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
 var unsupportedKeys = []string{
 	"collectionId", "collectionTagId", "postId", "postIds", "userId", "username", "hubId",
 	"hubExcludedSources", "imageId", "reviewId", "skip", "ids", "tags", "techniques", "tools",
@@ -89,7 +121,14 @@ func parseInput(m map[string]any, unsupported []string) (*Input, error) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
 		}
 	}
-	in := &Input{Limit: 100, Sort: SortMostReactions, Period: "AllTime", PeriodMode: "published"}
+	// After unsupported keys so the reason names the parity gap.
+	if k, ok := imagesSchema.Unknown(mapKeys(m), trpcTransportKeys); ok {
+		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	}
+	in := &Input{
+		Limit: imagesDefaults.limit, Sort: imagesDefaults.sort, Period: imagesDefaults.period,
+		PeriodMode: imagesDefaults.periodMode,
+	}
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {
 		if in.Limit, err = intIn(v, 0, 200); err != nil {
@@ -211,6 +250,14 @@ func (in *Input) ApplyDomainCap(cap int) (browsingLevel int, preCap *int) {
 		browsingLevel = *in.BrowsingLevel
 	}
 	return browsingLevel, in.PreCapBrowsingLevel
+}
+
+func mapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func isEmpty(v any) bool {
