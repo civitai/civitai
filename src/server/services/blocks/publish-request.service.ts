@@ -282,11 +282,6 @@ export type SubmitListingReadiness = {
 
 const MANIFEST_PATH = 'block.manifest.json';
 
-/** Org holding the per-slug in-review snapshot repos a review preview builds
- *  from. Deliberately separate from the canonical build org so commits here
- *  never fire the production build webhook. */
-const REVIEW_REPO_ORG = FORGEJO_REVIEW_ORG;
-
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
 // scannable in the mod-review UI.
@@ -1482,7 +1477,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: REVIEW_REPO_ORG,
+      org: FORGEJO_REVIEW_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -5718,7 +5713,7 @@ async function reviewRepoAlreadyHoldsTree(
 ): Promise<boolean> {
   try {
     const { listRepoTree } = await import('./forgejo.service');
-    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    const tree = await listRepoTree(slug, 'main', FORGEJO_REVIEW_ORG);
     if (tree.size !== files.length) return false;
     const seen = new Set<string>();
     for (const file of files) {
@@ -5799,7 +5794,7 @@ async function resolveReviewSourceSha(request: {
   }
 
   const { sha } = await commitFiles({
-    org: REVIEW_REPO_ORG,
+    org: FORGEJO_REVIEW_ORG,
     slug: request.slug,
     files,
     message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,
