@@ -950,11 +950,13 @@ async function holdForDecision(claim: SendClaim, holdCase: SendHoldCase, reason:
   const unconfirmed = report.details?.unconfirmedOpens ?? [];
   const fields = {
     message: `report ${report.id} held (${holdCase}): ${reason}`,
-    case: holdCase,
-    hoursPending: hoursSinceFiled(report),
     ncmecReportId: report.reportId ?? undefined,
-    possibleDuplicateReportIds: possibleDuplicates,
-    unconfirmedOpens: unconfirmed.length,
+    payload: {
+      case: holdCase,
+      hoursPending: hoursSinceFiled(report),
+      possibleDuplicateReportIds: possibleDuplicates,
+      unconfirmedOpens: unconfirmed.length,
+    },
   };
   logSendLine(claim, 'send-held', fields, 'error');
   logSendLine(claim, 'send-decision-needed', fields, 'error');

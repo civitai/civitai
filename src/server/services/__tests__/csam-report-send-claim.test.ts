@@ -433,7 +433,11 @@ describe('a report the send cannot file', () => {
 
       expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
       expect(submitReport).not.toHaveBeenCalled();
-      const held = expect.objectContaining({ type: 'error', reportId: 1, case: 'missing-user' });
+      const held = expect.objectContaining({
+        type: 'error',
+        reportId: 1,
+        payload: expect.objectContaining({ case: 'missing-user' }),
+      });
       expect(lines('send-held')).toEqual([held]);
       expect(lines('send-decision-needed')).toEqual([held]);
       expect(writesWith('details')).toEqual([
@@ -597,11 +601,20 @@ describe('a stored CyberTip id NCMEC answers for', () => {
 
 describe('a report that may have a CyberTip at NCMEC', () => {
   it.each([
-    ['a stored CyberTip', { reportId: 77 }, { ncmecReportId: 77 }],
+    [
+      'a stored CyberTip',
+      { reportId: 77 },
+      { ncmecReportId: 77, payload: expect.objectContaining({ case: 'missing-user' }) },
+    ],
     [
       'a possible duplicate noted',
       { details: { possibleDuplicateReportIds: [6] } },
-      { possibleDuplicateReportIds: [6] },
+      {
+        payload: expect.objectContaining({
+          case: 'missing-user',
+          possibleDuplicateReportIds: [6],
+        }),
+      },
     ],
   ])(
     'keeps a report with %s and no reported user over two runs, opening and cancelling nothing',
@@ -617,7 +630,6 @@ describe('a report that may have a CyberTip at NCMEC', () => {
       const hold = expect.objectContaining({
         type: 'error',
         reportId: 1,
-        case: 'missing-user',
         ...named,
       });
       expect(lines('send-held')).toEqual([hold, hold]);
