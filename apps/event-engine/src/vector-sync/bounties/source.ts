@@ -86,8 +86,9 @@ export async function getBountyDocs(
        b.complete, b.refunded,
        EXISTS (SELECT 1 FROM "BountyEntry" be WHERE be."bountyId" = b.id) AS "hasEntries",
        b."userId", u.username,
-       (SELECT array_agg(t.name ORDER BY t.name) FROM "TagsOnBounty" tob
-          JOIN "Tag" t ON t.id = tob."tagId" WHERE tob."bountyId" = b.id) AS tags
+       -- Tag.name is citext, whose array node-pg returns unparsed: cast, as models/source.ts does.
+       COALESCE((SELECT array_agg(t.name::text ORDER BY t.name) FROM "TagsOnBounty" tob
+          JOIN "Tag" t ON t.id = tob."tagId" WHERE tob."bountyId" = b.id), '{}') AS tags
      FROM "Bounty" b
      JOIN "User" u ON u.id = b."userId"
      WHERE b.id = ANY($1::int[]) AND ${BOUNTY_ELIGIBLE_SQL}`,
