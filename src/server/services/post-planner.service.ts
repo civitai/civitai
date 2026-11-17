@@ -108,7 +108,7 @@ export async function getScheduledPosts({
   user: SessionUser;
   /**
    * `requestServableLevels(ctx)`: the cover and count hold to it, as the editor does. The owner's
-   * own held image may still be the cover (Moderation Lead ruling for the calendar).
+   * own held image may still be the cover.
    */
   servableLevels: number;
   from: Date;
