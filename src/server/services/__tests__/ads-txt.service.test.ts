@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ADS_TXT_SOURCES,
   AdsTxtUnavailableError,
   buildAdsTxt,
-  isAcceptableBody,
+  judgeAdsTxtBody,
   mergeAdsTxt,
   type AdsTxtDeps,
 } from '~/server/services/ads-txt.service';
@@ -29,6 +29,10 @@ const sparteoBody = [
   '## END actirise.com ##',
 ].join('\n');
 
+const clock = { now: new Date('2026-11-17T20:00:00Z') };
+const HOUR = 60 * 60 * 1000;
+const advance = (ms: number) => (clock.now = new Date(clock.now.getTime() + ms));
+
 function fakeDeps(overrides: Partial<AdsTxtDeps> & { bodies?: Record<string, string> } = {}) {
   const store = new Map<string, { body: string; fetchedAt: string; recordCount: number }>();
   const bodies = overrides.bodies ?? { [SNIGEL.url]: snigelBody, [SPARTEO.url]: sparteoBody };
@@ -39,7 +43,7 @@ function fakeDeps(overrides: Partial<AdsTxtDeps> & { bodies?: Record<string, str
         : { status: 500, contentType: 'text/plain', body: '' },
     getLastGood: async (name) => store.get(name),
     setLastGood: async (name, value) => void store.set(name, value),
-    now: () => new Date('2026-11-17T20:00:00Z'),
+    now: () => clock.now,
     log: vi.fn(),
     ...overrides,
   };
@@ -51,8 +55,8 @@ const recordLines = (text: string) =>
 
 describe('mergeAdsTxt', () => {
   const merged = mergeAdsTxt([
-    { name: 'snigel', body: snigelBody, fetchedAt: 't1' },
-    { name: 'sparteo', body: sparteoBody, fetchedAt: 't2' },
+    { name: 'snigel', body: snigelBody, note: 'fetched t1' },
+    { name: 'sparteo', body: sparteoBody, note: 'fetched t2' },
   ]);
 
   it('keeps every record from both sources, a record in both once, under the first', () => {
@@ -67,27 +71,93 @@ describe('mergeAdsTxt', () => {
   });
 
   it('declares one owner domain and one global manager, whatever case the sources use', () => {
-    expect(merged.match(/^OWNERDOMAIN=/gim)).toEqual(['OWNERDOMAIN=']);
+    expect(merged.match(/^OWNERDOMAIN=.*$/gim)).toEqual(['OWNERDOMAIN=civitai.com']);
     expect(merged.match(/^MANAGERDOMAIN=.*$/gim)).toEqual(['MANAGERDOMAIN=snigelweb.com']);
     expect(merged).toContain('\nCONTACT=ads@partner-a.test\n');
   });
 });
 
-describe('isAcceptableBody', () => {
+describe('judgeAdsTxtBody', () => {
   it('rejects an HTML page served with a 200', () => {
-    expect(
-      isAcceptableBody('<!DOCTYPE html><html>google.com, 1, DIRECT</html>', 'text/plain')
-    ).toBe(false);
-    expect(isAcceptableBody(snigelBody, 'text/html; charset=utf-8')).toBe(false);
+    expect(judgeAdsTxtBody('<!DOCTYPE html><html>google.com, 1, DIRECT</html>', 'text/plain')).toBe(
+      'invalid'
+    );
+    expect(judgeAdsTxtBody(snigelBody, 'text/html; charset=utf-8')).toBe('invalid');
   });
 
-  it('rejects a body that lost more than half of its last good records', () => {
-    expect(isAcceptableBody('google.com, pub-111, DIRECT', 'text/plain', 3)).toBe(false);
-    expect(isAcceptableBody(snigelBody, 'text/plain', 3)).toBe(true);
+  it('flags a body that lost more than half of its last good records', () => {
+    expect(judgeAdsTxtBody('google.com, pub-111, DIRECT', 'text/plain', 3)).toBe('shrunk');
+    expect(judgeAdsTxtBody(snigelBody, 'text/plain', 3)).toBe('ok');
   });
 });
 
 describe('buildAdsTxt', () => {
+  beforeEach(() => {
+    clock.now = new Date('2026-11-17T20:00:00Z');
+  });
+
+  const shrunkSnigel = 'google.com, pub-111, DIRECT';
+  const withSnigel = (deps: AdsTxtDeps, response: { status: number; body: string }) => ({
+    ...deps,
+    fetchSource: async (url: string) =>
+      url === SNIGEL.url ? { ...response, contentType: 'text/plain' } : deps.fetchSource(url),
+  });
+
+  it('keeps serving the stored copy when a source suddenly loses most of its records', async () => {
+    const { deps, store } = fakeDeps();
+    await buildAdsTxt(deps);
+    const file = await buildAdsTxt(withSnigel(deps, { status: 200, body: shrunkSnigel }));
+    expect(file).toContain('appnexus.com, 10040, RESELLER');
+    expect(store.get('snigel')?.recordCount).toBe(3);
+    expect(store.get('snigel')?.body).toBe(snigelBody);
+  });
+
+  it('accepts the smaller file once it has been served for a day', async () => {
+    const { deps, store } = fakeDeps();
+    await buildAdsTxt(deps);
+    const shrunk = withSnigel(deps, { status: 200, body: shrunkSnigel });
+    await buildAdsTxt(shrunk);
+    advance(23 * HOUR);
+    expect(recordLines(await buildAdsTxt(shrunk))).toContain('appnexus.com, 10040, RESELLER');
+    advance(2 * HOUR);
+    const file = await buildAdsTxt(shrunk);
+    expect(file).not.toContain('rubiconproject.com');
+    expect(store.get('snigel')?.recordCount).toBe(1);
+  });
+
+  it('serves the stored copy when a source answers a non-200 that still looks like a file', async () => {
+    const { deps } = fakeDeps();
+    await buildAdsTxt(deps);
+    const file = await buildAdsTxt(
+      withSnigel(deps, { status: 404, body: `${snigelBody}\ngoogle.com, other, DIRECT` })
+    );
+    expect(file).toContain('appnexus.com, 10040, RESELLER');
+    expect(file).not.toContain('google.com, other, DIRECT');
+  });
+
+  it('labels a replayed section as such', async () => {
+    const { deps } = fakeDeps();
+    await buildAdsTxt(deps);
+    const file = await buildAdsTxt(withSnigel(deps, { status: 500, body: '' }));
+    expect(file).toContain(
+      '# snigel (upstream unavailable; last good copy confirmed 2026-11-17T20:00:00.000Z)'
+    );
+    expect(file).toContain('# sparteo (fetched ');
+  });
+
+  it('drops an optional source gone for over a week, but never the primary seller', async () => {
+    const { deps } = fakeDeps();
+    await buildAdsTxt(deps);
+    advance(8 * 24 * HOUR);
+    const allDown = {
+      ...deps,
+      fetchSource: async () => ({ status: 500, contentType: null, body: '' }),
+    };
+    const file = await buildAdsTxt(allDown);
+    expect(file).not.toContain('# sparteo');
+    expect(file).toContain('appnexus.com, 10040, RESELLER');
+  });
+
   it('merges both sources and stores each as its last good copy', async () => {
     const { deps, store } = fakeDeps();
     const file = await buildAdsTxt(deps);

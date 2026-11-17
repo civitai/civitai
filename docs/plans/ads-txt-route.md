@@ -24,8 +24,8 @@ no hand edits, and that never serves something worse than today's file.
   answering through `respondWithText` (`text/plain; charset=utf-8`).
 - Host gate with `getRequestDomainColor`: green (civitai.com) serves the merged file; every other
   color keeps today's 404, so .red is unchanged.
-- Add `ads.txt` to `excludedFiles` and `regionMiddlewareMatcher` in
-  `src/server/middleware/region-middleware-utils.ts` (as `robots.txt` is), so a crawler in a
+- Add `ads.txt` to `excludedFiles` in `src/server/middleware/region-middleware-utils.ts` (as `robots.txt`
+  is), so a crawler in a
   restricted region gets the file rather than the region-blocked redirect.
 - Sources are one list in code (`ADS_TXT_SOURCES`), each `{ name, url, required }`. Adding or dropping a partner is a one-line PR;
   nobody edits partner lines.
@@ -49,14 +49,16 @@ no hand edits, and that never serves something worse than today's file.
 
 - `Cache-Control: public, max-age=3600, stale-while-revalidate=86400`. Crawlers fetch ads.txt about daily,
   and partner changes reach the file within an hour.
-- An upstream body is accepted only if it is a 200, is not HTML, and parses to at least half of that
-  source's last good record count (an error page served with a 200 must not empty a section).
-- The last good body for each source is kept in `dbKV` (Postgres), written only when it changes; the built
-  file is memoized per pod for an hour. When a fetch fails or is rejected,
-  that source's last good body is used and the failure is logged.
-- If the ad stack's source has never been fetched successfully (cold Redis and upstream down), the route
+- An upstream body is used only if it is a 200, is not HTML and has records. A body with under half the
+  records of the stored copy is held back for 24 hours (the stored copy is served meanwhile), then accepted,
+  so a truncated response cannot empty a section and a real reduction still lands.
+- The last good body for each source is kept in `dbKV` (Postgres), written when it changes and at most every
+  6 hours otherwise; the built file is memoized per pod for an hour. A failed or rejected fetch serves that
+  copy, labelled in its section comment with the last time the upstream answered.
+- If the ad stack's source has never been fetched successfully (cold store and upstream down), the route
   answers 302 to the ad stack's hosted URL, which is today's behavior, instead of a file without it.
-- If only the partner's source is missing, the file is served without it. That equals today's file.
+- If only the partner's source is missing, or its upstream has been gone for over 7 days, the file is served
+  without it. That equals today's file.
 
 ## Tests
 

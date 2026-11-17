@@ -23,12 +23,27 @@ export const ADS_TXT_MANAGER_DOMAIN = 'snigelweb.com';
 export const ADS_TXT_FALLBACK_URL = ADS_TXT_SOURCES[0].url;
 
 const FETCH_TIMEOUT_MS = 5_000;
-const MEMO_TTL_MS = 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const MEMO_TTL_MS = HOUR_MS;
+/** How long a smaller file must keep being served before it replaces the stored copy. */
+const SHRINK_GRACE_MS = 24 * HOUR_MS;
+/** Bounds last-good writes for an unchanged file; `checkedAt` is only as fresh as this. */
+const CHECK_WRITE_INTERVAL_MS = 6 * HOUR_MS;
+/** An optional source whose upstream has been gone this long is dropped rather than replayed. */
+const OPTIONAL_FALLBACK_MAX_AGE_MS = 7 * 24 * HOUR_MS;
 const lastGoodKey = (name: string) => `ads-txt:last-good:${name}`;
 
 type AdsTxtRecord = { line: string; key: string };
 type AdsTxtVariable = { key: string; value: string };
-type SourceBody = { body: string; fetchedAt: string; recordCount: number };
+type SourceBody = {
+  body: string;
+  fetchedAt: string;
+  recordCount: number;
+  /** Last time the upstream served an accepted body. */
+  checkedAt?: string;
+  /** First rejection of a smaller body still pending its grace period. */
+  shrinkSince?: string;
+};
 
 export function parseAdsTxt(text: string) {
   const records: AdsTxtRecord[] = [];
@@ -53,15 +68,22 @@ export function parseAdsTxt(text: string) {
   return { records, variables };
 }
 
-/** A 200 that is HTML, or that lost more than half its records, is an error page, not a file. */
-export function isAcceptableBody(body: string, contentType: string | null, lastGoodCount = 0) {
+type BodyVerdict = 'ok' | 'shrunk' | 'invalid';
+
+/** An HTML page or an empty body is an error page; losing over half the records may be one. */
+export function judgeAdsTxtBody(
+  body: string,
+  contentType: string | null,
+  lastGoodCount = 0
+): BodyVerdict {
   if (contentType?.toLowerCase().includes('text/html') || body.trimStart().startsWith('<'))
-    return false;
+    return 'invalid';
   const count = parseAdsTxt(body).records.length;
-  return count > 0 && count * 2 >= lastGoodCount;
+  if (count === 0) return 'invalid';
+  return count * 2 >= lastGoodCount ? 'ok' : 'shrunk';
 }
 
-export function mergeAdsTxt(sources: { name: string; body: string; fetchedAt: string }[]) {
+export function mergeAdsTxt(sources: { name: string; body: string; note: string }[]) {
   const seen = new Set<string>();
   const contacts = new Set<string>();
   const otherVariables = new Set<string>();
@@ -75,7 +97,7 @@ export function mergeAdsTxt(sources: { name: string; body: string; fetchedAt: st
       else otherVariables.add(`${key}=${value}`);
     }
     const lines = records.filter((r) => !seen.has(r.key)).map((r) => (seen.add(r.key), r.line));
-    sections.push([`# ${source.name} (fetched ${source.fetchedAt})`, ...lines].join('\n'));
+    sections.push([`# ${source.name} (${source.note})`, ...lines].join('\n'));
   }
 
   const header = [
@@ -114,34 +136,62 @@ const defaultDeps: AdsTxtDeps = {
   log: (data) => logToAxiom({ name: 'ads-txt', type: 'warning', ...data }).catch(() => undefined),
 };
 
+const ageMs = (now: Date, iso: string | undefined) =>
+  iso ? now.getTime() - Date.parse(iso) : Infinity;
+
 async function resolveSource(source: AdsTxtSource, deps: AdsTxtDeps) {
   const lastGood = await deps.getLastGood(source.name).catch(() => undefined);
+  const now = deps.now();
+  const store = (value: SourceBody) =>
+    deps
+      .setLastGood(source.name, value)
+      .catch((error: Error) =>
+        deps.log({ message: 'last-good write failed', source: source.name, error: error.message })
+      );
+
   try {
     const res = await deps.fetchSource(source.url);
-    if (res.status === 200 && isAcceptableBody(res.body, res.contentType, lastGood?.recordCount)) {
+    const verdict =
+      res.status === 200
+        ? judgeAdsTxtBody(res.body, res.contentType, lastGood?.recordCount)
+        : 'invalid';
+    const shrinkSettled =
+      verdict === 'shrunk' &&
+      !!lastGood?.shrinkSince &&
+      ageMs(now, lastGood.shrinkSince) >= SHRINK_GRACE_MS;
+    if (verdict === 'ok' || shrinkSettled) {
+      const changed = res.body !== lastGood?.body;
       const fresh: SourceBody = {
         body: res.body,
-        fetchedAt: deps.now().toISOString(),
+        fetchedAt: changed || !lastGood ? now.toISOString() : lastGood.fetchedAt,
         recordCount: parseAdsTxt(res.body).records.length,
+        checkedAt: now.toISOString(),
       };
-      if (fresh.body !== lastGood?.body) {
-        await deps
-          .setLastGood(source.name, fresh)
-          .catch((error: Error) =>
-            deps.log({
-              message: 'last-good write failed',
-              source: source.name,
-              error: error.message,
-            })
-          );
-      }
-      return fresh;
+      if (
+        changed ||
+        lastGood?.shrinkSince ||
+        ageMs(now, lastGood?.checkedAt) >= CHECK_WRITE_INTERVAL_MS
+      )
+        await store(fresh);
+      return { body: fresh.body, note: `fetched ${fresh.checkedAt}` };
     }
-    deps.log({ message: 'upstream rejected', source: source.name, status: res.status });
+    if (verdict === 'shrunk' && lastGood && !lastGood.shrinkSince)
+      await store({ ...lastGood, shrinkSince: now.toISOString() });
+    deps.log({ message: 'upstream rejected', source: source.name, status: res.status, verdict });
   } catch (error) {
     deps.log({ message: 'upstream failed', source: source.name, error: (error as Error).message });
   }
-  return lastGood;
+
+  if (!lastGood) return undefined;
+  const confirmedAt = lastGood.checkedAt ?? lastGood.fetchedAt;
+  if (!source.required && ageMs(now, confirmedAt) > OPTIONAL_FALLBACK_MAX_AGE_MS) {
+    deps.log({ message: 'stored copy too old, source dropped', source: source.name });
+    return undefined;
+  }
+  return {
+    body: lastGood.body,
+    note: `upstream unavailable; last good copy confirmed ${confirmedAt}`,
+  };
 }
 
 export async function buildAdsTxt(deps: AdsTxtDeps = defaultDeps) {
@@ -152,9 +202,7 @@ export async function buildAdsTxt(deps: AdsTxtDeps = defaultDeps) {
   if (missingRequired)
     throw new AdsTxtUnavailableError(`no copy of ${missingRequired.source.name}`);
   return mergeAdsTxt(
-    resolved.flatMap(({ source, body }) =>
-      body ? [{ name: source.name, body: body.body, fetchedAt: body.fetchedAt }] : []
-    )
+    resolved.flatMap(({ source, body }) => (body ? [{ name: source.name, ...body }] : []))
   );
 }
 
