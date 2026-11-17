@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
@@ -158,5 +162,28 @@ describe('getPostEditDetail model', () => {
       getPostEditDetail({ id: 1, user: viewer(MODEL_OWNER), servableLevels: allBrowsingLevelsFlag })
     ).rejects.toThrow();
     expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPostEditDetail level cap', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('reads the post images held to the servable levels it was given', async () => {
+    givenPost({ publishedAt: null, modelVersionId: null });
+    vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([] as never);
+
+    await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: sfwBrowsingLevelsFlag,
+    });
+
+    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([{ nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] } }]),
+        }),
+      })
+    );
   });
 });

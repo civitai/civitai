@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { Sql } from '@prisma/client/runtime/library';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PostService from '~/server/services/post.service';
@@ -747,6 +750,16 @@ describe('getPlannerPostDetail', () => {
     tools: [],
     techniques: [],
     ...overrides,
+  });
+
+  it('reads the post through the editor at the servable levels it was given', async () => {
+    getPostEditDetail.mockResolvedValue(editDetail());
+
+    await getPlannerPostDetail({ id: 11, user: OWNER, servableLevels: sfwBrowsingLevelsFlag });
+
+    expect(getPostEditDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 11, servableLevels: sfwBrowsingLevelsFlag })
+    );
   });
 
   it('refuses another user’s post even though the edit loader admits moderators', async () => {
