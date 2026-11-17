@@ -1180,7 +1180,6 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // OauthClient.allowedOrigins. Mirrors how trustTier is server-owned.
   const { env } = await import('~/env/server');
   stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
-  // Store tagline/repository as the validator measures them (trimmed).
   trimManifestStringFields(manifest);
 
   // 🔴 Before the pending-conflict check, so a non-owner learns nothing about pending state. One
@@ -2332,8 +2331,7 @@ export async function recordPendingFromPush(args: {
   /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
   pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
-  // The one store sink for both the git-push webhook and the web manifest editor: store
-  // tagline/repository as the validator measures them (trimmed).
+  // Single sink for every push-recorded manifest.
   trimManifestStringFields(args.manifest as Record<string, unknown>);
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
@@ -3400,7 +3398,6 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // makes the value the validator (below), the app_blocks.manifest write, and
   // the committed block.manifest.json (step 5) all see consistent.
   stampCanonicalIframeSrc(manifest, request.slug, env.APPS_DOMAIN);
-  // Store tagline/repository as the validator measures them (trimmed) in app_blocks.manifest.
   trimManifestStringFields(manifest);
 
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
