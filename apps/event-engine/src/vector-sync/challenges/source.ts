@@ -14,7 +14,8 @@ export const CHALLENGE_ELIGIBLE_SQL = `c."ingestion" = 'Scanned'
   AND c."coverImageId" IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)
   AND (c.source <> 'User' OR EXISTS (
-    SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'))
+    SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'
+      AND i."nsfwLevel" != 0))
   AND c.status <> 'Cancelled'
   AND NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId"
     AND (i."tosViolation" OR i."needsReview" IS NOT NULL OR i.minor OR i."blockedFor" IS NOT NULL
