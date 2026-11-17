@@ -741,7 +741,7 @@ export async function resolveScanOutcome({
       name: 'scan-outcome-read-back',
       imageId: image.id,
       message: error.message,
-    }).catch(() => null);
+    });
     return [];
   });
   if (written?.blockedFor === BlockedReason.CSAM) {
