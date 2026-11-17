@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { fakeVersionedBucket } from '~/__tests__/mocks/fake-versioned-bucket';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -582,11 +583,11 @@ describe('an image whose key shop artwork uses', () => {
     await deleteImageById({ id: 4242, ...args });
 
     const sent = mockB2Send.mock.calls.map(([command]) => command.constructor.name);
-    expect(sent).toEqual(
-      allVersions
-        ? ['ListObjectVersionsCommand', 'ListObjectVersionsCommand']
-        : ['DeleteObjectCommand']
-    );
+    // The object is gone either way; an all-versions delete never deletes by key alone.
+    if (allVersions) {
+      expect(sent).toContain('ListObjectVersionsCommand');
+      expect(sent).not.toContain('DeleteObjectCommand');
+    } else expect(sent).toEqual(['DeleteObjectCommand']);
     expect(invalidateCalls()).toHaveLength(1);
   });
 
@@ -655,5 +656,56 @@ describe('imagesWithOpenReports', () => {
     `);
 
     expect([...reported].sort()).toEqual([1, 2, 3]);
+  });
+});
+
+describe('a moderator delete', () => {
+  const OWNER = 7;
+  const MOD = 99;
+  let bucket: ReturnType<typeof fakeVersionedBucket>;
+  // `kept`: a hold marker's trigger kept the row, so the DELETE returns nothing.
+  const deleted = ({ kept = false } = {}) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (!text.includes('DELETE FROM "Image"') || kept) return [];
+      return [
+        {
+          url: KEY,
+          postId: null,
+          nsfwLevel: 1,
+          userId: OWNER,
+          metadata: null,
+          ingestion: 'Scanned',
+          needsReview: null,
+          blockedFor: null,
+        },
+      ];
+    }) as never);
+  beforeEach(() => {
+    bucket = fakeVersionedBucket();
+    bucket.putVersion(KEY);
+    bucket.putVersion(KEY);
+    bucket.putDeleteMarker(KEY);
+    mockGetB2ImageS3Client.mockReturnValue({ send: bucket.send });
+  });
+
+  it('removes every version of an unblocked image', async () => {
+    deleted();
+    await deleteImageById({ id: 4242, deletedById: MOD, moderatorDelete: true });
+    expect(bucket.entriesFor(KEY)).toHaveLength(0);
+  });
+
+  it("leaves the versions of an owner's delete of the same image", async () => {
+    deleted();
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+    expect(bucket.calls).toEqual(['delete-key']);
+    expect(bucket.entriesFor(KEY)).toHaveLength(4);
+  });
+
+  it('removes nothing of an image a hold kept', async () => {
+    deleted({ kept: true });
+    await deleteImageById({ id: 4242, deletedById: MOD, moderatorDelete: true });
+    expect(bucket.calls).toEqual([]);
+    expect(bucket.entriesFor(KEY)).toHaveLength(3);
   });
 });

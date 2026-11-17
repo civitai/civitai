@@ -564,11 +564,15 @@ type DeleteImageFromS3Args = {
   retractionGate?: RetractionGate;
 } & PurgeResizeCacheRetraction;
 
-/** A blocked image, or one under CSAM review, leaves no object version behind when deleted. */
+/**
+ * Whether a delete removes every version of the stored object: a moderator's delete, or a blocked
+ * image, or one under CSAM review.
+ */
 export function purgesAllVersions(
-  image: Parameters<typeof hasBlockMarker>[0] & { needsReview: string | null }
+  image: Parameters<typeof hasBlockMarker>[0] & { needsReview: string | null },
+  moderatorDelete = false
 ): boolean {
-  return hasBlockMarker(image) || image.needsReview === 'csam';
+  return moderatorDelete || hasBlockMarker(image) || image.needsReview === 'csam';
 }
 
 /**
@@ -904,7 +908,13 @@ export const deleteImageById = async ({
   id,
   updatePost,
   deletedById,
-}: GetByIdInput & { updatePost?: boolean; deletedById?: number }) => {
+  moderatorDelete = false,
+}: GetByIdInput & {
+  updatePost?: boolean;
+  deletedById?: number;
+  /** A moderator ordered it: every version of the stored object goes. */
+  moderatorDelete?: boolean;
+}) => {
   updatePost ??= true;
   try {
     // Resolved BEFORE the delete: `CollectionItem.imageId` is `onDelete: Cascade`, so
@@ -963,7 +973,7 @@ export const deleteImageById = async ({
       deleteImageFromS3({
         id,
         url: image.url,
-        allVersions: purgesAllVersions(image),
+        allVersions: purgesAllVersions(image, moderatorDelete),
         keepShopArtwork: isPlainOwnerDelete({ ...image, openReport }, deletedById),
       }),
       queueImageSearchIndexUpdate({
@@ -1072,9 +1082,12 @@ export async function deleteImages(
     retractPublicBlobs = false,
     onlyWhere,
     retractionGate = newRetractionGate(),
+    moderatorDelete = false,
   }: PurgeResizeCacheRetraction & {
     /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
     onlyWhere?: Prisma.Sql;
+    /** A moderator ordered it: every version of each stored object goes. */
+    moderatorDelete?: boolean;
     /** Once set (by a 429 or a timeout here or earlier in the caller's run), no retraction is sent;
      *  those rows come back `busy` so the caller can queue them. */
     retractionGate?: RetractionGate;
@@ -1154,6 +1167,7 @@ export async function deleteImages(
     ]);
 
     const deleted = await deleteFromStorage(results, {
+      moderatorDelete,
       retractPublicBlobs,
       retractionGate,
       ownLimit,
@@ -1186,10 +1200,12 @@ export const RETRACTING_STORAGE_DELETE_TIMEOUT_MS = 30_000;
 async function deleteFromStorage(
   rows: Omit<DeletedImageRow, 'retraction'>[],
   {
+    moderatorDelete,
     retractPublicBlobs,
     retractionGate,
     ownLimit,
   }: Required<PurgeResizeCacheRetraction> & {
+    moderatorDelete: boolean;
     retractionGate: RetractionGate;
     ownLimit: LimitFunction;
   }
@@ -1200,7 +1216,11 @@ async function deleteFromStorage(
       async (rows) =>
         await Promise.all(
           rows.map((row) =>
-            deleteImageFromS3({ id: row.id, url: row.url, allVersions: purgesAllVersions(row) })
+            deleteImageFromS3({
+              id: row.id,
+              url: row.url,
+              allVersions: purgesAllVersions(row, moderatorDelete),
+            })
           )
         )
     );
@@ -1212,7 +1232,7 @@ async function deleteFromStorage(
         const { purge } = await deleteImageFromStorage({
           id: row.id,
           url: row.url,
-          allVersions: purgesAllVersions(row),
+          allVersions: purgesAllVersions(row, moderatorDelete),
           retractPublicBlobs,
           retractionGate,
           // A failed object delete is queued for its own retry, and the purge still runs.

@@ -192,7 +192,11 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
+    const image = await deleteImageById({
+      ...input,
+      deletedById: ctx.user.id,
+      moderatorDelete: !!ctx.user.isModerator,
+    });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.

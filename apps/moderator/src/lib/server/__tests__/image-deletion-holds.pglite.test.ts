@@ -12,10 +12,11 @@ import type { ImageKeptReason } from '$lib/image-kept-reasons';
 
 /** A moderator delete refuses any image a CSAM review, block, report or owner hold covers. */
 
-const { dbHandle, deletedKeys, purgedKeys, purgeFails } = vi.hoisted(() => ({
+// `deletedKeys`: files removed with every version; `keyOnlyDeletes`: deletes that would leave versions.
+const { dbHandle, deletedKeys, keyOnlyDeletes, purgeFails } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   deletedKeys: [] as string[],
-  purgedKeys: [] as string[],
+  keyOnlyDeletes: [] as string[],
   purgeFails: { current: false },
 }));
 
@@ -32,11 +33,11 @@ vi.mock('../db', () => ({
 vi.mock('../storage', () => ({
   getStorage: () => ({
     deleteObject: async ({ key }: { key: string }) => {
-      deletedKeys.push(key);
+      keyOnlyDeletes.push(key);
     },
     purgeObjectVersions: async ({ key }: { key: string }) => {
       if (purgeFails.current) throw new Error('Versions remain');
-      purgedKeys.push(key);
+      deletedKeys.push(key);
       return { versionsDeleted: 2, remaining: 0 };
     },
   }),
@@ -91,6 +92,12 @@ CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "CdnQueued" ("imageId" INTEGER);
+CREATE TYPE "EntityType" AS ENUM ('Image');
+CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete');
+CREATE TABLE "JobQueue" (
+  "entityId" INTEGER, "entityType" "EntityType", "type" "JobQueueType", "data" JSONB,
+  PRIMARY KEY ("entityType", "entityId", "type")
+);
 CREATE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
   RETURNS void LANGUAGE sql AS $$ INSERT INTO "CdnQueued" VALUES (entity_id) $$;
 `;
@@ -103,7 +110,7 @@ let db: PGlite;
 
 beforeEach(async () => {
   deletedKeys.length = 0;
-  purgedKeys.length = 0;
+  keyOnlyDeletes.length = 0;
   purgeFails.current = false;
   db = await freshPglite();
   await db.exec(SCHEMA);
@@ -196,16 +203,12 @@ describe('deleteImageRows', () => {
     expect(rows.refused).toEqual([]);
   });
 
-  it('purges every version of a blocked image, and deletes an unblocked one by key', async () => {
+  it('purges every version of each deleted image, never deleting by key alone', async () => {
     await image(2, { blockedFor: 'moderated' });
-    const rows = await deleteImages([PLAIN, 2]);
+    await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([]);
-    expect(purgedKeys).toEqual(['key-2']);
-    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
-    expect(rows.deleted.map((d) => [d.id, d.allVersions])).toEqual([
-      [PLAIN, false],
-      [2, true],
-    ]);
+    expect(deletedKeys.sort()).toEqual([`key-${PLAIN}`, 'key-2']);
+    expect(keyOnlyDeletes).toEqual([]);
   });
 
   it('reports a purge that did not verify', async () => {
@@ -214,14 +217,26 @@ describe('deleteImageRows', () => {
     const rows = await (dbHandle.current as Kysely<DB>)
       .transaction()
       .execute((trx) => deleteImageRows(trx, [PLAIN, 2]));
-    await expect(finishImageDeletes(rows)).resolves.toEqual({ storageFailed: [2] });
+    await expect(finishImageDeletes(rows)).resolves.toEqual({ storageFailed: [PLAIN, 2] });
+    // The main app's retry job works these, and keeps them all-versions purges.
+    const queued = await db.query<{ entityId: number; type: string; data: unknown }>(
+      `SELECT "entityId", type, data FROM "JobQueue" ORDER BY "entityId"`
+    );
+    expect(queued.rows).toEqual([
+      {
+        entityId: PLAIN,
+        type: 'ImageStorageDelete',
+        data: { url: `key-${PLAIN}`, allVersions: true },
+      },
+      { entityId: 2, type: 'ImageStorageDelete', data: { url: 'key-2', allVersions: true } },
+    ]);
   });
 
   it('purges nothing for a held image', async () => {
     await image(2, { needsReview: 'csam' });
     await deleteImages([PLAIN, 2]);
     expect(await remaining()).toEqual([2]);
-    expect(purgedKeys).toEqual([]);
+    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
   });
 
   it('deletes an image whose owner was named only on a report closed over a year ago', async () => {

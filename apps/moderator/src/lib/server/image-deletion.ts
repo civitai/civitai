@@ -2,7 +2,6 @@ import { sql } from '@civitai/db/kysely';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS, REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
-import { NsfwLevel } from '@civitai/shared';
 import { dbWrite } from './db';
 import { getStorage } from './storage';
 import { getSysRedis } from './redis';
@@ -20,27 +19,7 @@ type DeletedImage = {
   url: string | null;
   postId: number | null;
   parentId: number | null;
-  /** Its stored file goes with every version, not just the current one: see {@link purgesAllVersions}. */
-  allVersions: boolean;
 };
-
-/**
- * A blocked image (any block marker, as the main app's `hasBlockMarker`), or one under CSAM review,
- * leaves no object version behind when deleted.
- */
-export function purgesAllVersions(image: {
-  blockedFor: string | null;
-  needsReview: string | null;
-  ingestion: string | null;
-  nsfwLevel: number;
-}): boolean {
-  return (
-    image.blockedFor != null ||
-    image.ingestion === 'Blocked' ||
-    image.nsfwLevel === NsfwLevel.Blocked ||
-    image.needsReview === 'csam'
-  );
-}
 
 export type DeletedImageRows = {
   deleted: DeletedImage[];
@@ -105,16 +84,7 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
       .deleteFrom('Image')
       .where('id', '=', id)
       .where(deletable)
-      .returning([
-        'url',
-        'userId',
-        'postId',
-        'needsReview',
-        'blockedFor',
-        'ingestion',
-        'nsfwLevel',
-        thumbnailParentId.as('parentId'),
-      ])
+      .returning(['url', 'userId', 'postId', 'needsReview', thumbnailParentId.as('parentId')])
       .executeTakeFirst();
     // Only once the row is gone (no foreign key cascades these), so a kept image keeps its collections.
     await trx
@@ -134,13 +104,7 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
         userId: image.userId,
         csamReview: image.needsReview === 'csam',
       });
-    deleted.push({
-      id,
-      url: image.url,
-      postId: image.postId,
-      parentId: image.parentId,
-      allVersions: purgesAllVersions(image),
-    });
+    deleted.push({ id, url: image.url, postId: image.postId, parentId: image.parentId });
   }
   const heldLate = await heldImages(trx, notReturned);
   // An untouched image keeps its search entry; one the trigger blocked leaves search.
@@ -157,7 +121,8 @@ export async function deleteImageRows(trx: Kysely<DB>, ids: number[]): Promise<D
 
 /**
  * Everything after the rows are gone: storage, caches, search, post levels. Best-effort; returns the
- * images whose stored file could not be deleted (for an all-versions purge: verified gone).
+ * images whose stored file was not verified gone. Every delete here is a moderator's, so each stored
+ * file goes with all its versions.
  */
 export async function finishImageDeletes({
   deleted,
@@ -179,16 +144,13 @@ export async function finishImageDeletes({
           .executeTakeFirst();
         if (!shared) {
           // Every image lives in the b2Image backend.
-          const target = { backend: 'b2Image', key: image.url } as const;
-          await (image.allVersions
-            ? getStorage().purgeObjectVersions(target)
-            : getStorage().deleteObject(target)
-          ).catch((err) => {
-            storageFailed.push(image.id);
-            logImageDeletionError(err, image.allVersions ? 'storage purge' : 'storage delete', [
-              image.id,
-            ]);
-          });
+          await getStorage()
+            .purgeObjectVersions({ backend: 'b2Image', key: image.url })
+            .catch(async (err) => {
+              storageFailed.push(image.id);
+              logImageDeletionError(err, 'storage purge', [image.id]);
+              await queueStorageRetry(image.id, image.url!);
+            });
         }
       }
 
@@ -232,6 +194,23 @@ export async function finishImageDeletes({
     }
   }
   return { storageFailed };
+}
+
+/**
+ * Hands a purge that did not verify to the main app's `retry-image-storage-deletes` job, the same row
+ * `queueImageStorageDeleteRetry` writes there: the Image row is gone, so this key is the only way back.
+ */
+async function queueStorageRetry(id: number, url: string) {
+  const data = JSON.stringify({ url, allVersions: true });
+  await sql`
+    INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+    VALUES (${id}, 'Image'::"EntityType", 'ImageStorageDelete'::"JobQueueType", ${data}::jsonb)
+    ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "data" = EXCLUDED."data"
+      WHERE "JobQueue"."data"->>'url' IS DISTINCT FROM EXCLUDED."data"->>'url'
+        OR (EXCLUDED."data"->>'allVersions' IS NOT NULL AND "JobQueue"."data"->>'allVersions' IS NULL)
+  `
+    .execute(dbWrite)
+    .catch((err) => logImageDeletionError(err, 'storage retry queue', [id]));
 }
 
 function logImageDeletionError(error: unknown, step: string, imageIds: number[]) {

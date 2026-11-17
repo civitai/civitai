@@ -2022,7 +2022,10 @@ export const removeAllContent = async ({
     await deleteImages(
       images.map((i) => i.id),
       true,
-      { onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}` }
+      {
+        onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+        moderatorDelete: true,
+      }
     );
     await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id IN (
       ${owned('Image')} AND NOT ${captureImageKeptSql('o')}
