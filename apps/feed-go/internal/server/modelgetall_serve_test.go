@@ -37,6 +37,15 @@ func serveModelsServer(reg *prometheus.Registry, on bool, ttl *trpc.CacheTTL) (s
 	return s, proxied, computes
 }
 
+// modelsFallbacks reads feed_go_fallback_total{feed_endpoint="model-getall",mode="serve",reason}.
+// Keyed on the endpoint: fallbackCount takes the first series with the reason, and the seeded
+// as-posts bulkhead series (0) would shadow this route's.
+func modelsFallbacks(t *testing.T, reg *prometheus.Registry, reason string) float64 {
+	t.Helper()
+	v, _ := metricValue(t, reg, "feed_go_fallback_total", map[string]string{"feed_endpoint": EndpointModelGetAll, "mode": "serve", "reason": reason})
+	return v
+}
+
 func modelsServeRequest(origin string) *http.Request {
 	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/trpc/model.getAll?input=%7B%22json%22%3A%7B%7D%7D", nil)
 	if origin != "" {
@@ -106,8 +115,8 @@ func TestServeModelGetAllOnKeepsTheGates(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s, proxied, computes := serveModelsServer(reg, true, nil)
 	s.ServeModelGetAllHTTP(httptest.NewRecorder(), modelsServeRequest(""))
-	if *proxied != 1 || *computes != 0 || fallbackCount(t, reg, "origin") != 1 {
-		t.Fatalf("no origin: proxied=%d computes=%d origin=%v, want 1, 0, 1", *proxied, *computes, fallbackCount(t, reg, "origin"))
+	if *proxied != 1 || *computes != 0 || modelsFallbacks(t, reg, "origin") != 1 {
+		t.Fatalf("no origin: proxied=%d computes=%d origin=%v, want 1, 0, 1", *proxied, *computes, modelsFallbacks(t, reg, "origin"))
 	}
 	s.MaxInFlight = 1
 	if !s.acquireServe() {
@@ -115,8 +124,8 @@ func TestServeModelGetAllOnKeepsTheGates(t *testing.T) {
 	}
 	s.ServeModelGetAllHTTP(httptest.NewRecorder(), modelsServeRequest("https://site.example"))
 	s.releaseServe()
-	if *proxied != 2 || *computes != 0 || fallbackCount(t, reg, "bulkhead") != 1 {
-		t.Fatalf("full pod: proxied=%d computes=%d bulkhead=%v, want 2, 0, 1", *proxied, *computes, fallbackCount(t, reg, "bulkhead"))
+	if *proxied != 2 || *computes != 0 || modelsFallbacks(t, reg, "bulkhead") != 1 {
+		t.Fatalf("full pod: proxied=%d computes=%d bulkhead=%v, want 2, 0, 1", *proxied, *computes, modelsFallbacks(t, reg, "bulkhead"))
 	}
 	// Positive control: with a slot free the same request is computed.
 	w := httptest.NewRecorder()
