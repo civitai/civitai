@@ -1,9 +1,11 @@
 import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
 import { toIndexedVersion, toIndexedVersions } from '~/server/search-index/models-index-versions';
 import { Prisma } from '@prisma/client';
+import { childBrowsingTagIds } from '@civitai/shared';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
 import { allowsDifferentLicenseOnMerges, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { dbRead } from '~/server/db/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -181,6 +183,11 @@ type PullDataResult = {
 export const withheldCoverIds = (model: { mode?: string | null }) =>
   isModelWithheld(model) ? { coverImageId: null, sfwCoverImageId: null } : {};
 
+const childTagIds = new Set(childBrowsingTagIds);
+/** Above PG13 and carrying one of `childBrowsingTagIds`: left out of every search document. */
+const isTaggedMatureImage = (image: { nsfwLevel: number; tags?: number[] }) =>
+  image.nsfwLevel > NsfwLevel.PG13 && !!image.tags?.some((tagId) => childTagIds.has(tagId));
+
 /**
  * The images a model's search document carries: the newest version of each distinct base model
  * keeps its images, so base-model-filtered cards can show a matching version's cover. The latest
@@ -216,7 +223,9 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
     coveredVersionIds.flatMap((versionId) =>
       images.filter(
         (image) =>
-          image.modelVersionId === versionId && image.availability !== Availability.Unsearchable
+          image.modelVersionId === versionId &&
+          image.availability !== Availability.Unsearchable &&
+          !isTaggedMatureImage(image)
       )
     )
   );

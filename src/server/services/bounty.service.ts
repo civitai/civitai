@@ -178,11 +178,12 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     period,
     baseModels,
     excludedUserIds,
+    ids,
   },
   select,
   viewer,
 }: {
-  input: GetInfiniteBountySchema;
+  input: GetInfiniteBountySchema & { ids?: number[] };
   select: TSelect;
   viewer?: BountyViewer;
 }) => {
@@ -225,6 +226,8 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   if (excludedUserIds?.length) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
+
+  if (ids) AND.push({ id: { in: ids } });
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
   if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
@@ -1217,7 +1220,7 @@ export const getBountyImages = async ({
       entityType: 'Bounty',
       image: { OR: imageOr },
     },
-    select: { image: { select: imageSelect } },
+    select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
@@ -1371,7 +1374,7 @@ export const getImagesForBounties = async ({
     },
     select: {
       entityId: true,
-      image: { select: imageSelect },
+      image: { select: { ...imageSelect, poi: true, minor: true } },
     },
   });
 

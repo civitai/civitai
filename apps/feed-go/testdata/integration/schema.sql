@@ -78,7 +78,8 @@ CREATE TABLE "Image" (
   minor               boolean NOT NULL DEFAULT false,
   poi                 boolean NOT NULL DEFAULT false,
   "acceptableMinor"   boolean NOT NULL DEFAULT false,
-  "modelRestricted"   boolean NOT NULL DEFAULT false
+  "modelRestricted"   boolean NOT NULL DEFAULT false,
+  "tosViolation"      boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE "ImageResourceNew" (

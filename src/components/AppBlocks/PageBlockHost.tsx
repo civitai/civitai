@@ -28,6 +28,7 @@ import {
   blockInitStorageMode,
   BLOCK_HOST_DEEP_LINK_BASE,
   BLOCK_HOST_SITE_NAVIGATION,
+  BLOCK_HOST_SHARE_LINK,
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
@@ -58,6 +59,14 @@ import {
   shouldEmitMidSessionLossBeacon,
   toHostGateStatus,
 } from './pageBlockHostLogic';
+import {
+  createShareLinkLimiter,
+  navigateWantsReplace,
+  performShareLink,
+  resolveBridgeLocation,
+  resolveShareLinkRequest,
+  SHARE_LINK_RATE_LIMITED_ERROR,
+} from './deepLinkLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import {
   buildCollectionFollowConsentCopy,
@@ -94,6 +103,7 @@ import { TrainingConsentBody } from './TrainingConsentBody';
 import {
   buildConfirmedStepConsentCopy,
   buildConfirmedStepDailyLimitCopy,
+  buildConfirmedStepStandingOfferCopy,
   CONFIRMED_STEP_UNCONFIRMED_NOTICE,
   confirmedStepReplyFromResult,
   isDailyLimitRefusal,
@@ -104,6 +114,7 @@ import {
   ConfirmedStepConsentBody,
   ConfirmedStepDailyLimitBody,
   ConfirmedStepNoticeBody,
+  type ConfirmedStepStandingChoice,
 } from './ConfirmedStepConsentBody';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import GuardedConfirmDialog from './GuardedConfirmDialog';
@@ -230,6 +241,7 @@ import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
+import { COARSE_POINTER_QUERY } from '~/utils/phone-layout';
 import { trpc } from '~/utils/trpc';
 import {
   sharedStorageErrorReply,
@@ -1466,6 +1478,33 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  const { search: routeSearch, hash: routeHash } = useMemo(
+    () => resolveBridgeLocation(router.asPath ?? ''),
+    [router.asPath]
+  );
+
+  // The href the host page is AT, for NAVIGATE's "already showing" check. 🔴 Written
+  // SYNCHRONOUSLY when the host pushes or replaces, because `router.asPath` lags an async
+  // push (two NAVIGATEs in one tick would compare the second against the pre-push path);
+  // resynced from `window.location` on `hashchange` / `popstate`, because a hash-only
+  // address-bar edit never reaches the router.
+  const currentHrefRef = useRef<string | null>(null);
+  useEffect(() => {
+    currentHrefRef.current = router.asPath ?? null;
+  }, [router.asPath]);
+  useEffect(() => {
+    const sync = () => {
+      const { pathname, search, hash } = window.location;
+      currentHrefRef.current = `${pathname}${search}${hash}`;
+    };
+    window.addEventListener('hashchange', sync);
+    window.addEventListener('popstate', sync);
+    return () => {
+      window.removeEventListener('hashchange', sync);
+      window.removeEventListener('popstate', sync);
+    };
+  }, []);
+
   // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
   // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
   // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
@@ -1488,11 +1527,13 @@ export function PageBlockHost({
       entityType: 'none',
       slug,
       subPath,
+      search: routeSearch,
+      hash: routeHash,
       viewerUserId: viewer?.id ?? null,
       viewerUsername: viewer?.username ?? null,
       theme,
     }),
-    [slug, subPath, viewer, theme]
+    [slug, subPath, routeSearch, routeHash, viewer, theme]
   );
 
   const buildInitPayload = useCallback(
@@ -2415,6 +2456,18 @@ export function PageBlockHost({
         window.open(req.href, '_blank', 'noopener');
         return;
       }
+      // `scroll: false`: an app's `#hash` names an element in the APP's document, and must
+      // not scroll the host page to a host element with that id.
+      if (req.scope === 'app') {
+        if (req.href === currentHrefRef.current) return;
+        currentHrefRef.current = req.href;
+        if (navigateWantsReplace(raw)) {
+          void router.replace(req.href, undefined, { shallow: true, scroll: false });
+          return;
+        }
+        void router.push(req.href, undefined, { shallow: true, scroll: false });
+        return;
+      }
       void router.push(req.href, undefined, req.shallow ? { shallow: true } : undefined);
     });
     return off;
@@ -2423,11 +2476,63 @@ export function PageBlockHost({
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
-  // subPath changes AFTER init.
+  // subPath, search or hash changes AFTER init — a search-only (`?take=2`) or
+  // hash-only move is a route change to a block that deep-links into its own state.
   useEffect(() => {
     if (!initSentRef.current || status !== 'ready') return;
-    send('ROUTE_CHANGED', { subPath });
-  }, [subPath, status, send]);
+    send('ROUTE_CHANGED', { subPath, search: routeSearch, hash: routeHash });
+  }, [subPath, routeSearch, routeHash, status, send]);
+
+  // 🔴 `performShareLink` IS CALLED SYNCHRONOUSLY IN THE HANDLER — no `await` before
+  // it. The clipboard and the share sheet need the transient user activation of the
+  // click inside the iframe, which an `await` can lose.
+  const shareLimiterRef = useRef<ReturnType<typeof createShareLinkLimiter> | null>(null);
+  useEffect(() => {
+    const off = onMessage<unknown>('SHARE_LINK', (raw) => {
+      const decision = resolveShareLinkRequest(raw, {
+        base: BLOCK_HOST_DEEP_LINK_BASE[surface],
+        slug,
+        origin: window.location.origin,
+        ready: readGateStatus() === 'ready',
+        reviewMode,
+        shareable: BLOCK_HOST_SHARE_LINK[surface],
+      });
+      if (decision.kind === 'drop') return;
+      if (decision.kind === 'refuse') {
+        send('SHARE_LINK_RESULT', { requestId: decision.requestId, error: decision.error });
+        return;
+      }
+      const limiter = (shareLimiterRef.current ??= createShareLinkLimiter());
+      if (!limiter.admit()) {
+        send('SHARE_LINK_RESULT', {
+          requestId: decision.requestId,
+          error: SHARE_LINK_RATE_LIMITED_ERROR,
+        });
+        return;
+      }
+      const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+      const activation = (nav as { userActivation?: { isActive?: boolean } } | undefined)
+        ?.userActivation;
+      void performShareLink(decision.url, {
+        userActivation: activation ? activation.isActive === true : null,
+        // Activation is page-wide (a click on host chrome counts); focus on THIS frame is
+        // what ties it to a click inside the app. See `performShareLink`.
+        frameHasFocus: iframeRef.current != null && document.activeElement === iframeRef.current,
+        coarsePointer:
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia(COARSE_POINTER_QUERY).matches,
+        clipboardWriteText: nav?.clipboard?.writeText
+          ? (text) => nav.clipboard.writeText(text)
+          : undefined,
+        share: typeof nav?.share === 'function' ? (data) => nav.share(data) : undefined,
+        canShare: typeof nav?.canShare === 'function' ? (data) => nav.canShare(data) : undefined,
+      }).then((result) => {
+        limiter.settle();
+        send('SHARE_LINK_RESULT', { requestId: decision.requestId, result });
+      });
+    });
+    return off;
+  }, [onMessage, send, readGateStatus, surface, slug, reviewMode]);
 
   // #5: page-visibility SUSPEND / RESUME — tell the block to pause work when its
   // tab is hidden and resume when shown (mirrors IframeHost). Only wired once the
@@ -5913,7 +6018,69 @@ export function PageBlockHost({
           showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
           return;
         }
+        // After a consent (click or standing): submit once and relay the outcome.
+        const submitConsented = async () => {
+          let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+          try {
+            result = await submitWorkflowMutation.mutateAsync({
+              blockToken: token,
+              // Schema-validated server-side and checked against the quote's
+              // body hash; the host never renders or trusts it.
+              body: body as never,
+            });
+          } catch (err) {
+            if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
+            // Never resent: the quote is spent once.
+            const failed = trainingSubmitReplyFromError(err);
+            settlement.reply(failed);
+            if ('error' in failed && failed.error === 'submission-unconfirmed') {
+              showUnconfirmedNotice(requestId);
+            }
+            return;
+          }
+          if (!reviewMode) {
+            reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
+          }
+          const reply = confirmedStepReplyFromResult(result);
+          settlement.reply(reply);
+          refreshBuzzCapNotice();
+          // The outcome is unknown and a retry would be a new, separately charged
+          // job: say so in host chrome, not only to the block.
+          if ('error' in reply && reply.error === 'submission-unconfirmed') {
+            showUnconfirmedNotice(requestId);
+          }
+          // The day's spend moved between preview and submit: tell the viewer
+          // the same thing the preview would have.
+          if (isDailyLimitRefusal(result.snapshot)) {
+            showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
+          }
+        };
+
+        if (preview.standing) {
+          let consented = false;
+          try {
+            await trpcUtils.client.blocks.consentQuoteGrantStanding.mutate({
+              blockToken: token,
+              quoteId,
+            });
+            consented = true;
+          } catch {
+            // Any refusal (limit moved, burst bound, flag off, an older server): ask instead.
+          }
+          if (consented) {
+            settlement.markConsented();
+            try {
+              await submitConsented();
+            } catch (err) {
+              settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+            }
+            return;
+          }
+        }
+
         const copy = buildConfirmedStepConsentCopy({ appName, preview });
+        const standingOffer = buildConfirmedStepStandingOfferCopy({ appName, preview });
+        let standingChoice: ConfirmedStepStandingChoice = { checked: false };
         const openBuyBuzz =
           preview.shortfall != null && preview.shortfall > 0
             ? () =>
@@ -5931,7 +6098,15 @@ export function PageBlockHost({
           props: {
             title: copy.title,
             message: (
-              <ConfirmedStepConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />
+              <ConfirmedStepConsentBody
+                copy={copy}
+                preview={preview}
+                onBuyBuzz={openBuyBuzz}
+                standingOffer={standingOffer}
+                onStandingChange={(choice) => {
+                  standingChoice = choice;
+                }}
+              />
             ),
             labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
             confirmProps: { color: 'blue' },
@@ -5941,45 +6116,23 @@ export function PageBlockHost({
               // able to claim `declined` for a job that is being submitted.
               settlement.markConsented();
               try {
+                if (standingChoice.checked) {
+                  // The opt-in is a preference: if it does not save, this job still runs
+                  // on the click, and the next one asks again.
+                  await trpcUtils.client.blocks.optInConfirmWithinLimit
+                    .mutate({
+                      appBlockId,
+                      maxJobBuzz: preview.total,
+                      buzzBudgetPerDay: standingChoice.limit,
+                    })
+                    .catch(() => undefined);
+                }
                 await trpcUtils.client.blocks.consentQuoteGrant.mutate({
                   kind: 'step',
                   blockToken: token,
                   quoteId,
                 });
-                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
-                try {
-                  result = await submitWorkflowMutation.mutateAsync({
-                    blockToken: token,
-                    // Schema-validated server-side and checked against the quote's
-                    // body hash; the host never renders or trusts it.
-                    body: body as never,
-                  });
-                } catch (err) {
-                  if (!reviewMode) reportAppSubmitError(appBlockId, 'confirmed_step_submit', err);
-                  // Never resent: the quote is spent once.
-                  const failed = trainingSubmitReplyFromError(err);
-                  settlement.reply(failed);
-                  if ('error' in failed && failed.error === 'submission-unconfirmed') {
-                    showUnconfirmedNotice(requestId);
-                  }
-                  return;
-                }
-                if (!reviewMode) {
-                  reportAppSubmitResult(appBlockId, 'confirmed_step_submit', result);
-                }
-                const reply = confirmedStepReplyFromResult(result);
-                settlement.reply(reply);
-                refreshBuzzCapNotice();
-                // The outcome is unknown and a retry would be a new, separately charged
-                // job: say so in host chrome, not only to the block.
-                if ('error' in reply && reply.error === 'submission-unconfirmed') {
-                  showUnconfirmedNotice(requestId);
-                }
-                // The day's spend moved between preview and submit: tell the viewer
-                // the same thing the preview would have.
-                if (isDailyLimitRefusal(result.snapshot)) {
-                  showDailyLimitRefusal(requestId, preview.total, preview.dailyLimit);
-                }
+                await submitConsented();
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }

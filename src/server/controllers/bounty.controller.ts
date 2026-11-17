@@ -48,12 +48,14 @@ import {
   getTextRatedBountyLevels,
   mayBeTextRated,
 } from '~/server/services/bounty-rated-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteBountySchema;
+  // ids: semantic search hydrates its ranked bounties through the feed's own query.
+  input: GetInfiniteBountySchema & { ids?: number[] };
   ctx: Context;
 }) => {
   const { user } = ctx;
@@ -103,13 +105,14 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const [images, textRated] = await Promise.all([
+    const [images, textRated, showsImage] = await Promise.all([
       getImagesForBounties({
         bountyIds: bountIds,
         userId: user?.id,
         isModerator: user?.isModerator,
       }),
       getTextRatedBountyLevels(items.filter(mayBeTextRated).map((bounty) => bounty.id)),
+      getRequestImageFilter(ctx),
     ]);
 
     return {
@@ -124,7 +127,7 @@ export const getInfiniteBountiesHandler = async ({
           );
           const unrated = moderatorNsfwLevel == null && !textRated.has(item.id);
           const itemImages = capNestedImages(
-            (images[item.id] ?? []).map((image) => ({
+            (images[item.id] ?? []).filter(showsImage).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
               nsfwLevel:
@@ -202,19 +205,21 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         : null;
     const { meta: _meta, moderatorNsfwLevel: _moderatorNsfwLevel, ...publicBounty } = bounty;
 
-    const [images, textRated] = await Promise.all([
+    const [images, textRated, showsImage] = await Promise.all([
       getBountyImages({
         id: bounty.id,
         userId: user?.id,
         isModerator: user?.isModerator,
       }),
       mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
+      getRequestImageFilter(ctx),
     ]);
     // A rated flag raises the images to its level; a flag with no rating leaves them at their own.
     const ratedFlagLevel =
       bounty.moderatorNsfwLevel != null || textRated.has(bounty.id)
         ? bountyNsfwFlagLevel(bounty, textRated.get(bounty.id))
         : null;
+    const shownImages = images.filter(showsImage);
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
@@ -230,8 +235,8 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         : ({} as BountyDetailsSchema),
       images: capNestedImages(
         ratedFlagLevel == null
-          ? images
-          : images.map((image) => ({
+          ? shownImages
+          : shownImages.map((image) => ({
               ...image,
               nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
             })),
@@ -303,14 +308,17 @@ export const getBountyEntriesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    const images = await getImagesByEntity({
-      ids: entries.map((entry) => entry.id),
-      type: 'BountyEntry',
-      imagesPerId: 4,
-      include: ['tags'],
-      isModerator: ctx.user?.isModerator,
-      userId: ctx.user?.id,
-    });
+    const [images, showsImage] = await Promise.all([
+      getImagesByEntity({
+        ids: entries.map((entry) => entry.id),
+        type: 'BountyEntry',
+        imagesPerId: 4,
+        include: ['tags'],
+        isModerator: ctx.user?.isModerator,
+        userId: ctx.user?.id,
+      }),
+      getRequestImageFilter(ctx),
+    ]);
 
     const files = await getFilesByEntity({
       ids: entries.map((entry) => entry.id),
@@ -336,7 +344,7 @@ export const getBountyEntriesHandler = async ({
             ...entry,
             user,
             images: capNestedImages(
-              images.filter((i) => i.entityId === entry.id),
+              images.filter((i) => i.entityId === entry.id && showsImage(i)),
               ctx,
               { ownerId: user.id }
             ).map((i) => ({

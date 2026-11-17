@@ -345,10 +345,12 @@ func (s *Sources) privacyDefaultsFrom(ctx context.Context, owners []int, got map
 }
 
 // VersionImages is getImagesForModelVersionCache: each version's cached showcase images
-// (imagesForModelVersionsCache, stale entries served), each image's `tags` replaced by the image-tag
-// cache's ids (the appendFn: `tags ?? []`). A version whose entry is a notFound marker has no
-// images (absent from the answer). A version-images miss falls back (its lookup is lag-aware); an
-// image-tags miss is computed as on the image feed (fillTagIDs), and falls back without s.Compute.
+// (imagesForModelVersionsCache), each image's `tags` replaced by the image-tag cache's ids (the
+// appendFn: `tags ?? []`). A version whose entry is a notFound marker has no images (absent from the
+// answer). With s.Compute a version-images miss is computed (fillVersionImages: the lookupFn's
+// showcase query, lag-aware with write-back on) and a stale entry revalidated as Node's fetch
+// revalidates it; without, a miss falls back and a stale entry is served. An image-tags miss is
+// computed as on the image feed (fillTagIDs), and falls back without s.Compute.
 func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int][]map[string]any, error) {
 	ids := Unique(versionIDs)
 	out := map[int][]map[string]any{}
@@ -356,10 +358,14 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 		return out, nil
 	}
 	b := NewBatch()
-	read := s.Packed.Queue(b, KeyVersionImages, ids, ttlDay)
+	read := s.Packed.Queue(b, KeyVersionImages, ids, versionImagesTTL)
 	b.Exec(ctx)
-	got := read.Entries()
+	got, writable := read.read()
+	if err := s.fillVersionImages(ctx, ids, got, writable); err != nil {
+		return nil, err
+	}
 	if miss := Missing(ids, got); len(miss) > 0 {
+		// No miss computation (FEED_GO_COMPUTE_MISSES off): the lookup is lag-aware.
 		return nil, fallback.Newf("model-images-miss", "%d ids", len(miss))
 	}
 	var imageIDs []int

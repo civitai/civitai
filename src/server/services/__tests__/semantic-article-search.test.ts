@@ -136,6 +136,9 @@ beforeEach(() => {
   dbMock.dbRead.article.findMany.mockImplementation((args: never) =>
     harness.prisma.article.findMany(args)
   );
+  // Calls are asserted per test, so none may carry over from an earlier one.
+  dbMock.dbRead.articleEngagement.findMany.mockClear();
+  dbMock.dbRead.collectionItem.findMany.mockClear();
 });
 
 const MOD = { id: 501, isModerator: true } as SessionUser;
@@ -249,8 +252,83 @@ describe("the articles feed's filters", () => {
     expect(h.fetchArgs[0]).toMatchObject({ followed: true });
   });
 
+  // The viewer's Bookmarked/Hidden list and the collection, as getArticles reads them.
+  const lists = (over: { engaged?: number[]; collected?: number[] }) => {
+    dbMock.dbRead.articleEngagement.findMany.mockResolvedValue(
+      (over.engaged ?? []).map((articleId) => ({ articleId })) as never
+    );
+    dbMock.dbRead.collectionItem.findMany.mockResolvedValue(
+      (over.collected ?? []).map((articleId) => ({ articleId })) as never
+    );
+  };
+
+  it("narrows the index to the viewer's bookmarks, so a short list is not a page of misses", async () => {
+    lists({ engaged: [10, 20] });
+    await feedSearch({ favorites: true });
+    expect(sent[0].ids).toEqual([10, 20]);
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 5, type: 'Favorite' } })
+    );
+  });
+
+  it('narrows the index to the hidden list in the Hidden view', async () => {
+    lists({ engaged: [11] });
+    await feedSearch({ hidden: true });
+    expect(sent[0].ids).toEqual([11]);
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 5, type: 'Hide' } })
+    );
+  });
+
+  it("narrows the index to the collection's articles, within the bookmarks when both apply", async () => {
+    lists({ engaged: [10, 20, 21], collected: [21, 10, 30] });
+    await feedSearch({ favorites: true, collectionId: 9 });
+    expect(sent[0].ids).toEqual([10, 21]);
+  });
+
+  it('finds nothing for an empty list, without asking the service', async () => {
+    lists({ engaged: [10], collected: [20] });
+    expect((await feedSearch({ favorites: true, collectionId: 9 })).items).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  it('leaves a very long list to hydration rather than the index filter', async () => {
+    lists({ collected: Array.from({ length: 1001 }, (_, i) => i + 1) });
+    await feedSearch({ collectionId: 9 });
+    expect(sent[0].ids).toBeUndefined();
+    expect(h.fetchArgs[0]).toMatchObject({ collectionId: 9 });
+    // Reads one past the cap, never the whole collection.
+    expect(dbMock.dbRead.collectionItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { collectionId: 9, articleId: { not: null } },
+        take: 1001,
+      })
+    );
+  });
+
+  it('narrows by the short list alone when the other is past the cap', async () => {
+    // The long list lacks 10: intersecting it in would leave nothing.
+    lists({ engaged: Array.from({ length: 1001 }, (_, i) => i + 100), collected: [10] });
+    await feedSearch({ favorites: true, collectionId: 9 });
+    expect(sent[0].ids).toEqual([10]);
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 1001 })
+    );
+  });
+
+  it("reads no one's bookmarks for a signed-out visitor", async () => {
+    lists({ engaged: [10] });
+    await searchSemanticArticles({
+      input: { query: 'guide', browsingLevel: 1, limit: 10, favorites: true, hidden: true },
+      candidateSource: ranking([10]),
+    });
+    expect(dbMock.dbRead.articleEngagement.findMany).not.toHaveBeenCalled();
+    expect(sent[0].ids).toBeUndefined();
+  });
+
   it("hydrates through the feed's views of the viewer's lists", async () => {
     h.follows = [10];
+    lists({ engaged: [10], collected: [10] });
     await feedSearch({ followed: true, favorites: true, hidden: true, collectionId: 9 });
     expect(h.fetchArgs[0]).toMatchObject({
       followed: true,
@@ -258,6 +336,10 @@ describe("the articles feed's filters", () => {
       hidden: true,
       collectionId: 9,
     });
+    // Bookmarked wins over Hidden, as in getArticles.
+    expect(dbMock.dbRead.articleEngagement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 5, type: 'Favorite' } })
+    );
   });
 });
 

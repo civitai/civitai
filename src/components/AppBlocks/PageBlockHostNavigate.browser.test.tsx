@@ -240,6 +240,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/settings', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -254,6 +255,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail/500', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -272,6 +274,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/Jos%C3%A9/2', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -325,6 +328,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
     expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
       shallow: true,
+      scroll: false,
     });
   });
 
@@ -361,6 +365,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
         shallow: true,
+        scroll: false,
       });
     });
   });
@@ -486,6 +491,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
         shallow: true,
+        scroll: false,
       });
     });
   });

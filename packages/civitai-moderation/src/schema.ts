@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
+import { HQ_TASK_URL_PREFIX, hqTaskFromUrl } from '@civitai/shared/clickup-url';
+import {
+  FEEDBACK_STATUSES,
+  FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH,
+} from '@civitai/shared/feedback.constants';
 
 // The wire contract for each moderator action the spoke exposes at `/api/mod/[action]`. Shared so the
 // spoke endpoint validates against the exact shape the main-app client sends — producer and consumer
@@ -11,6 +16,7 @@ export const MOD_ACTION = {
   imageModerate: 'image-moderate',
   abuseReport: 'abuse-report',
   relabelBuildBatch: 'relabel-build-batch',
+  feedbackTriage: 'feedback-triage',
 } as const;
 export type ModActionName = (typeof MOD_ACTION)[keyof typeof MOD_ACTION];
 
@@ -270,3 +276,58 @@ export function relabelBuildShortfall(response: unknown): RelabelBuildShortfall 
     ?.result;
   return summary ? relabelSummaryShortfall(summary) : 'no summary';
 }
+
+// feedback-triage (`MOD_ACTION.feedbackTriage`) — set ONE feedback report's moderator triage status through the queue's own write
+// (`triageFeedback` in the moderator app), optionally appending to its internal triage note and
+// recording the HQ task that tracks it as `context.hq`. Scoped on `expectedStatus`: a row that moved
+// since the caller read it is not changed. `ownerStatus` (the app developer's vocabulary) is not in
+// this contract and is never written.
+//
+// `feedbackTriageRequest` is what a caller of the main app's `/api/mod/feedback/triage` sends;
+// `feedbackTriageInput` adds the acting moderator, asserted by the trusted caller after its own
+// `feedback.status.set` check, as every action here does.
+export const feedbackTriageRequest = z.object({
+  id: z.coerce.number().int().positive().max(2_147_483_647).describe('The Feedback row id.'),
+  status: z.enum(FEEDBACK_STATUSES).describe('The status to set.'),
+  expectedStatus: z
+    .enum(FEEDBACK_STATUSES)
+    .describe('The status the caller last read. A row no longer at it is not changed (409).'),
+  noteAppend: z
+    .string()
+    .trim()
+    .min(1)
+    .max(FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH)
+    .optional()
+    .describe('Appended to the moderator-internal triage note, below what it holds.'),
+  hqTaskUrl: z
+    .string()
+    .refine((url) => hqTaskFromUrl(url) !== null, {
+      message: `Expected an HQ task link: ${HQ_TASK_URL_PREFIX}<id>`,
+    })
+    .optional()
+    .describe('The HQ task tracking this report, recorded as context.hq.'),
+});
+export type FeedbackTriageRequest = z.infer<typeof feedbackTriageRequest>;
+
+export const feedbackTriageInput = feedbackTriageRequest.extend({
+  userId: z.number().int().positive(),
+  /**
+   * The handler the caller read, when it must not overwrite a row someone else has re-stamped since
+   * (the HQ sync): `null` matches only an unhandled row. Absent = not checked. Not on the public
+   * route's input: a moderator acting is the one doing the re-stamping.
+   */
+  expectedHandledById: z.number().int().positive().nullable().optional(),
+});
+export type FeedbackTriageInput = z.infer<typeof feedbackTriageInput>;
+
+/**
+ * What the action answers, inside `modActionResponse`. `changed: false` is the compare-and-set
+ * refusal; `gone` is a row that does not exist. Any other refusal `triageFeedback` can give needs a
+ * resolution write, which this contract has no field for.
+ */
+export const feedbackTriageResponse = z.object({
+  result: z.union([
+    z.object({ ok: z.literal(true), changed: z.boolean() }),
+    z.object({ ok: z.literal(false), reason: z.string() }),
+  ]),
+});

@@ -1,3 +1,4 @@
+import { HQ_TASK_ID_PATTERN } from '@civitai/shared/clickup-url';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -374,8 +375,6 @@ export async function captureAttachGate(
     await sleep(delays[attempt]);
   }
 }
-
-const HQ_TASK_ID_PATTERN = /^[\w-]{1,100}$/;
 
 /** The task HQ returned, or null unless its link is on the same origin we posted to. */
 function parseHqReply(reply: unknown, hqOrigin: string): { id: string; url: string } | null {

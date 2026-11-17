@@ -53,7 +53,7 @@ async function reprocessExemptBlockedImages(req: NextApiRequest, res: NextApiRes
         `
         UPDATE "Image"
         SET "ingestion" = 'Rescan', "blockedFor" = NULL
-        WHERE id = ANY($1::int[]);
+        WHERE id = ANY($1::int[]) AND "blockedFor" = 'AiNotVerified';
         `,
         [batch]
       );
