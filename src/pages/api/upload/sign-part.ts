@@ -55,7 +55,7 @@ const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
     const result = await getUploadPartUrl({ bucket, key, uploadId, partNumber, s3 });
     res.status(200).json(result);
     try {
-      await logToAxiom({ name: 's3-upload-sign-part', userId, key, uploadId, partNumber, backend });
+      logToAxiom({ name: 's3-upload-sign-part', userId, key, uploadId, partNumber, backend });
     } catch {
       /* contained — @civitai/axiom reports its own ingest failures */
     }
@@ -65,7 +65,7 @@ const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
     // rest-error-envelope-ledger baseline alongside its siblings), only the ORDER changes.
     res.status(500).json({ error: error.message });
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-sign-part-error',
         userId,
         key,

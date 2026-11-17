@@ -139,7 +139,7 @@ function safeErrorMessage(collectionId: number, e: unknown) {
   logToAxiom(
     { name: 'contest-score', type: 'error', collectionId, message: error?.message },
     'civitai-prod'
-  ).catch(() => null);
+  );
   console.error('[contest-score] failed', collectionId, error?.message);
   return 'Contest scoring failed. See server logs.';
 }

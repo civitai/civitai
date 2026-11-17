@@ -963,7 +963,7 @@ export async function findCashWithdrawalByRefCode(refCode: string) {
   }
 
   if (candidates.length > 1) {
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'error',
         name: 'tipalti-refcode-ambiguous',
@@ -971,7 +971,7 @@ export async function findCashWithdrawalByRefCode(refCode: string) {
         candidateIds: candidates.map((row) => row.id),
       },
       'webhooks'
-    ).catch(() => null);
+    );
     throw new Error(`Ambiguous Tipalti refCode ${refCode}: ${candidates.length} withdrawals match`);
   }
 
@@ -1127,7 +1127,7 @@ export async function withdrawCash(userId: number, amount: number, idempotencyKe
       data: {},
     });
   } catch (e) {
-    await logToAxiom({ name: 'withdraw-cash', type: 'error', error: e, ...data, userId });
+    logToAxiom({ name: 'withdraw-cash', type: 'error', error: e, ...data, userId });
 
     // In case of error, we need to revert the transaction
     if (data.updated) {
@@ -1531,13 +1531,13 @@ export const updateCashWithdrawal = async ({
     withdrawal.transactionId &&
     (await isWithdrawalBurnRefunded(withdrawal.transactionId, storedMetadata).catch(() => false))
   )
-    await logToAxiom({
+    logToAxiom({
       name: 'cash-withdrawal-paid-after-refund',
       type: 'error',
       withdrawalId,
       userId,
       previousStatus: withdrawal.status,
-    }).catch(() => null);
+    });
 
   try {
     // Merged in SQL so a refund claim another caller stored meanwhile is not overwritten.
@@ -1699,7 +1699,7 @@ export async function modAdjustCashBalance({
     }
   }
 
-  await logToAxiom({
+  logToAxiom({
     name: 'mod-cash-adjustment',
     type: 'info',
     modUserId,

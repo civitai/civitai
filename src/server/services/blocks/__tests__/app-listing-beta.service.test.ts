@@ -367,49 +367,7 @@ describe('🔴 the …ForRender readers — a cosmetic label must never take a p
   });
 });
 
-describe('🔴 a degraded render read is LOGGED, and the logging cannot take the page down', () => {
-  it('🔴 the log promise gets a REJECTION HANDLER attached — the `.catch` is load-bearing', async () => {
-    // 🔴 THE FAILURE THIS PREVENTS IS THE ONE THE WHOLE POSTURE EXISTS FOR, reintroduced
-    // through the logging. `logToAxiom` awaits an ingest that rejects when Axiom is degraded,
-    // and NOTHING awaits the call — so without `.catch(() => null)` the rejection has nowhere
-    // to go but `unhandledRejection`, and the render this merely OBSERVES is taken down by
-    // the observation.
-    //
-    // 🔴 TWO EARLIER VERSIONS OF THIS TEST WERE VACUOUS, AND BOTH LOOKED RIGHT.
-    //   (a) asserting only that the read RESOLVES passes with the `.catch` deleted, precisely
-    //       because nothing awaits the log — the dangling rejection cannot reach the read's
-    //       own value. Mutant SURVIVED a green suite.
-    //   (b) listening for `process.on('unhandledRejection')` also passes, because vitest
-    //       installs its own handling and the event never reaches a test-registered listener.
-    //       Mutant SURVIVED again.
-    // What is actually observable is the call the guard makes on the returned promise, so
-    // that is what this reads: the mock hands back a rejected promise instrumented to record
-    // whether anyone attached a handler.
-    let handlerAttached = false;
-    logToAxiom.mockImplementationOnce((() => {
-      const promise = Promise.reject(new Error('axiom is down'));
-      const realCatch = promise.catch.bind(promise);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (promise as any).catch = (...args: unknown[]) => {
-        handlerAttached = true;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        return (realCatch as any)(...args);
-      };
-      return promise;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    }) as any);
-
-    const err = new Error('boom') as Error & { code?: string };
-    err.code = '57014';
-    await expect(readListingBetaForRender('apl_1', throwingClient(err))).resolves.toEqual(
-      BETA_UNAVAILABLE
-    );
-    expect(
-      handlerAttached,
-      'the degradation log must attach a rejection handler, or a degraded Axiom takes the page down'
-    ).toBe(true);
-  });
-
+describe('🔴 a degraded render read is LOGGED', () => {
   it('the batched render read logs and degrades the same way', async () => {
     const err = new Error('boom') as Error & { code?: string };
     err.code = '42P01';

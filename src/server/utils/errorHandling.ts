@@ -705,7 +705,7 @@ export async function runClickHouseRead<T>(
           error: e instanceof Error ? e.message : String(e),
         },
         'clickhouse'
-      ).catch(() => undefined);
+      );
       throwServiceUnavailableError(
         options.message ?? 'This service is temporarily unavailable. Please try again.',
         e
@@ -728,7 +728,7 @@ export function handleLogError(e: Error, name?: string, details?: MixedObject) {
         cause: error.cause,
       },
       'civitai-prod'
-    ).catch();
+    );
   else console.error(error);
 }
 

@@ -386,9 +386,9 @@ describe('entity image writers', () => {
     dbMock.dbWrite.image.createMany.mock.calls[0][0].data as Record<string, unknown>[];
   const withAllColumns = withServerColumns() as never;
   beforeEach(() => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(OWNER)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(OWNER)] as never);
   });
-  afterEach(() => redisMock.sysRedis.mGet.mockReset());
+  afterEach(() => redisMock.redis.mGet.mockReset());
 
   it('createEntityImages writes no id, postId or index', async () => {
     await createEntityImages({
@@ -475,7 +475,7 @@ describe('setVideoThumbnail', () => {
     dbMock.dbWrite.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
   });
   afterEach(() => {
-    redisMock.sysRedis.mGet.mockReset();
+    redisMock.redis.mGet.mockReset();
     dbMock.dbWrite.$queryRaw.mockReset();
   });
   const save = (userId: number) =>
@@ -488,21 +488,21 @@ describe('setVideoThumbnail', () => {
     });
 
   it("creates a moderator's custom thumbnail as the video owner's", async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(MODERATOR)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(MODERATOR)] as never);
 
     await save(MODERATOR);
     expect(dbMock.dbWrite.image.create.mock.calls[0][0].data).toMatchObject({ userId: OWNER });
   });
 
   it('refuses a custom thumbnail whose key was issued to another user', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER_USER)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(OTHER_USER)] as never);
 
     await expect(save(OWNER)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
   });
 
   it('creates the custom thumbnail with no id, postId or index from the client', async () => {
-    redisMock.sysRedis.mGet.mockResolvedValue([String(OWNER)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(OWNER)] as never);
 
     await setVideoThumbnail({
       imageId: 10,
@@ -596,12 +596,12 @@ describe('a client url owned by another user', () => {
 describe('a client url key issued to another user', () => {
   const unavailable = { code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE };
   const issuedTo = (userId: number) =>
-    redisMock.sysRedis.mGet.mockResolvedValue([String(userId)] as never);
+    redisMock.redis.mGet.mockResolvedValue([String(userId)] as never);
   beforeEach(() => {
     dbMock.dbWrite.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
   });
   afterEach(() => {
-    redisMock.sysRedis.mGet.mockReset();
+    redisMock.redis.mGet.mockReset();
     dbMock.dbWrite.$queryRaw.mockReset();
   });
 
@@ -684,7 +684,7 @@ describe('a client url key issued to another user', () => {
       issuedTo(OTHER_USER);
 
       await entitySites[site]([URL_KEY]);
-      expect(redisMock.sysRedis.mGet).not.toHaveBeenCalled();
+      expect(redisMock.redis.mGet).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.image.createMany).toHaveBeenCalledTimes(1);
     });
 

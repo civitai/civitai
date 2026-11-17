@@ -410,7 +410,7 @@ async function runLeg(
           placementId,
           kind,
           amount: attempted.amount,
-        }).catch(() => null);
+        });
 
       let transactionId: string | null;
       try {
@@ -764,7 +764,7 @@ async function rewardAccepted(placement: PlacementRow) {
         message: 'accept reward failed',
         placementId: placement.id,
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => null)
+      })
     );
 }
 
@@ -1052,7 +1052,7 @@ export async function expirePlacements({ limit = 100 }: { limit?: number } = {})
         message: 'expiry failed',
         placementId: id,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1130,7 +1130,7 @@ export async function sweepUnpaidLegs({
         message: 'unpaid leg could not be resumed',
         placementId,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -1236,7 +1236,7 @@ export async function sweepUnplannedSettlements({
           type: 'error',
           message: 'settled placement has no funded escrow behind it',
           placementId: id,
-        }).catch(() => null);
+        });
       }
     } catch (error) {
       logToAxiom({
@@ -1245,7 +1245,7 @@ export async function sweepUnplannedSettlements({
         message: 'unplanned settlement could not be resolved',
         placementId: id,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 

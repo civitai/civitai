@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { BOUNTY_SCAN_DETAILS_KEY } from '~/server/utils/bounty-details';
 
 // Hand-listed: the real module pulls nsfwLevels.service, whose search-index graph builds clients at load.
 vi.mock('~/server/services/text-scan/rated-entities', () => ({
@@ -40,7 +41,11 @@ describe('applyBountyNsfwTextScan', () => {
     expect(sql).toContain('b.nsfw = FALSE');
     expect(sql).toContain(`NOT ('nsfw' = ANY(COALESCE(b."lockedProperties", ARRAY[]::text[])))`);
     expect(sql).toContain(`b."moderatorNsfwLevel" IS NULL`);
-    expect(sql).toContain(`'textScanNsfw'`);
+    // The key the readers strip and look for, not a copy of it.
+    const flip = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
+      (c[0] as readonly string[]).join('?').includes('SET nsfw = TRUE')
+    );
+    expect(flip).toContain(BOUNTY_SCAN_DETAILS_KEY);
     // details can hold JSON null, and `null || object` is null.
     expect(sql).toContain(`jsonb_typeof(b.details) = 'object'`);
     expect(applyRatingFloor).toHaveBeenCalledWith('Bounty', args(NsfwLevel.R));

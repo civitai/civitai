@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 )
 
@@ -38,18 +39,29 @@ type Config struct {
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
 	RegionRules      []browsing.RegionRule
+	RegionBlockRules []browsing.RegionRule
 	CreatorPromotion string          // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
 	LazyPostImages   bool            // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
 	ImageIndexFeed   bool            // FEED_GO_IMAGE_INDEX_FEED: mirrors `image-index-feed`
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// The flags model.getAll reads (DESIGN.md §15.3), each defaulting to its production value. Only
+	// that state is ported: any of them off makes every model.getAll sample the flag-off-state fallback.
+	BaseModelFeedMetrics bool // FEED_GO_BASE_MODEL_FEED_METRICS: mirrors `base-model-feed-metrics`
+	ModelImagesSlim      bool // FEED_GO_MODEL_IMAGES_SLIM: mirrors the getAllModelImagesSlim feature
+	CoverageNext         bool // FEED_GO_GENERATION_COVERAGE_NEXT: mirrors `generation-coverage-next`
+	LoadingOpenToAll     bool // FEED_GO_GENERATION_LOADING_OPEN_TO_ALL: mirrors `generation-loading-open-to-all`
 	// ImageLocation is NEXT_PUBLIC_IMAGE_LOCATION (same var as the Node app): the edge URL prefix the
 	// REST images endpoint publishes. Unset = that endpoint falls back.
 	ImageLocation string
 	// Pprof is FEED_GO_PPROF (default off): serve net/http/pprof under /debug/pprof/ on the internal
 	// listener only (never the public one).
 	Pprof bool
+
+	// RevocationMarkerCache is SESSION_REVOCATION_CACHE (default on; off|0|false turns it off, as
+	// isEnvSwitchOn): a failed revocation read still denies a revocation this process has already read.
+	RevocationMarkerCache bool
 
 	// System redis through its Sentinels (internal/sysredis). Same names and precedence as the
 	// Node app: a non-empty REDIS_SYS_SENTINELS selects Sentinel mode, else REDIS_SYS_URL is used.
@@ -67,6 +79,11 @@ type Config struct {
 	// RequestBudget is FEED_GO_REQUEST_BUDGET_MS: the deadline of one computation, served
 	// or shadow. Past it the request falls back (reason `deadline`); a partial answer is never sent.
 	RequestBudget time.Duration
+	// MaxInFlight is FEED_GO_MAX_IN_FLIGHT: the public requests one pod computes at once. Past it a
+	// request is not computed but proxied to the Node app (fallback reason `bulkhead`). 0 = not set
+	// explicitly (unset, zero, negative or junk): the cap is then the replica pool's connection ceiling
+	// (server.ResolveMaxInFlight). There is no unlimited setting.
+	MaxInFlight int
 	// CompletionConcurrency is FEED_GO_COMPLETION_CONCURRENCY: the lazy-post-images completion
 	// fetches one request runs at once. The default is sized for shadow load; serving may want more.
 	CompletionConcurrency int
@@ -90,6 +107,23 @@ type Config struct {
 	// PrimaryDatabaseURL is DATABASE_URL, the primary (Node's dbWrite), read only with CacheWriteBack:
 	// the frame and event-decoration miss lookups then read it as Node's do (DESIGN.md §3.1).
 	PrimaryDatabaseURL string
+
+	// The ClickHouse reader the image metric-hash misses are computed with (DESIGN.md §3.1), from this
+	// service's OWN variables only: FEED_GO_CLICKHOUSE_HOST (the HTTP(S) endpoint),
+	// FEED_GO_CLICKHOUSE_USERNAME, FEED_GO_CLICKHOUSE_PASSWORD, for a dedicated SELECT-only login. Read
+	// only with ComputeMisses, and only when the host and the username are both set (Node's
+	// shouldConnect, over these names); otherwise those misses fall back (`metrics-miss`). The app's
+	// CLICKHOUSE_HOST / CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD are deliberately never read: the
+	// shared app config carries them (the app's read-write login) into this service's environment, and
+	// they must not switch the reader on.
+	ClickHouseURL, ClickHouseUsername, ClickHousePassword string
+	// ClickHouseTimeout is FEED_GO_CLICKHOUSE_TIMEOUT_MS (default 2000): the bound of one page's
+	// metrics lookup, at most half of RequestBudget. Past it the page falls back. The lookup also holds
+	// it under Node's own budget (hydrate's metricsTimeoutMax), whatever this says.
+	ClickHouseTimeout time.Duration
+	// ClickHouseMaxInFlight is FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT (default 4): the ClickHouse reads one
+	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
+	ClickHouseMaxInFlight int
 
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
@@ -118,8 +152,13 @@ func Load() (*Config, error) {
 		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
-		Pprof:            boolEnv("FEED_GO_PPROF", false),
-		ImageLocation:    os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
+
+		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
+		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
+		CoverageNext:         boolEnv("FEED_GO_GENERATION_COVERAGE_NEXT", true),
+		LoadingOpenToAll:     boolEnv("FEED_GO_GENERATION_LOADING_OPEN_TO_ALL", true),
+		Pprof:                boolEnv("FEED_GO_PPROF", false),
+		ImageLocation:        os.Getenv("NEXT_PUBLIC_IMAGE_LOCATION"),
 
 		RedisSysSentinels:        os.Getenv("REDIS_SYS_SENTINELS"),
 		RedisSysSentinelName:     os.Getenv("REDIS_SYS_SENTINEL_NAME"),
@@ -130,6 +169,7 @@ func Load() (*Config, error) {
 	}
 	ms := intEnv("REDIS_SYS_READ_TIMEOUT_MS", 1000)
 	c.SysReadTimeout = time.Duration(ms) * time.Millisecond
+	c.RevocationMarkerCache = envSwitchOn(os.Getenv("SESSION_REVOCATION_CACHE"))
 	c.Hosts = browsing.HostColors{}
 	for _, color := range []string{"green", "blue", "red"} {
 		up := strings.ToUpper(color)
@@ -142,6 +182,7 @@ func Load() (*Config, error) {
 	}
 	c.DBMaxConns = intEnv("FEED_GO_DB_MAX_CONNS", 0)
 	c.RequestBudget = time.Duration(positiveIntEnv("FEED_GO_REQUEST_BUDGET_MS", 6000)) * time.Millisecond
+	c.MaxInFlight = positiveIntEnv("FEED_GO_MAX_IN_FLIGHT", 0)
 	c.CompletionConcurrency = positiveIntEnv("FEED_GO_COMPLETION_CONCURRENCY", 4)
 	c.JWKSRefresh = time.Duration(positiveIntEnv("FEED_GO_JWKS_REFRESH_MS", 600_000)) * time.Millisecond
 	c.JWKSMaxStaleness = time.Duration(positiveIntEnv("FEED_GO_JWKS_MAX_STALENESS_MS", 3*int(c.JWKSRefresh/time.Millisecond))) * time.Millisecond
@@ -154,12 +195,22 @@ func Load() (*Config, error) {
 	if c.CacheWriteBack {
 		c.PrimaryDatabaseURL = os.Getenv("DATABASE_URL")
 	}
+	if c.ComputeMisses && os.Getenv("FEED_GO_CLICKHOUSE_HOST") != "" && os.Getenv("FEED_GO_CLICKHOUSE_USERNAME") != "" {
+		c.ClickHouseURL = os.Getenv("FEED_GO_CLICKHOUSE_HOST")
+		c.ClickHouseUsername = os.Getenv("FEED_GO_CLICKHOUSE_USERNAME")
+		c.ClickHousePassword = os.Getenv("FEED_GO_CLICKHOUSE_PASSWORD")
+	}
+	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
+	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
 		return nil, err
 	}
 	c.RegionRules = rules
+	if c.RegionBlockRules, err = RegionBlockRules(os.Getenv("REGION_BLOCK_CONFIG")); err != nil {
+		return nil, err
+	}
 	if c.DatabaseURL == "" {
 		return nil, errors.New("DATAPACKET_DATABASE_RO_URL, DATABASE_REPLICA_URL or DATABASE_URL is required")
 	}
@@ -242,14 +293,40 @@ func ParseRegionRules(s string) ([]browsing.RegionRule, error) {
 		if i < 0 {
 			return nil, fmt.Errorf("invalid region restriction config %q", part)
 		}
-		t, err := time.Parse("2006-01-02", part[i+1:])
+		rule, err := regionRule(part[:i], part[i+1:])
 		if err != nil {
 			return nil, fmt.Errorf("invalid region restriction date %q: %w", part, err)
 		}
-		// region-blocking.ts reads the date as its END of day, UTC (`${date}T23:59:59.999Z`): the
-		// restriction starts once that instant is reached, not at the start of the day.
-		eff := t.Add(24*time.Hour - time.Millisecond)
-		out = append(out, browsing.RegionRule{Region: strings.ToUpper(part[:i]), Effective: eff})
+		out = append(out, rule)
+	}
+	return out, nil
+}
+
+// regionRule is one `REGION` + `YYYY-MM-DD` entry. region-blocking.ts reads the date as its END of day,
+// UTC (`${date}T23:59:59.999Z`): the rule applies once that instant is reached, not at the start of
+// the day.
+func regionRule(region, date string) (browsing.RegionRule, error) {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return browsing.RegionRule{}, err
+	}
+	return browsing.RegionRule{Region: strings.ToUpper(region), Effective: t.Add(24*time.Hour - time.Millisecond)}, nil
+}
+
+// RegionBlockRules is REGION_BLOCK_CONFIG (region-blocking.ts): the variable when set (the same format
+// as REGION_RESTRICTION_CONFIG), else DEFAULT_REGION_BLOCK_CONFIG, which apipolicy.json carries from
+// the Node module so the list is never copied by hand.
+func RegionBlockRules(env string) ([]browsing.RegionRule, error) {
+	if env != "" {
+		return ParseRegionRules(env)
+	}
+	var out []browsing.RegionRule
+	for _, b := range apipolicy.RegionBlockDefault() {
+		rule, err := regionRule(b.Region, b.EffectiveDate)
+		if err != nil {
+			return nil, fmt.Errorf("apipolicy.json region block %q: %w", b.Region, err)
+		}
+		out = append(out, rule)
 	}
 	return out, nil
 }
@@ -270,6 +347,16 @@ func boolEnv(k string, def bool) bool {
 		return false
 	}
 	return def
+}
+
+// envSwitchOn is isEnvSwitchOn (packages/civitai-shared/src/env-switch.ts): a default-ON switch that only
+// `off`, `0` or `false` (any case, surrounding whitespace ignored) turns off, so a typo never disables it.
+func envSwitchOn(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "0", "false":
+		return false
+	}
+	return true
 }
 
 func intEnv(k string, def int) int {

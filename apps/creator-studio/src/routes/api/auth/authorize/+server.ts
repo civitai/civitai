@@ -5,5 +5,5 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = ({ request, url }) =>
   spokeAuthorize(request, {
     onEvent: (outcome, detail) =>
-      void getLogger().logToAxiom({ name: 'auth-flow', step: 'authorize', outcome, host: url.host, ...detail }).catch(() => {}),
+      void getLogger().logToAxiom({ name: 'auth-flow', step: 'authorize', outcome, host: url.host, ...detail }),
   });

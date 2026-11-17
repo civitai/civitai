@@ -196,9 +196,7 @@ const PROVIDER_REFUSAL_PRECEDENCE: GenerationFetchRefusal[] = [
 ];
 
 function log(message: string, data: Record<string, unknown>) {
-  logToAxiom({ name: 'download-by-hash', type: 'info', message, ...data }).catch(() => {
-    // swallow logging failure
-  });
+  logToAxiom({ name: 'download-by-hash', type: 'info', message, ...data });
 }
 
 /**

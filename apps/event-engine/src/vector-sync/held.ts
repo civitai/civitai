@@ -58,3 +58,16 @@ export function heldImageSql(image: string): string {
   )`;
   return `COALESCE((${flagged} OR (${image}.id)::text IN (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL})), false)`;
 }
+
+/**
+ * The cover `column` (an "Image" id) is empty or names a scanned, unflagged, rated image that is not
+ * held: the site's semanticCoverImageCleanText, pinned to it by the comic and storyline eligibility
+ * parity tests.
+ */
+export function coverImageCleanSql(column: string): string {
+  const cover = sqlRef(column);
+  return `(${cover} IS NULL OR EXISTS (SELECT 1 FROM "Image" ci WHERE ci.id = ${cover}
+    AND ci.ingestion = 'Scanned' AND ci."needsReview" IS NULL AND ci."tosViolation" = false
+    AND ci."blockedFor" IS NULL AND ci.minor = false AND ci.poi = false
+    AND ci."nsfwLevel" NOT IN (0, 32) AND NOT ${heldImageSql('ci')}))`;
+}

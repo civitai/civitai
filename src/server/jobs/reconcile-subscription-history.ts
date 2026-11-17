@@ -17,13 +17,13 @@ export const reconcileSubscriptionHistoryJob = createJob(
 
     // Any repair means the trigger missed a write, which is worth knowing about.
     if (result && (result.refreshed > 0 || result.closed > 0)) {
-      await logToAxiom({
+      logToAxiom({
         name: 'reconcile-subscription-history',
         type: 'warning',
         message: 'Repaired CustomerSubscriptionHistory drift',
         refreshed: result.refreshed,
         closed: result.closed,
-      }).catch(() => null);
+      });
     }
 
     return result;

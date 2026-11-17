@@ -608,7 +608,7 @@ export async function postRemixResult({
       type: 'warning',
       message: `posted, but ${REMIX_DONE_TAG} was not added: ${(error as Error).message}`,
       details: { workflowId, postId: result.postId },
-    }).catch(() => undefined)
+    })
   );
   bustQueriedWorkflowsCache(caller.user.id).catch(() => null);
   return result;

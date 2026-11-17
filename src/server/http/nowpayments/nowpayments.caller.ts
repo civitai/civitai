@@ -163,7 +163,7 @@ class NOWPaymentsCaller extends HttpCaller {
         stage: 'payment-status-failed',
         paymentId: payment_id,
         status: response.status,
-      }).catch(() => null);
+      });
       return { payment: null, status: response.status };
     }
     const data = await response.json();

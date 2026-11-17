@@ -20,13 +20,13 @@ async function alertEndingEvidenceHolds() {
   // `stringToArray` turns a set-but-empty variable into `['']`.
   const recipients = env.EVIDENCE_HOLD_ALERT_EMAILS.filter(Boolean);
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: NAME,
     message: `${owners} owner(s) with an evidence hold ending within ${EVIDENCE_HOLD_ENDING_DAYS} days`,
     owners,
     earliest: earliest?.toISOString() ?? null,
-  }).catch(() => null);
+  });
 
   // Every run, not only when something is ending: an alert with nowhere to go must be noticed before
   // the day it is needed.
@@ -36,12 +36,12 @@ async function alertEndingEvidenceHolds() {
     ? 'email is not configured'
     : null;
   if (unsendable) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: NAME,
       message: `Evidence hold expiry alert cannot be sent: ${unsendable}`,
       owners,
-    }).catch(() => null);
+    });
     return { owners, sent: false };
   }
 

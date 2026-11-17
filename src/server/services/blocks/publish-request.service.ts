@@ -6197,7 +6197,7 @@ export async function mintReviewBlockToken(opts: {
       buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   return {
     token: result.token,

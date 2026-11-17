@@ -94,7 +94,7 @@ function logInternalModeratorKey(context: Context | undefined) {
     apiKeyId: context?.apiKeyId ?? null,
     apiKeyType: context?.apiKeyType ?? null,
     client: context?.subject?.type ?? null,
-  }).catch(() => undefined);
+  });
 }
 
 /**
@@ -124,7 +124,7 @@ export async function scopeRefusalMode(
     ...fields,
     tokenScope: context?.tokenScope ?? null,
     apiKeyId: context?.apiKeyId ?? null,
-  }).catch(() => undefined);
+  });
   return mode;
 }
 

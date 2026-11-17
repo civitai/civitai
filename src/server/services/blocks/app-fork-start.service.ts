@@ -624,7 +624,7 @@ export async function startAppFork(input: StartAppForkInput): Promise<ForkStartR
       name: 'app-fork-start-failed',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: FORK_SOURCE_UNREADABLE_MESSAGE });
   }
 }
@@ -700,7 +700,7 @@ export async function applyForkSessionToFirstPublishRequest(args: {
         name: 'app-fork-session-provenance-failed',
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
-      }).catch(() => null);
+      });
     }
     return false;
   }

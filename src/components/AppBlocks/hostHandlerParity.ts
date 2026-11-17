@@ -233,6 +233,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // A link to a view of the app: the page host builds the canonical
+  // `/apps/run/<slug>/<subPath>` URL from its own origin and slug, copies it or opens the
+  // share sheet, and replies with `{ url, copied, method }`. REQUEST-style ⇒ an unhandled
+  // one HANGS the block.
+  SHARE_LINK: {
+    request: true,
+    reply: 'SHARE_LINK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    // N/A: a model slot has no route of its own (no `subPath`, no deep-link base), so
+    // there is no app URL to build for it.
+    IframeHost: 'model slot has no app route to link to (no deep-link base); page-only',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   TRACK_EVENT: {
     request: false,
     reply: '',
@@ -381,6 +396,18 @@ export const INVENTORY = {
     request: true,
     reply: 'DAILY_LIMIT_RAISE_RESULT',
     replyKeys: ['raised'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The app asks the host to unlock ONE restricted workflow output (by workflow and position).
+  // The host's own dialog offers what the server allows; every outcome, a refusal included, is
+  // reported inside `result`, so only the shared dispatcher's NACK carries an `error`.
+  REQUEST_OUTPUT_UNLOCK: {
+    request: true,
+    reply: 'OUTPUT_UNLOCK_RESULT',
+    replyKeys: ['result'],
     errorKeys: ['error'],
     IframeHost: 'required',
     PageBlockHost: 'required',

@@ -16,6 +16,6 @@ export function isRefusedModerationAccount(
     type: 'error',
     source: `auth-hub:${source}`,
     userId: user.id,
-  }).catch(() => undefined);
+  });
   return true;
 }

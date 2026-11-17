@@ -85,9 +85,7 @@ async function loadBlockedBrowsingContext(input: AddonTarget, viewer: Viewer) {
  *  - W1: re-derives the browsing-settings addon exclusions server-side and
  *    unions them in. Moderators bypass (resolveBrowsingSettingsAddons); a
  *    viewer's own-content feed keeps its tag exclusions off (own POI stays
- *    visible), matching the client's `isOwnImages` behavior. "Own" is read
- *    from the creator the feed filters by: `userId` when present (equal to
- *    the viewer's id), otherwise `username` (the viewer's, case-insensitively).
+ *    visible).
  */
 export async function enforceBlockedBrowsingTags(
   input: AddonTarget & { tags?: number[] },

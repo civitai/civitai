@@ -454,7 +454,7 @@ async function createPromotionPlacement({
         message: 'compensating settle failed; escrow may be held for a rejected promotion',
         placementId: placement.id,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }

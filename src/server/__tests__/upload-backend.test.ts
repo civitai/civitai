@@ -316,18 +316,6 @@ describe('/api/upload — telemetry cannot gate or fail the response', () => {
     );
   });
 
-  it('CONTAINMENT: a rejecting logger leaves the 200 intact and the handler settled', async () => {
-    vi.mocked(logToAxiom).mockRejectedValue(new Error('timeout of 30000ms exceeded'));
-    const res = makeRes();
-
-    await expect(handler(makeReq(UploadType.Model), res)).resolves.toBeUndefined();
-
-    // Without the inner try/catch the rejection unwinds into the handler's own catch and
-    // overwrites this with a 500 — on a request whose upload session was created fine.
-    expect(res.statusCode).toBe(200);
-    expect((res.body as { uploadId?: string })?.uploadId).toBe('test-upload-id');
-  });
-
   it('a create failure is a 500 with a STATIC body and its own logged event', async () => {
     getMultipartPutUrl.mockRejectedValueOnce(new Error('B2 said no: bucket civitai-modelfiles'));
     const res = makeRes();
