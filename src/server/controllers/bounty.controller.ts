@@ -46,7 +46,7 @@ import { capNestedImages, relatedPostsBrowsingLevel } from '~/server/utils/brows
 import { getShowcaseImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
 /** The viewer's browsing-tag filter over a bounty's images, at their browsing level. */
-const getBountyImageFilter = async (ctx: Context) => {
+export const getBountyImageFilter = async (ctx: Context) => {
   const showsImage = await getShowcaseImageFilter({
     browsingLevel: relatedPostsBrowsingLevel(ctx, undefined),
     viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
@@ -287,14 +287,17 @@ export const getBountyEntriesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    const images = await getImagesByEntity({
-      ids: entries.map((entry) => entry.id),
-      type: 'BountyEntry',
-      imagesPerId: 4,
-      include: ['tags'],
-      isModerator: ctx.user?.isModerator,
-      userId: ctx.user?.id,
-    });
+    const [images, showsImage] = await Promise.all([
+      getImagesByEntity({
+        ids: entries.map((entry) => entry.id),
+        type: 'BountyEntry',
+        imagesPerId: 4,
+        include: ['tags'],
+        isModerator: ctx.user?.isModerator,
+        userId: ctx.user?.id,
+      }),
+      getBountyImageFilter(ctx),
+    ]);
 
     const files = await getFilesByEntity({
       ids: entries.map((entry) => entry.id),
@@ -320,7 +323,7 @@ export const getBountyEntriesHandler = async ({
             ...entry,
             user,
             images: capNestedImages(
-              images.filter((i) => i.entityId === entry.id),
+              images.filter((i) => i.entityId === entry.id && showsImage(i)),
               ctx,
               { ownerId: user.id }
             ).map((i) => ({

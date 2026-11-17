@@ -450,7 +450,12 @@ describe('bounty images on a capped site', () => {
 
 describe('entry detail image count', () => {
   const OWNER = 5;
-  const twelve = Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, entityId: 3, nsfwLevel: 1 }));
+  const twelve = Array.from({ length: 12 }, (_, i) => ({
+    id: 100 + i,
+    entityId: 3,
+    nsfwLevel: 1,
+    tags: [],
+  }));
   const entryImageCount = async (ctx: object) => {
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
     return entry.images.length;
@@ -520,15 +525,35 @@ describe('bounty images and browsing-tag rules', () => {
     return ids((await getBountyHandler({ input: { id: 9 }, ctx: ctx as never })).images);
   };
 
+  const entryIds = async (ctx: object) => {
+    mockGetEntries.mockResolvedValue([{ id: 3, user: { id: 5 } }] as never);
+    mockImagesByEntity.mockResolvedValue([
+      { ...image(30, CHILD_TAG), entityId: 3 },
+      { ...image(31, OTHER_TAG), entityId: 3 },
+    ]);
+    const list = await getBountyEntriesHandler({ input: { id: 9 } as never, ctx: ctx as never });
+    const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: ctx as never });
+    return { list: ids(list.items[0].images), entry: ids(entry.images) };
+  };
+
   beforeEach(() => mockAssert.mockResolvedValue(undefined));
 
   it('drops a child-tagged image for a mature non-moderator, keeping other mature images', async () => {
     expect(await feedIds(matureViewer)).toEqual([11]);
     expect(await detailIds(matureViewer)).toEqual([11]);
+    expect(await entryIds(matureViewer)).toEqual({ list: [31], entry: [31] });
   });
 
   it('serves a moderator every image', async () => {
     expect(await feedIds(modViewer)).toEqual([10, 11]);
     expect(await detailIds(modViewer)).toEqual([10, 11]);
+    expect(await entryIds(modViewer)).toEqual({ list: [30, 31], entry: [30, 31] });
+  });
+
+  it('reads tags for entry detail images', async () => {
+    await entryIds(matureViewer);
+    expect(mockImagesByEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3, include: ['tags'] })
+    );
   });
 });
