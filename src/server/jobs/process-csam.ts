@@ -206,10 +206,8 @@ async function wasStamped(reportId: number) {
 
 type Tick = { tickId: string; pod: string | null; inAppOn: boolean; readable: boolean };
 
-/**
- * The tick's own keys go under `payload`, a map field: civitai-prod is at Axiom's field cap, so a new
- * top-level key is dropped on ingest. `pod` is already a dataset field and stays top level.
- */
+// civitai-prod is at Axiom's field cap, so a new top-level key is dropped on ingest; only keys that
+// are already dataset fields (pod) may stay top level.
 const tickFields = (tick: Tick) => ({
   pod: tick.pod,
   payload: { tickId: tick.tickId, inAppOn: tick.inAppOn, readable: tick.readable },

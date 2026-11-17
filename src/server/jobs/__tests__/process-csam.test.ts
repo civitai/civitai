@@ -468,6 +468,11 @@ describe('archive-csam-reports and the separate archiver', () => {
       8801,
     ]);
     expect(unreadable.every((l) => l.type === 'error')).toBe(true);
+    // civitai-prod is at Axiom's field cap: a new top-level key would be dropped on ingest.
+    expect(unreadable.map((l) => Object.keys(l).sort())).toEqual([
+      ['name', 'payload', 'pod', 'subType', 'type'],
+      ['name', 'payload', 'pod', 'reportId', 'subType', 'type'],
+    ]);
     // The stamp read-back reads archivedAt by report id.
     expect(sw.stampReads).toEqual([
       ['CsamReport', 'archivedAt', 'id', '=', 8801],
