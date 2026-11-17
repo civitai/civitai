@@ -91,6 +91,8 @@ describe('/api/training-studio/studio/[route]', () => {
     const [url, init] = outbound();
     expect(url).toBe('https://studio.example/api/train');
     expect(init.method).toBe('POST');
+    // Followed, a Studio redirect to sign-in would come back as that page instead of a 401.
+    expect(init.redirect).toBe('manual');
     expect(JSON.parse(String(init.body))).toEqual({ runs: [{ trigger: 'x' }] });
     expect(init.headers.cookie).toBe(SESSION);
     expect(Object.keys(init.headers).map((h) => h.toLowerCase())).not.toEqual(
@@ -162,10 +164,30 @@ describe('/api/training-studio/studio/[route]', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('answers a Studio reply that is not its JSON as unconfirmed, whatever its status', async () => {
+  it.each([
+    ["the Studio's closed-beta page as a run that never started", 403, 403, /didn't start/],
+    ['a 2xx page as an unconfirmed submit', 200, 502, /check your runs/],
+    ['any other page as an unconfirmed submit', 503, 502, /check your runs/],
+  ])('answers %s', async (_label, upstream, status, message) => {
     fetchMock.mockResolvedValueOnce(
-      new Response('<html>ok</html>', { status: 200, headers: { 'content-type': 'text/html' } })
+      new Response('<html>page</html>', {
+        status: upstream,
+        headers: { 'content-type': 'text/html' },
+      })
     );
+    const res = await call({ route: 'train' });
+    expect(res.statusCode).toBe(status);
+    expect(res.body).toEqual({ message: expect.stringMatching(message) });
+  });
+
+  it('answers a 2xx whose body breaks off mid-read as an unconfirmed submit', async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"workflowIds":['));
+        controller.error(new Error('connection reset'));
+      },
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
     const res = await call({ route: 'train' });
     expect(res.statusCode).toBe(502);
     expect(res.body).toEqual({ message: expect.stringMatching(/check your runs/) });

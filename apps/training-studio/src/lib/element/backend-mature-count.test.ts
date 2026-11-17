@@ -123,7 +123,9 @@ describe('embed training submit, mature count', () => {
   it('submits nothing on a host page without the Studio server', async () => {
     rating.stored = {};
     const { studioServer: _omit, ...bare } = host;
-    await expect(elementBackend(bare).submitTraining([greenRun('portrait-1')])).rejects.toThrow();
+    await expect(elementBackend(bare).submitTraining([greenRun('portrait-1')])).rejects.toThrow(
+      'Training is unavailable on this page right now. Reload and try again.'
+    );
     expect(orch.submitWorkflow).not.toHaveBeenCalled();
   });
 });
