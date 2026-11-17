@@ -7145,25 +7145,27 @@ async function addModelToShowcaseCollection({
   userId: number;
   isModerator?: boolean;
 }) {
+  const refused = () => throwBadRequestError('The model could not be added to that collection');
+  // Checked before anything that depends on whether the model is already in it, so a refusal
+  // looks the same either way.
+  const permissions = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+  if (!permissions.write && !permissions.manage && !permissions.writeReview) throw refused();
   const existing = await dbWrite.collectionItem.findFirst({
     where: { collectionId, modelId },
     select: { id: true },
   });
   if (existing) {
-    const permissions = await getUserCollectionPermissionsById({
-      id: collectionId,
-      userId,
-      isModerator,
-    });
-    if (!permissions.write && !permissions.manage)
-      throw throwBadRequestError('The model could not be added to that collection');
+    if (!permissions.write && !permissions.manage) throw refused();
     return;
   }
   const status = await saveItemInCollections({
     input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
   });
-  if (status !== 'added')
-    throw throwBadRequestError('The model could not be added to that collection');
+  if (status !== 'added') throw refused();
 }
 
 /**

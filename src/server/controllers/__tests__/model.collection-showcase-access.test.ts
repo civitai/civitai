@@ -110,14 +110,12 @@ describe('removing a model from a collection', () => {
 
   it("clears the showcase when the collection's owner removes the model from it", async () => {
     await remove(COLLECTION_OWNER, SHOWCASE);
-    await settle();
-    expect(storedMeta.showcaseCollectionId).toBeNull();
+    await vi.waitFor(() => expect(storedMeta.showcaseCollectionId).toBeNull());
   });
 
   it('clears the showcase when the model owner removes the model from it (control)', async () => {
     await remove(MODEL_OWNER, SHOWCASE);
-    await settle();
-    expect(storedMeta.showcaseCollectionId).toBeNull();
+    await vi.waitFor(() => expect(storedMeta.showcaseCollectionId).toBeNull());
   });
 
   it('keeps the showcase when the model leaves a different collection', async () => {

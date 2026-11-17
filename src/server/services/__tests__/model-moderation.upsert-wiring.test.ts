@@ -103,7 +103,10 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { upsertModel } from '~/server/services/model.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
-import { saveItemInCollections } from '~/server/services/collection.service';
+import {
+  getUserCollectionPermissionsById,
+  saveItemInCollections,
+} from '~/server/services/collection.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -151,6 +154,7 @@ beforeEach(() => {
   mockDbWrite.model.findUnique.mockResolvedValue(storedModel);
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  vi.mocked(getUserCollectionPermissionsById).mockResolvedValue({ write: true } as never);
 });
 
 // The update branch must submit what was PERSISTED, not what the caller sent. `description` is
