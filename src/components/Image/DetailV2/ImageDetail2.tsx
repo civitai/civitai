@@ -225,6 +225,7 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   const handleSettle = (settledIndex: number) => {
