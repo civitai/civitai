@@ -30,9 +30,9 @@ const {
 } = vi.hoisted(() => ({
   bulkSetReportStatus: vi.fn(),
   softDeleteUser: vi.fn(async () => undefined),
-  createCsamReport: vi.fn(async (..._args: unknown[]) => undefined),
+  createCsamReport: vi.fn(async (..._args: unknown[]) => ({ id: 900 })),
   snapshotCsamContextText: vi.fn(),
-  createSupplementalCsamReport: vi.fn(async (..._args: unknown[]) => undefined),
+  createSupplementalCsamReport: vi.fn(async (..._args: unknown[]) => ({ id: 901 })),
 }));
 vi.mock('~/server/services/csam-supplemental.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CsamSupplementalService>()),
@@ -71,9 +71,8 @@ vi.mock('~/server/services/csam.service-new', async (importOriginal) => ({
 
 const { bulkAddBlockedImages } = await import('~/server/services/image.service');
 const { logToAxiom } = await import('~/server/logging/client');
-const { createExternalCsamReportHandler, fileCsamReport } = await import(
-  '~/server/controllers/csam.controller'
-);
+const { CSAM_BLOCKLIST_FAILED_MESSAGE, createExternalCsamReportHandler, fileCsamReport } =
+  await import('~/server/controllers/csam.controller');
 
 const OWNER = 20;
 const OTHER_OWNER = 21;
@@ -154,13 +153,29 @@ describe('fileCsamReport', () => {
     expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
   });
 
-  it('files the report and removes the account when the blocklist write throws, then throws', async () => {
+  // Ruled: the message must stop a re-file, which can create a second report. A 500's message
+  // is replaced before it reaches the moderator, so this has to stay a 503 with this text.
+  it('tells the moderator not to file again when the blocklist write throws, after one filing', async () => {
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
+    vi.mocked(logToAxiom).mockClear();
 
-    await expect(file(OWNER, [IMAGE])).rejects.toThrow('no ClickHouse client');
+    const filing = file(OWNER, [IMAGE]);
+    await expect(filing).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+      message: CSAM_BLOCKLIST_FAILED_MESSAGE,
+    });
 
     expect(createCsamReport).toHaveBeenCalledTimes(1);
+    expect(createSupplementalCsamReport).not.toHaveBeenCalled();
+    const [logged] = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry)
+      .filter((entry) => entry.message === 'CSAM blocklist write failed');
+    expect(logged.payload).toEqual({ reportedById: MOD, csamReportId: 900, imageCount: 1 });
+    expect(JSON.stringify(logged, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v))).not.toContain(
+      '123'
+    );
     expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
       expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
@@ -168,8 +183,18 @@ describe('fileCsamReport', () => {
   });
 
   it('leaves the blocklist write to after the removal, not to the report service', async () => {
-    await file(OWNER, [IMAGE]);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    vi.mocked(logToAxiom).mockClear();
 
+    await expect(file(OWNER, [IMAGE])).resolves.toEqual({
+      denyFailed: false,
+      denyBookkeepingFailed: false,
+      strikesReviewFailed: false,
+    });
+
+    expect(logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'CSAM blocklist write failed' })
+    );
     expect(createCsamReport).toHaveBeenCalledWith(
       expect.objectContaining({ writeBlocklist: false })
     );
@@ -211,7 +236,7 @@ describe('fileCsamReport', () => {
     dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
 
-    await expect(file(OWNER, [IMAGE])).rejects.toThrow('no ClickHouse client');
+    await expect(file(OWNER, [IMAGE])).rejects.toThrow(CSAM_BLOCKLIST_FAILED_MESSAGE);
 
     expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'Rejected' }) })

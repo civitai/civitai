@@ -17,7 +17,7 @@ import type {
   CreateExternalCsamReportSchema,
   CsamReportFormOutput,
 } from '~/server/schema/csam.schema';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
 import { createCsamReport } from '~/server/services/csam.service';
 import type { CsamContextText } from '~/server/services/csam-context-text';
 import { reportedUserIdsOf, snapshotCsamContextText } from '~/server/services/csam-context-text';
@@ -43,6 +43,9 @@ export async function createCsamReportHandler({
 }) {
   return fileCsamReport({ ...input, reportedById: ctx.user.id });
 }
+
+export const CSAM_BLOCKLIST_FAILED_MESSAGE =
+  'The report was filed and the account removed. Writing the image hashes to the blocklist failed and has been logged. Do not file again.';
 
 /** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
  *  it with the acting moderator's id rather than a fabricated tRPC context. */
@@ -73,10 +76,12 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     contextText,
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
-  if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
-  else await createCsamReport({ ...filed, writeBlocklist: false });
+  const report = supplementalOf
+    ? await createSupplementalCsamReport({ ...filed, supplementalOf })
+    : await createCsamReport({ ...filed, writeBlocklist: false });
 
-  // Written after the account removal below, so a failed blocklist write cannot hold that up.
+  // Hashes read now, written after the account removal below, so a failed blocklist write cannot
+  // hold that up.
   // A supplemental writes only for an Image report, as on main.
   const writesBlocklist = !!imageIds.length && (!supplementalOf || type === 'Image');
   const blocklistHashes = writesBlocklist
@@ -159,8 +164,8 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       payload: { reportedById },
     });
   }
-  // Written whether or not the removal succeeded. A failure is rethrown at the end so the filing
-  // shows it, after the filed images' appeals are closed.
+  // Written whether or not the removal succeeded. If the removal also failed, a write failure is
+  // thrown here; otherwise it is thrown at the end, after the filed images' appeals are closed.
   let blocklistError: unknown;
   try {
     await bulkAddBlockedImages({
@@ -168,17 +173,17 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       context: { step: 'csam-report', imageIds, actorUserId: reportedById },
     });
   } catch (error) {
-    if (removalError) throw error;
-    blocklistError = error;
-    // Logged here: a failing step below would replace this error.
+    // The report id is what the missing write is redone from. No hashes.
     logToAxiom({
       name: 'csam-report',
       type: 'error',
       message: 'CSAM blocklist write failed',
       userId,
       error: (error as Error)?.message,
-      payload: { reportedById },
+      payload: { reportedById, csamReportId: report.id, imageCount: imageIds.length },
     });
+    if (removalError) throw error;
+    blocklistError = error;
   }
   if (removalError) throw removalError;
 
@@ -230,7 +235,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     // Last, so the images are already blocked and the report row committed when the flag comes off.
     await releaseReviewFlagsToReportHold(imageIds);
   }
-  if (blocklistError) throw blocklistError;
+  // A 503 so the message reaches the moderator (a 500's is replaced); it must stop a re-file,
+  // which can create a second report.
+  if (blocklistError) throwServiceUnavailableError(CSAM_BLOCKLIST_FAILED_MESSAGE, blocklistError);
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };

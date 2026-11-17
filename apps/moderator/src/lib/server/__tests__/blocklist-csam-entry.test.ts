@@ -10,6 +10,9 @@ const ch = vi.hoisted(() => ({
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
   lookupFails: false,
+  // Rows oldest first. FINAL reads what a merge keeps, the newest row per hash; without it every
+  // row is read, merged or not.
+  tableRows: undefined as { hash: string; reason: string; disabled: boolean }[] | undefined,
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -21,6 +24,15 @@ vi.mock('$lib/server/clickhouse', () => ({
     query: async ({ query }: { query: string }) => {
       if (!query.includes("reason = 'CSAM'")) return { json: async () => ch.liveRows };
       if (ch.lookupFails) throw new Error('Socket hang up');
+      if (ch.tableRows) {
+        const rows = query.includes(' FINAL ')
+          ? [...new Map(ch.tableRows.map((row) => [row.hash, row])).values()]
+          : ch.tableRows;
+        const live = rows.filter((row) => row.reason === 'CSAM' && !row.disabled);
+        return {
+          json: async () => [...new Set(live.map((row) => row.hash))].map((hash) => ({ hash })),
+        };
+      }
       return { json: async () => ch.csamHashes.map((hash) => ({ hash })) };
     },
     insert: async ({ table, values }: { table: string; values: unknown[] }) => {
@@ -42,7 +54,21 @@ beforeEach(() => {
   ch.liveRows = [];
   ch.csamHashes = [CSAM_HASH];
   ch.lookupFails = false;
+  ch.tableRows = undefined;
   logToAxiom.mockClear();
+});
+
+it('a CSAM row a newer, unmerged row disabled is not live, so another block lands', async () => {
+  ch.tableRows = [
+    { hash: CSAM_HASH, reason: 'CSAM', disabled: false },
+    { hash: CSAM_HASH, reason: 'CSAM', disabled: true },
+  ];
+
+  await addImagesToBlocklist([tosImage(CSAM_HASH)]);
+
+  expect(ch.inserts.map(({ values }) => values)).toEqual([
+    [{ hash: CSAM_HASH, reason: expect.any(String) }],
+  ]);
 });
 
 describe('a hash with a CSAM entry keeps it', () => {

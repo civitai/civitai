@@ -7071,14 +7071,15 @@ export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUs
 
 /**
  * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
- * merges, so a later row of any other reason would replace that entry.
+ * merges, so a later row of any other reason would replace that entry. Read FINAL so a CSAM row
+ * that a newer, unmerged row has already replaced or disabled does not count as live.
  * The moderator app has the same guard (apps/moderator image-moderation-effects.ts); change both.
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
   if (hashes.length === 0) return new Set();
   const rows = await blocklistClient().$query<{ hash: string }>`
     SELECT DISTINCT toString(hash) AS hash
-    FROM "blocked_images"
+    FROM "blocked_images" FINAL
     WHERE hash IN (${hashes
       .map(toClickhouseInt64)
       .join(',')}) AND reason = 'CSAM' AND disabled = false

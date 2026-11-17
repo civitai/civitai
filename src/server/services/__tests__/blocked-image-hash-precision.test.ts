@@ -79,9 +79,20 @@ fakeClickhouse.client = makePermissive({
     capturedQueries.push(query);
     if (!query.includes("reason = 'CSAM'")) return Promise.resolve(queryResult);
     if (csamLookupFails) return Promise.reject(new Error('Socket hang up'));
+    if (tableRows) return Promise.resolve(liveCsamHashes(tableRows, query.includes(' FINAL')));
     return Promise.resolve(csamQueryResult);
   },
 });
+
+type TableRow = { hash: string; reason: string; disabled: boolean };
+// Rows oldest first. FINAL reads what a merge keeps, the newest row per hash; without it every
+// row is read, merged or not.
+let tableRows: TableRow[] | undefined;
+function liveCsamHashes(rows: TableRow[], final: boolean) {
+  const read = final ? [...new Map(rows.map((row) => [row.hash, row])).values()] : rows;
+  const live = read.filter((row) => row.reason === 'CSAM' && !row.disabled);
+  return [...new Set(live.map((row) => row.hash))].map((hash) => ({ hash }));
+}
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await import(
@@ -144,7 +155,21 @@ describe('a hash with a CSAM entry keeps it', () => {
     csamQueryResult = [];
     csamLookupFails = false;
     clientAbsent = false;
+    tableRows = undefined;
     vi.mocked(logToAxiom).mockClear();
+  });
+
+  it('a CSAM row a newer, unmerged row disabled is not live, so a TOS block lands', async () => {
+    tableRows = [
+      { hash: HASH.toString(), reason: 'CSAM', disabled: false },
+      { hash: HASH.toString(), reason: 'CSAM', disabled: true },
+    ];
+
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'TOS' as any }] });
+
+    expect(capturedInserts.map(({ values }) => values)).toEqual([
+      [{ hash: HASH.toString(), reason: 'TOS' }],
+    ]);
   });
 
   it('an unblock disables none of its rows and still disables an unrelated hash', async () => {
