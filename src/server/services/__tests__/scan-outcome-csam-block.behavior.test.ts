@@ -309,4 +309,13 @@ describe('the rating block', () => {
     });
     expect(outcome.blockedFor).toBe('CSAM');
   });
+
+  // The orchestrator's rating can carry no reason (`mediaRating.blockedReason` undefined).
+  it('keeps the stored reason when the rating gives none', async () => {
+    await blockImageFromRating({ imageId: CSAM });
+    await blockImageFromRating({ imageId: OTHER });
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    expect(await imageRow(OTHER)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+  });
 });
