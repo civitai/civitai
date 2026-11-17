@@ -3,10 +3,11 @@
  * Rebuilds scripts/test-shard/unit-timings.json from the per-file timings CI records.
  *
  * Every `Unit tests` shard uploads `.test-perf/runs/unit-shard-<n>.perf.json` (written by
- * scripts/test-perf/reporter.mjs) inside its `unit-report-<n>` artifact. Download the artifacts of
- * one or more green runs and point this at them:
+ * scripts/test-perf/reporter.mjs) as its `unit-perf-<n>` artifact (~0.2 MB, kept 14 days). Download
+ * those of several green runs (each run's shards land on different runners, which is what lets the
+ * runner speed be divided out) and point this at them:
  *
- *   gh run download <run-id> -R civitai/civitai -p 'unit-report-*' -D /tmp/unit-timings/<run-id>
+ *   gh run download <run-id> -R civitai/civitai -p 'unit-perf-*' -D /tmp/unit-timings/<run-id>
  *   node scripts/test-shard/update-timings.mjs /tmp/unit-timings
  *
  * A file's cost is its worker time — environment + prepare + import/collect + setup + tests — the

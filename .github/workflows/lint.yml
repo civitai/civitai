@@ -165,11 +165,11 @@ name: Lint
 # ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
 #
 # With the `full-ci` label on a PR (draft or not), a PR run here includes the
-# four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
+# six `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
 # `github.event.pull_request.labels`, the label set in that run's event payload.
 # apps.yml honours the same label, behind its own `paths:` filter. The label stays
 # on until the full unit suite has passed once on the PR (on some commit, not
-# necessarily the head): the `full-ci-done` job removes it after a run whose four
+# necessarily the head): the `full-ci-done` job removes it after a run whose six
 # shards all passed, so later pushes run without the shards; a cancelled or red unit run leaves it on. Re-add it to ask again. Add it
 # only when the change touches code the unit or component suites cover and the PR is
 # near merge-ready.
@@ -214,7 +214,7 @@ on:
       only:
         description: >-
           Run only this suite. all = every suite (default). typecheck,
-          typecheck-tests (test files only), unit (all 4 shards), unit-1 .. unit-4
+          typecheck-tests (test files only), unit (all 6 shards), unit-1 .. unit-6
           (one shard), packages, geometry, component.
           App suites: dispatch apps.yml.
         type: choice
@@ -228,6 +228,8 @@ on:
           - unit-2
           - unit-3
           - unit-4
+          - unit-5
+          - unit-6
           - packages
           - geometry
           - component
@@ -694,7 +696,7 @@ jobs:
     # ── NOT RUN ON PULL REQUESTS UNLESS ASKED, NOT RUN ON PUSH; VERIFIED IN BATCHES ON `main` ──
     #
     # The `if` below skips this job on `pull_request` unless the PR carries the
-    # `full-ci` label (draft or not; the label comes off once all four shards have
+    # `full-ci` label (draft or not; the label comes off once all six shards have
     # passed for the PR — `full-ci-done`, see the header), and skips it on every push to `main`. It runs on `workflow_dispatch`,
     # where `only` still selects it — including the batch dispatch on `main` from
     # unit-batched.yml, after which `unit-verify` posts the verdict as a commit status
@@ -715,7 +717,7 @@ jobs:
     #
     # WANT A VERDICT BEFORE MERGING? Add the `full-ci` label to the PR
     # (`gh pr edit <n> --add-label full-ci`), or dispatch this workflow on your
-    # branch with `only: unit` (all four shards) or `only: unit-<n>` (one):
+    # branch with `only: unit` (all six shards) or `only: unit-<n>` (one):
     #   gh workflow run lint.yml --ref <branch> -f only=unit
     # Or run `pnpm run test:unit:run` locally, which the root CLAUDE.md already asks for.
     #
@@ -742,52 +744,53 @@ jobs:
     # `Unit tests` step underneath was `failure`, so for those old runs read
     # `steps[].conclusion` from the jobs endpoint, not the run.
     #
-    # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone
+    # `only: unit` runs all six shards; `only: unit-<n>` runs that shard alone
     # (the matrix below narrows to it). The job-level `if` cannot read `matrix`,
     # which is why the shard pick lives in the matrix expression instead.
     #
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
     # draft too).
     if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
-    # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
+    # ── SHARDED ACROSS 6 RUNNERS, SPLIT BY RECORDED COST ─────────────────────
     #
-    # Measured before the change, n=12 runs of this job, from the Actions API:
+    # The split is NOT Vitest's: `--shard` hands the file list to the root sequencer
+    # (scripts/test-shard/sequencer.mjs), which assigns files greedy longest-first by
+    # their recorded worker time (scripts/test-shard/unit-timings.json). Vitest's own
+    # split cuts a path-hash-ordered list into equal file COUNTS, and this suite's
+    # per-file cost is bimodal (a file either loads the big core-service graph or it
+    # does not), so equal counts are not equal time. Modelled on the cost table, the
+    # hash split's heaviest shard carries 1.08x the mean at N=4, 1.19x at N=6 and
+    # 1.26x at N=8; the cost split carries 1.00x at each. A file missing from the
+    # table (new, renamed) is dealt round-robin, so a stale table costs balance,
+    # never coverage. Refresh it from the `unit-perf-*` artifacts every shard uploads
+    # (scripts/test-shard/update-timings.mjs) when the shard durations drift apart.
     #
-    #   Unit tests step   555.5s   <- variable, scales with 1/shards
-    #   Install            30.0s   |
-    #   checkout           21.0s   |  fixed overhead, paid by EVERY shard
-    #   setup-node         13.0s   |
-    #   set up job + pnpm   2.5s   |  = 66.5s
-    #   -------------------------
-    #   total             622.0s   = the 10.4m job median
+    # 🔴 RUNNER SPEED IS THE OTHER HALF OF THE SPREAD, AND NO SPLIT FIXES IT. The same
+    # files ran 0.77x on one shard's runner and 1.27x on another's within one run
+    # (Lint run 44092626209). So the slowest shard is usually the slowest RUNNER, and
+    # two runs of one config can differ by ~20% at the max. Compare configs over
+    # several runs, never one.
     #
-    # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
-    # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
+    # WHY 6, measured 2026-11-17 (only=unit dispatches, two runs per config; the
+    # job-minutes column is the sum of all shard jobs; fixed cost ~110s per shard):
     #
-    # 🔴 WHY 4 AND NOT MORE. The curve is already flat at 4: the fifth shard saves
-    # ~0.5m of wall clock (3.4m -> 3.0m) and the sixth ~0.3m, while EVERY shard adds
-    # the 66.5s fixed overhead to runner-minutes (13.7m at N=4, 14.8m at N=5) and
-    # takes one more slot of the plan's org-wide concurrent-job limit, which this
-    # workflow already saturates — so each extra shard queues someone else's job
-    # for longer than it saves this one. Shrink the fixed overhead or the suite
-    # before raising this number.
+    #   config        max shard job   job-minutes
+    #   hash  N=4     1005-1076s      64-65
+    #   cost  N=4     1173-1215s      69-72
+    #   hash  N=6     816-964s        69-70
+    #   cost  N=6     860-894s        65-70
+    #   cost  N=8     648-883s        69-79
     #
-    # BALANCE: ASSUMED BEFOREHAND, NOW MEASURED. `--shard` is not cost-aware and
-    # this suite's cost is bimodal (p50 66 modules per file, p75 1088 — see
-    # claudedocs/test-perf-measurement-envelope-2026-08-15.md and
-    # scripts/test-perf/README.md), so uneven shards were the live risk. Measured
-    # on the first green sharded run, 2026-08-25:
-    #
-    #   shard   1        2        3        4
-    #   files   355      354      354      354     <- vitest splits by FILE COUNT
-    #   tests   5794     5142     5774     5447
-    #   wall    3.3m     3.6m     3.8m     3.4m    <- 1.14x spread
-    #
-    # The file split is near-exact; the 14% spread is the cost distribution
-    # showing through it. Adequate at N=4 — but the margin narrows as N rises and
-    # per-shard file counts fall, so READ THE FOUR DURATIONS after any change to
-    # this matrix. If one dominates, assign files by measured per-file cost
-    # (scripts/test-perf/reporter.mjs emits it) rather than raising N.
+    # Going 4 -> 6 is what moved the wall clock (~20%) at about the same job-minutes.
+    # The cost split's own share is BELOW this sample's noise: modelling the measured
+    # runner spread over the cost table puts it at 1.6% off the expected slowest shard
+    # at N=4, 4.0% at N=6, 5.4% at N=8 — it grows with N because count-split
+    # imbalance does. N=8 cuts the wall further but adds the fixed cost per extra
+    # shard (and one more slot of the plan's org-wide concurrent-job limit, which
+    # this workflow already saturates — each extra shard queues someone else's job),
+    # and exposes more runners to a slow install (one N=8 shard spent 342s in
+    # setup-node + Install against a typical ~65s). Shrink the fixed overhead or the
+    # suite before raising this number.
     #
     # ⚠️ Suite size moves fast: 1,065 files / 16,784 tests on 2026-08-15 became
     # 1,417 files / 22,157 executed ten days later, +33%. Any figure here is a
@@ -799,16 +802,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # [1, 2, 3, 4] unless a dispatch named one shard (`only: unit-<n>`). The
-        # `--shard=<n>/4` denominator below stays 4 either way, so a single
+        # [1, 2, 3, 4, 5, 6] unless a dispatch named one shard (`only: unit-<n>`). The
+        # `--shard=<n>/6` denominator below stays 6 either way, so a single
         # shard runs exactly the files it would in a full run.
-        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4]') }}
-    # Per-shard, not the whole suite. The ~3.4m estimate above is from the
-    # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
-    # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
-    # Raised 20 -> 25m on 2026-11-10: shard medians had reached 13-16m and shard 3
-    # (the heaviest, since `--shard` splits by file count, not cost) hit 20m on
-    # slow runners. It is NOT 30/4: the fixed overhead does not shard.
+        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4],"unit-5":[5],"unit-6":[6]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4, 5, 6]') }}
+    # Per-shard, not the whole suite. On 2026-10-23, under heavy runner load, shards
+    # took 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
+    # Raised 20 -> 25m on 2026-11-10: shard medians had reached 13-16m at N=4 and the
+    # heaviest hash shard hit 20m on slow runners. Left at 25m when N went to 6 (shards
+    # 8-15m at N=6 on 2026-11-17): the headroom is for slow runners, which do not shard.
     timeout-minutes: 25
     # A real Redis for the tests that must see what Redis itself does: Lua scripts, sorted-set
     # order of equal scores, increment exactness (roster.real-redis.test.ts). Such a test skips
@@ -960,7 +962,7 @@ jobs:
       - name: Unit tests
         env:
           TESTPERF_LABEL: unit-shard-${{ matrix.shard }}
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json --reporter=./scripts/test-perf/reporter.mjs
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json --reporter=./scripts/test-perf/reporter.mjs
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -975,7 +977,7 @@ jobs:
         # confusing red assert step on top of the cancellation. Observed on shard 3
         # of the run that shipped the `--` bug.
         if: ${{ !cancelled() }}
-        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 6
 
       # For `unit-verify`, which reads which files failed. Kept briefly.
       - name: Upload unit report
@@ -983,12 +985,26 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: unit-report-${{ matrix.shard }}
-          path: |
-            unit-report.json
-            .test-perf/runs/unit-shard-${{ matrix.shard }}.perf.json
+          path: unit-report.json
           if-no-files-found: warn
           retention-days: 3
           # A re-run of a failed shard uploads again under the same name.
+          overwrite: true
+
+      # Per-file worker time (import + tests) from scripts/test-perf/reporter.mjs: the input
+      # scripts/test-shard/update-timings.mjs rebuilds the shard cost table from. Its OWN artifact,
+      # not inside `unit-report-<n>`: `unit-verify` downloads `unit-report-*` and counts every
+      # `.json` under it as one shard's report (scripts/ci/unit-batched.mjs readReports), so a
+      # second file there would inflate the count its completeness check relies on. Kept longer
+      # than the report because a refresh reads several runs; ~0.2 MB per shard.
+      - name: Upload per-file timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-perf-${{ matrix.shard }}
+          path: .test-perf/runs/unit-shard-${{ matrix.shard }}.perf.json
+          if-no-files-found: warn
+          retention-days: 14
           overwrite: true
 
       # The registry adapter's bundle, and its check that every external it loads loads under
@@ -1041,7 +1057,7 @@ jobs:
     # repo-settings change, not a workflow one.
     #
     # Why this one runs on PRs when `unit` does not: `unit` is ~12,000+ tests whose cost is a
-    # ~33s import/transform phase per file, four shards and most of this workflow's
+    # ~33s import/transform phase per file, six shards and most of this workflow's
     # job-minutes (see its comment). This is 616 tests with no browser, no database and no
     # Next module graph — ~15s locally.
     #
@@ -1611,9 +1627,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           UNIT_RESULT: ${{ needs.unit.result }}
-        # 4: the `unit` matrix on an `only: unit` dispatch. Fewer reports than this means a shard
+        # 6: the `unit` matrix on an `only: unit` dispatch. Fewer reports than this means a shard
         # never finished, so the red is not treated as a flake or bisected.
-        run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports" 4
+        run: node scripts/ci/unit-batched.mjs verify "$UNIT_RESULT" "$RUNNER_TEMP/reports" 6
 
       # A crashed verification must not look like no news: `error` on HEAD, naming the step, so
       # the gate (which counts only a posted success or failure) re-verifies HEAD next time.
@@ -1642,7 +1658,7 @@ jobs:
 
   # ── THE `full-ci` LABEL COMES OFF ONCE THE FULL UNIT SUITE HAS PASSED ───────────────────────
   #
-  # The label stays on a PR until one Lint run has passed all four unit shards for it (on some
+  # The label stays on a PR until one Lint run has passed all six unit shards for it (on some
   # commit of the PR, not necessarily its head); this job then removes it, so later pushes run
   # without the shards (re-add it to ask again). Which runs:
   #   - a pull_request run whose payload carries the label, from a branch in this repo (a fork's
