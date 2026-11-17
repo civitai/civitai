@@ -144,6 +144,9 @@ import {
 } from '~/server/schema/blocks/subscription.schema';
 import {
   approveRequestSchema,
+  clearPublishRequestHoldSchema,
+  listPublishRequestHoldsSchema,
+  placePublishRequestHoldSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
   agentReviewChatSchema,
@@ -282,6 +285,10 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
+import {
+  resolveBlockOutputRules,
+  resolveBlockOutputView,
+} from '~/server/services/blocks/block-media-serving';
 import {
   collectBlockStepTypes,
   isRepeatStepType,
@@ -1099,6 +1106,18 @@ export function authorizeBlockBridgeViewer(
     }
     return next({ ctx: { blockViewer } });
   };
+}
+
+function mapHoldError(err: unknown): TRPCError {
+  if (err instanceof TRPCError) return err;
+  const name = (err as Error)?.name;
+  if (name === 'PublishRequestHoldInputError')
+    return new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message, cause: err });
+  return new TRPCError({
+    code: 'INTERNAL_SERVER_ERROR',
+    message: 'Review hold write failed',
+    cause: err,
+  });
 }
 
 /**
@@ -3298,14 +3317,63 @@ export const blocksRouter = router({
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
           mediaSplit: input.mediaSplit,
+          holdOverrideReason: input.holdOverrideReason,
+          holdOverrideIds: input.holdOverrideIds,
         });
       } catch (err) {
         throw new TRPCError({
-          code: 'BAD_REQUEST',
+          code:
+            (err as Error).name === 'PublishRequestHeldError'
+              ? 'PRECONDITION_FAILED'
+              : 'BAD_REQUEST',
           message: (err as Error).message,
           cause: err,
         });
       }
+    }),
+
+  /**
+   * Review holds: a moderator's or agent's open check on an app. While one is open, approving any
+   * pending request for the app is refused unless the approve carries an override reason.
+   */
+  placePublishRequestHold: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(placePublishRequestHoldSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { dbWrite } = await import('~/server/db/client');
+      const { placeHold } = await import('~/server/services/blocks/publish-request-holds.service');
+      try {
+        return await dbWrite.$transaction((tx) =>
+          placeHold(tx, { ...input, actorUserId: ctx.user.id })
+        );
+      } catch (err) {
+        throw mapHoldError(err);
+      }
+    }),
+
+  clearPublishRequestHold: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(clearPublishRequestHoldSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { dbWrite } = await import('~/server/db/client');
+      const { clearHold } = await import('~/server/services/blocks/publish-request-holds.service');
+      try {
+        await clearHold(dbWrite, { ...input, actorUserId: ctx.user.id });
+        return { ok: true as const };
+      } catch (err) {
+        throw mapHoldError(err);
+      }
+    }),
+
+  listPublishRequestHolds: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listPublishRequestHoldsSchema)
+    .query(async ({ input }) => {
+      const { dbWrite } = await import('~/server/db/client');
+      const { listHoldsBySlug } = await import(
+        '~/server/services/blocks/publish-request-holds.service'
+      );
+      return listHoldsBySlug(dbWrite, input.slugs, { includeCleared: input.includeCleared });
     }),
 
   /**
@@ -5621,7 +5689,7 @@ export const blocksRouter = router({
       // carries no text field and its `images` are posture-gated, so a text step
       // contributes nothing — not even a url), not this sentence.
       const snapshot = await attachModeratedStepTextOutputs(
-        snapshotFromWorkflow(workflow, blockOutputCeilingFromClaims(claims)),
+        snapshotFromWorkflow(workflow, await resolveBlockOutputView(claims)),
         workflow,
         {
           userId,
@@ -5901,7 +5969,7 @@ export const blocksRouter = router({
       // returns a snapshot of whatever the orchestrator had produced, so it is a
       // real text-publishing surface and not a formality.
       const snapshot = await attachModeratedStepTextOutputs(
-        snapshotFromWorkflow(workflow, blockOutputCeilingFromClaims(claims)),
+        snapshotFromWorkflow(workflow, await resolveBlockOutputView(claims)),
         workflow,
         {
           userId,
@@ -6082,10 +6150,9 @@ export const blocksRouter = router({
       // would mean up to 50 inline xGuard scans on a rate-limited read path.
       // If `AppWorkflow` ever GAINS a text field, wrapping stops being optional
       // and the per-page fan-out has to be solved, not skipped.
+      const outputView = await resolveBlockOutputView(claims);
       return {
-        workflows: items.map((item) =>
-          projectAppWorkflow(item, blockOutputCeilingFromClaims(claims))
-        ),
+        workflows: items.map((item) => projectAppWorkflow(item, outputView)),
         cursor: nextCursor ?? null,
       };
     }),
@@ -6181,7 +6248,7 @@ export const blocksRouter = router({
       // Both guards passed — cancel, then re-read + project the terminal state.
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const canceledWorkflow = projectAppWorkflow(canceled, blockOutputCeilingFromClaims(claims));
+      const canceledWorkflow = projectAppWorkflow(canceled, await resolveBlockOutputView(claims));
       // 🔴 THE AUTHOR FEE FOLLOWS THE GENERATION — the THIRD observer, and the one
       // slice 2b originally missed. This procedure issues a real orchestrator
       // cancel (the sibling `blocks.cancelWorkflow` above does the same thing for
@@ -6363,10 +6430,11 @@ export const blocksRouter = router({
       // late. A NAMED restricted position is refused before anything is fetched —
       // never replaced by the next output. An omitted `imageIndexes` means every
       // available output that is not restricted.
-      const { positions } = projectAppWorkflowWithPositions(
-        workflow,
-        blockOutputCeilingFromClaims(claims)
-      );
+      // No mint: publish fetches each position's media itself.
+      const { positions } = projectAppWorkflowWithPositions(workflow, {
+        ...(await resolveBlockOutputRules(claims)),
+        mint: null,
+      });
       const shape = (idx: number) => {
         const output = positions[idx]?.output;
         if (!output) return 'missing';
@@ -6610,7 +6678,7 @@ export const blocksRouter = router({
           appBlockId: claims.appBlockId,
           workflowId: input.workflowId,
           imageIndex: input.imageIndex,
-          ceiling: blockOutputCeilingFromClaims(claims),
+          ceiling: await resolveBlockOutputRules(claims),
           // Lazily, so the durable ownership row is checked before an orchestrator token is minted.
           getWorkflow: async (workflowId) =>
             getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
@@ -6873,7 +6941,7 @@ export const blocksRouter = router({
           appId: claims.appId,
           appBlockId: claims.appBlockId,
           browsingLevel: resolveViewerBrowsingLevel(claims),
-          outputCeiling: blockOutputCeilingFromClaims(claims),
+          outputCeiling: await resolveBlockOutputRules(claims),
         },
         sources: input.sources,
         title: input.title,
@@ -7034,7 +7102,7 @@ export const blocksRouter = router({
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         browsingLevel: resolveViewerBrowsingLevel(claims),
-        outputCeiling: blockOutputCeilingFromClaims(claims),
+        outputCeiling: await resolveBlockOutputRules(claims),
       };
 
       // ── AUDIT SCOPE. Everything below runs INSIDE `recordOutcome`, so a
@@ -7624,6 +7692,8 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
+          // A preview returns no snapshot, so nothing is minted.
+          view: { serving: (await resolveBlockOutputRules(auth.claims)).serving, mint: null },
         },
         deps
       );
@@ -7646,6 +7716,7 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
+          view: await resolveBlockOutputView(auth.claims),
           expectedTotal: input.expectedTotal,
         },
         deps
@@ -8776,7 +8847,7 @@ export const blocksRouter = router({
         });
         // #3520: fold in any checkpoint the graph silently swapped during the
         // validation inside `createBlockTextToImageStep` above.
-        snapshot = snapshotFromWorkflow(submitted, blockOutputCeilingFromClaims(claims), {
+        snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims), {
           modelSubstitutions,
         });
         realizedTransactions = submitted.transactions;
@@ -11141,10 +11212,15 @@ async function estimateBlockWorkflowCell(
   // cost for model A and is silently priced for model B has the same
   // detectability problem as the submit, one step earlier.
   return {
-    snapshot: snapshotFromWorkflow(whatIfResult, blockOutputCeilingFromClaims(claims), {
-      modelSubstitutions,
-      additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
-    }),
+    snapshot: snapshotFromWorkflow(
+      whatIfResult,
+      // An estimate has no outputs to mint.
+      { ...blockOutputCeilingFromClaims(claims), serving: false, mint: null },
+      {
+        modelSubstitutions,
+        additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
+      }
+    ),
   };
 }
 
@@ -11768,7 +11844,7 @@ async function submitCustomComfyWorkflow(opts: {
         externalId: blockExternalId,
       },
     });
-    snapshot = snapshotFromWorkflow(submitted, blockOutputCeilingFromClaims(claims));
+    snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
     realizedTransactions = submitted.transactions;
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
@@ -13190,7 +13266,7 @@ async function submitStepWorkflow(opts: {
         externalId: blockExternalId,
       },
     });
-    snapshot = snapshotFromWorkflow(submitted, blockOutputCeilingFromClaims(claims));
+    snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
     realizedTransactions = submitted.transactions;
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
@@ -14126,7 +14202,7 @@ async function submitPassThroughStepWorkflow(opts: {
         externalId: blockExternalId,
       },
     });
-    snapshot = snapshotFromWorkflow(submitted, blockOutputCeilingFromClaims(claims));
+    snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
     realizedTransactions = submitted.transactions;
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
@@ -14806,7 +14882,7 @@ async function submitMultiStepWorkflow(opts: {
         externalId: blockExternalId,
       },
     });
-    snapshot = snapshotFromWorkflow(submitted, blockOutputCeilingFromClaims(claims));
+    snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
     realizedTransactions = submitted.transactions;
     realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
     realizedPriceIsCap = submitted.cost?.variable === true;
@@ -15894,7 +15970,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
     await releaseGenIdempotency(genClaimKey);
     throw e;
   }
-  const snapshot = snapshotFromWorkflow(submitted, blockOutputCeilingFromClaims(claims));
+  const snapshot = snapshotFromWorkflow(submitted, await resolveBlockOutputView(claims));
   const realizedTransactions = submitted.transactions;
   const realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
   const realizedPriceIsCap = submitted.cost?.variable === true;

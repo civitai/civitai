@@ -210,6 +210,8 @@ beforeEach(async () => {
     app: { userId: 42 },
   });
   db.write.oauthClient.update.mockResolvedValue({});
+  // The ceiling a late hold would put back, read on the primary before step (3).
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0 });
   db.write.appListing.create.mockResolvedValue({ id: 'apl_created' });
   db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
   db.read.appBlockPublishRequest.findUnique.mockResolvedValue({

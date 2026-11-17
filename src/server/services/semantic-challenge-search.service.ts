@@ -217,9 +217,8 @@ export async function searchSemanticChallenges({
   logToAxiom({
     type: 'info',
     name: 'semantic-challenge-search',
-    returned: search.state.returned,
     hydrated,
-    shown: page.items.length,
+    payload: { returned: search.state.returned, shown: page.items.length },
   });
 
   if (search.state.refused) return none;

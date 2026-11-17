@@ -221,6 +221,18 @@ describe('GET /api/v1/blocks/collections/[id]', () => {
     expect(mockGetById).toHaveBeenCalled();
   });
 
+  it("reads a moderator subject's items with no moderator or owner view", async () => {
+    mockHydrate.mockResolvedValueOnce({ id: 42, username: 'mod', isModerator: true });
+    mockPerms.mockResolvedValueOnce({ read: true, publicCollection: true });
+    mockItems.mockResolvedValueOnce({ items: [], nextCursor: undefined });
+    const { req, res } = createMocks({ query: { id: '7' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    expect(mockItems).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: false, asOwner: false })
+    );
+  });
+
   it('404 when the collection row is gone (getCollectionById throws)', async () => {
     mockGetById.mockRejectedValueOnce(new Error('No collection'));
     const { req, res } = createMocks({ query: { id: '7' } });

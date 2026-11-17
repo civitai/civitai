@@ -1155,10 +1155,19 @@ export type BlockWorkflowSnapshot = {
    *     cap the site itself put on the workflow, or a `MatureContent` block.
    *     `'unrated'`: no rating will ever arrive (an `imageResourceTraining` sample, a
    *     3D mesh on a finished step with no rating source) and one could restrict it —
-   *     terminal, fail closed. Treat an unknown reason like `'ceiling'`.
+   *     terminal, fail closed. `'unrecognised_url'`: host media serving is on and the
+   *     host could not issue a media url for the output. Treat an unknown reason like
+   *     `'ceiling'`.
    *   A video from an engine the orchestrator never rates (kling, veo3, vidu, grok,
    *   gemini-omni) is DELIVERED with its url while unrated, as on the site — its
    *   provider moderates it; a rating that arrives still meets the ceiling checks.
+   *   While host media serving is on for the viewer, every such video, and every
+   *   output rated `na`, is `{ restricted: true, reason: 'unrated' }` instead.
+   *
+   *   HOST MEDIA SERVING (per viewer, off by default). When on, every `url` here, in
+   *   `imageUrls`, `steps[]`, `model3dOutputs` and `AppWorkflow.images` is a host
+   *   media url valid for about two minutes, and each `{ url }` entry carries a
+   *   `mediaRef` to store instead. When off, entries are exactly as above.
    * Restricted urls are withheld; an app shows a locked state for such an entry and
    * must not try to fetch it. Not-yet-available outputs are dropped, as from
    * `imageUrls`; a BLOCKED one keeps its slot (below).
@@ -1658,11 +1667,25 @@ export type BlockWorkflowSnapshot = {
 /** The orchestrator content rating of an output the app may load. */
 export type BlockWorkflowOutputRating = 'pg' | 'pg13' | 'r' | 'x' | 'xxx';
 
+export type BlockWorkflowRestrictedReason = 'pool' | 'ceiling' | 'unrated' | 'unrecognised_url';
+
 /** One entry of `BlockWorkflowSnapshot.outputs` / `AppWorkflow.outputs`. */
 export type BlockWorkflowOutput =
-  | { url: string; nsfwLevel?: BlockWorkflowOutputRating }
-  /** `'unrated'`: no rating will ever arrive, and one could restrict it (fail closed). */
-  | { restricted: true; reason: 'pool' | 'ceiling' | 'unrated' }
+  | {
+      url: string;
+      nsfwLevel?: BlockWorkflowOutputRating;
+      /**
+       * Present only while host media serving is on for this viewer, and then `url` is a
+       * short-lived host media url. The value an app may store and replay through
+       * `GET_WORKFLOW_MEDIA`; opaque.
+       */
+      mediaRef?: string;
+    }
+  /**
+   * `'unrated'`: no rating will ever arrive, and one could restrict it (fail closed).
+   * `'unrecognised_url'`: the host could not issue a media url for it.
+   */
+  | { restricted: true; reason: BlockWorkflowRestrictedReason }
   /** Not rated yet, and its rating could still restrict it: no url until it lands. */
   | { pending: true }
   /** Blocked by moderation: keeps its position, no url, never available. */

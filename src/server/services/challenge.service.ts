@@ -1159,7 +1159,7 @@ export async function getChallengeDetail(
   ) {
     const cover = await dbRead.image.findUnique({
       where: { id: challenge.coverImageId },
-      select: { poi: true, ingestion: true },
+      select: { poi: true, ingestion: true, nsfwLevel: true },
     });
     if (
       isChallengeHiddenByPoiCover(
