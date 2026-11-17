@@ -108,7 +108,7 @@ export function buildAuthorizeRedirect(opts: {
   /** Post-login destination (a safe same-origin path; validated here). */
   returnUrl?: string;
   /** Requested scope. First-party defaults to a full session. */
-  scope?: number;
+  scope?: bigint;
   /** Cookie `Secure` flag. Defaults to the app's own protocol (`isSecureCookie()`). */
   secure?: boolean;
   /** Cookie `Domain` (the registrable domain, e.g. `civitai.red`) so the bridge cookie survives a host

@@ -39,8 +39,8 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
  *
  * MATURITY: media items are clamped to the token's `maxBrowsingLevel` ceiling
  * (region-narrowed) by threading the clamped `browsingLevel` into
- * `getCollectionItemsByCollectionId` — the identical authority surface
- * /api/v1/blocks/images uses. Only image/video (playable) items are returned;
+ * `getCollectionItemsByCollectionId` — the domain clamp, NOT the viewer-level
+ * clamp /api/v1/blocks/images serves at. Only image/video (playable) items are returned;
  * model/post/article items are omitted.
  *
  * Response: `{ collection: { id, name, description, curator:{ userId, username },

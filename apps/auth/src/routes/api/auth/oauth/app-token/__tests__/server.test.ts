@@ -54,7 +54,8 @@ function call(body: Record<string, unknown>) {
     request: new Request('https://auth.civitai.com/api/auth/oauth/app-token', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
+      // The main app sends the scope as a JSON number (JSON has no bigint).
+      body: JSON.stringify(body, (_, v) => (typeof v === 'bigint' ? Number(v) : v)),
     }),
   } as never);
 }
@@ -158,7 +159,9 @@ describe('oauth/app-token +server', () => {
     expect(row.type).toBe('Access');
     expect(row.clientId).toBe(CLIENT_ID);
     expect(row.userId).toBe(7);
-    expect(row.tokenScope).toBe(REQUESTED);
+    // UserRead (1) | AIServicesWrite (32768), in both scope columns.
+    expect(row.tokenScope).toBe(32769);
+    expect(row.tokenScopeWide).toBe('32769');
     expect(row.key).toBe(`hash:${json.access_token as string}`);
     const expiresMs = (row.expiresAt as Date).getTime() - Date.now();
     expect(Math.abs(expiresMs - 600_000)).toBeLessThan(5000);
@@ -166,10 +169,40 @@ describe('oauth/app-token +server', () => {
     expect(json.token_type).toBe('Bearer');
     expect(json.expires_in).toBe(600);
     expect(json.expires_at).toBe((row.expiresAt as Date).toISOString());
-    expect(json.scope).toBe(REQUESTED);
+    expect(json.scope).toBe(32769);
     expect(h.logOAuthEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'token.issued', metadata: { grant_type: 'app_token' } })
     );
+  });
+});
+
+describe('oauth/app-token +server — scopes past bit 30', () => {
+  // UserRead | AppsRead (2^31) | AppDataRead (2^32), as the main app sends it: a JSON number.
+  const APPS = 6442450945;
+
+  it('passes the bounds check, and mints with bits 31 and 32 when the consent covers them', async () => {
+    h.rows.OauthClient = { allowedScopes: APPS, accessMode: 'open', grants: [] };
+    h.rows.OauthConsent = { scope: APPS };
+    const res = await call({ ...body, scope: APPS });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).scope).toBe(APPS);
+    const [row] = h.inserts;
+    expect(row.tokenScopeWide).toBe('6442450945');
+    expect(row.tokenScope).toBe(1);
+  });
+
+  it('refuses them when the consent does not cover them (consent_required, not invalid_scope)', async () => {
+    h.rows.OauthClient = { allowedScopes: APPS, accessMode: 'open', grants: [] };
+    h.rows.OauthConsent = { scope: 1 };
+    const res = await call({ ...body, scope: APPS });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('consent_required');
+  });
+
+  it('still refuses a bit past the defined scopes', async () => {
+    const res = await call({ ...body, scope: 8589934592 }); // 2^33: no such scope
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
   });
 });
 

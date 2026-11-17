@@ -214,6 +214,7 @@ export async function getModelShowcaseImages(
           width: true,
           height: true,
           meta: true,
+          hideMeta: true,
           nsfwLevel: true,
           ingestion: true,
           needsReview: true,
@@ -274,7 +275,7 @@ export async function getModelShowcaseImages(
   const top = flat.slice(0, MAX_SHOWCASE_IMAGES);
 
   return top.map(({ img }) => {
-    const meta = extractMeta(img.meta);
+    const meta = extractMeta(img.hideMeta ? null : img.meta);
     // Prefer the meta-recorded generation dimensions over the image-file
     // dimensions when present. Many showcase images are upscaled offline
     // before upload — Image.width/Image.height reflect the post-upscale

@@ -28,9 +28,9 @@ export const DEFAULT_HUB_ISSUER = 'https://auth.civitai.com';
  * scope, and so does a missing or non-string `scope` claim, so a check that refuses write scopes
  * (a system account's) refuses it rather than missing it.
  */
-export function scopeBits(scope: unknown): number {
+export function scopeBits(scope: unknown): bigint {
   if (typeof scope !== 'string') return ALL_SCOPES;
-  let bits = 0;
+  let bits = 0n;
   for (const name of scope.split(' ').filter(Boolean)) {
     // `None` is 0 in the bitmask: looked up, a token claiming only `None` would read as no scope
     // at all, so it is treated like an unknown name instead.
@@ -57,7 +57,7 @@ export type HubJwtConfig = {
 
 export type HubJwtDeps = {
   /** The user a bearer for `userId` with `tokenScope` acts as, or null (`getBearerTokenUser`). */
-  loadUser: (userId: number, tokenScope: number) => Promise<VerifiedToken['user'] | null>;
+  loadUser: (userId: number, tokenScope: bigint) => Promise<VerifiedToken['user'] | null>;
 };
 
 const USER_ID_RE = /^[1-9][0-9]{0,15}$/;
