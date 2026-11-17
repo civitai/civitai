@@ -91,8 +91,12 @@ votes, never player rows.
 
 ## Serving (`feed.ts`)
 
-- Each feed slot rolls once, per player, against `KNIGHTS_YESNO_SHARE` (default above one half; 0 switches questions off). The roll is
-  fixed until the player answers, so a reload does not change it. With no rating to show, a question is shown whenever there is one.
+- Questions come in bursts (`cadence.ts`, `BURSTS`): a gap of 5, 8 or 10 ratings, then a burst of 1 to 5 questions, each length
+  rolled anew per player. `burstDue` reads the player's last 11 votes plus the items already handed out ahead (`servedHistory`; a
+  hidden check counts as a rating), and rolls each length from the item that ended the run before it, so a reload or the look-ahead
+  never re-rolls. A due burst comes before the hidden-check roll; a hidden check rides only on a rating slot. When no question is
+  left, the slot is a rating; with no rating to show, a question is shown whenever there is one. `KNIGHTS_YESNO_SHARE=0` switches
+  questions off; any other value leaves the cadence as it is.
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the
@@ -148,5 +152,5 @@ question gets its own `rule` row, so the store computes the majority per questio
 ## Players see
 
 `/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
-any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is offered before a question is rolled for, so its rate does
-not depend on the yes/no share.
+any rating. The Codex has a short paragraph that says only that an answer is graded against the Order's final answer. Hotkeys, banner and the status line are in `/play`. A hidden check is rolled only on a rating slot, at its own rate
+(`KNIGHTS_HIDDEN_CHECK_RATE`).

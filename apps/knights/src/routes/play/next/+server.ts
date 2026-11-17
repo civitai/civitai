@@ -74,10 +74,14 @@ export const GET: RequestHandler = async ({ url, locals }) => {
       yesno: [...skipped.yesno],
     };
     for (const ref of taken) leaveOut[ref.kind].push(ref.id);
-    const next = await pickItem(userId, status.rank, leaveOut, digest.readUInt32BE(0), [
-      ...ahead,
-      ...picked,
-    ]);
+    const next = await pickItem(
+      userId,
+      status.rank,
+      leaveOut,
+      digest.readUInt32BE(0),
+      [...ahead, ...picked],
+      [...taken]
+    );
     const ref = next && openItem(secret, userId, next.item.id);
     if (!next || !ref || taken.some((t) => t.kind === ref.kind && t.id === ref.id)) break;
     items.push(next);

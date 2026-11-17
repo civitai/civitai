@@ -4,6 +4,8 @@ const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
+const burstDue = vi.hoisted(() => vi.fn());
+const servedHistory = vi.hoisted(() => vi.fn());
 const lockoutFor = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const queueDeps = vi.hoisted(() => ({
@@ -21,6 +23,11 @@ vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.
 vi.mock('$lib/server/hidden/hidden.service', () => ({ pickHiddenCheck }));
 vi.mock('$lib/server/queue/queue.service', () => ({ getFeed }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
+vi.mock('$lib/server/yesno/cadence', () => ({
+  burstDue,
+  burstRoller: () => () => 0,
+  servedHistory,
+}));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0.5, stretch: 8 }) }));
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
@@ -71,6 +78,10 @@ beforeEach(() => {
   pickHiddenCheck.mockResolvedValue(null);
   pickYesNo.mockResolvedValue(null);
   skipList.list.mockResolvedValue([]);
+  burstDue.mockReset();
+  burstDue.mockReturnValue(true);
+  servedHistory.mockReset();
+  servedHistory.mockResolvedValue([]);
 });
 
 describe('GET /play/next', () => {
@@ -111,6 +122,21 @@ describe('GET /play/next', () => {
   it('tells the yes/no picker only the yes/no questions named as ahead, so the stretch counts them', async () => {
     await ask([], {}, undefined, [token('yesno', 3), token('queue', 9), token('yesno', 4)]);
     expect(pickYesNo.mock.calls[0][1].ahead).toEqual([3, 4]);
+  });
+
+  it('hands the cadence every item named in after, then each one it picks, as served', async () => {
+    await ask([token('queue', 9), token('yesno', 3)], {}, 2);
+    expect(servedHistory.mock.calls.map((call) => call[2])).toEqual([
+      [
+        { kind: 'queue', id: 9 },
+        { kind: 'yesno', id: 3 },
+      ],
+      [
+        { kind: 'queue', id: 9 },
+        { kind: 'yesno', id: 3 },
+        { kind: 'queue', id: 42 },
+      ],
+    ]);
   });
 
   it('does not count a skipped or unloadable yes/no item named in after as ahead: it never gets a vote', async () => {
