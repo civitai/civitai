@@ -8,6 +8,9 @@ export const EMBED_FORWARDED_PATHS: ReadonlySet<string> = new Set([
   '/api/train',
   '/api/continue-training',
   '/api/dataset-rating',
+  '/api/edit-image',
+  '/api/suggest-instruction',
+  '/api/epoch-archive',
 ]);
 
 /**

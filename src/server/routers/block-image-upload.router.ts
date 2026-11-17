@@ -1,8 +1,8 @@
 import {
   gateBlockUploadImageSchema,
+  generationSourceUsesScannedRowsSchema,
   persistBlockUploadImageSchema,
 } from '~/server/schema/blocks/block-image-upload.schema';
-import * as z from 'zod';
 import { rateLimit } from '~/server/middleware.trpc';
 import { protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -61,7 +61,7 @@ export const blockImageUploadRouter = router({
    * (`authorizeBlockBridgeToken`); a refused token answers as that refusal.
    */
   generationSourceUsesScannedRows: protectedProcedure
-    .input(z.object({ blockToken: z.string().min(1) }))
+    .input(generationSourceUsesScannedRowsSchema)
     .query(async ({ input }) => {
       const [{ authorizeBlockBridgeToken }, { appUsesScannedSourceRows }] = await Promise.all([
         import('~/server/services/blocks/block-bridge-auth.service'),
