@@ -328,11 +328,22 @@ describe("replayed refs vs the viewer's hidden and blocked users", () => {
       })
     ).media[0];
 
+  // What an app gets for any ref it may not have: here, one stored by another app.
+  const unavailable = async () =>
+    (
+      await resolveWorkflowMediaForBlockClaims({
+        claims: tokenClaims,
+        refs: [sealBlockMediaRef({ ...claims, appBlockId: 'apb_other' })!],
+      })
+    ).media[0];
+
   it.each(['hiddenUsers', 'blockedUsers', 'blockedByUsers'] as const)(
-    "🔴 refuses a ref whose owner is in the viewer's %s, with one reason for every relation",
+    "🔴 refuses a ref whose owner is in the viewer's %s, indistinguishable from any unavailable ref",
     async (relation) => {
       relations = { ...noRelations(), [relation]: [{ id: claims.ownerId }] };
-      expect(await replay()).toEqual({ status: 'hidden', reason: 'owner_hidden' });
+      const refused = await replay();
+      expect(refused.status).toBe('hidden');
+      expect(refused).toEqual(await unavailable());
       expect(hiddenFor).toHaveBeenCalledWith({ userId: 99 });
     }
   );
@@ -354,5 +365,35 @@ describe("replayed refs vs the viewer's hidden and blocked users", () => {
       refs: [sealBlockMediaRef(claims)!, sealBlockMediaRef({ ...claims, ownerId: 8 })!],
     });
     expect(media.map((m) => m.status)).toEqual(['hidden', 'visible']);
+  });
+});
+
+describe('a token whose viewer level is 0', () => {
+  const tokenClaims = {
+    sub: 'user:99',
+    appBlockId: 'apb_1',
+    maxBrowsingLevel: allBrowsingLevelsFlag,
+  };
+  const replayAt = async (viewerBrowsingLevel: number) =>
+    (
+      await resolveWorkflowMediaForBlockClaims({
+        claims: { ...tokenClaims, viewerBrowsingLevel },
+        refs: [sealBlockMediaRef(claims)!],
+      })
+    ).media[0];
+
+  it('🔴 gets no ref back, not the public floor', async () => {
+    expect((await replayAt(0)).status).toBe('hidden');
+  });
+
+  it('CONTROL: a PG token gets a ticket that serves a PG clip', async () => {
+    const item = await replayAt(NsfwLevel.PG);
+    expect(item.status).toBe('visible');
+    blobState.mockResolvedValue(rated('pg'));
+    const url = (item as { url: string }).url;
+    expect(await resolveBlockMediaFetch(url.slice('/api/v1/blocks/media/'.length))).toEqual({
+      state: 'redirect',
+      location: CONTENT,
+    });
   });
 });
