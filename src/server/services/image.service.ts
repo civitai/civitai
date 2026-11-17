@@ -1248,6 +1248,11 @@ async function deleteFromStorage(
   );
 }
 
+function nonCsamBlockReason(reason: string) {
+  const mapped = getReviewTypeToBlockedReason(reason);
+  return mapped === BlockImageReason.CSAM ? BlockImageReason.TOS : mapped;
+}
+
 function getReviewTypeToBlockedReason(reason: string) {
   switch (reason) {
     case 'csam':
@@ -1369,7 +1374,11 @@ export async function handleUnblockImages({
       // The unblock SQL above can rewrite "minor", which no trigger watches.
       queueModelsForImageChildTagChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
-      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
+      bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined), {
+        step: 'unblock',
+        imageIds: ids,
+        actorUserId: moderatorId,
+      }),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
       // `tosViolation`. Unblock flips those, but `processImageScanWorkflow`
       // (where the standard re-queue lives) isn't on this code path —
@@ -1423,8 +1432,8 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 export async function writeModeratorBlock(
   ids: number[],
   deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
-): Promise<{ held: Set<number>; underReview: Set<number> }> {
-  if (!ids.length) return { held: new Set(), underReview: new Set() };
+): Promise<{ held: Set<number>; underReview: Set<number>; removedForCsam: Set<number> }> {
+  if (!ids.length) return { held: new Set(), underReview: new Set(), removedForCsam: new Set() };
   return dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
@@ -1463,9 +1472,13 @@ export async function writeModeratorBlock(
           "notifyOwner" = "ImageDeferredBlockEffect"."notifyOwner" OR EXCLUDED."notifyOwner",
           "reportReason" = COALESCE("ImageDeferredBlockEffect"."reportReason", EXCLUDED."reportReason")
       `;
-    const idsWhere = (key: 'held' | 'underReview') =>
+    const idsWhere = (key: 'held' | 'underReview' | 'removedForCsam') =>
       new Set(rows.filter((r) => r[key]).map((r) => r.id));
-    return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+    return {
+      held: idsWhere('held'),
+      underReview: idsWhere('underReview'),
+      removedForCsam: idsWhere('removedForCsam'),
+    };
   });
 }
 
@@ -1501,13 +1514,14 @@ export async function handleBlockImages({
 
     let held = new Set<number>();
     let underReview = new Set<number>();
+    let removedForCsam = new Set<number>();
     await Promise.all([
       writeModeratorBlock(
         ids,
         include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
       )
         .then((written) => {
-          ({ held, underReview } = written);
+          ({ held, underReview, removedForCsam } = written);
         })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
@@ -1537,13 +1551,14 @@ export async function handleBlockImages({
             if (!pHash) return null;
             return {
               hash: pHash,
-              reason:
-                held.has(id) || underReview.has(id)
-                  ? BlockImageReason.CSAM
-                  : getReviewTypeToBlockedReason(blockedFor ?? BlockedReason.Moderated),
+              // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+              reason: removedForCsam.has(id)
+                ? BlockImageReason.CSAM
+                : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
             };
           })
           .filter(isDefined),
+        context: { step: 'block', imageIds: images.map(({ id }) => id), actorUserId: moderatorId },
       });
     }
     if (include?.includes('user-notification')) {
@@ -2147,11 +2162,10 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   holdExempt?: boolean;
   // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
   galleryOwnerId?: number;
-  // Server-only: whether the request may act as a moderator (a session or full-scope key);
-  // defaults to the user's.
+  // Server-only: whether the request reads with a moderator's view, and with the owner's view of
+  // the user's own unpublished, private and held images. Both default to false, so a caller that
+  // names neither reads as a plain viewer; pass `credentialViews(ctx)`.
   asModerator?: boolean;
-  // Server-only: whether the request may see the user's own unpublished, private and held images;
-  // default true. False for a narrow-scope key.
   asOwner?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
@@ -2307,11 +2321,11 @@ function feedViewer(input: {
   asModerator?: boolean;
   asOwner?: boolean;
 }) {
-  const owner = input.asOwner !== false;
+  const owner = input.asOwner === true;
   return {
     id: owner ? input.user?.id : undefined,
     username: owner ? input.user?.username ?? undefined : undefined,
-    isModerator: input.asModerator ?? input.user?.isModerator ?? false,
+    isModerator: input.asModerator === true && !!input.user?.isModerator,
   };
 }
 
@@ -2432,8 +2446,8 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  const isModerator = input.asModerator ?? user?.isModerator ?? false;
-  const ownerId = input.asOwner === false ? undefined : userId;
+  const isModerator = input.asModerator === true && !!user?.isModerator;
+  const ownerId = input.asOwner === true ? userId : undefined;
   // Moderators opting into the "pending review" collection filter get the same
   // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
@@ -3620,10 +3634,8 @@ export async function getImagesFromFeedServiceForRest(
   if (searchInput.limit < 1) return { items: [], nextCursor: undefined };
 
   const input = withoutUnservedFilters(searchInput);
-  const prepared = await prepareImageFeedRequest(input, {
-    id: input.currentUserId,
-    isModerator: input.isModerator,
-  });
+  // The hydrate's viewer and views: an own-scoped feed keeps its exclusions off only for the owner.
+  const prepared = await prepareImageFeedRequest(input, feedViewer(hydrateInput));
   if (prepared.blocked) return { items: [], nextCursor: undefined };
   const { userId } = prepared;
   // An unknown username is an empty page, not a 404, as the search index answered it.
@@ -7114,48 +7126,159 @@ export async function getImagesByUserIdForModeration(
   });
 }
 
-export function addBlockedImage({ hash, reason }: { hash: bigint; reason: BlockImageReason }) {
-  return clickhouse?.insert({
-    table: 'blocked_images',
-    values: [{ hash: toClickhouseInt64(hash), reason }],
-    format: 'JSONEachRow',
+/** Who and what a blocklist write is for, so a write left undone can be traced and counted. */
+export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUserId?: number };
+
+/**
+ * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
+ * merges, so a later row of any other reason would replace that entry. Only the newest row per
+ * hash (argMax on created_at, merged or not) decides, so a CSAM row that a newer row has replaced
+ * or disabled does not count as live. created_at is whole seconds; on a tie the live CSAM row wins,
+ * so a tie can over-block but never drops a live CSAM entry. The filter runs on that row, outside
+ * the aggregate; this needs no FINAL and no query setting.
+ * The moderator app has the same guard (apps/moderator image-moderation-effects.ts); change both.
+ */
+async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
+  if (hashes.length === 0) return new Set();
+  const rows = await blocklistClient().$query<{ hash: string }>`
+    SELECT toString(hash) AS hash
+    FROM (
+      SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest
+      FROM "blocked_images"
+      WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')})
+      GROUP BY hash
+    )
+    WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false
+  `;
+  return new Set(rows.map((row) => row.hash));
+}
+
+/** Blocklist writes throw without a client rather than pass as a no-op. */
+function blocklistClient() {
+  if (!clickhouse) throw new Error('blocked_images: no ClickHouse client');
+  return clickhouse;
+}
+
+/** The CSAM-entry check failed, so the blocklist was left unchanged for these hashes. Logged to be counted. */
+function logBlocklistCheckFailed(
+  name: 'blocklist-insert-skipped' | 'blocklist-disable-refused',
+  rows: { hash: bigint | string; reason: string }[],
+  context: BlocklistWriteContext | undefined,
+  error: unknown
+) {
+  logToAxiom({
+    type: 'error',
+    name,
+    message: 'blocked_images left unchanged: the CSAM-entry check failed',
+    payload: {
+      step: context?.step,
+      imageIds: context?.imageIds,
+      actorUserId: context?.actorUserId,
+      hashes: rows.map(({ hash }) => hash.toString()),
+      reasons: rows.map(({ reason }) => reason),
+      error: safeError(error),
+    },
   });
 }
 
-export function bulkAddBlockedImages({
+export function addBlockedImage({
+  hash,
+  reason,
+  context,
+}: {
+  hash: bigint;
+  reason: BlockImageReason;
+  context?: BlocklistWriteContext;
+}) {
+  return bulkAddBlockedImages({ data: [{ hash, reason }], context });
+}
+
+/**
+ * A hash with a live CSAM entry keeps it: other reasons are not written over it. CSAM rows are
+ * written first and never wait on that check; they throw on any failure. If the check fails, the
+ * other rows are left unwritten and logged.
+ */
+export async function bulkAddBlockedImages({
   data,
+  context,
 }: {
   data: { hash: bigint; reason: BlockImageReason }[];
+  context?: BlocklistWriteContext;
 }) {
   if (data.length === 0) return;
+  const write = (rows: typeof data) =>
+    rows.length
+      ? blocklistClient().insert({
+          table: 'blocked_images',
+          values: rows.map(({ hash, reason }) => ({
+            hash: toClickhouseInt64(hash),
+            reason: reason.toString(),
+          })),
+          format: 'JSONEachRow',
+        })
+      : undefined;
 
-  const values = data.map(({ hash, reason }) => ({
-    hash: toClickhouseInt64(hash),
-    reason: reason.toString(),
-  }));
-
-  return clickhouse?.insert({
-    table: 'blocked_images',
-    values,
-    format: 'JSONEachRow',
-  });
+  const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
+  await write(csamRows);
+  const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
+  const others = data.filter(
+    ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
+  );
+  if (!others.length) return;
+  let csam: Set<string>;
+  try {
+    csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+  } catch (error) {
+    logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
+    return;
+  }
+  await write(others.filter(({ hash }) => !csam.has(hash.toString())));
 }
 
-export async function bulkRemoveBlockedImages(hashes: bigint[]) {
-  if (hashes.length === 0 || !clickhouse) return;
-  const blocked = await clickhouse.$query<{ hash: string; reason: string }>`
-    SELECT toString(hash) AS hash, reason
-    FROM "blocked_images"
-    WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
-  `;
+/**
+ * Disables the live entries of these hashes, except a hash with a live CSAM entry. If that check
+ * fails, nothing is disabled (the entries stay) and the refusal is logged.
+ */
+export async function bulkRemoveBlockedImages(hashes: bigint[], context?: BlocklistWriteContext) {
+  if (hashes.length === 0) return;
+  let blocked: { hash: string; reason: string }[];
+  let csam: Set<string>;
+  try {
+    [blocked, csam] = await Promise.all([
+      blocklistClient().$query<{ hash: string; reason: string }>`
+        SELECT toString(hash) AS hash, reason
+        FROM "blocked_images"
+        WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
+      `,
+      csamBlockedHashes(hashes),
+    ]);
+  } catch (error) {
+    logBlocklistCheckFailed(
+      'blocklist-disable-refused',
+      hashes.map((hash) => ({ hash, reason: 'unknown' })),
+      context,
+      error
+    );
+    return;
+  }
 
-  const values = blocked.map(({ hash, reason }) => ({
-    hash: toClickhouseInt64(hash),
-    reason,
-    disabled: true,
-  }));
+  if (csam.size)
+    logToAxiom({
+      type: 'info',
+      name: 'blocklist-disable-kept-csam',
+      message: 'an unblock left hashes with a live CSAM entry in place',
+      payload: { step: context?.step, imageIds: context?.imageIds, hashCount: csam.size },
+    });
+  const values = blocked
+    .filter(({ hash }) => !csam.has(hash))
+    .map(({ hash, reason }) => ({
+      hash: toClickhouseInt64(hash),
+      reason,
+      disabled: true,
+    }));
+  if (!values.length) return;
 
-  return await clickhouse.insert({
+  return await blocklistClient().insert({
     table: 'blocked_images',
     values,
     format: 'JSONEachRow',

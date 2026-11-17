@@ -123,7 +123,12 @@ describe('the post feed on a narrow-scope key', () => {
   });
 
   it('shows them to the owner on a session (control)', async () => {
-    const { sql, values } = await postsSql({ user: owner, scheduled: true, pending: true });
+    const { sql, values } = await postsSql({
+      user: owner,
+      asOwner: true,
+      scheduled: true,
+      pending: true,
+    });
     expect(sql).not.toMatch(PRIVATE_HIDDEN);
     expect(values.filter((v) => v === VIEWER).length).toBeGreaterThan(1);
   });
@@ -133,13 +138,15 @@ describe('the post feed on a narrow-scope key', () => {
     expect(narrow.sql).toContain('p."publishedAt" <= NOW()');
     expect(narrow.sql).not.toMatch(/AND\s+p\."publishedAt" IS NULL/);
 
-    const session = await postsSql({ user: owner, draftOnly: true });
+    const session = await postsSql({ user: owner, asOwner: true, draftOnly: true });
     expect(session.sql).toMatch(/AND\s+p\."publishedAt" IS NULL/);
   });
 
   it('gives a moderator no moderator view (session control: Private shown)', async () => {
     expect((await postsSql({ user: moderator, asModerator: false })).sql).toMatch(PRIVATE_HIDDEN);
-    expect((await postsSql({ user: moderator })).sql).not.toMatch(PRIVATE_HIDDEN);
+    expect((await postsSql({ user: moderator, asModerator: true })).sql).not.toMatch(
+      PRIVATE_HIDDEN
+    );
   });
 });
 
@@ -152,7 +159,7 @@ describe('the image feed on a narrow-scope key', () => {
     expect(narrow.values).not.toContain(VIEWER);
     expect(narrow.sql).toMatch(PRIVATE_HIDDEN_BOUND);
 
-    const session = await imagesSql({ user: owner, scheduled: true });
+    const session = await imagesSql({ user: owner, asOwner: true, scheduled: true });
     expect(session.values).toContain(VIEWER);
   });
 
@@ -160,7 +167,9 @@ describe('the image feed on a narrow-scope key', () => {
     expect((await imagesSql({ user: moderator, asModerator: false })).sql).toMatch(
       PRIVATE_HIDDEN_BOUND
     );
-    expect((await imagesSql({ user: moderator })).sql).not.toMatch(PRIVATE_HIDDEN_BOUND);
+    expect((await imagesSql({ user: moderator, asModerator: true })).sql).not.toMatch(
+      PRIVATE_HIDDEN_BOUND
+    );
   });
 });
 
@@ -177,7 +186,10 @@ describe.each([
   });
 
   it('as the moderator and owner on a session (control)', async () => {
-    await imagesSql({ user: { id: VIEWER, username: 'v', isModerator: true } }, feed);
+    await imagesSql(
+      { user: { id: VIEWER, username: 'v', isModerator: true }, asModerator: true, asOwner: true },
+      feed
+    );
     expect(exclusionViewer()).toEqual({ id: VIEWER, username: 'v', isModerator: true });
   });
 });
@@ -188,8 +200,25 @@ describe('the index feed on a narrow-scope key', () => {
     expect(
       (await imagesSql({ user: moderator, asModerator: false }, getAllImagesIndex)).sql
     ).toMatch(PRIVATE_HIDDEN_BOUND);
-    expect((await imagesSql({ user: moderator }, getAllImagesIndex)).sql).not.toMatch(
-      PRIVATE_HIDDEN_BOUND
-    );
+    expect(
+      (await imagesSql({ user: moderator, asModerator: true }, getAllImagesIndex)).sql
+    ).not.toMatch(PRIVATE_HIDDEN_BOUND);
+  });
+});
+
+describe('a caller that names no view (fail closed)', () => {
+  const moderatorOwner = { id: VIEWER, isModerator: true };
+
+  it('reads the post feed as a plain viewer', async () => {
+    const { sql, values } = await postsSql({ user: moderatorOwner as never, scheduled: true });
+    expect(sql).toMatch(PRIVATE_HIDDEN);
+    expect(values.filter((v) => v === VIEWER)).toHaveLength(1); // the creator filter only
+  });
+
+  it('reads the image feed as a plain viewer', async () => {
+    const { sql, values } = await imagesSql({ user: moderatorOwner, scheduled: true });
+    expect(sql).toMatch(PRIVATE_HIDDEN_BOUND);
+    expect(values).not.toContain(VIEWER);
+    expect(exclusionViewer()).toEqual({ id: undefined, username: undefined, isModerator: false });
   });
 });

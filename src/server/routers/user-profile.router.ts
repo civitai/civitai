@@ -7,12 +7,14 @@ import {
 } from '~/server/trpc';
 import {
   addEntityToShowcaseHandler,
+  addToShowcaseSectionHandler,
   getUserContentOverviewHandler,
   getUserProfileHandler,
   setShowcaseSectionsHandler,
   updateUserProfileHandler,
 } from '~/server/controllers/user-profile.controller';
 import {
+  addToShowcaseSectionSchema,
   getUserProfileSchema,
   setShowcaseSectionsSchema,
   showcaseItemSchema,
@@ -42,4 +44,9 @@ export const userProfileRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setShowcaseSectionsSchema)
     .mutation(setShowcaseSectionsHandler),
+  addToShowcaseSection: protectedProcedure
+    .use(isFlagProtected('profileShowcases'))
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(addToShowcaseSectionSchema)
+    .mutation(addToShowcaseSectionHandler),
 });
