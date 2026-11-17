@@ -283,6 +283,17 @@ describe('grading hidden checks', () => {
     }
   );
 
+  it('grades a pending check whose reference was retired since as inconclusive, with no cost', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '16');
+    await answer(1, ref, '2');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET status='retired' WHERE id=$1`, [ref]);
+    await settle(minutes(31));
+    expect((await vote(1))[0]).toMatchObject({ verdict: 'inconclusive', consequence: null });
+    expect(await smites(1)).toHaveLength(0);
+    expect((await player(1)).goldPending).toBe(0);
+  });
+
   it('grades a check once', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10), '4');

@@ -44,6 +44,7 @@ ordinary vote in every way a player can see.
   `KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE` (default 0.5) of at least `KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS` (default 20)
   answers is retired in the same transaction: its known answer is more likely wrong or unclear than its players in bad faith.
   The harvest never re-adds a retired image (`imageId` is unique).
+  A check still pending when its reference is retired (by this rule or by hand) is graded `inconclusive`: no pay, no penalty.
 - A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure (a `warning`
   or `smite` consequence, never `close`) in `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the
   vote (`consequence`) and shown as a notice that the player dismisses (only a notice from the current career, since `startAt`; a

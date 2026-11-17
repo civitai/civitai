@@ -54,6 +54,8 @@ export async function gradeHiddenVotes(
         .innerJoin('Post as p', 'p.id', 'img.postId')
         .select(['r.id', 'r.answer'])
         .where('r.id', 'in', [...new Set(due.map((v) => -v.itemId))])
+        // A reference retired after the answer (e.g. a bad ruling pulled) no longer grades anyone.
+        .where('r.status', '=', REFERENCE_STATUS.active)
         .where(servableImage)
         .execute()
     ).map((r) => [r.id, r.answer])
