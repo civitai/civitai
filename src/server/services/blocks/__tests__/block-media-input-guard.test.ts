@@ -3,6 +3,11 @@ import {
   containsBlockMediaReference,
   isBlockMediaReference,
 } from '~/server/services/blocks/block-media-input-guard';
+import {
+  blockMediaUrl,
+  sealBlockMediaRef,
+  sealBlockMediaTicket,
+} from '~/server/services/blocks/block-media-token';
 
 const TOKEN = `bm1.${'I'.repeat(16)}.${'C'.repeat(40)}.${'T'.repeat(22)}`;
 const PATH = `/api/v1/blocks/media/${TOKEN}`;
@@ -58,5 +63,31 @@ describe('containsBlockMediaReference', () => {
     let deep: unknown = 'x';
     for (let i = 0; i < 300; i++) deep = [deep];
     expect(containsBlockMediaReference(deep)).toBe(true);
+  });
+});
+
+describe('🔴 tied to the mint: whatever the media route issues, the guard refuses', () => {
+  const minted = {
+    blobId: 'BLOB1',
+    workflowId: 'wf-1',
+    ownerId: 7,
+    appBlockId: 'apb_1',
+    mediaType: 'image' as const,
+    privateGen: false,
+    neverRatedVideoStep: false,
+  };
+
+  it('a ticket url exactly as blockMediaUrl builds it', () => {
+    const ticket = sealBlockMediaTicket({ ...minted, viewerId: 7, viewerBrowsingLevel: 1 });
+    expect(ticket).toBeTruthy();
+    expect(isBlockMediaReference(blockMediaUrl(ticket!))).toBe(true);
+    expect(isBlockMediaReference(`https://civitai.com${blockMediaUrl(ticket!)}`)).toBe(true);
+  });
+
+  it('a bare ticket and a bare ref, as sealed', () => {
+    const ticket = sealBlockMediaTicket({ ...minted, viewerId: 7, viewerBrowsingLevel: 1 });
+    const ref = sealBlockMediaRef(minted);
+    expect(isBlockMediaReference(ticket!)).toBe(true);
+    expect(isBlockMediaReference(ref!)).toBe(true);
   });
 });
