@@ -126,7 +126,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
     expect(days).toBeLessThan(7.01);
   });
 
-  it('holds them to a SFW-capped request too, keeping unrated ones', async () => {
+  it('holds them to a SFW-capped request too, unrated ones included', async () => {
     await getMyImages({
       userId: 42,
       servableLevels: sfwBrowsingLevelsFlag,
@@ -136,7 +136,7 @@ describe('getMyImages — entry drafts whose scan failed', () => {
       includeEntryDrafts: true,
     });
     expect(errorQueryOf()?.where.AND).toContainEqual({
-      nsfwLevel: { in: [0, NsfwLevel.PG, NsfwLevel.PG13] },
+      nsfwLevel: { in: [NsfwLevel.PG, NsfwLevel.PG13] },
     });
   });
 

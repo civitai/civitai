@@ -7454,11 +7454,9 @@ const notHeldForReviewWhere: Prisma.ImageWhereInput = {
   OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
 };
 
-/** Held to the request's servable levels; unrated uploads (still scanning, or failed) stay listed. */
+/** Held to the request's servable levels: a capped request gets no unrated upload either. */
 const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
-  levels === allBrowsingLevelsFlag
-    ? {}
-    : { nsfwLevel: { in: [0, ...Flags.instanceToArray(levels)] } };
+  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
 
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.

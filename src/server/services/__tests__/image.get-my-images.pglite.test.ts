@@ -101,11 +101,12 @@ describe('getMyImages: the request level cap', () => {
     return items.map((i) => i.id).sort();
   };
 
-  it('leaves an R image out on a SFW-capped request, keeping one still scanning', async () => {
-    expect(await listed(sfwBrowsingLevelsFlag)).toEqual([PG, STILL_SCANNING]);
+  // Ruled: an unrated upload can be anything, so a capped request is not sent it, the owner's or not.
+  it('leaves R and unrated images out on a SFW-capped request', async () => {
+    expect(await listed(sfwBrowsingLevelsFlag)).toEqual([PG]);
   });
 
-  it('lists it where the request is not capped', async () => {
+  it('lists both where the request is not capped', async () => {
     expect(await listed(allBrowsingLevelsFlag)).toEqual([PG, R, STILL_SCANNING]);
   });
 });
