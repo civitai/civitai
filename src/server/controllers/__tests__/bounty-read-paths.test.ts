@@ -468,6 +468,7 @@ describe('an nsfw-flagged bounty in the feed', () => {
       data: items as never,
       hiddenPreferences: {
         hiddenUsers: new Map(),
+        blockRelations: new Map(),
         hiddenTags: new Map(),
         hiddenModels: new Map(),
         hiddenModel3Ds: new Map(),
