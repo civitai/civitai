@@ -2375,10 +2375,22 @@ export async function getJudgedEntries(
   });
 
   const ranked = eligibleEntries
-    .map(({ note, ...entry }) => {
-      const { score, summary } = JSON.parse(note);
-      const weightedRating = calculateWeightedCategoryScore(score, rubric);
-      return { ...entry, summary, score, weightedRating };
+    .flatMap(({ note, ...entry }) => {
+      // One entry whose note isn't a judge's verdict must not stop the whole challenge's ranking.
+      try {
+        const { score, summary } = JSON.parse(note);
+        const weightedRating = calculateWeightedCategoryScore(score, rubric);
+        return [{ ...entry, summary, score, weightedRating }];
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'daily-challenge-judged-note-unreadable',
+          message: error instanceof Error ? error.message : String(error),
+          collectionId,
+          imageId: entry.imageId,
+        });
+        return [];
+      }
     })
     .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
 
