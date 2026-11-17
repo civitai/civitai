@@ -86,6 +86,8 @@ const routers = {
     import('./semantic-collection-search.router').then((m) => m.semanticCollectionSearchRouter),
   semanticBountySearch: () =>
     import('./semantic-bounty-search.router').then((m) => m.semanticBountySearchRouter),
+  semanticCrucibleSearch: () =>
+    import('./semantic-crucible-search.router').then((m) => m.semanticCrucibleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),

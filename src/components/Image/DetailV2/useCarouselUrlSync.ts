@@ -34,12 +34,15 @@ export function useCarouselUrlSync({
     return true;
   };
 
-  // The drawer and the fork point move the detail to another image from outside the carousel.
+  // The drawer, the fork point and a cold `?text=` load (the text arrives after the carousel has
+  // mounted on its anchor image) move the detail to another slide from outside the carousel.
   // An index that only caught up with the carousel's own settle is skipped, or a quick second
   // swipe would be dragged back.
   useEffect(() => {
     const target = items[index];
-    if (!storyline.active || !target || target.key === lastSettledKeyRef.current) return;
+    const hasTexts = items.some((item) => item.key.startsWith('txt:'));
+    if (!(storyline.active || hasTexts) || !target || target.key === lastSettledKeyRef.current)
+      return;
     lastSettledKeyRef.current = target.key;
     carouselNavigate(index);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- fires on index change or mode entry

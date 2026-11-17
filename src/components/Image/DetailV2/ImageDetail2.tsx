@@ -20,6 +20,7 @@ import {
   IconBolt,
   IconBookmark,
   IconBrandWechat,
+  IconPencil,
   IconBrush,
   IconChevronDown,
   IconChevronUp,
@@ -525,6 +526,17 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                                 the menu, and so is Report image. */}
                             {text ? (
                               <>
+                                {textPost && textPost.user.id === currentUser?.id && (
+                                  <NextLink
+                                    href={`/posts/${text.postId}/edit`}
+                                    aria-label="Edit text"
+                                    data-testid="text-slide-edit"
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconPencil {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </NextLink>
+                                )}
                                 <ShareButton url={imageShareUrl} title={title}>
                                   <LegacyActionIcon {...sharedActionIconProps}>
                                     <IconShare3 {...sharedIconProps} />
@@ -726,13 +738,27 @@ function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
                   }`}
                 >
                   <div className="flex items-center gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon
-                    {...sharedActionIconProps}
-                    onClick={toggleInfo}
-                    data-testid="image-detail-chevron"
-                  >
-                    <IconChevron {...sharedIconProps} />
-                  </LegacyActionIcon>
+                  {text ? (
+                    // A text's talk lives in this sheet, so the strip names it.
+                    <Button
+                      variant="light"
+                      size="compact-md"
+                      leftSection={<IconBrandWechat size={16} />}
+                      rightSection={<IconChevron size={16} />}
+                      onClick={toggleInfo}
+                      data-testid="image-detail-chevron"
+                    >
+                      Discussion
+                    </Button>
+                  ) : (
+                    <LegacyActionIcon
+                      {...sharedActionIconProps}
+                      onClick={toggleInfo}
+                      data-testid="image-detail-chevron"
+                    >
+                      <IconChevron {...sharedIconProps} />
+                    </LegacyActionIcon>
+                  )}
                 </div>
                 <ScrollArea className="flex-1 p-3 py-0">
                   <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
