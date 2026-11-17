@@ -1,5 +1,6 @@
 import type { UiState } from 'instantsearch.js';
 import * as z from 'zod';
+import { safeParseValidKeys } from '~/utils/zod-helpers';
 import {
   ARTICLES_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -58,22 +59,8 @@ export const stringArrayParamSchema = z
 export function parseSearchParams<TSchema extends z.ZodType<Record<string, unknown>>>(
   schema: TSchema,
   params: Record<string, unknown>
-): z.output<TSchema> | Record<string, never> {
-  const result = schema.safeParse(params);
-  if (result.success) return result.data;
-
-  const invalidKeys = new Set(
-    result.error.issues
-      .map((issue) => issue.path[0])
-      .filter((key): key is string => typeof key === 'string')
-  );
-  if (!invalidKeys.size) return {};
-
-  const retried = schema.safeParse(
-    Object.fromEntries(Object.entries(params).filter(([key]) => !invalidKeys.has(key)))
-  );
-
-  return retried.success ? retried.data : {};
+) {
+  return safeParseValidKeys(schema, params);
 }
 
 export type InstantSearchRoutingParser = {

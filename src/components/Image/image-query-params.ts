@@ -4,7 +4,12 @@ import { baseModels } from '~/shared/constants/basemodel.constants';
 import { jumpToMonthParam } from '~/shared/utils/jump-to-month';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import {
+  booleanString,
+  numericString,
+  numericStringArray,
+  safeParseValidKeys,
+} from '~/utils/zod-helpers';
 
 // React-free so a server module can read a page's query exactly as the page does.
 
@@ -79,8 +84,8 @@ export const imagesQueryParamSchema = z
  * Read `imagesQueryParamSchema` off a router query WITHOUT throwing.
  *
  * Never a bare `.parse`: one junk param (e.g. `?postId=null`, from stale shared/emailed links)
- * makes the schema throw and the page 500s. All-or-nothing: one junk key discards the valid ones
- * beside it.
+ * makes the schema throw and the page 500s. Only the junk key is dropped; the valid ones beside it
+ * are kept.
  */
 export function parseImageQueryParams(query: Record<string, unknown>): ImagesQueryParamSchema;
 export function parseImageQueryParams<TSchema extends z.ZodObject>(
@@ -91,8 +96,7 @@ export function parseImageQueryParams(
   query: Record<string, unknown>,
   schema: z.ZodObject = imagesQueryParamSchema
 ) {
-  const result = schema.safeParse(query);
-  return result.success ? result.data : {};
+  return safeParseValidKeys(schema, query);
 }
 
 /**

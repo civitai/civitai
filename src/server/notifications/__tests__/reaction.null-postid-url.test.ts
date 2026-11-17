@@ -98,13 +98,17 @@ describe('half 2 — the page survives a link already delivered', () => {
   });
 
   // The `{}` above is over-determined: `imageId` is not a schema key and `postId` was
-  // the only other one, so `{}` is also what a "strip just the bad key" implementation
-  // would return. This case separates them. Zod object parsing is all-or-nothing, so
-  // the valid neighbours go too — assert that plainly rather than leaving a later
-  // refactor free to change it and stay green.
-  it('discards the whole filter object, not just the offending key', () => {
+  // the only other one. This case pins that only the junk key goes: the feed filters and
+  // search beside it survive, so the rest of a shared link still works.
+  it('drops only the offending key, keeping the valid ones beside it', () => {
     expect(
-      parseImageQueryParams({ postId: 'null', sort: 'Most Reactions', period: 'Week' })
-    ).toEqual({});
+      parseImageQueryParams({
+        postId: 'null',
+        similarTo: 'abc',
+        query: 'castle',
+        sort: 'Most Reactions',
+        period: 'Week',
+      })
+    ).toEqual({ query: 'castle', sort: 'Most Reactions', period: 'Week' });
   });
 });

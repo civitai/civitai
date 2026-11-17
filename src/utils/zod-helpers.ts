@@ -179,3 +179,22 @@ export function defaultCatch<ZodType extends z.ZodType<any, any>>(
 ) {
   return schema.default(value).catch(value) as unknown as z.ZodDefault<ZodType>;
 }
+
+/**
+ * `schema.safeParse(query)`, but a key that fails is dropped instead of failing the whole object,
+ * so one junk param in a shared URL (`?postId=null`) doesn't discard the valid ones beside it.
+ * `{}` only when the failures can't be pinned to keys of `query`.
+ */
+export function safeParseValidKeys<TSchema extends z.ZodType<Record<string, unknown>>>(
+  schema: TSchema,
+  query: Record<string, unknown>
+): Partial<z.output<TSchema>> {
+  let input = query;
+  for (;;) {
+    const result = schema.safeParse(input);
+    if (result.success) return result.data;
+    const badKeys = new Set(result.error.issues.map((issue) => issue.path[0]));
+    if (!Object.keys(input).some((key) => badKeys.has(key))) return {};
+    input = Object.fromEntries(Object.entries(input).filter(([key]) => !badKeys.has(key)));
+  }
+}
