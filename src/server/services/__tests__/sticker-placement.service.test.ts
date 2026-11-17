@@ -1405,6 +1405,64 @@ describe('getPendingStickerPlacements paging', () => {
  * is the owner's OWN upload, which changes who is being protected from what but
  * not whether the domain may be sent it.
  */
+describe('sticker queues mark moving placements', () => {
+  const LEVELS = { domainLevels: allBrowsingLevelsFlag, viewerLevels: allBrowsingLevelsFlag };
+  const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
+  const moving = {
+    v: 2,
+    keys: [
+      { t: 0, x: 0.5, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'linear' },
+      { t: 1000, x: 0.7, y: 0.5, s: 0.2, r: 0, o: 1, ease: 'linear' },
+    ],
+  };
+  const rows = [
+    { id: 1, track: moving },
+    { id: 2, track: null },
+    // Fails the track rules, so the player would never draw it.
+    { id: 3, track: { v: 2, keys: [] } },
+  ].map(({ id, track }) => ({
+    id,
+    targetId: IMAGE,
+    placerId: PLACER,
+    ownerId: OWNER,
+    status: 'pending',
+    amount: PRICE,
+    data: good,
+    track,
+    createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    expiresAt: null,
+    placer: { id: PLACER, username: 'someone', image: null },
+    owner: { id: OWNER, username: 'owner', image: null },
+  }));
+
+  beforeEach(() => {
+    placementFindMany.mockResolvedValue(rows);
+    imageFindMany.mockResolvedValue([]);
+  });
+
+  it('flags only a playable track, in the review queue', async () => {
+    const { items } = await getPendingStickerPlacements({ ownerId: OWNER, limit: 10, ...LEVELS });
+
+    expect(items.map(({ id, moving }) => [id, moving])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+    ]);
+    expect(items[0]).not.toHaveProperty('track');
+  });
+
+  it('flags only a playable track, in the placed list', async () => {
+    const items = await getMyStickerPlacements({ placerId: PLACER, ...LEVELS });
+
+    expect(items.map(({ id, moving }) => [id, moving])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+    ]);
+    expect(items[0]).not.toHaveProperty('track');
+  });
+});
+
 describe('getPendingStickerPlacements domain ceiling', () => {
   const good = { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 };
 
