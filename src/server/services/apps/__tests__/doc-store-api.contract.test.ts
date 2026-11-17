@@ -4289,6 +4289,8 @@ describe('orchestrator media links in shared data are refused in every moderatio
     'https://orchestration.civitai.com/v2/consumer/blobs/ABC123DEF.png?sig=s1&exp=2099-01-01';
   const PUBLIC = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc-123/width=450/1.jpeg';
 
+  const CONTENT_REDIRECT = 'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk9x2Q';
+
   async function put(data: Record<string, unknown>, key = 'p1') {
     const { A } = freshApps();
     const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
@@ -4308,6 +4310,19 @@ describe('orchestrator media links in shared data are refused in every moderatio
         fieldKind: 'value',
       });
       expect(JSON.stringify(r.body)).not.toContain('ABC123DEF');
+    }
+  );
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a resolved blob content redirect url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ img: CONTENT_REDIRECT });
+      expect(r.status).toBe(422);
+      expect((r.body as { details: unknown }).details).toMatchObject({
+        category: 'link',
+        field: 'data.img',
+      });
     }
   );
 
