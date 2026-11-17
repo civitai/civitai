@@ -538,6 +538,50 @@ describe('an nsfw-flagged bounty in the feed', () => {
   });
 });
 
+describe('an nsfw-flagged bounty page', () => {
+  // A queued answer a test does not consume would otherwise reach the next one.
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]));
+  const page = async (moderatorNsfwLevel: number | null, rows: object[]) => {
+    mockAssert.mockResolvedValue(undefined);
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      id: 9,
+      name: 'B',
+      availability: 'Public',
+      poi: false,
+      nsfw: true,
+      nsfwLevel: 60,
+      moderatorNsfwLevel,
+      user: { id: 5 },
+      details: null,
+      tags: [],
+      meta: {},
+    });
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(rows);
+    mockBountyImages.mockResolvedValue([
+      { id: 10, nsfwLevel: NsfwLevel.PG, tags: [] },
+      { id: 11, nsfwLevel: NsfwLevel.X, tags: [] },
+    ]);
+    const bounty = await getBountyHandler({ input: { id: 9 }, ctx: stranger });
+    return { levels: bounty.images.map((i) => i.nsfwLevel), bounty };
+  };
+  const scanned = (scanLevel: number) => [
+    { id: 9, byScan: true, scanLevel, scanVersion: '1', content: NsfwLevel.PG | NsfwLevel.X },
+  ];
+
+  it('lifts its images to the rated level, never below their own', async () => {
+    expect((await page(null, scanned(NsfwLevel.R))).levels).toEqual([NsfwLevel.X, NsfwLevel.X]);
+    expect((await page(NsfwLevel.R, [])).levels).toEqual([NsfwLevel.R, NsfwLevel.X]);
+  });
+
+  it('leaves the images of a flag with no recorded rating at their own level, as before', async () => {
+    expect((await page(null, [])).levels).toEqual([NsfwLevel.PG, NsfwLevel.X]);
+  });
+
+  it('never sends the moderator rating field to the client', async () => {
+    expect((await page(NsfwLevel.R, [])).bounty).not.toHaveProperty('moderatorNsfwLevel');
+  });
+});
+
 describe('entry detail image count', () => {
   const OWNER = 5;
   const twelve = Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, entityId: 3, nsfwLevel: 1 }));

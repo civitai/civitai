@@ -164,6 +164,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       select: {
         ...getBountyDetailsSelect,
         meta: true,
+        moderatorNsfwLevel: true,
         benefactors: {
           select: {
             user: {
@@ -200,13 +201,22 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
             userId: user.id,
           })
         : null;
-    const { meta: _meta, ...publicBounty } = bounty;
+    const { meta: _meta, moderatorNsfwLevel: _moderatorNsfwLevel, ...publicBounty } = bounty;
 
-    const images = await getBountyImages({
-      id: bounty.id,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, textRated] = await Promise.all([
+      getBountyImages({
+        id: bounty.id,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      }),
+      mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
+    ]);
+    // A rated flag lifts the images to the bounty's level; a flag with no rating leaves them at their
+    // own, as before.
+    const ratedFlagLevel =
+      bounty.moderatorNsfwLevel != null || textRated.has(bounty.id)
+        ? bountyNsfwFlagLevel(bounty, textRated.get(bounty.id))
+        : null;
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
@@ -220,7 +230,16 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       details: bounty.details
         ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
-      images: capNestedImages(images, ctx, { ownerId: bounty.user?.id }).map((image) => ({
+      images: capNestedImages(
+        ratedFlagLevel == null
+          ? images
+          : images.map((image) => ({
+              ...image,
+              nsfwLevel: Math.max(image.nsfwLevel, ratedFlagLevel) as NsfwLevel,
+            })),
+        ctx,
+        { ownerId: bounty.user?.id }
+      ).map((image) => ({
         ...image,
         meta: (image?.meta ?? {}) as ImageMetaProps,
         metadata: image?.metadata as MixedObject,
