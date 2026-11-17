@@ -131,6 +131,21 @@ describe('getServerAuthSession scope modes, enforcing', () => {
     for (const field of credentialFields) expect(browser.context).not.toHaveProperty(field);
   });
 
+  it('reads a scope recorded as a number like the same bigint', async () => {
+    bearerKey(TokenScope.ModelsRead);
+    const narrow = bearerRequest();
+    await resolve(narrow, 'defer');
+    narrow.context!.tokenScope = Number(TokenScope.ModelsRead);
+    expect((await resolve(narrow, { scope: TokenScope.ModelsRead }))?.user?.id).toBe(USER_ID);
+    expect(await resolve(narrow, { scope: TokenScope.VaultRead })).toBeNull();
+
+    bearerKey(TokenScope.Full);
+    const full = bearerRequest();
+    await resolve(full, 'defer');
+    full.context!.tokenScope = Number(TokenScope.Full);
+    expect((await resolve(full))?.user?.id).toBe(USER_ID);
+  });
+
   it('leaves a browser session alone whatever the mode', async () => {
     h.hub = { user: { id: USER_ID, isModerator: true } };
     const req = { url: '/api/v1/models', headers: {}, cookies: {} };

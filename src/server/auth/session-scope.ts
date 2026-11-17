@@ -40,6 +40,13 @@ function credentialMeetsScope(tokenScope: bigint, scope: SessionScope | undefine
   return required.some((bit) => bit !== TokenScope.None && hasScope(tokenScope, bit));
 }
 
+/** The recorded scope as a bigint; a number from an older writer is read as one, anything else as no bits. */
+function heldScope(tokenScope: unknown): bigint {
+  if (typeof tokenScope === 'bigint') return tokenScope;
+  if (typeof tokenScope === 'number' && Number.isSafeInteger(tokenScope)) return BigInt(tokenScope);
+  return TokenScope.None;
+}
+
 function requiredBits(scope: SessionScope | undefined): bigint {
   if (scope === undefined) return TokenScope.Full;
   if (typeof scope === 'string') return TokenScope.None;
@@ -118,7 +125,7 @@ export function applySessionScope(
   const enforcement = env.REST_SCOPE_ENFORCE;
   if (enforcement === 'off') return pass;
 
-  const allowed = credentialMeetsScope(context.tokenScope, scope);
+  const allowed = credentialMeetsScope(heldScope(context.tokenScope), scope);
   const withholdModerator = allowed && scope !== 'defer' && withholdsModerator(user, context);
   if (!allowed) logScopeDecision(req, context, scope, enforcement, 'refused');
   else if (withholdModerator)
@@ -139,7 +146,8 @@ export function requestHoldsScope(req: ScopeRequest, scope: SessionScope): boole
   const context = req.context as ScopeContext | undefined;
   if (context?.tokenScope == null) return true;
   const enforcement = env.REST_SCOPE_ENFORCE;
-  if (enforcement === 'off' || credentialMeetsScope(context.tokenScope, scope)) return true;
+  if (enforcement === 'off' || credentialMeetsScope(heldScope(context.tokenScope), scope))
+    return true;
   logScopeDecision(req, context, scope, enforcement, 'refused');
   return enforcement !== 'enforce';
 }
