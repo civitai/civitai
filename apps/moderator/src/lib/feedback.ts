@@ -3,6 +3,7 @@ import {
   APPS_PLATFORM_FEEDBACK_AREA,
   FEEDBACK_AREAS,
   FEEDBACK_ERROR_REF_PATTERN,
+  FEEDBACK_STATUSES,
   FEEDBACK_ORCHESTRATOR_ID_PATTERN,
   FEEDBACK_TOAST_TEXT_MAX_LENGTH,
   ORCHESTRATION_FEEDBACK_AREA,
@@ -15,7 +16,8 @@ import {
 } from '@civitai/shared/feedback-capture';
 import type { LightboxItem } from './lightbox';
 
-export const FEEDBACK_STATUSES = ['new', 'reviewed', 'actioned', 'dismissed'] as const;
+// Owned by `@civitai/shared`, which the main app's triage API validates against too.
+export { FEEDBACK_STATUSES };
 export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 
 export const isFeedbackStatus = (value: string): value is FeedbackStatus =>

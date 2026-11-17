@@ -286,7 +286,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
-    const destination = legacyImageSearchDestination(features ?? {}, ctx.query);
+    const destination = legacyImageSearchDestination(features ?? {});
     if (destination === 'images-feed')
       return {
         redirect: {
