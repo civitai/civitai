@@ -21,9 +21,23 @@ export function scanFlagLevel(scan: { nsfwLevel: number | null; result: unknown 
   return scanned >= NsfwLevel.R ? scanned : null;
 }
 
-/** Images can rate a text-rated bounty higher than its scan did. */
 export const withContentLevel = (scanned: number, content: number | null) =>
   Math.max(scanned, ratedLevel(content ?? 0));
+
+/**
+ * The rating fields a write that newly sets a bounty's nsfw flag also sets, or undefined. A rating
+ * below R is older than the flag and would outrank it, so it is raised to R, never cleared: cleared,
+ * the bounty would fall below it once the flag is turned off again. No basis, so the rating review
+ * cannot auto-lower it; a moderator must.
+ */
+export function staleRatingRaise(
+  stored: { nsfw: boolean; moderatorNsfwLevel: number | null },
+  nsfw: boolean | undefined
+) {
+  if (nsfw !== true || stored.nsfw || stored.moderatorNsfwLevel == null) return undefined;
+  if (ratedLevel(stored.moderatorNsfwLevel) >= NsfwLevel.R) return undefined;
+  return { moderatorNsfwLevel: NsfwLevel.R, moderatorNsfwLevelBasis: null };
+}
 
 type BountyLevelInput = { nsfw: boolean; nsfwLevel: number; moderatorNsfwLevel: number | null };
 

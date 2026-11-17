@@ -220,7 +220,6 @@ describe('updateBountyById — lock enforcement', () => {
 describe('updateBountyById — a moderator rating against a new nsfw flag', () => {
   type Row = { nsfw: boolean; moderatorNsfwLevel: number | null };
   const modEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, nsfw: true };
-  // The row after the last update.
   const applied = (stored: Row): Row => {
     const data = updateData();
     return {
@@ -229,7 +228,6 @@ describe('updateBountyById — a moderator rating against a new nsfw flag', () =
         'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : stored.moderatorNsfwLevel,
     };
   };
-  // The level the feed serves a flagged row at with no text rating.
   const servedLevel = (row: Row) => bountyNsfwFlagLevel({ ...row, nsfwLevel: 60 }, undefined);
 
   it('raises a rating below R to R when the edit sets the flag', async () => {
@@ -357,6 +355,22 @@ describe('updateBountyById on real rows: the stored level after an nsfw toggle',
     const row = await readRow();
     expect(row.nsfw).toBe(false);
     expect(ratedLevel(row.nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
+  });
+
+  it('keeps the committed edit and its queued retry when the recompute fails', async () => {
+    await pg.db.exec(`
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG}, null);
+    `);
+    mockDbWrite.$queryRaw.mockImplementation(((...a: Parameters<typeof onPg>) => {
+      const q = 'text' in a[0] ? a[0] : Prisma.sql(a[0], ...(a.slice(1) as never[]));
+      if (q.text.includes('WITH next AS')) return Promise.reject(new Error('recompute failed'));
+      return onPg(...a).then((r) => r.rows);
+    }) as never);
+
+    await edit(true);
+    expect((await readRow()).nsfw).toBe(true);
+    expect(await queued()).toBe(1);
   });
 });
 

@@ -63,8 +63,9 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
-import { BountySort, BountyStatus, NsfwLevel } from '../common/enums';
-import { ratedLevel } from '~/server/services/bounty-rated-level';
+import type { NsfwLevel } from '../common/enums';
+import { BountySort, BountyStatus } from '../common/enums';
+import { staleRatingRaise } from '~/server/services/bounty-rated-level';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { updateBountyNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { dbRead, dbWrite } from '../db/client';
@@ -700,15 +701,8 @@ export const updateBountyById = async ({
         existing.poi &&
         data.poi === false &&
         hasOpenTextScanFlag(existing.meta, 'poi');
-      // A rating below R is older than a flag set now, and it would outrank the flag. It is raised to
-      // R, never cleared: a cleared rating would let the bounty fall below it once the flag is
-      // turned off again. No basis, so the rating review cannot auto-lower it; a moderator must.
-      const raisesStaleRating =
-        data.nsfw === true &&
-        !existing.nsfw &&
-        existing.moderatorNsfwLevel != null &&
-        ratedLevel(existing.moderatorNsfwLevel) < NsfwLevel.R;
-      // Covers the raise above, which only happens when the flag changes.
+      const ratingRaise = staleRatingRaise(existing, data.nsfw);
+      // Covers the rating raise, which only happens when the flag changes.
       nsfwChanged = data.nsfw !== undefined && data.nsfw !== existing.nsfw;
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
@@ -737,10 +731,7 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
-          ...(raisesStaleRating && {
-            moderatorNsfwLevel: NsfwLevel.R,
-            moderatorNsfwLevelBasis: null,
-          }),
+          ...ratingRaise,
           ...(liftedTextScanPoi && {
             availability:
               (readTextScanFlags(existing.meta).poi?.prev?.availability as
@@ -999,7 +990,13 @@ export async function applyBountyContentChange({
 
   const stored = await dbWrite.bounty.findUnique({
     where: { id },
-    select: { name: true, nsfw: true, lockedProperties: true, details: true },
+    select: {
+      name: true,
+      nsfw: true,
+      moderatorNsfwLevel: true,
+      lockedProperties: true,
+      details: true,
+    },
   });
   if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
 
@@ -1040,7 +1037,12 @@ export async function applyBountyContentChange({
     await dbWrite.bounty.update({
       where: { id },
       data: flagged.lock
-        ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), details }
+        ? {
+            nsfw: true,
+            ...staleRatingRaise(stored, true),
+            lockedProperties: uniq([...stored.lockedProperties, 'nsfw']),
+            details,
+          }
         : { details },
     });
   }
