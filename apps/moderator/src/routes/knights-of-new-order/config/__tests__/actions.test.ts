@@ -17,7 +17,7 @@ vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions, load } from '../+page.server';
-import { gameChangeSummary } from '../game-form';
+import { gameChangeSummary, toggleChoice, toggleSubmission } from '../game-form';
 import { percentToRate, rateToPercent } from '../rates';
 
 const formEvent = (fields: Record<string, string>) => {
@@ -221,6 +221,34 @@ describe('Knights of New Order game settings action', () => {
     });
     await expect(actions.game(formEvent({ yesNoStretch: '3' }))).rejects.toThrow('forbidden');
     expect(saveGame).not.toHaveBeenCalled();
+  });
+});
+
+describe('toggle choices', () => {
+  it('starts on the Knights default when nothing is saved, and posts nothing while it stays there', () => {
+    expect(toggleChoice(undefined)).toBe('default');
+    expect(toggleSubmission(undefined, 'default')).toBeNull();
+  });
+
+  it('starts on the saved value when one is saved', () => {
+    expect(toggleChoice(true)).toBe('on');
+    expect(toggleChoice(false)).toBe('off');
+  });
+
+  it('saves an explicit off over a Knights default the environment may have on, in one step', () => {
+    expect(toggleSubmission(undefined, 'off')).toEqual({ set: false });
+    expect(toggleSubmission(undefined, 'on')).toEqual({ set: true });
+    expect(toggleSubmission(true, 'off')).toEqual({ set: false });
+  });
+
+  it('clears a saved value when the Knights default is chosen', () => {
+    expect(toggleSubmission(true, 'default')).toBe('clear');
+    expect(toggleSubmission(false, 'default')).toBe('clear');
+  });
+
+  it('posts nothing when the saved value is chosen again', () => {
+    expect(toggleSubmission(false, 'off')).toBeNull();
+    expect(toggleSubmission(true, 'on')).toBeNull();
   });
 });
 

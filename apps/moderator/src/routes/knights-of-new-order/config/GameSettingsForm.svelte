@@ -5,7 +5,10 @@
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
-  import { Switch } from '@civitai/ui/components/ui/switch/index.js';
+  import {
+    ToggleGroup,
+    ToggleGroupItem,
+  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import {
     KNIGHTS_GAME_SETTINGS,
@@ -14,7 +17,13 @@
   } from '@civitai/shared/new-order';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { CONFIRM_FIELD, defaultField } from './game-form';
+  import {
+    CONFIRM_FIELD,
+    defaultField,
+    toggleChoice,
+    toggleSubmission,
+    type ToggleChoice,
+  } from './game-form';
 
   let { game }: { game: KnightsGameSettings | undefined } = $props();
 
@@ -64,51 +73,45 @@
     },
   ];
 
-  // What Knights does when neither this page nor its environment sets a toggle.
-  const TOGGLE_BUILT_IN: Record<ToggleKey, boolean> = {
-    apprenticeSmites: true,
-    shopDisabled: false,
-    conversionDisabled: false,
-  };
+  const CHOICES: { value: ToggleChoice; label: string }[] = [
+    { value: 'default', label: 'Knights default (env)' },
+    { value: 'on', label: 'On' },
+    { value: 'off', label: 'Off' },
+  ];
   const KILL_SWITCHES: ToggleKey[] = ['shopDisabled', 'conversionDisabled'];
 
   // Seeded once from the server: the inputs are the moderator's draft until a save reloads the page.
   const seed: KnightsGameSettings = untrack(() => game ?? {});
   const seedText = (key: NumberKey) => (seed[key] === undefined ? '' : String(seed[key]));
-  const seedToggle = (key: ToggleKey) => seed[key] ?? TOGGLE_BUILT_IN[key];
 
   const numberKeys = SECTIONS.flatMap((section) => section.numbers);
   const toggleKeys = SECTIONS.flatMap((section) => section.toggles);
   let numbers = $state(
     Object.fromEntries(numberKeys.map((key) => [key, seedText(key)])) as Record<NumberKey, string>
   );
+  // The moderator app cannot see the Knights environment, so a toggle with nothing saved shows "Knights default", not a guess.
   let toggles = $state(
-    Object.fromEntries(toggleKeys.map((key) => [key, seedToggle(key)])) as Record<
+    Object.fromEntries(toggleKeys.map((key) => [key, toggleChoice(seed[key])])) as Record<
       ToggleKey,
-      boolean
+      ToggleChoice
     >
   );
   let useDefault = $state(
-    Object.fromEntries([...numberKeys, ...toggleKeys].map((key) => [key, false])) as Record<
-      KnightsGameSettingKey,
-      boolean
-    >
+    Object.fromEntries(numberKeys.map((key) => [key, false])) as Record<NumberKey, boolean>
   );
   let confirming = $state(false);
 
   // Only changed settings are posted, so a save never rewrites a field the moderator did not touch.
   const numberChanged = (key: NumberKey) =>
     !useDefault[key] && numbers[key].trim() !== '' && numbers[key].trim() !== seedText(key);
-  const toggleChanged = (key: ToggleKey) => !useDefault[key] && toggles[key] !== seedToggle(key);
-  const clearing = (key: KnightsGameSettingKey) => useDefault[key] && seed[key] !== undefined;
+  const clearing = (key: NumberKey) => useDefault[key] && seed[key] !== undefined;
+  const toggleChange = (key: ToggleKey) => toggleSubmission(seed[key], toggles[key]);
 
   const anyChange = $derived(
     numberKeys.some((key) => numberChanged(key) || clearing(key)) ||
-      toggleKeys.some((key) => toggleChanged(key) || clearing(key))
+      toggleKeys.some((key) => toggleChange(key) !== null)
   );
-  const killSwitchChange = $derived(
-    KILL_SWITCHES.some((key) => toggleChanged(key) || clearing(key))
-  );
+  const killSwitchChange = $derived(KILL_SWITCHES.some((key) => toggleChange(key) !== null));
 
   const form = new FormState({
     reload: true,
@@ -172,35 +175,31 @@
 
         {#each section.toggles as key (key)}
           {@const spec = KNIGHTS_GAME_SETTINGS[key]}
+          {@const change = toggleChange(key)}
           <div class="grid gap-1.5">
-            <div class="flex items-center justify-between gap-4">
-              <div>
-                <Label for="game-{key}">{spec.label}</Label>
-                <p class="text-xs text-dark-2">{status(key)}</p>
-              </div>
-              {#if toggleChanged(key)}<input type="hidden" name={key} value={String(toggles[key])} />{/if}
-              <Switch
-                id="game-{key}"
-                disabled={useDefault[key]}
-                bind:checked={
-                  () => toggles[key], (value) => ((toggles[key] = value), (confirming = false))
-                }
-              />
-            </div>
-            {#if seed[key] !== undefined}
-              <div class="flex items-center gap-2" data-touch-target>
-                {#if useDefault[key]}<input type="hidden" name={defaultField(key)} value="true" />{/if}
-                <Checkbox
-                  id="game-{key}-default"
-                  bind:checked={
-                    () => useDefault[key], (value) => ((useDefault[key] = value), (confirming = false))
-                  }
-                />
-                <Label for="game-{key}-default" class="text-xs font-normal text-dark-2">
-                  Use the Knights default
-                </Label>
-              </div>
+            <span class="text-sm font-medium" id="game-{key}-label">{spec.label}</span>
+            {#if change === 'clear'}
+              <input type="hidden" name={defaultField(key)} value="true" />
+            {:else if change}
+              <input type="hidden" name={key} value={String(change.set)} />
             {/if}
+            <ToggleGroup
+              type="single"
+              size="sm"
+              variant="outline"
+              aria-labelledby="game-{key}-label"
+              value={toggles[key]}
+              onValueChange={(value) => {
+                // A second click on the chosen item would empty a single group; keep the choice instead.
+                if (value) toggles[key] = value as ToggleChoice;
+                confirming = false;
+              }}
+            >
+              {#each CHOICES as choice (choice.value)}
+                <ToggleGroupItem value={choice.value}>{choice.label}</ToggleGroupItem>
+              {/each}
+            </ToggleGroup>
+            <p class="text-xs text-dark-2">{status(key)}</p>
           </div>
         {/each}
       </fieldset>

@@ -66,3 +66,18 @@ export function gameChangeSummary(
   );
   return moved.length ? moved.join('; ') : null;
 }
+
+/** A toggle's three choices: nothing saved (Knights follows its environment), or an explicit on or off. */
+export type ToggleChoice = 'default' | 'on' | 'off';
+
+export const toggleChoice = (saved: boolean | undefined): ToggleChoice =>
+  saved === undefined ? 'default' : saved ? 'on' : 'off';
+
+/** What a save posts for a toggle: a value to store, `clear` to remove the saved one, or null when nothing changes. */
+export function toggleSubmission(
+  saved: boolean | undefined,
+  choice: ToggleChoice
+): { set: boolean } | 'clear' | null {
+  if (choice === toggleChoice(saved)) return null;
+  return choice === 'default' ? 'clear' : { set: choice === 'on' };
+}
