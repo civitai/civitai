@@ -19,17 +19,20 @@ const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
 const RERATING_ACTIVITIES = [MODERATOR_RULING_ACTIVITY, 'setNsfwLevelKono'];
 const DAY_MS = 86_400_000;
-/** The lock reason the moderator image queue records (apps/moderator image-queue.ts); too often wrong to grade against. */
+/** The lock reason the moderator image queue records (apps/moderator image-queue.ts); not used as a grading reference. */
 export const MODERATOR_QUEUE_RATING_REASON = 'Moderator queue rating';
 
 export type HarvestResult = { scanned: number; added: number; retired: number };
 
-/** The harvest job: nothing is read or written while it is paused, so the cursor holds where it was. */
+/**
+ * The harvest job. While paused it takes in no rulings and the cursor holds where it was, but references whose ruling
+ * no longer stands are still retired.
+ */
 export async function runHarvestJob(
   db: Kysely<DB>,
   { now, settings }: { now: Date; settings: HarvestSettings }
-): Promise<HarvestResult | { paused: true }> {
-  if (settings.paused) return { paused: true };
+): Promise<HarvestResult | { paused: true; retired: number }> {
+  if (settings.paused) return { paused: true, retired: await retireStale(db, now, HARVEST) };
   return harvestRulings(db, {
     now,
     config: { ...HARVEST, hiddenCheckShare: settings.hiddenCheckShare },

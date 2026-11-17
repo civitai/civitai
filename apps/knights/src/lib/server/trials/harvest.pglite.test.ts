@@ -266,7 +266,7 @@ describe('harvest defaults and the job switch', () => {
       now: NOW,
       settings: { paused: true, hiddenCheckShare: 1 },
     });
-    expect(paused).toEqual({ paused: true });
+    expect(paused).toEqual({ paused: true, retired: 0 });
     expect(await references()).toEqual([]);
     expect(await cursor()).toEqual([]);
 
@@ -277,6 +277,30 @@ describe('harvest defaults and the job switch', () => {
     expect(resumed).toMatchObject({ scanned: 1, added: 1 });
     expect(await references()).toMatchObject([{ imageId: 1, pool: 'hiddenCheck' }]);
     expect(await cursor()).toHaveLength(1);
+  });
+});
+
+describe('the paused harvest job', () => {
+  it('still retires a reference whose ruling no longer stands', async () => {
+    await image(1, { level: 8 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES (1,'hiddenCheck','4','harvested')`
+    );
+    await image(2, { level: 4 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES (2,'hiddenCheck','4','harvested')`
+    );
+
+    const result = await runHarvestJob(db, {
+      now: NOW,
+      settings: { paused: true, hiddenCheckShare: 0 },
+    });
+
+    expect(result).toEqual({ paused: true, retired: 1 });
+    expect(await references()).toMatchObject([
+      { imageId: 1, status: 'retired' },
+      { imageId: 2, status: 'active' },
+    ]);
   });
 });
 

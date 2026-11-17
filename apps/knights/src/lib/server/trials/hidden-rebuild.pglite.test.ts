@@ -5,7 +5,14 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
-import { planHiddenRebuild, retireUnagreedHiddenChecks } from './hidden-rebuild.service';
+import {
+  inlineSql,
+  offlineDb,
+  planHiddenRebuild,
+  retireIdsQuery,
+  retirableIdsQuery,
+  retireUnagreedHiddenChecks,
+} from './hidden-rebuild.service';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -24,7 +31,16 @@ beforeEach(async () => {
   );
 });
 
-type RefOpts = { pool?: string; source?: string; status?: string; reason?: string };
+type RefOpts = {
+  pool?: string;
+  source?: string;
+  status?: string;
+  reason?: string;
+  /** Who cast each answer (default: a different player each). */
+  players?: number[];
+  /** The stored counters (default: from `answers`). */
+  counters?: { answers: number; failures: number };
+};
 
 /** A reference answered by players: `answers` lists each player's answer. */
 async function reference(imageId: number, answer: string, answers: string[], o: RefOpts = {}) {
@@ -45,8 +61,8 @@ async function reference(imageId: number, answer: string, answers: string[], o: 
       o.source ?? 'harvested',
       o.status ?? 'active',
       Q,
-      answers.length,
-      answers.filter((a) => a !== answer).length,
+      o.counters?.answers ?? answers.length,
+      o.counters?.failures ?? answers.filter((a) => a !== answer).length,
     ]
   );
   const id = rows[0].id;
@@ -54,7 +70,14 @@ async function reference(imageId: number, answer: string, answers: string[], o: 
     await pg.query(
       `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
        VALUES ($1,$2,$3,$4,$5,'Knight',$6,1)`,
-      [-id, 100 + i, NOW.toISOString(), Q, imageId, value]
+      [
+        -id,
+        o.players?.[i] ?? 100 + i,
+        new Date(NOW.getTime() + i * 1000).toISOString(),
+        Q,
+        imageId,
+        value,
+      ]
     );
   }
   return id;
@@ -145,7 +168,67 @@ describe('retireUnagreedHiddenChecks', () => {
       live: 2,
       keep: 1,
       retire: 1,
+      ids: [2],
     });
     expect(await statusOf()).toEqual({ 1: 'active', 2: 'active' });
+  });
+
+  it('counts players, not votes, and reads the votes rather than the stored counters', async () => {
+    await reference(1, '4', agree(5, 5), { players: [7, 7, 7, 7, 7] }); // one player, five votes
+    await reference(2, '4', agree(5, 5), { counters: { answers: 0, failures: 0 } });
+    await reference(3, '4', agree(0, 5), { counters: { answers: 50, failures: 0 } });
+
+    await retireUnagreedHiddenChecks(db, { now: NOW, excludeImageIds: [] });
+
+    expect(await statusOf()).toEqual({ 1: 'retired', 2: 'active', 3: 'retired' });
+  });
+
+  it('retires a pending check players do not agree with and leaves an agreed one as it is', async () => {
+    await reference(1, '4', agree(1, 5), { status: 'pending' });
+    await reference(2, '4', agree(5, 5), { status: 'pending' });
+
+    await retireUnagreedHiddenChecks(db, { now: NOW, excludeImageIds: [] });
+
+    expect(await statusOf()).toEqual({ 1: 'retired', 2: 'pending' });
+  });
+});
+
+describe('the SQL printed for a run by hand', () => {
+  it('selects the planned ids and retires exactly those, with every value written in', async () => {
+    await reference(1, '4', agree(5, 5));
+    await reference(2, '4', agree(1, 5));
+    await reference(3, '4', agree(5, 5));
+    await reference(4, '4', []);
+    const select = inlineSql(retirableIdsQuery(offlineDb(), { excludeImageIds: [3] }).compile());
+    expect(select).not.toMatch(/\$\d/);
+
+    const ids = (await pg.query<{ id: number }>(select)).rows.map((r) => r.id);
+    expect(ids).toEqual((await planHiddenRebuild(db, { excludeImageIds: [3] })).ids);
+    const update = inlineSql(
+      retireIdsQuery(offlineDb(), { now: NOW, excludeImageIds: [3], ids }).compile()
+    );
+    const { affectedRows } = await pg.query(update);
+
+    expect(affectedRows).toBe(ids.length);
+    expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired', 3: 'retired', 4: 'retired' });
+  });
+
+  it('retires fewer than planned, never more, when a check gains agreement in between', async () => {
+    const late = await reference(1, '4', agree(4, 4));
+    await reference(2, '4', []);
+    const ids = (await planHiddenRebuild(db, { excludeImageIds: [] })).ids;
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+       VALUES ($1,999,$2,$3,1,'Knight','4',1)`,
+      [-late, NOW.toISOString(), Q]
+    );
+
+    const { affectedRows } = await pg.query(
+      inlineSql(retireIdsQuery(offlineDb(), { now: NOW, excludeImageIds: [], ids }).compile())
+    );
+
+    expect(ids).toHaveLength(2);
+    expect(affectedRows).toBe(1);
+    expect(await statusOf()).toEqual({ 1: 'active', 2: 'retired' });
   });
 });

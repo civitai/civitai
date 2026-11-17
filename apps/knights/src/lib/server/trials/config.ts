@@ -26,13 +26,14 @@ export type HarvestSettings = {
 };
 
 /**
- * Operator switches from the environment (see `.env.example`): `KNIGHTS_HARVEST=off` pauses the harvest job, and
+ * Operator switches from the environment (see `.env.example`): `KNIGHTS_HARVEST` runs the harvest only when unset or
+ * `on` (any other value, `off` included, pauses it), and
  * `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` (0 to 1) sends that share of new rulings to hidden checks.
  */
 export function harvestSettings(env: Record<string, string | undefined>): HarvestSettings {
   const share = Number(env.KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE?.trim() || NaN);
   return {
-    paused: env.KNIGHTS_HARVEST?.trim().toLowerCase() === 'off',
+    paused: !['', 'on'].includes(env.KNIGHTS_HARVEST?.trim().toLowerCase() ?? ''),
     hiddenCheckShare: share >= 0 && share <= 1 ? share : HARVEST.hiddenCheckShare,
   };
 }

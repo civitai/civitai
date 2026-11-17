@@ -12,11 +12,14 @@ Known-answer images (`KnightsReferenceImage`, pool `hiddenCheck`) served in a Kn
 ordinary vote in every way a player can see.
 
 - Where checks come from: the ruling harvest (`trials/harvest.service.ts`) sends new rulings to `trials` unless
-  `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` sends a share to `hiddenCheck`, skips rulings from the moderator image queue, and
-  pauses entirely with `KNIGHTS_HARVEST=off`. A retired reference keeps its image, so that image is never harvested again.
+  `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` sends a share to `hiddenCheck`, and skips rulings from the moderator image queue.
+  `KNIGHTS_HARVEST` set to anything but `on` pauses intake (the cursor holds) while references whose ruling no longer
+  stands are still retired. A retired reference keeps its image, so that image is never harvested again.
 - `pnpm run rebuild:hidden-checks` (`trials/hidden-rebuild.service.ts`) retires every live harvested check that fewer than
   `KEEP_MIN_PLAYERS` players answered or that most of its players answered differently, plus any `--exclude` image ids.
-  It changes only `status`, never deletes, and is a dry run without `--apply`; `--print-sql` prints the update.
+  It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run
+  elsewhere, `--print-sql` prints the SELECT of the ids to retire, and `--print-sql --ids <ids>` the UPDATE of exactly
+  those ids, both with their values written in; the UPDATE's row count must equal the number of ids.
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever

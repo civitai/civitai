@@ -2,30 +2,38 @@ import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 import {
+  inlineSql,
+  offlineDb,
+  parseRebuildArgs,
   planHiddenRebuild,
+  retireIdsQuery,
+  retirableIdsQuery,
   retireUnagreedHiddenChecks,
-  retireUnagreedQuery,
 } from '../src/lib/server/trials/hidden-rebuild.service';
 
 /**
- * Retires harvested hidden checks that players do not agree with:
- * `pnpm run rebuild:hidden-checks [--apply] [--exclude <imageId,...>] [--print-sql]`.
- * A dry run by default; `--print-sql` prints the exact update for a reviewed run elsewhere. Counts only, never deletes.
+ * Retires harvested hidden checks that players do not agree with. Counts only, never deletes.
+ * - `pnpm run rebuild:hidden-checks [--exclude <imageId,...>]`: dry run against the local database.
+ * - `... --apply`: retire in one transaction, local database only.
+ * - `... --print-sql [--exclude ...]`: print the SELECT of the ids to retire; with `--ids <id,...>` (that SELECT's
+ *   result), print the UPDATE of exactly those ids. Values are written in, and nothing connects to a database.
  */
 async function main() {
+  const args = parseRebuildArgs(process.argv.slice(2));
+  const input = { now: new Date(), excludeImageIds: args.excludeImageIds };
+
+  if (args.printSql) {
+    const db = offlineDb();
+    const statement = args.ids
+      ? retireIdsQuery(db, { ...input, ids: args.ids }).compile()
+      : retirableIdsQuery(db, input).compile();
+    console.log(`${inlineSql(statement)};`);
+    if (args.ids) console.log(`-- expect exactly ${args.ids.length} rows updated`);
+    return;
+  }
+
   const connectionString = process.env.DATABASE_URL;
   assertLocalDatabase(connectionString);
-
-  const args = process.argv.slice(2);
-  const flag = (name: string) => args.indexOf(name);
-  const excludeAt = flag('--exclude');
-  const excludeImageIds =
-    excludeAt >= 0 ? (args[excludeAt + 1] ?? '').split(',').filter(Boolean).map(Number) : [];
-  if (excludeImageIds.some((id) => !Number.isInteger(id) || id <= 0)) {
-    throw new Error('--exclude takes a comma-separated list of image ids.');
-  }
-  const input = { now: new Date(), excludeImageIds };
-
   const { db } = createKyselyClients<DB>({
     connectionString,
     sslNoVerify: true,
@@ -33,13 +41,10 @@ async function main() {
     max: 1,
   });
   try {
-    if (flag('--print-sql') >= 0) {
-      const { sql, parameters } = retireUnagreedQuery(db, input).compile();
-      console.log(sql);
-      console.log(JSON.stringify(parameters));
-    }
-    if (flag('--apply') < 0) {
-      console.log(JSON.stringify(await planHiddenRebuild(db, input)));
+    if (!args.apply) {
+      const { ids, ...counts } = await planHiddenRebuild(db, input);
+      console.log(JSON.stringify(counts));
+      console.log(`Would retire: ${ids.join(',')}`);
       console.log('Dry run: nothing written.');
       return;
     }
