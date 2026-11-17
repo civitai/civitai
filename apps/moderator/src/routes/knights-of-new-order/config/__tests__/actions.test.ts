@@ -17,7 +17,7 @@ vi.mock('$lib/server/access', () => ({ requireAccess }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 import { actions, load } from '../+page.server';
-import { gameChangeSummary, toggleChoice, toggleSubmission } from '../game-form';
+import { toggleChoice, toggleSubmission } from '../game-form';
 import { percentToRate, rateToPercent } from '../rates';
 
 const formEvent = (fields: Record<string, string>) => {
@@ -249,24 +249,6 @@ describe('toggle choices', () => {
   it('posts nothing when the saved value is chosen again', () => {
     expect(toggleSubmission(false, 'off')).toBeNull();
     expect(toggleSubmission(true, 'on')).toBeNull();
-  });
-});
-
-describe('gameChangeSummary', () => {
-  it('names each moved setting with its value before and after', () => {
-    expect(
-      gameChangeSummary(
-        { yesNoStretch: 4, shopDisabled: false },
-        { yesNoStretch: 2, conversionDisabled: true }
-      )
-    ).toBe(
-      'Questions per axis in a row: 4 to 2; Shop closed: off to Knights default; Gold to Buzz conversion off: Knights default to on'
-    );
-  });
-
-  it('is null when no game setting moved', () => {
-    expect(gameChangeSummary(undefined, undefined)).toBeNull();
-    expect(gameChangeSummary({ yesNoStretch: 4 }, { yesNoStretch: 4 })).toBeNull();
   });
 });
 

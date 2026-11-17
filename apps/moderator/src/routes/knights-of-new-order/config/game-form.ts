@@ -2,7 +2,6 @@ import {
   KNIGHTS_GAME_SETTING_KEYS,
   KNIGHTS_GAME_SETTINGS,
   type KnightsGameSettingKey,
-  type KnightsGameSettings,
 } from '@civitai/shared/new-order';
 
 /** Form field that asks to remove a stored setting, so Knights falls back to its environment. */
@@ -42,29 +41,6 @@ export function parseGameForm(
   }
   if (Object.keys(changes).length === 0) return { ok: false, error: 'Nothing was changed.' };
   return { ok: true, changes, confirmed: form.get(CONFIRM_FIELD) === 'true' };
-}
-
-const showValue = (value: number | boolean | undefined) =>
-  value === undefined
-    ? 'Knights default'
-    : typeof value === 'boolean'
-    ? value
-      ? 'on'
-      : 'off'
-    : String(value);
-
-/** The game settings a recorded change moved, as "label: before to after", or null when it moved none. */
-export function gameChangeSummary(
-  before: KnightsGameSettings | undefined,
-  after: KnightsGameSettings | undefined
-): string | null {
-  const moved = KNIGHTS_GAME_SETTING_KEYS.filter((key) => before?.[key] !== after?.[key]).map(
-    (key) =>
-      `${KNIGHTS_GAME_SETTINGS[key].label}: ${showValue(before?.[key])} to ${showValue(
-        after?.[key]
-      )}`
-  );
-  return moved.length ? moved.join('; ') : null;
 }
 
 /** A toggle's three choices: nothing saved (Knights follows its environment), or an explicit on or off. */

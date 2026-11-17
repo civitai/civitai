@@ -66,28 +66,28 @@ export const KNIGHTS_GAME_SETTINGS = {
   hiddenCheckFailureWindowHours: {
     kind: 'number',
     env: 'KNIGHTS_HIDDEN_CHECK_FAILURE_WINDOW_HOURS',
-    label: 'Failure window (hours)',
+    label: 'Failure window',
     range: 'greater than 0',
     valid: (n: number) => n > 0,
   },
   hiddenCheckSevereDistance: {
     kind: 'number',
     env: 'KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE',
-    label: 'Severe miss distance (levels)',
+    label: 'Severe miss distance',
     range: 'a whole number greater than 0',
     valid: (n: number) => Number.isInteger(n) && n > 0,
   },
   hiddenCheckSettleDelayMinutes: {
     kind: 'number',
     env: 'KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES',
-    label: 'Settle delay (minutes)',
+    label: 'Settle delay',
     range: '0 or more',
     valid: (n: number) => n >= 0,
   },
   hiddenCheckRetireMinAnswers: {
     kind: 'number',
     env: 'KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS',
-    label: 'Answers before a check can retire',
+    label: 'Answers before retiring',
     range: 'a whole number greater than 0',
     valid: (n: number) => Number.isInteger(n) && n > 0,
   },
@@ -101,14 +101,14 @@ export const KNIGHTS_GAME_SETTINGS = {
   yesNoStretch: {
     kind: 'number',
     env: 'KNIGHTS_YESNO_STRETCH',
-    label: 'Questions per axis in a row',
+    label: 'Questions per topic in a row',
     range: 'a whole number greater than 0',
     valid: (n: number) => Number.isInteger(n) && n > 0,
   },
   yesNoMaxAgeDays: {
     kind: 'number',
     env: 'KNIGHTS_YESNO_MAX_AGE_DAYS',
-    label: 'Close unanswered questions after (days)',
+    label: 'Close unanswered after',
     range: 'greater than 0',
     valid: (n: number) => n > 0,
   },
@@ -117,11 +117,11 @@ export const KNIGHTS_GAME_SETTINGS = {
     env: 'KNIGHTS_APPRENTICE_SMITES',
     label: 'Acolyte wrong-answer smites',
   },
-  shopDisabled: { kind: 'toggle', env: 'KNIGHTS_SHOP_DISABLED', label: 'Shop closed' },
+  shopDisabled: { kind: 'toggle', env: 'KNIGHTS_SHOP_DISABLED', label: 'Shop' },
   conversionDisabled: {
     kind: 'toggle',
     env: 'KNIGHTS_CONVERSION_DISABLED',
-    label: 'Gold to Buzz conversion off',
+    label: 'Gold to Buzz conversion',
   },
 } as const;
 

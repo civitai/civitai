@@ -21,8 +21,8 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   most 500 ms for it and is not throttled when it is slower, and the count still fills the cache when it lands. A failed count does not
   throttle, is not cached, and pauses counting for 10 s. The moderator Config page edits the three fields above and the optional
   `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps a stored
-  `maxOpen` and the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "use the Knights default"
-  checkbox removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits
+  `maxOpen` and the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "Reset" button
+  removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits
   the [game settings](#game-settings).
 - Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
   `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
@@ -52,15 +52,19 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
-The moderator Config page (`/knights-of-new-order/config`, "Game settings") groups them as Skill checks, Yes/no, Acolytes, and Shop
-and conversion. Each number field says whether it is saved there or on the Knights default, and a saved one has a "Use the
-Knights default" checkbox that removes it. Each toggle is a three-way choice, "Knights default (env)" / On / Off, starting on
-"Knights default" when nothing is saved (the moderator app cannot see the Knights environment); On or Off saves that value
-explicitly, and "Knights default (env)" removes it. The form posts only the fields the moderator changed; `saveGameSettings`
+The moderator Config page (`/knights-of-new-order/config`) is one column: the queue counts, then cards for Queue sources (switch,
+both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, and a "Shop and conversion" danger-zone card. Each
+setting with a Knights default carries a "Default" or "Custom" badge (its tooltip names the variable behind the default), and a
+custom number has a "Reset" button that removes the saved value. Toggles are segmented with the default first and positive labels:
+Shop Default / Open / Closed, Gold to Buzz conversion Default / On / Off, Acolyte wrong-answer smites Default / On / Off, stored as the
+same booleans. A sticky bar counts unsaved changes and saves them through the page's two
+actions (`?/save` for the sources, `?/game` for the game settings, each only when its fields changed); Discard restores what is
+stored. The game form posts only the changed fields; `saveGameSettings`
 (`apps/moderator/src/lib/server/knights/sources-config.service.ts`) applies them over what is stored, carries every other field over
 (switch, rates, `maxOpen`, `yesNoShare`, other game settings), refuses an out-of-range or mistyped value without coercing it, and
 writes and audits through the same path as the sources form (`ModActivity`, `knights.sources.update`, with before and after).
 The moderator app is the only writer of the key. Every save is a compare-and-set: it writes only if the key still holds what it
 read, otherwise it reads again and reapplies its change, up to three times, then refuses with "Another moderator saved the config
 at the same time", so two saves never overwrite each other. A
-change to either kill switch is refused unless confirmed; the page asks before saving one.
+change to either kill switch is refused unless confirmed; the page asks in a dialog before saving one, or before turning the sources
+on. The last recorded change is under "Recent changes" at the bottom.

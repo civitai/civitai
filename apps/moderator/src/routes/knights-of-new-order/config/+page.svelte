@@ -1,26 +1,23 @@
 <script lang="ts">
-  import ContextPanel from './ContextPanel.svelte';
-  import GameSettingsForm from './GameSettingsForm.svelte';
-  import SourcesForm from './SourcesForm.svelte';
+  import ConfigEditor from './ConfigEditor.svelte';
+  import RecentChanges from './RecentChanges.svelte';
+  import StatusStrip from './StatusStrip.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 </script>
 
-<header class="page-header">
-  <h1>Knights of New Order config</h1>
-  <p>
-    Switch the image sources that fill the Knights queue, set how much of the incoming flow they
-    take, and tune the game. Changes reach the site within about 30 seconds.
-  </p>
-</header>
+<div class="mx-auto flex w-full max-w-4xl flex-col gap-4">
+  <header class="page-header">
+    <h1>Knights of New Order config</h1>
+    <p>Tune the Knights game. Changes reach the site within about 30 seconds.</p>
+  </header>
 
-<div class="grid gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-  {#key data.lastChange?.at}
-    <div class="flex flex-col gap-4">
-      <SourcesForm settings={data.settings} lastChange={data.lastChange} />
-      <GameSettingsForm game={data.settings.config.game} />
-    </div>
+  <StatusStrip context={data.context} />
+
+  {#key JSON.stringify(data.settings)}
+    <ConfigEditor settings={data.settings} />
   {/key}
-  <ContextPanel context={data.context} />
+
+  <RecentChanges lastChange={data.lastChange} />
 </div>
