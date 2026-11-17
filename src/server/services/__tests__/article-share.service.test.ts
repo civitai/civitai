@@ -429,7 +429,7 @@ describe('getArticleByShareToken: body images', () => {
         n
       ).repeat(12)}`;
     const content =
-      [1, 2, 3, 4, 5]
+      [1, 2, 3, 4, 5, 7, 8]
         .map(
           (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
         )
@@ -457,6 +457,9 @@ describe('getArticleByShareToken: body images', () => {
       row(3, { ingestion: 'Blocked' }),
       row(4, { needsReview: 'csam' }),
       row(5, { tosViolation: true }),
+      // A minor-flagged image the minor content rule restricts; 8, rated the same unflagged, stays.
+      row(7, { minor: true, nsfwLevel: 4 }),
+      row(8, { minor: false, nsfwLevel: 4 }),
     ];
     // Only the fields the service selects come back, as from Prisma.
     dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
@@ -468,10 +471,12 @@ describe('getArticleByShareToken: body images', () => {
 
     const result = await read(STRANGER);
 
-    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
+    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1, 8]);
     const sent = JSON.stringify(result);
     expect(sent).toContain(uuid(1));
-    for (const n of [2, 3, 4, 5, 6]) expect(sent).not.toContain(uuid(n));
+    expect(sent).toContain(uuid(8));
+    for (const n of [2, 3, 4, 5, 6, 7]) expect(sent).not.toContain(uuid(n));
+    expect(sent).not.toContain('"minor"');
     expect(sent).not.toContain('csam');
   });
 });

@@ -187,3 +187,85 @@ describe('getCivitaiNews, a public list with no viewer', () => {
     expect(shown).not.toHaveProperty('minor');
   });
 });
+
+describe('getArticleById body images', () => {
+  const BODY_UUID = '0f8e2a4c-1b3d-4e5f-8a9b-0c1d2e3f4a5b';
+  const bodyImage = (nsfwLevel: number, minor: boolean | null) => ({
+    id: 600,
+    url: BODY_UUID,
+    nsfwLevel,
+    minor,
+    userId: OWNER,
+    ingestion: 'Scanned',
+    needsReview: null,
+    tosViolation: false,
+    hash: null,
+    width: 10,
+    height: 10,
+  });
+
+  async function bodyFor(image: ReturnType<typeof bodyImage>, viewer: Viewer) {
+    dbMock.dbRead.article.findFirst.mockResolvedValue({
+      id: 1,
+      userId: OWNER,
+      nsfwLevel: 1,
+      status: ArticleStatus.Published,
+      ingestion: ArticleIngestionStatus.Scanned,
+      tags: [],
+      content: `<p>x</p><img src="https://image.civitai.com/abc/${BODY_UUID}/width=450">`,
+      metadata: null,
+      coverImage: null,
+      bannerImage: null,
+    } as never);
+    // Answers only what the query selects, so a body image read without `minor` comes back without it.
+    dbMock.dbRead.imageConnection.findMany.mockImplementation((async (args: {
+      include?: { image?: { select?: { minor?: boolean } } };
+    }) => {
+      const { minor, ...unflagged } = image;
+      return [{ image: args.include?.image?.select?.minor ? image : unflagged }];
+    }) as never);
+    const article = await getArticleById({
+      id: 1,
+      userId: viewer?.id,
+      isModerator: viewer?.isModerator,
+    });
+    return {
+      ids: article.contentImages.map((i) => i.id),
+      inBody: !!article.content?.includes(BODY_UUID),
+      images: article.contentImages,
+    };
+  }
+
+  it.each([['a signed-out viewer'], ['a stranger']] as const)(
+    'withholds a minor-flagged body image rated R or above from %s, list and body',
+    async (who) => {
+      expect(await bodyFor(bodyImage(4, true), viewers[who])).toMatchObject({
+        ids: [],
+        inBody: false,
+      });
+    }
+  );
+
+  it('serves an unflagged R body image to a stranger (control)', async () => {
+    expect(await bodyFor(bodyImage(4, false), viewers['a stranger'])).toMatchObject({
+      ids: [600],
+      inBody: true,
+    });
+  });
+
+  it.each([['the owner'], ['a moderator']] as const)(
+    'keeps the restricted body image for %s (control)',
+    async (who) => {
+      expect(await bodyFor(bodyImage(4, true), viewers[who])).toMatchObject({
+        ids: [600],
+        inBody: true,
+      });
+    }
+  );
+
+  it('does not add the flag to the body images it returns', async () => {
+    const { images } = await bodyFor(bodyImage(2, true), viewers['a stranger']);
+    expect(images).toHaveLength(1);
+    expect(images[0]).not.toHaveProperty('minor');
+  });
+});

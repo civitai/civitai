@@ -249,7 +249,7 @@ export async function getArticleByShareToken({
 
   const connections = await dbWrite.imageConnection.findMany({
     where: { entityId: article.id, entityType: ImageConnectionType.Article },
-    select: { image: { select: articleContentImageSelect } },
+    select: { image: { select: { ...articleContentImageSelect, minor: true } } },
   });
   const withheldByModel = await getModelWithheldImageIds(
     [article.coverImage?.id, article.bannerImage?.id].filter(isDefined),
@@ -316,7 +316,9 @@ function readSharedArticleRow(id: number) {
 /** Only what the read-only view renders. */
 function toSharedArticle(
   article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>,
-  contentImages: Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }>[],
+  contentImages: (Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }> & {
+    minor: boolean | null;
+  })[],
   /** Cover or banner images their model withholds: no cover, and no banner in its place. */
   withheldByModel: Set<number>
 ) {
@@ -352,6 +354,7 @@ function toSharedArticle(
         ingestion: _ingestion,
         needsReview: _needsReview,
         tosViolation: _tosViolation,
+        minor: _minor,
         ...image
       }) => image
     ),

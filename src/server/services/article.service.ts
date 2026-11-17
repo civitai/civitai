@@ -893,7 +893,7 @@ export const getArticleById = async ({
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
       where: { entityId: id, entityType: ImageConnectionType.Article },
-      include: { image: { select: articleContentImageSelect } },
+      include: { image: { select: { ...articleContentImageSelect, minor: true } } },
     });
 
     const articleCategories = await getCategoryTags('article');
@@ -935,14 +935,15 @@ export const getArticleById = async ({
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
     const bodyImages = imageConnections.map((conn) => conn.image);
-    const contentImages = isModerator
+    const keptImages = isModerator
       ? bodyImages
       : bodyImages.filter((image) =>
           userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
         );
     const withheld = bodyImages
-      .filter((image) => !contentImages.includes(image))
+      .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
+    const contentImages = keptImages.map(({ minor, ...image }) => image);
     const nonOwner = !isModerator && userId !== article.userId;
     const content =
       isModerator || !article.content
