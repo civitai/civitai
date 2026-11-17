@@ -1520,7 +1520,10 @@ profile-picture / image-tag cache readers with the gallery port; its own readers
    official checkpoints and drops them from every page.
 3. **`getModelsRaw`.** `enforceBlockedBrowsingTagsForModels`: a blocked tag name is an empty page; the
    addons' poi / minor switches and tag exclusions are resolved at the request level (the tag ones off
-   on the viewer's own `username`). The query: `ModelMetric` joined to `Model`, or, with
+   on the viewer's own `username`). With a `collectionId`, the viewer's read permission on the
+   collection (`getUserCollectionPermissionsById`, no moderator branch): no read is an empty page
+   (`isPrivate`); otherwise the query gains a `CollectionItem` semi-join. The query: `ModelMetric`
+   joined to `Model`, or, with
    `base-model-feed-metrics` on and a base-model filter, one of three per-base-model paths (one base
    model drives from `ModelBaseModelMetric`; several on Newest / Oldest / Hot drive from `ModelMetric`
    with a LATERAL sum; several on the other sorts aggregate per model); every filter clause; a keyset
@@ -1545,19 +1548,42 @@ profile-picture / image-tag cache readers with the gallery port; its own readers
 
 The ported set was chosen by the input shapes' share of the route's successful answers, read from
 request logs before the port (the figures are not recorded here): base-model filters, cursors, tag
-names and creators are the common shapes and are ported; a collection and Hot with a base-model filter
-are the largest fallbacks; every other unsupported key is rare. A ported shape can still fall back on
+names and creators are the common shapes and are ported; a collection, the largest fallback measured
+after them, is ported too (§15.2.1); Hot with a base-model filter is the largest left; every other
+unsupported key is rare. A ported shape can still fall back on
 a cache miss. In shadow that is not measured: the sample is computed after Node answered the same
 request and filled every key it read, so the shadow's miss fallbacks undercount the misses a Go-first
 read would see. Serving needs a Go-first miss measurement and Go-side miss filling first (§3).
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1) | `query` (Meilisearch), `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
-| Lookups | the tag by name and the creator by name on the replica; the blocked tag list | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
+| Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model frames, the model hats, the version showcases and the showcase images' tag ids | misses on the model data, the model tags, user cosmetics, memberships (`model-data-miss`, `model-tags-miss`, `user-cosmetics-miss`, `membership-miss`), and on the model frames, model hats, version showcases and image tags without the computation (`model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+
+### 15.2.1 Collections
+
+`getModelsRaw` with a `collectionId` (truthy: 0 is no filter), after the tag and creator lookups and
+before the cursor is parsed, as Node orders them (`internal/modelfeed/collection.go`, `servePage`):
+
+- **Read.** `getUserCollectionPermissionsById({ userId, id })`, called without `isModerator`: a
+  collection reads when its `read` is Public or Unlisted, when the viewer owns it, or when the
+  viewer's `CollectionContributor` row holds VIEW. A missing collection reads for no one. No read is
+  `{ items: [], nextCursor: undefined }` with no page query, whatever the cursor (Node returns before
+  parsing it). One indexed read of the `Collection` row (with the viewer's contributor row when signed
+  in) on the replica, on the first page; the loop's later pages reuse it.
+- **Items.** `getAvailableCollectionItemsFilterForUser` without `statuses` (model.getAll never passes
+  them; `collectionItemStatus` is ignored): `ACCEPTED` items, and for a signed-in viewer also the
+  `REVIEW` items they added, as `EXISTS (SELECT 1 FROM "CollectionItem" ci …)` on `mm."modelId"`,
+  narrowed by `collectionTagId` when it is set. Every sort, filter, base-model path and the keyset
+  cursor apply as without a collection; Recently Added (the `JOIN` ordered by `ci."id"`) falls back.
+- **Versions.** A collection turns `hidePrivateModels` off: Private versions are listed.
+- **Cache policy.** Unchanged: Node's `isPrivate` sets `canCache = false` on the copy of `ctx.cache`
+  `skipEdgeCache` hands the handler, which no header reads (its comment in `model.router.ts`), so a
+  signed-out answer stays public and a session's private. A signed-out viewer reads no private
+  collection, so nothing private reaches a shared cache.
 
 ### 15.3 Flags
 
@@ -1629,6 +1655,10 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   this service and a Node pod up to 30 s apart;
 - a cursor's date token is read in Postgres' own `CONCAT` form only; any other spelling dayjs accepts
   falls back;
+- the collection read permission is read once per request (Node reads it again on each page of its
+  loop): a permission changed between two pages of one request is the only difference. Node's read
+  also joins the viewer's accepted invite, which feeds only `isCollaborator`, not `read`; it is not
+  read here;
 - `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,
