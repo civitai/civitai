@@ -60,10 +60,18 @@ var PageCaches = []PageCache{
 }
 
 // MissReason is the fallback reason a miss on the named cache raises when s serves: "" for a cache
-// s.Compute answers (MissCaches, shared with the miss computation); else the PageCaches Reason of a
+// s.Compute answers (MissCaches, shared with the miss computation; the metric hashes only when s
+// reads ClickHouse); else the PageCaches Reason of a
 // page cache, the lookup spec's reason for another computed cache (model-frames), and "" for any
 // other name.
 func (s *Sources) MissReason(name string) string {
+	if name == CacheMetrics {
+		// Computed only with a ClickHouse reader (metricsComputed), not by every MissCompute.
+		if s.metricsComputed() {
+			return ""
+		}
+		return "metrics-miss"
+	}
 	if s.Compute != nil && slices.Contains(MissCaches, name) {
 		return ""
 	}
@@ -364,8 +372,9 @@ type presenceKey struct{}
 // WithPresence is ctx for a Go-first probe that runs a serving path itself (model.getAll, whose
 // hydration is not the page hydrator PresenceProbe stands in for): under it a miss the computation
 // would answer (Sources.fill) is recorded on p, its ids and one database read, and answered as no
-// entry, never looked up or written; and each model page (ModelPage) counts as a page checked. A
-// cache Go falls back on still falls back.
+// entry, never looked up or written (a version showcase miss is looked up, on the replica, as its
+// answer decides the page's rows: lookupSpec.probeLooksUp); and each model page (ModelPage) counts as
+// a page checked. A cache Go falls back on still falls back.
 func WithPresence(ctx context.Context, p *PresenceProbe) context.Context {
 	return context.WithValue(ctx, presenceKey{}, p)
 }

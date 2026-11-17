@@ -30,7 +30,8 @@ export type ModeratorGrantId =
   | 'user.message.asCivitai'
   | 'labelStore.submitPrediction'
   | 'apps.buzz.refund'
-  | 'apps.buzz.refund.large';
+  | 'apps.buzz.refund.large'
+  | 'feedback.status.set';
 
 /** Whether `user` holds a role on the moderator app's `AppPageAccess` row `path`; admin always. */
 async function holdsModeratorRow(user: { roles?: string[] }, path: string): Promise<boolean> {

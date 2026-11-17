@@ -95,6 +95,7 @@ export const NAVIGATION: NavLink[] = [
       countKey: reportCountKey(entity),
     })),
   },
+  { path: '/cases', label: 'Takedown Cases' },
   {
     label: 'Images',
     path: '/images',

@@ -152,3 +152,22 @@ func TestWriteResultThenReleaseConcurrent(t *testing.T) {
 		}
 	}
 }
+
+// ResultHeaders is what WriteResult sends, for each cache policy (the shadow comparison's Go side).
+func TestResultHeadersMatchWriteResult(t *testing.T) {
+	for _, c := range []struct {
+		ttl  *CacheTTL
+		want string
+	}{
+		{nil, "max-age=0, private, no-cache"},
+		{&CacheTTL{Browser: 60}, "max-age=0, private, no-cache"},
+		{&SignedOutTTL, "public, max-age=60, s-maxage=60, stale-while-revalidate=30"},
+	} {
+		w := httptest.NewRecorder()
+		WriteResult(w, []byte(`{}`), c.ttl)
+		got := ResultHeaders(c.ttl)
+		if got["cache-control"] != c.want || w.Header().Get("Cache-Control") != c.want || len(got) != 1 {
+			t.Errorf("ttl %+v: ResultHeaders %v, WriteResult %q, want %q", c.ttl, got, w.Header().Get("Cache-Control"), c.want)
+		}
+	}
+}

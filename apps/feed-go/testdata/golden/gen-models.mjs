@@ -1247,8 +1247,10 @@ const SPECS = [
   },
   {
     name: 'fallback-images-miss',
-    description: 'A version-images miss (Node reads it lag-aware) falls back.',
+    description:
+      'A version-images miss falls back with the miss computation off (FEED_GO_COMPUTE_MISSES=false; on, it is computed).',
     host: HOST.green,
+    config: { computeMissesOff: true },
     input: { sort: 'Highest Rated', limit: 1, browsingLevel: 1 },
     pages: [{ cursor: null, ids: [5009] }],
     dropKeys: [`${K.versionImages}:6012`],

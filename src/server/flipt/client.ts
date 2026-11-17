@@ -668,6 +668,9 @@ export enum FLIPT_FEATURE_FLAGS {
   TRAINING_STUDIO = 'trainingStudio',
   // Gates sending the reporter's page capture to HQ.
   FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
+  // Gates the `feedback-hq-sync` job: a feedback row's triage status follows its HQ task. Off (or
+  // unknown to Flipt) the job reads and writes nothing.
+  FEEDBACK_HQ_SYNC = 'feedback-hq-sync',
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',
