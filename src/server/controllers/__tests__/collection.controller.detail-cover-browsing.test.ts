@@ -97,6 +97,12 @@ describe('collection.getById cover and browsing-settings rules', () => {
     });
   });
 
+  it('hides a cover whose poi and minor flags could not be read', async () => {
+    arrange();
+    dbMock.dbRead.image.findUnique.mockResolvedValue(null);
+    expect((await cover(mature)).image).toBeNull();
+  });
+
   it('serves a moderator every cover', async () => {
     const mod = { ...mature, isModerator: true };
     arrange({ tagId: CHILD_TAG });

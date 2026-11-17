@@ -247,6 +247,8 @@ async function isCoverShownByBrowsingRules(
     getRequestImageFilter(ctx),
     dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
   ]);
+  // No row means its flags are unread: hidden, as unread tags are.
+  if (!flags) return false;
   return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
 }
 
