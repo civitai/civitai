@@ -303,6 +303,39 @@ describe('grading hidden checks', () => {
   });
 });
 
+describe('retiring checks players keep failing', () => {
+  const statusOf = async (id: number) =>
+    (
+      await pg.query<{ status: string }>(`SELECT status FROM "KnightsReferenceImage" WHERE id=$1`, [
+        id,
+      ])
+    ).rows[0].status;
+
+  it('retires a check once enough answers are in and more than half of them failed', async () => {
+    for (const u of [1, 2]) await seedPlayer(pg, u);
+    const ref = await reference(10, '4');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=19, failures=10 WHERE id=$1`, [ref]);
+    await answer(1, ref, '8');
+    await settle(minutes(31));
+    expect(await statusOf(ref)).toBe('retired');
+  });
+
+  it('keeps a check with too few answers, or failures at half or below', async () => {
+    for (const u of [1, 2]) await seedPlayer(pg, u);
+    const young = await reference(10, '4');
+    const fair = await reference(11, '4');
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=5, failures=5 WHERE id=$1`, [young]);
+    await pg.query(`UPDATE "KnightsReferenceImage" SET answers=39, failures=20 WHERE id=$1`, [
+      fair,
+    ]);
+    await answer(1, young, '8');
+    await answer(2, fair, '4');
+    await settle(minutes(31));
+    expect(await statusOf(young)).toBe('active');
+    expect(await statusOf(fair)).toBe('active');
+  });
+});
+
 describe('naming the check behind a notice', () => {
   it('names the image, the answer given and the answer it wanted', async () => {
     await seedPlayer(pg, 1);

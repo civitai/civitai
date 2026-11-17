@@ -1,5 +1,5 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
-import { servableImage } from '@civitai/db/knights';
+import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
+import { REFERENCE_SOURCE, REFERENCE_STATUS, servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -76,6 +76,22 @@ export async function gradeHiddenVotes(
         .where('id', '=', -v.itemId)
         .execute();
     }
+  }
+
+  // A check most players get wrong more likely has a wrong or unclear known answer than bad-faith players: stop serving it.
+  const counted = [
+    ...new Set(gradedVotes.filter((v) => v.verdict !== 'inconclusive').map((v) => -v.itemId)),
+  ];
+  if (counted.length > 0) {
+    await trx
+      .updateTable('KnightsReferenceImage')
+      .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+      .where('id', 'in', counted)
+      .where('status', '=', REFERENCE_STATUS.active)
+      .where('source', '!=', REFERENCE_SOURCE.core)
+      .where('answers', '>=', settings.retireMinAnswers)
+      .where(sql<SqlBool>`"failures" > "answers" * ${settings.retireFailureRate}::float8`)
+      .execute();
   }
 
   const paid = await payOutVotes(trx, gradedVotes, now);

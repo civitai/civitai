@@ -30,6 +30,10 @@ ordinary vote in every way a player can see.
   `settleHiddenChecks` (run by the tick) is now only the sweep for checks still pending after `settleDelayMinutes`, such as ones
   answered before inline grading shipped. Grading on the spot shows which images were checks; that is accepted because a player is
   never served a check on an image they already voted on, and the harvest keeps renewing the pool.
+- Grading counts the answer on its reference image (`answers`, `failures`). A harvested check failed by more than
+  `KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE` (default 0.5) of at least `KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS` (default 20)
+  answers is retired in the same transaction: its known answer is more likely wrong or unclear than its players in bad faith.
+  The harvest never re-adds a retired image (`imageId` is unique).
 - A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure in
   `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the
   vote (`consequence`) and shown as a notice that the player dismisses (only a notice from the current career, since `startAt`; a
