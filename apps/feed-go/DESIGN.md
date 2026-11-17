@@ -734,6 +734,10 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      unreadable one is already `would_miss` there (`blocked-tags`); on the other procedures the
      overstatement is bounded by how often that key is absent, which
      `feed_go_cache_miss_total{cache="tag-ids",result="error"}` counts on the serving side;
+
+   The caveats on misses Go computes (the cosmetic lower bound, the stale tag-ids entry, the tag-ids
+   gate) apply equally to a raced entry on such a cache: since it is costed and classified as a miss
+   there (below), whatever over- or understates that miss's reads or verdict does the same for it;
 3. records the result in `feed_go_gofirst_total{feed_endpoint,result}`:
    - `would_serve`: every cache answered, or missed only where Go answers the miss itself
      (`Sources.MissReason` is `""`): from the replica (basic users, profile pictures, thumbnails,
@@ -744,11 +748,15 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      ClickHouse reader is configured (the five per-image caches above too with it off) — or before hydration the session user
      (`session-cache-miss` / `-cleared`), the gallery settings (`gallery-settings-miss` /
      `-stale`) or, for `image.getInfinite`, the blocked-tag list (`blocked-tags-miss` / `-stale`);
-   - `raced`: as `would_serve`, but some present entry was filled at or after the request began
-     (its `cachedAt`, or a metric hash's `_populatedAt`, is at least `startedAt` −
-     `RaceSkewMargin`, 100 ms): most likely by the Node request this probe races, so a Go-first
-     serve would have found it missing. `feed_go_gofirst_raced_total{feed_endpoint,cache}` counts
-     the probes with a raced entry per cache. Not served: it is not in the numerator of the served
+   - `raced`: as `would_serve`, but a present entry of a cache Go falls back on
+     (`Sources.MissReason` non-empty) was filled at or after the request began (its `cachedAt`, or
+     a metric hash's `_populatedAt`, is at least `startedAt` − `RaceSkewMargin`, 100 ms): most
+     likely by the Node request this probe races, so a Go-first serve would have found it missing
+     and fallen back. A raced entry on a cache Go answers itself does not make the probe `raced`:
+     a Go-first serve would have answered it as it answers a miss there, so it stays `would_serve`
+     and its lookup is costed instead (the cost gate, below).
+     `feed_go_gofirst_raced_total{feed_endpoint,cache}` counts the probes with a raced entry per
+     cache, every cache, whatever the result. Not served: it is not in the numerator of the served
      share. `would_miss` wins over it (a miss was seen anyway);
    - `unsupported`: Go falls back for any other reason (an input shape, a bearer token, a sponsored
      post it cannot decide, the request budget); the reason is on
@@ -774,8 +782,10 @@ cache of every served fixture emptied, and require the same verdict; the `cold-*
 cache, and costed (below). The probe never computes a miss.
 
 **The cost gate.** A miss Go answers itself (replica path or computed) is served, but each costs a
-database query a warm cache does not. Per served probe (`would_serve`, `raced`), the probe counts
-one query per page and cache with such misses, `feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
+database query a warm cache does not; so does a raced entry on such a cache, which a Go-first serve
+would have found missing. Per served probe (`would_serve`, `raced`), the probe counts one query per
+page and cache with such a miss or raced entry (once when that page's cache has both),
+`feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
 (a lower bound: the user-cosmetics and frame computations, image and model, can each add the
 withheld-cosmetic check's two queries, and a computed tag-ids miss counts one read, its tag-records
 query for the tags `basic-tags` misses not included), over the pages it checked,
@@ -826,9 +836,14 @@ MGET plus a miss query, which is the margin.
 `feed_go_gofirst_check_lag_seconds` is the first page cache read minus request start, to hold
 against Node's time to its first fill on the same procedure (the route's hydration span). It
 crosses two pods' clocks; a negative difference is recorded as 0. It shows timing only, not
-whether the race was lost: that is the `raced` result. Where the probe loses the race it reads an
-entry Node just filled; the entry's own fill stamp says so, and the probe is `raced`, not
-`would_serve`. What the stamp cannot catch: an entry with no stamp (a frame record, a profile
+whether the race was lost: that is `feed_go_gofirst_raced_total` per cache, every cache whatever the
+result (the `raced` result counts only the probes that lost it on a cache Go falls back on; with
+every page cache answered by Go, as with the miss computation on and a ClickHouse reader configured,
+it reads 0 while races still happen). Where the probe loses the race it reads an
+entry Node just filled; the entry's own fill stamp says so. On a cache Go falls back on the probe is
+then `raced`, not `would_serve`; on a cache Go answers itself it stays `would_serve`, with that
+entry's lookup counted in the cost gate (it is what a cold miss there costs). What the stamp cannot
+catch: an entry with no stamp (a frame record, a profile
 picture, a watcher-fed metric hash), and a fill by another request just before ours outside the
 margin (which a Go-first serve would have found anyway). Later pages of one request (the page loop,
 the post completions) are checked later than the first, which makes a lost race on them likelier.
@@ -851,9 +866,12 @@ sum by (cache) (rate(feed_go_gofirst_db_reads_total{feed_endpoint="as-posts"}[1h
 sum(rate(feed_go_gofirst_db_reads_total{feed_endpoint="as-posts"}[1h]))
   / sum(rate(feed_go_gofirst_pages_total{feed_endpoint="as-posts"}[1h]))
 
-# How often the probe lost the race, and on which cache.
+# The share of probes that lost the race on a cache Go falls back on (`raced`; 0 when Go answers
+# every page cache itself, e.g. miss computation on with a ClickHouse reader).
 sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="raced"}[1h]))
   / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts"}[1h]))
+# How often the probe lost the race at all, per cache (every cache, whatever the result: a race on a
+# cache Go answers itself is costed in (3), not counted as `raced`).
 topk(10, sum by (cache) (rate(feed_go_gofirst_raced_total{feed_endpoint="as-posts"}[1h])))
 
 # What blocks (2): the caches, then the other fallbacks.
@@ -871,6 +889,12 @@ every probe, `raced`, `unsupported` and `error` included: a request Go falls bac
 or whose served verdict the race may have flattered, is not counted as served Go-first. Write-back
 must be on before ramping past 10% (the cost gate above). Read `feed_go_gofirst_dropped_total` and the Node-side `dropped_overload`
 beside it: a dropped probe is not in the denominator.
+
+**Gate windows must start after the race reclassification rolls out.** Since a race on a cache Go
+answers itself stopped making a probe `raced` (it is `would_serve`, its lookup costed as a database
+read), the served share (2) and the DB reads per page (3) both step up at that deploy. The step is the
+reclassification, not Go serving better or reading more: a window that spans the deploy mixes the two
+definitions, so read both figures over a window that begins after it.
 
 ## 8. Flags the Node path reads, and what this service does with them
 
