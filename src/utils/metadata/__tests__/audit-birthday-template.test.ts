@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { includesInappropriate, includesMinorAge } from '~/utils/metadata/audit';
 
 // An ordinal birthday is not a stated age of the subject ("her 4th birthday party" can be a
-// grown woman's photo of her daughter's party), so it no longer counts as an age phrase.
+// grown woman's photo of her daughter's party), so it is not an age phrase.
 // Both audit engines read the shared template list; each is checked.
 const engines = [
   ['site audit', (prompt: string) => includesInappropriate({ prompt }, true)],
