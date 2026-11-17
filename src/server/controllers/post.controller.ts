@@ -327,6 +327,17 @@ export const updatePostHandler = async ({
       input.publishedAt = today;
     }
 
+    // Pointing a post at a collection needs the same access as posting to it; clearing it doesn't.
+    if (post && input.collectionId != null && input.collectionId !== post.collectionId) {
+      const permissions = await getUserCollectionPermissionsById({
+        id: input.collectionId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      if (!permissions.write && !permissions.writeReview)
+        throw throwAuthorizationError('You cannot post to this collection');
+    }
+
     if (post && input.publishedAt && input.collectionId) {
       // Confirm & Validate in the case of a contest collection
       // That a submission can be made. We only do this as the user publishes

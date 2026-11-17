@@ -2463,8 +2463,10 @@ export const updatePostCollectionTagId = async ({
 
   if (!collection || collection?.mode !== CollectionMode?.Contest) return;
 
-  if (!collection.tags.find((t) => t.id === collectionTagId))
-    throw throwBadRequestError('Invalid tag');
+  // Category tags only, and only on entries that have none or a category tag: the rest (judging
+  // state and the like) is the system's, as `setCollectionItemsTag` keeps it.
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.tag.id);
+  if (!categoryTagIds.includes(collectionTagId)) throw throwBadRequestError('Invalid tag');
 
   const isImageCollection = collection.type === CollectionType.Image;
 
@@ -2479,6 +2481,7 @@ export const updatePostCollectionTagId = async ({
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }],
     },
     data: {
       tagId: collectionTagId,
