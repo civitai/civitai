@@ -7,8 +7,6 @@ import type {
   EditGenerationItem,
   EditImageOption,
   StudioBackend,
-  SubmittedBatch,
-  TrainingRunPayload,
 } from '$lib/backend';
 import type {
   DatasetItem,
@@ -18,23 +16,10 @@ import type {
 } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { parseServiceStatus } from '$lib/service-status-core';
-import type { DatasetRatingCount } from '$lib/dataset-rating';
 import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
-import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
-import { MatureAckRequiredError } from '$lib/mature-charge';
+import { messageOf, studioServerCalls } from '$lib/studio-server-calls';
 import { UploadError, uploadProblem } from '$lib/upload';
 import { AUTO_LABEL_UNAVAILABLE_CODE, AutoLabelRefusedError } from '$lib/autolabel-errors';
-
-/** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
-async function messageOf(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { message?: string };
-    if (body.message) return body.message;
-  } catch {
-    // non-JSON body
-  }
-  return fallback;
-}
 
 /** Why an auto-label submit failed. Our route answers 4xx only for a refusal made before any workflow
  *  existed (its own, or the main app's gates, validation and limits), and its marked 503 when
@@ -47,20 +32,6 @@ async function autoLabelSubmitFailure(res: Response): Promise<Error> {
     (res.status >= 400 && res.status < 500) ||
     (res.status === 503 && body?.code === AUTO_LABEL_UNAVAILABLE_CODE);
   return refused ? new AutoLabelRefusedError(body?.message || fallback) : new Error(fallback);
-}
-
-/** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
- *  so the caller can show the confirm. */
-async function startFailure(res: Response, fallback: string): Promise<Error> {
-  const body = (await res.json().catch(() => null)) as {
-    message?: string;
-    matureCount?: unknown;
-    code?: unknown;
-  } | null;
-  if (body?.code === FILES_PROCESSING_CODE) return new FilesProcessingError();
-  if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
-    return new MatureAckRequiredError(body.matureCount);
-  return new Error(body?.message || fallback);
 }
 
 /** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
@@ -101,6 +72,8 @@ async function postReadiness<T>(body: unknown): Promise<T> {
 }
 
 export const shellBackend: StudioBackend = {
+  ...studioServerCalls((path, init) => fetch(path, init)),
+
   listTrainings: () => getFor<TrainingRow[]>('/api/trainings', 'Failed to load trainings'),
 
   // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
@@ -168,27 +141,6 @@ export const shellBackend: StudioBackend = {
     return (await res.json()) as { done: boolean; results: AutoLabelResult[] };
   },
 
-  submitTraining: async (runs: TrainingRunPayload[]) => {
-    const res = await fetch('/api/train', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ runs }),
-    });
-    if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
-    const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
-    return { workflowIds, failure };
-  },
-
-  datasetRating: async (blobIds) => {
-    const res = await fetch('/api/dataset-rating', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ blobIds }),
-    });
-    if (!res.ok) throw new Error(`Dataset rating failed (${res.status})`);
-    return (await res.json()) as DatasetRatingCount;
-  },
-
   datasetReadiness: (blobIds) => postReadiness<ReadinessProbe>({ blobIds }),
   datasetReadyToTrain: (run) => postReadiness<ReadinessCheck>({ run }),
 
@@ -247,28 +199,6 @@ export const shellBackend: StudioBackend = {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
-  },
-
-  continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
-    const params = new URLSearchParams({
-      id: workflowId,
-      fromEpoch: String(fromEpoch),
-      addEpochs: String(addEpochs),
-    });
-    for (const currency of currencies) params.append('currencies', currency);
-    const res = await fetch(`/api/continue-training?${params}`);
-    if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
-    return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
-  },
-
-  continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
-    const res = await fetch('/api/continue-training', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies, matureAck }),
-    });
-    if (!res.ok) throw await startFailure(res, 'Could not start training.');
-    return ((await res.json()) as { workflowId: string }).workflowId;
   },
 
   // The shell's flow gets prices streamed from the /new server load (redis-cached, shared across

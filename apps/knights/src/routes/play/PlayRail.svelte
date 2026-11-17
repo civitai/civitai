@@ -15,7 +15,17 @@
     daily,
     rail,
     ladder,
-  }: { status: PlayerStatus; daily: DailyStatus; rail: Rail; ladder: LadderRow[] } = $props();
+    sheet = false,
+  }: {
+    status: PlayerStatus;
+    daily: DailyStatus;
+    rail: Rail;
+    ladder: LadderRow[];
+    /** Rendered inside the phone/tablet sheet: always shown, unframed, and with its own heading ids. */
+    sheet?: boolean;
+  } = $props();
+
+  const id = (name: string) => (sheet ? `sheet-${name}` : name);
 
   const strip = $derived(watchStrip(daily));
   const belowBar = $derived(belowBarCue(status));
@@ -34,9 +44,9 @@
   const ring = $derived(strip.max > 0 ? strip.value / strip.max : 0);
 </script>
 
-<aside class="rail" aria-label="Your day in the Order">
-  <section aria-labelledby="rail-watch">
-    <h2 id="rail-watch">Today's Watch</h2>
+<aside class="rail" class:sheet aria-label={sheet ? undefined : 'Your day in the Order'}>
+  <section aria-labelledby={id('rail-watch')}>
+    <h2 id={id('rail-watch')}>Today's Watch</h2>
     <div class="watch">
       <span class="ring" role="img" aria-label="{strip.value} of {strip.max} judged" use:bump={strip.value}>
         <svg viewBox="0 0 36 36" aria-hidden="true" focusable="false">
@@ -79,8 +89,8 @@
     </div>
   </section>
 
-  <section aria-labelledby="rail-fervor">
-    <h2 id="rail-fervor" class="with-icon"><Icon name="sparkles" size={13} />This week's fervor</h2>
+  <section aria-labelledby={id('rail-fervor')}>
+    <h2 id={id('rail-fervor')} class="with-icon"><Icon name="sparkles" size={13} />This week's fervor</h2>
     <p class="big">{count(status.fervor)}</p>
     {#if standing}
       <p class="sub">Board position #{count(standing.position)} of {count(standing.total)}</p>
@@ -108,8 +118,8 @@
     {/if}
   </section>
 
-  <section aria-labelledby="rail-next">
-    <h2 id="rail-next">{next ? `Next rank · ${next.rank}` : 'Rank'}</h2>
+  <section aria-labelledby={id('rail-next')}>
+    <h2 id={id('rail-next')}>{next ? `Next rank · ${next.rank}` : 'Rank'}</h2>
     {#if belowBar}
       <p class="below" role="status">{belowBar} <a href="/codex#ranks">Why?</a></p>
     {/if}
@@ -140,8 +150,8 @@
   </section>
 
   {#if rail.activity !== null}
-    <section aria-labelledby="rail-activity">
-      <h2 id="rail-activity">Order activity</h2>
+    <section aria-labelledby={id('rail-activity')}>
+      <h2 id={id('rail-activity')}>Order activity</h2>
       <p class="ticker"><span class="dot" aria-hidden="true"></span>{count(rail.activity)} {rail.activity === 1 ? 'judgment' : 'judgments'} today</p>
     </section>
   {/if}
@@ -162,10 +172,20 @@
     background: var(--io-surface);
     font-family: var(--io-font-ui);
   }
-  @media (min-width: 75rem) {
+  @media (min-width: 64rem) {
     .rail {
       display: flex;
     }
+  }
+  .rail.sheet {
+    display: flex;
+    width: auto;
+    margin: 0;
+    padding: 0 20px;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: none;
   }
   section {
     padding: 16px 0;

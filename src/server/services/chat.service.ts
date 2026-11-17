@@ -745,7 +745,7 @@ export const createMessage = async ({
             user: userId,
           },
           'civitai-prod'
-        ).catch();
+        );
       }
     }
   }

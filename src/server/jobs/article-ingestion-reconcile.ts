@@ -185,7 +185,7 @@ export const articleIngestionReconcile = createJob(
               name: 'article-verdict-resubmit-capped',
               type: 'warning',
               articleId: id,
-            }).catch(() => null);
+            });
 
           if (shouldResubmit && !capped) {
             let skipped: string | undefined;
@@ -216,12 +216,12 @@ export const articleIngestionReconcile = createJob(
               }
             } catch (e) {
               errors++;
-              await logToAxiom({
+              logToAxiom({
                 name: 'article-ingestion-reconcile',
                 type: 'error',
                 message: `submitTextModeration failed: ${(e as Error).message}`,
                 articleId: id,
-              }).catch(() => null);
+              });
               return;
             }
           } else {
@@ -230,7 +230,7 @@ export const articleIngestionReconcile = createJob(
           }
         }
 
-        await logToAxiom({
+        logToAxiom({
           name: 'article-ingestion-reconcile',
           type: 'info',
           articleId: id,
@@ -239,16 +239,16 @@ export const articleIngestionReconcile = createJob(
           beforeIngestion: before.ingestion,
           afterStatus: after.status,
           afterIngestion: after.ingestion,
-        }).catch(() => null);
+        });
       } catch (e) {
         errors++;
-        await logToAxiom({
+        logToAxiom({
           name: 'article-ingestion-reconcile',
           type: 'error',
           message: `recompute failed: ${(e as Error).message}`,
           stack: (e as Error).stack,
           articleId: id,
-        }).catch(() => null);
+        });
       }
     });
 

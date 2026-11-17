@@ -139,7 +139,7 @@ function logFailure(name: string, source: string, message: string, error: unknow
     message: `${source}: ${message}`,
     source,
     error: safeError(error),
-  }).catch(() => undefined);
+  });
 }
 
 export const COVER_INDEX_NAME = 'Collection_imageId_idx';
@@ -288,7 +288,7 @@ export async function getCollectionIdsForImages({
       name: 'collection-media-index-cover-leg-skipped',
       message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is a removed image are not being re-indexed. Apply the migration that creates it.`,
       source,
-    }).catch(() => undefined);
+    });
 
   try {
     return applyCap(await imageLegsSql(uniqueImageIds, cap, withCover, db), cap);
@@ -460,7 +460,7 @@ export async function isCoverLegUsable(source: string) {
       name: 'collection-media-index-cover-leg-skipped',
       message: `${source}: "${COVER_INDEX_NAME}" is not present and valid, so collections whose COVER is one of the model's images are not being re-indexed. Apply the migration that creates it.`,
       source,
-    }).catch(() => undefined);
+    });
   return usable;
 }
 
@@ -510,7 +510,7 @@ export async function enqueueCollectionRebuild({
       message: `${source}: capped at ${cap} collections; an unknown number beyond the cap remain stale until a full reindex.`,
       source,
       cap,
-    }).catch(() => undefined);
+    });
 
   return { queued: collectionIds.length, truncated };
 }
@@ -563,7 +563,7 @@ export async function getCollectionIdsForPostCascade({
             source,
             postId,
             cap: POST_IMAGE_LOOKUP_CAP,
-          }).catch(() => undefined);
+          });
         }
         return {
           ids: rows.slice(0, POST_IMAGE_LOOKUP_CAP).map((r) => r.id),

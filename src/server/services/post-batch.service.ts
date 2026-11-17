@@ -391,7 +391,7 @@ function logSlowBatchSteps(steps: BatchSteps, durationMs: number, userId: number
     techniquesMs: round(steps.techniquesMs),
     resourcesMs: round(steps.resourcesMs),
     publishMs: round(steps.publishMs),
-  }).catch(() => undefined);
+  });
 }
 
 export async function scheduleBatch(args: {

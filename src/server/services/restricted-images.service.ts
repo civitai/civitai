@@ -82,7 +82,7 @@ export async function flagImagesOnRestrictedVersions({
     const restricted = await getRestrictedModelVersionIds(dbWrite, modelVersionIds);
     return await flagRestrictedImages(dbWrite, { modelVersionIds: restricted, imageIds });
   } catch (error) {
-    await logToAxiom(
+    logToAxiom(
       {
         name: 'restricted-images',
         type: 'error',
@@ -92,7 +92,7 @@ export async function flagImagesOnRestrictedVersions({
         error: (error as Error).message,
       },
       'webhooks'
-    ).catch(() => undefined);
+    );
     return { flagged: 0, postIds: [] };
   }
 }

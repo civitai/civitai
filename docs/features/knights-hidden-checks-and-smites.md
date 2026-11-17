@@ -40,3 +40,7 @@ ordinary vote in every way a player can see.
   are the pending record: `insertVote` refuses (`reset-pending`) and the tick retries (`resetPendingPlayers`) before it expires smites.
 - Notice: a reset moves `NewOrderPlayer.startAt`; `/play` (the Acolyte apprenticeship included) shows a notice while `startAt` is later than
   `KnightsPlayer.startAtSeen`, until dismissed. A player's first look only records where they stand.
+
+## Acolytes
+
+Acolytes get no hidden checks: every apprenticeship item already has a known answer, so every answer is a check. Six wrong among an Acolyte's last 20 answers issue a smite, a level-up clears them, and three make the career reset due. Details: [`knights-apprenticeship.md`](knights-apprenticeship.md#smites).

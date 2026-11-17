@@ -241,14 +241,14 @@ export const eventEngine = {
               name: 'event-points-referee',
               event: eventDef.name,
               ...result,
-            }).catch(() => undefined);
+            });
           } catch (error) {
             logToAxiom({
               type: 'error',
               name: 'event-points-referee',
               event: eventDef.name,
               message: (error as Error).message,
-            }).catch(() => undefined);
+            });
           }
         }
         const standings = await refreshStandings(standingsEvent, dbWrite);

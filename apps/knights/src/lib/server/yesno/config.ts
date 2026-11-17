@@ -1,5 +1,5 @@
 export type YesNoSettings = {
-  /** Chance that a feed slot is a yes/no question when one is available. Above one half, they come more often than ratings. */
+  /** 0 switches yes/no questions off. Any other value leaves them on; how often they come is the burst cadence (`cadence.ts`). */
   share: number;
   /** Questions of one axis in a row before the next axis starts. */
   stretch: number;

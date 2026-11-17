@@ -85,7 +85,7 @@ const USES = [{ blurbId: 7, contentHash: 'h7' }];
 const upsert = (input: Record<string, unknown> = {}) => {
   // The fixture image's upload key was issued to whoever saves.
   const saver = String(input.userId ?? OWNER_ID);
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map(() => saver)) as never);
   return upsertBounty({
     id: BOUNTY_ID,

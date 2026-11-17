@@ -10,6 +10,7 @@ import {
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   resolveCoverImageId,
 } from '~/server/services/cover-image.service';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
@@ -258,7 +259,7 @@ async function trackStorylineModEdit({
       storylineId,
       activity,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -1410,7 +1411,7 @@ export async function deleteStoryline({
         name: 'storyline-delete',
         message: (error as Error)?.message,
         storylineId: id,
-      }).catch(() => undefined);
+      });
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message: STORYLINE_DELETE_REFUSALS.failed,
@@ -4031,7 +4032,7 @@ export async function recordStorylineBranchChoice({
       message: 'fork counts not written through after a choice; marked stale',
       chapterId: fromChapterId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     await bustFetchThroughCache(key).catch(() => undefined);
   }
 }
@@ -4161,8 +4162,10 @@ function storylineImageVisible(gate: StorylineImageGate) {
   const viewerId = gate.viewer?.id ?? -1;
   return Prisma.sql`i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
       AND i."acceptableMinor" = false
-      -- Shown to everyone who sees the card or page, so no minor or real-person image.
-      AND i.minor = false AND i.poi = false
+      -- Shown to everyone who sees the card or page, so no minor, real-person, blocked or held
+      -- image.
+      AND i.minor = false AND i.poi = false AND i."blockedFor" IS NULL
+      AND NOT ${Prisma.raw(semanticImageHeldText('i'))}
       AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
@@ -4584,7 +4587,7 @@ export async function getStorylinesInfinite({
         type: 'warning',
         message: 'continue prices unavailable for a feed page',
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
       return new Map<number, { max: number }>();
     }),
   ]);

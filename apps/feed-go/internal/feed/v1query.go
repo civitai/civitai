@@ -35,9 +35,20 @@ type V1Input struct {
 	Cursor        string // "" = none (the REST cursor always parses as a string)
 	Type          string // "" = none
 	RequiringMeta bool
+	// IDs is the `ids` batch as sent (duplicates kept; 1 to imageIDsBatchMax positive ids). A batch
+	// takes the legacy Postgres path (runImageSearch's useLegacyMethod).
+	IDs []int
+	// WithMeta adds each image's cached `meta`; FlatMeta is `flatMeta` (nil = undefined: flat on the
+	// feed path, wrapped as `{id, meta}` on the legacy path).
+	WithMeta bool
+	FlatMeta *bool
 	// Query is req.query in Object.keys order, for nextPage.
 	Query []QueryParam
 }
+
+// imageIDsBatchMax is IMAGE_IDS_BATCH_MAX (src/server/common/constants.ts): the most ids one `ids`
+// batch may name.
+const imageIDsBatchMax = 100
 
 // The schema keys. Any other key is ignored by the schema but kept in nextPage.
 var v1SchemaKeys = map[string]bool{
@@ -196,9 +207,6 @@ func ParseV1(raw string) (*V1Input, error) {
 
 	// Shapes taking a path this service does not port.
 	switch {
-	case has("ids"):
-		// `ids` forces the legacy Postgres path (runImageSearch's useLegacyMethod).
-		return nil, fallback.New("v1-ids")
 	case has("imageId"):
 		return nil, fallback.New("v1-image-id")
 	case has("tags"):
@@ -279,6 +287,11 @@ func ParseV1(raw string) (*V1Input, error) {
 		}
 		in.BrowsingLevel = &n
 	}
+	if v, ok := vals["ids"]; ok {
+		if in.IDs, err = v1IDs(v); err != nil {
+			return nil, err
+		}
+	}
 	in.Cursor = vals["cursor"]
 	if v, ok := vals["type"]; ok {
 		if !v1Types[v] {
@@ -287,8 +300,8 @@ func ParseV1(raw string) (*V1Input, error) {
 		in.Type = v
 	}
 	bools := map[string]*bool{}
-	var withMeta, withTags, flatMeta bool
-	bools["withMeta"], bools["withTags"], bools["flatMeta"], bools["requiringMeta"] = &withMeta, &withTags, &flatMeta, &in.RequiringMeta
+	var withTags, flatMeta bool
+	bools["withMeta"], bools["withTags"], bools["flatMeta"], bools["requiringMeta"] = &in.WithMeta, &withTags, &flatMeta, &in.RequiringMeta
 	for k, dst := range bools {
 		if v, ok := vals[k]; ok {
 			b, err := stringbool(v)
@@ -298,9 +311,8 @@ func ParseV1(raw string) (*V1Input, error) {
 			*dst = b
 		}
 	}
-	if withMeta {
-		// The meta read is the brotli-compressed image-meta cache: not ported.
-		return nil, fallback.New("v1-with-meta")
+	if has("flatMeta") {
+		in.FlatMeta = &flatMeta
 	}
 	if withTags {
 		return nil, fallback.New("v1-with-tags")
@@ -319,6 +331,29 @@ func v1Int(v string) (int, error) {
 		return 0, fallback.New("v1-input-number")
 	}
 	return n, nil
+}
+
+// v1IDs is commaDelimitedNumberArray(z.number().int().positive().array().min(1).max(100)) for the
+// spellings that read the same in Go: split on `,`, each part trimmed, every part a plain decimal
+// integer from 1 to 2^31-1. Number() reads more (hex, exponents, a fraction of .0, `+1`) and the
+// schema takes those too, so they fall back rather than being refused; so do ids past int4, which
+// zod accepts and Postgres then rejects.
+func v1IDs(v string) ([]int, error) {
+	parts := strings.Split(v, ",")
+	if len(parts) > imageIDsBatchMax {
+		return nil, fallback.New("v1-input-ids")
+	}
+	ids := make([]int, 0, len(parts))
+	for _, p := range parts {
+		// String.prototype.trim also strips Unicode spaces; a part carrying one is not all digits
+		// after this ASCII trim, so it falls back.
+		n, err := v1Int(strings.Trim(p, " \t\n\v\f\r"))
+		if err != nil || n < 1 {
+			return nil, fallback.New("v1-input-ids")
+		}
+		ids = append(ids, n)
+	}
+	return ids, nil
 }
 
 func stringbool(v string) (bool, error) {

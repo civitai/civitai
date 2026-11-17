@@ -13,7 +13,10 @@ vi.mock('~/server/auth/oauth-bridge', () => ({
   clearBridgeCookie: () => 'oauth_bridge=; Path=/; Max-Age=0; SameSite=Lax',
   buildAuthorizeRedirect: () => ({
     location: 'https://auth.test/api/auth/oauth/authorize?x=1',
-    setCookie: ['oauth_bridge=abc; Path=/; SameSite=Lax'],
+    setCookies: [
+      'oauth_bridge_st=abc; Path=/; SameSite=Lax',
+      'oauth_bridge=abc; Path=/; SameSite=Lax',
+    ],
   }),
 }));
 
@@ -82,7 +85,8 @@ describe('/api/auth/authorize — retry-tolerant loop recovery', () => {
     expect(cookieStr(setCookies, LOGIN_RETRY_COOKIE)).toMatch(
       new RegExp(`${LOGIN_RETRY_COOKIE}=1`)
     );
-    // bridge cookie still emitted
+    // both bridge cookies (per-flow + pre-per-flow) still emitted
+    expect(cookieStr(setCookies, 'oauth_bridge_st')).toBeDefined();
     expect(cookieStr(setCookies, 'oauth_bridge')).toBeDefined();
   });
 

@@ -50,12 +50,14 @@ const OTHER_FILE = 10;
 const SIGNED_URL = 'https://files.example.invalid/model.safetensors?token=SECRET-SIGNATURE';
 const GIB_KB = 1024 * 1024;
 
-// sysRedis as the one MULTI this path sends uses it: SET NX EX, then INCR.
+// The cache cluster as the one MULTI this path sends uses it: SET NX EX, then INCR.
 let store: Map<string, number>;
+let keysWritten: string[];
 function fakeMulti() {
   const ops: (() => unknown)[] = [];
   const pipeline = {
     set(key: string, value: number, options: { NX?: boolean; EX?: number }) {
+      keysWritten.push(key);
       ops.push(() => {
         if (options.NX && store.has(key)) return null;
         store.set(key, value);
@@ -111,9 +113,10 @@ const download = async (fileId = BIG_FILE, sizeKB = 24 * GIB_KB) => {
 
 beforeEach(() => {
   store = new Map();
+  keysWritten = [];
   mockIncrement.mockReset().mockResolvedValue(1);
   mockGetServerAuthSession.mockResolvedValue({ user: { id: USER } });
-  redisMock.sysRedis.multi.mockImplementation(fakeMulti);
+  redisMock.redis.multi.mockImplementation(fakeMulti);
 });
 
 describe('repeat requests for one file', () => {
@@ -144,14 +147,43 @@ describe('repeat requests for one file', () => {
   });
 
   it('still count when the repeat tracking cannot be reached', async () => {
-    redisMock.sysRedis.multi.mockImplementation(() => {
-      throw new Error('sysRedis down');
+    redisMock.redis.multi.mockImplementation(() => {
+      throw new Error('cache cluster down');
     });
 
     await download();
     await download();
 
     expect(mockIncrement).toHaveBeenCalledTimes(2);
+  });
+
+  it('still count, after one second, when the repeat tracking does not answer', async () => {
+    vi.useFakeTimers();
+    try {
+      redisMock.redis.multi.mockImplementation((() => ({
+        ...fakeMulti(),
+        exec: () => new Promise(() => undefined),
+      })) as never);
+
+      const done = download();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(mockIncrement).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockIncrement).toHaveBeenCalledTimes(1);
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('where the repeat count is kept', () => {
+  // It is a cache, so it lives on the cache cluster, not in system Redis.
+  it('is a per-user, per-file key on the cache cluster', async () => {
+    await download(BIG_FILE);
+
+    expect(keysWritten).toEqual(['download:repeats:42:9']);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 });
 

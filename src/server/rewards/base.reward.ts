@@ -47,7 +47,7 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
     type: 'error',
     event: JSON.stringify(event),
     ...data,
-  }).catch(() => null);
+  });
 };
 
 // Lua script for atomic on-demand reward processing.
@@ -346,7 +346,7 @@ export function createBuzzEvent<T>({
         rewardType: type,
         error: (error as Error)?.message,
         stack: (error as Error)?.stack,
-      }).catch(() => null);
+      });
       rewardFailedCounter?.inc?.();
       return null;
     });
@@ -807,7 +807,7 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
       clampedEvents: clamped,
       batchSize: events.length,
       clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
-    }).catch(() => null);
+    });
   }
 
   return rows;

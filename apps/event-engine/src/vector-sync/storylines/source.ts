@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { normalizeTitle, nsfwLevels } from '../models/document';
-import { heldImageSql, heldUserSql } from '../held';
+import { coverImageCleanSql, heldImageSql, heldUserSql } from '../held';
 import { storylineDocument } from './document';
 
 /** NsfwLevel.Blocked: a chapter 1 post at it, or unrated, hides the storyline. */
@@ -23,8 +23,9 @@ export const STORYLINE_FROM = `"Storyline" st
  * Whether the publication time has passed is not part of it: the payload's rootPublishedAt is
  * filtered at query time.
  */
-export const STORYLINE_ELIGIBLE_SQL = `(st."tosViolation" = false AND u."bannedAt" IS NULL
-  AND u."deletedAt" IS NULL AND rp.id IS NOT NULL AND rc."removedAt" IS NULL
+export const STORYLINE_ELIGIBLE_SQL = `(st."tosViolation" = false AND st."minorByScan" = false
+  AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+  AND ${coverImageCleanSql('st."coverImageId"')} AND rp.id IS NOT NULL AND rc."removedAt" IS NULL
   AND rp."tosViolation" = false AND ru."bannedAt" IS NULL AND ru."deletedAt" IS NULL
   AND rp."nsfwLevel" NOT IN (0, ${BLOCKED}) AND rp."publishedAt" IS NOT NULL
   AND rp.availability = 'Public'

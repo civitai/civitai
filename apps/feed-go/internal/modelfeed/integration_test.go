@@ -17,7 +17,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/integtest"
 )
 
@@ -171,11 +170,10 @@ func TestIntegrationModelPageCursors(t *testing.T) {
 	newest := integPage(t, pool, PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31})
 	integWant(t, "newest", integIDs(newest), []int{3101001, 3101002, 3101005})
 	integWant(t, "newest cursors", integCursors(newest), []string{"2026-06-12 10:00:00.25|3101001", "2026-06-11 10:00:00.125|3101002", "|3101005"})
-	// A 2-digit fraction (250 ms written ".25") is one the deployed Node binds as 25 ms: until the
-	// fix (#9075) is deployed it falls back rather than serve a page Node would not.
-	if _, err := (&PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-12 10:00:00.25|3101001"}).Build(); fallback.Reason(err) != "short-fraction-cursor" {
-		t.Fatalf("newest from a .25 cursor: %v, want the short-fraction-cursor fallback", err)
-	}
+	// A 2-digit fraction (250 ms written ".25") binds 250 ms, as Node reads it since #9075: the
+	// equality branch finds the cursor row (read as 25 ms it would start at the next one).
+	integWant(t, "newest from a .25 cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortNewest, BrowsingLevel: 31, Cursor: "2026-06-12 10:00:00.25|3101001"})),
+		[]int{3101001, 3101002})
 	// A 3-digit fraction is served, and binds the instant the row holds: the equality branch finds the
 	// cursor row itself (a misread millisecond would find nothing: the row is not before it either).
 	// The NULL lastVersionAt row is not reached from a timestamp cursor, in Node's SQL as here.

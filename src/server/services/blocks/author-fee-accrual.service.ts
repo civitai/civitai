@@ -309,7 +309,7 @@ export async function resolveBlockAuthorFeePayee(args: {
           appId,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     }
     return { payee: false, reason: 'app-missing' };
   }
@@ -335,7 +335,7 @@ export async function resolveBlockAuthorFeePayee(args: {
           appOwnerUserId: app.userId,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     }
     return { payee: false, reason: 'self-dealing' };
   }
@@ -431,7 +431,7 @@ export async function accrueBlockAuthorFee(
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { accrued: false, reason: 'error' };
   }
 

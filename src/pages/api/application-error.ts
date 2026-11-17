@@ -82,7 +82,7 @@ export default PublicEndpoint(
               ? queryInput.stack
               : await applySourceMaps(queryInput.stack),
         };
-        await logToAxiom(payload);
+        logToAxiom(payload);
       }
       return res.status(200).end();
     } catch (e: any) {

@@ -396,14 +396,14 @@ export async function recordShopTakedownArtwork(shopItemId: number): Promise<Sho
   `;
   result.queued = proven.length;
   if (result.unproven || result.otherOwner || result.inUse)
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'shop-takedown-artwork-left-serving',
       message: 'takedown artwork referred to a moderator',
       shopItemId,
       ...result,
       lookupFailed,
-    }).catch(() => undefined);
+    });
   if (lookupFailed) throw new Error(`artwork ownership lookup failed for ${lookupFailed} key(s)`);
   return result;
 }
@@ -570,7 +570,7 @@ async function reportCoverage(
       name: 'cdn-access-coverage-lookup',
       message: 'report coverage lookup failed; treating every image as uncovered',
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     return none;
   }
 }
@@ -620,7 +620,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
       name: 'cdn-access-hold-lookup',
       message: 'evidence hold lookup failed; treating every owner as held',
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     return { held: () => true, reported: () => true };
   }
 }
@@ -796,14 +796,14 @@ export async function sendTakedownPersistOrRetry(
     imageIds = uniq([...imageIds, ...found.imageIds]);
     await sendTakedownPersist(url, options, found.images);
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'takedown-persist-failed',
       message: 'takedown persist failed; queued for retry',
       imageIds,
       imageKey: url,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     await queueTakedownPersistRetry({ imageId: imageIds[0], url, ...options });
   }
 }
@@ -818,12 +818,12 @@ async function logRevivedRetries(imageIds: number[]) {
       AND data->>'gaveUpAt' IS NOT NULL
   `.catch(() => []);
   if (revived.length)
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'takedown-persist-retry-revived',
       message: 'a new takedown event restarted retries that had run out of attempts',
       imageIds: revived.map((r) => r.entityId),
-    }).catch(() => undefined);
+    });
 }
 
 /**
@@ -877,14 +877,14 @@ export async function queueTakedownPersistRetry({
     `;
     return true;
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'takedown-persist-retry-not-queued',
       message: 'takedown persist retry was not queued',
       imageId,
       imageKey: data.url,
       error: safeError(error),
-    }).catch(() => undefined);
+    });
     return false;
   }
 }
@@ -1125,7 +1125,7 @@ async function retryTakedownPersist(
       if (gaveUp) totals.gaveUp++;
       else if (error instanceof CloudflarePurgeBusyError) totals.throttled++;
       else if (!(error instanceof RetractionNotDoneError)) totals.failed++;
-      await logToAxiom({
+      logToAxiom({
         type: gaveUp ? 'error' : 'warning',
         name: gaveUp ? 'takedown-persist-retry-exhausted' : 'takedown-persist-retry-failed',
         message: gaveUp
@@ -1135,7 +1135,7 @@ async function retryTakedownPersist(
         imageKey: url,
         attempts,
         error: safeError(error),
-      }).catch(() => undefined);
+      });
       await dbWrite.$executeRaw`
         UPDATE "JobQueue" SET data = ${JSON.stringify(next)}::jsonb WHERE ${matchRow}
       `;
@@ -1198,14 +1198,14 @@ export async function persistDeletedTakedowns(
       } catch (error) {
         // Per row at warn: the retry is the remedy, and an outage would otherwise be one error per
         // image. The budget running out is reported once, below.
-        await logToAxiom({
+        logToAxiom({
           type: 'warning',
           name: 'takedown-persist-failed',
           message: 'takedown persist failed; queued for retry',
           imageIds: [id],
           imageKey: url,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
       totals.queued++;
       const written = await queueTakedownPersistRetry({
@@ -1220,13 +1220,13 @@ export async function persistDeletedTakedowns(
     DELETE_PERSIST_CONCURRENCY
   );
   if (totals.notAttempted)
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'takedown-persist-budget-spent',
       message: 'takedown persist budget ran out; the rest were queued for retry without an attempt',
       notAttempted: totals.notAttempted,
       budgetMs,
-    }).catch(() => undefined);
+    });
   return { ...totals, unqueued };
 }
 
@@ -1408,7 +1408,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           imageKey: url,
           call,
           error: safeError(error),
-        }).catch(() => undefined);
+        });
       }
     }),
     CALL_CONCURRENCY
@@ -1516,7 +1516,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       entityId: q.entityId,
       failures: next.count,
       since: next.since,
-    }).catch(() => undefined);
+    });
   }
 
   // A re-queued row still carries its first-deferral time, so its wait counts from the re-queue.
@@ -1530,7 +1530,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       message: 'takedown CDN queue has rows older than 15 minutes',
       oldest: oldest.toISOString(),
       failed,
-    }).catch(() => undefined);
+    });
 
   const oldestDeferred = earliest(
     queue.filter((q) => q.data && 'deferred' in q.data).map((q) => q.createdAt)
@@ -1542,7 +1542,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       message: 'takedown CDN queue has a retraction deferred for over 24 hours',
       oldest: oldestDeferred.toISOString(),
       deferredInBatch: waitingTake,
-    }).catch(() => undefined);
+    });
 
   if (denyFailed || liftFailed)
     logToAxiom({
@@ -1551,7 +1551,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       message: 'takedown CDN deny or lift calls failed; will retry',
       denyFailed,
       liftFailed,
-    }).catch(() => undefined);
+    });
 
   if (retracts || deferred.size)
     logToAxiom({
@@ -1561,7 +1561,7 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       retracts,
       deferred: deferred.size,
       maxRetracts,
-    }).catch(() => undefined);
+    });
 
   return {
     queued: queue.length,
@@ -1712,7 +1712,7 @@ export async function reconcileCdnAccess({
             imageKey: row.url,
             call: attempted,
             error: safeError(error),
-          }).catch(() => undefined);
+          });
         }
       }),
       CALL_CONCURRENCY

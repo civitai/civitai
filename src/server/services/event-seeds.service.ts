@@ -100,5 +100,5 @@ function logSeedError(event: string, e: unknown) {
     name: 'event-seeds',
     message: e instanceof Error ? e.message : String(e),
     event,
-  }).catch(() => undefined);
+  });
 }

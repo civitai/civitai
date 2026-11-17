@@ -119,7 +119,7 @@ function expectImageUntouched(imageId: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER_ID)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(CALLER_ID)] as never);
   currentPictureOwnedBy(CALLER_ID);
   mockUpdateUserById.mockResolvedValue({ id: CALLER_ID, profilePictureId: CREATED_PICTURE_ID });
   mockIngestImage.mockResolvedValue(true);
@@ -224,7 +224,7 @@ describe('profile picture updates are scoped to the caller', () => {
   describe('a new picture or `image` whose key was issued to another user', () => {
     beforeEach(() => {
       dbMock.dbWrite.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
-      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER_USER_ID)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(OTHER_USER_ID)] as never);
     });
     afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
 

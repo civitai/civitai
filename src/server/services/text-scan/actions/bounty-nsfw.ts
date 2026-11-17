@@ -2,6 +2,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
+import { BOUNTY_SCAN_DETAILS_KEY } from '~/server/utils/bounty-details';
 
 async function markBountyNsfw({
   entityId,
@@ -21,7 +22,7 @@ async function markBountyNsfw({
           SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['nsfw']::text[])
         ),
         details = (CASE WHEN jsonb_typeof(b.details) = 'object' THEN b.details ELSE '{}'::jsonb END) || jsonb_build_object(
-          'textScanNsfw',
+          ${BOUNTY_SCAN_DETAILS_KEY}::text,
           jsonb_build_object('workflowId', ${workflowId}::text, 'level', ${level}::int, 'at', now())
         )
     WHERE b.id = ${entityId}

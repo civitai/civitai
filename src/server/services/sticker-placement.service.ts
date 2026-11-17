@@ -402,7 +402,7 @@ export async function createStickerPlacement({
         message: 'could not unwind a placement whose escrow failed',
         placementId: placement.id,
         error: (settleError as Error).message,
-      }).catch(() => null)
+      })
     );
     throw error;
   }
@@ -527,7 +527,7 @@ async function discardFreePlacement(placementId: number) {
       message: 'could not discard a free placement whose use spend failed',
       placementId,
       error: (error as Error).message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -1524,7 +1524,7 @@ export async function actOnStickerPlacements({
         placementId,
         action,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 
