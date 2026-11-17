@@ -67,7 +67,11 @@ import {
 } from '~/shared/constants/block-analytics.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  isSensitiveBlockScope,
+  resolvePerCallBuzzBudget,
+} from '~/shared/constants/block-scope.constants';
+import { PASS_THROUGH_MAX_BUZZ } from '~/server/schema/blocks/workflow.schema';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -1692,6 +1696,32 @@ export function ManifestScopeRow({
   );
 }
 
+function ManifestPerJobBudget({ manifest }: { manifest: Record<string, unknown> }) {
+  const declared = (manifest.page as { buzzBudgetPerGen?: unknown } | undefined)?.buzzBudgetPerGen;
+  const budget = resolvePerCallBuzzBudget(declared);
+  const usesDefault = !(typeof declared === 'number' && Number.isInteger(declared));
+  const overPassThroughMax = budget > PASS_THROUGH_MAX_BUZZ;
+  return (
+    <Group gap={6} data-testid="apps-review-per-job-budget">
+      <IconCoin size={14} />
+      <Text size="sm">
+        Per-job Buzz budget: <b>{budget}</b>
+        {usesDefault && ' (default)'}
+      </Text>
+      {overPassThroughMax && (
+        <Badge
+          color="orange"
+          variant="light"
+          size="sm"
+          data-testid="apps-review-per-job-budget-over"
+        >
+          Over {PASS_THROUGH_MAX_BUZZ}: approve only if intended
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
 export function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -1755,6 +1785,9 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 {sensitiveScopes.map((s) => (
                   <ManifestScopeRow key={s} scope={s} justifications={justifications} />
                 ))}
+                {scopes.includes('ai:write:budgeted') && (
+                  <ManifestPerJobBudget manifest={manifest} />
+                )}
               </Stack>
             )}
             <Group gap={6}>
