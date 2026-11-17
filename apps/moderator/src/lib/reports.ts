@@ -151,7 +151,6 @@ export const REPORT_QUEUE_OF: Partial<Record<ReportEntity, ReportEntity>> = { po
 export const reportQueueOf = (entity: ReportEntity): ReportEntity =>
   REPORT_QUEUE_OF[entity] ?? entity;
 
-/** The types with a queue of their own, in display order. */
 export const reportQueueEntities = reportEntities.filter((e) => !REPORT_QUEUE_OF[e]);
 
 // Only the types with a queue of their own have a page: a text's report opens in the post queue.

@@ -120,6 +120,12 @@ describe('/api/mod/post-text/moderate', () => {
     expect(svc.holdPostTextForCsam).not.toHaveBeenCalled();
   });
 
+  it('refuses a non-moderator, and writes nothing', async () => {
+    hubSession.current = { user: MEMBER };
+    expect((await call({ textId: TEXT, action: 'refuse', reason: 'why' })).status).toBe(403);
+    expect(svc.refusePostText).not.toHaveBeenCalled();
+  });
+
   it('refuses for a moderator who holds the grant', async () => {
     const { status, json } = await call({ textId: TEXT, action: 'refuse', reason: 'graphic' });
     expect(status).toBe(200);

@@ -291,6 +291,27 @@ describe('holdPostTextForCsam', () => {
     expect(hold.text).toContain('What was reported.');
   });
 
+  // Unlike the scan's writer, which replaces a pending hold's text (and so must wait out a claim), a
+  // moderator's hold never rewrites one: a hold a moderator is mid-decision on is left as it is.
+  it('leaves a pending hold a moderator has claimed untouched, text and claim alike', async () => {
+    const meta = { decisionClaim: { by: 9, at: new Date().toISOString() } };
+    await pg.query(
+      `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status, text, "textHash", meta)
+       VALUES ('PostText', $1, 'csam', 'Pending', 'held words', 'h1', $2)`,
+      [reported, JSON.stringify(meta)]
+    );
+    const [before] = await holds();
+
+    const result = await holdPostTextForCsam({ textId: reported, moderatorId: 2, reportId: 300 });
+
+    expect(result).toEqual({ postId: POST, holdId: before.id, changed: false });
+    expect(await holds()).toEqual([before]);
+    expect(
+      (await pg.query(`SELECT "csamHeld" FROM "PostText" WHERE id = $1`, [reported])).rows
+    ).toEqual([{ csamHeld: true }]);
+    expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
   it('holds words an earlier hold dismissed', async () => {
     await pg.query(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', $1, 'csam', 'Dismissed')`,

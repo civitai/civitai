@@ -99,6 +99,12 @@ describe('reporting a storyline text', () => {
     });
   });
 
+  // A dismissed report must not swallow a later one: the author may have edited the text since.
+  it('folds only into a report still waiting for a moderator', async () => {
+    await report(READER);
+    expect(reportFindFirst.mock.calls[0][0].where).toMatchObject({ status: ReportStatus.Pending });
+  });
+
   it('drops a snapshot a folded-in reporter sent', async () => {
     reportFindFirst.mockResolvedValueOnce({
       id: 9,

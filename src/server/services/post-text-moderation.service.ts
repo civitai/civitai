@@ -58,7 +58,6 @@ export async function refusePostText({
     entityId: textId,
     activity: 'refuse',
   });
-  // A refused text no longer rates its post.
   await updatePostNsfwLevels([updated.postId]);
   return { ok: true, postId: updated.postId, changed: true };
 }

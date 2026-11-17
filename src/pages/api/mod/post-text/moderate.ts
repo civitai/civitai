@@ -29,8 +29,7 @@ export default defineModeratorEndpoint('postText.moderate', {
     reportId: z.coerce.number().int().positive().optional().describe('The report acted on.'),
   }),
   async handler(input, ctx) {
-    // The moderator app grants /reports/post through its shared `/reports` section (`sharedAccess`),
-    // so that row is the page grant the queue's actions run under.
+    // `/reports`, not `/reports/post`: the post queue is granted by its section's row.
     if (!(await hasModeratorPageAccess(ctx.actor, '/reports')))
       throw new TRPCError({
         code: 'FORBIDDEN',

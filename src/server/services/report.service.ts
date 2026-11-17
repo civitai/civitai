@@ -536,8 +536,14 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
-          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue. A
+          // text can be edited after a ruling, so a later report on it is filed afresh, with the words
+          // it is about now.
+          pendingOnly:
+            castsNoTagVotes ||
+            reportsStorylineChapter ||
+            type === ReportEntity.PostText ||
+            foldIntoPendingOnly,
           tx: callerTx,
         })
       : null;
@@ -593,7 +599,6 @@ export const createReport = async ({
         [type]: {
           create: {
             [reportTypeConnectionMap[type]]: id,
-            // A text's report sits in its post's queue, and stays there once the text is gone.
             ...(reportedText ? { postId: reportedText.postId } : {}),
           },
         },
