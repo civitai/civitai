@@ -46,6 +46,10 @@ type Config struct {
 	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
 	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
 	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
+	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
+	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
+	// on the Postgres path fall back (the cache-ordered branch is not ported).
+	PrioritizedVersionCache bool
 	// The flags model.getAll reads (DESIGN.md §15.3), each defaulting to its production value. Only
 	// that state is ported: any of them off makes every model.getAll sample the flag-off-state fallback.
 	BaseModelFeedMetrics bool // FEED_GO_BASE_MODEL_FEED_METRICS: mirrors `base-model-feed-metrics`
@@ -156,6 +160,8 @@ func Load() (*Config, error) {
 		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
 		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
 		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
+
+		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
 
 		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
 		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),

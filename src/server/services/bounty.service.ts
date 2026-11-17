@@ -2045,8 +2045,8 @@ export async function releaseStuckBountyAward(
       userId: supporter.userId,
       unitAmount: supporter.unitAmount,
       buzzTransactionId: supporter.buzzTransactionId,
-      winnerUserId: read.payoutWinnerUserId,
       moderatorId,
+      payload: { winnerUserId: read.payoutWinnerUserId },
     });
   return { unpaidAwards: unpaid.length, refundSettled };
 }
@@ -2244,9 +2244,8 @@ export async function resolveUnpaidBountyAward({
       message: `Bounty ${bountyId}: unpaid award from user ${userId} resolved as ${ruling}`,
       bountyId,
       userId,
-      ruling,
-      ledgerReference,
       moderatorId,
+      payload: { ruling, ledgerReference },
     });
   return { recorded };
 }

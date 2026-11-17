@@ -8,6 +8,7 @@ import { withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
+  guardKey,
   readGuardStatus,
   UNKNOWN_GUARD_STATUS,
   type GuardStatus,
@@ -46,7 +47,7 @@ const VERDICT_OUTCOMES: ReadonlySet<GuardOutcome> = new Set(['pass', 'flag']);
 function judgedUnder(blockGuard: GuardRead | undefined, key: string | undefined) {
   if (key === undefined || blockGuard?.outcome === 'none') return true;
   if (!blockGuard || !VERDICT_OUTCOMES.has(blockGuard.outcome)) return false;
-  return `${blockGuard.mode}:${blockGuard.version ?? 'none'}` === key;
+  return guardKey(blockGuard.mode, blockGuard.version) === key;
 }
 
 /**

@@ -761,3 +761,10 @@ export const mergeVersionsSchema = z.object({
     .optional(),
   appendDescriptions: z.boolean().default(false),
 });
+
+export type RevokeUserEarlyAccessInput = z.infer<typeof revokeUserEarlyAccessSchema>;
+export const revokeUserEarlyAccessSchema = z.object({
+  userId: z.number().int().positive(),
+  modelVersionId: z.number().int().positive(),
+  reason: z.string().trim().min(1).max(500),
+});
