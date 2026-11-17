@@ -134,6 +134,9 @@ func TestServeModelGetAllOnKeepsTheGates(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got == "" || got == "public, max-age=60, s-maxage=60, stale-while-revalidate=30" {
 		t.Fatalf("a session answer (no ttl) carried Cache-Control %q, want the private default", got)
 	}
+	if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != "trpc-accept, accept" {
+		t.Fatalf("served model.getAll Vary = %q, want [\"trpc-accept, accept\"]", got)
+	}
 }
 
 func inFlightOf(t *testing.T, reg *prometheus.Registry, endpoint string) (float64, bool) {

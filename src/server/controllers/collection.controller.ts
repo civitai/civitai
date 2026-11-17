@@ -1,3 +1,4 @@
+import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 import { omit } from 'lodash-es';
 import { TRPCError } from '@trpc/server';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
@@ -82,7 +83,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
-import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
+import {
+  getRequestImageFilter,
+  isCoverShownByBrowsingRules,
+} from '~/server/services/blocked-browsing-tags.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -237,21 +241,6 @@ export const getAllUserCollectionsHandler = async ({
     throw throwDbError(error);
   }
 };
-
-/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
-async function isCoverShownByBrowsingRules(
-  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
-  ctx: Context
-) {
-  if (!image) return true;
-  const [showsImage, flags] = await Promise.all([
-    getRequestImageFilter(ctx),
-    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
-  ]);
-  // No row means its flags are unread: hidden, as unread tags are.
-  if (!flags) return false;
-  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
-}
 
 export const getCollectionByIdHandler = async ({
   ctx,
@@ -638,11 +627,14 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
+  const fullAccess = isSessionOrFullUserKey(ctx);
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
     coverage: await coverageAudience(ctx.user ?? undefined),
     requireRead: true,
+    asModerator: !!ctx.user?.isModerator && fullAccess,
+    asOwner: fullAccess,
   });
 
   return {

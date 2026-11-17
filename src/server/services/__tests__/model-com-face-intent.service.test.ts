@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as IntentService from '~/server/services/model-com-face-intent.service';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 
 const { mockPreviewComFaceIntent, mockRead, mockRecord, mockLock } = vi.hoisted(() => ({
   mockPreviewComFaceIntent: vi.fn(),
@@ -16,6 +17,12 @@ vi.mock('@civitai/orchestration-client', () => ({
 vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanPreview>()),
   previewComFaceIntent: mockPreviewComFaceIntent,
+}));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPrompt>()),
+  getActiveTextScanPrompts: vi.fn(async () => ({
+    'label:model-com-face-intent': { id: 42, key: 'label:model-com-face-intent', content: 'x' },
+  })),
 }));
 // The row reads and writes are faked; the hash and reuse rules are the real ones.
 vi.mock('~/server/services/model-com-face-intent.service', async (importOriginal) => ({
@@ -63,7 +70,7 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
 
   it('reuses an allowed verdict for unchanged text without asking the classifier', async () => {
     mockRead.mockResolvedValue(
-      model({ comFaceIntent: { detected: false, textHash: hash, at: 'x' } })
+      model({ comFaceIntent: { detected: false, textHash: hash, promptId: 42, at: 'x' } })
     );
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).resolves.toBe(
       undefined
@@ -73,7 +80,9 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
 
   it('refuses again on a stored detection for unchanged text without re-judging, and locks a model since marked mature', async () => {
     mockRead.mockResolvedValue(
-      model({ comFaceIntent: { detected: true, textHash: hash, at: '2026-01-01T00:00:00Z' } })
+      model({
+        comFaceIntent: { detected: true, textHash: hash, promptId: 42, at: '2026-01-01T00:00:00Z' },
+      })
     );
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
       COM_FACE_REFUSED_MESSAGE
@@ -84,7 +93,9 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
 
   it('does not re-apply a stored detection a moderator has ruled past, and offers no dispute', async () => {
     mockRead.mockResolvedValue(
-      model({ comFaceIntent: { detected: true, textHash: hash, at: '2026-01-01T00:00:00Z' } })
+      model({
+        comFaceIntent: { detected: true, textHash: hash, promptId: 42, at: '2026-01-01T00:00:00Z' },
+      })
     );
     dbMock.dbWrite.modActivity.findFirst.mockResolvedValueOnce({ id: 1 } as never);
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).rejects.toThrow(
@@ -105,7 +116,7 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
   it("offers the dispute when the lock is already the intent check's", async () => {
     mockRead.mockResolvedValue({
       ...model({
-        comFaceIntent: { detected: true, textHash: hash, at: 'x' },
+        comFaceIntent: { detected: true, textHash: hash, promptId: 42, at: 'x' },
         systemNsfwLock: { source: 'com-face-intent', at: 'x' },
       }),
       lockedProperties: ['nsfw'],
@@ -118,7 +129,9 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
 
   it('lets an overturned detection through for the text it was ruled on', async () => {
     mockRead.mockResolvedValue(
-      model({ comFaceIntent: { detected: true, textHash: hash, at: 'x', overturnedAt: 'y' } })
+      model({
+        comFaceIntent: { detected: true, textHash: hash, promptId: 42, at: 'x', overturnedAt: 'y' },
+      })
     );
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 1 })).resolves.toBe(
       undefined
@@ -165,7 +178,7 @@ describe('assertComFaceAllowed, with a stored verdict', () => {
 
   it("neither reuses nor writes a verdict on someone else's model", async () => {
     mockRead.mockResolvedValue(
-      model({ comFaceIntent: { detected: false, textHash: hash, at: 'x' } })
+      model({ comFaceIntent: { detected: false, textHash: hash, promptId: 42, at: 'x' } })
     );
     mockPreviewComFaceIntent.mockResolvedValue(intent(true));
     await expect(assertComFaceAllowed({ ...stored, modelId: 7, userId: 2 })).rejects.toThrow(

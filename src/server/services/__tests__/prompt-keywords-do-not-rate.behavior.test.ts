@@ -113,6 +113,7 @@ beforeAll(async () => {
     CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamp(3),
       "pHash" bigint,
       ingestion "ImageIngestionStatus",

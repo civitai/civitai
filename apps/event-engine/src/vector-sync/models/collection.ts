@@ -5,8 +5,9 @@ import type { ModelPayload } from './source';
 /**
  * The search service reads these names (contract agreed with it 2026-11-06); exact-title and
  * quoted-phrase search switch on only once the first two show in the collection's payload_schema.
- * name, username, tags, triggerWords and docHash are stored, never filtered; versionIds is only
- * for the live sync's version-delete lookup.
+ * name is also word-indexed, for the search service's all-words name match. username, tags,
+ * triggerWords and docHash are stored, never filtered; versionIds is only for the live sync's
+ * version-delete lookup. A missing index is built on the live collection when the sync starts.
  */
 export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
   ...SITE_REPLICATION,
@@ -24,6 +25,18 @@ export const MODEL_COLLECTION: CollectionSpec<ModelPayload> = {
         on_disk: true,
         min_token_len: 1,
         max_token_len: 800,
+        enable_hnsw: false,
+      },
+    ],
+    [
+      'name',
+      {
+        type: 'text',
+        tokenizer: 'word',
+        lowercase: true,
+        on_disk: true,
+        min_token_len: 1,
+        max_token_len: 100,
         enable_hnsw: false,
       },
     ],

@@ -163,9 +163,8 @@ export async function searchSemanticCrucibles({
   logToAxiom({
     type: 'info',
     name: 'semantic-crucible-search',
-    returned: search.state.returned,
     hydrated,
-    shown: page.items.length,
+    payload: { returned: search.state.returned, shown: page.items.length },
   });
 
   if (search.state.refused) return none;

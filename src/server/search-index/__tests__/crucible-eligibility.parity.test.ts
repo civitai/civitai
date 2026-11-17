@@ -82,6 +82,7 @@ const spec: ParitySpec = {
     crucible(15, 'ownerNotDeleted', false, { owner: 'NULL, now()' }),
     crucible(16, 'coverNotBlockedLevel', false, { flags: 'false, NULL, 32' }),
     crucible(17, 'coverNotPoi', false, { flags: 'false, NULL, 1, true' }),
+    crucible(18, 'coverUnrated', false, { flags: 'false, NULL, 0' }),
     // Upcoming and finished crucibles stay searchable; the caller filters status.
     crucible(8, 'pending', true, { status: 'Pending' }),
     crucible(9, 'completed', true, { status: 'Completed' }),
@@ -99,6 +100,7 @@ const spec: ParitySpec = {
     'ownerNotDeleted',
     'coverNotBlockedLevel',
     'coverNotPoi',
+    'coverUnrated',
   ],
   site: async (prisma) =>
     (

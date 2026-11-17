@@ -135,6 +135,11 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   stripBenignPhrases: (text?: string, type?: unknown) => mockStripBenignPhrases(text, type),
 }));
 
+const mockBustPosts = vi.hoisted(() => vi.fn(async (_postId: number) => undefined));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCachesForPosts: mockBustPosts,
+}));
 vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
   dbRead: mockDbWrite,
@@ -587,6 +592,57 @@ describe('image-scan-result webhook - pipeline tests', () => {
     });
   });
 
+  it("refreshes a hard-blocked image's post showcase when the rest of the scan throws", async () => {
+    getImageState(13).postId = 70;
+    const passthrough = mockDbWrite.$queryRaw.getMockImplementation();
+    mockDbWrite.$queryRaw.mockImplementation(async (query: any, ...values: any[]) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('INSERT INTO "Tag"'))
+        throw new Error('Raw query failed. Code: `23502`.');
+      return passthrough(query, ...values);
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-blocked-then-failing-on-a-post',
+      status: 'succeeded',
+      imageId: 13,
+      steps: [
+        {
+          $type: 'wdTagging',
+          output: { tags: { 'a tag that cannot be created': 0.9 }, rating: { general: 0.9 } },
+        },
+        {
+          $type: 'mediaRating',
+          output: { nsfwLevel: 'xxx', isBlocked: true, blockedReason: 'CSAM' },
+        },
+      ] as any,
+    });
+
+    expect(mockBustPosts).toHaveBeenCalledWith(70);
+  });
+
+  it("refreshes the image's post showcase when a post-verdict side effect throws first", async () => {
+    getImageState(12).postId = 71;
+    mockDbWrite.$executeRaw.mockImplementation(async (query: any) => {
+      const strings = Array.isArray(query) ? query : query.strings;
+      if (strings.join('').includes('DELETE FROM "JobQueue"'))
+        throw new Error('job queue delete failed');
+      return 0;
+    });
+
+    await processImageScanWorkflow({
+      workflowId: 'workflow-with-a-failing-side-effect-on-a-post',
+      status: 'succeeded',
+      imageId: 12,
+      steps: [
+        { $type: 'wdTagging', output: { tags: { 'some-tag': 0.9 }, rating: { general: 0.9 } } },
+        { $type: 'mediaRating', output: { nsfwLevel: 'pg', isBlocked: false } },
+      ] as any,
+    });
+
+    expect(mockBustPosts).toHaveBeenCalledWith(71);
+  });
+
   it('keeps a persisted verdict when a post-verdict side effect throws', async () => {
     mockDbWrite.$executeRaw.mockImplementation(async (query: any) => {
       const strings = Array.isArray(query) ? query : query.strings;
@@ -693,7 +749,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
         ingestion: param('ingestion', `CASE[\\s\\S]*?ELSE \\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
         nsfwLevel: param(
           'nsfwLevel',
-          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+\\s+ELSE \\$(\\d+)`
+          // The scan's value is the ELSE arm, after the CSAM and locked-rating arms.
+          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+[\\s\\S]*?ELSE \\$(\\d+)`
         ),
         // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
         needsReview: param(
