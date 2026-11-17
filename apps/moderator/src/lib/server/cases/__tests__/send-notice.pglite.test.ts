@@ -378,6 +378,28 @@ describe('the batch', () => {
     ).rejects.toThrow(/not a pending notice/);
   });
 
+  it('refuses to withdraw while the batch is out with the fallback sender, and allows it after', async () => {
+    const [first] = await notices();
+    await exportUnsent('backlog-test', { actorId: 1, db });
+    await expect(withdrawNotice('backlog-test', first.id, 'x', { actorId: 1, db })).rejects.toThrow(
+      /out with the fallback sender/
+    );
+    expect((await notices())[0]).toMatchObject({ status: 'pending', error: null });
+    await importSentJsonl('backlog-test', '', { actorId: 1, db });
+    await expect(
+      withdrawNotice('backlog-test', first.id, 'x', { actorId: 1, db })
+    ).resolves.toEqual({ rowId: first.id });
+  });
+
+  it('withdraws only a row of the batch it names', async () => {
+    await importBatch(input('backlog-other'), { actorId: 1, db });
+    const other = (await notices()).at(-1)!;
+    await expect(withdrawNotice('backlog-test', other.id, 'x', { actorId: 1, db })).rejects.toThrow(
+      /not a pending notice of batch backlog-test/
+    );
+    expect((await notices()).at(-1)).toMatchObject({ id: other.id, status: 'pending' });
+  });
+
   it('never retries an erased row, and does not count it as a relay refusal', async () => {
     const [first] = await notices();
     await db

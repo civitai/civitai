@@ -452,6 +452,11 @@ export async function withdrawNotice(
       .executeTakeFirst();
     if (!row)
       throw new ImportRefusedError(`row ${rowId} is not a pending notice of batch ${batchId}`);
+    // An exported row still reads `pending` while the fallback sender holds it and may send it.
+    if ((await exportState(batchId, { db: tx as unknown as CasesDb })) === 'outstanding')
+      throw new ImportRefusedError(
+        `batch ${batchId} is out with the fallback sender; withdraw after its sent.jsonl is imported`
+      );
     await tx
       .updateTable('case_notice')
       .set({ status: 'failed', error: 'Withdrawn' })
@@ -542,6 +547,8 @@ export async function exportUnsent(
       ])
       .where(sendable('n'))
       .orderBy('n.id')
+      // Locked, so a withdraw that got there first is seen here, and one that comes after sees the export.
+      .forUpdate()
       .execute();
     // A lock that lapsed may let a send start, and it can't see this uncommitted export: roll back
     // rather than hand out rows that send may also claim.
