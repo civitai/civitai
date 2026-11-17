@@ -3,6 +3,7 @@ import type * as ApiKeySpend from '~/server/http/orchestrator/api-key-spend';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 import type * as AppBlocksFlag from '~/server/services/app-blocks-flag';
 import type * as ScopeGrant from '~/server/services/blocks/scope-grant.service';
+import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
 /**
  * `blocks.getMyAppDailyLimit` / `blocks.raiseAppDailyLimit`: the session procedures behind the
@@ -14,6 +15,10 @@ const { mockIsAppBlocksEnabled, m } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   m: {
     raiseFlag: vi.fn(async () => true),
+    withinLimitFlag: vi.fn(async () => false),
+    optedIn: vi.fn(async (): Promise<number | null> => null),
+    optIn: vi.fn(),
+    optOut: vi.fn(async () => undefined),
     readLimit: vi.fn(),
     raise: vi.fn(),
     record: vi.fn(async () => undefined),
@@ -39,14 +44,19 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppDailyLimitRaiseEnabled: m.raiseFlag,
+  isAppConfirmedStepWithinLimitEnabled: m.withinLimitFlag,
 }));
 vi.mock('~/server/services/blocks/scope-grant.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ScopeGrant>()),
   readConsentDailyLimit: m.readLimit,
   raiseConsentDailyLimit: m.raise,
   recordConsentLimitChange: m.record,
+  readConfirmWithinLimit: m.optedIn,
+  optInConfirmWithinLimit: m.optIn,
+  optOutConfirmWithinLimit: m.optOut,
 }));
-vi.mock('~/server/middleware/block-scope.middleware', () => ({
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockScopeMiddleware>()),
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
 }));
@@ -119,6 +129,8 @@ beforeEach(() => {
   redisMock.sysRedis.get.mockResolvedValue(null as never);
   m.readLimit.mockResolvedValue({ limit: 1000, spentToday: 980, remaining: 20, exceeds: false });
   m.raise.mockResolvedValue({ previousLimit: 1000 });
+  m.withinLimitFlag.mockResolvedValue(false);
+  m.optedIn.mockResolvedValue(null);
 });
 
 describe('blocks.getMyAppDailyLimit', () => {
@@ -129,6 +141,7 @@ describe('blocks.getMyAppDailyLimit', () => {
       limit: 1000,
       spentToday: 980,
       refusedRecently: true,
+      confirmWithinLimitMaxJob: null,
     });
     expect(m.readLimit).toHaveBeenCalledWith(USER, APP, 0);
   });
@@ -239,5 +252,111 @@ describe('blocks.raiseAppDailyLimit', () => {
       caller().raiseAppDailyLimit({ appBlockId: APP, buzzBudgetPerDay: 50_001 })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(m.raise).not.toHaveBeenCalled();
+  });
+});
+
+describe('the "run without asking" opt-in', () => {
+  it('the raise dialog learns the viewer opted in, so it can say jobs will run without asking', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optedIn.mockResolvedValue(1040);
+    expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toMatchObject({
+      confirmWithinLimitMaxJob: 1040,
+    });
+  });
+
+  it('control: with the flag off an opted-in viewer reads as not opted in', async () => {
+    m.optedIn.mockResolvedValue(1040);
+    expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toMatchObject({
+      confirmWithinLimitMaxJob: null,
+    });
+  });
+
+  it('a raise never opts anyone in', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    await caller().raiseAppDailyLimit({ appBlockId: APP, buzzBudgetPerDay: 2000 });
+    expect(m.optIn).not.toHaveBeenCalled();
+  });
+
+  it('opting in with a new limit records the limit change', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optIn.mockResolvedValue({ limit: 1500 });
+    expect(
+      await caller().optInConfirmWithinLimit({
+        appBlockId: APP,
+        maxJobBuzz: 1040,
+        buzzBudgetPerDay: 1500,
+      })
+    ).toEqual({ limit: 1500 });
+    expect(m.optIn).toHaveBeenCalledWith({
+      userId: USER,
+      appBlockId: APP,
+      maxJob: 1040,
+      newLimit: 1500,
+    });
+    expect(m.record).toHaveBeenCalledWith({
+      userId: USER,
+      appBlockId: APP,
+      previousLimit: null,
+      limit: 1500,
+    });
+  });
+
+  it('opting in on an existing limit records no limit change', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optIn.mockResolvedValue({ limit: 1000 });
+    await caller().optInConfirmWithinLimit({ appBlockId: APP, maxJobBuzz: 1040 });
+    expect(m.record).not.toHaveBeenCalled();
+  });
+
+  it('refuses with the flag off, writing nothing', async () => {
+    await expect(
+      caller().optInConfirmWithinLimit({ appBlockId: APP, maxJobBuzz: 1040 })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(m.optIn).not.toHaveBeenCalled();
+  });
+
+  it('refuses a new limit below the job it was set from', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    await expect(
+      caller().optInConfirmWithinLimit({
+        appBlockId: APP,
+        maxJobBuzz: 1040,
+        buzzBudgetPerDay: 1000,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(m.optIn).not.toHaveBeenCalled();
+  });
+
+  it('says to reopen when the write matched nothing', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optIn.mockResolvedValue(null);
+    await expect(
+      caller().optInConfirmWithinLimit({ appBlockId: APP, maxJobBuzz: 1040 })
+    ).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    });
+  });
+
+  it('the activity page reads the viewer’s own ceiling and today’s spend', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optedIn.mockResolvedValue(1040);
+    expect(await caller().getMyConfirmWithinLimit({ appBlockId: APP })).toEqual({
+      maxJob: 1040,
+      limit: 1000,
+      spentToday: 980,
+    });
+    expect(m.optedIn).toHaveBeenCalledWith(USER, APP, 'read');
+  });
+
+  it('control: not opted in, nothing to show', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    expect(await caller().getMyConfirmWithinLimit({ appBlockId: APP })).toBeNull();
+  });
+
+  it('switching off clears the signed-in viewer’s own opt-in, even with the flag off', async () => {
+    await caller().optOutConfirmWithinLimit({ appBlockId: APP });
+    expect(m.optOut).toHaveBeenCalledWith(USER, APP);
   });
 });

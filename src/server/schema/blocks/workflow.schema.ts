@@ -888,6 +888,11 @@ export const blockQuoteGrantConsentInputSchema = z.discriminatedUnion('kind', [
     quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
   }),
 ]);
+/** Input of `blocks.consentQuoteGrantStanding`: step quotes only. */
+export const blockStepQuoteStandingConsentInputSchema = z.object({
+  blockToken: z.string().min(1),
+  quoteId: z.string().regex(BLOCK_STEP_QUOTE_ID_REGEX),
+});
 /** Max sample prompts on a training run. */
 export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
 /** Max characters of one sample prompt. */

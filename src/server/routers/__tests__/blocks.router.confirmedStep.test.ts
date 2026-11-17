@@ -10,6 +10,7 @@ import type * as AttributionModule from '~/server/services/blocks/buzz-attributi
 import type * as AuthorFeeChargeModule from '~/server/services/blocks/author-fee-charge.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
 import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics';
+import type * as ScopeGrantModule from '~/server/services/blocks/scope-grant.service';
 
 /**
  * The CONFIRMED pass-through step end-to-end through `blocksRouter`: estimate (grant)
@@ -28,6 +29,8 @@ const h = vi.hoisted(() => ({
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   confirmedStepFlag: vi.fn(async () => true),
+  withinLimitFlag: vi.fn(async () => false),
+  optedIn: vi.fn(async (): Promise<number | null> => null),
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
   getUserById: vi.fn(async (): Promise<unknown> => ({ id: 42, isModerator: false })),
@@ -56,6 +59,11 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksConfirmedStepEnabled: (...a: unknown[]) => h.confirmedStepFlag(...(a as [])),
+  isAppConfirmedStepWithinLimitEnabled: (...a: unknown[]) => h.withinLimitFlag(...(a as [])),
+}));
+vi.mock('~/server/services/blocks/scope-grant.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ScopeGrantModule>()),
+  readConfirmWithinLimit: (...a: unknown[]) => h.optedIn(...(a as [])),
 }));
 vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricsModule>()),
@@ -170,6 +178,26 @@ function installRedis() {
   });
   r.expire.mockImplementation(async () => true);
   r.ttl.mockImplementation(async () => 3600);
+  // The cache client's MULTI, for the standing-consent burst bucket: run in order, like Redis.
+  redisMock.redis.multi.mockImplementation((() => {
+    const ops: Array<() => unknown> = [];
+    const chain = {
+      set: (k: string, v: string, o?: { NX?: boolean }) => {
+        ops.push(() => (o?.NX && store.has(k) ? null : (store.set(k, v), 'OK')));
+        return chain;
+      },
+      incr: (k: string) => {
+        ops.push(() => {
+          const n = Number(store.get(k) ?? 0) + 1;
+          store.set(k, String(n));
+          return n;
+        });
+        return chain;
+      },
+      exec: async () => ops.map((op) => op()),
+    };
+    return chain;
+  }) as never);
 }
 const ENOUGH_BUZZ = { blue: 100, green: 20_000, yellow: 0 };
 const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
@@ -331,6 +359,8 @@ beforeEach(() => {
   h.getUserById.mockImplementation(async () => ({ id: VIEWER, isModerator: false }));
   h.authorize.mockImplementation(async () => claims());
   h.confirmedStepFlag.mockImplementation(async () => true);
+  h.withinLimitFlag.mockImplementation(async () => false);
+  h.optedIn.mockImplementation(async () => null);
   h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: 'app-daily' }));
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   h.getActiveDevTunnel.mockImplementation(async () => null);
@@ -1534,5 +1564,158 @@ describe('accountType — a confirmed quote is bound to the pool it was priced w
     // Not spent: the original body still submits against it.
     const r = await submit(body({ quoteId }));
     expect(r.snapshot.workflowId).toBe(workflowId);
+  });
+});
+
+describe('STANDING consent — an opted-in viewer, within their daily limit', () => {
+  async function unconfirmedQuote() {
+    const { snapshot } = await estimate();
+    return snapshot.stepQuote!.quoteId;
+  }
+  const preview = (quoteId: string) =>
+    caller(VIEWER).previewQuoteGrant({ kind: 'step', blockToken: 't', quoteId }) as Promise<{
+      standing: boolean;
+      standingOffer: boolean;
+    }>;
+  const standingConsent = (quoteId: string) =>
+    caller(VIEWER).consentQuoteGrantStanding({ blockToken: 't', quoteId });
+
+  beforeEach(() => {
+    h.withinLimitFlag.mockImplementation(async () => true);
+    h.optedIn.mockImplementation(async () => PRICE);
+    setDailyLimit(10_000);
+  });
+
+  it('runs with no click: the preview says standing, the consent records it, the submit runs', async () => {
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: true, standingOffer: false });
+    await standingConsent(quoteId);
+    const stored = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`)!);
+    expect(stored).toMatchObject({ consentedBy: null, standingConsentBy: VIEWER });
+
+    const res = await submit({ ...body(), quoteId });
+    expect(res.snapshot.workflowId).toBe(workflowId);
+    expect(realSubmits()).toHaveLength(1);
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalled());
+    expect(h.recordScopeInvocation.mock.calls[0][0]).toMatchObject({
+      detail: { consentKind: 'standing' },
+    });
+  });
+
+  it('control: a clicked consent is recorded as a click', async () => {
+    const quoteId = await confirmedQuote();
+    await submit({ ...body(), quoteId });
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalled());
+    expect(h.recordScopeInvocation.mock.calls[0][0]).toMatchObject({
+      detail: { consentKind: 'click' },
+    });
+  });
+
+  it('not opted in: the preview offers the opt-in, and a standing consent is refused', async () => {
+    h.optedIn.mockImplementation(async () => null);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: true });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const res = submit({ ...body(), quoteId });
+    await expect(res).rejects.toMatchObject({ message: /not been confirmed/ });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('a job priced above the one the viewer opted in on asks again, and is offered the opt-in', async () => {
+    h.optedIn.mockImplementation(async () => PRICE - 1);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: true });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('switched off after the consent: the next submit refuses the standing quote', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    h.optedIn.mockImplementation(async () => null);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('re-opted in at a lower price after the consent: the submit refuses the pricier quote', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    h.optedIn.mockImplementation(async () => PRICE - 1);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('the flag off: no standing, no offer, and the consent is refused', async () => {
+    h.withinLimitFlag.mockImplementation(async () => false);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: false });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('a job over what is left of the limit is refused', async () => {
+    setDailyLimit(PRICE - 1);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('a private run always asks', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    const quoteId = `sq_${'2'.repeat(32)}`;
+    seedQuote(quoteId, { consentedBy: null, consentedAt: null });
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: false });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('five run inside a minute; the sixth is refused, and the host then asks', async () => {
+    const outcomes: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const quoteId = `sq_${String(i).repeat(32)}`;
+      seedQuote(quoteId, { consentedBy: null, consentedAt: null });
+      outcomes.push(
+        await standingConsent(quoteId).then(
+          () => 'ok',
+          (e: TRPCError) => e.code
+        )
+      );
+    }
+    expect(outcomes).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'TOO_MANY_REQUESTS']);
+  });
+
+  it('the burst store unreachable: refused', async () => {
+    redisMock.redis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    const quoteId = await unconfirmedQuote();
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+
+  it('the flag turned off after the consent: the submit refuses the standing quote, nothing charged', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    h.withinLimitFlag.mockImplementation(async () => false);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('the limit removed after the consent: refused with no limit to bound it, and refunded', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: null,
+      revokedAt: null,
+    });
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap:')).toBe(0);
   });
 });
