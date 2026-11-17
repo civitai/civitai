@@ -945,7 +945,13 @@ describe('OnsiteReviewModal — the per-job Buzz budget is shown to the mod', ()
   test.each([
     ['declared 1000', { buzzBudgetPerGen: 1000 }, 'Per-job Buzz budget: 1000', true],
     ['declared 250', { buzzBudgetPerGen: 250 }, 'Per-job Buzz budget: 250', false],
-    ['undeclared', {}, 'Per-job Buzz budget: 1000 (default, not declared)', true],
+    ['undeclared', {}, 'Per-job Buzz budget: 1000 (default)', true],
+    [
+      'fractional (the mint ignores it)',
+      { buzzBudgetPerGen: 12.5 },
+      'Per-job Buzz budget: 1000 (default)',
+      true,
+    ],
   ])('%s', async (_name, pageField, text, flagged) => {
     renderWithPage(pageField);
     const row = page.getByTestId('apps-review-per-job-budget');

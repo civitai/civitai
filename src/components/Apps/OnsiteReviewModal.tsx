@@ -1699,16 +1699,16 @@ export function ManifestScopeRow({
 function ManifestPerJobBudget({ manifest }: { manifest: Record<string, unknown> }) {
   const declared = (manifest.page as { buzzBudgetPerGen?: unknown } | undefined)?.buzzBudgetPerGen;
   const budget = resolvePerCallBuzzBudget(declared);
-  // Above this, approving the app is approving a higher per-job charge than the platform's own bound.
-  const overDefault = budget > PASS_THROUGH_MAX_BUZZ;
+  const usesDefault = !(typeof declared === 'number' && Number.isInteger(declared));
+  const overPassThroughMax = budget > PASS_THROUGH_MAX_BUZZ;
   return (
     <Group gap={6} data-testid="apps-review-per-job-budget">
       <IconCoin size={14} />
       <Text size="sm">
         Per-job Buzz budget: <b>{budget}</b>
-        {typeof declared !== 'number' && ' (default, not declared)'}
+        {usesDefault && ' (default)'}
       </Text>
-      {overDefault && (
+      {overPassThroughMax && (
         <Badge
           color="orange"
           variant="light"
