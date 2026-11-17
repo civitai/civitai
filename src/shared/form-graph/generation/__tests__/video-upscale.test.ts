@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '../hub.graph';
+import { applyGenerationData } from '~/components/form-graph/generation/ingestion';
+import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import type { GenerationCtx } from '~/shared/generation/context';
+
+type ScaleFactorMeta = { options: { value: number; disabled: boolean }[] } | undefined;
 
 const EXT: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 4 },
@@ -54,7 +58,8 @@ describe('video upscaling', () => {
   it('offers only each model’s factors and remembers them independently', () => {
     const store = generationHub.createStore({ ext: EXT });
     store.set(input);
-    const factors = () => store.getField('scaleFactor')?.meta?.options.map((o) => o.value);
+    const factors = () =>
+      (store.getField('scaleFactor')?.meta as ScaleFactorMeta)?.options.map((o) => o.value);
     expect(factors()).toEqual([2, 4]);
     store.set({ scaleFactor: 4 });
 
@@ -77,10 +82,22 @@ describe('video upscaling', () => {
     store.set({ scaleFactor: 4 });
     store.set({ video: video(1280, 720) });
     expect(store.getField('scaleFactor')?.value).toBe(2);
-    expect(store.getField('scaleFactor')?.meta?.options).toEqual([
+    expect((store.getField('scaleFactor')?.meta as ScaleFactorMeta)?.options).toEqual([
       expect.objectContaining({ value: 2, disabled: false }),
       expect.objectContaining({ value: 4, disabled: true }),
     ]);
+    expect(store.validate().success).toBe(true);
+  });
+
+  it('remixes an upscale stored before the model selector as the FlashVSR job it was', () => {
+    const store = generationHub.createStore({ ext: EXT });
+    applyGenerationData(store, {
+      runType: 'remix',
+      params: mapDataToGraphInput({ ...input, scaleFactor: 3 }, []),
+      resources: [],
+    } as never);
+    expect(store.getField('videoUpscaler')?.value).toBe('flashvsr');
+    expect(store.getField('scaleFactor')?.value).toBe(3);
     expect(store.validate().success).toBe(true);
   });
 

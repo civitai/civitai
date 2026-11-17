@@ -62,7 +62,14 @@ const externalCtx: GenerationCtx = {
   flags: {},
   gateRules: [],
 };
-const common = { externalCtx, userId: 1, isModerator: false, token: 'test', experimental: false };
+const common = {
+  externalCtx,
+  userId: 1,
+  isModerator: false,
+  token: 'test',
+  experimental: false,
+  inputGate: 'checked-by-caller' as const,
+};
 const video = {
   url: 'https://example.com/video.mp4',
   metadata: { width: 640, height: 360, fps: 24, duration: 5 },
