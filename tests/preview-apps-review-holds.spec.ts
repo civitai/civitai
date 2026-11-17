@@ -207,15 +207,24 @@ test.describe('App review holds (mod, nothing approved)', () => {
       expect(hold.clearedAt, 'a new hold is open').toBeNull();
 
       // Queue: the app's row carries the badge.
+      // The queue renders after its queries settle, and a fresh row can trail the write, so page
+      // through it (Load more) and reload until the row appears.
       await page.goto('/apps/review', { waitUntil: 'domcontentloaded' });
       const row = page.getByRole('row').filter({ hasText: SLUG });
-      for (let i = 0; i < 20 && !(await row.count()); i++) {
-        const more = page.getByRole('button', { name: 'Load more' });
-        if (!(await more.count())) break;
-        await more.first().click();
-        await page.waitForTimeout(1000);
-      }
-      await expect(row, 'the held app is in the queue').toHaveCount(1);
+      await expect
+        .poll(
+          async () => {
+            if (await row.count()) return true;
+            const more = page.getByRole('button', { name: 'Load more' });
+            if (await more.count()) await more.first().click();
+            else await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.waitForTimeout(1500);
+            return (await row.count()) > 0;
+          },
+          { message: 'the held app is in the queue', timeout: 60_000 }
+        )
+        .toBe(true);
+      await expect(row).toHaveCount(1);
       await expect(row).toContainText('On hold · 1');
 
       // Review modal: the panel names the hold, and the override field is offered.
