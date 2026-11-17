@@ -4,6 +4,7 @@ import {
   nextFeedSearchQuery,
   parseFeedSearch,
 } from '~/components/AutocompleteSearch/autocomplete-query';
+import { isProfileFeedPathname } from '~/components/Search/search-target';
 
 /**
  * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. The
@@ -40,7 +41,12 @@ export function useFeedSearchSync({
   const apply = (text: string) => {
     // An empty bar can't be refused: it is checked against the last text, not its own.
     if (!enabled || (blocked && text)) return;
-    const next = nextFeedSearchQuery(router.query, text, typedUsername.current);
+    const next = nextFeedSearchQuery(
+      router.query,
+      text,
+      typedUsername.current,
+      isProfileFeedPathname(router.pathname)
+    );
     if (!next) return;
     typedUsername.current = parseFeedSearch(text).username;
     inFlight.current.push(typeof next.query === 'string' ? next.query : undefined);

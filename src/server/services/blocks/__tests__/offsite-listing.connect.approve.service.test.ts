@@ -113,13 +113,13 @@ beforeEach(() => {
  */
 function stageConnectApprove(
   overrides: {
-    requestedScopes?: number;
+    requestedScopes?: number | bigint;
     justifications?: Record<string, string>;
     /** In-tx (PRIMARY) row overrides — defaults mirror the replica row. Lets a test
      * diverge the primary from the replica to exercise the in-tx TOCTOU re-gate. */
-    primaryRequestedScopes?: number;
+    primaryRequestedScopes?: number | bigint;
     primaryJustifications?: Record<string, string>;
-    primaryAllowedScopes?: number;
+    primaryAllowedScopes?: bigint;
     /** The listing's destination. `null` → the actionability gate refuses go-live. */
     externalUrl?: string | null;
   } = {}
@@ -173,7 +173,7 @@ function stageConnectApprove(
 }
 
 /** Stage a connect REVISION approve: a pending request on a shadow of the live `apl_parent`. */
-function stageConnectRevision(scopes: number, justifications: Record<string, string>) {
+function stageConnectRevision(scopes: number | bigint, justifications: Record<string, string>) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_r',
     status: 'pending',

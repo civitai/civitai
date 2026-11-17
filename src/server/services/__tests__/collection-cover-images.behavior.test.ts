@@ -72,6 +72,9 @@ const MATURE_ARTICLE_BOTH = 8040;
 const ARTICLE_SRC_PENDING_IMAGE = 8041;
 const BLOCKED_IMAGE_ITEM = 8042;
 const UNRATED_IMAGE_ITEM = 8043;
+const IMAGE_MINOR_R = 8044;
+const IMAGE_MINOR_PG13 = 8045;
+const POST_ITEM_MINOR_R_FIRST = 8046;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -246,6 +249,16 @@ beforeAll(async () => {
     INSERT INTO "Image" ("id", "url", "needsReview") VALUES (135, 'pending-article-cover', 'minor');
     INSERT INTO "Article" ("id", "cover", "coverId") VALUES (29, 'pending-src', 135);
     INSERT INTO "CollectionItem" ("id", "collectionId", "articleId") VALUES (41, ${ARTICLE_SRC_PENDING_IMAGE}, 29);
+    INSERT INTO "Post" ("id", "userId", "publishedAt") VALUES (1017, 2, now() - interval '1 day');
+    INSERT INTO "Image" ("id", "url", "postId", "userId", "index", "nsfwLevel", "minor") VALUES
+      (1132, 'minor-r', 1, 2, 0, 4, true),
+      (1133, 'minor-pg13', 1, 2, 0, 2, true),
+      (1134, 'post-1017-minor-r', 1017, 2, 0, 4, true),
+      (1135, 'post-1017-second', 1017, 2, 1, 4, false);
+    INSERT INTO "CollectionItem" ("id", "collectionId", "imageId", "postId", "addedById") VALUES
+      (1038, ${IMAGE_MINOR_R}, 1132, NULL, 2),
+      (1039, ${IMAGE_MINOR_PG13}, 1133, NULL, 2),
+      (1040, ${POST_ITEM_MINOR_R_FIRST}, NULL, 1017, 2);
     INSERT INTO "ModelVersion" ("id", "modelId", "index") VALUES (53, 43, 0);
     INSERT INTO "Post" ("id", "userId", "modelVersionId", "publishedAt") VALUES
       (8, 2, 53, now() - interval '1 day'),
@@ -441,6 +454,15 @@ describe('getCollectionCoverImages', () => {
 
   it('skips a Model item whose version is a draft', async () => {
     expect(await coversFor(MODEL_ITEM_DRAFT_VERSION)).toEqual([]);
+  });
+
+  it('skips a minor-flagged Image item rated R, and keeps one rated PG-13', async () => {
+    expect(await coversFor(IMAGE_MINOR_R)).toEqual([]);
+    expect(await coversFor(IMAGE_MINOR_PG13)).toEqual([{ imageId: 1133, src: null }]);
+  });
+
+  it("passes over a post's first image when it is minor-flagged and rated R", async () => {
+    expect(await coversFor(POST_ITEM_MINOR_R_FIRST)).toEqual([{ imageId: 1135, src: null }]);
   });
 
   it('serves a mature cover to a viewer at that level (control)', async () => {

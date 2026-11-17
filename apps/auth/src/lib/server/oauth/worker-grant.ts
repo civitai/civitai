@@ -21,7 +21,7 @@ import {
 } from './constants';
 import { checkOAuthRateLimit } from './rate-limit';
 import { logOAuthEvent } from './audit-log';
-import { scopeToString, stringToScope } from './scope';
+import { apiKeyScopeInsert, scopeFromColumn, scopeToString, stringToScope } from './scope';
 import { SaladTokenError, saladJwtEnabled, verifySaladJwt } from './worker-salad';
 
 // RFC 8693 token exchange for workload clients: a worker trades its device credential (`subject_token`)
@@ -70,7 +70,10 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
       ])
       .where('WorkerClient.clientId', '=', client.id)
       .executeTakeFirst();
-    if (!workload?.isConfidential || (workload.allowedScopes & TokenScope.WorkerRegister) === 0) {
+    if (
+      !workload?.isConfidential ||
+      (scopeFromColumn(workload.allowedScopes) & TokenScope.WorkerRegister) === 0n
+    ) {
       throw new UnauthorizedClientError('Unauthorized client: not a workload client');
     }
 
@@ -122,7 +125,7 @@ export class WorkerTokenExchangeGrant extends AbstractGrantType {
         .values({
           key: generateSecretHash(accessToken),
           name: `worker:${workload.clientId}`,
-          tokenScope: TokenScope.WorkerRegister,
+          ...apiKeyScopeInsert(TokenScope.WorkerRegister),
           userId: workload.userId,
           type: 'Worker',
           expiresAt,

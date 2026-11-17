@@ -62,7 +62,7 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
       findUnique: vi.fn(
         async (...a: unknown[]): Promise<unknown> =>
           (a[0] as { select?: { allowedScopes?: boolean } } | undefined)?.select?.allowedScopes
-            ? { allowedScopes: 0 }
+            ? { allowedScopes: 0n }
             : null
       ),
       create: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
@@ -193,7 +193,7 @@ function existingAppBlock() {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   };
 }
 

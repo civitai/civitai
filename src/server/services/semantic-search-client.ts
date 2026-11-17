@@ -287,8 +287,8 @@ export function searchServiceSource(
   };
 }
 
-// Cap on the word matches ranked ahead of the rest of a text search: the service's largest `limit`.
-const MAX_WORD_MATCHES = 100;
+// Cap on the word matches ranked ahead of the rest of a text search.
+const MAX_WORD_MATCHES = 200;
 
 /**
  * Text candidates with the points holding every query word in `key` first (in their own similarity

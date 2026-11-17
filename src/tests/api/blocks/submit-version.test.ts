@@ -221,7 +221,7 @@ describe('POST /api/blocks/submit-version', () => {
       makeReq({
         body: { bundleBase64 },
         headers: { authorization: 'Bearer test-oauth-token' },
-        context: { subject: { type: 'oauth', id: 'client-1' }, tokenScope: 1, apiKeyId: 3 },
+        context: { subject: { type: 'oauth', id: 'client-1' }, tokenScope: 1n, apiKeyId: 3 },
       }),
       res
     );

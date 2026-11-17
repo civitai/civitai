@@ -18,6 +18,7 @@ import {
   articleModerationFloorSql,
   collectionTextFloorBucketSql,
   ratedEntityDerivedNsfwLevelSql,
+  scanFloorSql,
   serviceOfferingTextFloorSql,
 } from '~/server/services/text-scan/scan-floor';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -489,22 +490,33 @@ export async function updateServiceOfferingNsfwLevels(offeringIds: number[]) {
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
   if (!bountyIds.length) return;
+  // A bounty can lose its last image (the image-delete cleanup unlinks it). With no image, the
+  // derivation is 0 unless the bounty is flagged, so its text verdict stands in; and when there is
+  // none, the bounty keeps its stored level, because 0 would unrate it and drop it from search.
   const bounties = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    WITH next AS (
+    WITH derived AS (
       SELECT
         b.id,
         COALESCE(b."moderatorNsfwLevel", ${ratedEntityDerivedNsfwLevelSql(
           'Bounty',
           'b'
-        )}) "nsfwLevel"
+        )}) "nsfwLevel",
+        EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'Bounty' AND ic."entityId" = b.id) "hasImages",
+        ${scanFloorSql('Bounty', 'b.id')} "textFloor"
       FROM "Bounty" b
       WHERE b.id IN (${Prisma.join(bountyIds)})
-        AND EXISTS (SELECT 1 FROM "ImageConnection" ic WHERE ic."entityType" = 'Bounty' AND ic."entityId" = b.id)
+    ), next AS (
+      SELECT
+        id,
+        "hasImages",
+        CASE WHEN "hasImages" OR "nsfwLevel" != 0 THEN "nsfwLevel" ELSE "textFloor" END "nsfwLevel"
+      FROM derived
     )
     UPDATE "Bounty" b
     SET "nsfwLevel" = next."nsfwLevel"
     FROM next
     WHERE next.id = b.id AND next."nsfwLevel" != b."nsfwLevel"
+      AND (next."hasImages" OR next."nsfwLevel" != 0)
     RETURNING b.id;
   `);
   await bountiesSearchIndex.queueUpdate(

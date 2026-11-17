@@ -126,7 +126,7 @@ const ROUTES: Array<{
 ];
 const WRITES = ROUTES.filter((r) => r.method !== 'GET');
 
-const token = (tokenScope: number) => ({ tokenScope, apiKeyId: 3, subject: { type: 'apiKey' } });
+const token = (tokenScope: bigint) => ({ tokenScope, apiKeyId: 3, subject: { type: 'apiKey' } });
 
 async function call(
   route: (typeof ROUTES)[number],

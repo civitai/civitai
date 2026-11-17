@@ -245,7 +245,7 @@ const KEY_OWNER = 7;
 // A capped (SFW) domain: signed in, without canViewNsfw.
 const green = { features: { canViewNsfw: false }, req: { headers: {} } };
 const mature = { nsfwLevel: NsfwLevel.X, user: { id: KEY_OWNER } };
-const key = (tokenScope: number) => ({
+const key = (tokenScope: bigint) => ({
   apiKeyId: 9,
   apiKeyType: ApiKeyType.User,
   subject: { type: 'apiKey' as const, id: 9 },

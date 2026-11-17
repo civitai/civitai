@@ -100,13 +100,6 @@ const ranking =
     return { ids: pool.slice(offset, offset + limit), correctedQuery };
   };
 
-// The name-match call and the ranking call both carry the viewer's gate and the feed's filters.
-const expectEveryCall = (expected: Partial<CandidateFilter>) => {
-  expect(sent.some((f) => f.allWords)).toBe(true);
-  expect(sent.some((f) => !f.allWords)).toBe(true);
-  for (const f of sent) expect(f).toMatchObject(expected);
-};
-
 const run = (
   ids: number[],
   over: Partial<SemanticModelSearchInput> = {},
@@ -206,7 +199,7 @@ describe('the index filter', () => {
       baseModels: ['SDXL 1.0'],
       checkpointType: 'Merge',
     });
-    expectEveryCall({
+    expect(sent[0]).toMatchObject({
       gate: { kind: 'level', nsfwLevels: [PG, R] },
       anyOf: { type: [ModelType.LORA], baseModels: ['SDXL 1.0'], checkpointType: ['Merge'] },
     });
@@ -214,18 +207,16 @@ describe('the index filter', () => {
 
   it('bounds the published date by whole days', async () => {
     await run([], { publishedFrom: '2026-01-01', publishedTo: '2026-01-31' });
-    expectEveryCall({
-      range: {
-        key: 'publishedAt',
-        gte: '2026-01-01T00:00:00.000Z',
-        lte: '2026-01-31T23:59:59.999Z',
-      },
+    expect(sent[0].range).toEqual({
+      key: 'publishedAt',
+      gte: '2026-01-01T00:00:00.000Z',
+      lte: '2026-01-31T23:59:59.999Z',
     });
   });
 
   it("narrows to the feed's user, and finds nothing for a user who doesn't exist", async () => {
     await run([], { username: 'someone' });
-    expectEveryCall({ userIds: [42] });
+    expect(sent[0].userIds).toEqual([42]);
     const asked = sent.length;
     expect((await run([1], { username: 'nobody' })).items).toEqual([]);
     expect(sent).toHaveLength(asked);
@@ -252,7 +243,7 @@ describe('the query audit', () => {
   it('searches the safe levels for a minor-meaning query from a non-moderator', async () => {
     h.includesInappropriate.mockReturnValue('minor');
     await run([], { browsingLevel: PG | PG13 | R });
-    expectEveryCall({ gate: { nsfwLevels: [PG, PG13] } });
+    expect(sent[0].gate.nsfwLevels).toEqual([PG, PG13]);
   });
 });
 

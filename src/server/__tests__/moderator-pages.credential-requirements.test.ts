@@ -48,7 +48,7 @@ const MODERATOR = { id: 4242, username: 'mod', isModerator: true, bannedAt: null
 const MEMBER = { ...MODERATOR, isModerator: false };
 const OTHER_USER = { id: 777, username: 'other', isModerator: false, bannedAt: null };
 
-const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number) => ({
+const nonOauthKey = (apiKeyType: string | undefined, tokenScope: bigint) => ({
   user: MODERATOR,
   apiKeyId: 11,
   ...(apiKeyType ? { apiKeyType } : {}),
@@ -56,7 +56,7 @@ const nonOauthKey = (apiKeyType: string | undefined, tokenScope: number) => ({
   tokenScope,
   buzzLimit: null,
 });
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   user: MODERATOR,
   apiKeyId: 12,
   apiKeyType: 'Access',
