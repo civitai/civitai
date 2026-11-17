@@ -158,7 +158,9 @@ type FileRow = {
   virusScanResult: ScanResultCode | null;
 };
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: 'selfGated' });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   sessionUser: Session['user'] | undefined
@@ -827,7 +829,7 @@ export default MixedAuthEndpoint(async function handler(
   // Read by the orchestrator as the absolute time its cached copy of this response expires.
   if (expiresAt !== undefined) res.setHeader('X-Expires', new Date(expiresAt).toISOString());
   res.status(200).json(data);
-});
+}
 
 /**
  * The orchestrator's link to the file this response describes, for an allowlisted ApiKey; undefined

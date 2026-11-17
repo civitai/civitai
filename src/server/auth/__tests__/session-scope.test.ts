@@ -1,0 +1,240 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CivitaiAuth from '@civitai/auth';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type { SessionScope } from '~/server/auth/session-scope';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+const h = vi.hoisted(() => ({
+  bearer: null as Record<string, unknown> | null,
+  hub: null as Record<string, unknown> | null,
+  getSessionFromBearerToken: vi.fn(),
+}));
+
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof CivitaiAuth>()),
+  createAuthVerifier: () => ({}),
+}));
+vi.mock('~/server/auth/bearer-token', () => ({
+  getSessionFromBearerToken: h.getSessionFromBearerToken,
+}));
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: async () => null },
+  getHubSession: async () => h.hub,
+  maybeRollHubCookie: async () => undefined,
+}));
+
+const { getServerAuthSession } = await import('~/server/auth/get-server-auth-session');
+const { getApiAuthSession } = await import('~/server/auth/api-auth-session');
+
+const USER_ID = 990000101;
+
+function bearerKey(tokenScope: number, extra: Record<string, unknown> = {}) {
+  h.bearer = {
+    user: { id: USER_ID, username: 'scoped' },
+    tokenScope,
+    apiKeyId: 41,
+    apiKeyType: 'User',
+    subject: { type: 'apiKey', id: 41 },
+    buzzLimit: { limit: 10 },
+    ...extra,
+  };
+}
+
+function bearerRequest() {
+  return {
+    url: '/api/v1/models?limit=1',
+    headers: { authorization: 'Bearer k' },
+    cookies: {},
+  } as {
+    url: string;
+    headers: Record<string, string>;
+    cookies: object;
+    context?: Record<string, unknown>;
+  };
+}
+
+const resolve = (req: ReturnType<typeof bearerRequest>, scope?: SessionScope) =>
+  getServerAuthSession({ req: req as never, res: {} as never, scope });
+
+function apiRes() {
+  return { status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
+}
+
+const decisionLogs = () =>
+  loggingMock.logToAxiom.mock.calls.filter(([entry]) => entry?.name === 'rest-scope-decision');
+
+beforeEach(() => {
+  resetEnv();
+  setEnv({ REST_SCOPE_ENFORCE: 'enforce' });
+  h.bearer = null;
+  h.hub = null;
+  h.getSessionFromBearerToken.mockReset();
+  h.getSessionFromBearerToken.mockImplementation(async () => h.bearer);
+  loggingMock.logToAxiom.mockClear();
+});
+
+describe('getServerAuthSession scope modes, enforcing', () => {
+  it.each<[string, SessionScope | undefined, number, boolean]>([
+    ['no mode, Full', undefined, TokenScope.Full, true],
+    [
+      'no mode, Full plus an opt-in bit',
+      undefined,
+      TokenScope.Full | TokenScope.AppBlocksSubmit,
+      true,
+    ],
+    ['no mode, a narrow key', undefined, TokenScope.ModelsRead, false],
+    ['scope held', { scope: TokenScope.ModelsRead }, TokenScope.ModelsRead, true],
+    ['scope missing', { scope: TokenScope.ModelsRead }, TokenScope.MediaRead, false],
+    ['scope inside Full', { scope: TokenScope.ModelsRead }, TokenScope.Full, true],
+    [
+      'anyOf, second bit held',
+      { anyOf: [TokenScope.ModelsRead, TokenScope.AIServicesRead] },
+      TokenScope.AIServicesRead,
+      true,
+    ],
+    [
+      'anyOf, none held',
+      { anyOf: [TokenScope.ModelsRead, TokenScope.AIServicesRead] },
+      TokenScope.MediaRead,
+      false,
+    ],
+    ['anyOf with a zero bit', { anyOf: [TokenScope.None] }, TokenScope.MediaRead, false],
+    ['defer, narrow', 'defer', TokenScope.MediaRead, true],
+    ['defer, no bits', 'defer', TokenScope.None, true],
+    ['selfGated, narrow', 'selfGated', TokenScope.MediaRead, true],
+    ['selfGated, no bits', 'selfGated', TokenScope.None, false],
+    ['anyScope, no bits', 'anyScope', TokenScope.None, true],
+  ])('%s', async (_label, scope, tokenScope, served) => {
+    bearerKey(tokenScope);
+    const session = await resolve(bearerRequest(), scope);
+    expect(session?.user?.id ?? null).toBe(served ? USER_ID : null);
+  });
+
+  it('leaves a browser session alone whatever the mode', async () => {
+    h.hub = { user: { id: USER_ID, isModerator: true } };
+    const req = { url: '/api/v1/models', headers: {}, cookies: {} };
+    const session = await getServerAuthSession({
+      req: req as never,
+      res: {} as never,
+      scope: { scope: TokenScope.VaultWrite },
+    });
+    expect(session?.user).toEqual({ id: USER_ID, isModerator: true });
+  });
+
+  it('applies each call’s own mode to the memoized session', async () => {
+    bearerKey(TokenScope.ModelsRead);
+    const req = bearerRequest();
+    expect((await resolve(req, 'defer'))?.user?.id).toBe(USER_ID);
+    expect(await resolve(req, { scope: TokenScope.ModelsWrite })).toBeNull();
+    expect((await resolve(req, { scope: TokenScope.ModelsRead }))?.user?.id).toBe(USER_ID);
+    expect(h.getSessionFromBearerToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('records the credential on req.context on every outcome', async () => {
+    const fields = {
+      tokenScope: TokenScope.ModelsRead,
+      apiKeyId: 41,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 41 },
+      buzzLimit: { limit: 10 },
+    };
+    const outcomes: Array<[RestScope, SessionScope | undefined]> = [
+      ['enforce', { scope: TokenScope.ModelsRead }],
+      ['enforce', { scope: TokenScope.VaultRead }],
+      ['report', { scope: TokenScope.VaultRead }],
+      ['off', undefined],
+    ];
+    for (const [mode, scope] of outcomes) {
+      setEnv({ REST_SCOPE_ENFORCE: mode });
+      bearerKey(TokenScope.ModelsRead);
+      const req = bearerRequest();
+      await resolve(req, scope);
+      expect(req.context).toMatchObject(fields);
+      // The memo hit leaves them in place.
+      await resolve(req, scope);
+      expect(req.context).toMatchObject(fields);
+    }
+  });
+
+  it('withholds moderator rights from a key that is not a full personal key', async () => {
+    bearerKey(TokenScope.ModelsRead, { user: { id: USER_ID, isModerator: true } });
+    const req = bearerRequest();
+    const session = await resolve(req, { scope: TokenScope.ModelsRead });
+    expect(session?.user?.isModerator).toBe(false);
+    // The recorded session is not changed, so a later caller still sees the credential's user.
+    expect((req.context?.session as { user: { isModerator: boolean } }).user.isModerator).toBe(
+      true
+    );
+  });
+
+  it('keeps moderator rights for a full personal key', async () => {
+    bearerKey(TokenScope.Full, { user: { id: USER_ID, isModerator: true } });
+    expect((await resolve(bearerRequest()))?.user?.isModerator).toBe(true);
+  });
+
+  it('keeps moderator rights where a per-operation check decides', async () => {
+    bearerKey(TokenScope.ModelsRead, { user: { id: USER_ID, isModerator: true } });
+    expect((await resolve(bearerRequest(), 'defer'))?.user?.isModerator).toBe(true);
+  });
+});
+
+type RestScope = 'off' | 'report' | 'enforce';
+
+describe('REST_SCOPE_ENFORCE', () => {
+  it('report serves the session and logs the would-refuse decision once per route', async () => {
+    setEnv({ REST_SCOPE_ENFORCE: 'report' });
+    bearerKey(TokenScope.ModelsRead, {
+      apiKeyType: 'Access',
+      subject: { type: 'oauth', id: 'client-1' },
+    });
+    const req = bearerRequest();
+    expect((await resolve(req, { scope: TokenScope.VaultRead }))?.user?.id).toBe(USER_ID);
+    await resolve(req, { scope: TokenScope.VaultRead });
+    expect(decisionLogs()).toHaveLength(1);
+    const [entry] = decisionLogs()[0];
+    expect(entry).toMatchObject({
+      mode: 'report',
+      route: '/api/v1/models',
+      requiredScope: TokenScope.VaultRead,
+      tokenScope: TokenScope.ModelsRead,
+      apiKeyType: 'Access',
+      clientId: 'client-1',
+      payload: { outcome: 'refused' },
+    });
+    expect(entry.payload.apiKeyIdHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.stringify(entry)).not.toContain(String(USER_ID));
+  });
+
+  it('off neither refuses nor logs', async () => {
+    setEnv({ REST_SCOPE_ENFORCE: 'off' });
+    bearerKey(TokenScope.ModelsRead, { user: { id: USER_ID, isModerator: true } });
+    const session = await resolve(bearerRequest(), { scope: TokenScope.VaultRead });
+    expect(session?.user).toMatchObject({ id: USER_ID, isModerator: true });
+    expect(decisionLogs()).toHaveLength(0);
+  });
+});
+
+describe('getApiAuthSession insufficient scope', () => {
+  it('refuse answers 403 and returns false', async () => {
+    bearerKey(TokenScope.ModelsRead);
+    const res = apiRes();
+    const result = await getApiAuthSession(
+      { req: bearerRequest() as never, res: res as never },
+      { whenBanned: 'refuse', scope: { scope: TokenScope.MediaWrite }, insufficient: 'refuse' }
+    );
+    expect(result).toBe(false);
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it('anonymous returns no session and sends nothing', async () => {
+    bearerKey(TokenScope.ModelsRead);
+    const res = apiRes();
+    const result = await getApiAuthSession(
+      { req: bearerRequest() as never, res: res as never },
+      { whenBanned: 'anonymous', scope: { scope: TokenScope.MediaRead } }
+    );
+    expect(result).toBeNull();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+});
