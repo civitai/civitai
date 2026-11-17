@@ -30,6 +30,7 @@ const OTHER_ID = 555;
 const IMAGE_ID = 42;
 const TAG_A = 1;
 const TAG_B = 2;
+const SYSTEM_TAG = 9;
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -51,6 +52,7 @@ const collectionRow = (metadata: Record<string, unknown> = {}) => ({
   tags: [
     { tag: { id: TAG_A, name: 'A' }, filterableOnly: false },
     { tag: { id: TAG_B, name: 'B' }, filterableOnly: false },
+    { tag: { id: SYSTEM_TAG, name: 'Judged' }, filterableOnly: true },
   ],
 });
 
@@ -129,15 +131,30 @@ describe('re-saving an entry with a different tag', () => {
   it('has the upsert change the tag only for the row author or a managed collection', async () => {
     await resave(OWNER_ID, TAG_B);
     const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
-    expect(strings.join('?')).toMatch(
-      /DO UPDATE SET "tagId" = EXCLUDED\."tagId"\s+WHERE "CollectionItem"\."addedById" = EXCLUDED\."addedById"\s+OR "CollectionItem"\."collectionId" = ANY\(\?::int\[\]\)/
+    const sql = strings.join('?').replace(/\s+/g, ' ');
+    expect(sql).toContain(
+      'DO UPDATE SET "tagId" = EXCLUDED."tagId" WHERE ( "CollectionItem"."addedById" = EXCLUDED."addedById" OR "CollectionItem"."collectionId" = ANY(?::int[]) ) AND ( "CollectionItem"."tagId" IS NULL OR EXISTS ('
     );
+    expect(sql).toContain('AND NOT tc."filterableOnly"');
     expect(values.at(-1)).toEqual([COLLECTION_ID]);
 
     mockDbWrite.$executeRaw.mockClear();
     await resave(OTHER_ID, TAG_B);
     const [, ...strangerValues] = mockDbWrite.$executeRaw.mock.calls[0] as unknown[];
     expect(strangerValues.at(-1)).toEqual([]);
+  });
+
+  it.each([
+    ['its author', AUTHOR_ID, undefined],
+    ['its author, with another tag', AUTHOR_ID, TAG_B],
+    ['a manager', OWNER_ID, TAG_B],
+  ])('keeps a system tag when %s re-saves the entry', async (_, userId, tagId) => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ disableTagRequired: true })]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: SYSTEM_TAG, addedById: AUTHOR_ID, note: null },
+    ]);
+    await resave(userId, tagId);
+    expect(writtenTag()).toBe(SYSTEM_TAG);
   });
 
   it('tags a new entry as asked (control)', async () => {

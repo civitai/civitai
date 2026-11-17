@@ -1251,8 +1251,13 @@ export const saveItemInCollections = async ({
         // keeps it as it is (the upsert below enforces the same against the row it hits). Not folded
         // into `unwrittenCollectionIds`: skipping the entry checks for an item already there would
         // answer whether it is there.
+        // A system tag (one that isn't among the collection's category tags, e.g. judging state) is
+        // kept for everyone, as `setCollectionItemsTag` keeps it.
         const existing = existingItemsByCollection.get(collectionId);
-        const keepsTag = !!existing && existing.addedById !== userId && !permission.manage;
+        const hasSystemTag =
+          existing?.tagId != null && !inputTags.some((t) => t.tag.id === existing.tagId);
+        const keepsTag =
+          !!existing && (hasSystemTag || (existing.addedById !== userId && !permission.manage));
 
         return {
           addedById: userId,
@@ -1293,8 +1298,18 @@ export const saveItemInCollections = async ({
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
         DO UPDATE SET "tagId" = EXCLUDED."tagId"
-        WHERE "CollectionItem"."addedById" = EXCLUDED."addedById"
-          OR "CollectionItem"."collectionId" = ANY(${managedCollectionIds}::int[]);
+        WHERE (
+          "CollectionItem"."addedById" = EXCLUDED."addedById"
+          OR "CollectionItem"."collectionId" = ANY(${managedCollectionIds}::int[])
+        ) AND (
+          "CollectionItem"."tagId" IS NULL
+          OR EXISTS (
+            SELECT 1 FROM "TagsOnCollection" tc
+            WHERE tc."collectionId" = "CollectionItem"."collectionId"
+              AND tc."tagId" = "CollectionItem"."tagId"
+              AND NOT tc."filterableOnly"
+          )
+        );
     `
     );
   }
