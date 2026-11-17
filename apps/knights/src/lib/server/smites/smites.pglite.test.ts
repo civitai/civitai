@@ -6,7 +6,7 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { castVote, ensureVotePartitions, enqueueItem } from '../queue/queue.service';
 import { getPlayerStatus } from '../player-status';
-import { SMITES } from './config';
+import { ACOLYTE_WRONG_ANSWER_SMITE, SMITES } from './config';
 import {
   activeSmiteCount,
   dismissResetNotice,
@@ -145,6 +145,39 @@ describe('career reset retry', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     expect(await resetPendingPlayers(db, { resetPlayer })).toEqual({ due: 2, failed: 1 });
     expect(resetPlayer.mock.calls.map((c) => c[0])).toEqual([1, 3]);
+  });
+});
+
+describe('career reset hold while Acolyte smites are off', () => {
+  async function seedDue() {
+    // 1: Acolyte, three wrong-answer smites. 2: Acolyte, one smite for another reason. 3: Knight, three wrong-answer smites.
+    await seedPlayer(pg, 1, 'Acolyte');
+    await seedPlayer(pg, 2, 'Acolyte');
+    await seedPlayer(pg, 3, 'Knight');
+    const W = ACOLYTE_WRONG_ANSWER_SMITE;
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","reason") VALUES (1,$1),(1,$1),(1,$1),(2,$1),(2,$1),(2,'Hidden check'),(3,$1),(3,$1),(3,$1)`,
+      [W]
+    );
+  }
+  const resetsWith = async (acolyteSmites?: () => boolean) => {
+    const resetPlayer = vi.fn<(id: number) => Promise<void>>(async () => undefined);
+    const result = await resetPendingPlayers(db, {
+      resetPlayer,
+      ...(acolyteSmites ? { acolyteSmites } : {}),
+    });
+    return { result, reset: resetPlayer.mock.calls.map((c) => c[0]) };
+  };
+
+  it('holds the reset of an Acolyte whose active smites are all wrong-answer smites, and no one else', async () => {
+    await seedDue();
+    expect(await resetsWith(() => false)).toEqual({ result: { due: 2, failed: 0 }, reset: [2, 3] });
+  });
+
+  it('resets everyone at the limit when Acolyte smites are on, or the switch is not wired', async () => {
+    await seedDue();
+    expect((await resetsWith(() => true)).reset).toEqual([1, 2, 3]);
+    expect((await resetsWith()).reset).toEqual([1, 2, 3]);
   });
 });
 
