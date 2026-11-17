@@ -1010,10 +1010,8 @@ func bodyDiffers(result string) bool {
 	return true
 }
 
-// expectedResponseDiff reports whether a header difference is one of the expected differences DESIGN.md
-// §7 lists: x-update-required only from Node (this service never tells a bundle to reload). Every
-// tRPC compute records createContext's signed-out TTL when there is no session (none with one), so a
-// Cache-Control difference is never expected.
+// expectedResponseDiff reports whether a header difference is one DESIGN.md §7 lists: x-update-required
+// only from Node (this service never tells a bundle to reload).
 func expectedResponseDiff(d shadow.Diff) bool {
 	return d.Category == "header:x-update-required" && d.Kind == "missing-in-go"
 }
