@@ -60,9 +60,7 @@ function wf(
     metadata: {},
     tags: [],
     cost: { total: 8 },
-    steps: [
-      { $type: 'textToImage', name: 's1', status, metadata: {}, output: { images } },
-    ],
+    steps: [{ $type: 'textToImage', name: 's1', status, metadata: {}, output: { images } }],
     ...over,
   } as never;
 }
