@@ -16,7 +16,14 @@ import { trpc } from '~/utils/trpc';
  * The hat button on a home-row flag: the same face as everywhere, but a press asks how many hats to
  * stack on the flag instead of placing one. Hidden once the flag has closed.
  */
-export function FlagHatButton({ imageId }: { imageId: number }) {
+export function FlagHatButton({
+  imageId,
+  faceClassName = classes.feed,
+}: {
+  imageId: number;
+  /** The face's size: a feed card's by default; image detail passes its own hat button's. */
+  faceClassName?: string;
+}) {
   const found = useFlag(imageId);
   const feed = useTurfFeed();
   const user = useCurrentUser();
@@ -58,7 +65,7 @@ export function FlagHatButton({ imageId }: { imageId: number }) {
         stock={stock}
         aria-label={joined ? `Add hats to flag ${rank}` : 'Join Hat Turf to add hats'}
         aria-expanded={open}
-        className={classes.feed}
+        className={faceClassName}
         onClick={(e) => {
           // The card is a link and this sits inside it.
           e.preventDefault();
@@ -72,6 +79,8 @@ export function FlagHatButton({ imageId }: { imageId: number }) {
         withinPortal
         position="top-end"
         withArrow
+        // Measured from the button, not the menu's edge: a menu pushed back on screen still points at it.
+        arrowPosition="center"
         shadow="md"
       >
         <Popover.Target>

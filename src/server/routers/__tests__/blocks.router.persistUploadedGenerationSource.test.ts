@@ -172,14 +172,18 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
   it('hands the service the TOKEN’s viewer and app and the url, and returns its result unchanged', async () => {
     await expect(call()).resolves.toEqual(RESULT);
     expect(h.persistUploaded.mock.calls).toEqual([
-      [{ userId: VIEWER_ID, appId: 'appblk-alpha', url: BLOB_URL }],
+      [{ userId: VIEWER_ID, appId: 'appblk-alpha', appBlockId: 'apb_alpha', url: BLOB_URL }],
     ]);
   });
 
   it('never takes the app or viewer from the request body', async () => {
-    await call({ appId: 'appblk-evil', userId: 1 });
+    await call({ appId: 'appblk-evil', appBlockId: 'apb_evil', userId: 1 });
     const arg = h.persistUploaded.mock.calls[0][0];
-    expect([arg.appId, arg.userId]).toEqual(['appblk-alpha', VIEWER_ID]);
+    expect([arg.appId, arg.appBlockId, arg.userId]).toEqual([
+      'appblk-alpha',
+      'apb_alpha',
+      VIEWER_ID,
+    ]);
   });
 
   it.each([
@@ -259,9 +263,23 @@ describe('blocks.persistUploadedGenerationSource — the scanned-rows flag', () 
     expect(h.persistUploaded).not.toHaveBeenCalled();
   });
 
-  it('reads the flag as the gate does: that flag, no entity', async () => {
+  it('reads the flag as the gate does: that flag, entity = the token’s app block id', async () => {
     await call();
-    expect(h.isFlipt.mock.calls).toEqual([['app-block-source-scanned-rows']]);
+    expect(h.isFlipt.mock.calls).toEqual([['app-block-source-scanned-rows', 'apb_alpha']]);
+  });
+
+  it('🔴 per app: ON for the token’s app persists; OFF for another app refuses', async () => {
+    h.isFlipt.mockImplementation(
+      async (flag: string, entityId?: string) =>
+        flag === 'app-block-source-scanned-rows' && entityId === 'apb_alpha'
+    );
+    await expect(call()).resolves.toEqual(RESULT);
+    h.authorize.mockResolvedValue(claims({ appId: 'appblk-beta', appBlockId: 'apb_beta' }));
+    await expect(call()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'picked generation sources are not enabled',
+    });
+    expect(h.persistUploaded.mock.calls.map((c) => c[0].appBlockId)).toEqual(['apb_alpha']);
   });
 });
 

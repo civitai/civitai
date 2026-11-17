@@ -122,7 +122,7 @@ describe('submit paths check the generation licence', () => {
         externalCtx: externalCtx(),
         user: { id: USER_ID, isModerator: false },
         isWhatIf: false,
-        inputGate: { entry: 'appBlocks', isApiCaller: false },
+        inputGate: { entry: 'appBlocks', isApiCaller: false, appBlockLog: { appBlockId: 'apb_1' } },
       })
     ).rejects.toBe(notAccepted);
     expectAskedFor();
@@ -142,7 +142,7 @@ describe('submit paths check the generation licence', () => {
       externalCtx: externalCtx(),
       user: { id: USER_ID, isModerator: false },
       isWhatIf: true,
-      inputGate: { entry: 'appBlocks', isApiCaller: false },
+      inputGate: { entry: 'appBlocks', isApiCaller: false, appBlockLog: { appBlockId: 'apb_1' } },
     }).catch(() => undefined);
     // Both calls got past the input-url check, which runs right before where the licence check
     // would, so a failure earlier on cannot make the assertion below pass vacuously.

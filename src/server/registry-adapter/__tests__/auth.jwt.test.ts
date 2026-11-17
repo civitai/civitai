@@ -298,6 +298,14 @@ describe('createHubJwtVerifier', () => {
     expect(getBearerTokenUserMock).not.toHaveBeenCalled();
   });
 
+  it('refuses a token with an empty client_id', async () => {
+    const verify = hubVerifier();
+    expect(await verify(await mint({ client_id: '' }))).toBeNull();
+    expect(getBearerTokenUserMock).not.toHaveBeenCalled();
+    // Control: the same claims with this client pass.
+    expect(await verify(await mint())).not.toBeNull();
+  });
+
   it('with no resource identifier, refuses every JWT without fetching keys', async () => {
     const verify = hubVerifier({ audience: undefined });
     expect(await verify(await mint())).toBeNull();
@@ -309,6 +317,13 @@ describe('scopeBits', () => {
   it('maps scope names to the site bits, and an unknown name to every scope', () => {
     expect(scopeBits('ModelsRead MediaRead')).toBe(TokenScope.ModelsRead | TokenScope.MediaRead);
     expect(scopeBits('ModelsRead NotAScope') & TokenScope.ModelsWrite).toBe(TokenScope.ModelsWrite);
+  });
+
+  it('reads the name None as every scope, like an unknown name, not as no scope', () => {
+    expect(scopeBits('None')).toBe(ALL_SCOPES);
+    expect(scopeBits('UserRead None')).toBe(ALL_SCOPES);
+    // Control: UserRead alone is just its bit.
+    expect(scopeBits('UserRead')).toBe(TokenScope.UserRead);
   });
 
   it('fails safe on a missing or non-string scope claim: every scope, like an unknown name', () => {
