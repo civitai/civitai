@@ -1,6 +1,7 @@
 import type { SegmentedControlProps } from '@mantine/core';
-import { Box, Group, SegmentedControl, Stack } from '@mantine/core';
-import { useState } from 'react';
+import { Box, Center, Group, Loader, SegmentedControl, Stack } from '@mantine/core';
+import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -165,7 +166,11 @@ function UserModelsPage() {
             ) : viewingDraft ? (
               <UserDraftModels />
             ) : viewingTraining ? (
-              <UserTrainingModels />
+              features.classicTrainerOff ? (
+                <TrainingStudioRedirect />
+              ) : (
+                <UserTrainingModels />
+              )
             ) : (
               <NotFound />
             )}
@@ -173,6 +178,19 @@ function UserModelsPage() {
         </MasonryContainer>
       </MasonryProvider>
     </Box>
+  );
+}
+
+// The Training tab lists classic-trainer runs; with the classic trainer off, the Studio's run list replaces it.
+function TrainingStudioRedirect() {
+  const router = useRouter();
+  useEffect(() => {
+    void router.replace('/training-studio');
+  }, [router]);
+  return (
+    <Center h="40vh">
+      <Loader />
+    </Center>
   );
 }
 

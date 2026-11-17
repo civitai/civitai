@@ -152,6 +152,8 @@ export function StudioOnlyModelsNotice() {
 
 export function SwitchToClassicTrainerAlert({ destination }: { destination: string }) {
   const { switchTo, switching } = useTrainingStudioSwitch();
+  const { classicTrainerOff } = useFeatureFlags();
+  if (classicTrainerOff) return null;
 
   return (
     <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm" mb="md">

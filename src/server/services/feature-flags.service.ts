@@ -427,6 +427,10 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch. On for a user, Training Studio is their only trainer: the
+  // `trainingStudioUi` toggle is pinned on and the classic trainer pages send them to the Studio.
+  // Dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -1841,6 +1845,10 @@ export function computeUserFeatureFlagsOverlay(
       delete result[key];
     }
   }
+
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
 
   return result;
 }

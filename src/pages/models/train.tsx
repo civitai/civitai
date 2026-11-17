@@ -30,12 +30,15 @@ export const getServerSideProps = createServerSideProps({
 
 function ModelTrainingNew() {
   // A `modelId` is an existing classic-trainer draft or run, which the studio cannot open, so it
-  // stays in this wizard. `replace` so Back doesn't bounce through this page again.
+  // stays in this wizard — unless the classic trainer is off, which sends even those to the Studio.
+  // `replace` so Back doesn't bounce through this page again.
   const features = useFeatureFlags();
   const router = useRouter();
-  const startsInStudio = features.trainingStudioUi && !router.query.modelId;
+  const startsInStudio =
+    features.trainingStudioUi && (!router.query.modelId || features.classicTrainerOff);
   useEffect(() => {
-    if (startsInStudio) void router.replace('/training-studio?view=new');
+    if (startsInStudio)
+      void router.replace(router.query.modelId ? '/training-studio' : '/training-studio?view=new');
   }, [startsInStudio, router]);
   if (startsInStudio)
     return (
