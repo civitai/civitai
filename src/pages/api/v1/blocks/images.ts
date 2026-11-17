@@ -11,11 +11,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch, withoutHeldImages } from '~/server/services/image-search.service';
 import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
-import {
-  hasEmptyViewerLevel,
-  resolveViewerBrowsingLevel,
-} from '~/server/services/blocks/block-viewer-ceiling';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { keysetCursorSchema } from '~/server/schema/base.schema';
@@ -60,8 +56,9 @@ export const config = {
  *   The effective browsing level is AUTHORITATIVELY CLAMPED to the VIEWER's
  *   ceiling from the block token: the color-domain ceiling
  *   (`claims.maxBrowsingLevel`) intersected with the viewer's own level
- *   (`claims.viewerBrowsingLevel`), via `resolveViewerBrowsingLevel` — the same
- *   level the gated image read (`GET_IMAGES_BY_IDS`) serves at. A SFW-domain
+ *   (`claims.viewerBrowsingLevel`), via `resolveCatalogViewerBrowsingLevel` —
+ *   the viewer's level held to the domain cap by the main site's rule
+ *   (`clampToDomainCap`). A SFW-domain
  *   (green/blue) block CANNOT fetch mature catalog images, and neither can a
  *   viewer on a mature domain who has mature content off, no matter what the
  *   client sends — there is no `nsfw` / `browsingLevel` knob on this endpoint's
@@ -71,8 +68,10 @@ export const config = {
  *   change, and on `red` it let an app put R/X/XXX catalog images in front of a
  *   viewer whose own settings are PG — the very images the gated read hides
  *   from that viewer. A token with no viewer level (minted before the claim
- *   existed) fails closed to PG; a token whose viewer level is exactly 0 gets
- *   an empty page (`hasEmptyViewerLevel`), as the gated read does.
+ *   existed) fails closed to PG. A viewer level that shares NO level with the
+ *   domain cap (minted as 0: e.g. a mature-only saved level on a SFW domain)
+ *   is served the cap, as the main site serves that viewer, not an empty page;
+ *   the region restriction narrows the cap first, by the same rule.
  *
  * Why Option B (a block-gated endpoint) and NOT clamping the public
  * /api/v1/images: the public endpoint is the apex public-API contract +
@@ -202,19 +201,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // override the shared search service does NOT apply). (The schema doesn't even
   // expose nsfw/browsingLevel, so there is nothing to read from the request; this
   // is the single maturity authority.)
-  if (hasEmptyViewerLevel(claims)) {
+  // A viewer level sharing nothing with the cap falls back to the cap, as the
+  // main site serves that viewer (`resolveCatalogViewerBrowsingLevel`).
+  let browsingLevel = resolveCatalogViewerBrowsingLevel(claims, {
+    regionRestricted: isRegionRestricted(getRegion(req)),
+  });
+  // Only an empty cap gives 0, and the search reads 0 as its default level, not as none.
+  if (!browsingLevel) {
     res.status(200).json({ items: [], metadata: {} });
     return;
-  }
-  let browsingLevel = resolveViewerBrowsingLevel(claims);
-  if (isRegionRestricted(getRegion(req))) {
-    // Only ever narrows; never widens a sub-SFW level back up.
-    browsingLevel = Flags.intersection(browsingLevel, sfwBrowsingLevelsFlag);
-    // The search reads 0 as its default level, not as none.
-    if (!browsingLevel) {
-      res.status(200).json({ items: [], metadata: {} });
-      return;
-    }
   }
 
   const { limit, page, cursor, type, withMeta, flatMeta, withTags, ...data } = reqParams.data;
@@ -381,7 +376,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 });
 
 // No requiredScope: any valid block token is accepted (see doc above). The
-// maturity clamp (resolveViewerBrowsingLevel) remains the whole authority
+// maturity clamp (resolveCatalogViewerBrowsingLevel) remains the whole authority
 // surface. allowOpaqueOrigin: an UNVERIFIED block runs at an opaque origin
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,

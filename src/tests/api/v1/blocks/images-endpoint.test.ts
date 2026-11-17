@@ -451,20 +451,35 @@ describe('/api/v1/blocks/images — the viewer level narrows the domain ceiling'
     expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
   });
 
-  it('a viewer level of exactly 0 gets an empty page and searches nothing', async () => {
+  // A viewer level sharing NO level with the domain cap is served the cap, by the
+  // main site's rule (`clampToDomainCap`: `(requested & cap) || cap`), never an
+  // empty page: the main site would fill that viewer's grid.
+  it('a mature-only viewer on a SFW domain (minted as 0) is served the SFW cap', async () => {
     claimsBox.claims = fakeClaims({
-      maxBrowsingLevel: allBrowsingLevelsFlag,
+      maxBrowsingLevel: sfwBrowsingLevelsFlag,
       viewerBrowsingLevel: 0,
-      domain: 'red',
+      domain: 'green',
     });
     const res = await invoke({ ids: '11' });
 
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ items: [], metadata: {} });
-    expect(mockRunImageSearch).not.toHaveBeenCalled();
+    expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
   });
 
-  it('a restricted region over an R-and-above viewer leaves no level: empty page, nothing searched', async () => {
+  it('a viewer level of exactly 0 on a RED domain is served the RED cap, never above it', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R,
+      viewerBrowsingLevel: 0,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(
+      NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R
+    );
+  });
+
+  it('a restricted region over an R-and-above viewer is served the region SFW cap, by the same rule', async () => {
     regionBox.restricted = true;
     claimsBox.claims = fakeClaims({
       maxBrowsingLevel: allBrowsingLevelsFlag,
@@ -474,7 +489,26 @@ describe('/api/v1/blocks/images — the viewer level narrows the domain ceiling'
     const res = await invoke({});
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.items).toEqual([]);
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('a restricted region keeps a PG-only viewer at PG (narrowed, never widened back to SFW)', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
+  });
+
+  it('an empty domain ceiling gets an empty page and searches nothing', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 0, viewerBrowsingLevel: undefined, domain: 'green' });
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ items: [], metadata: {} });
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 });
