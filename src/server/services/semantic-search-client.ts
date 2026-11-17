@@ -287,7 +287,7 @@ export function searchServiceSource(
   };
 }
 
-// Most word matches ranked ahead of the rest of a text search.
+// Cap on the word matches ranked ahead of the rest of a text search.
 const MAX_WORD_MATCHES = 200;
 
 /**

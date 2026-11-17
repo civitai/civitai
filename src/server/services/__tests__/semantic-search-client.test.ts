@@ -224,6 +224,20 @@ describe('withWordMatchesFirst', () => {
     expect(wordCalls[0].filter.allWords).toEqual({ key: 'search_text', text: 'civetai' });
   });
 
+  it('asks for no word matches for blank text or "more like this"', async () => {
+    const { source, calls } = index([7], [1, 2]);
+    const ranked = withWordMatchesFirst(source, 'search_text');
+    expect((await page(ranked, 0, 2, '  ')).ids).toEqual([1, 2]);
+    await ranked({
+      query: { similarTo: 5 },
+      filter: { gate },
+      offset: 0,
+      limit: 2,
+      viewer: { isModerator: false },
+    });
+    expect(calls.filter((call) => call.filter.allWords)).toEqual([]);
+  });
+
   it('is the plain ranking when nothing holds every word', async () => {
     const { source } = index([], [1, 2, 3]);
     expect((await page(withWordMatchesFirst(source, 'search_text'), 0, 3)).ids).toEqual([1, 2, 3]);
