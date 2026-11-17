@@ -58,6 +58,11 @@ type Input struct {
 	// IncludeProfilePictures is `include` holding 'profilePictures'. The gallery handler adds it
 	// anyway; image.getInfinite hydrates profile pictures only when the client asked.
 	IncludeProfilePictures bool
+	// IncludeCosmetics is `include` holding 'cosmetics' (its default, ['cosmetics'], does). Without it
+	// getAllImagesUncaptured reads no user cosmetics and no image frames: every creator's `cosmetics`
+	// is [] and every image's `cosmetic` null. The gallery refuses it (Parse); image.getInfinite
+	// serves it (the model page's showcase carousel sends `include: []`).
+	IncludeCosmetics bool
 }
 
 // imagesSchema is getInfiniteImagesSchema's allow-list and defaults (why: the inputschema package doc).
@@ -111,7 +116,14 @@ var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "
 // Parse validates the decoded input map. A shape outside the supported subset is a fallback; a value
 // the schema itself rejects is also a fallback (the Node app answers it with its own BAD_REQUEST).
 func Parse(m map[string]any) (*Input, error) {
-	return parseInput(m, unsupportedKeys, trpcTransportKeys)
+	in, err := parseInput(m, unsupportedKeys, trpcTransportKeys)
+	if err != nil {
+		return nil, err
+	}
+	if !in.IncludeCosmetics {
+		return nil, fallback.New("input-include-no-cosmetics")
+	}
+	return in, nil
 }
 
 // parseInput is Parse with the procedure's own list of keys that fall back when present, and its own
@@ -128,7 +140,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	}
 	in := &Input{
 		Limit: imagesDefaults.limit, Sort: imagesDefaults.sort, Period: imagesDefaults.period,
-		PeriodMode: imagesDefaults.periodMode,
+		PeriodMode: imagesDefaults.periodMode, IncludeCosmetics: true,
 	}
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {
@@ -224,9 +236,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 				return nil, fallback.Newf("input-include", "%v", e)
 			}
 		}
-		if !hasCosmetics {
-			return nil, fallback.New("input-include-no-cosmetics")
-		}
+		in.IncludeCosmetics = hasCosmetics
 	}
 	return in, nil
 }
