@@ -9,6 +9,11 @@ vi.mock('$lib/server/text-check', () => ({
   textCheckCookie: () => null,
   throwTextCheckHttpError: () => undefined,
 }));
+let kohyaAllowed = false;
+vi.mock('$lib/server/flipt', () => ({
+  isKohyaAllowed: async () => kohyaAllowed,
+  flagVariant: async () => null,
+}));
 vi.mock('$lib/server/train', () => ({
   submitTrainingBatch: (...args: unknown[]) => submitTrainingBatch(...args),
 }));
@@ -29,5 +34,14 @@ describe('POST /api/train', () => {
       status: 409,
       body: { message: refusal.message, matureCount: 3 },
     });
+  });
+
+  it("passes the user's Kohya gate to the submit", async () => {
+    submitTrainingBatch.mockResolvedValue({ workflowIds: ['wf-1'] });
+    for (const allowed of [true, false]) {
+      kohyaAllowed = allowed;
+      await post({ runs: [] });
+      expect(submitTrainingBatch.mock.calls.at(-1)![5]).toBe(allowed);
+    }
   });
 });

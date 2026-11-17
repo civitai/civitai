@@ -1,0 +1,1224 @@
+{
+  "namespace": {
+    "key": "default"
+  },
+  "flags": [
+    {
+      "key": "bool-threshold-25",
+      "name": "bool-threshold-25",
+      "description": "25% threshold rollout to true",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 25,
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-threshold-50-off",
+      "name": "bool-threshold-50-off",
+      "description": "enabled flag, 50% threshold rollout to false",
+      "enabled": true,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 50,
+            "value": false
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-threshold-33-3",
+      "name": "bool-threshold-33-3",
+      "description": "fractional threshold",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 33.3,
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-threshold-0",
+      "name": "bool-threshold-0",
+      "description": "0% threshold: nobody",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 0,
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-threshold-100",
+      "name": "bool-threshold-100",
+      "description": "100% threshold: everybody",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 100,
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-mods-then-10",
+      "name": "bool-mods-then-10",
+      "description": "moderators first, then 10% of everyone",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "moderators",
+                "name": "moderators",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 10,
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-anon-off-then-50",
+      "name": "bool-anon-off-then-50",
+      "description": "anonymous excluded, then 50%",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": false,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "anonymous",
+                "name": "anonymous",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isLoggedIn",
+                    "operator": "eq",
+                    "value": "false"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "type": "THRESHOLD_ROLLOUT_TYPE",
+          "threshold": {
+            "percentage": 50,
+            "value": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-and-logged-in-member",
+      "name": "bool-and-logged-in-member",
+      "description": "AND of two segments",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "AND_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "logged-in",
+                "name": "logged-in",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isLoggedIn",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              },
+              {
+                "key": "members",
+                "name": "members",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isMember",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-or-paid-early",
+      "name": "bool-or-paid-early",
+      "description": "OR of two segments",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "paid-tiers",
+                "name": "paid-tiers",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "tier",
+                    "operator": "isoneof",
+                    "value": "[\"gold\",\"silver\"]"
+                  }
+                ]
+              },
+              {
+                "key": "early-adopters",
+                "name": "early-adopters",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isEarlyAdopter",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-moderator-string",
+      "name": "bool-moderator-string",
+      "description": "isModerator as a STRING constraint",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "moderators-string",
+                "name": "moderators-string",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "eq",
+                    "value": "true"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-not-moderator",
+      "name": "bool-not-moderator",
+      "description": "BOOLEAN constraint, operator false",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "moderator-false",
+                "name": "moderator-false",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "false",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-app-builder",
+      "name": "bool-app-builder",
+      "description": "appBuilderApproved eq \"true\"",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "app-builder-approved",
+                "name": "app-builder-approved",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "appBuilderApproved",
+                    "operator": "eq",
+                    "value": "true"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-creator-program",
+      "name": "bool-creator-program",
+      "description": "isInCreatorProgram (an extra context key)",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "creator-program",
+                "name": "creator-program",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isInCreatorProgram",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-canary",
+      "name": "bool-canary",
+      "description": "deploymentId prefix",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "canary-deployments",
+                "name": "canary-deployments",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "deploymentId",
+                    "operator": "prefix",
+                    "value": "canary"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-low-user-ids",
+      "name": "bool-low-user-ids",
+      "description": "NUMBER constraint lt",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "low-user-ids",
+                "name": "low-user-ids",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "NUMBER_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "userId",
+                    "operator": "lt",
+                    "value": "1000"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-listed-or-pinned",
+      "name": "bool-listed-or-pinned",
+      "description": "NUMBER isoneof OR ENTITY_ID isoneof",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "listed-user-ids",
+                "name": "listed-user-ids",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "NUMBER_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "userId",
+                    "operator": "isoneof",
+                    "value": "[7,42,1001]"
+                  }
+                ]
+              },
+              {
+                "key": "pinned-entities",
+                "name": "pinned-entities",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "ENTITY_ID_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "entityId",
+                    "operator": "isoneof",
+                    "value": "[\"42\",\"anonymous\"]"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-no-user-id",
+      "name": "bool-no-user-id",
+      "description": "NUMBER notpresent",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "no-user-id",
+                "name": "no-user-id",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "NUMBER_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "userId",
+                    "operator": "notpresent",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-mod-or-early-any",
+      "name": "bool-mod-or-early-any",
+      "description": "ANY match type",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "mod-or-early",
+                "name": "mod-or-early",
+                "matchType": "ANY_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isModerator",
+                    "operator": "true",
+                    "value": ""
+                  },
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isEarlyAdopter",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-logged-in-free",
+      "name": "bool-logged-in-free",
+      "description": "ALL match type with two constraints",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "logged-in-free",
+                "name": "logged-in-free",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isLoggedIn",
+                    "operator": "true",
+                    "value": ""
+                  },
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "tier",
+                    "operator": "eq",
+                    "value": "free"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-tier-present",
+      "name": "bool-tier-present",
+      "description": "STRING notempty",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "tier-present",
+                "name": "tier-present",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "tier",
+                    "operator": "notempty",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-everyone-off",
+      "name": "bool-everyone-off",
+      "description": "segment with no constraints matches everyone",
+      "enabled": true,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": false,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "everyone",
+                "name": "everyone",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": []
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-disabled-with-rollouts",
+      "name": "bool-disabled-with-rollouts",
+      "description": "disabled flag whose rollouts still apply",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [
+        {
+          "type": "SEGMENT_ROLLOUT_TYPE",
+          "segment": {
+            "value": true,
+            "segmentOperator": "OR_SEGMENT_OPERATOR",
+            "segments": [
+              {
+                "key": "logged-in",
+                "name": "logged-in",
+                "matchType": "ALL_SEGMENT_MATCH_TYPE",
+                "constraints": [
+                  {
+                    "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                    "property": "isLoggedIn",
+                    "operator": "true",
+                    "value": ""
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "bool-disabled-no-rollouts",
+      "name": "bool-disabled-no-rollouts",
+      "description": "disabled flag, no rollouts",
+      "enabled": false,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": []
+    },
+    {
+      "key": "bool-enabled-no-rules",
+      "name": "bool-enabled-no-rules",
+      "description": "enabled flag, no rollouts",
+      "enabled": true,
+      "type": "BOOLEAN_FLAG_TYPE",
+      "rules": [],
+      "rollouts": []
+    },
+    {
+      "key": "variant-50-50",
+      "name": "variant-50-50",
+      "description": "even split",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "a",
+              "rollout": 50
+            },
+            {
+              "variantKey": "b",
+              "rollout": 50
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-thirds",
+      "name": "variant-thirds",
+      "description": "thirds that truncate",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "one",
+              "rollout": 33.33
+            },
+            {
+              "variantKey": "two",
+              "rollout": 33.33
+            },
+            {
+              "variantKey": "three",
+              "rollout": 33.34
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-under-100",
+      "name": "variant-under-100",
+      "description": "distributions summing to 50%",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "a",
+              "rollout": 30
+            },
+            {
+              "variantKey": "b",
+              "rollout": 20
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-uneven",
+      "name": "variant-uneven",
+      "description": "non-integer tenths",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "small",
+              "rollout": 10.05
+            },
+            {
+              "variantKey": "large",
+              "rollout": 89.95
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-fractional",
+      "name": "variant-fractional",
+      "description": "exact tenths",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "x",
+              "rollout": 12.5
+            },
+            {
+              "variantKey": "y",
+              "rollout": 37.5
+            },
+            {
+              "variantKey": "z",
+              "rollout": 50
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-segmented",
+      "name": "variant-segmented",
+      "description": "ranked rules",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "moderators",
+              "name": "moderators",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isModerator",
+                  "operator": "true",
+                  "value": ""
+                }
+              ]
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "mod",
+              "rollout": 100
+            }
+          ]
+        },
+        {
+          "segments": [
+            {
+              "key": "paid-tiers",
+              "name": "paid-tiers",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "tier",
+                  "operator": "isoneof",
+                  "value": "[\"gold\",\"silver\"]"
+                }
+              ]
+            },
+            {
+              "key": "creator-program",
+              "name": "creator-program",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isInCreatorProgram",
+                  "operator": "true",
+                  "value": ""
+                }
+              ]
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "paid",
+              "rollout": 100
+            }
+          ]
+        },
+        {
+          "segments": [
+            {
+              "key": "logged-in",
+              "name": "logged-in",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isLoggedIn",
+                  "operator": "true",
+                  "value": ""
+                }
+              ]
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "control",
+              "rollout": 50
+            },
+            {
+              "variantKey": "treatment",
+              "rollout": 50
+            }
+          ]
+        }
+      ],
+      "rollouts": [],
+      "defaultVariant": {
+        "id": "v-control",
+        "key": "control"
+      }
+    },
+    {
+      "key": "variant-and-segments",
+      "name": "variant-and-segments",
+      "description": "AND rule",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "logged-in",
+              "name": "logged-in",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isLoggedIn",
+                  "operator": "true",
+                  "value": ""
+                }
+              ]
+            },
+            {
+              "key": "early-adopters",
+              "name": "early-adopters",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isEarlyAdopter",
+                  "operator": "true",
+                  "value": ""
+                }
+              ]
+            }
+          ],
+          "segmentOperator": "AND_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "early",
+              "rollout": 100
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-default-no-rules",
+      "name": "variant-default-no-rules",
+      "description": "no rules, default variant",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [],
+      "rollouts": [],
+      "defaultVariant": {
+        "id": "v-fallback",
+        "key": "fallback",
+        "attachment": "{\"color\":\"gray\"}"
+      }
+    },
+    {
+      "key": "variant-disabled",
+      "name": "variant-disabled",
+      "description": "disabled, with default variant",
+      "enabled": false,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "on",
+              "rollout": 100
+            }
+          ]
+        }
+      ],
+      "rollouts": [],
+      "defaultVariant": {
+        "id": "v-off",
+        "key": "off"
+      }
+    },
+    {
+      "key": "variant-disabled-no-default",
+      "name": "variant-disabled-no-default",
+      "description": "disabled, no default variant",
+      "enabled": false,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "on",
+              "rollout": 100
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-no-distributions",
+      "name": "variant-no-distributions",
+      "description": "a rule with no distributions",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "logged-in",
+              "name": "logged-in",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "BOOLEAN_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isLoggedIn",
+                  "operator": "true",
+                  "value": ""
+                }
+              ]
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": []
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-zero-rollout",
+      "name": "variant-zero-rollout",
+      "description": "a 0% distribution",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "never",
+              "rollout": 0
+            },
+            {
+              "variantKey": "always",
+              "rollout": 100
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-attachment",
+      "name": "variant-attachment",
+      "description": "attachments",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "everyone",
+              "name": "everyone",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": []
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "blue",
+              "rollout": 50,
+              "variantAttachment": "{\"hex\":\"#00f\"}"
+            },
+            {
+              "variantKey": "red",
+              "rollout": 50,
+              "variantAttachment": "{\"hex\":\"#f00\"}"
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    },
+    {
+      "key": "variant-anon-only",
+      "name": "variant-anon-only",
+      "description": "one rule, no default variant",
+      "enabled": true,
+      "type": "VARIANT_FLAG_TYPE",
+      "rules": [
+        {
+          "segments": [
+            {
+              "key": "anonymous",
+              "name": "anonymous",
+              "matchType": "ALL_SEGMENT_MATCH_TYPE",
+              "constraints": [
+                {
+                  "type": "STRING_CONSTRAINT_COMPARISON_TYPE",
+                  "property": "isLoggedIn",
+                  "operator": "eq",
+                  "value": "false"
+                }
+              ]
+            }
+          ],
+          "segmentOperator": "OR_SEGMENT_OPERATOR",
+          "distributions": [
+            {
+              "variantKey": "anon",
+              "rollout": 100
+            }
+          ]
+        }
+      ],
+      "rollouts": []
+    }
+  ]
+}

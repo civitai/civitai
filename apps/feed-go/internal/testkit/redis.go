@@ -14,7 +14,7 @@ import (
 )
 
 // Redis is an in-memory redis.UniversalClient for the commands this service sends: GET, HGET,
-// HGETALL, SET, SET NX and SADD, directly or in a pipeline. Any other command panics (the embedded nil
+// HGETALL, SET, SET NX, SADD and (pipelined) DEL, directly or in a pipeline. Any other command panics (the embedded nil
 // interface), so a test never passes on a command the fake silently ignored.
 //
 // Failure modes: Err makes every command fail with it (a transport failure); KeyErr, when it returns
@@ -350,6 +350,41 @@ func (p *pipe) SAdd(ctx context.Context, key string, members ...any) *redis.IntC
 	return cmd
 }
 
+// exists is EXISTS over one key: 1 when it holds a value of any type (an empty hash is no key).
+func (r *Redis) exists(key string) int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.strings[key]; ok {
+		return 1
+	}
+	if len(r.hashes[key]) > 0 || len(r.sets[key]) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// Exists is EXISTS, pipelined. One key per command (a cluster pipeline sends one per slot anyway);
+// several keys panic, so a test never passes on a count the fake did not compute.
+func (p *pipe) Exists(ctx context.Context, keys ...string) *redis.IntCmd {
+	if len(keys) != 1 {
+		panic("testkit.Redis: EXISTS of other than one key")
+	}
+	key := keys[0]
+	cmd := redis.NewIntCmd(ctx, "exists", key)
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		if failErr == nil {
+			failErr = p.r.keyErr(key)
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		cmd.SetVal(p.r.exists(key))
+	})
+	return cmd
+}
+
 // setNX is SET NX with an expiry: false (and nothing written) when key holds a value of any type.
 func (r *Redis) setNX(key string, val any, ttl time.Duration) bool {
 	r.mu.Lock()
@@ -400,6 +435,40 @@ func (p *pipe) SetNX(ctx context.Context, key string, val any, ttl time.Duration
 			return
 		}
 		cmd.SetVal(p.r.setNX(key, val, ttl))
+	})
+	return cmd
+}
+
+// Del is DEL, pipelined: the number of the keys that held a value.
+func (p *pipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	cmd := redis.NewIntCmd(ctx, "del")
+	p.cmds = append(p.cmds, cmd)
+	p.ops = append(p.ops, func(failErr error) {
+		for _, key := range keys {
+			if failErr == nil {
+				failErr = p.r.keyErr(key)
+			}
+		}
+		if failErr != nil {
+			cmd.SetErr(failErr)
+			return
+		}
+		var n int64
+		p.r.mu.Lock()
+		for _, key := range keys {
+			_, s := p.r.strings[key]
+			_, h := p.r.hashes[key]
+			_, m := p.r.sets[key]
+			if s || h || m {
+				n++
+			}
+			delete(p.r.strings, key)
+			delete(p.r.hashes, key)
+			delete(p.r.sets, key)
+			delete(p.r.ttls, key)
+		}
+		p.r.mu.Unlock()
+		cmd.SetVal(n)
 	})
 	return cmd
 }

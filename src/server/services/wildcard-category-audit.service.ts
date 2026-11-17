@@ -120,7 +120,7 @@ export async function submitWildcardCategoryAudit(categoryId: number): Promise<s
       name: 'wildcard-category-audit',
       message: 'createXGuardModerationRequest returned no workflow id',
       wildcardSetCategoryId: categoryId,
-    }).catch(() => undefined);
+    });
     return null;
   }
 
@@ -178,7 +178,7 @@ async function processOrphanCategory(category: OrphanCategory): Promise<OrphanRe
       wildcardSetCategoryId: category.id,
       wildcardSetId: category.wildcardSetId,
       error: err instanceof Error ? err.message : String(err),
-    }).catch(() => undefined);
+    });
     return { kind: 'error', wildcardSetId: category.wildcardSetId };
   }
 }
@@ -359,7 +359,7 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
       message: 'callback for missing category',
       wildcardSetCategoryId: categoryId,
       workflowId,
-    }).catch(() => undefined);
+    });
     return;
   }
   const meta = (current.metadata ?? {}) as WildcardCategoryMetadata;
@@ -454,7 +454,7 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
       message: 'stale workflow callback ignored (EntityModeration workflowId mismatch)',
       wildcardSetCategoryId: categoryId,
       workflowId,
-    }).catch(() => undefined);
+    });
     return;
   }
 
@@ -509,7 +509,7 @@ export async function applyWildcardCategoryAuditFailure(opts: {
       wildcardSetCategoryId: categoryId,
       workflowId,
       status,
-    }).catch(() => undefined);
+    });
   }
 }
 

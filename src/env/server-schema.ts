@@ -546,6 +546,12 @@ export const serverSchema = z
     // newest-first (starving the oldest backlog) — a bad hand-tune must fail
     // loudly at boot instead.
     IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
+    // Most scan submits one `ingest-images` run makes, across all its lanes; the rest stay queued
+    // for later runs. Above a small burst they are spaced evenly over the run, so the cron's
+    // in-flight scans stay well below the orchestrator's scan slot, which refuses work when full
+    // rather than queueing it. Sized above an ordinary run's retries, so only a backlog is held
+    // back. Retry capacity is this x 12 per hour; raise it to drain a backlog faster.
+    IMAGE_SCANNING_RETRY_MAX_PER_RUN: z.coerce.number().int().positive().default(200),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
@@ -1060,6 +1066,11 @@ export const serverSchema = z
     // token; if either is unset, reports are saved but not filed.
     HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
     HQ_INTAKE_TOKEN: z.string().optional(),
+    // HQ -> feedback triage status sync (the `feedback-hq-sync` job): a member's HQ `read` token,
+    // the narrowest HQ issues that reaches its data API (it also reads recordings, so set it ONLY on
+    // the deployment that runs jobs, never on web pods). Unset (or '') the job does nothing and says
+    // so once. Also behind the `feedback-hq-sync` Flipt flag, default off.
+    HQ_FEEDBACK_SYNC_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),

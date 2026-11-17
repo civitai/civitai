@@ -19,6 +19,8 @@ import {
   type WorkflowTemplate,
 } from '@civitai/orchestration-client';
 import {
+  BLOCKED_CUSTOM_MODEL_MESSAGE,
+  isBlockedCustomModel,
   isSafeTensorFormat,
   NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE,
 } from '@civitai/shared/training-custom-model';
@@ -60,8 +62,10 @@ import {
 } from '$lib/data/trainingModels';
 import {
   blockedRunMessage,
+  FLUX2_UNAVAILABLE_REASON,
   type RunModelRef,
   type TrainingServiceStatus,
+  UNAVAILABLE_LABEL,
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
 import { MatureAckRequiredError } from '$lib/mature-charge';
@@ -160,11 +164,12 @@ export interface SubmitOptions {
   /** Told how each dataset maturity count was made, for the run's log line. */
   onMatureCount?: (count: MatureCount) => void;
   /** Whether this user may train with Kohya (the `KOHYA_FLAG_KEY` gate). Anything but true refuses a
-   *  Kohya run or continuation before any orchestrator call. */
+   *  Kohya run before any orchestrator call, and a Kohya continuation once its source run is read. */
   kohyaAllowed?: boolean;
 }
 
 export const KOHYA_UNAVAILABLE = 'Kohya training is not available right now.';
+export const FLUX2_UNAVAILABLE = `Flux.2 is ${UNAVAILABLE_LABEL.toLowerCase()} for training. ${FLUX2_UNAVAILABLE_REASON}`;
 
 /** Why a run can't start right now — training is off, or its model is blocked — or null when it can. */
 export function unavailableRunMessage(
@@ -222,11 +227,10 @@ function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unk
   return out;
 }
 
-/** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
- *  blobs for every engine; the SDK types imageResourceTraining's `trainingData` as a string, so that path
- *  is cast). The Flux.2 (imageResourceTraining) engine takes no hyperparameters — only the base model +
- *  data + prompts, matching the main app. Ai-toolkit's hyperparameters are sent as extra input fields the
- *  minimal SDK type doesn't declare — the same cast-past-the-type the whatif and the main app's builders use. */
+/** Build one run's training step. The `imageResourceTraining` branch is unreachable while Flux.2 is
+ *  refused (`FLUX2_UNAVAILABLE`): the orchestrator takes its `trainingData` only as one zip URL, not
+ *  the blob list built here. Ai-toolkit hyperparameters are extra input fields the minimal SDK type
+ *  doesn't declare, hence the cast. */
 function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTemplate {
   // Backstop for the Data step's dedupe: the orchestrator rejects a dataset naming one blob twice. An
   // edit dataset places items by path instead, where one starting image may serve several pairs.
@@ -614,6 +618,8 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   }
   if (isFlux2(run.engine) && !isNonEmptyString(run.customModel ?? run.model))
     fail(`${field}.model`, 'is required for this engine.');
+  // Also refuses a Flux.2 base no catalog card names, which the status check can't see.
+  if (isFlux2(run.engine)) throw new TrainingBatchValidationError(FLUX2_UNAVAILABLE);
 }
 
 // `control_1/pair_0001.png`, `main/pair_0001.jpg`: a folder AI-Toolkit reads, then a plain file name.
@@ -656,6 +662,10 @@ async function assertCustomModelTrainable(
       throw new TrainingBatchValidationError(`${field}.customModel: model could not be found.`);
     throw new Error(`custom model lookup failed (${response?.status ?? 'no response'})`);
   }
+  // The orchestrator's AIR is resolved from the version, so it names the model the version belongs to
+  // even when the submitted AIR pairs that version with another model id.
+  if (isBlockedCustomModel(data.air))
+    throw new TrainingBatchValidationError(`${field}.customModel: ${BLOCKED_CUSTOM_MODEL_MESSAGE}`);
   if (!isSafeTensorFormat(data.fileFormat))
     throw new TrainingBatchValidationError(
       `${field}.customModel: ${NON_SAFETENSOR_CUSTOM_MODEL_MESSAGE}`

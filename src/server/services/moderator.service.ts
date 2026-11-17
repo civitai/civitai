@@ -50,6 +50,7 @@ export type ImageModActivity = {
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
+    | 'retractedMedia:view'
     | ReturnType<typeof shownActivity>;
 };
 
@@ -187,7 +188,7 @@ export type StorylineModActivity = {
 
 type CrucibleModActivity = {
   entityType: 'crucible';
-  activity: 'takeDown';
+  activity: 'takeDown' | 'updateSettings';
 };
 
 type SiteAlertModActivity = {

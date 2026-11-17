@@ -217,7 +217,7 @@ export async function runBlurbFanout({
         const err = error as Error;
         // `warn`, not `error`: a permanently-failing entity logs this on every run, and the job's
         // aggregate log already warns on a nonzero `failed`.
-        await logToAxiom({
+        logToAxiom({
           type: 'error',
           level: 'warn',
           name: 'blurb-fanout-row',
@@ -226,7 +226,7 @@ export async function runBlurbFanout({
           blurbIds: rows.map((r) => r.blurbId),
           entityType: rows[0].entityType,
           entityId: rows[0].entityId,
-        }).catch(() => undefined);
+        });
         for (const row of rows) {
           try {
             await recordFailure(row);

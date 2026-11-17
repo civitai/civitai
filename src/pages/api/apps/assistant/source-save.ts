@@ -37,7 +37,7 @@ export default AuthedEndpoint(
         userId: user.id,
         app: body.data.app,
         error: safeError(err),
-      }).catch(() => undefined);
+      });
       return res.status(503).json({ error: 'Could not save the app right now' });
     }
   },

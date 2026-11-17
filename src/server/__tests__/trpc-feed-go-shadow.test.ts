@@ -7,7 +7,9 @@ import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as FliptClient from '~/server/flipt/client';
 import {
+  FEED_GO_PROBE_PATH,
   FEED_GO_SHADOW_INFINITE_PATH,
+  FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
   resetFeedGoShadowForTests,
 } from '~/server/trpc/feed-go-shadow';
@@ -21,7 +23,8 @@ import {
  * What it pins: a sampled request is mirrored to feed-go with the raw input, the forwarded
  * headers and the superjson envelope Node wrote; the user's response is identical with the
  * sampler on or off and never waits on feed-go; nothing is mirrored with the flag off or for
- * another procedure.
+ * another procedure. And the Go-first probe (flag `feed-go-gofirst-probe`): it reaches feed-go
+ * BEFORE the handler computes the page, and never runs with the sampler off.
  */
 
 const PAYLOAD = {
@@ -42,8 +45,19 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
 const flag = vi.hoisted(() => ({
   shadow: null as boolean | null,
   infinite: null as boolean | null,
+  models: null as boolean | null,
+  probe: null as boolean | null,
 }));
-const handler = vi.hoisted(() => ({ fail: false, infiniteBadRequest: false }));
+const handler = vi.hoisted(() => ({
+  fail: false,
+  infiniteBadRequest: false,
+  modelsBadRequest: false,
+  // When set, the procedure waits (up to 1s) for feed-go to have received a probe before it
+  // computes, and records whether it had: the probe must not depend on the handler finishing.
+  awaitProbe: false,
+  probeSeen: undefined as boolean | undefined,
+  probePath: '',
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
@@ -51,8 +65,12 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     isFliptSync: (key: string, ...rest: [string?, Record<string, string>?]) =>
       key === 'feed-go-shadow'
         ? flag.shadow
+        : key === 'feed-go-gofirst-probe'
+        ? flag.probe
         : key === 'feed-go-shadow-infinite'
         ? flag.infinite
+        : key === 'feed-go-shadow-model-getall'
+        ? flag.models
         : actual.isFliptSync(key, ...rest),
   };
 });
@@ -73,7 +91,13 @@ vi.mock('~/server/routers', async () => {
   return {
     appRouter: router({
       image: router({
-        getImagesAsPostsInfinite: publicProcedure.query(() => {
+        getImagesAsPostsInfinite: publicProcedure.query(async () => {
+          if (handler.awaitProbe) {
+            const start = Date.now();
+            const seen = () => feedGo.received.some((p) => p.path === handler.probePath);
+            while (!seen() && Date.now() - start < 1000) await new Promise((r) => setTimeout(r, 5));
+            handler.probeSeen = seen();
+          }
           if (handler.fail) throw new Error('handler failed');
           return PAYLOAD;
         }),
@@ -85,13 +109,22 @@ vi.mock('~/server/routers', async () => {
           return PAYLOAD;
         }),
       }),
+      model: router({
+        getAll: publicProcedure.query(async () => {
+          if (handler.modelsBadRequest) {
+            const { TRPCError } = await import('@trpc/server');
+            throw new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid cursor' });
+          }
+          return PAYLOAD;
+        }),
+      }),
     }),
   };
 });
 
 type Received = {
   path: string;
-  body: { input: string; headers: Record<string, string>; node: unknown };
+  body: { input: string; headers: Record<string, string>; node?: unknown; startedAt?: number };
 };
 
 /** The fake feed-go: records each POST, answers `status`, optionally holding until released. */
@@ -142,6 +175,7 @@ afterAll(async () => {
   delete process.env.FEED_GO_SHADOW_SAMPLE_RATE;
   delete process.env.FEED_GO_SHADOW_TIMEOUT_MS;
   delete process.env.FEED_GO_SHADOW_MAX_IN_FLIGHT;
+  delete process.env.FEED_GO_GOFIRST_PROBE_SAMPLE_RATE;
   resetFeedGoShadowForTests();
 });
 
@@ -159,15 +193,22 @@ beforeEach(() => {
   feedGo.hold = undefined;
   feedGo.onReceived = undefined;
   flag.shadow = true;
+  flag.probe = false;
   flag.infinite = false;
+  flag.models = false;
   handler.fail = false;
+  handler.awaitProbe = false;
+  handler.probeSeen = undefined;
+  handler.probePath = FEED_GO_PROBE_PATH;
   handler.infiniteBadRequest = false;
+  handler.modelsBadRequest = false;
   h.writeDevalue = false;
   configure({
     FEED_GO_SHADOW_URL: fakeBase,
     FEED_GO_SHADOW_SAMPLE_RATE: '1',
     FEED_GO_SHADOW_TIMEOUT_MS: '2000',
     FEED_GO_SHADOW_MAX_IN_FLIGHT: undefined,
+    FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: undefined,
   });
 });
 
@@ -343,12 +384,85 @@ describe('feed-go shadow, end to end', () => {
       const metric = instrumentationRegistry.getSingleMetric(name);
       expect(metric, name).toBeDefined();
       const { values } = await metric!.get();
-      // Seeded for every endpoint, so the label set is visible without traffic.
       expect(values.map((v) => v.labels.feed_endpoint).sort(), name).toEqual(
-        expect.arrayContaining(['as-posts', 'v1-images', 'infinite'])
+        expect.arrayContaining([
+          'as-posts',
+          'v1-images',
+          'infinite',
+          'model-getall',
+          'v1-models',
+          'v1-models-id',
+        ])
       );
       for (const v of values) expect(Object.keys(v.labels), name).not.toContain('endpoint');
     }
+  });
+});
+
+describe('feed-go Go-first probe, end to end', () => {
+  function probeOn() {
+    flag.probe = true;
+    configure({ FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '1' });
+  }
+
+  it('reaches feed-go BEFORE the handler computes the page', async () => {
+    probeOn();
+    handler.awaitProbe = true;
+    const before = Date.now();
+    const served = await get(PROCEDURE, { cookie: '__Secure-civ-token=hdr.payload.sig' });
+    expect(served.status).toBe(200);
+    // The handler, while computing, already saw the probe at feed-go.
+    expect(handler.probeSeen).toBe(true);
+
+    const received = await receivedWithin(2);
+    expect(received.map((p) => p.path)).toEqual([FEED_GO_PROBE_PATH, FEED_GO_SHADOW_PATH]);
+    const probe = received[0].body;
+    expect(probe.input).toBe(INPUT);
+    expect(probe.headers).toEqual({
+      host: new URL(baseUrl).host,
+      cookie: '__Secure-civ-token=hdr.payload.sig',
+    });
+    expect(probe.node).toBeUndefined();
+    // The request's start, on the epoch clock, taken before the handler ran.
+    expect(typeof probe.startedAt).toBe('number');
+    expect(probe.startedAt!).toBeGreaterThanOrEqual(before - 5);
+    expect(probe.startedAt!).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('control: the same wait reads false for a post that only comes after the response', async () => {
+    // Same wait, aimed at the shadow sample, which is posted only after the response: the
+    // handler must NOT see it. So a probe moved after the response would read false above.
+    handler.awaitProbe = true;
+    handler.probePath = FEED_GO_SHADOW_PATH;
+    expect((await get(PROCEDURE)).status).toBe(200);
+    expect(handler.probeSeen).toBe(false);
+    expect((await receivedWithin(1)).map((p) => p.path)).toEqual([FEED_GO_SHADOW_PATH]);
+  });
+
+  it('the sampler off: no probe either', async () => {
+    probeOn();
+    flag.shadow = false;
+    resetFeedGoShadowForTests();
+    expect((await get(PROCEDURE)).status).toBe(200);
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+
+  it('the probe flag off: only the shadow sample is posted', async () => {
+    configure({ FEED_GO_GOFIRST_PROBE_SAMPLE_RATE: '1' });
+    expect((await get(PROCEDURE)).status).toBe(200);
+    await receivedWithin(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(feedGo.received.map((p) => p.path)).toEqual([FEED_GO_SHADOW_PATH]);
+  });
+
+  it('the user response is identical with the probe on', async () => {
+    const off = await get(PROCEDURE);
+    await receivedWithin(1);
+    probeOn();
+    const on = await get(PROCEDURE);
+    expect(on).toEqual(off);
+    // Drain this request's probe and shadow posts, so they cannot land in the next test.
+    expect(await receivedWithin(3)).toHaveLength(3);
   });
 });
 
@@ -398,6 +512,59 @@ describe('feed-go shadow, image.getInfinite end to end', () => {
     flag.infinite = false;
     resetFeedGoShadowForTests();
     expect((await get(INFINITE)).status).toBe(200);
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+});
+
+describe('feed-go shadow, model.getAll end to end', () => {
+  const MODELS = 'model.getAll';
+
+  it('flag on: one POST to its own compare path with the raw input and the envelope Node wrote', async () => {
+    flag.shadow = false; // the gallery flag plays no part
+    flag.models = true;
+    resetFeedGoShadowForTests();
+    const served = await get(MODELS, {
+      cookie: '__Secure-civ-token=hdr.payload.sig; theme=dark',
+    });
+    expect(served.status).toBe(200);
+    expect(JSON.parse(served.text).result.data).toEqual(SUPERJSON_PAYLOAD);
+    const posts = await receivedWithin(1);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(FEED_GO_SHADOW_MODEL_GET_ALL_PATH);
+    expect(posts[0].body.input).toBe(INPUT);
+    expect(posts[0].body.node).toEqual(SUPERJSON_PAYLOAD);
+    expect(posts[0].body.headers).toEqual({
+      host: new URL(baseUrl).host,
+      cookie: '__Secure-civ-token=hdr.payload.sig',
+    });
+    // Exactly one: nothing more arrives (the gallery procedure was not asked).
+    expect(await receivedWithin(2, 200)).toHaveLength(1);
+  });
+
+  it('a 4xx answer is not mirrored, and is counted as skipped_status under its endpoint', async () => {
+    flag.models = true;
+    resetFeedGoShadowForTests();
+    handler.modelsBadRequest = true;
+    const before = await outcomeCounts('model-getall');
+    const served = await get(MODELS);
+    expect(served.status).toBe(400);
+    const start = Date.now();
+    while (
+      ((await outcomeCounts('model-getall')).skipped_status ?? 0) ===
+        (before.skipped_status ?? 0) &&
+      Date.now() - start < 1000
+    )
+      await new Promise((r) => setTimeout(r, 10));
+    expect((await outcomeCounts('model-getall')).skipped_status).toBe(
+      (before.skipped_status ?? 0) + 1
+    );
+    expect(await receivedWithin(1, 200)).toHaveLength(0);
+  });
+
+  it('flag off: nothing is mirrored (the first case proves the same request IS when on)', async () => {
+    flag.models = false;
+    resetFeedGoShadowForTests();
+    expect((await get(MODELS)).status).toBe(200);
     expect(await receivedWithin(1, 200)).toHaveLength(0);
   });
 });

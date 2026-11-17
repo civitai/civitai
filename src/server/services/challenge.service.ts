@@ -1549,7 +1549,7 @@ export async function upsertChallenge({
           challengeId: id,
           message: `upsertChallenge aborted: challenge ${id} was no longer '${challenge.status}' at write time`,
           readStatus: challenge.status,
-        }).catch(() => undefined);
+        });
         // Deliberately NOT "reload and try again": `challenge.status` came from the read REPLICA,
         // so this also fires when a transition already committed on the primary and has not
         // replicated yet — a reload re-reads the same lagging replica and cannot clear it. It also
@@ -2180,14 +2180,14 @@ export async function rescanChallenge({
       }),
   });
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'challenge-rescan',
     challengeId: id,
     moderatorId,
     coverRequeued,
     workflowId: workflow?.id ?? null,
-  }).catch(() => undefined);
+  });
 
   // A submit failure resolves to `undefined` rather than throwing (it persists a Failed
   // EntityModeration row for the retry cron instead), so without this the moderator gets a
@@ -2249,13 +2249,13 @@ export async function rejudgeChallenge({
     await lock.release();
   }
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'challenge-rejudge',
     challengeId: id,
     moderatorId,
     ...reset,
-  }).catch(() => undefined);
+  });
   return { entries: reset.entries };
 }
 
@@ -2892,7 +2892,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         }));
 
         if (unmatchedPicks.length) {
-          await logToAxiom({
+          logToAxiom({
             type: 'warning',
             name: 'challenge-winner-unmatched-pick',
             message: `Winner pick named a creatorId matching no judged entry; that placement was not awarded: challenge=${challengeId}`,
@@ -2903,7 +2903,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
             // path.)
             resolvedPlaces: winningEntries.length,
             pickedPlaces: generated.winners.length,
-          }).catch(() => undefined);
+          });
           recordChallengeWinnerUnmatchedPick({
             source: challenge.source,
             count: unmatchedPicks.length,
@@ -2922,14 +2922,14 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         dedupeWinnersForPayout(winningEntries);
       if (droppedWinners.length) {
         winningEntries = dedupedWinners;
-        await logToAxiom({
+        logToAxiom({
           type: 'warning',
           name: 'challenge-winner-duplicate-pick',
           message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
           challengeId,
           droppedUserIds: droppedWinners.map((entry) => entry.userId),
           droppedPlaces: droppedWinners.map((entry) => entry.position),
-        }).catch(() => undefined);
+        });
         recordChallengeWinnerDuplicatePick({
           source: challenge.source,
           count: droppedWinners.length,
@@ -2999,7 +2999,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
       if (residualBuzz > 0) {
-        await logToAxiom({
+        logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
           message: 'Challenge completed with fewer winners than prize places; buzz not paid out',
@@ -3149,7 +3149,7 @@ async function notifyEntrantsOfCancellation(challenge: {
     });
     log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
   } catch (err) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'challenge-cancelled-notification',
       challengeId: challenge.id,

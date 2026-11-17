@@ -29,7 +29,7 @@ process.env.TZ = 'UTC';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { importDep, mark, packMarked } from './pack.mjs';
+import { importDep, mark, packMarked, packMarkedCompressed } from './pack.mjs';
 
 if (new Date(0).getTimezoneOffset() !== 0) throw new Error('run with TZ=UTC (the Node pods run in UTC)');
 
@@ -206,6 +206,7 @@ for (const [id, userId, versionId, publishedAt] of [
   [7203, 1001, 6401, day(10)],
   [7301, 1002, 6101, day(11)],
   [7401, 1001, 6201, day(11)],
+  [7011, 1002, null, day(6, 12)],
 ])
   POSTS[id] = { id, userId, modelVersionId: versionId, publishedAt };
 
@@ -227,7 +228,7 @@ function image(id, postId, opts = {}) {
     width: type === 'video' ? 1280 : 832,
     height: type === 'video' ? 720 : 1216,
     hash: `UGOLDEN${id}`,
-    hideMeta: false,
+    hideMeta: opts.hideMeta ?? false,
     hasMeta: opts.hasMeta ?? true,
     hasPositivePrompt: opts.hasMeta ?? true,
     onSite: false,
@@ -298,6 +299,27 @@ image(8204, 7203);
 image(8301, 7301, { index: 0 });
 image(8302, 7301, { index: 1, nsfwLevel: 4 });
 image(8401, 7401);
+// An image that hides its meta: the column holds one, the cache and the lookup answer null.
+image(8030, 7011, { hideMeta: true, hasMeta: false });
+
+// Image.meta (jsonb), the generation parameters imageMetaCache serves (withMeta). Each differs; the
+// first holds an integer-like key ("10", listed first in JS, after "a" in jsonb's order), a fraction,
+// a nested array and a null member. An image without an entry has a NULL meta.
+const META = {
+  8001: { prompt: 'golden synthetic prompt one', negativePrompt: 'blurry', cfgScale: 7.5, steps: 30, seed: 4242001, sampler: 'Euler a', 10: 'ten', a: null, resources: [{ name: 'golden-lora', type: 'lora', weight: 0.8 }] },
+  8002: { prompt: 'golden synthetic prompt two', steps: 12, clipSkip: 2 },
+  8003: { prompt: 'golden synthetic prompt three', cfgScale: 4, nested: { deep: { level: 3, list: [1, 'two', false] } }, comfy: null, note: 'ünïcödé ✓' },
+  8004: { prompt: 'golden synthetic prompt four', seed: 9007199254740, Size: '832x1216' },
+  8005: { prompt: 'golden synthetic video', fps: 23.976 },
+  8006: null,
+  8007: { prompt: 'golden synthetic prompt seven', steps: 7 },
+  8030: { prompt: 'golden hidden prompt' },
+};
+// imageMetaCache entries Node wrote before the cache was compressed: plain msgpack, read as is.
+const META_UNCOMPRESSED = new Set([8002]);
+// imageMetaCache notFound markers (the lookup found no row when the entry was written).
+const META_NOT_FOUND = new Set([8009]);
+const metaOf = (id) => (IMAGES[id].hideMeta ? null : prismaJson(META[id] ?? null));
 
 // Video thumbnails (thumbnailCache, keyed by the video's id).
 const THUMBNAILS = {
@@ -369,6 +391,7 @@ const K = {
   postVersion: 'model:gallery-settings:post-version',
   versionModel: 'model:gallery-settings:version-model',
   session: 'session:data2',
+  meta: 'packed:caches:image-meta',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
 const entry = (v) => ({ ...v, cachedAt: CACHED_AT });
@@ -421,6 +444,9 @@ function worldPacked(prefix, id) {
       return VERSIONS[id] ? entry({ id, modelId: VERSIONS[id] }) : undefined;
     case K.session:
       return SESSIONS[id];
+    case K.meta:
+      if (META_NOT_FOUND.has(id)) return notFound('id', id);
+      return IMAGES[id] ? entry({ id, meta: metaOf(id) }) : undefined;
   }
   throw new Error(`unknown cache ${prefix}`);
 }
@@ -595,6 +621,11 @@ function lookupImageEvents(ids) {
     };
   }
   return result;
+}
+
+/** imageMetaCache's lookupFn: `{ id, meta }` per image found, its meta NULL when it hides it. */
+function lookupImageMeta(ids) {
+  return Object.fromEntries(ids.filter((id) => IMAGES[id]).map((id) => [id, { id, meta: metaOf(id) }]));
 }
 
 // frame-cache-negative, as the fixtures run it (feed-go's FEED_GO_FRAME_CACHE_NEGATIVE default):
@@ -847,10 +878,16 @@ function imageSql(q) {
   const asc = q.sort === 'Oldest';
   if (byIndex) rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0) || a.id - b.id);
   else rows.sort((a, b) => (asc ? a.id - b.id : b.id - a.id));
-  if (q.cursor) rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= q.cursor : asc ? r.id >= q.cursor : r.id <= q.cursor));
+  if (q.cursor) {
+    // getCursor: a single-field sort's cursor is one integer (parseCursor's parseInt).
+    const c = typeof q.cursor === 'string' ? parseInt(q.cursor, 10) : q.cursor;
+    if (Number.isNaN(c)) throw new NodeError(400, 'cursor');
+    rows = rows.filter((r) => (byIndex ? (r.index ?? 0) >= c : asc ? r.id >= c : r.id <= c));
+  }
   for (const r of rows) T.posts.add(r.postId);
   void viaVersion;
-  return rows.slice(0, q.limit + 1).map((r) => ({ ...structuredClone(r), cursorId: byIndex ? r.index : r.id }));
+  const skip = q.skip ?? 0; // OFFSET
+  return rows.slice(skip, skip + q.limit + 1).map((r) => ({ ...structuredClone(r), cursorId: byIndex ? r.index : r.id }));
 }
 
 /** toImageV2Stats(shapeImageMetrics(...)) over MetricService.fetch's parse of the hash. */
@@ -1372,7 +1409,8 @@ function runInfinite(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed };
-  return { value: infiniteHandler({ input, ctx: { user, features } }) };
+  // createContext's policy, as for the gallery procedure: cacheable without a session.
+  return { value: infiniteHandler({ input, ctx: { user, features } }), cacheable: !session };
 }
 
 // --- GET /api/v1/images ----------------------------------------------------------------------------
@@ -1447,8 +1485,19 @@ function runV1(spec) {
     browsingLevel: num(query.browsingLevel),
     cursor: query.cursor,
     type: query.type,
+    // commaDelimitedNumberArray(z.number().int().positive().array().min(1).max(IMAGE_IDS_BATCH_MAX)).
+    ids: (() => {
+      if (query.ids === undefined) return undefined;
+      const ids = String(query.ids)
+        .split(',')
+        .map((x) => Number(x.trim()));
+      if (!ids.length || ids.length > 100 || ids.some((n) => !Number.isInteger(n) || n <= 0)) throw new NodeError(400, 'ids');
+      return ids;
+    })(),
+    withMeta: query.withMeta === undefined ? false : booleanString(query.withMeta),
+    flatMeta: query.flatMeta === undefined ? undefined : booleanString(query.flatMeta),
   };
-  const { limit, page, cursor, nsfw, browsingLevel, type, ...data } = p;
+  const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = p;
   for (const k of Object.keys(data)) if (data[k] === undefined) delete data[k];
   const usingPaging = page && !cursor;
   if (usingPaging && page * limit > 1000) throw new NodeError(429, 'paging');
@@ -1463,13 +1512,16 @@ function runV1(spec) {
       if (!level) return ok({ items: [], metadata: {} });
     }
   }
-  // runImageSearch (feed path).
-  if (cursor !== undefined && cursor !== '' && !parseFeedCursor(cursor) && !/^(-?\d+)(?:\|[^|]*)?$/.test(cursor)) throw new NodeError(400, 'cursor');
+  // runImageSearch: an `ids` batch takes the legacy path (getAllImages), everything else the feed.
+  const useLegacyMethod = Array.isArray(data.ids) && data.ids.length > 0;
+  if (!useLegacyMethod && cursor !== undefined && cursor !== '' && !parseFeedCursor(cursor) && !/^(-?\d+)(?:\|[^|]*)?$/.test(cursor))
+    throw new NodeError(400, 'cursor');
   const include = ['tagIds', 'profilePictures'];
   const dbQuery = { ...data, types: type ? [type] : undefined, limit, skip, cursor, include, periodMode: 'published', browsingLevel: level, withMeta: false, user, disableMinor: true, disablePoi: true, includeBaseModel: true };
   const searchQuery = { ...data, types: type ? [type] : undefined, limit, skip, cursor, include, periodMode: 'published', browsingLevel: level, withMeta: false, currentUserId: user?.id, isModerator: user?.isModerator, disableMinor: true, disablePoi: true };
   let result;
-  if (searchQuery.limit < 1) result = { items: [], nextCursor: undefined };
+  if (useLegacyMethod) result = getAllImages(dbQuery);
+  else if (searchQuery.limit < 1) result = { items: [], nextCursor: undefined };
   else {
     const input = withoutUnservedFilters(searchQuery);
     enforceBlockedBrowsingTags(input, { id: input.currentUserId, isModerator: input.isModerator });
@@ -1496,6 +1548,12 @@ function runV1(spec) {
       }
     }
   }
+  // imageMetaCache.fetch (5h EX: ttl 4h plus the 1h stale-while-revalidate tail), on a miss its lookup.
+  let imageMetas = {};
+  if (withMeta && result.items.length > 0) {
+    T.metaRead = true;
+    imageMetas = cacheFetch(K.meta, result.items.map((img) => img.id), { lookup: lookupImageMeta, idKey: 'id', ttl: 5 * HOUR });
+  }
   const videoIds = result.items.filter((i) => i.type === 'video').map((i) => i.id);
   const customThumbnails = videoIds.length ? cacheFetch(K.thumbs, videoIds) : {};
   const shaped = result.items.map((image) => {
@@ -1521,7 +1579,12 @@ function runV1(spec) {
         heartCount: image.stats?.heartCountAllTime ?? 0,
         commentCount: image.stats?.commentCountAllTime ?? 0,
       },
-      meta: null,
+      meta: (() => {
+        if (!withMeta) return null;
+        const imageMeta = imageMetas[image.id]?.meta ?? null;
+        const useFlat = flatMeta !== undefined ? flatMeta : !useLegacyMethod;
+        return useFlat ? imageMeta : { id: image.id, meta: imageMeta };
+      })(),
       username: typeof image.user.username === 'number' ? String(image.user.username) : image.user.username,
       baseModel: image.baseModel,
       modelVersionIds: image.modelVersionIds,
@@ -1929,14 +1992,90 @@ const V1 = [
     replies: { 'levels=1%2C2%2C4%2C8%2C16&excludeMinor=1&excludePoi=1&viewerId=1004&sort=oldest&limit=3': { body: { items: [8001, 8002, 8004], ...fc('1717000000000', '8004') } } },
   },
   {
-    name: 'extra-key-in-next-page',
-    description: 'A key outside the schema is kept in nextPage, in req.query order.',
+    name: 'fallback-unknown-key',
+    description: 'A key outside imagesEndpointSchema: Node strips it (and keeps it in nextPage), but a key the app added after the Go build was generated is one it reads, so feed-go never treats it as absent.',
     query: 'foo=bar&limit=2&sort=Newest',
-    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=newest&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } } },
+    fallback: 'input-unknown-key',
+  },
+  // `ids`: the legacy Postgres path (getAllImages), in its own order, never the request's.
+  {
+    name: 'ids-order-duplicates-unknown',
+    description: '`ids` out of order, one repeated, one unknown: by id descending (the default sort), each once, the unknown one simply absent; createdAt is the image’s own, not its sortAt.',
+    query: 'ids=8003,8001,8999,8007,8001',
+  },
+  {
+    name: 'ids-limit-next-cursor',
+    description: '`ids` with `limit`: the look-ahead row’s id is nextCursor, a NUMBER, and nextPage carries it; the R image is below the requested level.',
+    query: 'ids=8001,8002,8003,8004,8006&browsingLevel=3&limit=2',
+  },
+  {
+    name: 'ids-cursor-page2',
+    description: '`ids` continued by the numeric cursor (inclusive): the last page, no nextCursor.',
+    query: 'ids=8001,8002,8003,8004,8006&browsingLevel=3&limit=2&cursor=8002',
+  },
+  {
+    name: 'ids-page-offset',
+    description: '`ids` with `page=2`: OFFSET (page - 1) * limit, currentPage and pageSize, a numeric nextCursor and nextPage with page=3.',
+    query: 'ids=8001,8002,8003,8006,8007&browsingLevel=3&limit=2&page=2',
+  },
+  {
+    name: 'ids-oldest-videos',
+    description: '`ids` with `sort=Oldest` and `type=video`: ascending ids, videos only; one custom thumbnail allowed, one above the level (a still cut from the video).',
+    query: 'ids=8009,8001,8005,8003&sort=Oldest&type=video',
+  },
+  {
+    name: 'ids-post-index-order',
+    description: '`ids` with `postId`: the post’s own order (its index), and the next cursor is the look-ahead row’s INDEX.',
+    query: 'ids=8011,8012,8013,8014,8003&postId=7005&limit=2',
+  },
+  {
+    name: 'ids-model-version-held',
+    description: '`ids` with an SFW-only model’s version: the level is held to PG|PG-13, the resource join keeps only the version’s images.',
+    query: 'ids=8301,8302,8001&modelVersionId=6101&browsingLevel=31',
+  },
+  {
+    name: 'ids-username-own-signed-in',
+    description: '`ids` with `username` naming the signed-in viewer: resolved to their id; on this path the session username makes it their own feed.',
+    query: 'ids=8001,8003,8007&username=artist_one',
+    viewer: 1001,
+  },
+  {
+    name: 'ids-unknown-only',
+    description: '`ids` naming no image: an empty page, `{ items: [], metadata: {} }`.',
+    query: 'ids=8998,8999',
+  },
+  {
+    name: 'ids-limit-zero',
+    description: '`ids` with `limit=0`: LIMIT 1 reads one row and pops it, so the page is empty but carries a nextCursor and nextPage.',
+    query: 'ids=8001,8003&limit=0',
+  },
+  // withMeta: imageMetaCache (brotli-compressed values), flat on the feed path, `{ id, meta }` on the legacy one.
+  {
+    name: 'ids-with-meta-wrapped',
+    description: '`ids` with `withMeta`: the legacy path wraps each meta as `{ id, meta }`; compressed entries, a plain one written before compression, a cold key read from the database, a hidden meta (null).',
+    query: 'ids=8001,8002,8003,8004,8030&withMeta=true&browsingLevel=7',
+    cold: ['packed:caches:image-meta:8004'],
+  },
+  {
+    name: 'ids-with-meta-flat',
+    description: '`ids` with `withMeta` and `flatMeta=true`: the meta itself; a NULL meta and a notFound marker are both null.',
+    query: 'ids=8001,8006,8009&withMeta=true&flatMeta=true&browsingLevel=3',
+  },
+  {
+    name: 'with-meta-feed-flat',
+    description: '`withMeta` on the feed path: flat by default, in the feed’s order.',
+    query: 'withMeta=true&limit=3',
+    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=reactions&limit=3': { body: { items: [8003, 8001, 8007] } } },
+  },
+  {
+    name: 'with-meta-feed-flat-false',
+    description: '`withMeta` with `flatMeta=false` on the feed path: wrapped as `{ id, meta }`.',
+    query: 'withMeta=true&flatMeta=false&limit=2',
+    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=reactions&limit=2': { body: { items: [8005, 8001], ...fc('1718000000000', '8001') } } },
   },
   // Fallbacks.
-  { name: 'fallback-ids', description: '`ids` takes the legacy Postgres path.', query: 'ids=8001,8003', fallback: 'v1-ids' },
-  { name: 'fallback-with-meta', description: '`withMeta=true` reads the compressed meta cache; not ported.', query: 'withMeta=true&limit=2', fallback: 'v1-with-meta' },
+  { name: 'fallback-ids-hex', description: '`ids` spelled as Number() reads hex: Node takes it, feed-go reads only plain decimals.', query: 'ids=8001,0x1f43', fallback: 'v1-input-ids' },
+  { name: 'fallback-ids-feed-cursor', description: 'A feed cursor on an `ids` batch: getCursor cannot read it (a 400 on Node).', query: 'ids=8001&cursor=feed%3A1%3A2', fallback: 'v1-legacy-cursor' },
   { name: 'fallback-model-only', description: 'A `modelId` without a version takes the legacy Postgres path.', query: 'modelId=5001', fallback: 'v1-model-only' },
   { name: 'fallback-page-limit', description: '`page * limit > 1000` is a 429 on Node.', query: 'page=20&limit=100', fallback: 'v1-page-limit' },
 ];
@@ -2146,12 +2285,20 @@ const INFINITE = [
 // ---------------------------------------------------------------------------------------------
 // Emission
 // ---------------------------------------------------------------------------------------------
-function dbTables({ tags = false } = {}) {
+function dbTables({ tags = false, meta = false } = {}) {
   const postIds = [...T.posts].sort((a, b) => a - b);
   const images = Object.values(IMAGES)
     .filter((i) => postIds.includes(i.postId))
     // `_tags`: the image's TagsOnImageDetails rows (the tag scope's subquery), in infinite/ only.
-    .map((i) => mark({ ...i, _resources: RESOURCES[i.id], ...(tags ? { _tags: tagIdsOf(i.id) } : {}) }));
+    // `_meta`: its meta column as Postgres prints it (the image-meta lookup), in v1-images/ only.
+    .map((i) =>
+      mark({
+        ...i,
+        _resources: RESOURCES[i.id],
+        ...(tags ? { _tags: tagIdsOf(i.id) } : {}),
+        ...(meta ? { _meta: META[i.id] == null ? null : jsonbText(META[i.id]) } : {}),
+      })
+    );
   return {
     images,
     posts: postIds.map((id) => ({ id, modelVersionId: POSTS[id].modelVersionId })),
@@ -2183,6 +2330,12 @@ function redisEntries(dropKeys = []) {
   for (const [key, value] of [...T.packed.entries()].sort()) {
     if (dropKeys.includes(key)) continue;
     const marked = mark(value);
+    // imageMetaCache is `compress: true`: its values are brotli-compressed at rest, except a notFound
+    // marker (fetch writes it uncompressed) and an entry written before compression was turned on.
+    if (key.startsWith(`${K.meta}:`) && !value.notFound && !META_UNCOMPRESSED.has(value.id)) {
+      out[key] = { value: marked, compressed: true, packed: packMarkedCompressed(marked) };
+      continue;
+    }
     out[key] = { value: marked, packed: packMarked(marked) };
   }
   for (const [key, raw] of [...T.raw.entries()].sort()) if (!key.startsWith('sys:')) out[key] = { raw };
@@ -2212,6 +2365,7 @@ function newTrace(name, spec) {
   T.events = new Set(spec.events ?? []);
   T.cold = new Set(spec.cold ?? []);
   T.usernames = new Set();
+  T.metaRead = false;
 }
 
 function checkReplies(spec) {
@@ -2292,7 +2446,7 @@ function emitV1() {
       feed: T.feed,
       redis: redisEntries(),
       sysRedis: { 'system:browsing-setting-addons': { raw: JSON.stringify(ADDONS) } },
-      db: { ...dbTables(), usernames: [...T.usernames] },
+      db: { ...dbTables({ meta: T.metaRead }), usernames: [...T.usernames] },
       expect,
     });
   }
@@ -2312,9 +2466,9 @@ function emitInfinite() {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
       expect = { fallback: spec.fallback };
     } else {
-      const { value } = runInfinite({ ...spec, nodeFlags });
+      const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
-      expect = { envelope: superjson.serialize(value), cacheable: false, writes: writeEntries() };
+      expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
     // scope) is one feed-go must drop too, not one the fixture never held.

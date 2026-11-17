@@ -192,7 +192,7 @@ async function refundRemainingPackShares(
 }
 
 const logBoxRefund = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ level, name: 'mystery-box-refund', message, data }).catch(() => undefined);
+  logToAxiom({ level, name: 'mystery-box-refund', message, data });
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 

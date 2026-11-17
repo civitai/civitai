@@ -60,7 +60,7 @@ export const notificationCursorMonitor = createJob(
           details: { key: r.key, lagMinutes, escalated: isEscalated },
         },
         'notifications'
-      ).catch();
+      );
     }
 
     log(`flagged ${stale.length} stale cursors`);

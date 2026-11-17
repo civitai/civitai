@@ -27,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       linkId,
       credentialKind: minter.credential.kind,
       credentialId: minter.credential.id,
-    }).catch(() => undefined);
+    });
     return res.status(204).end();
   } catch (error) {
     logToAxiom({
@@ -35,7 +35,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       name: 'download-link',
       type: 'error',
       message: 'revoke-failed',
-    }).catch(() => undefined);
+    });
     return handleEndpointError(res, error);
   }
 }

@@ -37,7 +37,7 @@ import {
 import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { publicBountyDetails } from '~/server/utils/bounty-details';
 import { NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -48,7 +48,8 @@ export const getInfiniteBountiesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteBountySchema;
+  // ids: semantic search hydrates its ranked bounties through the feed's own query.
+  input: GetInfiniteBountySchema & { ids?: number[] };
   ctx: Context;
 }) => {
   const { user } = ctx;
@@ -199,10 +200,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         ? resolveFlagScanReasons({ isOwner, poi: bounty.poi, minor: false, meta: bounty.meta })
         : [],
       details: bounty.details
-        ? filterSensitiveProfanityData(
-            bounty.details as BountyDetailsSchema,
-            ctx?.user?.isModerator
-          )
+        ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
       images: capNestedImages(images, ctx, { ownerId: bounty.user?.id }).map((image) => ({
         ...image,
@@ -379,10 +377,7 @@ export const upsertBountyHandler = async ({
     return {
       ...publicBounty,
       details: publicBounty.details
-        ? filterSensitiveProfanityData(
-            publicBounty.details as BountyDetailsSchema,
-            ctx.user.isModerator
-          )
+        ? publicBountyDetails(publicBounty.details as BountyDetailsSchema, ctx.user.isModerator)
         : publicBounty.details,
     };
   } catch (error) {

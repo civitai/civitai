@@ -12,13 +12,15 @@ const schema = z.object({
   limit: z.number().int().min(1).max(200).default(100),
   concurrency: z.number().int().min(1).max(4).default(2),
   dryRun: z.boolean().default(true),
+  includeMature: z.boolean().default(false),
 });
 
 export default defineModeratorEndpoint('textScan.articleCategoryBackfill', {
   summary: 'Story Writers backfill: send the category call for recent unclassified articles.',
-  returns: '{ dryRun, selected, nextAfterId, byStatus, results }',
+  returns: '{ dryRun, includeMature, selected, nextAfterId, byStatus, results }',
   notes: [
     'dryRun defaults to true and only lists the selection.',
+    'includeMature: true also selects articles rated R and above; by default only PG and PG-13.',
     'Each submitted article is one billed category call; the category is written by its callback.',
   ],
   rateLimit: { max: 10, windowSeconds: 60 },

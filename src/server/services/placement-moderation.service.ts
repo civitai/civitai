@@ -192,13 +192,13 @@ async function settleContinuationsOf(placementIds: number[]) {
     );
     await settleOrphanedContinuations({ removedPlacementIds: placementIds });
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       name: 'placement-moderation',
       type: 'error',
       message: 'settling continuations of removed chapters failed',
       placementIds,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -495,7 +495,7 @@ async function settleEach(
         message: 'placement could not be settled',
         placementId: id,
         error: (error as Error).message,
-      }).catch(() => null);
+      });
     }
   }
 

@@ -395,6 +395,7 @@ describe('switches', () => {
       'public.TagsOnModel3D',
       'public.Storyline',
       'public.StorylineChapter',
+      'public.Collection',
     ]);
     expect(on.columns).toEqual(
       expect.arrayContaining([
@@ -403,6 +404,7 @@ describe('switches', () => {
         'public.Challenge.prizes',
         'public.Crucible.takedownReason',
         'public.Model3D.generationParams',
+        'public.Collection.metadata',
       ])
     );
     expect(on.columns).not.toContain('public.Model.description');

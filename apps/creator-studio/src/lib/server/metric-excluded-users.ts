@@ -47,8 +47,7 @@ export async function getMetricExcludedUserIds(): Promise<number[]> {
     if (!outageReported) {
       outageReported = true;
       getLogger()
-        .logToAxiom({ name: 'metric-excluded-users-unavailable', error: safeError(error) })
-        .catch(() => undefined);
+        .logToAxiom({ name: 'metric-excluded-users-unavailable', error: safeError(error) });
     }
     return [];
   }

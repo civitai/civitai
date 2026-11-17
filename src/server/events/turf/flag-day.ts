@@ -154,7 +154,7 @@ export async function swapFlagDay(
     flagDayId: day.id,
     crucibleId: crucible.id,
     flags: imageIds.length,
-  }).catch(() => null);
+  });
   return day;
 }
 

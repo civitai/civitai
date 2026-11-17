@@ -54,6 +54,7 @@ import {
   restrictContentLevelsToBuzzType,
   type CrucibleBuzzType,
   type CrucibleCreateFormValues,
+  type CrucibleEditableField,
   type CrucibleUpdateChanges,
   type PlaceBuzz,
 } from '~/components/Crucible/crucible-create-form';
@@ -98,6 +99,7 @@ import {
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
+  crucibleHasEnded,
   getPrizeDistributionTotal,
   hasCrucibleStarted,
   isCustomPrizeDistribution,
@@ -220,7 +222,16 @@ export function CrucibleUpsertWizard(props: Props) {
   const canEditAll = !crucible || (crucible.userId === currentUser?.id && !hasStarted);
   const rulesLocked = !canEditAll;
   const canEditContentLevels = canEditAll || (isModerator && !hasStarted);
-  const editableFields = getCrucibleEditableFields({ canEditAll, canEditContentLevels });
+  const hasEnded = !!crucible && crucibleHasEnded(crucible);
+  // Keep in sync with isModeratorFixingRunning in updateCrucible.
+  const canFixRunning = isModerator && hasStarted && !hasEnded;
+  const editableFields = getCrucibleEditableFields({
+    canEditAll,
+    canEditContentLevels,
+    canFixRunning,
+  });
+  const isLocked = (field: CrucibleEditableField) =>
+    !(editableFields as readonly string[]).includes(field);
 
   useEffect(() => {
     if (!canEditContentLevels) return;
@@ -301,8 +312,9 @@ export function CrucibleUpsertWizard(props: Props) {
 
   const isStep2Valid = () =>
     !contentLevelError &&
-    (rulesLocked ||
-      (values.entryFee != null &&
+    (rulesLocked
+      ? !canFixRunning || (!entryLimitError && !entryWindowError)
+      : values.entryFee != null &&
         values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
         values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
         values.entryLimit >= 1 &&
@@ -311,7 +323,7 @@ export function CrucibleUpsertWizard(props: Props) {
         !freeEntriesError &&
         !entryWindowError &&
         !minViewRangeError &&
-        !videoSettingsError));
+        !videoSettingsError);
 
   const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
   const prizeDistributionError =
@@ -455,7 +467,9 @@ export function CrucibleUpsertWizard(props: Props) {
     <Group gap={6} wrap="nowrap" align="flex-start">
       <IconLock size={14} className="mt-0.5 shrink-0 text-gray-5" />
       <Text size="xs" c="dimmed">
-        {hasStarted
+        {canFixRunning
+          ? "While it's running, the entry fee, prizes, seed, duration and content can't change, so nobody who already paid is affected."
+          : hasStarted
           ? "These settings can't change once the crucible has started, so the outcome stays fair."
           : 'Only the creator can change these settings.'}
       </Text>
@@ -643,7 +657,7 @@ export function CrucibleUpsertWizard(props: Props) {
         allowDecimal={false}
         clampBehavior="blur"
         error={entryLimitError}
-        disabled={rulesLocked}
+        disabled={isLocked('entryLimit')}
         withAsterisk
       />
 
@@ -673,7 +687,7 @@ export function CrucibleUpsertWizard(props: Props) {
           allowNegative={false}
           allowDecimal={false}
           clampBehavior="blur"
-          disabled={rulesLocked}
+          disabled={isLocked('maxTotalEntries')}
           clearable
           // Step errors are only re-checked on Next, so a corrected value would keep the old one.
           onChange={() => form.clearErrors('maxTotalEntries')}
@@ -712,7 +726,7 @@ export function CrucibleUpsertWizard(props: Props) {
             allowNegative={false}
             allowDecimal={false}
             clampBehavior="blur"
-            disabled={rulesLocked}
+            disabled={isLocked('entryWarningPercent')}
           />
           <InputNumber
             name="entryCutoffPercent"
@@ -733,7 +747,7 @@ export function CrucibleUpsertWizard(props: Props) {
             allowDecimal={false}
             clampBehavior="blur"
             error={entryWindowError}
-            disabled={rulesLocked}
+            disabled={isLocked('entryCutoffPercent')}
           />
         </Stack>
       </Input.Wrapper>
@@ -792,7 +806,7 @@ export function CrucibleUpsertWizard(props: Props) {
           </Group>
         }
         description="Entries must use at least one of the selected models. Leave empty to allow any model."
-        disabled={rulesLocked}
+        disabled={isLocked('allowedResources')}
         generatableOnly={false}
         mediaType={values.contentType}
         error={contentLevelError}
@@ -807,7 +821,7 @@ export function CrucibleUpsertWizard(props: Props) {
         maxValues={CRUCIBLE_MAX_ALLOWED_BASE_MODELS}
         searchable
         clearable
-        disabled={rulesLocked}
+        disabled={isLocked('allowedBaseModels')}
       />
     </Stack>
   );
@@ -1270,6 +1284,19 @@ export function CrucibleUpsertWizard(props: Props) {
               </Text>
             </div>
           </Group>
+
+          {crucible && hasStarted && !hasEnded && (
+            <Paper p="md" mb="xl" className="border border-dark-4">
+              <Group gap="sm" wrap="nowrap" align="flex-start">
+                <IconLock size={18} className="mt-0.5 shrink-0 text-gray-5" />
+                <Text size="sm">
+                  {canFixRunning
+                    ? "This crucible is running. As a moderator you can change its name, description and images, raise or lower the entry caps (not below the entries already in), move the entry window, and add required models or base models. Everything else stays locked while it's running."
+                    : "This crucible is running, so its settings are locked: only its name, description and images can change while it's running."}
+                </Text>
+              </Group>
+            </Paper>
+          )}
 
           <Group ref={wizardTopRef} gap="xs" mb="xl" className="scroll-mt-20">
             {stepLabels.map((label, index) => (

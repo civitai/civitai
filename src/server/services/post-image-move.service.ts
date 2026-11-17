@@ -209,7 +209,7 @@ export async function moveImagesToPost({
   ]);
   const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
   if (failures.length)
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'move-images-to-post-followup-failed',
       message: 'Images moved, but a follow-up step failed',
@@ -217,7 +217,7 @@ export async function moveImagesToPost({
       fromPostId,
       toPostId: targetPostId,
       errors: failures.map((f) => safeError(f.reason)),
-    }).catch(() => undefined);
+    });
 
   return { postId: targetPostId };
 }

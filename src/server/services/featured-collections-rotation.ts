@@ -164,7 +164,7 @@ async function drawFromCycle(
       type: 'redis-degraded',
       name: 'featured-collections-rotation',
       message: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
   }
 
   if (picks.length < want) {
@@ -210,7 +210,7 @@ async function refillCycle(eligible: number[], taken: number[], deps: RotationDe
         type: 'redis-degraded',
         name: 'featured-collections-rotation',
         message: 'cycle pass written without a TTL',
-      }).catch(() => null);
+      });
   } finally {
     // Released only if we still hold it. An unconditional delete is not fenced: a refill that
     // overran the 10s TTL would delete whoever holds the lock NOW, and two concurrent rewrites are

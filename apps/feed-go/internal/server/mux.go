@@ -13,7 +13,8 @@ func PublicMux(s *Server) *http.ServeMux {
 	return mux
 }
 
-// InternalMux is the internal listener's routes: metrics, health, the shadow endpoint, and — only when
+// InternalMux is the internal listener's routes: metrics, health, the shadow endpoints, the Go-first
+// probe endpoint (`/internal/probe/<procedure>`), and — only when
 // withPprof (FEED_GO_PPROF) — the net/http/pprof handlers under /debug/pprof/, so a CPU profile can be
 // pulled through a port-forward (`/debug/pprof/profile?seconds=30`).
 func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux {
@@ -22,7 +23,11 @@ func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/internal/shadow/"+Procedure, s.ShadowHandler)
 	mux.HandleFunc("/internal/shadow"+V1ImagesPath, s.ShadowV1Handler)
+	mux.HandleFunc("/internal/shadow"+V1ModelsPath, s.ShadowV1ModelsHandler)
+	mux.HandleFunc("/internal/shadow"+V1ModelsPath+"/id", s.ShadowV1ModelsIDHandler)
 	mux.HandleFunc("/internal/shadow/"+ProcedureInfinite, s.ShadowInfiniteHandler)
+	mux.HandleFunc("/internal/shadow/"+ProcedureModelGetAll, s.ShadowModelGetAllHandler)
+	mux.HandleFunc(ProbePathPrefix, s.ProbeHandler)
 	if withPprof {
 		// Registered explicitly: importing net/http/pprof also registers these on http.DefaultServeMux,
 		// which this service never serves.

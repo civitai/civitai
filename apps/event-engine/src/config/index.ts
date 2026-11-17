@@ -31,6 +31,7 @@ export const CONTENT_CDC_TABLES = [
   'public.TagsOnModel3D',
   'public.Storyline',
   'public.StorylineChapter',
+  'public.Collection',
 ];
 
 /**
@@ -53,6 +54,7 @@ export const CONTENT_EXCLUDED_COLUMNS = {
   ChallengeEvent: ['description'],
   Crucible: ['description', 'prizePositions', 'allowedResources', 'takedownReason'],
   Model3D: ['description', 'licenseDetails', 'generationParams', 'meta', 'gallerySettings'],
+  Collection: ['description', 'metadata'],
 };
 
 export const config = {
@@ -230,6 +232,10 @@ export const config = {
     storylineAlias: process.env.VECTOR_STORYLINE_ALIAS ?? 'storylines_semantic',
     model3dCollection: process.env.VECTOR_MODEL3D_COLLECTION ?? 'models3d_wemm2b_256_v1',
     model3dAlias: process.env.VECTOR_MODEL3D_ALIAS ?? 'models3d_semantic',
+    collectionCollection: process.env.VECTOR_COLLECTION_COLLECTION ?? 'collections_wemm2b_256_v1',
+    collectionAlias: process.env.VECTOR_COLLECTION_ALIAS ?? 'collections_semantic',
+    bountyCollection: process.env.VECTOR_BOUNTY_COLLECTION ?? 'bounties_wemm2b_256_v1',
+    bountyAlias: process.env.VECTOR_BOUNTY_ALIAS ?? 'bounties_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

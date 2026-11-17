@@ -134,7 +134,7 @@ export default PublicEndpoint(
             status,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       }
 
       const { rendersTotal } = ensureRegisterAppBlockRuntimeMetrics();

@@ -16,8 +16,10 @@ const challengeTagID = 676575
 // ImagesQuery is one getAllImages call for the supported subset, after the handler and the blocked-
 // browsing-tags enforcement have shaped it.
 type ImagesQuery struct {
-	Limit          int
-	Cursor         int
+	Limit  int
+	Cursor int
+	// Skip is the offset-paging skip (the REST endpoint's `page`): `OFFSET <skip>`; 0 adds nothing.
+	Skip           int
 	Sort           string
 	Period         string
 	PeriodMode     string
@@ -225,6 +227,13 @@ func (q *ImagesQuery) Build() Built {
 	and = append(and, `(i."nsfwLevel" & `+a.add(browsingLevel)+`) != 0 AND i."nsfwLevel" != 0`)
 	and = append(and, hydrate.ImageReviewedSQL("i"))
 
+	offset := ""
+	if q.Skip > 0 {
+		// Inlined, as Node does: an int, never request text.
+		offset = `
+    OFFSET ` + strconv.Itoa(q.Skip)
+	}
+
 	sql := `
     SELECT
       i.id,
@@ -282,13 +291,11 @@ func (q *ImagesQuery) Build() Built {
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
         OR NOT i."modelRestricted"
       )
-    ORDER BY ` + orderBy + `
+    ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
 
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout}
 }
 
-// imageOnSiteSQL is imageOnSiteSql('i.meta') (src/server/utils/image-onsite.ts).
-const imageOnSiteSQL = `(i.meta->>'civitaiResources' IS NOT NULL
- AND NOT (i.meta ? 'Version')
- AND (NOT (i.meta ? 'Model') OR (i.meta->>'Model') LIKE 'urn:air:%'))`
+// imageOnSiteSQL is imageOnSiteSql('i.meta'), shared with the version showcase lookup.
+const imageOnSiteSQL = hydrate.ImageOnSiteSQL

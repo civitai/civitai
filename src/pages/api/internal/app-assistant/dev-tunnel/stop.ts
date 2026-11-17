@@ -60,7 +60,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         : { clientKey: target.clientKey }),
       grantId: grant.grantId,
       ...extra,
-    }).catch(() => undefined);
+    });
 
   try {
     const outcome =

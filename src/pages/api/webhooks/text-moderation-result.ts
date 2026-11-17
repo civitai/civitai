@@ -54,7 +54,7 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
   if (shadow) {
     if (event.status === 'succeeded') await recordShadowSexualPrompt(data, shadow);
     else
-      await logToAxiom({
+      logToAxiom({
         name: 'shadow-sexual-prompt',
         type: 'warning',
         message: `Workflow ${event.status}`,
@@ -93,7 +93,7 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
         output: moderationStep.output,
       });
       if (!recorded) {
-        await logToAxiom({
+        logToAxiom({
           name: 'text-moderation-result',
           type: 'warning',
           message: 'Stale workflow callback ignored (workflowId mismatch)',
@@ -130,7 +130,7 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
     case 'expired':
     case 'canceled': {
       if (!hasEntity) {
-        await logToAxiom({
+        logToAxiom({
           name: 'text-moderation-result',
           type: event.status === 'failed' ? 'error' : 'warning',
           message: `Workflow ${event.status} (no entity attached)`,
@@ -151,7 +151,7 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
         status: statusMap[event.status],
       });
       if (!recorded) {
-        await logToAxiom({
+        logToAxiom({
           name: 'text-moderation-result',
           type: 'warning',
           message: 'Stale workflow callback ignored (workflowId mismatch)',
@@ -161,7 +161,7 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
         });
         return;
       }
-      await logToAxiom({
+      logToAxiom({
         name: 'text-moderation-result',
         type: event.status === 'failed' ? 'error' : 'warning',
         message: `Workflow ${event.status}`,
@@ -181,7 +181,7 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
       return;
     }
     default: {
-      await logToAxiom({
+      logToAxiom({
         name: 'text-moderation-result',
         type: 'warning',
         message: `Unexpected workflow status: ${event.status}`,
@@ -203,7 +203,7 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(200).json({ ok: true });
   } catch (e: unknown) {
     const error = e as Error;
-    await logToAxiom({
+    logToAxiom({
       name: 'text-moderation-result',
       type: 'error',
       message: error.message,
