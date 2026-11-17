@@ -144,6 +144,15 @@ describe('re-saving an entry with a different tag', () => {
     expect(strangerValues.at(-1)).toEqual([]);
   });
 
+  it('keeps a tag the collection does not list when its author re-saves the entry', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([collectionRow({ disableTagRequired: true })]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: 77, addedById: AUTHOR_ID, note: null },
+    ]);
+    await resave(AUTHOR_ID, undefined);
+    expect(writtenTag()).toBe(77);
+  });
+
   it.each([
     ['its author', AUTHOR_ID, undefined],
     ['its author, with another tag', AUTHOR_ID, TAG_B],
