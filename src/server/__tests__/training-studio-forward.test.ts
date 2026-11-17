@@ -165,7 +165,8 @@ describe('/api/training-studio/studio/[route]', () => {
   });
 
   it.each([
-    ['a 2xx page as a run that never started', 200, 403, /didn't start/],
+    ["the Studio's closed-beta page as a run that never started", 403, 403, /didn't start/],
+    ['a 2xx page as an unconfirmed submit', 200, 502, /check your runs/],
     ['any other page as an unconfirmed submit', 503, 502, /check your runs/],
   ])('answers %s', async (_label, upstream, status, message) => {
     fetchMock.mockResolvedValueOnce(
@@ -177,6 +178,19 @@ describe('/api/training-studio/studio/[route]', () => {
     const res = await call({ route: 'train' });
     expect(res.statusCode).toBe(status);
     expect(res.body).toEqual({ message: expect.stringMatching(message) });
+  });
+
+  it('answers a 2xx whose body breaks off mid-read as an unconfirmed submit', async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"workflowIds":['));
+        controller.error(new Error('connection reset'));
+      },
+    });
+    fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+    const res = await call({ route: 'train' });
+    expect(res.statusCode).toBe(502);
+    expect(res.body).toEqual({ message: expect.stringMatching(/check your runs/) });
   });
 
   it("sends the session cookie's bytes as the browser sent them", async () => {

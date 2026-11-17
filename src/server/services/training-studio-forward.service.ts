@@ -48,12 +48,12 @@ const NOT_STARTED: StudioForwardResult = {
 };
 
 // Far above any Studio answer; a larger body is not one.
-const MAX_BODY_BYTES = 1_000_000;
+const MAX_BODY_CHARS = 1_000_000;
 
 /** The response's JSON, or null for a body that is not JSON, is too large, or can't be read. */
 async function readJson(res: Response): Promise<unknown> {
   const text = await res.text().catch(() => null);
-  if (text === null || text.length > MAX_BODY_BYTES) return null;
+  if (text === null || text.length > MAX_BODY_CHARS) return null;
   try {
     return JSON.parse(text);
   } catch {
@@ -98,8 +98,8 @@ export async function forwardToStudio({
   if ((res.status >= 300 && res.status < 400) || res.status === 401)
     return { status: 401, body: { message: 'Sign in again to continue.' } };
   const json = await readJson(res);
-  // A page instead of the Studio's answer. On a 2xx it is a page served before any route ran (a
-  // sign-in or closed-beta page), so nothing started; otherwise a submit may have landed.
-  if (json === null) return res.ok ? NOT_STARTED : UNCONFIRMED;
+  // No readable JSON. The Studio answers 403 only before anything is submitted (its closed-beta
+  // page, a withheld run); any other status, a 2xx included, may follow a submit that landed.
+  if (json === null) return res.status === 403 ? NOT_STARTED : UNCONFIRMED;
   return { status: res.status, body: json };
 }

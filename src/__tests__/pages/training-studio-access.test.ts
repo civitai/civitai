@@ -6,11 +6,14 @@ import { OnboardingSteps } from '~/server/common/enums';
 /** The answer the Training Studio's server trusts to serve its embed routes to a user outside its
  *  closed beta: the real account gates and embed page flag, with only the caller supplied. */
 
-const flags = vi.hoisted(() => ({ trainingStudioUi: true }));
+const flags = vi.hoisted(() => ({
+  trainingStudioUi: true,
+  overlay: {} as Record<string, boolean>,
+}));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
   getFeatureFlagsLazy: vi.fn(() => ({ trainingStudioUi: flags.trainingStudioUi })),
-  computeUserFeatureFlagsOverlay: vi.fn(() => ({})),
+  computeUserFeatureFlagsOverlay: vi.fn(() => flags.overlay),
   getFliptGatedEligibility: vi.fn(() => ({})),
 }));
 vi.mock('~/server/services/user.service', () => ({
@@ -56,6 +59,7 @@ async function call(user: Record<string, unknown>) {
 describe('GET /api/training-studio/access', () => {
   beforeEach(() => {
     flags.trainingStudioUi = true;
+    flags.overlay = {};
   });
 
   it('answers ok for a user the embed is open to, uncached', async () => {
@@ -78,6 +82,13 @@ describe('GET /api/training-studio/access', () => {
 
   it('refuses a user the embed page is off for', async () => {
     flags.trainingStudioUi = false;
+    const res = await call(allowed);
+    expect(res.statusCode).toBe(403);
+    expect(res.body).not.toEqual({ ok: true });
+  });
+
+  it('refuses a user who switched back to the classic trainer', async () => {
+    flags.overlay = { trainingStudioUi: false };
     const res = await call(allowed);
     expect(res.statusCode).toBe(403);
     expect(res.body).not.toEqual({ ok: true });
