@@ -188,6 +188,12 @@ export const ingestionKeptAfterVerdict = (
   current === ImageIngestionStatus.NotFound && verdict === ImageIngestionStatus.Scanned
     ? ImageIngestionStatus.NotFound
     : verdict;
+/** The image without its `minor` flag, read only to apply the rule below and never sent on. */
+export const withoutMinorFlag = <T extends { minor?: boolean | null }>({
+  minor: _minor,
+  ...image
+}: T) => image;
+
 /** The images `minorMatureImageVisibleSql` shows only to their owner and moderators. */
 export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: number }) =>
   isMinorContentRestricted({ minor: image.minor === true, nsfwLevel: image.nsfwLevel });

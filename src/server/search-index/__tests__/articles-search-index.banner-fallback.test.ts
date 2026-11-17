@@ -10,7 +10,11 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
   onSearchIndexDocumentsCleanup: meili.cleanup,
 }));
 
-import { pushData, transformData } from '~/server/search-index/articles.search-index';
+import {
+  articleSelect,
+  pushData,
+  transformData,
+} from '~/server/search-index/articles.search-index';
 
 type Input = Parameters<typeof transformData>[0];
 const recordsOf = async (input: Input) => (await transformData(input)).records;
@@ -68,6 +72,11 @@ describe('articles search index', () => {
   });
 
   const restricted = (id: number) => ({ ...image(id, 4), minor: true });
+
+  it('reads the flag for the cover and the banner', () => {
+    expect(articleSelect.coverImage.select.minor).toBe(true);
+    expect(articleSelect.bannerImage.select.minor).toBe(true);
+  });
 
   it('🔴 indexes an article without a restricted minor cover, and not with its banner', async () => {
     const [record] = await recordsOf({

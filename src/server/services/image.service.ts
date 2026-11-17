@@ -1363,6 +1363,8 @@ export async function handleUnblockImages({
       resetBlockedNsfwLevel(ids),
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
+      // A minor-queue accept rewrites "minor", which no trigger watches.
+      queueArticlesForCoverImagesLazy(ids),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
@@ -4606,7 +4608,6 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     return records;
   },
   appendFn: async (records, { bypassLocal }) => {
-    // Entries cached before getImagesForModelVersion left out restricted minor images carry them.
     for (const entry of records) entry.images = entry.images.filter((i) => !isMinorMatureImage(i));
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
     // Passed on so the models search index, which fetches with bypassLocal, writes Redis-fresh tag
@@ -7645,6 +7646,10 @@ export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
 
+// Imported at the call: article-cover-reindex reaches image.service through the search-index barrel.
+const queueArticlesForCoverImagesLazy = async (imageIds: number[]) =>
+  (await import('~/server/services/article-cover-reindex')).queueArticlesForCoverImages(imageIds);
+
 export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -7658,6 +7663,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
+  if (flag === 'minor') await queueArticlesForCoverImagesLazy([id]);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7677,6 +7683,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
+  if (flag === 'minor') await queueArticlesForCoverImagesLazy(ids);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(

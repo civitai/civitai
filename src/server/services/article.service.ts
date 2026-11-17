@@ -7,7 +7,11 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
-import { hasBlockMarker, isMinorMatureImage } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  isMinorMatureImage,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -611,7 +615,7 @@ export const getArticles = async ({
         : []
     )
       .filter((image) => !minorMatureHidden(image, userId, isModerator))
-      .map(({ minor, ...image }) => image);
+      .map(withoutMinorFlag);
 
     const articleCategories = await getCategoryTags('article');
     const [cosmetics, eventDecorations] = includeCosmetics
@@ -750,7 +754,7 @@ export const getCivitaiNews = async () => {
       : []
   )
     .filter((image) => !minorMatureHidden(image))
-    .map(({ minor, ...image }) => image);
+    .map(withoutMinorFlag);
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
@@ -943,7 +947,7 @@ export const getArticleById = async ({
     const withheld = bodyImages
       .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
-    const contentImages = keptImages.map(({ minor, ...image }) => image);
+    const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;
     const content =
       isModerator || !article.content

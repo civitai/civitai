@@ -162,7 +162,12 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
+vi.mock('~/server/services/article-cover-reindex', () => ({
+  queueArticlesForCoverImages: vi.fn(async () => undefined),
+}));
+
 const { handleUnblockImages } = await import('../image.service');
+const { queueArticlesForCoverImages } = await import('~/server/services/article-cover-reindex');
 const { resolveEntityAppeal } = await import('../report.service');
 const { createNotification } = await import('../notification.service');
 const { refundMultiAccountTransaction } = await import('../buzz.service');
@@ -251,6 +256,12 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
     // The reset/unlock must be followed by the recompute — otherwise the row would
     // sit at Unrated instead of its true level.
     expect(capturedExecUnsafe.some((sql) => sql.includes('update_nsfw_levels_new'))).toBe(true);
+  });
+
+  // An accept out of the minor queue rewrites "minor", which no trigger watches.
+  it('queues the articles the unblocked images cover', async () => {
+    await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
+    expect(queueArticlesForCoverImages).toHaveBeenCalledWith([128489949]);
   });
 });
 

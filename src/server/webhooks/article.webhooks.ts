@@ -1,5 +1,9 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { hasBlockMarker, isMinorMatureImage } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  isMinorMatureImage,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
@@ -14,7 +18,6 @@ import { servableArticleImage } from '~/shared/utils/article-card-image';
 const { ingestion: _ingestion, ...publicArticleWhere } = articleSemanticEligibleWhere;
 
 const baseUrl = getBaseUrl();
-const withoutMinor = <T extends { minor: boolean | null }>({ minor: _minor, ...image }: T) => image;
 export const articleWebhooks = createWebhookProcessor({
   'new-article': {
     displayName: 'New Articles',
@@ -56,7 +59,7 @@ export const articleWebhooks = createWebhookProcessor({
 
         return {
           ...article,
-          coverImage: shownCover && withoutMinor(shownCover),
+          coverImage: shownCover && withoutMinorFlag(shownCover),
           type: categories[0] ?? 'article',
           tags,
           cover: coverAllowed && cover ? getEdgeUrl(cover, { width: 450 }) : null,

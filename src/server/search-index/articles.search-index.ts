@@ -6,7 +6,11 @@ import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/ut
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
-import { hasBlockMarker, isMinorMatureImage } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  isMinorMatureImage,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { articlesFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { articlesSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -72,9 +76,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-const withoutMinor = <T extends { minor?: boolean | null }>({ minor: _minor, ...image }: T) =>
-  image;
-
 export const transformData = async ({
   articles,
   cosmetics,
@@ -126,7 +127,7 @@ export const transformData = async ({
         tags: tags.map((articleTag) => articleTag.tag),
         coverImage: coverImage
           ? {
-              ...withoutMinor(coverImage),
+              ...withoutMinorFlag(coverImage),
               // Lift the cover image nsfwLevel to the article's aggregate so
               // front-end filters (ImageGuard blur, browsingLevel mask) reflect
               // the article's true rating whenever content images, userNsfwLevel,
@@ -151,7 +152,7 @@ export const transformData = async ({
 export type ArticleSearchIndexRecord = Awaited<ReturnType<typeof transformData>>['records'][number];
 
 const coverSelect = { select: { ...imageSelect, minor: true } };
-const articleSelect = {
+export const articleSelect = {
   ...articleDetailSelect,
   coverImage: coverSelect,
   bannerImage: coverSelect,

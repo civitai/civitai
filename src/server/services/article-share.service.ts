@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isServableBodyImage, removeBodyMedia } from '~/server/utils/article-body-media';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
-import { isMinorMatureImage } from '~/server/common/image-visibility';
+import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { dbWrite } from '~/server/db/client';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { isDefined } from '~/utils/type-guards';
@@ -314,8 +314,6 @@ function readSharedArticleRow(id: number) {
   });
 }
 
-const withoutMinor = <T extends { minor: boolean | null }>({ minor: _minor, ...image }: T) => image;
-
 /** Only what the read-only view renders. */
 function toSharedArticle(
   article: NonNullable<Awaited<ReturnType<typeof readSharedArticleRow>>>,
@@ -366,7 +364,7 @@ function toSharedArticle(
     coverImage:
       showCover && coverImage
         ? {
-            ...withoutMinor(coverImage),
+            ...withoutMinorFlag(coverImage),
             nsfwLevel: coverImage.nsfwLevel as NsfwLevel,
             meta: coverImage.meta as ImageMetaProps,
             metadata: coverImage.metadata as ImageMetadata,
