@@ -123,7 +123,7 @@ function giftedPermissionsSql(column: string) {
  * Takes back refunded purchases. With `narrow`, only those bits and meta keys go and the row stays
  * for what is kept (an older purchase or a gift); without it, the whole grant goes. A gift's bits
  * are never taken: they are read from the row when it is written. Neither throws on a row that is
- * already gone.
+ * already gone. Returns how many rows the write touched (0 or 1).
  */
 export async function revokeModelVersionAccess({
   userId,
@@ -135,16 +135,15 @@ export async function revokeModelVersionAccess({
   narrow?: { revokePermissions: number; removeKeys: string[] };
 }) {
   if (narrow) {
-    await dbWrite.$executeRaw`
+    return dbWrite.$executeRaw`
       UPDATE "EntityAccess"
          SET "permissions" = "permissions"
                & ~(${narrow.revokePermissions}::int & ~${giftedPermissionsSql('"meta"')}),
              "meta" = ${asJsonbObjectSql('"meta"')} - ${narrow.removeKeys}::text[]
        WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
          AND "accessorId" = ${userId} AND "accessorType" = 'User'`;
-    return;
   }
-  await dbWrite.entityAccess.deleteMany({
+  const { count } = await dbWrite.entityAccess.deleteMany({
     where: {
       accessToId: modelVersionId,
       accessToType: 'ModelVersion',
@@ -152,4 +151,5 @@ export async function revokeModelVersionAccess({
       accessorType: 'User',
     },
   });
+  return count;
 }
