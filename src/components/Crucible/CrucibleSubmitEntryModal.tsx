@@ -37,7 +37,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import {
   GeneratorMediaPicker,
-  useGeneratorSelectionStore,
+  generatorSelectionStore,
+  useGeneratorSelection,
 } from '~/components/EntrySubmit/GeneratorMediaPicker';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -393,8 +394,8 @@ export default function CrucibleSubmitEntryModal({
   const countAutoSubmitFailure = () =>
     setAutoSubmit((prev) => prev && { ...prev, failed: prev.failed + 1 });
 
-  const generatorSelected = useGeneratorSelectionStore((state) => state.selected);
-  const deselectAllGenerator = useGeneratorSelectionStore((state) => state.deselectAll);
+  const generatorSelected = useGeneratorSelection();
+  const deselectAllGenerator = generatorSelectionStore.actions.clear;
 
   const createEntryPostMutation = trpc.crucible.createEntryPost.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
