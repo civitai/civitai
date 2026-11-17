@@ -3399,6 +3399,7 @@ async function approveRequestUnderClaim(
     where: { blockId: request.slug },
     select: {
       id: true,
+      currentVersionSha: true,
       appId: true,
       repoUrl: true,
       trustTier: true,
@@ -3573,7 +3574,16 @@ async function approveRequestUnderClaim(
   // 🔴 PUBLISH FLOOR. Refuse before anything is written: the listing writes below are
   // log-and-continue, so a refusal there would deploy the app and leave only a log line.
   // Ungated paths: see listing-publish-floor.ts.
-  if (goLive?.firstGoLive) {
+  // A reset listing is exempt (it already went live), except a first version's left by a late
+  // hold: it never went live, and the hold doubted its content after the first check ran.
+  const lateHeldFirstVersion =
+    goLive != null &&
+    !goLive.firstGoLive &&
+    !existingAppBlock?.currentVersionSha &&
+    (await import('./publish-request-holds.service').then((m) =>
+      m.hadLateHold(dbWrite, request.slug)
+    ));
+  if (goLive && (goLive.firstGoLive || lateHeldFirstVersion)) {
     const floor = checkListingMeetsFloor(goLive.listing);
     if (!floor.ok) throw new Error(listingFloorApproveRefusal(floor.missing));
   }

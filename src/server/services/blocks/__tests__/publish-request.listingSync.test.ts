@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
@@ -845,6 +845,55 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
     expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
       where: { id: 'apb_1', status: 'suspended' },
       data: { status: 'approved' },
+    });
+  });
+
+  describe('a first version re-approved after a late hold (its hold since cleared)', () => {
+    /** A first version a late hold left: no current sha, and a late-resuspend on record. */
+    function lateHeldFirstVersion({ late = true, currentVersionSha = null as string | null } = {}) {
+      db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), currentVersionSha });
+      db.write.$queryRaw.mockImplementation(async (strings: unknown) =>
+        Array.isArray(strings) && strings.join('').includes('publishRequestHoldLateResuspend')
+          ? [{ late }]
+          : []
+      );
+      db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    }
+    afterEach(() => {
+      db.write.$queryRaw.mockImplementation(async () => []);
+    });
+
+    it('🔴 re-runs the floor: media now below it refuses, and the app stays suspended', async () => {
+      lateHeldFirstVersion();
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_held', iconId: 53, coverId: null, contentRating: 'pg' })
+      );
+      await expectRefusedBeforeAnyWrite('cover');
+      expect(db.write.appBlock.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('passes the floor with an icon and a cover, and un-suspends the app', async () => {
+      lateHeldFirstVersion();
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_held', iconId: 53, coverId: 47, contentRating: 'pg' })
+      );
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+      expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: 'apb_1', status: 'suspended' },
+        data: { status: 'approved' },
+      });
+    });
+
+    it('a version that already went live stays exempt, late hold or not', async () => {
+      lateHeldFirstVersion({ currentVersionSha: 'a'.repeat(40) });
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_live', iconId: null, coverId: null, contentRating: 'pg' })
+      );
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
     });
   });
 

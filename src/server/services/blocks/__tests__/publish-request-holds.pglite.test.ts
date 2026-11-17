@@ -9,6 +9,7 @@ import {
   claimApprove,
   clearHold,
   getOpenHoldCountsBySlug,
+  hadLateHold,
   placeHold,
   PublishRequestHeldError,
   releaseApproveClaim,
@@ -452,6 +453,23 @@ describe('the final check after an on-site approve has committed', () => {
         entityId: hold.id,
       },
     ]);
+  });
+
+  it('🔴 hadLateHold finds the late re-suspend on that app only, and stays true once the hold is cleared', async () => {
+    const hold = await lateHold();
+    expect(await hadLateHold(raw, 'app-a')).toBe(false);
+    await tx((t) =>
+      resolveHoldsAtApprove(t, {
+        slug: 'app-a',
+        actorUserId: HUMAN,
+        shownHoldIds: [],
+        afterSideEffects: true,
+      })
+    );
+    expect(await hadLateHold(raw, 'app-a')).toBe(true);
+    expect(await hadLateHold(raw, 'app-b')).toBe(false);
+    await clearHold(raw, { holdId: hold.id, actorUserId: HUMAN, reason: 'check finished, clean' });
+    expect(await hadLateHold(raw, 'app-a')).toBe(true);
   });
 
   it('a shown hold is still overridden alongside a late one', async () => {

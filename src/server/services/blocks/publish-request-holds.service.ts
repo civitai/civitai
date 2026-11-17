@@ -92,6 +92,18 @@ export async function getOpenHoldsBySlug(
     ORDER BY h.created_at`;
 }
 
+/** Whether a hold on this app ever landed after an approve's side effects and re-suspended it. */
+export async function hadLateHold(db: RawClient, slug: string): Promise<boolean> {
+  const [row] = await db.$queryRaw<{ late: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM app_publish_request_holds h
+      JOIN "ModActivity" m ON m."entityType" = 'publishRequestHold' AND m."entityId" = h.id
+      WHERE h.slug = ${slug} AND m.activity = 'publishRequestHoldLateResuspend'
+    ) AS late`;
+  return row?.late === true;
+}
+
 export async function listHoldsBySlug(
   db: RawClient,
   slugs: string[],
