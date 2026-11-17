@@ -3,14 +3,16 @@ import { describe, expect, it, vi } from 'vitest';
 const brake = vi.hoisted(() => ({ pauseSends: vi.fn(), resumeSends: vi.fn(), readBrake: vi.fn() }));
 vi.mock('$lib/server/cases/brake', () => brake);
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('$lib/server/cases/backlog-import', () => ({
+const imports = vi.hoisted(() => ({
   importBatch: vi.fn(),
   undoImport: vi.fn(),
   ImportRefusedError: class extends Error {},
 }));
+vi.mock('$lib/server/cases/backlog-import', () => imports);
 vi.mock('$lib/server/cases/cases.service', () => ({
   listBatches: vi.fn(),
   casesStoreMessage: vi.fn(),
+  caseDataBlocked: vi.fn(async () => null),
 }));
 
 const { actions } = await import('../+page.server');
@@ -43,5 +45,7 @@ describe('/cases grants', () => {
     expect(
       ((await actions.undo!(event(none, { batchId: 'b-1' }))) as { status: number }).status
     ).toBe(403);
+    expect(imports.importBatch).not.toHaveBeenCalled();
+    expect(imports.undoImport).not.toHaveBeenCalled();
   });
 });

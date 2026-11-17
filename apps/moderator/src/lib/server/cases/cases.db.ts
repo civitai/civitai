@@ -17,3 +17,6 @@ export const noticesOfBatch = (db: CasesDb, batchId: string) =>
     .selectFrom('case_notice as n')
     .innerJoin('case_record as c', 'c.id', 'n.case_id')
     .where('c.import_batch_id', '=', batchId);
+
+/** A row `sending` for longer than this may or may not have gone out; a person checks it. */
+export const STALE_SENDING_MS = 10 * 60 * 1000;

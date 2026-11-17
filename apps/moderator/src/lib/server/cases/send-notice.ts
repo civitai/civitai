@@ -23,7 +23,8 @@ export const DEFAULT_HOURLY_CEILING = 400;
 
 export type SendOutcome =
   | 'sent'
-  // The relay refused it with an SMTP reply: not delivered, so the row may be sent again.
+  // Not delivered: the relay refused it with an SMTP reply, or it was never sent (erased, or the address
+  // no longer matches its hash). The row may be claimed again.
   | 'failed'
   // It may have been delivered (a timeout, a dropped connection, or the `sent` write failed). The row is
   // left `sending` for a person to check, and sends are paused.
@@ -98,10 +99,11 @@ function errorCode(e: unknown) {
  * 3. The claim: one UPDATE from `pending`/`failed` to `sending`. Postgres serialises concurrent
  *    UPDATEs of a row and re-checks the WHERE, so exactly one sender gets it back.
  * 4. The send, from the row's own snapshot, retried only on an SES throttle.
- * 5. `sent` with the message id; `failed` only when the relay refused it with an SMTP reply.
+ * 5. `sent` with the message id; `failed` when the relay refused it with an SMTP reply (or, before any
+ *    send, when the row was erased or its address no longer matches its hash).
  *
  * Anything else leaves the row `sending`, never retried here: it may have been delivered, so a person
- * checks and resends deliberately. That covers a process that died mid-send, a send that timed out
+ * checks it and resolves it (`resolveSending`). That covers a process that died mid-send, a send that timed out
  * after the relay may have accepted it, and a `sent` write that failed; the last two also pause sends.
  */
 export async function sendNotice(noticeId: number, deps: SendDeps): Promise<SendOutcome> {

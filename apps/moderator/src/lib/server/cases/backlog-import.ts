@@ -1,6 +1,6 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { casesDb, noticesOfBatch, SENDABLE, type CasesDb } from './cases.db';
+import { casesDb, noticesOfBatch, SENDABLE, STALE_SENDING_MS, type CasesDb } from './cases.db';
 import { CASE_TARGET_STATES } from './cases-tables';
 import { newPublicRef } from './public-ref';
 import { hashAddress } from './send-notice';
@@ -306,6 +306,62 @@ export async function batchCounts(batchId: string, { db = casesDb() }: { db?: Ca
 
 /** The state of a case whose import was undone: kept only so its events stay attached. */
 export const UNDONE_STATE = 'Undone';
+
+/**
+ * A person's verdict on a notice left `sending` (it may or may not have been delivered): `sent` once
+ * they found it delivered, `failed` once they found it was not, which lets it be sent again. Only a
+ * row of this batch that has stopped (it carries an error, or was claimed over STALE_SENDING_MS ago),
+ * never one a send is still working on. Recorded as a `notice_resolved` event.
+ */
+export async function resolveSending(
+  batchId: string,
+  rowId: number,
+  outcome: 'sent' | 'failed',
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
+  return db.transaction().execute(async (tx) => {
+    const row = await tx
+      .updateTable('case_notice')
+      .set(
+        outcome === 'sent'
+          ? { status: 'sent', sent_at: sql`coalesce(attempted_at, now())` }
+          : { status: 'failed', error: 'ResolvedNotDelivered' }
+      )
+      .where('id', '=', rowId)
+      .where('status', '=', 'sending')
+      .where((eb) =>
+        eb.or([
+          eb('error', 'is not', null),
+          eb(
+            'attempted_at',
+            '<',
+            sql<Date>`now() - ${STALE_SENDING_MS} * interval '1 millisecond'`
+          ),
+        ])
+      )
+      .where(
+        'case_id',
+        'in',
+        tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId)
+      )
+      .returning(['id', 'case_id'])
+      .executeTakeFirst();
+    if (!row)
+      throw new ImportRefusedError(
+        `row ${rowId} is not a stopped send of batch ${batchId}; refresh and check it again`
+      );
+    await tx
+      .insertInto('case_event')
+      .values({
+        case_id: row.case_id,
+        actor_id: actorId,
+        type: 'notice_resolved',
+        data: JSON.stringify({ noticeRowId: row.id, outcome }),
+      })
+      .execute();
+    return { rowId: row.id, outcome };
+  });
+}
 
 export type ExportState = 'never' | 'outstanding' | 'closed';
 

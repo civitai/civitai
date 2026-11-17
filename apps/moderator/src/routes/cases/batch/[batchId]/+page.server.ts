@@ -1,6 +1,6 @@
 import { error, fail } from '@sveltejs/kit';
 import { requiresGrant } from '$lib/server/access';
-import { batchCounts, importSentJsonl } from '$lib/server/cases/backlog-import';
+import { batchCounts, importSentJsonl, resolveSending } from '$lib/server/cases/backlog-import';
 import { readBrake } from '$lib/server/cases/brake';
 import { caseActionFailure, withCaseData } from '$lib/server/cases/case-routes';
 import { BATCH_ID } from '$lib/server/cases/cases.db';
@@ -11,7 +11,14 @@ import {
   STALE_SENDING_MS,
   startBatchSend,
 } from '$lib/server/cases/cases.service';
+import { parseForm } from '$lib/server/query';
+import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
+
+const resolveSchema = z.object({
+  rowId: z.coerce.number().int().positive(),
+  outcome: z.enum(['sent', 'failed']),
+});
 
 export const load: PageServerLoad = async ({ params, locals }) => {
   if (!BATCH_ID.test(params.batchId)) error(404, 'Unknown batch.');
@@ -68,6 +75,22 @@ export const actions: Actions = {
       return { scope: 'importSent', ...result };
     } catch (e) {
       return caseActionFailure('importSent', e);
+    }
+  }),
+  resolve: requiresGrant('cases.act', async ({ params, request, locals }) => {
+    const batchId = params.batchId ?? '';
+    if (!BATCH_ID.test(batchId)) return fail(404, { scope: 'resolve', error: 'Unknown batch.' });
+    const input = parseForm(resolveSchema, await request.formData());
+    if (typeof input === 'string') return fail(400, { scope: 'resolve', error: input });
+    try {
+      const blocked = await caseDataBlocked();
+      if (blocked) return fail(503, { scope: 'resolve', error: blocked });
+      const result = await resolveSending(batchId, input.rowId, input.outcome, {
+        actorId: locals.user.id,
+      });
+      return { scope: 'resolve', ...result };
+    } catch (e) {
+      return caseActionFailure('resolve', e);
     }
   }),
 };

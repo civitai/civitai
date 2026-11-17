@@ -74,6 +74,7 @@ export async function batchPreview(
       'n.error',
       'n.attempted_at as attemptedAt',
       'n.sent_at as sentAt',
+      'n.message_id as messageId',
     ])
     .orderBy('n.id')
     .execute();
@@ -93,8 +94,7 @@ export async function batchPreview(
   return rows;
 }
 
-/** A row `sending` for longer than this may or may not have gone out; a person checks it. */
-export const STALE_SENDING_MS = 10 * 60 * 1000;
+export { STALE_SENDING_MS } from './cases.db';
 
 const runningKey = (batchId: string) =>
   `${REDIS_SYS_KEYS.APP.CASES_SEND_RUNNING}:${batchId}` as RedisKeyTemplateSys;

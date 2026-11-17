@@ -15,6 +15,7 @@ const {
   exportState,
   exportUnsent,
   importBatch,
+  resolveSending,
   importSentJsonl,
   undoImport,
   ImportRefusedError,
@@ -340,6 +341,49 @@ describe('the batch', () => {
     expect(await exportState('backlog-test', { db })).toBe('outstanding');
     await importSentJsonl('backlog-test', '', { actorId: 1, db });
     expect(await exportState('backlog-test', { db })).toBe('closed');
+  });
+
+  it('lets a person resolve a stopped send, never one still in flight', async () => {
+    const [first, second] = await notices();
+    await expect(
+      resolveSending('backlog-test', first.id, 'sent', { actorId: 1, db })
+    ).rejects.toThrow(/not a stopped send/);
+    // Claimed just now and still in flight: not resolvable yet.
+    await db
+      .updateTable('case_notice')
+      .set({ status: 'sending', attempted_at: new Date() })
+      .where('id', 'in', [first.id, second.id])
+      .execute();
+    await expect(
+      resolveSending('backlog-test', first.id, 'failed', { actorId: 1, db })
+    ).rejects.toThrow(/not a stopped send/);
+
+    // An ambiguous send leaves an error on the row: resolvable at once.
+    await db
+      .updateTable('case_notice')
+      .set({ error: 'Unknown:Error' })
+      .where('id', '=', first.id)
+      .execute();
+    await resolveSending('backlog-test', first.id, 'failed', { actorId: 3, db });
+    expect(await sendNotice(first.id, deps())).toBe('sent');
+
+    // Older than the stale window: resolvable as delivered, and never sent again.
+    await db
+      .updateTable('case_notice')
+      .set({ attempted_at: new Date(Date.now() - 11 * 60 * 1000) })
+      .where('id', '=', second.id)
+      .execute();
+    await resolveSending('backlog-test', second.id, 'sent', { actorId: 3, db });
+    expect(await sendNotice(second.id, deps())).toBe('not-claimable');
+    const events = await db
+      .selectFrom('case_event')
+      .select(['actor_id', 'data'])
+      .where('type', '=', 'notice_resolved')
+      .execute();
+    expect(events.map((e) => [e.actor_id, (e.data as { outcome: string }).outcome])).toEqual([
+      [3, 'failed'],
+      [3, 'sent'],
+    ]);
   });
 
   it('refuses to undo a batch that was ever exported for the fallback', async () => {

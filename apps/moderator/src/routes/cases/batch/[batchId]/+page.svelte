@@ -24,6 +24,8 @@
     started?: boolean;
     updated?: number[];
     refused?: number[];
+    rowId?: number;
+    outcome?: string;
   };
   const result = $derived(form as Result | null);
   const PANEL = 'rounded-xl border border-dark-4 bg-dark-6 p-5';
@@ -116,6 +118,8 @@
     <p class="text-sm text-dark-0">
       {result.started ? 'Sending started.' : 'A send of this batch is already running.'}
     </p>
+  {:else if result?.scope === 'resolve'}
+    <p class="text-sm text-dark-0">Row {result.rowId} marked {result.outcome}.</p>
   {:else if result?.scope === 'importSent'}
     <p class="text-sm text-dark-0">
       Marked {result.updated?.length ?? 0} sent; refused {result.refused?.length ?? 0} already sent
@@ -183,7 +187,19 @@
               {unknown(row) ? 'unknown (check before resending)' : row.status}
             </Badge>
             {#if row.error}<span class="text-red-300">{row.error}</span>{/if}
+            {#if row.messageId}<span class="text-dark-2">message {row.messageId}</span>{/if}
           </div>
+          {#if data.canAct && unknown(row)}
+            <form method="POST" action="?/resolve" use:enhance class="mt-2 flex flex-wrap gap-2">
+              <input type="hidden" name="rowId" value={row.id} />
+              <Button type="submit" name="outcome" value="sent" size="sm" variant="outline">
+                Checked: delivered
+              </Button>
+              <Button type="submit" name="outcome" value="failed" size="sm" variant="outline">
+                Checked: not delivered (may be sent again)
+              </Button>
+            </form>
+          {/if}
           <p class="mt-2 font-medium text-dark-0">{row.subject}</p>
           <pre class="mt-1 whitespace-pre-wrap text-dark-2">{row.body}</pre>
         </li>
