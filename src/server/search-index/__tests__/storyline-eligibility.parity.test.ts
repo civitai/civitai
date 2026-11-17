@@ -39,11 +39,13 @@ const SCHEMA = `
   CREATE VIEW "EvidenceHeldUser" AS
     SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
   CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "postId" int,
-    "needsReview" text, "blockedFor" text);
+    "needsReview" text, "blockedFor" text, ingestion text NOT NULL DEFAULT 'Scanned',
+    "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
+    poi boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 1);
   CREATE TABLE "Storyline" (
     id int PRIMARY KEY, "userId" int NOT NULL, "tosViolation" boolean NOT NULL,
     "maxNsfwLevel" int NOT NULL, "nsfwLevel" int NOT NULL, "moderatorNsfwLevel" int,
-    "minorByScan" boolean NOT NULL DEFAULT false
+    "minorByScan" boolean NOT NULL DEFAULT false, "coverImageId" int
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "tosViolation" boolean NOT NULL,
@@ -132,6 +134,21 @@ const storyline = (id: number, name: string, over: Partial<typeof eligible> = {}
   };
 };
 
+/** Runs after the insert: a column the helper does not set. */
+const withSql = (row: ParityRow, ...sql: string[]): ParityRow => ({
+  ...row,
+  insert: [row.insert, ...sql].join(';\n'),
+});
+
+/** An eligible storyline whose cover is a clean image (not on its post) changed by `set`. */
+const cover = (id: number, name: string, set: string) =>
+  withSql(
+    storyline(id, name),
+    `INSERT INTO "Image" (id, "userId") VALUES (${id * 100 + 9}, 1)`,
+    ...(set ? [`UPDATE "Image" SET ${set} WHERE id = ${id * 100 + 9}`] : []),
+    `UPDATE "Storyline" SET "coverImageId" = ${id * 100 + 9} WHERE id = ${id}`
+  );
+
 // The site's joins, as the storyline feed (getStorylinesInfinite) makes them.
 const SITE = `SELECT st.id FROM "Storyline" st
   JOIN "User" u ON u.id = st."userId"
@@ -185,6 +202,20 @@ const spec: ParitySpec = {
     // A hold written before csamHeld, with the apply that sets it failed.
     storyline(34, 'textPendingHold', { text: 'clean', textHold: 'Pending' }),
     storyline(35, 'eligible:textHoldDismissed', { text: 'clean', textHold: 'Dismissed' }),
+    withSql(
+      storyline(36, 'minorByScan'),
+      `UPDATE "Storyline" SET "minorByScan" = true WHERE id = 36`
+    ),
+    cover(37, 'eligible:cleanCover', ''),
+    cover(38, 'coverScanned', `ingestion = 'Pending'`),
+    cover(39, 'coverNotInReview', `"needsReview" = 'minor'`),
+    cover(40, 'coverTos', `"tosViolation" = true`),
+    cover(41, 'coverBlockedFor', `"blockedFor" = 'AiNotVerified'`),
+    cover(42, 'coverMinor', `minor = true`),
+    cover(43, 'coverPoi', `poi = true`),
+    cover(44, 'coverUnrated', `"nsfwLevel" = 0`),
+    cover(45, 'coverBlocked', `"nsfwLevel" = 32`),
+    cover(46, 'coverHeld', `"userId" = 4`),
   ],
   clauses: [
     'tosViolation',
@@ -214,6 +245,16 @@ const spec: ParitySpec = {
     'anyImageHeld',
     'textHeld',
     'textPendingHold',
+    'minorByScan',
+    'coverScanned',
+    'coverNotInReview',
+    'coverTos',
+    'coverBlockedFor',
+    'coverMinor',
+    'coverPoi',
+    'coverUnrated',
+    'coverBlocked',
+    'coverHeld',
   ],
   site: async (prisma) =>
     (await prisma.$queryRawUnsafe<{ id: number }[]>(SITE)).map((r) => Number(r.id)),
