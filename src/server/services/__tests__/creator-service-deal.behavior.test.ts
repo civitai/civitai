@@ -488,9 +488,7 @@ describe('request', () => {
     await q(`DELETE FROM "UserEngagement"`);
     await q(`UPDATE "ServiceOffering" SET "maxOpenDeals" = 1`);
     await request();
-    await expect(request({ buyerId: STRANGER })).rejects.toThrow(
-      expect.objectContaining({ message: "This offering isn't taking requests right now" })
-    );
+    await expect(request({ buyerId: STRANGER })).rejects.toThrow(/not taking new requests/);
     expect(buzz.createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
   });
 
@@ -505,28 +503,19 @@ describe('request', () => {
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
-  it('refuses a request to a muted seller as not taking requests, before any charge', async () => {
-    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
-    await expect(request()).rejects.toThrow(
-      expect.objectContaining({ message: "This offering isn't taking requests right now" })
-    );
-    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
-    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
-  });
-
-  it("answers a muted seller's offering exactly as a full one, so the answer reveals nothing", async () => {
+  it("answers a muted seller's offering exactly as a banned one's, before any charge", async () => {
     const answer = (error: unknown) => {
       const { name, code, message } = error as { name: string; code: string; message: string };
       return { name, code, message };
     };
     await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
     const muted = answer(await request().catch((e) => e));
-    await q(`UPDATE "User" SET muted = false WHERE id = $1`, [SELLER]);
-    await q(`UPDATE "ServiceOffering" SET "maxOpenDeals" = 1`);
-    await request();
-    const full = answer(await request({ buyerId: STRANGER }).catch((e) => e));
+    await q(`UPDATE "User" SET muted = false, "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    const banned = answer(await request().catch((e) => e));
     expect(muted.code).toBeDefined();
-    expect(muted).toEqual(full);
+    expect(muted).toEqual(banned);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
   });
 
   it('takes the same request once the seller is no longer muted', async () => {
