@@ -166,7 +166,7 @@ function UserModelsPage() {
             ) : viewingDraft ? (
               <UserDraftModels />
             ) : viewingTraining ? (
-              features.classicTrainerOff ? (
+              features.classicTrainerOff && features.trainingStudioUi ? (
                 <TrainingStudioRedirect />
               ) : (
                 <UserTrainingModels />
@@ -181,7 +181,6 @@ function UserModelsPage() {
   );
 }
 
-// The Training tab lists classic-trainer runs; with the classic trainer off, the Studio's run list replaces it.
 function TrainingStudioRedirect() {
   const router = useRouter();
   useEffect(() => {
