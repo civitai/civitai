@@ -69,7 +69,7 @@ describe('ImageFeedFilters sort while searching', () => {
   }
 
   test('tapping the locked sort says why it is locked, and a tap elsewhere closes it', async () => {
-    flags.value = { feedSearch: true };
+    flags.value = { feedSearch: true, moreLikeThis: true };
     router.query = { similarTo: '123' };
     renderWithProviders(<ImageFeedFilters />);
     const reason = page.getByText('Clear the search to sort the feed');
@@ -82,7 +82,7 @@ describe('ImageFeedFilters sort while searching', () => {
   });
 
   test('the locked sort shows no reason until tapped', async () => {
-    flags.value = { feedSearch: true };
+    flags.value = { feedSearch: true, moreLikeThis: true };
     router.query = { similarTo: '123' };
     renderWithProviders(<ImageFeedFilters />);
 
@@ -91,7 +91,7 @@ describe('ImageFeedFilters sort while searching', () => {
   });
 
   test('tapping the locked audience says why it is locked', async () => {
-    flags.value = { feedSearch: true };
+    flags.value = { feedSearch: true, moreLikeThis: true };
     currentUser.value = { id: 1 };
     router.query = { similarTo: '123' };
     renderWithProviders(
