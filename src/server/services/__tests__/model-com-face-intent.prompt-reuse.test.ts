@@ -48,7 +48,7 @@ const activeIntentPrompt = (id: number) =>
     'label:model-com-face-intent': { id, key: 'label:model-com-face-intent', content: 'x' },
   });
 
-const writes = { record: vi.fn(), lock: vi.fn(async () => true) };
+const writes = { record: vi.fn(), lock: vi.fn(async () => true), suppress: vi.fn() };
 const resolve = () =>
   resolveComFaceIntent({ modelId: MODEL_ID, userId: OWNER_ID, ...listing }, writes);
 

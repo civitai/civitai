@@ -22,6 +22,7 @@ import {
   readComFaceIntentModel,
   recordComFaceIntent,
   reusableComFaceIntent,
+  suppressComFaceIntentRelock,
 } from '~/server/services/model-com-face-intent.service';
 
 export { getOwnTriggerWords };
@@ -186,7 +187,7 @@ export async function checkComFaceIntentVerdict({
   const { promptId } = verdict;
   if (verdict.output.detected)
     return { status: 'detected', reason: verdict.output.reason, promptId };
-  // A drop in these per prompt version is how a publish that allows too much gets noticed.
+  // Counted per prompt version, so a publish that shifts how much is allowed shows up.
   logToAxiom({
     type: 'info',
     name: 'model-com-face-intent',
@@ -199,6 +200,7 @@ export async function checkComFaceIntentVerdict({
 export type ComFaceIntentWrites = {
   record: typeof recordComFaceIntent;
   lock: typeof lockForComFaceIntent;
+  suppress: typeof suppressComFaceIntentRelock;
 };
 
 /**
@@ -208,11 +210,16 @@ export type ComFaceIntentWrites = {
  * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
  * first made while the model was not mature, unless a moderator has ruled on its rating since.
  * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
- * owns the model. `writes` replaces how the verdict is stored and the lock added (e.g. no-ops).
+ * owns the model. `writes` replaces how the verdict is stored, the lock added and a ruling's
+ * relock suppression kept.
  */
 export async function resolveComFaceIntent(
   { modelId, userId, ...listing }: ComFaceIntentListing & { modelId?: number; userId?: number },
-  writes: ComFaceIntentWrites = { record: recordComFaceIntent, lock: lockForComFaceIntent }
+  writes: ComFaceIntentWrites = {
+    record: recordComFaceIntent,
+    lock: lockForComFaceIntent,
+    suppress: suppressComFaceIntentRelock,
+  }
 ): Promise<ComFaceIntentVerdict & { disputable?: boolean }> {
   const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
   const model = found && found.userId === userId ? found : null;
@@ -257,7 +264,10 @@ export async function resolveComFaceIntent(
   // undone: neither by the stored detection nor by a fresh one under a new prompt version.
   const earlier = meta?.comFaceIntent;
   const recordedAt = earlier?.textHash === textHash && earlier.at ? new Date(earlier.at) : null;
-  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) return verdict;
+  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) {
+    await writes.suppress(model.id, textHash);
+    return verdict;
+  }
 
   const locked = await writes.lock(model.id, textHash).catch((error: Error) => {
     logToAxiom({

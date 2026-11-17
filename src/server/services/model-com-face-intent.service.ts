@@ -41,9 +41,8 @@ export async function activeComFaceIntentPromptId(): Promise<number | undefined>
     .catch(() => undefined);
 }
 
-/** The stored verdict, while it was read from this exact listing text: the check's own verdict only
- *  under the prompt version that made it (`activePromptId`), so publishing or restoring a version
- *  retires the rest; a moderator's overturn under any version. */
+/** The stored verdict for this exact text. A new or restored prompt version retires the check's own
+ *  verdicts, never a moderator's overturn. */
 export function reusableComFaceIntent(
   meta: unknown,
   textHash: string,
@@ -125,6 +124,22 @@ export async function recordComFaceIntent(
       error: error.message,
     })
   );
+}
+
+/** Keeps a moderator's ruling on this text from being undone by a later re-judgement of it, whatever
+ *  that writes to the verdict's `at`. Best effort, as `recordComFaceIntent`. */
+export async function suppressComFaceIntentRelock(modelId: number, textHash: string) {
+  await dbWrite
+    .$executeRaw(suppressComFaceIntentRelockSql(modelId, textHash))
+    .catch((error: Error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-com-face-intent',
+        message: 'relock suppression not stored',
+        modelId,
+        error: error.message,
+      })
+    );
 }
 
 /**
