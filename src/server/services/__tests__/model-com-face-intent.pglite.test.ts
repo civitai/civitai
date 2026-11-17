@@ -344,3 +344,53 @@ describe('the face check after a moderator unlocked from the model form', () => 
     expect((await row()).meta.comFaceIntent.overturnedAt).toBeTruthy();
   });
 });
+
+// Decision: a fresh verdict on edited text is not auto-locked over a moderator's nsfw ruling made
+// since the previous stored verdict, and that holds past one save: the skip suppresses re-locking
+// this text, as a form unlock does. Without that, the next save reuses the verdict just stored,
+// which is newer than the ruling, and locks.
+describe('the face check after a moderator ruling since the previous verdict', () => {
+  const OWNER = 1;
+  const RULED_AT = new Date('2026-06-01T00:00:00Z');
+  const stored = { name: 'Model', description: 'edited listing', triggerWords: [] };
+  const faceCheck = (listing = stored) =>
+    assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
+
+  beforeEach(async () => {
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue({ status: 'ok', output: { detected: true } });
+    // The ruling query honours its date: a ruling at RULED_AT is found only from before it.
+    dbMock.dbWrite.modActivity.findFirst.mockImplementation((async (args: {
+      where: { createdAt: { gt: Date } };
+    }) => (args.where.createdAt.gt < RULED_AT ? { id: 1 } : null)) as never);
+    const previous = { detected: false, textHash: 'old', at: '2026-01-01T00:00:00Z' };
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, '{}', true, $2, $3)`,
+      [MODEL, { comFaceIntent: previous }, stored.description]
+    );
+  });
+
+  it('refuses the face without locking, on this save and the next of the same text', async () => {
+    await expect(faceCheck()).rejects.toThrow();
+    await expect(faceCheck()).rejects.toThrow();
+    expect((await row()).lockedProperties).toEqual([]);
+    expect(activities).toHaveLength(0);
+  });
+
+  it('locks a different text saved next, which the ruling never saw', async () => {
+    await expect(faceCheck()).rejects.toThrow();
+    const next = { ...stored, description: 'another listing' };
+    await db.query(`UPDATE "Model" SET description = $2 WHERE id = $1`, [MODEL, next.description]);
+    await expect(faceCheck(next)).rejects.toThrow();
+    expect((await row()).lockedProperties).toEqual(['nsfw']);
+  });
+
+  // A moderator's own lock is a model update that never reads the suppression; a face save after
+  // it keeps that lock.
+  it("keeps a moderator's manual lock on the suppressed text", async () => {
+    await expect(faceCheck()).rejects.toThrow();
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{nsfw}' WHERE id = $1`, [MODEL]);
+    await expect(faceCheck()).rejects.toThrow();
+    expect((await row()).lockedProperties).toEqual(['nsfw']);
+  });
+});
