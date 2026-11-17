@@ -10,6 +10,8 @@
  *   REGISTRY_ADAPTER_GRPC_PORT     gRPC listen port (default 7131; see `grpc.ts` for why it is
  *                                  a port of its own)
  *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
+ *   KEEP_ALIVE_TIMEOUT             the HTTP/SSE server's idle keep-alive timeout in ms (default
+ *                                  100000, above a fronting proxy's 90 s; `serve.ts`)
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
  *   REGISTRY_ADAPTER_RESOURCE_URL  this source's public URL, its OAuth resource identifier; when
  *                                  set (with AUTH_JWT_ISSUER, the issuer whose tokens it
@@ -53,7 +55,7 @@ import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
-import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
 import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
@@ -126,7 +128,11 @@ function main() {
   });
   const adapter = composeAdapter(entities, docs);
 
-  const server = createRegistryServer(adapter, { onError, ...auth });
+  const server = createRegistryServer(adapter, {
+    onError,
+    ...auth,
+    keepAliveTimeoutMs: keepAliveTimeoutFromEnv(process.env),
+  });
   server.listen(port, () =>
     console.log(
       `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`

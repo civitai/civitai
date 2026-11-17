@@ -263,7 +263,32 @@ export function handleRequest(
   };
 }
 
-export function createRegistryServer(adapter: Adapter, opts: ServeOptions = {}): Server {
+/**
+ * How long an idle keep-alive connection is held open, in ms. Above the 90 s a reverse proxy in
+ * front holds its idle upstream connections: were it shorter (Node's default is 5 s), the proxy
+ * could reuse a socket this server had just closed and answer 502.
+ */
+export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 100_000;
+
+/**
+ * `KEEP_ALIVE_TIMEOUT` in ms, parsed as `scripts/trpc-server/server.cjs` parses it. An unset,
+ * zero, negative or non-numeric value is the default above, never Node's 5 s.
+ */
+export function keepAliveTimeoutFromEnv(env: Record<string, string | undefined>): number {
+  const ms = parseInt(env.KEEP_ALIVE_TIMEOUT ?? '', 10);
+  if (Number.isNaN(ms) || !Number.isFinite(ms) || ms <= 0) return DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  return ms;
+}
+
+export function createRegistryServer(
+  adapter: Adapter,
+  opts: ServeOptions & { keepAliveTimeoutMs?: number } = {}
+): Server {
   const handle = handleRequest(adapter, opts);
-  return createServer((req, res) => void handle(req, res));
+  const server = createServer((req, res) => void handle(req, res));
+  server.keepAliveTimeout = opts.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  // Strictly above keepAliveTimeout, so a request arriving on a connection about to idle out
+  // is not cut off by the headers timeout first.
+  server.headersTimeout = server.keepAliveTimeout + 1000;
+  return server;
 }
