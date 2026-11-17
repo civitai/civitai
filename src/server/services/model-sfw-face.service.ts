@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
 import {
+  activeComFaceIntentPromptId,
   COM_FACE_INTENT_LOCK_SOURCE,
   type ComFaceIntentListing,
   comFaceIntentFields,
@@ -183,9 +184,16 @@ export async function checkComFaceIntentVerdict({
   });
   if (verdict.status !== 'ok') return { status: 'unavailable' };
   const { promptId } = verdict;
-  return verdict.output.detected
-    ? { status: 'detected', reason: verdict.output.reason, promptId }
-    : { status: 'allowed', promptId };
+  if (verdict.output.detected)
+    return { status: 'detected', reason: verdict.output.reason, promptId };
+  // A drop in these per prompt version is how a publish that allows too much gets noticed.
+  logToAxiom({
+    type: 'info',
+    name: 'model-com-face-intent',
+    message: 'allowed',
+    payload: { promptId },
+  });
+  return { status: 'allowed', promptId };
 }
 
 export type ComFaceIntentWrites = {
@@ -209,7 +217,9 @@ export async function resolveComFaceIntent(
   const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
   const model = found && found.userId === userId ? found : null;
   const textHash = comFaceIntentTextHash(listing);
-  const stored = model ? reusableComFaceIntent(model.meta, textHash) : null;
+  const stored = model
+    ? reusableComFaceIntent(model.meta, textHash, await activeComFaceIntentPromptId())
+    : null;
   const storedHash = model
     ? comFaceIntentTextHash({
         name: model.name,

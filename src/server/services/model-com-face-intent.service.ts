@@ -3,7 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { ComFaceIntentRecord, ModelMeta } from '~/server/schema/model.schema';
-import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { getActiveTextScanPrompts, textScanTextHash } from '~/server/services/text-scan/prompt';
 import type { TextScanField } from '~/server/services/text-scan/types';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 import { removeTags } from '~/utils/string-helpers';
@@ -34,16 +34,28 @@ export function comFaceIntentFields({
 export const comFaceIntentTextHash = (listing: ComFaceIntentListing) =>
   textScanTextHash({ fields: comFaceIntentFields(listing), declared: {} });
 
-/** The stored verdict, while it was read from this exact listing text. */
+/** The id of the intent prompt version in use; undefined when it cannot be read. */
+export async function activeComFaceIntentPromptId(): Promise<number | undefined> {
+  return getActiveTextScanPrompts()
+    .then((prompts) => prompts['label:model-com-face-intent']?.id)
+    .catch(() => undefined);
+}
+
+/** The stored verdict, while it was read from this exact listing text: the check's own verdict only
+ *  under the prompt version that made it (`activePromptId`), so publishing or restoring a version
+ *  retires the rest; a moderator's overturn under any version. */
 export function reusableComFaceIntent(
   meta: unknown,
-  textHash: string
+  textHash: string,
+  activePromptId: number | undefined
 ): Pick<ComFaceIntentRecord, 'detected' | 'reason'> | null {
   const record = (meta as ModelMeta | null)?.comFaceIntent;
   if (!record || typeof record !== 'object' || record.textHash !== textHash) return null;
   if (typeof record.detected !== 'boolean') return null;
   // An overturned detection stands as allowed for the text it was ruled on.
-  return { detected: record.detected && !record.overturnedAt, reason: record.reason };
+  if (record.overturnedAt) return { detected: false, reason: record.reason };
+  if (activePromptId === undefined || record.promptId !== activePromptId) return null;
+  return { detected: record.detected, reason: record.reason };
 }
 
 /**

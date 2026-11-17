@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 import type { ModelMeta } from '~/server/schema/model.schema';
 
 /** The listing intent lock's own SQL against PGlite: which rows it may lock. Ids are invented. */
@@ -24,6 +25,12 @@ vi.mock('@civitai/orchestration-client', () => ({
 vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanPreview>()),
   previewComFaceIntent: mockPreviewComFaceIntent,
+}));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPrompt>()),
+  getActiveTextScanPrompts: vi.fn(async () => ({
+    'label:model-com-face-intent': { id: 42, key: 'label:model-com-face-intent', content: 'x' },
+  })),
 }));
 
 const {
@@ -212,7 +219,11 @@ describe('the face check after a moderator lifted the intent lock', () => {
   const OWNER = 1;
   const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
   const storedHash = comFaceIntentTextHash(stored);
-  const detects = (detected: boolean) => ({ status: 'ok', output: { detected, reason: 'r' } });
+  const detects = (detected: boolean) => ({
+    status: 'ok',
+    output: { detected, reason: 'r' },
+    promptId: 42,
+  });
   const faceCheck = (listing: typeof stored) =>
     assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
 
@@ -282,7 +293,12 @@ describe('the face check after a moderator unlocked from the model form', () => 
   const OWNER = 1;
   const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
   const storedHash = comFaceIntentTextHash(stored);
-  const detection = { detected: true, textHash: storedHash, at: '2026-01-01T00:00:00Z' };
+  const detection = {
+    detected: true,
+    textHash: storedHash,
+    at: '2026-01-01T00:00:00Z',
+    promptId: 42,
+  };
   const faceCheck = (listing = stored) =>
     assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
 
@@ -308,6 +324,7 @@ describe('the face check after a moderator unlocked from the model form', () => 
     mockPreviewComFaceIntent.mockResolvedValue({
       status: 'ok',
       output: { detected: true, reason: 'r' },
+      promptId: 42,
     });
     // The unlock's logged ruling, after the stored detection; the lookup honours its date.
     dbMock.dbWrite.modActivity.findFirst.mockImplementation((async (args: {
