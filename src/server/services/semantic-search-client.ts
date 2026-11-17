@@ -62,6 +62,8 @@ export type CandidateFilter = {
   excludedTagIds?: number[];
   userIds?: number[];
   excludedUserIds?: number[];
+  // Only these points: the viewer's own short list, so the ranking is within it.
+  ids?: number[];
   excludedIds?: number[];
   // Payload key → the point matches any of the values.
   anyOf?: Record<string, PayloadValue[] | undefined>;
@@ -122,6 +124,7 @@ export function buildQdrantFilter(collection: SearchCollection, f: CandidateFilt
   const { must, must_not } = gateConditions(collection, f.gate);
   for (const tagId of f.tagIds ?? []) must.push({ key: 'tagIds', match: { value: tagId } });
   if (f.userIds?.length) must.push({ key: 'userId', match: { any: f.userIds } });
+  if (f.ids?.length) must.push({ has_id: f.ids });
   for (const [key, values] of Object.entries(f.anyOf ?? {}))
     if (values?.length) must.push({ key, match: { any: values } });
   if (f.range && (f.range.gte !== undefined || f.range.lte !== undefined))
