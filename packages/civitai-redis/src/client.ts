@@ -2268,6 +2268,8 @@ export const REDIS_SYS_KEYS = {
     REVIEW_BATCH_IDEM_LOCK: 'app:review-batch-idem-lock',
     // `app:review-sheet:session:<sha256(token)>` — one general-tier review sheet session.
     REVIEW_SHEET_SESSION: 'app:review-sheet:session',
+    // The case engine's send brake: present = no case notice is sent. JSON { by, at, reason }.
+    CASES_SENDS_PAUSED: 'app:cases:sends-paused',
   },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.

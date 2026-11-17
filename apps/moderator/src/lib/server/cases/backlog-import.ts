@@ -1,0 +1,363 @@
+import { sql } from 'kysely';
+import { z } from 'zod';
+import { casesDb, type CasesDb } from './cases.db';
+import { CASE_TARGET_STATES } from './cases-tables';
+import { newPublicRef } from './public-ref';
+import { hashAddress } from './send-notice';
+
+/**
+ * A one-off import of messages already approved word for word (the 2026-11 takedown backlog). Its input
+ * file holds names and addresses, so it is kept out of the repository and handed to `importBatch` by a
+ * moderator.
+ *
+ * Imported cases pin no definition: each message is stored and sent exactly as approved.
+ */
+
+const noticeSchema = z.object({
+  /** `0` for a message about the whole case, otherwise the `key` of one of the case's targets. */
+  target: z.number().int().min(0),
+  noticeId: z.string().min(1).max(40),
+  recipientRole: z.enum(['claimant', 'uploader']),
+  to: z.email(),
+  subject: z.string().min(1),
+  body: z.string().min(1),
+});
+
+const caseSchema = z.object({
+  receivedAt: z.iso.datetime(),
+  state: z.string().min(1),
+  submitter: z.object({ name: z.string().optional(), email: z.email().optional() }).default({}),
+  details: z.record(z.string(), z.unknown()).default({}),
+  targets: z
+    .array(
+      z.object({
+        key: z.number().int().min(1),
+        url: z.string().min(1),
+        entityType: z.string().optional(),
+        entityId: z.number().int().optional(),
+        uploaderUserId: z.number().int().optional(),
+        state: z.enum(CASE_TARGET_STATES),
+      })
+    )
+    .default([]),
+  notices: z.array(noticeSchema).min(1),
+});
+
+export const importInputSchema = z.object({
+  batchId: z.string().regex(/^[a-z0-9-]{3,60}$/),
+  processKey: z.string().min(1),
+  /**
+   * How many messages of each notice id the batch must end up sending, from the approved list, not
+   * from this file. The counts panel compares `sent` with these, so an import that dropped rows
+   * can't read as finished.
+   */
+  expected: z.record(z.string(), z.number().int().positive()),
+  cases: z.array(caseSchema).min(1),
+});
+export type ImportInput = z.infer<typeof importInputSchema>;
+
+export class ImportRefusedError extends Error {
+  readonly status = 409;
+}
+
+const batchDefinitionKey = (batchId: string) => `import:${batchId}`;
+
+/** Import every case, target and notice of one batch in one transaction, or none of them. */
+export async function importBatch(
+  raw: unknown,
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
+  const input = importInputSchema.parse(raw);
+  for (const c of input.cases) {
+    const keys = new Set(c.targets.map((t) => t.key));
+    for (const n of c.notices)
+      if (n.target !== 0 && !keys.has(n.target))
+        throw new ImportRefusedError(
+          `notice ${n.noticeId} names target ${n.target}, which its case lacks`
+        );
+  }
+
+  return db.transaction().execute(async (tx) => {
+    const existing = await tx
+      .selectFrom('case_record')
+      .select('id')
+      .where('import_batch_id', '=', input.batchId)
+      .limit(1)
+      .executeTakeFirst();
+    if (existing)
+      throw new ImportRefusedError(`batch ${input.batchId} is already imported; undo it first`);
+
+    // The expected counts live on a disabled definition named after the batch, so they are stored
+    // with the batch and not in the code.
+    const def = await tx
+      .insertInto('process_definition')
+      .values({ key: batchDefinitionKey(input.batchId), enabled: false })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    const version = await tx
+      .insertInto('process_definition_version')
+      .values({
+        definition_id: def.id,
+        definition: JSON.stringify({ kind: 'import-batch', expected: input.expected }),
+        created_by_id: actorId,
+        note: `import ${input.batchId}`,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await tx
+      .updateTable('process_definition')
+      .set({ current_version_id: version.id })
+      .where('id', '=', def.id)
+      .execute();
+
+    let notices = 0;
+    for (const c of input.cases) {
+      const record = await tx
+        .insertInto('case_record')
+        .values({
+          public_ref: newPublicRef(),
+          process_key: input.processKey,
+          state: c.state,
+          source: 'import',
+          received_at: c.receivedAt,
+          submitter: JSON.stringify(c.submitter),
+          details: JSON.stringify(c.details),
+          import_batch_id: input.batchId,
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+
+      const targetIds = new Map<number, number>();
+      for (const t of c.targets) {
+        const row = await tx
+          .insertInto('case_target')
+          .values({
+            case_id: record.id,
+            url: t.url,
+            entity_type: t.entityType ?? null,
+            entity_id: t.entityId ?? null,
+            uploader_user_id: t.uploaderUserId ?? null,
+            state: t.state,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        targetIds.set(t.key, row.id);
+      }
+
+      for (const n of c.notices) {
+        await tx
+          .insertInto('case_notice')
+          .values({
+            case_id: record.id,
+            target_key: n.target === 0 ? 0 : targetIds.get(n.target)!,
+            notice_id: n.noticeId,
+            recipient_role: n.recipientRole,
+            recipient_address: n.to,
+            address_hash: hashAddress(n.to),
+            subject_snapshot: n.subject,
+            body_snapshot: n.body,
+          })
+          .execute();
+        notices++;
+      }
+
+      await tx
+        .insertInto('case_event')
+        .values({
+          case_id: record.id,
+          actor_id: actorId,
+          type: 'imported',
+          data: JSON.stringify({ batchId: input.batchId }),
+        })
+        .execute();
+    }
+    return { cases: input.cases.length, notices };
+  });
+}
+
+/**
+ * Delete one batch, children first, in one transaction. Refused once any of its notices has left
+ * `pending`: from then on the rows are the record of what was sent.
+ */
+export async function undoImport(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
+  return db.transaction().execute(async (tx) => {
+    const cases = tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId);
+    const moved = await tx
+      .selectFrom('case_notice')
+      .select(sql<number>`count(*)::int`.as('n'))
+      .where('case_id', 'in', cases)
+      .where('status', '<>', 'pending')
+      .executeTakeFirstOrThrow();
+    if (moved.n > 0)
+      throw new ImportRefusedError(
+        `${moved.n} notice(s) of batch ${batchId} are no longer pending; it can't be undone`
+      );
+
+    await tx.deleteFrom('case_event').where('case_id', 'in', cases).execute();
+    await tx.deleteFrom('case_notice').where('case_id', 'in', cases).execute();
+    await tx.deleteFrom('case_party').where('case_id', 'in', cases).execute();
+    await tx.deleteFrom('case_target').where('case_id', 'in', cases).execute();
+    const deleted = await tx
+      .deleteFrom('case_record')
+      .where('import_batch_id', '=', batchId)
+      .executeTakeFirst();
+
+    const def = await tx
+      .selectFrom('process_definition')
+      .select('id')
+      .where('key', '=', batchDefinitionKey(batchId))
+      .executeTakeFirst();
+    if (def) {
+      await tx
+        .updateTable('process_definition')
+        .set({ current_version_id: null })
+        .where('id', '=', def.id)
+        .execute();
+      await tx
+        .deleteFrom('process_definition_version')
+        .where('definition_id', '=', def.id)
+        .execute();
+      await tx.deleteFrom('process_definition').where('id', '=', def.id).execute();
+    }
+    return { cases: Number(deleted.numDeletedRows) };
+  });
+}
+
+export type BatchCount = {
+  noticeId: string;
+  expected: number | null;
+  sent: number;
+  failed: number;
+  pending: number;
+  sending: number;
+  /** Sent equals a stated, non-zero expected count, and nothing is failed, pending or sending. */
+  done: boolean;
+};
+
+/**
+ * Sent, failed, pending and sending per notice id, against the batch's stated expected counts. A notice
+ * id with no expected count, or with rows but no expectation, is never done.
+ */
+export async function batchCounts(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
+  const def = await db
+    .selectFrom('process_definition as d')
+    .innerJoin('process_definition_version as v', 'v.id', 'd.current_version_id')
+    .select('v.definition')
+    .where('d.key', '=', batchDefinitionKey(batchId))
+    .executeTakeFirst();
+  const expected = ((def?.definition as { expected?: Record<string, number> } | undefined)
+    ?.expected ?? {}) as Record<string, number>;
+
+  const rows = await db
+    .selectFrom('case_notice as n')
+    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+    .select(['n.notice_id', 'n.status', sql<number>`count(*)::int`.as('n')])
+    .where('c.import_batch_id', '=', batchId)
+    .groupBy(['n.notice_id', 'n.status'])
+    .execute();
+
+  const ids = new Set([...Object.keys(expected), ...rows.map((r) => r.notice_id)]);
+  return [...ids].sort().map((noticeId): BatchCount => {
+    const of = (status: string) =>
+      rows.find((r) => r.notice_id === noticeId && r.status === status)?.n ?? 0;
+    const exp = expected[noticeId] ?? null;
+    const c = {
+      sent: of('sent'),
+      failed: of('failed'),
+      pending: of('pending'),
+      sending: of('sending'),
+    };
+    return {
+      noticeId,
+      expected: exp,
+      ...c,
+      done: !!exp && c.sent === exp && c.failed + c.pending + c.sending === 0,
+    };
+  });
+}
+
+/** The batch's unsent rows for the fallback script: ids only, no addresses (the script has its own). */
+export async function exportUnsent(batchId: string, { db = casesDb() }: { db?: CasesDb } = {}) {
+  return db
+    .selectFrom('case_notice as n')
+    .innerJoin('case_record as c', 'c.id', 'n.case_id')
+    .select([
+      'n.id as rowId',
+      'n.notice_id as noticeId',
+      'n.recipient_role as recipientRole',
+      'c.public_ref as caseRef',
+    ])
+    .where('c.import_batch_id', '=', batchId)
+    .where('n.status', 'in', ['pending', 'failed'])
+    .orderBy('n.id')
+    .execute();
+}
+
+const sentLineSchema = z.object({
+  rowId: z.union([z.string().regex(/^\d+$/), z.number().int().positive()]).transform(Number),
+  /** What the fallback sender returned for the message (a ticket id). */
+  messageId: z.string().min(1).max(200),
+  sentAt: z.iso.datetime(),
+});
+
+/**
+ * Mark rows the fallback script sent. Matches on row id within the batch, and only moves a row that is
+ * still `pending` or `failed`: a row already `sent` or `sending` is refused, never overwritten.
+ */
+export async function importSentJsonl(
+  batchId: string,
+  jsonl: string,
+  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+) {
+  const lines = jsonl
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const parsed = lines.map((l, i) => {
+    const r = sentLineSchema.safeParse(
+      (() => {
+        try {
+          return JSON.parse(l);
+        } catch {
+          return null;
+        }
+      })()
+    );
+    if (!r.success) throw new ImportRefusedError(`line ${i + 1} is not a sent record`);
+    return r.data;
+  });
+
+  return db.transaction().execute(async (tx) => {
+    const updated: number[] = [];
+    const refused: number[] = [];
+    for (const line of parsed) {
+      const row = await tx
+        .updateTable('case_notice')
+        .set({ status: 'sent', message_id: line.messageId, sent_at: line.sentAt, error: null })
+        .where('id', '=', line.rowId)
+        .where('status', 'in', ['pending', 'failed'])
+        .where(
+          'case_id',
+          'in',
+          tx.selectFrom('case_record').select('id').where('import_batch_id', '=', batchId)
+        )
+        .returning(['id', 'case_id'])
+        .executeTakeFirst();
+      if (!row) {
+        refused.push(line.rowId);
+        continue;
+      }
+      updated.push(row.id);
+      await tx
+        .insertInto('case_event')
+        .values({
+          case_id: row.case_id,
+          actor_id: actorId,
+          type: 'notice_sent_elsewhere',
+          data: JSON.stringify({ noticeRowId: row.id }),
+        })
+        .execute();
+    }
+    return { updated, refused };
+  });
+}
