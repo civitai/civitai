@@ -15,6 +15,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { useTeamColor } from '~/components/Events/events.utils';
 import { FALLBACK_COLOR } from '~/components/HatTurf/hat-turf.utils';
 import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { useOpenFlagCrucible } from '~/components/HatTurf/FlagRace/FlagEnterButton';
 import { flagsHeld, flagsPot } from '~/components/HatTurf/FlagRace/flag-race.utils';
 import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -44,12 +45,12 @@ function useHowtoDismissed() {
 }
 
 /** The Flag Race row's side panel: the race's clock, what is at stake, who holds what, and the way in. */
-export function FlagRacePanel({ summary }: { summary: FlagSummary }) {
+export function FlagRacePanel({ event, summary }: { event: string; summary: FlagSummary }) {
   const teamColor = useTeamColor();
   const [dismissed, setDismissed] = useHowtoDismissed();
   const held = flagsHeld(summary.flags);
   const pot = flagsPot(summary.flags);
-  const next = summary.nextCrucible;
+  const next = useOpenFlagCrucible(event);
 
   return (
     <div className={classes.panel} data-testid="flag-race-panel">
@@ -179,12 +180,10 @@ export function FlagRacePanel({ summary }: { summary: FlagSummary }) {
             {next.coverUrl && <img src={getEdgeUrl(next.coverUrl, { width: 96 })} alt="" />}
             <span className="min-w-0">
               <b className="block text-[13px]">Enter tomorrow&apos;s flags</b>
-              {next.endAt && new Date(next.endAt).getTime() > Date.now() && (
-                <small>
-                  Today&apos;s Crucible ·{' '}
-                  <Countdown endTime={new Date(next.endAt)} format="short" /> left
-                </small>
-              )}
+              <small>
+                Today&apos;s Crucible · <Countdown endTime={new Date(next.endAt)} format="short" />{' '}
+                left
+              </small>
             </span>
             <IconArrowRight size={18} className="ml-auto shrink-0" />
           </Link>

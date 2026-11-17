@@ -582,28 +582,7 @@ export type FlagSummary = {
   frozen: boolean;
   // Once frozen: the points each team won across the day's flags. Empty before.
   teamPoints: Record<string, number>;
-  // The running flag Crucible, whose top places become the next flags. Absent from a summary cached
-  // before the field existed.
-  nextCrucible?: FlagCrucible | null;
 };
-
-export type FlagCrucible = { id: number; endAt: Date | null; coverUrl: string | null };
-
-/** The flag Crucible taking entries now, soonest to end first; its cover only when visible and PG or PG-13. */
-async function activeFlagCrucible(event: string): Promise<FlagCrucible | null> {
-  const [row] = await dbRead.$queryRaw<FlagCrucible[]>`
-    SELECT cr.id, cr."endAt", (
-      SELECT i.url FROM "Image" i JOIN "Post" p ON p.id = i."postId"
-      WHERE i.id = cr."imageId" AND i."nsfwLevel" IN (1, 2) AND ${imageVisible}
-    ) AS "coverUrl"
-    FROM "Crucible" cr
-    WHERE cr.status = 'Active'::"CrucibleStatus"
-      AND cr."eventTags" @> ARRAY[${flagCrucibleTag(event)}]::text[]
-      AND (cr."endAt" IS NULL OR cr."endAt" > now())
-    ORDER BY cr."endAt" ASC NULLS LAST LIMIT 1
-  `;
-  return row ?? null;
-}
 
 // Cached with the cut beside it, so a hit is checked in memory: an open summary must not outlive
 // the cut, and a hit must not cost a database read.
@@ -697,10 +676,9 @@ async function buildFlagSummary(
 ): Promise<FlagSummary | null> {
   // Read before the day, so a swap landing during the build marks this summary stale.
   const gen = (await sysRedis.get(flagSummaryGenKey(eventName)).catch(() => null)) ?? '0';
-  const [event, day, nextCrucible] = await Promise.all([
+  const [event, day] = await Promise.all([
     getTurfEvent(eventName, now),
     currentFlagDay(eventName, now),
-    activeFlagCrucible(eventName),
   ]);
   if (!event || !day) return null;
   const closed = now >= day.cutAt;
@@ -723,7 +701,6 @@ async function buildFlagSummary(
     }),
     frozen,
     teamPoints: results?.teamPoints ?? {},
-    nextCrucible,
   };
   const value: CachedFlagSummary = { summary, cutAtMs: day.cutAt.getTime(), gen };
   await sysRedis
@@ -734,6 +711,42 @@ async function buildFlagSummary(
       logSysRedisFailOpen('write-degraded', 'turf.getFlagSummary', error, { event: eventName })
     );
   return summary;
+}
+
+export type OpenFlagCrucible = { id: number; endAt: Date; coverUrl: string | null };
+
+/**
+ * The flag Crucible open for entries now, whose top places become the next day's flags, with its
+ * cover only when visible and PG or PG-13. Its own lookup, not a FlagSummary field: a frozen summary
+ * is cached for minutes and straddles the 22:00Z handover, when the open Crucible changes.
+ */
+export async function getOpenFlagCrucible(
+  eventName: string,
+  now = new Date()
+): Promise<OpenFlagCrucible | null> {
+  const { flags: config } = await readFlagRaceConfig(eventName);
+  if (!config?.on) return null;
+  const [row] = await dbRead.$queryRaw<OpenFlagCrucible[]>`
+    SELECT cr.id, cr."endAt", (
+      SELECT i.url FROM "Image" i JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id = cr."imageId" AND i."nsfwLevel" IN (1, 2) AND ${imageVisible}
+    ) AS "coverUrl"
+    FROM "Crucible" cr
+    WHERE cr.status = 'Active'::"CrucibleStatus"
+      AND cr."eventTags" @> ARRAY[${flagCrucibleTag(eventName)}]::text[]
+      AND cr."startAt" <= ${now} AND cr."endAt" > ${now}
+    ORDER BY cr."endAt" ASC LIMIT 1
+  `;
+  return row ?? null;
+}
+
+/** The event whose Flag Race shows this Collection's items, if any. */
+export async function getFlagRaceEventForCollection(collectionId: number): Promise<string | null> {
+  for (const event of await loadEvents()) {
+    const { flags } = await readFlagRaceConfig(event.name);
+    if (flags?.on && flags.homeCollectionId === collectionId) return event.name;
+  }
+  return null;
 }
 
 // Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.

@@ -29,6 +29,7 @@ import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
+import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -36,8 +37,7 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
-import { FlagRaceContext, type FlagRow } from '~/components/HatTurf/FlagRace/FlagRaceContext';
-import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
+import { FlagRowProviders, useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
@@ -79,23 +79,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   const features = useFeatureFlags();
   const flagEvent = features.flagRace ? metadata.collection?.flagRace : undefined;
-
-  const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
-    { event: flagEvent ?? '' },
-    {
-      enabled: !!flagEvent,
-      refetchInterval: 30_000,
-      staleTime: 15_000,
-      // Unbatched, so the edge caches it: every viewer gets the same answer.
-      trpc: { context: { skipBatch: true } },
-    }
-  );
-  const flagRow = useMemo(
-    () => (flagEvent && flagSummary ? { event: flagEvent, summary: flagSummary } : null),
-    [flagEvent, flagSummary]
-  );
-  // The panel layout takes all of a day's flags; without a summary the row stays one row, as before.
-  const rows = flagRow ? 2 : flagEvent ? 1 : metadata.collection?.rows ?? 2;
+  // A Flag Race row is one row that scrolls, holding every one of today's flags.
+  const rows = flagEvent ? 1 : metadata.collection?.rows ?? 2;
+  const flagRow = useFlagRow(flagEvent);
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
     return shuffle([...collection.items]);
@@ -125,7 +111,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     {
       order: dedupeOrder(blockIndex),
       entity: type,
-      rows,
+      rows: flagEvent ? Math.max(1, Math.ceil(filtered.length / ITEMS_PER_ROW)) : rows,
       maxPerUser,
     }
   ) as typeof filtered;
@@ -145,7 +131,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
       <HomeBlockWrapper py={32}>
         <div className={flagClasses.wrap}>
           <section className={clsx(partyClasses.party, flagClasses.row)}>
-            <FlagRacePanel summary={flagRow.summary} />
+            <FlagRacePanel event={flagRow.event} summary={flagRow.summary} />
             <div className={flagClasses.flags}>
               {loading ? (
                 Array.from({ length: flagRow.summary.flags.length }).map((_, index) => (
@@ -227,18 +213,21 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
             </Popover>
           )}
         </Group>
-        {link && (
-          <Link legacyBehavior href={link} passHref>
-            <Button
-              className={classes.expandButton}
-              component="a"
-              variant="subtle"
-              rightSection={<IconArrowRight size={16} />}
-            >
-              {metadata.linkText ?? 'View All'}
-            </Button>
-          </Link>
-        )}
+        <Group gap="xs" wrap="nowrap">
+          {flagEvent && <FlagEnterButton event={flagEvent} />}
+          {link && (
+            <Link legacyBehavior href={link} passHref>
+              <Button
+                className={classes.expandButton}
+                component="a"
+                variant="subtle"
+                rightSection={<IconArrowRight size={16} />}
+              >
+                {metadata.linkText ?? 'View All'}
+              </Button>
+            </Link>
+          )}
+        </Group>
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
         <div className="text-base">
@@ -375,15 +364,3 @@ type Props = {
   showAds?: boolean;
   blockIndex: number;
 };
-
-/** Around a Flag Race row only: its flags, and the viewer's Hat Turf team and stock for adding hats. */
-function FlagRowProviders({ row, children }: { row: FlagRow | null; children: React.ReactNode }) {
-  if (!row) return <>{children}</>;
-  return (
-    <FlagRaceContext.Provider value={row}>
-      <TurfSummaryProvider imageIds={[]} gate={{ event: row.event }}>
-        {children}
-      </TurfSummaryProvider>
-    </FlagRaceContext.Provider>
-  );
-}

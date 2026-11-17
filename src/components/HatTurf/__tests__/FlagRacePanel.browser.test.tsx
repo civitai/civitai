@@ -1,5 +1,21 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
+import type * as Trpc from '~/utils/trpc';
+
+const h = vi.hoisted(() => ({
+  open: null as { id: number; endAt: Date; coverUrl: string | null } | null,
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof Trpc>()),
+    trpc: makeTrpcProxy({
+      'hatTurf.getOpenFlagCrucible': {
+        useQuery: () => ({ data: h.open, refetch: async () => undefined }),
+      },
+    }),
+  };
+});
 import { FlagRacePanel, HOWTO_DISMISSED_KEY } from '~/components/HatTurf/FlagRace/FlagRacePanel';
 import type { FlagSummary } from '~/server/events/turf/turf.service';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -28,7 +44,6 @@ function summary(over: Partial<FlagSummary> = {}): FlagSummary {
       flag(4, { Blue: 6, Green: 1 }, 600),
       flag(5, {}, 0),
     ],
-    nextCrucible: { id: 389, endAt: new Date(Date.now() + 20 * H), coverUrl: null },
     ...over,
   };
 }
@@ -39,24 +54,30 @@ const chips = () =>
     el.getAttribute('aria-label')
   );
 
-beforeEach(() => localStorage.removeItem(HOWTO_DISMISSED_KEY));
+beforeEach(() => {
+  localStorage.removeItem(HOWTO_DISMISSED_KEY);
+  h.open = { id: 389, endAt: new Date(Date.now() + 20 * H), coverUrl: null };
+});
 afterEach(async () => {
   await cleanup();
 });
 
 describe('FlagRacePanel', () => {
   test('counts the flags each team alone leads, most first; a tie or an empty flag counts for nobody', async () => {
-    await renderWithProviders(<FlagRacePanel summary={summary()} />);
+    await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
     expect(chips()).toEqual(['Green holds 2 flags', 'Blue holds 1 flag']);
   });
 
   test('totals the open flags’ points, and drops the total and the chips once the race closes', async () => {
-    await renderWithProviders(<FlagRacePanel summary={summary()} />);
+    await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
     expect(q('flag-race-pot')?.textContent).toBe('3.5k points up for grabs');
     await cleanup();
 
     await renderWithProviders(
-      <FlagRacePanel summary={summary({ closed: true, cutAt: new Date(), frozen: true })} />
+      <FlagRacePanel
+        event="e"
+        summary={summary({ closed: true, cutAt: new Date(), frozen: true })}
+      />
     );
     expect(q('flag-race-pot')).toBeNull();
     expect(q('flag-race-held')).toBeNull();
@@ -64,25 +85,26 @@ describe('FlagRacePanel', () => {
   });
 
   test('a dismissed how-it-works stays dismissed on the next visit, and the pill brings it back', async () => {
-    const first = await renderWithProviders(<FlagRacePanel summary={summary()} />);
+    const first = await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
     await first.getByRole('button', { name: 'Hide how it works' }).click();
-    expect(q('flag-race-howto')).toBeNull();
+    await expect.poll(() => q('flag-race-howto')).toBeNull();
     await cleanup();
 
-    const second = await renderWithProviders(<FlagRacePanel summary={summary()} />);
+    const second = await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
     await expect.element(second.getByText('How it works')).toBeVisible();
     expect(q('flag-race-howto')).toBeNull();
     await second.getByText('How it works').click();
-    expect(q('flag-race-howto')).not.toBeNull();
+    await expect.poll(() => q('flag-race-howto')).not.toBeNull();
     expect(localStorage.getItem(HOWTO_DISMISSED_KEY)).toBeNull();
   });
 
   test('the button goes into the running flag Crucible, and is gone when none is running', async () => {
-    await renderWithProviders(<FlagRacePanel summary={summary()} />);
+    await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
     expect(q('flag-race-enter')?.getAttribute('href')).toBe('/crucibles/389');
     await cleanup();
 
-    await renderWithProviders(<FlagRacePanel summary={summary({ nextCrucible: null })} />);
+    h.open = null;
+    await renderWithProviders(<FlagRacePanel event="e" summary={summary()} />);
     expect(q('flag-race-enter')).toBeNull();
   });
 });
