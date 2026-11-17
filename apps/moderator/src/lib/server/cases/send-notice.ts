@@ -47,6 +47,8 @@ export type SendDeps = {
   pauseSends: typeof pauseSends;
   /** Whether the read-only role is still shut out of the case tables (`readPiiLockdown` is `ok`). */
   lockdownOk: () => Promise<boolean>;
+  /** Renews the batch's run lock; false once this run no longer holds it. Checked before every claim. */
+  holdsLock: () => Promise<boolean>;
   /** Told once when the hourly ceiling pauses sends. */
   alert: (message: string) => Promise<unknown>;
   from: string;
@@ -54,7 +56,7 @@ export type SendDeps = {
   hourlyCeiling: number;
 };
 
-export function defaultSendDeps(): SendDeps {
+export function defaultSendDeps(): Omit<SendDeps, 'holdsLock'> {
   const db = casesDb();
   return {
     db,
@@ -92,20 +94,10 @@ function errorCode(e: unknown) {
 }
 
 /**
- * Send one case notice, at most once.
- *
- * 1. The brake, then the PII lockdown: either refusing means nothing is claimed.
- * 2. The hourly ceiling: at or over it, sends are paused (a person has to resume them) and the alert
- *    goes out once.
- * 3. The claim: one UPDATE from `pending`/`failed` to `sending`. Postgres serialises concurrent
- *    UPDATEs of a row and re-checks the WHERE, so exactly one sender gets it back.
- * 4. The send, from the row's own snapshot, retried only on an SES throttle.
- * 5. `sent` with the message id; `failed` when the relay refused it with an SMTP reply (or, before any
- *    send, when the row was erased or its address no longer matches its hash).
- *
- * Anything else leaves the row `sending`, never retried here: it may have been delivered, so a person
- * checks it and resolves it (`resolveSending`). That covers a process that died mid-send, a send that timed out
- * after the relay may have accepted it, and a `sent` write that failed; the last two also pause sends.
+ * Send one case notice, at most once. Any outcome not recorded as sent or failed leaves the row
+ * `sending`, never retried here: it may have been delivered, so a person resolves it (resolveSending);
+ * an ambiguous send also pauses sends. The claim is one conditional UPDATE, so exactly one sender gets
+ * a row.
  */
 export async function sendNotice(noticeId: number, deps: SendDeps): Promise<SendOutcome> {
   const brake = await deps.readBrake();
@@ -231,7 +223,7 @@ const isStop = (o: SendOutcome): o is Stop => (STOPS as readonly string[]).inclu
 
 export type BatchResult = {
   counts: Record<SendOutcome, number>;
-  stoppedBy?: Stop | 'failures';
+  stoppedBy?: Stop | 'failures' | 'lost-lock';
 };
 
 /**
@@ -265,6 +257,12 @@ export async function sendBatch(
   let failedInARow = 0;
   for (const [i, { id, status }] of rows.entries()) {
     if (i > 0) await sleep(minIntervalMs);
+    // Lost the lock (it expired, or someone else took it): an export or another run may now own the
+    // batch, so claim nothing more.
+    if (!(await deps.holdsLock().catch(() => false))) {
+      await deps.pauseSends('system', `the send of batch ${importBatchId} lost its run lock`);
+      return { counts, stoppedBy: 'lost-lock' };
+    }
     const outcome = await sendNotice(id, deps);
     counts[outcome]++;
     if (isStop(outcome)) return { counts, stoppedBy: outcome };

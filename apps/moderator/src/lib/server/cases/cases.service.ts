@@ -1,10 +1,10 @@
-import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
 import { sql, type Kysely } from 'kysely';
 import { moderatorDbStatus, storeUnavailableMessage } from '$lib/moderator-db-status';
 import { logAxiomError } from '../axiom';
 import { getSysRedis } from '../redis';
 import { exportState, exportUnsent } from './backlog-import';
 import { pauseSends } from './brake';
+import { acquireRunLock, releaseRunLock, renewRunLock, runLockKey } from './run-lock';
 import { casesDb, noticesOfBatch, type CasesDb } from './cases.db';
 import { readPiiLockdown, type PiiLockdown } from './pii-lockdown';
 import { defaultSendDeps, sendBatch } from './send-notice';
@@ -96,33 +96,31 @@ export async function batchPreview(
 
 export { STALE_SENDING_MS } from './cases.db';
 
-const runningKey = (batchId: string) =>
-  `${REDIS_SYS_KEYS.APP.CASES_SEND_RUNNING}:${batchId}` as RedisKeyTemplateSys;
-
 /**
- * Start sending a batch in the background, at SES's pace, and return at once; the page reads progress from the rows. A lock stops a second run of the same batch from
- * doubling the pace. The claim on each row already stops a double send. A run that dies on an error
- * pauses sends: a person looks before anything else goes out.
+ * Start sending a batch in the background and return at once; the page reads progress from the rows.
+ * The run holds the batch's run lock, renewed before every claim, and stops if it ever loses it. A run
+ * that dies on an error pauses sends.
  */
 export async function startBatchSend(
   batchId: string
 ): Promise<'started' | 'already-running' | 'export-outstanding'> {
   const redis = getSysRedis();
-  const got = await redis.set(runningKey(batchId), new Date().toISOString(), { NX: true, EX: 900 });
-  if (!got) return 'already-running';
+  const token = await acquireRunLock(redis, batchId);
+  if (!token) return 'already-running';
   // Checked under the lock the export also takes, so the two can't interleave.
   if ((await exportState(batchId).catch(() => 'outstanding' as const)) === 'outstanding') {
-    await redis.del(runningKey(batchId));
+    await releaseRunLock(redis, batchId, token);
     return 'export-outstanding';
   }
-  void sendBatch(batchId, defaultSendDeps())
+  const deps = { ...defaultSendDeps(), holdsLock: () => renewRunLock(redis, batchId, token) };
+  void sendBatch(batchId, deps)
     .catch(async (e) => {
       await pauseSends('system', `the send of batch ${batchId} stopped on an error`).catch(
         () => undefined
       );
       await logAxiomError(e, { name: 'cases.sendBatch', batchId });
     })
-    .finally(() => redis.del(runningKey(batchId)).catch(() => undefined));
+    .finally(() => releaseRunLock(redis, batchId, token).catch(() => undefined));
   return 'started';
 }
 
@@ -132,18 +130,18 @@ export async function startBatchSend(
  */
 export async function startExport(batchId: string, actorId: number) {
   const redis = getSysRedis();
-  const got = await redis.set(runningKey(batchId), new Date().toISOString(), { NX: true, EX: 300 });
-  if (!got) return 'running' as const;
+  const token = await acquireRunLock(redis, batchId, 300);
+  if (!token) return 'running' as const;
   try {
     return await exportUnsent(batchId, { actorId });
   } finally {
-    await redis.del(runningKey(batchId)).catch(() => undefined);
+    await releaseRunLock(redis, batchId, token).catch(() => undefined);
   }
 }
 
 export async function isBatchRunning(batchId: string) {
   try {
-    return !!(await getSysRedis().get(runningKey(batchId)));
+    return !!(await getSysRedis().get(runLockKey(batchId)));
   } catch {
     return false;
   }

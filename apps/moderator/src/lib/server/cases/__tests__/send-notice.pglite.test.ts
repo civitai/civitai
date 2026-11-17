@@ -22,6 +22,30 @@ const {
   ImportRefusedError,
 } = await import('../backlog-import');
 const { batchPreview } = await import('../cases.service');
+const { acquireRunLock, releaseRunLock, renewRunLock, runLockKey } = await import('../run-lock');
+
+/** Redis for the run lock: SET NX and the two compare scripts, with expiry done by hand. */
+function fakeLockRedis() {
+  const store = new Map<string, string>();
+  return {
+    store,
+    set: async (k: string, v: string, o?: { NX?: boolean }) => {
+      if (o?.NX && store.has(k)) return null;
+      store.set(k, v);
+      return 'OK';
+    },
+    get: async (k: string) => store.get(k) ?? null,
+    eval: async (
+      script: string,
+      { keys, arguments: args }: { keys: string[]; arguments: string[] }
+    ) => {
+      const guarded = script.includes('== ARGV[1]');
+      if (guarded && store.get(keys[0]) !== args[0]) return 0;
+      if (script.includes("'del'")) store.delete(keys[0]);
+      return 1;
+    },
+  };
+}
 type SendDeps = import('../send-notice').SendDeps;
 
 let pg: PGlite;
@@ -37,6 +61,7 @@ const deps = (over: Partial<SendDeps> = {}): SendDeps => ({
   readBrake: async () => ({ paused: false }),
   pauseSends,
   lockdownOk: async () => true,
+  holdsLock: async () => true,
   alert,
   from: 'Notices <notices@example.test>',
   replyTo: 'inbox@example.test',
@@ -326,6 +351,28 @@ describe('the batch', () => {
     const result = await sendBatch('backlog-test', deps());
     expect(result).toMatchObject({ stoppedBy: 'unknown', counts: { unknown: 1, sent: 0 } });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops claiming once its run lock expires, so an export that takes the lock cannot overlap', async () => {
+    const redis = fakeLockRedis();
+    const asLock = redis as unknown as Parameters<typeof acquireRunLock>[0];
+    const run = (await acquireRunLock(asLock, 'backlog-test'))!;
+    send.mockImplementation(async () => {
+      // The first row is slow enough for the lock to expire; an export then takes it.
+      redis.store.delete(runLockKey('backlog-test'));
+      expect(await acquireRunLock(asLock, 'backlog-test')).toBeTruthy();
+      return { messageId: '<a@relay>' };
+    });
+    const result = await sendBatch(
+      'backlog-test',
+      deps({ holdsLock: () => renewRunLock(asLock, 'backlog-test', run) })
+    );
+    expect(result).toMatchObject({ stoppedBy: 'lost-lock', counts: { sent: 1 } });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(pauseSends).toHaveBeenCalledWith('system', expect.stringContaining('lost its run lock'));
+    // The run's release leaves the export's lock alone.
+    await releaseRunLock(asLock, 'backlog-test', run);
+    expect(redis.store.has(runLockKey('backlog-test'))).toBe(true);
   });
 
   it('counts against the stated expected numbers, and a type with no expected count is never done', async () => {
