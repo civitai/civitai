@@ -131,8 +131,7 @@ describe('a connection lost during the statement is retried', () => {
   });
 
   it('createNotification retries the UPDATE when its result() rejects', async () => {
-    // Opt-out SELECT result succeeds; the UPDATE's result() is lost once; the retried UPDATE finds no
-    // row and the INSERT runs.
+    // undefined = the opt-out SELECT succeeds.
     h.resultFailures = [undefined, adminShutdown()];
 
     const r = await settle(
@@ -238,8 +237,7 @@ describe('a connection lost during the statement is retried', () => {
 
 describe('createNotification survives a switchover', () => {
   it('retries the write and queues once', async () => {
-    // Opt-out lookup succeeds, the UPDATE's connection drops once, the retried UPDATE finds no row and
-    // the INSERT runs.
+    // undefined = the opt-out SELECT succeeds.
     h.failures = [undefined, new Error('Connection terminated unexpectedly')];
 
     const r = await settle(
@@ -307,6 +305,31 @@ describe('withDbRetry', () => {
     const r = run([error]);
     await expect(r.p).resolves.toBe('ok');
     expect(r.calls()).toBe(2);
+  });
+
+  it('returns the value or the error unchanged when the onResult hook throws', async () => {
+    const onResult = () => {
+      throw new Error('hook broke');
+    };
+    const sleep = async () => undefined;
+    let calls = 0;
+    const recovered = withDbRetry(
+      async () => {
+        if (calls++ === 0) throw adminShutdown();
+        return 'ok';
+      },
+      { sleep, onResult }
+    );
+    await expect(recovered).resolves.toBe('ok');
+
+    const lastError = adminShutdown();
+    const exhausted = withDbRetry(
+      async () => {
+        throw lastError;
+      },
+      { sleep, onResult, backoffMs: [1] }
+    );
+    await expect(exhausted).rejects.toBe(lastError);
   });
 
   it.each([
