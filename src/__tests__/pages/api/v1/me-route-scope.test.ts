@@ -43,7 +43,7 @@ const USER = {
   email: 'identity@example.com',
 };
 
-function oauthToken(tokenScope: number) {
+function oauthToken(tokenScope: bigint) {
   h.bearer = {
     user: USER,
     tokenScope,

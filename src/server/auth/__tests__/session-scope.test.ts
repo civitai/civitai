@@ -31,7 +31,7 @@ const { getApiAuthSession } = await import('~/server/auth/api-auth-session');
 
 const USER_ID = 990000101;
 
-function bearerKey(tokenScope: number, extra: Record<string, unknown> = {}) {
+function bearerKey(tokenScope: bigint, extra: Record<string, unknown> = {}) {
   h.bearer = {
     user: { id: USER_ID, username: 'scoped' },
     tokenScope,
@@ -77,7 +77,7 @@ beforeEach(() => {
 });
 
 describe('getServerAuthSession scope modes, enforcing', () => {
-  it.each<[string, SessionScope | undefined, number, boolean]>([
+  it.each<[string, SessionScope | undefined, bigint, boolean]>([
     ['no mode, Full', undefined, TokenScope.Full, true],
     [
       'no mode, Full plus an opt-in bit',
@@ -231,8 +231,8 @@ describe('REST_SCOPE_ENFORCE', () => {
     expect(entry).toMatchObject({
       mode: 'report',
       route: '/api/v1/models',
-      requiredScope: TokenScope.VaultRead,
-      tokenScope: TokenScope.ModelsRead,
+      requiredScope: Number(TokenScope.VaultRead),
+      tokenScope: Number(TokenScope.ModelsRead),
       apiKeyType: 'Access',
       clientId: 'client-1',
       payload: { outcome: 'refused' },

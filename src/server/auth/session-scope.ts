@@ -2,8 +2,7 @@ import { createHmac } from 'node:crypto';
 import { env } from '~/env/server';
 import { withholdsModerator, type BearerCredential } from '~/server/auth/full-user-credential';
 import { logToAxiom } from '~/server/logging/client';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { Session } from '~/types/session';
 
 /**
@@ -15,8 +14,8 @@ import type { Session } from '~/types/session';
  * - `anyScope`: any bearer credential, including one with no scope bits.
  */
 export type SessionScope =
-  | { scope: number }
-  | { anyOf: readonly number[] }
+  | { scope: bigint }
+  | { anyOf: readonly bigint[] }
   | 'defer'
   | 'selfGated'
   | 'anyScope';
@@ -32,19 +31,19 @@ type ScopeRequest = { url?: string; context?: Record<string, unknown> };
 export const INSUFFICIENT_SCOPE_MESSAGE =
   'Your API key does not have the required scope for this action';
 
-function credentialMeetsScope(tokenScope: number, scope: SessionScope | undefined): boolean {
+function credentialMeetsScope(tokenScope: bigint, scope: SessionScope | undefined): boolean {
   if (scope === 'defer' || scope === 'anyScope') return true;
   if (scope === 'selfGated') return tokenScope !== TokenScope.None;
-  if (scope === undefined) return Flags.hasFlag(tokenScope, TokenScope.Full);
+  if (scope === undefined) return hasScope(tokenScope, TokenScope.Full);
   const required = 'scope' in scope ? [scope.scope] : scope.anyOf;
-  // `hasFlag(x, 0)` is true for every x, so a zero bit never satisfies a requirement.
-  return required.some((bit) => bit !== TokenScope.None && Flags.hasFlag(tokenScope, bit));
+  // `hasScope(x, 0n)` is true for every x, so a zero bit never satisfies a requirement.
+  return required.some((bit) => bit !== TokenScope.None && hasScope(tokenScope, bit));
 }
 
-function requiredBits(scope: SessionScope | undefined): number {
+function requiredBits(scope: SessionScope | undefined): bigint {
   if (scope === undefined) return TokenScope.Full;
   if (typeof scope === 'string') return TokenScope.None;
-  return 'scope' in scope ? scope.scope : scope.anyOf.reduce((all, bit) => all | bit, 0);
+  return 'scope' in scope ? scope.scope : scope.anyOf.reduce((all, bit) => all | bit, 0n);
 }
 
 const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -88,8 +87,8 @@ function logScopeDecision(
     type: 'info',
     mode: enforcement,
     route,
-    requiredScope: requiredBits(scope),
-    tokenScope: context.tokenScope ?? null,
+    requiredScope: Number(requiredBits(scope)),
+    tokenScope: context.tokenScope == null ? null : Number(context.tokenScope),
     apiKeyType: context.apiKeyType ?? null,
     clientId: context.subject?.type === 'oauth' ? String(context.subject.id) : null,
     payload: {
