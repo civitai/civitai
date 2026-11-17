@@ -77,7 +77,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   else await createCsamReport({ ...filed, writeBlocklist: false });
 
   // Written after the account removal below, so a failed blocklist write cannot hold that up.
-  const blocklistHashes = imageIds.length
+  // A supplemental writes only for an Image report, as on main.
+  const writesBlocklist = !!imageIds.length && (!supplementalOf || type === 'Image');
+  const blocklistHashes = writesBlocklist
     ? (await dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }))
         .map((img) => img.pHash)
         .filter(isDefined)
@@ -157,14 +159,30 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       payload: { reportedById },
     });
   }
-  // Written whether or not the removal succeeded, and throws on failure so the filing shows it.
-  await bulkAddBlockedImages({
-    data: blocklistHashes.map((hash) => ({ hash, reason: BlockImageReason.CSAM })),
-    context: { step: 'csam-report', imageIds, actorUserId: reportedById },
-  });
+  // Written whether or not the removal succeeded. A failure is rethrown at the end so the filing
+  // shows it, after the filed images' appeals are closed.
+  let blocklistError: unknown;
+  try {
+    await bulkAddBlockedImages({
+      data: blocklistHashes.map((hash) => ({ hash, reason: BlockImageReason.CSAM })),
+      context: { step: 'csam-report', imageIds, actorUserId: reportedById },
+    });
+  } catch (error) {
+    if (removalError) throw error;
+    blocklistError = error;
+    // Logged here: a failing step below would replace this error.
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      message: 'CSAM blocklist write failed',
+      userId,
+      error: (error as Error)?.message,
+      payload: { reportedById },
+    });
+  }
   if (removalError) throw removalError;
 
-  if (type === 'GeneratedImage') {
+  if (type === 'GeneratedImage' && !blocklistError) {
     // After the removal, so a slow or failing orchestrator can never hold it up. A 404 is the retired
     // route, which leaves nothing to review.
     try {
@@ -212,6 +230,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     // Last, so the images are already blocked and the report row committed when the flag comes off.
     await releaseReviewFlagsToReportHold(imageIds);
   }
+  if (blocklistError) throw blocklistError;
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed, strikesReviewFailed };

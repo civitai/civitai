@@ -202,6 +202,59 @@ describe('fileCsamReport', () => {
       })
     );
   });
+
+  it('still closes the filed images’ appeals and deferred effects when the blocklist write throws', async () => {
+    const { releaseReviewFlagsToReportHold } = await import('~/server/services/image-appeal-flag');
+    vi.mocked(releaseReviewFlagsToReportHold).mockClear();
+    dbMock.dbWrite.appeal.updateMany.mockClear();
+    dbMock.dbWrite.$executeRaw.mockClear();
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
+
+    await expect(file(OWNER, [IMAGE])).rejects.toThrow('no ClickHouse client');
+
+    expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'Rejected' }) })
+    );
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(releaseReviewFlagsToReportHold).toHaveBeenCalledWith([IMAGE]);
+  });
+});
+
+// Ruled main parity: a first filing of any type writes its images' hashes (createCsamReport did on
+// main), a supplemental only for an Image report. Widening or narrowing this needs a new ruling.
+describe('fileCsamReport blocklist scope by report type', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    vi.mocked(bulkAddBlockedImages).mockClear();
+  });
+  const fileAs = (type: string, supplementalOf?: number) =>
+    fileCsamReport({
+      userId: OWNER,
+      imageIds: [IMAGE],
+      type,
+      reportedById: MOD,
+      supplementalOf,
+    } as never);
+
+  it('writes no hash for a non-Image supplemental', async () => {
+    await fileAs('TrainingData', 3);
+    expect(bulkAddBlockedImages).toHaveBeenCalledWith(expect.objectContaining({ data: [] }));
+  });
+
+  it('writes CSAM hashes for an Image supplemental', async () => {
+    await fileAs('Image', 3);
+    expect(bulkAddBlockedImages).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+    );
+  });
+
+  it('writes CSAM hashes for a non-Image first filing, as main did', async () => {
+    await fileAs('TrainingData');
+    expect(bulkAddBlockedImages).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+    );
+  });
 });
 
 describe('fileCsamReport with attached text', () => {

@@ -1970,7 +1970,7 @@ export async function settleResolvedAppeals(
             await dropBlockedImageDeleteQueue([appeal.entityId]);
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
-            // with handleUnblockImages).
+            // with handleUnblockImages). A hash with a live CSAM entry stays blocked.
             if (updated.pHash != null)
               await bulkRemoveBlockedImages([updated.pHash], {
                 step: 'appeal-approve',
