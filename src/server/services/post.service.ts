@@ -4,7 +4,7 @@ import {
   onStorySparkPostsHidden,
   onStorySparkPostsRestored,
 } from '~/server/events/points/hooks';
-import { uniq } from 'lodash-es';
+import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -61,6 +61,8 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
+import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import {
@@ -293,11 +295,14 @@ export const getPostsInfinite = async ({
   poiOnly,
   minorOnly,
   asModerator,
+  asOwner = true,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
   /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
   asModerator?: boolean;
+  /** Whether the request may see the user's own drafts, Private and scheduled posts; default true. */
+  asOwner?: boolean;
 }) => {
   const AND = [Prisma.sql`1 = 1`];
   const cacheTags: string[] = [];
@@ -305,6 +310,10 @@ export const getPostsInfinite = async ({
   const userId = user?.id;
   // One value for every moderator branch below: a narrow-scope key is not a moderator here.
   const isModerator = asModerator ?? user?.isModerator ?? false;
+  // A narrow-scope key is not the owner of its posts here: the post owner branches read `ownerId`.
+  // Collection permissions (and the contributor read) still follow `user.id`: a scoped key keeps
+  // collection ownership and membership.
+  const ownerId = asOwner ? userId : undefined;
   const includeCosmetics = !!include?.includes('cosmetics');
 
   let targetUser: number | undefined;
@@ -322,7 +331,7 @@ export const getPostsInfinite = async ({
     cacheTags.push(`posts-user:${targetUser}`);
   }
 
-  const isOwnerRequest = !!userId && targetUser === userId;
+  const isOwnerRequest = !!ownerId && targetUser === ownerId;
 
   if (!isOwnerRequest && !isModerator) {
     // Makes it so private posts are not shown to the public
@@ -357,7 +366,11 @@ export const getPostsInfinite = async ({
     });
     if (
       version &&
-      !canViewPoiModel(version.model.poi, version.model.userId, user && { ...user, isModerator })
+      !canViewPoiModel(
+        version.model.poi,
+        version.model.userId,
+        user && { ...user, isModerator, id: ownerId ?? null }
+      )
     )
       return { items: [] };
 
@@ -370,11 +383,11 @@ export const getPostsInfinite = async ({
   let collectionJoined = false;
   let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
-    if (scheduled && userId) {
+    if (scheduled && ownerId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
       // the image service carve-out (image.service.ts ~line 4060).
       AND.push(
-        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${ownerId} AND p."publishedAt" > NOW()))`
       );
     } else {
       AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
@@ -425,12 +438,12 @@ export const getPostsInfinite = async ({
   // images and the image exclusions below are all served at the same level.
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   if (browsingLevel) {
-    if (pending && (isModerator || userId)) {
+    if (pending && (isModerator || ownerId)) {
       if (isModerator) {
         AND.push(Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR p."nsfwLevel" = 0)`);
-      } else if (userId) {
+      } else if (ownerId) {
         AND.push(
-          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${userId}))`
+          Prisma.sql`((p."nsfwLevel" & ${browsingLevel}) != 0 OR (p."nsfwLevel" = 0 AND p."userId" = ${ownerId}))`
         );
       }
     } else {
@@ -455,8 +468,8 @@ export const getPostsInfinite = async ({
       return { items: [] };
     }
 
-    const displayReviewItems = user?.id
-      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
+    const displayReviewItems = ownerId
+      ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${ownerId})`
       : '';
 
     // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
@@ -584,7 +597,7 @@ export const getPostsInfinite = async ({
     minor?: boolean | null;
     tagIds?: number[];
   }) =>
-    (!!user && image.userId === user.id) ||
+    (!!ownerId && image.userId === ownerId) ||
     (!(imageRules.disablePoi && image.poi) &&
       !(imageRules.disableMinor && image.minor) &&
       !(image.tagIds ?? []).some((tagId) => excludedImageTagIds.has(tagId)));
@@ -602,8 +615,9 @@ export const getPostsInfinite = async ({
           ? getImagesForPosts({
               postIds: postsRaw.map((x) => x.id),
               // excludedIds: excludedImageIds,
-              // A request that may not act as a moderator fetches images as anyone would.
-              user: user && { ...user, isModerator },
+              // Images are fetched with the request's own rights: a scoped key (no `ownerId`) as
+              // a signed-out viewer, so it gets no owner carve-out either.
+              user: ownerId !== undefined && user ? { ...user, isModerator } : undefined,
               browsingLevel,
               pending,
               disablePoi,
@@ -648,7 +662,7 @@ export const getPostsInfinite = async ({
         // remove unlisted resources the user has no access to:
         .filter((p) => {
           // Allow mods and owners to view all.
-          if (isModerator || p.userId === user?.id) return true;
+          if (isModerator || (!!ownerId && p.userId === ownerId)) return true;
 
           // Hide posts from unpublished model versions:
           if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
@@ -1860,22 +1874,57 @@ export async function bustCachesForPosts(postIds: number | number[]) {
     .map((x) => x.modelVersionId as number);
   if (!showcaseVersionIds.length) return;
 
-  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
-  // .com cover, which only the level computation re-checks.
   const showcaseModelIds = [
     ...new Set(
       results.filter((x) => x.isShowcase && x.modelId != null).map((x) => x.modelId as number)
     ),
   ];
-  await refreshSfwFaceLevels(showcaseModelIds);
+  await refreshModelShowcases(showcaseVersionIds, showcaseModelIds);
+}
+
+/**
+ * After every image of an account is blocked: the showcases and search documents of the models it
+ * owns. Bounded by that account's own models and versions, in chunks of `SHOWCASE_CHUNK`.
+ */
+export async function refreshShowcasesForUserModels(userId: number) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+    SELECT mv.id AS "modelVersionId", m.id AS "modelId"
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    WHERE m."userId" = ${userId}
+  `;
+  if (!rows.length) return;
+  await refreshModelShowcases(
+    rows.map((r) => r.modelVersionId),
+    uniq(rows.map((r) => r.modelId))
+  );
+}
+
+const SHOWCASE_CHUNK = 500;
+
+async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
+  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
+  // .com cover, which only the level computation re-checks.
+  await refreshSfwFaceLevels(modelIds);
 
   // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss
   // path) routes to primary during the replication window. Then refresh
   // instead of bust — refresh actively repopulates from primary, so a
   // concurrent reader can't poison the cache with `images: []` during the
   // bust debounce window.
-  await preventReplicationLagBatch('modelVersion', showcaseVersionIds);
-  await imagesForModelVersionsCache.refresh(showcaseVersionIds);
+  for (const batch of chunk(versionIds, SHOWCASE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', batch);
+    await imagesForModelVersionsCache.refresh(batch);
+  }
+
+  // The models sync re-picks a model only when `Model.updatedAt` moves, so a showcase image that
+  // stops qualifying would stay in its search document. Call-site import: models.search-index
+  // imports image.service, which imports this module.
+  const { modelsSearchIndex } = await import('~/server/search-index/models.search-index');
+  for (const batch of chunk(modelIds, SHOWCASE_CHUNK))
+    await modelsSearchIndex.queueUpdate(
+      batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
@@ -2451,7 +2500,9 @@ export const getPostContestCollectionDetails = async ({
 export const updatePostCollectionTagId = async ({
   id,
   collectionTagId,
-}: UpdatePostCollectionTagIdInput) => {
+  userId,
+  isModerator,
+}: UpdatePostCollectionTagIdInput & { userId: number; isModerator?: boolean }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
@@ -2463,8 +2514,24 @@ export const updatePostCollectionTagId = async ({
 
   if (!collection || collection?.mode !== CollectionMode?.Contest) return;
 
-  if (!collection.tags.find((t) => t.id === collectionTagId))
-    throw throwBadRequestError('Invalid tag');
+  // Category tags only, and only on entries that have none or a category tag: the rest (judging
+  // state and the like) is the system's, as `setCollectionItemsTag` keeps it.
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.id);
+  if (!categoryTagIds.includes(collectionTagId)) throw throwBadRequestError('Invalid tag');
+
+  // An entrant changes their category only while submissions are open; managers and moderators
+  // can at any time.
+  const { manage } = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
+    isModerator,
+  });
+  if (!manage) {
+    const { submissionEndDate } = (collection.metadata ?? {}) as CollectionMetadataSchema;
+    if (submissionEndDate && new Date(submissionEndDate) < new Date())
+      throw throwBadRequestError('Submissions for this contest are closed');
+    if (await isContestBanned(userId)) throw throwBadRequestError(CONTEST_BANNED_MESSAGE);
+  }
 
   const isImageCollection = collection.type === CollectionType.Image;
 
@@ -2479,6 +2546,7 @@ export const updatePostCollectionTagId = async ({
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+      OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }],
     },
     data: {
       tagId: collectionTagId,

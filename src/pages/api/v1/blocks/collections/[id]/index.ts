@@ -168,6 +168,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       user: subjectUser,
       // The same image population /api/v1/blocks/images serves.
       imagesAsPublicCatalog: true,
+      // An app token is never a full-access key: no moderator or owner view of the items.
+      asModerator: false,
+      asOwner: false,
     });
 
     // Only playable media (image/video) that passes the shared block image gate.

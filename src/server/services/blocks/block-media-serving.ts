@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { sessionClient } from '~/server/auth/session-client';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
+import type { SessionUser } from '~/types/session';
 import {
   parseSubjectUserId,
   type BlockTokenClaims,
@@ -18,13 +21,25 @@ import {
 } from '~/server/services/blocks/block-output-gate';
 import { readBlobState } from '~/server/services/orchestrator/blobRatings';
 import { hasEmptyViewerLevel } from '~/server/services/blocks/block-viewer-ceiling';
+import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputRules, BlockOutputView } from '~/server/services/blocks/block-output-mint';
 
 /**
- * Off or absent: every App Block media item is paused (hidden). Flipt unreachable
- * pauses only a pod whose client never started; a running pod keeps its last-known state.
+ * Off or absent: every App Block media item is paused. Judged per viewer: Flipt segments
+ * read either the entity id or the session context, so both are passed. A viewer that does
+ * not resolve, or an evaluation that throws, reads off. Flipt unreachable pauses only a pod
+ * whose client never started; a running pod keeps its last-known state.
  */
-export async function isBlockMediaServing() {
-  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE);
+export async function isBlockMediaServing(viewerId: number | null): Promise<boolean> {
+  try {
+    const flag = FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE;
+    if (viewerId === null) return await isFlipt(flag);
+    const user = (await sessionClient.getSessionUserById(viewerId)) as SessionUser | null;
+    if (!user) return false;
+    return await isFlipt(flag, String(viewerId), buildFliptContext(user));
+  } catch {
+    return false;
+  }
 }
 
 export type BlockMediaFetch =
@@ -48,10 +63,9 @@ export async function resolveBlockMediaFetch(token: unknown): Promise<BlockMedia
 }
 
 async function judgeTicket(token: unknown): Promise<BlockMediaFetch> {
-  if (!(await isBlockMediaServing())) return { state: 'hidden', reason: 'paused' };
-
   const ticket = openBlockMediaTicket(token);
   if (!ticket) return { state: 'hidden', reason: 'invalid' };
+  if (!(await isBlockMediaServing(ticket.viewerId))) return { state: 'hidden', reason: 'paused' };
 
   const blob = await readBlobState(ticket.blobId);
   if (blob.verdict === 'pending') return { state: 'pending' };
@@ -92,7 +106,7 @@ export async function resolveWorkflowMediaRefs(args: {
   /** Users the viewer hid, blocked or is blocked by: their refs do not replay to this viewer. */
   hiddenOwnerIds: ReadonlySet<number>;
 }): Promise<WorkflowMediaItem[]> {
-  const serving = await isBlockMediaServing();
+  const serving = await isBlockMediaServing(args.viewerId);
   return args.refs.map((token) => {
     const item = judgeRef(token, args, serving);
     recordBlockMediaVerdict(
@@ -178,4 +192,33 @@ export async function resolveWorkflowMediaForBlockClaims(input: {
     ),
   });
   return { media };
+}
+
+/**
+ * The output view for an app-facing workflow read: the token's output ceiling, whether
+ * serving is on for this viewer, and a mint context only while it is. Off, a signed-out
+ * subject, or a failed evaluation gives `serving: false, mint: null`, so the read is
+ * exactly what it was before serving existed.
+ */
+export async function resolveBlockOutputView(
+  claims: Pick<BlockTokenClaims, 'sub' | 'appBlockId' | 'maxBrowsingLevel' | 'viewerBrowsingLevel'>
+): Promise<BlockOutputView> {
+  const ceiling = blockOutputCeilingFromClaims(claims);
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null || !(await isBlockMediaServing(userId))) {
+    return { ...ceiling, serving: false, mint: null };
+  }
+  return { ...ceiling, serving: true, mint: { userId, appBlockId: claims.appBlockId } };
+}
+
+/**
+ * The rules for a server-side read of the viewer's outputs (publish, post, persist): the
+ * same ceiling and serving decision as {@link resolveBlockOutputView}, with nothing minted,
+ * so these name the same positions as usable as the poll does.
+ */
+export async function resolveBlockOutputRules(
+  claims: Pick<BlockTokenClaims, 'sub' | 'appBlockId' | 'maxBrowsingLevel' | 'viewerBrowsingLevel'>
+): Promise<BlockOutputRules> {
+  const { mint: _mint, ...rules } = await resolveBlockOutputView(claims);
+  return rules;
 }
