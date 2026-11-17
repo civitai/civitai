@@ -67,22 +67,20 @@ const SESSION_OWNER_ID: number | null = null;
 // fails to load with 0 tests collected and no failing assertion.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
-        useInfiniteQuery: (input: Record<string, unknown>) => {
-          mocks.lastArgs = input;
-          return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isFetchingNextPage: false,
-            fetchNextPage: vi.fn(),
-            hasNextPage: false,
-          };
-        },
+  trpc: (await import('../../../test/trpcProxyStub')).makeTrpcProxy({
+    'appListings.listAvailable': {
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.lastArgs = input;
+        return {
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
+        };
       },
     },
-  },
+  }),
 }));
 
 // 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
