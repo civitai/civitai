@@ -266,6 +266,15 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
     await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
     expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([128489949]);
   });
+
+  it('completes the unblock when the article requeue fails', async () => {
+    vi.mocked(queueArticlesAndComicsForImages).mockRejectedValueOnce(
+      new Error('chunk load failed')
+    );
+    await expect(
+      handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any)
+    ).resolves.not.toThrow();
+  });
 });
 
 describe('handleUnblockImages and a CSAM block', () => {

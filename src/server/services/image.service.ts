@@ -7665,10 +7665,11 @@ export async function bustImageModRulesCache() {
 }
 
 // Imported at the call, keeping the search-index side out of image.service's import graph.
-const queueArticlesAndComicsForImagesLazy = async (imageIds: number[]) =>
-  (await import('~/server/services/image-models-reindex.service')).queueArticlesAndComicsForImages(
-    imageIds
-  );
+// Never throws: callers run it after their writes have committed.
+const queueArticlesAndComicsForImagesLazy = (imageIds: number[]) =>
+  import('~/server/services/image-models-reindex.service')
+    .then(({ queueArticlesAndComicsForImages }) => queueArticlesAndComicsForImages(imageIds))
+    .catch(handleLogError);
 
 export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
   const image = await dbRead.image.findUnique({
