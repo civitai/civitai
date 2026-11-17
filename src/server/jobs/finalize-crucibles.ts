@@ -8,6 +8,7 @@ import {
 } from '~/server/services/crucible.service';
 import { logToAxiom } from '~/server/logging/client';
 import { CrucibleRankingDeferredError } from '~/server/services/crucible-bradley-terry';
+import { freezeAllFlagDays } from '~/server/events/turf/flag-freeze';
 import { swapAllFlagDays } from '~/server/events/turf/turf.service';
 
 const log = createLogger('finalize-crucibles', 'yellow');
@@ -102,6 +103,7 @@ export const finalizeCruciblesJob = createJob(
     // A finished flag Crucible becomes the home row's flags now, not at the next turf reconcile.
     // swapAllFlagDays logs its own failures and never throws for one event.
     if (results.success.length) await swapAllFlagDays();
+    await freezeAllFlagDays();
 
     return {
       finalized: results.success.length,
