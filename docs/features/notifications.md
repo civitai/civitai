@@ -186,6 +186,29 @@ shows an Email checkbox for those types only, unavailable while the type itself 
 - **Off until switched on:** the `KeyValue` row `notification-email-enabled` must hold JSON `true`.
   Delete it (or set `false`) to stop all notification email within a minute, no deploy needed.
 
+### Weekly missed-notification digest
+
+One email a week listing the notifications a user has not seen (`UserNotification.viewed` false)
+in the last seven days, or since their last digest if that is later: the newest ten, "and N more",
+and a link to `/user/notifications`. Types that send their own email (`defaultEmail`) are left out,
+so the digest never repeats one. Users with nothing unseen get nothing.
+
+- **On by default, with an opt-out.** It is the email opt-out type `missed-notification-digest`
+  (`missed-digest.constants.ts`): a `UserEmailNotificationOptOut` row turns it off. The settings
+  switch ("Weekly email of notifications you missed") and the email's one-click unsubscribe both
+  write that row.
+- **Skipped:** no verified email, opted out, every notification turned off (the same rule the
+  Knights app applies), or sent a digest in the last six days.
+- **Job:** `missed-notification-digest`, hourly. One pass walks every user in id order, resuming
+  where the last run stopped (`KeyValue` `missed-notification-digest:cursor`); a new pass starts a
+  week after the previous one did. Sends are paced at the shared bulk-email interval and capped per
+  run. `UserNotificationDigest` records each send before the email goes out; with that table
+  missing the job sends nothing.
+- **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user. Off, it emails no one.
+- **Reads:** the notifications app's `POST /notifications/unseen` (`queryUnseenNotifications`).
+- **Counts:** each run logs `notification-digest` with users considered, emailed, failed and
+  skipped by reason.
+
 ## Debugging
 
 - **Missing notifications** — check the user's settings opt-out and the dedupe key. Remember create
