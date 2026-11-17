@@ -165,6 +165,40 @@ describe('saveItemInCollections with an image', () => {
     ).resolves.toBeDefined();
   });
 
+  it('refuses a caller who cannot add to the collection the same way whether or not the image is in it', async () => {
+    const privateRow = { ...collectionRow, read: 'Private', write: 'Private' };
+    mockDbRead.collection.findMany.mockResolvedValue([privateRow]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Private',
+        write: 'Private',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+    const refusal = async (listed: boolean) => {
+      mockDbRead.collectionItem.findMany.mockResolvedValue(
+        listed
+          ? [{ id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: OWNER_ID, note: null }]
+          : []
+      );
+      return save({ imageId: HIDDEN_IMAGE, collections: [{ collectionId: COLLECTION_ID }] }).then(
+        () => 'saved',
+        (error: TRPCError) => ({ code: error.code, message: error.message })
+      );
+    };
+
+    const notListed = await refusal(false);
+    expect(notListed).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(await refusal(true)).toEqual(notListed);
+    expect(assertVisible).not.toHaveBeenCalled();
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
   it('leaves non-image items alone', async () => {
     mockDbRead.collection.findMany.mockResolvedValue([{ ...collectionRow, type: 'Model' }]);
     mockDbRead.model.findMany.mockResolvedValue([{ id: HIDDEN_IMAGE, userId: SUBMITTER_ID }]);

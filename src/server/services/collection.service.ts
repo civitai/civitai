@@ -1110,6 +1110,24 @@ export const saveItemInCollections = async ({
     ...upsertCollectionItems.map((c) => c.collectionId),
     ...removeFromCollectionIds,
   ]);
+  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query), adds and removes
+  // together — they're one round trip over the same table whether or not this request does both.
+  const permissionsArray = await getUserCollectionPermissionsByIds({
+    ids: touchedCollectionIds,
+    userId,
+    isModerator,
+  });
+  const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
+  // An add to a collection the caller can't write is dropped before anything below looks at it: the
+  // checks that follow differ by whether the item is already there, and must not answer that for
+  // someone who couldn't have written it.
+  const canWrite = (collectionId: number) => {
+    const permission = permissionsMap.get(collectionId);
+    return !!permission && (permission.write || permission.writeReview);
+  };
+  upsertCollectionItems = upsertCollectionItems.filter((c) => canWrite(c.collectionId));
+  const writableCollections = collections.filter((c) => canWrite(c.id));
+
   const existingItems = await dbRead.collectionItem.findMany({
     where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
     select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
@@ -1139,7 +1157,7 @@ export const saveItemInCollections = async ({
   }
 
   // Check if any contest collections are involved and validate ONCE
-  const contestCollections = collections.filter(
+  const contestCollections = writableCollections.filter(
     (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
   );
   if (contestCollections.length > 0) {
@@ -1157,7 +1175,7 @@ export const saveItemInCollections = async ({
   }
 
   // Check if any featured collections are involved and validate ONCE
-  const featuredCollections = collections.filter(
+  const featuredCollections = writableCollections.filter(
     (c) =>
       c.userId === -1 && !c.mode && c.name.includes('Featured') && !unwrittenCollectionIds.has(c.id)
   );
@@ -1167,15 +1185,6 @@ export const saveItemInCollections = async ({
       [`${itemKey}s`]: [input[itemKey]],
     });
   }
-
-  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query), adds and removes
-  // together — they're one round trip over the same table whether or not this request does both.
-  const permissionsArray = await getUserCollectionPermissionsByIds({
-    ids: touchedCollectionIds,
-    userId,
-    isModerator,
-  });
-  const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
 
   // Submitting to a collection you don't already follow follows it — but that's a side effect of the
   // entry landing, so it's collected here and applied after the write. Doing it inline left a user
