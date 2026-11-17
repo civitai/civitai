@@ -191,6 +191,12 @@ const scan = async (id: number) =>
 
 const STILL_CSAM = { ingestion: 'Blocked', blockedFor: 'CSAM', nsfwLevel: 32 };
 
+/** Leaves the reasons but lifts the block, so a block call that writes nothing reads as one. */
+const unblockBoth = () =>
+  holder.db.exec(
+    `UPDATE "Image" SET ingestion = 'Rescan', "nsfwLevel" = 0 WHERE id IN (${CSAM}, ${OTHER})`
+  );
+
 describe('a scan of a CSAM-blocked image', () => {
   it('keeps the block when the audit comes back clean', async () => {
     const outcome = await scan(CSAM);
@@ -311,11 +317,31 @@ describe('the rating block', () => {
   });
 
   // The orchestrator's rating can carry no reason (`mediaRating.blockedReason` undefined).
-  it('keeps the stored reason when the rating gives none', async () => {
+  it('blocks but keeps the stored reason when the rating gives none', async () => {
+    await unblockBoth();
+
     await blockImageFromRating({ imageId: CSAM });
     await blockImageFromRating({ imageId: OTHER });
 
     expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
-    expect(await imageRow(OTHER)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'moderated' });
+    expect(await imageRow(OTHER)).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      nsfwLevel: 32,
+    });
+  });
+
+  it('clears the reason on an explicit null, except a CSAM one', async () => {
+    await unblockBoth();
+
+    await blockImageFromRating({ imageId: CSAM, blockedReason: null });
+    await blockImageFromRating({ imageId: OTHER, blockedReason: null });
+
+    expect(await imageRow(CSAM)).toEqual(STILL_CSAM);
+    expect(await imageRow(OTHER)).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: null,
+      nsfwLevel: 32,
+    });
   });
 });
