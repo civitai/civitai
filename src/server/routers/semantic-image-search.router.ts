@@ -1,7 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
-import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,
@@ -21,6 +20,7 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
@@ -38,7 +38,7 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
     usernames?.length === 1 &&
     usernames[0].toLowerCase() === username &&
     !userIds &&
-    // The picker sends a text query and reads one page.
+    // No paging or image-similarity search on this path.
     !cursor &&
     !imageId;
   if (!ownOnly) throw new TRPCError({ code: 'FORBIDDEN' });
@@ -46,7 +46,6 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
   return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
 });
 
-// The picker's page size.
 const OWN_IMAGES_PAGE = 25;
 // Only what the picker sends; anything else on this path is dropped.
 const ownImagesInput = (
@@ -60,19 +59,20 @@ const ownImagesInput = (
 });
 
 // The own-images path has its own, lower limit: the picker needs no more.
-const OWN_IMAGES_RATE_LIMIT = { limit: 20, period: 60 };
-const ownImagesRateLimit = middleware(async ({ ctx, path, next }) => {
-  if (!(ctx as { ownImagesOf?: number }).ownImagesOf) return next();
-  const recordAttempt = await claimRateLimitAttempt({
-    rules: [OWN_IMAGES_RATE_LIMIT],
-    keyName: `${path.replace('.', ':')}:own`,
-    scope: path,
-    user: ctx.user,
-    req: ctx.req,
-  });
-  await recordAttempt();
-  return next();
-});
+const ownImagesRateLimit = rateLimit(
+  { limit: 20, period: 60 },
+  (_, ctx) => !!(ctx as { ownImagesOf?: number }).ownImagesOf,
+  { sharedKey: 'semanticImageSearch:search:own' }
+);
+
+// shortcut: estimated, as own-images latency was not yet logged; re-derive from the `ownImages`
+// search log rows.
+export const OWN_IMAGES_FLOOR_MS = 200;
+export const OWN_IMAGES_JITTER_MS = 500;
+const holdOwnImages = async (started: number) => {
+  const wait = started + OWN_IMAGES_FLOOR_MS + Math.random() * OWN_IMAGES_JITTER_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+};
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
@@ -99,29 +99,40 @@ export const semanticImageSearchRouter = router({
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
         refuseNarrowing: !!ownImagesOf,
+      }).catch(async (error) => {
+        if (ownImagesOf) await holdOwnImages(started);
+        throw error;
       });
       const latencyMs = Date.now() - started;
 
-      // Logged as searched, so the row says what ran.
       if (!input.cursor) {
+        // Logged as searched, so the row says what ran.
         const { query, imageId, cursor, limit, ...filters } = searched;
         void ctx.track
           .search({
             query: query ?? '',
             index: 'images_semantic',
-            filters: { ...filters, imageId, resultCount: result.items.length, latencyMs },
+            filters: {
+              ...filters,
+              imageId,
+              resultCount: result.items.length,
+              latencyMs,
+              ...(ownImagesOf && { ownImages: true }),
+            },
           })
           .catch(() => undefined);
       }
 
       // The picker reads one page and shows neither a correction nor a timing.
-      if (ownImagesOf)
+      if (ownImagesOf) {
+        await holdOwnImages(started);
         return {
           items: result.items,
           nextCursor: undefined,
           correctedQuery: undefined,
           latencyMs: 0,
         };
+      }
       return { ...result, latencyMs };
     }),
 

@@ -57,6 +57,9 @@ const search = (id: number, own: boolean) =>
 
 /** `n` recorded attempts across the last 50 seconds; a fresh array per read, as the store gives. */
 const recent = (n: number) => Array.from({ length: n }, (_, i) => Date.now() - i * 2_000);
+/** `n` attempts in the own-images bucket only, so sharing the general bucket would read as empty. */
+const ownBucket = (n: number) => async (key: string) =>
+  key.endsWith(':semanticImageSearch:search:own') ? recent(n) : [];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -67,13 +70,13 @@ beforeEach(() => {
 
 describe('semanticImageSearch own-images rate limit', () => {
   it('refuses the 21st own-images search in a minute', async () => {
-    mockHGet.mockImplementation(async () => recent(20));
+    mockHGet.mockImplementation(ownBucket(20));
     await expect(search(1, true)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(h.search).not.toHaveBeenCalled();
   });
 
   it('serves the 20th', async () => {
-    mockHGet.mockImplementation(async () => recent(19));
+    mockHGet.mockImplementation(ownBucket(19));
     await expect(search(2, true)).resolves.toBeDefined();
   });
 

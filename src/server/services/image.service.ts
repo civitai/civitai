@@ -4969,6 +4969,12 @@ export const getImagesByEntity = async ({
     : [];
 
   if (!isModerator) {
+    // An unrated image is its owner's and moderators' alone, as in the image feeds.
+    AND.push(
+      userId
+        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
+        : Prisma.sql`i."nsfwLevel" != 0`
+    );
     const needsReviewOr = [
       Prisma.sql`i."needsReview" IS NULL`,
       userId ? Prisma.sql`i."userId" = ${userId}` : null,
@@ -5551,6 +5557,9 @@ export const getEntityCoverImage = async ({
     i."acceptableMinor" = FALSE OR (${signedIn}::boolean AND i."userId" = ${viewerId}) OR ${isModerator}::boolean
   )`;
 
+  // An unrated image is never a cover for anyone but moderators, owner included.
+  const coverRated = Prisma.sql`(i."nsfwLevel" != 0 OR ${isModerator}::boolean)`;
+
   // A minor or SFW-only model's image above its gallery level is its owner's and moderators'
   // alone. Placed before DISTINCT ON, so a held first image falls back to the next one.
   const withinHeldGallery = heldGalleryImageSql({
@@ -5665,6 +5674,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
+          AND ${coverRated}
           AND ${baseModelAllowed}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
@@ -5703,6 +5713,7 @@ export const getEntityCoverImage = async ({
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
           AND ${imageNotFlagged}
+          AND ${coverRated}
           AND ${baseModelAllowed}
           ORDER BY e."entityId", mv.index,  p.id, i.index, i.id
         ) t
@@ -5724,6 +5735,7 @@ export const getEntityCoverImage = async ({
         LEFT JOIN "Model" m ON m.id = mv."modelId"
         WHERE e."entityType" = 'Image'
           AND ${imageVisible}
+          AND ${coverRated}
           AND ${modelNotWithheld}
           AND ${withinHeldGallery}
 
@@ -5756,6 +5768,7 @@ export const getEntityCoverImage = async ({
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
               AND ${imageNotFlagged}
+              AND ${coverRated}
         ) t
 
         UNION
@@ -5784,6 +5797,7 @@ export const getEntityCoverImage = async ({
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
+            AND ${coverRated}
             AND ${baseModelAllowed}
           ORDER BY e."entityId", i."postId", i.index, i.id
         ) t
@@ -5842,6 +5856,7 @@ export const getEntityCoverImage = async ({
           WHERE i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
             AND ${imageNotFlagged}
+            AND ${coverRated}
             AND ${withinHeldGallery}
             -- An allowlist: a connection type without a visibility rule here serves no cover.
             AND e."entityType" IN ('Bounty', 'BountyEntry', 'Article')

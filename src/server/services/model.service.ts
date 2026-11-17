@@ -293,6 +293,7 @@ import {
 } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
+  heldGalleryLevel,
   modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -6757,18 +6758,7 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   return result;
 }
 
-/**
- * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
- * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
- * gallery reads 0 as no cap.
- */
-export function heldGalleryLevel(
-  stored: number | undefined,
-  model: { minor: boolean; sfwOnly: boolean }
-) {
-  const limit = modelBrowsingLevelLimit(model);
-  return Flags.intersection(stored ?? 0, limit) || limit;
-}
+export { heldGalleryLevel };
 
 export const getGalleryHiddenPreferences = async ({
   settings,
@@ -7151,8 +7141,9 @@ export async function copyGallerySettingsToAllModelsByUser({
 }
 
 /**
- * A showcase collection must list its model. A model already in it is left alone: re-saving would
- * demand write access and a tag the caller may not have, and would clear an existing item's tag.
+ * A showcase collection must list its model. A model already in it needs the caller's write access
+ * and is not re-saved: that would demand a tag the caller may not have, and would clear an existing
+ * item's tag. Otherwise it is added, which a caller who may only submit for review can do too.
  */
 async function addModelToShowcaseCollection({
   modelId,
@@ -7165,16 +7156,63 @@ async function addModelToShowcaseCollection({
   userId: number;
   isModerator?: boolean;
 }) {
+  const refused = () => throwBadRequestError('The model could not be added to that collection');
+  // Checked before anything that depends on whether the model is already in it, so a refusal
+  // looks the same either way.
+  const permissions = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+  if (!permissions.write && !permissions.manage && !permissions.writeReview) throw refused();
   const existing = await dbWrite.collectionItem.findFirst({
     where: { collectionId, modelId },
     select: { id: true },
   });
-  if (existing) return;
+  if (existing) {
+    if (!permissions.write && !permissions.manage) throw refused();
+    return;
+  }
   const status = await saveItemInCollections({
     input: { collections: [{ collectionId }], modelId, type: 'Model', userId, isModerator },
   });
-  if (status !== 'added')
-    throw throwBadRequestError('The model could not be added to that collection');
+  if (status !== 'added') throw refused();
+}
+
+/**
+ * After a model leaves collections, clears its showcase if it named one of them and the model is no
+ * longer listed there, whether the model's owner or the collection's side removed it.
+ */
+export async function clearModelShowcaseAfterRemoval({
+  modelId,
+  collectionIds,
+}: {
+  modelId: number;
+  collectionIds: number[];
+}) {
+  if (!collectionIds.length) return;
+  const model = await getModel({ id: modelId, select: { id: true, meta: true } });
+  const showcaseCollectionId = (model?.meta as ModelMeta | null)?.showcaseCollectionId;
+  if (!showcaseCollectionId || !collectionIds.includes(showcaseCollectionId)) return;
+  // primary: the removal this follows was just written.
+  const stillListed = await dbWrite.collectionItem.findFirst({
+    where: { collectionId: showcaseCollectionId, modelId },
+    select: { id: true },
+  });
+  if (stillListed) return;
+
+  await updateModelById({
+    id: modelId,
+    data: {},
+    meta: (stored) =>
+      ({
+        ...stored,
+        ...(stored?.showcaseCollectionId === showcaseCollectionId && {
+          showcaseCollectionId: null,
+        }),
+      } as ModelMeta),
+  });
+  await dataForModelsCache.refresh(modelId);
 }
 
 export async function setModelShowcaseCollection({
