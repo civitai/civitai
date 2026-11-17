@@ -312,7 +312,7 @@ describe('the full-ci label', () => {
   });
 
   // The label stays on until the full unit suite has passed once on the PR. lint.yml's
-  // `full-ci-done` removes it after a run whose four shards all passed: a PR run carrying the
+  // `full-ci-done` removes it after a run whose six shards all passed: a PR run carrying the
   // label from this repo, or a dispatch that names the PR (`pr`, which only full-ci.yml passes).
   describe('lint.yml, `full-ci-done` removes the label after a passing full unit run', () => {
     const doc = load('lint.yml');
@@ -335,7 +335,7 @@ describe('the full-ci label', () => {
 
     // `needs.unit.result == 'success'` means "the suite passed" only while `unit` is fail-closed:
     // a `continue-on-error` job or test step would read success over a red suite, and a matrix
-    // that runs fewer than four shards on a full run would be a partial pass. These pin that.
+    // that runs fewer than six shards on a full run would be a partial pass. These pin that.
     it('relies on a fail-closed `unit`: no continue-on-error on the job', () => {
       expect(doc.jobs?.unit?.['continue-on-error']).toBeUndefined();
     });
@@ -348,7 +348,7 @@ describe('the full-ci label', () => {
     });
 
     // Evaluate the matrix expression for every `only` a full run can have.
-    it('relies on a full `unit` matrix: [1, 2, 3, 4] when only is unset, all or unit', () => {
+    it('relies on a full `unit` matrix: [1, 2, 3, 4, 5, 6] when only is unset, all or unit', () => {
       const expr = norm(String(doc.jobs?.unit?.strategy?.matrix?.shard ?? ''));
       const m =
         /^fromJSON\('(\{.*\})'\)\[inputs\.only \|\| 'all'\] \|\| fromJSON\('(\[.*\])'\)$/.exec(
@@ -359,11 +359,11 @@ describe('the full-ci label', () => {
       const fallback = JSON.parse(m?.[2] ?? '[]') as number[];
       const shards = (only: string | undefined) => perOnly[only || 'all'] || fallback;
       for (const only of [undefined, '', 'all', 'unit'])
-        expect(shards(only), `only=${only}`).toEqual([1, 2, 3, 4]);
+        expect(shards(only), `only=${only}`).toEqual([1, 2, 3, 4, 5, 6]);
     });
 
     // `only: unit-<n>` runs one shard; its success says nothing about the other three.
-    it('only after a full run of all four shards', () => {
+    it('only after a full run of all six shards', () => {
       expect(c[1], 'the second conjunct must exclude single-shard dispatches').toBe(FULL_RUN);
     });
 

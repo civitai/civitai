@@ -130,6 +130,11 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 	if req.NoProfilePictures {
 		profileUsers = nil
 	}
+	// As Page: the user cosmetics and frames (and so the cosmetic records) only with 'cosmetics'.
+	cosmeticUsers, frameImages := users, images
+	if req.NoCosmetics {
+		cosmeticUsers, frameImages = nil, nil
+	}
 	stage1 := NewBatch()
 	reads := []struct {
 		name string
@@ -137,10 +142,10 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 		read *PackedRead
 	}{
 		{CacheBasicUsers, users, s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)},
-		{CacheUserCosmetics, users, s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)},
+		{CacheUserCosmetics, cosmeticUsers, s.Packed.Queue(stage1, KeyUserCosmetics, cosmeticUsers, 0)},
 		// As Page: the profile pictures only when the include list asks for them.
 		{CacheProfilePictures, profileUsers, s.Packed.Queue(stage1, KeyProfilePictures, profileUsers, 0)},
-		{CacheImageFrames, images, s.Packed.Queue(stage1, KeyImageFrames, images, 0)},
+		{CacheImageFrames, frameImages, s.Packed.Queue(stage1, KeyImageFrames, frameImages, 0)},
 		{CacheThumbnails, videos, s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)},
 		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)},
 	}

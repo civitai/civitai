@@ -89,7 +89,7 @@ const PUBLIC_FILE = {
 
 type Caller = { user?: Record<string, unknown>; context?: Record<string, unknown> };
 
-const bearer = (tokenScope: number | undefined, subject: 'apiKey' | 'oauth' = 'oauth') => ({
+const bearer = (tokenScope: bigint | undefined, subject: 'apiKey' | 'oauth' = 'oauth') => ({
   apiKeyId: 6,
   apiKeyType: subject === 'oauth' ? 'Access' : 'User',
   subject: { type: subject, id: subject === 'oauth' ? 'client-abc' : 6 },

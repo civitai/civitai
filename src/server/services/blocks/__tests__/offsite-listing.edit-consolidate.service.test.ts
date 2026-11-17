@@ -245,7 +245,7 @@ describe('getMyListingForEdit', () => {
       }),
     });
     // The client's allowedScopes drifted to 13 since the stored snapshot (4).
-    mockRead.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 13n });
 
     const res = await getMyListingForEdit({ listingId: 'apl_parent', userId: 7 });
     expect(res.connectClientId).toBe('oauth-1');
@@ -585,11 +585,11 @@ describe('updateRevisionDraft', () => {
     );
     // Client allowedScopes = 13 (UserRead|ModelsRead|ModelsWrite); the form's bogus
     // requestedScopes:4 must be ignored and the derived 13 snapshotted.
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 7, allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 7, allowedScopes: 13n });
     await updateRevisionDraft({
       shadowId: 'apl_shadow',
       userId: 7,
-      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+      patch: { requestedScopes: 4n, scopeJustifications: { ModelsRead: 'reason' } },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.connectRequestedScopes).toBe(13);
@@ -637,12 +637,12 @@ describe('updateRevisionDraft', () => {
       })
     );
     // Client owned by someone else (999); the shadow/listing is owned by the mod (7).
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13n });
     await updateRevisionDraft({
       shadowId: 'apl_shadow',
       userId: 7,
       isModerator: true,
-      patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+      patch: { requestedScopes: 4n, scopeJustifications: { ModelsRead: 'reason' } },
     });
     const data = mockWrite.appListing.update.mock.calls[0][0].data as Record<string, unknown>;
     expect(data.connectRequestedScopes).toBe(13);
@@ -657,13 +657,13 @@ describe('updateRevisionDraft', () => {
         connectClientId: 'oauth-1',
       })
     );
-    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13 });
+    mockRead.oauthClient.findUnique.mockResolvedValue({ userId: 999, allowedScopes: 13n });
     await expect(
       updateRevisionDraft({
         shadowId: 'apl_shadow',
         userId: 7,
         isModerator: false,
-        patch: { requestedScopes: 4, scopeJustifications: { ModelsRead: 'reason' } },
+        patch: { requestedScopes: 4n, scopeJustifications: { ModelsRead: 'reason' } },
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(mockWrite.appListing.update).not.toHaveBeenCalled();

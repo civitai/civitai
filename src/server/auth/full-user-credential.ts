@@ -4,7 +4,7 @@ import { ApiKeyType } from '~/shared/utils/prisma/enums';
 export type BearerCredential = {
   apiKeyType?: ApiKeyType | null;
   subject?: { type: 'apiKey' | 'oauth'; id: number | string } | null;
-  tokenScope?: number | null;
+  tokenScope?: bigint | null;
 };
 
 /**

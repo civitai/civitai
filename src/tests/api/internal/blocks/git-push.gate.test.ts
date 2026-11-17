@@ -244,7 +244,11 @@ describe('git-push webhook — no-trust-on-push gate', () => {
       appId: `appblk-${SLUG}`,
       blockId: SLUG,
       currentVersionSha: APPROVED_SHA,
-      app: { id: `appblk-${SLUG}`, allowedScopes: 0, allowedOrigins: [`https://${SLUG}.civit.ai`] },
+      app: {
+        id: `appblk-${SLUG}`,
+        allowedScopes: 0n,
+        allowedOrigins: [`https://${SLUG}.civit.ai`],
+      },
     };
     state.approvedPubReqForSha = null;
     state.pendingPubReqForSha = null;

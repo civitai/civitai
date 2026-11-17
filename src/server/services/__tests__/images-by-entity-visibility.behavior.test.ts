@@ -33,6 +33,8 @@ const viewers = {
 const RATED = 101;
 const UNRATED = 102;
 const UNRATED_PENDING = 103;
+const MINOR_R = 104; // minor-flagged, rated R: restricted by the minor content rule
+const UNFLAGGED_R = 105;
 
 let db: PGlite;
 
@@ -50,8 +52,10 @@ beforeAll(async () => {
     CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     INSERT INTO "Image" (id, "nsfwLevel", ingestion) VALUES
       (${RATED}, 1, 'Scanned'), (${UNRATED}, 0, 'Scanned'), (${UNRATED_PENDING}, 0, 'Pending');
+    INSERT INTO "Image" (id, "nsfwLevel", minor) VALUES (${MINOR_R}, 4, true), (${UNFLAGGED_R}, 4, false);
     INSERT INTO "ImageConnection" VALUES
-      (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry');
+      (${RATED}, 1, 'BountyEntry'), (${UNRATED}, 2, 'BountyEntry'), (${UNRATED_PENDING}, 3, 'BountyEntry'),
+      (${MINOR_R}, 4, 'BountyEntry'), (${UNFLAGGED_R}, 5, 'BountyEntry');
   `);
   const raw = pgliteRaw(db);
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(raw.queryRaw);
@@ -87,4 +91,22 @@ describe('getImagesByEntity', () => {
       expect(await imageOf(3, viewers[who])).toEqual([]);
     }
   );
+
+  it.each(['anonymous', 'stranger'] as const)(
+    'withholds a minor-flagged image rated R from the %s',
+    async (who) => {
+      expect(await imageOf(4, viewers[who])).toEqual([]);
+    }
+  );
+
+  it.each(['owner', 'moderator'] as const)(
+    'serves the minor-flagged R image to the %s (control)',
+    async (who) => {
+      expect(await imageOf(4, viewers[who])).toEqual([MINOR_R]);
+    }
+  );
+
+  it('serves an unflagged R image to a stranger (control)', async () => {
+    expect(await imageOf(5, viewers.stranger)).toEqual([UNFLAGGED_R]);
+  });
 });

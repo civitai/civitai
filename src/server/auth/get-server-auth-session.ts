@@ -54,7 +54,9 @@ export const getServerAuthSession = async ({
   if (token) {
     if (!req.context?.session) {
       const result = await getSessionFromBearerToken(token);
-      req.context.session = result;
+      // The session can reach page props, so it carries the scope as a number. Scope checks must read
+      // the bigint `req.context.tokenScope`: a bitwise op on the number is 32-bit and drops bits 31-32.
+      req.context.session = result && { ...result, tokenScope: Number(result.tokenScope) };
       if (result && 'tokenScope' in result) {
         req.context.tokenScope = result.tokenScope;
         req.context.buzzLimit = (result as any).buzzLimit ?? null;

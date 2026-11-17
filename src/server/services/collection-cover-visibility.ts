@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { minorMatureImageVisibleSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
@@ -29,6 +30,7 @@ const servableImageSql = Prisma.sql`(
   AND i."tosViolation" IS NOT TRUE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
   AND ${baseModelAllowedSql}
+  AND ${minorMatureImageVisibleSql()}
 )`;
 
 /** The post `"Post" p` is on no taken-down model; true for no post or a post on no model. */

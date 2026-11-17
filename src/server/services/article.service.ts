@@ -7,7 +7,11 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
 import { NsfwLevel } from '~/server/common/enums';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  isMinorMatureImage,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -156,6 +160,8 @@ type ArticleRaw = {
   id: number;
   cover?: string | null;
   coverId?: number | null;
+  /** The stored cover id; `coverId` is the card's image, null when its model withholds the cover. */
+  storedCoverId?: number | null;
   title: string;
   publishedAt: Date | null;
   userNsfwLevel: number;
@@ -528,6 +534,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
+        a."coverId" AS "storedCoverId",
         ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
@@ -602,12 +609,21 @@ export const getArticles = async ({
     );
 
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
-    const coverImages = coverIds.length
-      ? await dbRead.image.findMany({
-          where: { id: { in: coverIds } },
-          select: imageSelect,
-        })
-      : [];
+    const minorHiddenCoverIds = new Set<number>();
+    const coverImages = (
+      coverIds.length
+        ? await dbRead.image.findMany({
+            where: { id: { in: coverIds } },
+            select: { ...imageSelect, minor: true },
+          })
+        : []
+    )
+      .filter((image) => {
+        const hidden = minorMatureHidden(image, userId, isModerator);
+        if (hidden) minorHiddenCoverIds.add(image.id);
+        return !hidden;
+      })
+      .map(withoutMinorFlag);
 
     const articleCategories = await getCategoryTags('article');
     const [cosmetics, eventDecorations] = includeCosmetics
@@ -634,7 +650,7 @@ export const getArticles = async ({
 
         return true;
       })
-      .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
+      .map(({ tags, user, userCosmetics, cursorV, storedCoverId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
@@ -644,6 +660,11 @@ export const getArticles = async ({
 
         return {
           ...article,
+          // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
+          ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
+            (article.coverId != null && minorHiddenCoverIds.has(article.coverId))) && {
+            cover: null,
+          }),
           tags: tags.map(({ tag }) => ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
@@ -737,12 +758,16 @@ export const getCivitaiNews = async () => {
   });
 
   const coverIds = articlesRaw.map((x) => x.coverId).filter(isDefined);
-  const coverImages = coverIds.length
-    ? await dbRead.image.findMany({
-        where: { id: { in: coverIds } },
-        select: imageSelect,
-      })
-    : [];
+  const coverImages = (
+    coverIds.length
+      ? await dbRead.image.findMany({
+          where: { id: { in: coverIds } },
+          select: { ...imageSelect, minor: true },
+        })
+      : []
+  )
+    .filter((image) => !minorMatureHidden(image))
+    .map(withoutMinorFlag);
 
   const articles = articlesRaw.map((article) => {
     const user = users.find((x) => x.id === article.userId);
@@ -817,6 +842,15 @@ export const articleContentImageSelect = {
   tosViolation: true,
 } satisfies Prisma.ImageSelect;
 
+/** A minor-flagged R+ image (`isMinorMatureImage`) is shown only to its uploader and moderators. */
+function minorMatureHidden(
+  image: { userId: number; minor?: boolean | null; nsfwLevel: number } | null | undefined,
+  viewerId?: number,
+  isModerator?: boolean
+) {
+  return !!image && !isModerator && image.userId !== viewerId && isMinorMatureImage(image);
+}
+
 /**
  * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
  * article's owner who uploaded it may see it. Read and save share this so a save keeps exactly what
@@ -858,8 +892,9 @@ export const getArticleById = async ({
       // field doesn't flow into external webhook / search-index payloads.
       select: {
         ...articleDetailSelect,
+        coverImage: { select: { ...imageSelect, minor: true } },
         // Page-only: kept out of the shared select so the webhook and search payloads are unchanged.
-        bannerImage: { select: imageSelect },
+        bannerImage: { select: { ...imageSelect, minor: true } },
         moderatorNsfwLevel: true,
         scheduledAt: true,
         reactions: viewerReactionsSelect(userId),
@@ -875,7 +910,7 @@ export const getArticleById = async ({
     // Fetch connected images with ingestion status, and what the body needs to guard each by level.
     const imageConnections = await dbRead.imageConnection.findMany({
       where: { entityId: id, entityType: ImageConnectionType.Article },
-      include: { image: { select: articleContentImageSelect } },
+      include: { image: { select: { ...articleContentImageSelect, minor: true } } },
     });
 
     const articleCategories = await getCategoryTags('article');
@@ -897,9 +932,15 @@ export const getArticleById = async ({
       !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
-    const coverImage = viewableArticleImage(coverHidden ? null : article.coverImage, isOwnerOrMod);
+    const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
+    const coverImage = viewableArticleImage(
+      coverWithheld ? null : article.coverImage,
+      isOwnerOrMod
+    );
     const bannerImage = viewableArticleImage(
-      bannerHidden ? null : article.bannerImage,
+      bannerHidden || minorMatureHidden(article.bannerImage, userId, isModerator)
+        ? null
+        : article.bannerImage,
       isOwnerOrMod
     );
     // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
@@ -910,14 +951,15 @@ export const getArticleById = async ({
     // Media nobody but its owner and moderators may get leaves the body, and csam-held media
     // leaves it for the owner too.
     const bodyImages = imageConnections.map((conn) => conn.image);
-    const contentImages = isModerator
+    const keptImages = isModerator
       ? bodyImages
       : bodyImages.filter((image) =>
           userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
         );
     const withheld = bodyImages
-      .filter((image) => !contentImages.includes(image))
+      .filter((image) => !keptImages.includes(image))
       .map((image) => image.url);
+    const contentImages = keptImages.map(withoutMinorFlag);
     const nonOwner = !isModerator && userId !== article.userId;
     const content =
       isModerator || !article.content
@@ -938,6 +980,8 @@ export const getArticleById = async ({
 
     return {
       ...article,
+      // The legacy `cover` is the same image's key.
+      ...(coverWithheld && { cover: null }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({
@@ -969,10 +1013,14 @@ function isArticleImageViewable<
   return isOwnerOrMod || servableArticleImage(image) !== null;
 }
 
-function viewableArticleImage(image: ArticleImageRow | null | undefined, isOwnerOrMod: boolean) {
+function viewableArticleImage(
+  image: (ArticleImageRow & { minor?: boolean | null }) | null | undefined,
+  isOwnerOrMod: boolean
+) {
   if (!isArticleImageViewable(image, isOwnerOrMod)) return undefined;
+  const { minor, ...row } = image;
   return {
-    ...image,
+    ...row,
     nsfwLevel: image.nsfwLevel as NsfwLevel,
     meta: image.meta as ImageMetaProps,
     metadata: image.metadata as ImageMetadata,
