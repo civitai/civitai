@@ -223,6 +223,17 @@ describe('queueModelsForImageChildTagChanges', () => {
     expect(queued()).toEqual([500]);
   });
 
+  // The reindex is how a minor flag reaches the articles index.
+  it('queues the articles and comics of a minor-flagged image, once', async () => {
+    arm({ models: [], childTagged: [], articles: [30], comics: [40] });
+
+    await queueModelsForImageChildTagChanges({ minorImageIds: [7] });
+
+    expect(articlesSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
+  });
+
   it('queues the article or comic of an image on no model', async () => {
     arm({ models: [], articles: [30], comics: [40] });
 

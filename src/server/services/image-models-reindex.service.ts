@@ -22,7 +22,7 @@ type ImageChildTagChanges = {
  * cached tags and showcase images from the primary), for the articles and comics using them as a
  * cover or banner, and for the collections and bounties whose documents show them. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
  * an image's child browsing tags or nsfwLevel reaches its model documents only through here.
- * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once;
+ * Never throws: it runs after the tag, level or minor-flag write has committed. A failed attempt is retried once;
  * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
  * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
  */

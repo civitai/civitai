@@ -62,7 +62,7 @@ const cover = (nsfwLevel: number, minor: boolean | null, imageOwner = OWNER) => 
   tags: [],
 });
 
-async function detailImage(
+async function detailArticle(
   image: ReturnType<typeof cover>,
   viewer: Viewer,
   field: 'coverImage' | 'bannerImage'
@@ -81,19 +81,25 @@ async function detailImage(
       tags: [],
       content: '',
       metadata: null,
+      cover: 'cover-key',
       coverImage: null,
       bannerImage: null,
       [field]: args.select?.[field]?.select?.minor ? image : unflagged,
     };
   }) as never);
   dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
-  const article = await getArticleById({
+  return getArticleById({
     id: 1,
     userId: viewer?.id,
     isModerator: viewer?.isModerator,
   });
-  return article[field];
 }
+
+const detailImage = async (
+  image: ReturnType<typeof cover>,
+  viewer: Viewer,
+  field: 'coverImage' | 'bannerImage'
+) => (await detailArticle(image, viewer, field))[field];
 
 const detailCover = (image: ReturnType<typeof cover>, viewer: Viewer) =>
   detailImage(image, viewer, 'coverImage');
@@ -160,6 +166,23 @@ describe.each([
     const image = cover(4, true, OTHER_IMAGE_OWNER);
     expect(await coverFor(image, viewers['the owner'])).toBeUndefined();
     expect((await coverFor(image, { id: OTHER_IMAGE_OWNER }))?.id).toBe(COVER);
+  });
+});
+
+describe("getArticleById and a restricted minor cover's legacy key", () => {
+  const legacyCover = async (image: ReturnType<typeof cover>, viewer: Viewer) =>
+    (await detailArticle(image, viewer, 'coverImage')).cover;
+
+  it.each(['a signed-out viewer', 'a stranger'])('🔴 clears it for %s', async (who) => {
+    expect(await legacyCover(cover(4, true), viewers[who])).toBeNull();
+  });
+
+  it.each(['the owner', 'a moderator'])('keeps it for %s (control)', async (who) => {
+    expect(await legacyCover(cover(4, true), viewers[who])).toBe('cover-key');
+  });
+
+  it('keeps it for a stranger when the cover is not restricted (control)', async () => {
+    expect(await legacyCover(cover(4, null), viewers['a stranger'])).toBe('cover-key');
   });
 });
 

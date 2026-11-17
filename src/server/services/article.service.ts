@@ -927,10 +927,9 @@ export const getArticleById = async ({
       !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
+    const coverMinorHidden = minorMatureHidden(article.coverImage, userId, isModerator);
     const coverImage = viewableArticleImage(
-      coverHidden || minorMatureHidden(article.coverImage, userId, isModerator)
-        ? null
-        : article.coverImage,
+      coverHidden || coverMinorHidden ? null : article.coverImage,
       isOwnerOrMod
     );
     const bannerImage = viewableArticleImage(
@@ -976,6 +975,8 @@ export const getArticleById = async ({
 
     return {
       ...article,
+      // The legacy `cover` is the same image's key.
+      ...(coverMinorHidden && { cover: null }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({

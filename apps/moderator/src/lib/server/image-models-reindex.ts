@@ -20,7 +20,7 @@ type ImageChildTagChanges = {
 /**
  * For this app's tag, level and minor-flag writes: drops the cached tags and showcase images of the models whose
  * posts hold these images, then queues those models for a models-index rewrite. Never throws: it runs
- * after the tag or level write has committed. A failed attempt, the queue call included, is retried
+ * after the tag, level or minor-flag write has committed. A failed attempt, the queue call included, is retried
  * once; a second failure is logged, with the image and model ids, and the requeue is dropped.
  */
 export async function queueModelsForImageChildTagChanges(
