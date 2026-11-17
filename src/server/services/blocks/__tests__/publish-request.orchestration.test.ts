@@ -1288,6 +1288,18 @@ describe('submitVersion', () => {
 
 // ---- withdrawRequest -------------------------------------------------------
 
+/**
+ * The suite's beforeEach strips `$transaction`'s implementation, so a callback would never run.
+ * Run it on the write mock, so a write made inside a transaction is recorded like any other.
+ */
+function runTransactionsOnWriteMock() {
+  (mockDbWrite.$transaction as ReturnType<typeof vi.fn>).mockImplementation(async (arg: unknown) =>
+    typeof arg === 'function'
+      ? (arg as (tx: unknown) => Promise<unknown>)(mockDbWrite)
+      : Promise.all(arg as unknown[])
+  );
+}
+
 /** Raw statements that WRITE the review-holds table, on either client (tx runs on the write mock). */
 function holdWrites(): string[] {
   return [mockDbWrite, mockDbRead]
@@ -1305,7 +1317,18 @@ function holdWrites(): string[] {
 }
 
 describe('withdrawRequest', () => {
+  it('holdWrites sees a hold cleared through a transaction (negative control)', async () => {
+    runTransactionsOnWriteMock();
+    const { clearHold } = await import('../publish-request-holds.service');
+    (mockDbWrite.$executeRaw as ReturnType<typeof vi.fn>).mockResolvedValue(1);
+    await (mockDbWrite.$transaction as (cb: (tx: unknown) => Promise<unknown>) => Promise<unknown>)(
+      (tx) => clearHold(tx as never, { holdId: 7, actorUserId: 1, reason: 'check finished, clean' })
+    ).catch(() => undefined);
+    expect(holdWrites()).not.toEqual([]);
+  });
+
   it('🔴 a developer withdrawing their request never lifts a moderator hold on the app', async () => {
+    runTransactionsOnWriteMock();
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
@@ -4215,6 +4238,7 @@ describe('approveRequest', () => {
 
 describe('rejectRequest', () => {
   it('🔴 rejecting a request leaves the app review holds open', async () => {
+    runTransactionsOnWriteMock();
     const { rejectRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
       id: 'pubreq_x',
