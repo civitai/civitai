@@ -39,7 +39,7 @@ export async function refusePostText({
 }): Promise<PostTextModerationResult | null> {
   const updated = await kyselyWrite
     .updateTable('PostText as t')
-    // `refused` is the scan's alone until now: kept in `refusedByScan` for a restore to fall back to.
+    // With no moderator refusal, `refused` is the scan's: kept in `refusedByScan` for a restore.
     // `updatedAt` is when its words last changed, which a refusal does not.
     .set({
       refusedByScan: sql`t.refused`,

@@ -8,6 +8,13 @@ vi.mock('~/server/services/text-scan/rated-entities', async (importOriginal) => 
   recomputeRatedEntityNsfwLevel: recompute,
 }));
 
+// The refusal statements run on the table in post-text-moderation.pglite.test.ts.
+const scanRefusal = vi.hoisted(() => ({
+  scanRefusePostText: vi.fn(async () => undefined),
+  scanLiftPostText: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/post-text-scan-refusal', () => scanRefusal);
+
 const { applyPostTextTextScan } = await import('~/server/services/text-scan/actions/image-caption');
 const { postTextTextScanSubject } = await import(
   '~/server/services/text-scan/profiles/post-text.profile'
@@ -70,41 +77,16 @@ describe('applyPostTextTextScan', () => {
     expect(recompute).toHaveBeenCalledWith('Post', POST);
   });
 
-  // The lift is filtered to a scan's own refusal: a moderator's (`refusedByModerator`) outlives any verdict.
-  it('refuses a real person, and a later clean verdict of the current text lets it back, unless a moderator refused it', async () => {
+  it('refuses a real person, and a later clean verdict of the current text lets it back', async () => {
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: true, minor: false }) as never);
-    expect(dataWith('refused')).toEqual([
-      { where: { id: ID, refused: false }, data: { refused: true } },
-    ]);
+    expect(scanRefusal.scanRefusePostText).toHaveBeenCalledWith(ID);
+    expect(scanRefusal.scanLiftPostText).not.toHaveBeenCalled();
 
     vi.clearAllMocks();
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
-    expect(dataWith('refused')).toEqual([
-      {
-        where: { id: ID, content: TEXT.content, refused: true, refusedByModerator: false },
-        data: { refused: false },
-      },
-    ]);
-  });
-
-  // Under a moderator's refusal the scan keeps its own verdict apart, for a restore to fall back to.
-  it("keeps the scan's verdict in refusedByScan while a moderator's refusal stands", async () => {
-    await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: true, minor: false }) as never);
-    expect(dataWith('refusedByScan')).toEqual([
-      {
-        where: { id: ID, refusedByModerator: true, refusedByScan: false },
-        data: { refusedByScan: true },
-      },
-    ]);
-
-    vi.clearAllMocks();
-    await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
-    expect(dataWith('refusedByScan')).toEqual([
-      {
-        where: { id: ID, content: TEXT.content, refusedByModerator: true, refusedByScan: true },
-        data: { refusedByScan: false },
-      },
-    ]);
+    expect(scanRefusal.scanLiftPostText).toHaveBeenCalledWith(ID, TEXT.content);
+    expect(scanRefusal.scanRefusePostText).not.toHaveBeenCalled();
+    expect(dataWith('refused')).toEqual([]);
   });
 
   it('holds on a csam verdict, and no clean verdict ever clears the hold', async () => {

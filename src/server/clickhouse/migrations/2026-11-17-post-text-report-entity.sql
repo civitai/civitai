@@ -3,14 +3,11 @@
 -- Apply this MANUALLY, BEFORE the code that emits it deploys. We do not auto-run DDL (same policy as
 -- the Postgres migrations).
 --
--- WHY. `ReportEntity` (src/shared/utils/report-helpers.ts) gains 'postText' for reports on a single
--- storyline text, and tracker-enum-drift.test.ts holds the column to every value of that enum.
--- Reports are filed through the tRPC report router, which emits a tracker event, so a tracker
--- holding the old enum silently drops them (the report still lands in Postgres).
+-- WHY. `ReportEntity` gains 'postText'. Until this is applied, the tracker silently drops those
+-- report events (the report still lands in Postgres).
 --
--- `MODIFY COLUMN` REPLACES the whole enum definition, so the statement below restates every
--- existing value at exactly the index it already has (./2026-10-29-comment-v3-report-entity.sql)
--- and appends at an unused index — a metadata-only ALTER. Do NOT renumber or rename an existing value.
+-- `MODIFY COLUMN` replaces the whole enum: every existing value is restated at its index and the new
+-- one appended. Do NOT renumber or rename an existing value.
 --
 -- TO ROLL BACK: re-run the statement below with 'postText' = 23 removed, having first confirmed
 -- `SELECT count() FROM default.reports WHERE entityType = 'postText'` is 0.

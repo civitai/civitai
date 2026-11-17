@@ -562,8 +562,8 @@ export const createReport = async ({
     };
   }
 
-  // The words as reported, from the row and never from `details`, for the reason above: the author
-  // can still edit or delete the text, and the moderator and a CSAM hold need what was reported.
+  // The words as reported, from the row and never from `details` (the reporter's to write): the
+  // author can still edit or delete the text, and the moderator and a CSAM hold need what was reported.
   if (reportedText)
     (data.details as MixedObject).postText = {
       content: reportedText.content,

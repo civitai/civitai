@@ -373,6 +373,17 @@ describe("a moderator's refusal and the scan, on the table", () => {
 
   beforeEach(scanWritesOnPglite);
 
+  it("refuses with no moderator refusal as before: the scan's verdict is `refused` itself", async () => {
+    await applyPostTextTextScan(verdict(true) as never);
+    expect(await flags()).toEqual({
+      refused: true,
+      refusedByModerator: false,
+      refusedByScan: false,
+    });
+    expect(await hiddenFromReaders(reported)).toBe(true);
+    expect(await hiddenFromReaders(sibling)).toBe(false);
+  });
+
   it('keeps a scan refusal made under the refusal through the restore, and a clean verdict lets the text back', async () => {
     await refusePostText({ textId: reported, moderatorId: 2 });
 
