@@ -73,6 +73,18 @@ export const SERVICE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
 /** An animated preview costs a CPU-second per few frames to mark, so it has its own, tighter, caps. */
 export const SERVICE_PREVIEW_ANIMATED_MAX_BYTES = 20 * 1024 * 1024;
 export const SERVICE_PREVIEW_ANIMATED_MAX_FRAMES = 60;
+/**
+ * Accepted only on a deal whose preview kind is Video. The orchestrator transcodes and marks it,
+ * so type and size are bounded by what its blob upload takes.
+ */
+export const SERVICE_PREVIEW_VIDEO_MIME_TYPES = ['video/mp4', 'video/webm'] as const;
+export const SERVICE_PREVIEW_VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+export const SERVICE_PREVIEW_VIDEO_WIDTH = 480;
+export const SERVICE_PREVIEW_VIDEO_MAX_SECONDS = 15;
+/** A video preview not yet transcoded this long after upload is failed rather than retried. */
+export const SERVICE_PREVIEW_VIDEO_GIVE_UP_MS = 45 * 60_000;
+export const isVideoPreviewMime = (mime: string | null | undefined) =>
+  !!mime && (SERVICE_PREVIEW_VIDEO_MIME_TYPES as readonly string[]).includes(mime);
 /** Previews a seller may upload per round, by the deal's preview kind. */
 export const SERVICE_PREVIEW_MAX_FILES = {
   Image: 1,
