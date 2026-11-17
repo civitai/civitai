@@ -34,7 +34,7 @@ const HOUR = 60 * 60 * 1000;
 const advance = (ms: number) => (clock.now = new Date(clock.now.getTime() + ms));
 
 function fakeDeps(overrides: Partial<AdsTxtDeps> & { bodies?: Record<string, string> } = {}) {
-  const store = new Map<string, { body: string; fetchedAt: string; recordCount: number }>();
+  const store = new Map<string, Parameters<AdsTxtDeps['setLastGood']>[1]>();
   const bodies = overrides.bodies ?? { [SNIGEL.url]: snigelBody, [SPARTEO.url]: sparteoBody };
   const deps: AdsTxtDeps = {
     fetchSource: async (url) =>
@@ -88,6 +88,8 @@ describe('judgeAdsTxtBody', () => {
   it('flags a body that lost more than half of its last good records', () => {
     expect(judgeAdsTxtBody('google.com, pub-111, DIRECT', 'text/plain', 3)).toBe('shrunk');
     expect(judgeAdsTxtBody(snigelBody, 'text/plain', 3)).toBe('ok');
+    // Exactly half is kept.
+    expect(judgeAdsTxtBody('a.com, 1, DIRECT\nb.com, 2, DIRECT', 'text/plain', 4)).toBe('ok');
   });
 });
 
@@ -168,6 +170,26 @@ describe('buildAdsTxt', () => {
       '# snigel (upstream unavailable; last good copy confirmed 2026-11-17T20:00:00.000Z)'
     );
     expect(file).toContain('# sparteo (fetched ');
+  });
+
+  it('keeps a healthy, unchanged source confirmed, so its copy is never treated as abandoned', async () => {
+    const { deps, store } = fakeDeps();
+    await buildAdsTxt(deps);
+    const firstFetchedAt = store.get('sparteo')?.fetchedAt;
+    advance(7 * HOUR);
+    await buildAdsTxt(deps);
+    expect(store.get('sparteo')?.checkedAt).toBe(clock.now.toISOString());
+    expect(store.get('sparteo')?.fetchedAt).toBe(firstFetchedAt);
+    for (let day = 0; day < 8; day++) {
+      advance(24 * HOUR);
+      await buildAdsTxt(deps);
+    }
+    const sparteoDown = {
+      ...deps,
+      fetchSource: async (url: string) =>
+        url === SPARTEO.url ? { status: 500, contentType: null, body: '' } : deps.fetchSource(url),
+    };
+    expect(await buildAdsTxt(sparteoDown)).toContain('flashb.id, f812656a, DIRECT');
   });
 
   it('drops an optional source gone for over a week, but never the primary seller', async () => {

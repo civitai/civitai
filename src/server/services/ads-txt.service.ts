@@ -19,7 +19,7 @@ export const ADS_TXT_OWNER_DOMAIN = 'civitai.com';
 // One global manager. Sparteo's file declares sparteo.com; revisit when its tag is turned on.
 export const ADS_TXT_MANAGER_DOMAIN = 'snigelweb.com';
 
-/** The file served when no merged file can be built: today's redirect target. */
+/** Where the route redirects when it cannot build a file with the primary seller in it. */
 export const ADS_TXT_FALLBACK_URL = ADS_TXT_SOURCES[0].url;
 
 const FETCH_TIMEOUT_MS = 5_000;
