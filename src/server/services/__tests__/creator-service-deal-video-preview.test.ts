@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as OrchestrationClient from '@civitai/orchestration-client';
 import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
@@ -55,9 +56,7 @@ describe('buildWatermarkedVideoPreview', () => {
 
     expect(result.data.toString()).toBe('marked clip');
     // The seller's media is uploaded under the seller's own token, never the system credentials.
-    expect(tokens.getOrchestratorToken).toHaveBeenCalledWith(SELLER, undefined, {
-      allowRestricted: true,
-    });
+    expect(tokens.getOrchestratorToken).toHaveBeenCalledWith(SELLER);
     const [uploadUrl, upload] = fetchMock.mock.calls[0];
     expect(uploadUrl).toBe('https://orchestration.example/upload?sig=z');
     expect(upload).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'video/mp4' } });
@@ -69,6 +68,17 @@ describe('buildWatermarkedVideoPreview', () => {
     expect(input.hideMetadata).toBe(true);
     expect(input.watermark.image).toMatch(/^data:image\/png;base64,.{100,}/);
     expect(input.watermark.opacity).toBeGreaterThan(0);
+  });
+
+  it('rejects, without uploading, for a seller whose account is restricted', async () => {
+    tokens.getOrchestratorToken.mockRejectedValueOnce(
+      new TRPCError({ code: 'FORBIDDEN', message: 'restricted' })
+    );
+    await expect(
+      buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4', SELLER)
+    ).rejects.toThrow(new PreviewRejectedError('Preview unavailable right now.'));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(orchestrator.submitWorkflow).not.toHaveBeenCalled();
   });
 
   it('puts a failed transcode on the file, for the seller to replace', async () => {

@@ -21,7 +21,7 @@ const SERVICE_CALLS: Record<string, string[]> = {
   'src/pages/api/orchestrator/getConsumerBlobUploadUrl.ts': ['token <- (not bound locally)'],
   // Creator Services video previews: the seller's own token, from the preview job.
   'src/server/services/creator-service-deal-video-preview.ts': [
-    'token <- await getOrchestratorToken(sellerId, undefined, { allowRestricted: true })',
+    'token <- await getOrchestratorToken(sellerId).catch(restrictedAsRejection)',
   ],
   // App Blocks batch upload (OPEN_MEDIA_UPLOAD_BATCH): `token` is a parameter, fed below.
   'src/server/services/blocks/media-upload-batch.service.ts': ['token <- (not bound locally)'],
