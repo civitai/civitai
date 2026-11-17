@@ -41,11 +41,8 @@ export async function getBearerTokenUser(
   > | null;
   if (!user) return null;
 
-  // Banned users get NO API/bearer access. Deleted users are already excluded by the hub producer (deletedAt
-  // is null), but a
-  // ban leaves the row intact (so the SESSION/cookie path can still render a "you're banned" page) — the
-  // bearer/API path must reject it CENTRALLY here, mirroring tRPC's isAuthed ban check, so a banned user's
-  // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
+  // A ban leaves the user row intact (so the cookie session can still show the banned page); every
+  // bearer path must refuse it here, as tRPC's isAuthed does.
   if (user.bannedAt) return null;
   if (refuseModerationAccountSession(user, 'bearer-token')) return null;
   // A system account with moderator access authenticates with read-only keys only, unless an admin
