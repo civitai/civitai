@@ -4,6 +4,7 @@ import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserService from '~/server/services/user.service';
 import type * as FileService from '~/server/services/file.service';
+import type * as CollectionCoverVisibility from '~/server/services/collection-cover-visibility';
 
 /**
  * An article's cover that is minor-flagged and rated R or above reaches only the image's owner and
@@ -27,7 +28,13 @@ vi.mock('~/server/services/file.service', async (importOriginal) => ({
   getFilesByEntity: vi.fn(async () => []),
 }));
 
+vi.mock('~/server/services/collection-cover-visibility', async (importOriginal) => ({
+  ...(await importOriginal<typeof CollectionCoverVisibility>()),
+  getModelWithheldImageIds: vi.fn(async () => new Set<number>()),
+}));
+
 import { getArticleById, getArticles, getCivitaiNews } from '~/server/services/article.service';
+import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { ArticleSort } from '~/server/common/enums';
 import {
   ArticleIngestionStatus,
@@ -169,21 +176,43 @@ describe.each([
   });
 });
 
-describe("getArticleById and a restricted minor cover's legacy key", () => {
+describe("getArticleById and a withheld cover's legacy key", () => {
   const legacyCover = async (image: ReturnType<typeof cover>, viewer: Viewer) =>
     (await detailArticle(image, viewer, 'coverImage')).cover;
+  const withheldByItsModel = () =>
+    vi.mocked(getModelWithheldImageIds).mockResolvedValue(new Set([COVER]));
 
-  it.each(['a signed-out viewer', 'a stranger'])('🔴 clears it for %s', async (who) => {
-    expect(await legacyCover(cover(4, true), viewers[who])).toBeNull();
+  beforeEach(() => {
+    vi.mocked(getModelWithheldImageIds).mockResolvedValue(new Set());
   });
+
+  it.each(['a signed-out viewer', 'a stranger'])(
+    '🔴 clears it for %s when the cover is a restricted minor image',
+    async (who) => {
+      expect(await legacyCover(cover(4, true), viewers[who])).toBeNull();
+    }
+  );
+
+  it.each(['a signed-out viewer', 'a stranger'])(
+    '🔴 clears it for %s when its model withholds the cover',
+    async (who) => {
+      withheldByItsModel();
+      expect(await legacyCover(cover(1, null), viewers[who])).toBeNull();
+    }
+  );
 
   it.each(['the owner', 'a moderator'])('keeps it for %s (control)', async (who) => {
     expect(await legacyCover(cover(4, true), viewers[who])).toBe('cover-key');
+    withheldByItsModel();
+    expect(await legacyCover(cover(1, null), viewers[who])).toBe('cover-key');
   });
 
-  it('keeps it for a stranger when the cover is not restricted (control)', async () => {
-    expect(await legacyCover(cover(4, null), viewers['a stranger'])).toBe('cover-key');
-  });
+  it.each(Object.keys(viewers))(
+    'keeps it for %s when the cover is not withheld (control)',
+    async (who) => {
+      expect(await legacyCover(cover(4, null), viewers[who])).toBe('cover-key');
+    }
+  );
 });
 
 describe('getCivitaiNews, a public list with no viewer', () => {

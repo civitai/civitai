@@ -160,6 +160,8 @@ type ArticleRaw = {
   id: number;
   cover?: string | null;
   coverId?: number | null;
+  /** The stored cover id; `coverId` is the card's image, null when its model withholds the cover. */
+  storedCoverId?: number | null;
   title: string;
   publishedAt: Date | null;
   userNsfwLevel: number;
@@ -532,6 +534,7 @@ export const getArticles = async ({
       SELECT
         a.id,
         a.cover,
+        a."coverId" AS "storedCoverId",
         ${articleCardCoverIdSql} AS "coverId",
         a.title,
         a."publishedAt",
@@ -647,7 +650,7 @@ export const getArticles = async ({
 
         return true;
       })
-      .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
+      .map(({ tags, user, userCosmetics, cursorV, storedCoverId, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const cover = coverImages.find((x) => x.id === article.coverId);
@@ -657,9 +660,11 @@ export const getArticles = async ({
 
         return {
           ...article,
-          // The legacy `cover` is the same image's key.
-          ...(article.coverId != null &&
-            minorHiddenCoverIds.has(article.coverId) && { cover: null }),
+          // The legacy `cover` is the stored cover's key: it goes when that cover is withheld.
+          ...(((storedCoverId != null && storedCoverId !== article.coverId) ||
+            (article.coverId != null && minorHiddenCoverIds.has(article.coverId))) && {
+            cover: null,
+          }),
           tags: tags.map(({ tag }) => ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),
@@ -927,9 +932,9 @@ export const getArticleById = async ({
       !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
     const coverHidden = hiddenByModel(article.coverImage);
     const bannerHidden = hiddenByModel(article.bannerImage);
-    const coverMinorHidden = minorMatureHidden(article.coverImage, userId, isModerator);
+    const coverWithheld = coverHidden || minorMatureHidden(article.coverImage, userId, isModerator);
     const coverImage = viewableArticleImage(
-      coverHidden || coverMinorHidden ? null : article.coverImage,
+      coverWithheld ? null : article.coverImage,
       isOwnerOrMod
     );
     const bannerImage = viewableArticleImage(
@@ -976,7 +981,7 @@ export const getArticleById = async ({
     return {
       ...article,
       // The legacy `cover` is the same image's key.
-      ...(coverMinorHidden && { cover: null }),
+      ...(coverWithheld && { cover: null }),
       nsfwLevel: article.nsfwLevel as NsfwLevel,
       attachments,
       tags: article.tags.map(({ tag }) => ({

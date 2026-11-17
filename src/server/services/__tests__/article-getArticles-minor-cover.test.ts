@@ -25,6 +25,7 @@ const row = {
   userId: AUTHOR,
   availability: 'Public',
   cover: 'cover-key',
+  storedCoverId: COVER,
   coverId: COVER,
   cursorV: 1,
   tags: [],
@@ -43,7 +44,11 @@ const coverImage = (minor: boolean) => ({
   tags: [],
 });
 
-const listedCover = async (minor: boolean, viewerId: number) => {
+const listedCover = async (minor: boolean, viewerId: number, rowOverrides = {}) => {
+  dbMock.dbRead.$queryRaw.mockReset();
+  dbMock.dbRead.$queryRaw
+    .mockResolvedValueOnce([{ ...row, ...rowOverrides }])
+    .mockResolvedValue([]);
   dbMock.dbRead.image.findMany.mockResolvedValue([coverImage(minor)] as never);
   const { items } = await getArticles({
     limit: 10,
@@ -70,5 +75,28 @@ describe('getArticles and a restricted minor cover', () => {
 
   it('keeps it for another viewer when the cover is not minor-flagged (control)', async () => {
     expect(await listedCover(false, STRANGER)).toBe('cover-key');
+  });
+});
+
+describe('getArticles and a cover its model withholds', () => {
+  // The card cover SQL answers no cover id for a cover its model withholds.
+  it('🔴 clears the legacy cover key', async () => {
+    expect(await listedCover(false, STRANGER, { coverId: null })).toBeNull();
+  });
+
+  it('keeps the key of a legacy article with no cover image (control)', async () => {
+    expect(await listedCover(false, STRANGER, { storedCoverId: null, coverId: null })).toBe(
+      'cover-key'
+    );
+  });
+
+  it('does not hand out the stored cover id', async () => {
+    dbMock.dbRead.image.findMany.mockResolvedValue([coverImage(false)] as never);
+    const { items } = await getArticles({
+      limit: 10,
+      sort: ArticleSort.Newest,
+      period: MetricTimeframe.AllTime,
+    } as never);
+    expect(items[0]).not.toHaveProperty('storedCoverId');
   });
 });
