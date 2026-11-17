@@ -148,9 +148,8 @@ async function sweep<T extends { id: number; createdAt: Date }>({
       name: 'text-scan',
       type: 'warning',
       message: 'sweep behind',
-      job,
-      lagMs: result.lagMs,
       rows: result.rows,
+      payload: { job, lagMs: result.lagMs },
     });
   }
   return result;

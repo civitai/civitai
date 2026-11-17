@@ -48,7 +48,9 @@ CREATE TABLE "Post" (
   "model3dId"      integer,
   "publishedAt"    timestamp(3),
   metadata         jsonb,
-  availability     "Availability" NOT NULL DEFAULT 'Public'
+  availability     "Availability" NOT NULL DEFAULT 'Public',
+  -- source: image.getInfinite's pending view (pendingViewerSQL, internal/feed/query.go).
+  "collectionId"   integer
 );
 
 CREATE TABLE "Image" (
@@ -288,7 +290,8 @@ CREATE TABLE "ModelVersionSaleItem" (
 );
 
 -- model.getAll's collection filter: the permission read (internal/modelfeed/collection.go) and the
--- CollectionItem semi-join of the page query.
+-- CollectionItem semi-join of the page query. CollectionContributor is also image.getInfinite's
+-- pending view of a signed-in viewer (pendingViewerSQL, internal/feed/query.go).
 CREATE TYPE "CollectionReadConfiguration" AS ENUM ('Private', 'Public', 'Unlisted');
 CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
 CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');

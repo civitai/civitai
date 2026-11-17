@@ -29,16 +29,14 @@ const VIEWER_CLAMP_CALLERS = [
   'src/pages/api/v1/blocks/collections/[id]/index.ts',
   'src/pages/api/v1/blocks/collections/index.ts',
   'src/pages/api/v1/blocks/generation-resources.ts',
+  'src/pages/api/v1/blocks/images.ts',
   'src/pages/api/v1/blocks/models.ts',
   'src/pages/api/v1/blocks/resource-intent.ts',
   'src/pages/api/v1/blocks/tools.ts',
 ];
 
 /** Callers of the DOMAIN-ONLY clamp, each with why it may still use it. */
-const DOMAIN_CLAMP_CALLERS: Record<string, string> = {
-  'src/pages/api/v1/blocks/images.ts':
-    'Moves to the viewer clamp in a separate change to this route; whichever of the two lands second moves this entry to VIEWER_CLAMP_CALLERS.',
-};
+const DOMAIN_CLAMP_CALLERS: Record<string, string> = {};
 
 function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
