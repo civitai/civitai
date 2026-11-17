@@ -128,15 +128,9 @@ func (c *Client) Query(ctx context.Context, sql string, settings []Setting) ([]m
 	}
 	u.Path = "/"
 	q.Set("output_format_json_quote_64bit_integers", "0")
-	// Without it ClickHouse runs a read to its end after the client has gone: a read this service
-	// abandoned (its context ended, so the connection is closed; the request fell back to Node, which
-	// reads again) would keep holding one of the server's query slots and its CPU for nothing, up to
-	// max_execution_time or, under the retry settings, with no cap at all. With it the server cancels
-	// a read-only HTTP query once it sees the connection closed. Read-only mode 2, which a GET runs
-	// under, allows setting it. Node's client does not send it because Node never closes this read
-	// early: its late answer still fills the cache. Here only a write-back populate fills the cache,
-	// and that one runs detached from the request (hydrate.populateDetached), so its connection
-	// closes only at its own bound.
+	// Without it ClickHouse keeps running a read after the client closes the connection, holding a
+	// query slot until max_execution_time (or indefinitely under the retry settings). A GET runs
+	// read-only mode 2, which allows setting it.
 	q.Set("cancel_http_readonly_queries_on_client_close", "1")
 	for _, s := range settings {
 		q.Set(s.Name, s.Value)

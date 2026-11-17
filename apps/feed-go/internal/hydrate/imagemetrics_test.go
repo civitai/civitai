@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
@@ -511,32 +513,82 @@ func TestMetricsMissWriteBackOutlivesTheRequest(t *testing.T) {
 	}
 }
 
-// The held locks are re-armed while a populate runs (each is touched again before its release).
+// lockLog records, in order, the commands sent on one key through pipelines (SET NX, EXPIRE, DEL).
+type lockLog struct {
+	*testkit.Redis
+	key string
+	mu  sync.Mutex
+	log []string
+}
+
+func (l *lockLog) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	return l.Redis.Pipelined(ctx, func(p redis.Pipeliner) error { return fn(&lockLogPipe{p, l}) })
+}
+
+func (l *lockLog) add(key, cmd string) {
+	if key == l.key {
+		l.mu.Lock()
+		l.log = append(l.log, cmd)
+		l.mu.Unlock()
+	}
+}
+
+func (l *lockLog) commands() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.log...)
+}
+
+type lockLogPipe struct {
+	redis.Pipeliner
+	l *lockLog
+}
+
+func (p *lockLogPipe) SetNX(ctx context.Context, key string, val any, ttl time.Duration) *redis.BoolCmd {
+	p.l.add(key, "SET NX")
+	return p.Pipeliner.SetNX(ctx, key, val, ttl)
+}
+
+func (p *lockLogPipe) Expire(ctx context.Context, key string, d time.Duration) *redis.BoolCmd {
+	p.l.add(key, "EXPIRE")
+	return p.Pipeliner.Expire(ctx, key, d)
+}
+
+func (p *lockLogPipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	for _, key := range keys {
+		p.l.add(key, "DEL")
+	}
+	return p.Pipeliner.Del(ctx, keys...)
+}
+
+// The held lock is re-armed on every heartbeat tick while a populate runs, and the release waits for
+// an in-flight re-arm, so the DEL is the last write. The ticks are sent while the query is in flight:
+// the second send is taken only after the first re-arm finished, so exactly two re-arms precede the
+// DEL, with no wall-clock dependence.
 func TestMetricsMissLockHeartbeat(t *testing.T) {
-	old := metricHeartbeatEvery
-	metricHeartbeatEvery = 10 * time.Millisecond
-	t.Cleanup(func() { metricHeartbeatEvery = old })
+	ticks := make(chan time.Time)
+	old := metricHeartbeatTicks
+	metricHeartbeatTicks = func() (<-chan time.Time, func()) { return ticks, func() {} }
+	t.Cleanup(func() { metricHeartbeatTicks = old })
 	s, r, f := coldSources(true)
-	f.delay = 120 * time.Millisecond
+	l := &lockLog{Redis: r, key: metricLockKey(32)}
+	s.Cache = l
 	s.Compute.MetricsTimeout = 5 * time.Second
-	var mu sync.Mutex
-	touches := 0
-	r.KeyErr = func(key string) error {
-		if key == metricLockKey(32) {
-			mu.Lock()
-			touches++
-			mu.Unlock()
+	f.onQuery = func() {
+		for i := 0; i < 2; i++ {
+			select {
+			case ticks <- time.Time{}:
+			case <-time.After(5 * time.Second):
+				t.Errorf("heartbeat tick %d was never taken", i+1)
+				return
+			}
 		}
-		return nil
 	}
 	if _, err := s.ImageMetrics(context.Background(), []int{32}); err != nil {
 		t.Fatal(err)
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	// SET NX, then at least three re-arms over 120 ms at 10 ms, then the DEL.
-	if touches < 5 {
-		t.Fatalf("lock touched %d times, want the SET NX, re-arms and the DEL", touches)
+	if got, want := l.commands(), []string{"SET NX", "EXPIRE", "EXPIRE", "DEL"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("lock commands %q, want %q (the SET NX, a re-arm per tick, then the DEL)", got, want)
 	}
 	if r.Has(metricLockKey(32)) {
 		t.Fatal("lock not released")
