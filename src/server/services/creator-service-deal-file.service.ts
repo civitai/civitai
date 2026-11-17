@@ -46,6 +46,7 @@ import {
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
   SERVICE_PREVIEW_VIDEO_GIVE_UP_MS,
   SERVICE_PREVIEW_VIDEO_MAX_BYTES,
+  SERVICE_PREVIEW_VIDEO_MIME_TYPES,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
   SERVICE_ZIP_MAX_IMAGE_BYTES,
   isVideoPreviewMime,
@@ -1121,6 +1122,8 @@ const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
 // Each step is claimed per file and idempotent, so a pod that rolls mid-way leaves the file where
 // the next run picks it up, with no second ingest and no copy left behind.
 
+const VIDEO_MIMES = Prisma.join([...SERVICE_PREVIEW_VIDEO_MIME_TYPES]);
+
 type ClaimedPreview = {
   id: number;
   s3Key: string;
@@ -1203,8 +1206,11 @@ export async function startPreviewScans({ limit = 5 } = {}) {
   const unscanned = Prisma.sql`p."scanStatus" = 'Pending'::"ServiceDealFileScanStatus" AND p."imageId" IS NULL`;
   // One video per run: each holds the run for a transcode wait, and the claim goes stale in 10 min.
   const claimed = [
-    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" NOT LIKE 'video/%'`, limit)),
-    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" LIKE 'video/%'`, 1)),
+    ...(await claimPreviews(
+      Prisma.sql`${unscanned} AND p."mimeType" NOT IN (${VIDEO_MIMES})`,
+      limit
+    )),
+    ...(await claimPreviews(Prisma.sql`${unscanned} AND p."mimeType" IN (${VIDEO_MIMES})`, 1)),
   ];
   let started = 0;
   for (const preview of claimed) {
@@ -1302,7 +1308,7 @@ export async function settlePreviewScans() {
     SET "status" = 'Failed'::"ServiceDealFileStatus",
       "failReason" = 'This video could not be prepared. Upload a shorter or smaller one.'
     WHERE "kind" = 'Preview'::"ServiceDealFileKind" AND "status" = 'Processing'::"ServiceDealFileStatus"
-      AND "imageId" IS NULL AND "mimeType" LIKE 'video/%'
+      AND "imageId" IS NULL AND "mimeType" IN (${VIDEO_MIMES})
       AND "uploadedAt" < now() - (${SERVICE_PREVIEW_VIDEO_GIVE_UP_MS}::int * interval '1 millisecond')`;
   return { passed, rejected, unchecked, timedOut: timedOut + videoTimedOut };
 }
@@ -1358,7 +1364,7 @@ export async function deleteScanCopies({ limit = 50 } = {}) {
     WHERE "imageId" IS NOT NULL
       AND (("scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
           -- A video publishes by copying its scan copy, so the copy waits for that.
-          AND ("mimeType" NOT LIKE 'video/%' OR "watermarkedKey" IS NOT NULL
+          AND ("mimeType" NOT IN (${VIDEO_MIMES}) OR "watermarkedKey" IS NOT NULL
             OR "status" = 'Failed'::"ServiceDealFileStatus"))
         OR ("scanStatus" = 'Pending'::"ServiceDealFileScanStatus"
           AND "status" = 'Failed'::"ServiceDealFileStatus"))

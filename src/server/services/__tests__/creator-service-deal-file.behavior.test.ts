@@ -1804,16 +1804,29 @@ describe('video previews', () => {
   });
 
   it('gives up on a video still not transcoded after 45 minutes, before the image give-up', async () => {
+    const transcoded = await videoPreview();
+    await files.startPreviewScans();
     const { fileId } = await videoPreview();
     await q(
-      `UPDATE "ServiceDealFile" SET "uploadedAt" = now() - interval '46 minutes' WHERE id = $1`,
-      [fileId]
+      `UPDATE "ServiceDealFile" SET "uploadedAt" = now() - interval '46 minutes' WHERE id IN ($1, $2)`,
+      [fileId, transcoded.fileId]
     );
     await files.settlePreviewScans();
     expect(await fileRow(fileId)).toMatchObject({
       status: 'Failed',
       failReason: 'This video could not be prepared. Upload a shorter or smaller one.',
     });
+    // One already transcoded is only waiting on its scan, and keeps the long give-up.
+    expect((await fileRow(transcoded.fileId)).status).toBe('Processing');
+  });
+
+  it('deletes the clip of a passed video that then failed, since it will never be published', async () => {
+    const { fileId } = await videoPreview();
+    await files.startPreviewScans();
+    await q(`UPDATE "Image" SET ingestion = 'Scanned'::"ImageIngestionStatus", "nsfwLevel" = 1`);
+    await files.settlePreviewScans();
+    await q(`UPDATE "ServiceDealFile" SET status = 'Failed' WHERE id = $1`, [fileId]);
+    expect(await files.deleteScanCopies()).toBe(1);
   });
 
   it('takes one video per run, beside the images', async () => {

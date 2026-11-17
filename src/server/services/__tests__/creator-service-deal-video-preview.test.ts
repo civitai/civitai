@@ -66,6 +66,14 @@ describe('buildWatermarkedVideoPreview', () => {
     ).rejects.toBeInstanceOf(PreviewRejectedError);
   });
 
+  it('rejects a file the blob upload refuses, without submitting a transcode', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('bad media', { status: 400 }));
+    await expect(
+      buildWatermarkedVideoPreview(Buffer.from('not a video'), 'video/mp4')
+    ).rejects.toBeInstanceOf(PreviewRejectedError);
+    expect(orchestrator.submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('throws a retryable error, not a rejection, when the transcode is still running', async () => {
     orchestrator.submitWorkflow.mockResolvedValue(workflow('processing', null));
     const error = await buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4').catch(
