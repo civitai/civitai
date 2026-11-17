@@ -185,6 +185,7 @@ async function errorOf(user: User, id: number) {
 const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
   ['blocked for a policy reason', { image: { '"blockedFor"': `'tos'` } }],
   ['rated Blocked', { image: { '"nsfwLevel"': '32' } }],
+  ['unrated', { image: { '"nsfwLevel"': '0' } }],
   ['flagged acceptableMinor', { image: { '"acceptableMinor"': 'true' } }],
   ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
   ['in an unpublished post', { post: { '"publishedAt"': 'NULL' } }],

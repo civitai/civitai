@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
@@ -577,6 +577,31 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
       expect(await coverOf('Article', 2906, viewers[who])).toBeNull();
     }
   );
+
+  // An unrated image is its moderators' alone: never a cover for anyone else, owner included.
+  describe.each(visible)('%s whose cover image is unrated', (_, entityType, entityId, imageId) => {
+    let level: number;
+    beforeEach(async () => {
+      const { rows } = await db.query<{ nsfwLevel: number }>(
+        `SELECT "nsfwLevel" FROM "Image" WHERE id = $1`,
+        [imageId]
+      );
+      level = rows[0].nsfwLevel;
+      await db.query(`UPDATE "Image" SET "nsfwLevel" = 0 WHERE id = $1`, [imageId]);
+    });
+    afterEach(async () => {
+      await db.query(`UPDATE "Image" SET "nsfwLevel" = $2 WHERE id = $1`, [imageId, level]);
+    });
+    it.each(['anonymous', 'stranger', 'owner'] as const)(
+      'is not the cover for the %s',
+      async (who) => {
+        expect(await coverOf(entityType, entityId, viewers[who])).not.toBe(imageId);
+      }
+    );
+    it('is still the cover for a moderator', async () => {
+      expect(await coverOf(entityType, entityId, viewers.moderator)).toBe(imageId);
+    });
+  });
 
   it('treats a missing viewer as anonymous', async () => {
     const covers = await getEntityCoverImage({
