@@ -295,3 +295,34 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 	integWantPacked(t, e, KeyVersionImages, 1150711, integWantVersionImages, 48*time.Hour)
 	integWantPacked(t, e, KeyVersionImages, 1150712, integWantVersionImagesMarker, time.Minute)
 }
+
+const (
+	// {id:1150107, name:'integ-hat', type:'ContentDecoration', source:'Event', data:JSON.parse('{"url":
+	//  "integ-hat-url", "event": "integ-ev"}'), equippedToId:1150601, equippedToType:'Model', userId:1150005, cachedAt}
+	integWantModelEvent = "de0009a26964ce00118c9ba46e616d65a9696e7465672d686174a474797065b1436f6e74656e744465636f726174696f6ea6736f75726365a54576656e74a464617461de0002a375726cad696e7465672d6861742d75726ca56576656e74a8696e7465672d6576ac6571756970706564546f4964ce00118e89ae6571756970706564546f54797065a54d6f64656ca6757365724964ce00118c35a86361636865644174d6ff6a2fe940"
+	// {equippedToId:1150602, notFound:true, cachedAt}
+	integWantModelEventMarker = "de0003ac6571756970706564546f4964ce00118e8aa86e6f74466f756e64c3a86361636865644174d6ff6a2fe940"
+)
+
+// The model decoration lookup against the real schema: only rows placed on a Model (1150602 wears the
+// same hat on an Image), written as Node writes them (a day; the marker an hour).
+func TestIntegrationModelDecorationMissComputed(t *testing.T) {
+	e := integMissSetup(t)
+	integtest.Exec(t, e.pool, `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "equippedAt", data, "equippedToId", "equippedToType") VALUES
+		  (1150005, 1150107, now(), NULL, 1150601, 'Model'),
+		  (1150006, 1150107, now(), NULL, 1150602, 'Image');`)
+	ctx := integtest.Ctx(t)
+	ids := []int{1150601, 1150602}
+	got, writable := e.src.read(ctx, KeyModelEvents, ids, 0)
+	if err := e.src.fillModelEvents(ctx, ids, got, writable); err != nil {
+		t.Fatal(err)
+	}
+	if d := got[1150601]; d.NotFound || d.Value["equippedToType"] != "Model" {
+		t.Fatalf("1150601 = %+v, want its Model decoration", d)
+	}
+	if d, ok := got[1150602]; !ok || !d.NotFound {
+		t.Fatalf("1150602 = %+v, want a notFound entry (its hat is on an Image)", d)
+	}
+	integWantPacked(t, e, KeyModelEvents, 1150601, integWantModelEvent, 24*time.Hour)
+	integWantPacked(t, e, KeyModelEvents, 1150602, integWantModelEventMarker, time.Hour)
+}

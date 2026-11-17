@@ -1,6 +1,7 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { timingSafeEqual } from 'crypto';
 import { env } from '$env/dynamic/private';
+import { isAccessTokenJwt } from '@civitai/auth';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
@@ -8,11 +9,7 @@ import { basicCredentials, parseBody } from '$lib/server/oauth/http';
 import { carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
 import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
-import {
-  introspectAccessTokenJwt,
-  isAccessTokenJwt,
-  isAnyIntrospector,
-} from '$lib/server/oauth/jwt-introspection';
+import { introspectAccessTokenJwt, isAnyIntrospector } from '$lib/server/oauth/jwt-introspection';
 
 // POST /api/auth/oauth/introspect — RFC 7662 token introspection.
 //

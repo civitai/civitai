@@ -61,11 +61,11 @@ type PrivacyDefaults struct{ Buzz, Downloads, Generations bool }
 // (users, profile pictures, user cosmetics, model data, model tags, model frames, decorations, the
 // metric-privacy defaults), then one for the records the first stage names (cosmetics for the user
 // cosmetics and the frames, basic tags for the model tags). The replica reads for misses run after,
-// concurrently. With s.Compute the frame misses are computed (fillModelFrames, the image frames'
-// lookup over the models); the other misses that Node fills from the primary or by a lag-aware read
-// fall back (model data, model tags, user cosmetics, decorations); the rest are read from the replica
-// as the image feed's are (basic users, profile pictures, cosmetics) or as Node's origin does (tags
-// by id, the privacy defaults). Under a Go-first probe (WithPresence) each call counts as a page.
+// concurrently. With s.Compute the frame and decoration misses are computed (fillModelFrames,
+// fillModelEvents: the image lookups over the models); the other misses that Node fills from the
+// primary or by a lag-aware read fall back (model data, model tags, user cosmetics); the rest are
+// read from the replica as the image feed's are (basic users, profile pictures, cosmetics) or as
+// Node's origin does (tags by id, the privacy defaults). Under a Go-first probe (WithPresence) each call counts as a page.
 func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPage, error) {
 	if p := presenceOf(ctx); p != nil {
 		p.notePage()
@@ -106,7 +106,11 @@ func (s *Sources) ModelPage(ctx context.Context, req ModelPageRequest) (*ModelPa
 			out.Decorations = map[int]superjson.Object{}
 			return nil
 		}
-		out.Decorations, err = modelDecorations(models, events.Entries(), req.VisibleEvents)
+		got, writable := events.read()
+		if err := s.fillModelEvents(gctx, models, got, writable); err != nil {
+			return err
+		}
+		out.Decorations, err = modelDecorations(models, got, req.VisibleEvents)
 		return
 	}))
 	g.Go(safe.Go(func() (err error) {
@@ -167,7 +171,8 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 	return joinUserCosmetics(perUser, cosmetics), joined, nil
 }
 
-// modelDecorations is VisibleEventDecorations for the models, with the model's own miss reason.
+// modelDecorations is VisibleEventDecorations for the models, with the model's own miss reason (with
+// s.Compute, fillModelEvents has computed the misses into got first).
 func modelDecorations(ids []int, got map[int]Entry, visible map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
 		return nil, fallback.Newf("model-decoration-miss", "%d ids", len(miss))

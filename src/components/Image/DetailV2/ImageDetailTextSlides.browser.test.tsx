@@ -1,4 +1,5 @@
 import Router from 'next/router';
+import { useEffect, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
@@ -37,7 +38,8 @@ const IMAGES = [image(101, 0), image(102, 1), image(103, 2)];
 // Text 7 took image 101's index, so it reads between 101 and 102.
 const TEXT = { id: 7, index: 0, content: '<p>Meanwhile</p>', nsfwLevel: 1 };
 
-const { flags, calls, chapters } = vi.hoisted(() => ({
+const { flags, calls, chapters, postGetDelay } = vi.hoisted(() => ({
+  postGetDelay: { value: false },
   flags: { storylines: true, storylineText: true } as Record<string, boolean>,
   calls: { postGet: [] as boolean[], getForPosts: [] as boolean[] },
   chapters: { value: {} as Record<number, unknown> },
@@ -59,7 +61,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'post.get': {
       useQuery: ({ id }: { id: number }, opts?: { enabled?: boolean }) => {
         calls.postGet.push(opts?.enabled !== false);
-        return { data: opts?.enabled === false ? undefined : { id, texts: [TEXT] } };
+        // A cold load: the post's texts arrive after the carousel has mounted on the image.
+        const [arrived, setArrived] = useState(!postGetDelay.value);
+        useEffect(() => {
+          if (arrived) return;
+          const timer = setTimeout(() => setArrived(true), 300);
+          return () => clearTimeout(timer);
+        }, [arrived]);
+        return { data: opts?.enabled === false || !arrived ? undefined : { id, texts: [TEXT] } };
       },
     },
   }),
@@ -201,6 +210,7 @@ beforeEach(() => {
   chapters.value = { [POST]: { chapterId: 1 } };
   calls.postGet.length = 0;
   calls.getForPosts.length = 0;
+  postGetDelay.value = false;
 });
 afterEach(() => {
   getBrowserRouter().replace({ query: {} }, '/');
@@ -223,6 +233,13 @@ describe('text slides in the image detail carousel', () => {
   test("a text slide's URL reopens it", async () => {
     await openAt(101, { text: 7, texts: [textOfPost] });
     await expect.element(shown()).toHaveTextContent('txt:7');
+  });
+
+  test('a cold load of ?text= lands on the text once the post read returns, and keeps its URL', async () => {
+    postGetDelay.value = true;
+    await openAt(101, { text: 7 });
+    await expect.element(shown()).toHaveTextContent('txt:7');
+    expect(location.pathname + location.search).toBe('/images/101?text=7');
   });
 
   test('an unknown text id opens the image the URL names', async () => {

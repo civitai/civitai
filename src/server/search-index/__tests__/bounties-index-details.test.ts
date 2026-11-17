@@ -14,13 +14,14 @@ const bounty = (details: Record<string, unknown>) =>
   } as never);
 
 describe('bounties search index transformData', () => {
-  it('leaves the profanity fields out of the indexed details', async () => {
+  it('leaves the profanity fields and the text scan record out of the indexed details', async () => {
     const [record] = await transformData({
       bounties: [
         bounty({
           baseModel: 'SD 1.5',
           profanityMatches: ['term'],
           profanityEvaluation: { reason: 'test reason' },
+          textScanNsfw: { workflowId: 'w', level: 4 },
         }),
       ],
       imageTags: [],

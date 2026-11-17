@@ -9,6 +9,7 @@ import { feedSecret } from '$lib/server/smites/runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { skippedFor } from '$lib/server/skips';
 import { getStanding } from '$lib/server/standing';
+import { consented } from '$lib/server/membership';
 import { BUFFER_TARGET, MAX_EXCLUDED, type PickedItem } from '../optimistic';
 import { pickItem } from '../next-item.server';
 import type { RequestHandler } from './$types';
@@ -33,6 +34,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
   ]);
   if (!status || muted || status.rank === 'Acolyte' || status.smites >= status.maxSmites)
     return NOTHING();
+  if (!(await consented(userId))) return NOTHING();
 
   const now = queueDeps.now();
   if (!locals.user.isModerator && (await lockoutFor(db, userId, now))) return NOTHING();
