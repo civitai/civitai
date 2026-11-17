@@ -120,7 +120,6 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
   });
 }
 
-/** Re-rates the images that had a moderated tag written, and returns their ids. */
 async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[]) {
   const moderatedTags = await getModeratedTags();
   const moderatedTagIds = moderatedTags.map((x) => x.id);

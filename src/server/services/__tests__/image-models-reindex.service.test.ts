@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
@@ -79,6 +80,24 @@ describe('queueModelsForImageChildTagChanges', () => {
     await queueModelsForImageChildTagChanges({ levelImageIds: [9] });
 
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('queues each model once, as an update, when several of its versions hold the images', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: SqlArg) =>
+      sqlText(sql).includes('"TagsOnImageNew"')
+        ? [{ imageId: 8 }]
+        : [
+            { modelId: 500, modelVersionId: 5000 },
+            { modelId: 500, modelVersionId: 5001 },
+          ]) as never);
+
+    await queueModelsForImageChildTagChanges({ levelImageIds: [8] });
+
+    expect(query('"TagsOnImageNew"')?.values[1]).toEqual([...childBrowsingTagIds]);
+    expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledWith([
+      { id: 500, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+    expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([5000, 5001]);
   });
 
   it('queues nothing for an image on no model', async () => {
