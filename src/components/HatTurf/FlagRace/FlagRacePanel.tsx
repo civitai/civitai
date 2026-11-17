@@ -60,66 +60,83 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
       <p className={classes.tag}>
         Stack hats. <b>Win the flag.</b>
       </p>
-      <div className="relative mt-2.5 flex flex-col items-start gap-1.5">
-        <FlagRaceHeader summary={summary} />
-        {!summary.closed && pot > 0 && (
-          <Badge
-            tt="none"
-            variant="light"
-            color="yellow"
-            size="lg"
-            radius="xl"
-            leftSection={<IconTrophy size={14} />}
-            data-testid="flag-race-pot"
-          >
-            {abbreviateNumber(pot)} points up for grabs
-          </Badge>
-        )}
-      </div>
-
-      {dismissed === true && (
-        <div className="mt-3">
-          <UnstyledButton onClick={() => setDismissed(false)}>
+      <div className={classes.bar}>
+        <div className={classes.pills}>
+          <FlagRaceHeader summary={summary} />
+          {!summary.closed && pot > 0 && (
             <Badge
               tt="none"
               variant="light"
-              color="gray"
+              color="yellow"
               size="lg"
               radius="xl"
-              className="cursor-pointer"
-              leftSection={<IconHelpCircle size={14} />}
+              leftSection={<IconTrophy size={14} />}
+              data-testid="flag-race-pot"
             >
-              How it works
+              {abbreviateNumber(pot)} points up for grabs
             </Badge>
-          </UnstyledButton>
-        </div>
-      )}
-
-      {!summary.closed && (
-        <>
-          <div className={classes.label}>Flags held right now</div>
-          {held.length ? (
-            <Group gap={6} wrap="nowrap" data-testid="flag-race-held">
-              {held.map(([team, count]) => (
-                <Badge
-                  tt="none"
-                  key={team}
-                  size="lg"
-                  radius="xl"
-                  aria-label={`${team} holds ${count} ${count === 1 ? 'flag' : 'flags'}`}
-                  style={{ backgroundColor: teamColor(team) ?? FALLBACK_COLOR, color: '#fff' }}
-                >
-                  {count}
-                </Badge>
-              ))}
-            </Group>
-          ) : (
-            <Text size="sm" c="dimmed" data-testid="flag-race-held">
-              Nobody yet. Be the first.
-            </Text>
           )}
-        </>
-      )}
+          {dismissed === true && (
+            <UnstyledButton onClick={() => setDismissed(false)}>
+              <Badge
+                tt="none"
+                variant="light"
+                color="gray"
+                size="lg"
+                radius="xl"
+                className="cursor-pointer"
+                leftSection={<IconHelpCircle size={14} />}
+              >
+                How it works
+              </Badge>
+            </UnstyledButton>
+          )}
+        </div>
+
+        {!summary.closed && (
+          <div className={classes.held}>
+            <div className={classes.label}>Flags held right now</div>
+            {held.length ? (
+              <Group gap={6} wrap="nowrap" data-testid="flag-race-held">
+                {held.map(([team, count]) => (
+                  <Badge
+                    tt="none"
+                    key={team}
+                    size="lg"
+                    radius="xl"
+                    aria-label={`${team} holds ${count} ${count === 1 ? 'flag' : 'flags'}`}
+                    style={{ backgroundColor: teamColor(team) ?? FALLBACK_COLOR, color: '#fff' }}
+                  >
+                    {count}
+                  </Badge>
+                ))}
+              </Group>
+            ) : (
+              <Text size="sm" c="dimmed" data-testid="flag-race-held">
+                Nobody yet. Be the first.
+              </Text>
+            )}
+          </div>
+        )}
+
+        {next && (
+          <Link
+            href={`/crucibles/${next.id}`}
+            className={classes.enter}
+            data-testid="flag-race-enter"
+          >
+            {next.coverUrl && <img src={getEdgeUrl(next.coverUrl, { width: 96 })} alt="" />}
+            <span className="min-w-0">
+              <b className="block text-[13px]">Enter tomorrow&apos;s flags</b>
+              <small>
+                Today&apos;s Crucible · <Countdown endTime={new Date(next.endAt)} format="short" />{' '}
+                left
+              </small>
+            </span>
+            <IconArrowRight size={18} className="ml-auto shrink-0" />
+          </Link>
+        )}
+      </div>
 
       {dismissed === false && (
         <div className={classes.howto} data-testid="flag-race-howto">
@@ -134,7 +151,7 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
           >
             <IconX size={14} />
           </ActionIcon>
-          <div className="grid gap-2">
+          <div className={classes.steps}>
             <div className={classes.step}>
               <span className={classes.stepIcon}>
                 <IconFlag size={13} />
@@ -167,27 +184,6 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
             Full rules in the article <IconArrowRight size={12} />
           </Link>
         </div>
-      )}
-
-      {next && (
-        <>
-          <div className="mt-auto" />
-          <Link
-            href={`/crucibles/${next.id}`}
-            className={classes.enter}
-            data-testid="flag-race-enter"
-          >
-            {next.coverUrl && <img src={getEdgeUrl(next.coverUrl, { width: 96 })} alt="" />}
-            <span className="min-w-0">
-              <b className="block text-[13px]">Enter tomorrow&apos;s flags</b>
-              <small>
-                Today&apos;s Crucible · <Countdown endTime={new Date(next.endAt)} format="short" />{' '}
-                left
-              </small>
-            </span>
-            <IconArrowRight size={18} className="ml-auto shrink-0" />
-          </Link>
-        </>
       )}
     </div>
   );
