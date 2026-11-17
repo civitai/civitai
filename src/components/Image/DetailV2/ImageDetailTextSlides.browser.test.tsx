@@ -9,6 +9,7 @@ import {
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
 import type { DetailText } from '~/components/Image/Detail/detail-items';
+import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
 import {
   ImageDetailProvider,
   useImageDetailContext,
@@ -153,6 +154,10 @@ function Detail() {
       <button type="button" data-testid="next" onClick={carouselNavigation.next} />
       <output data-testid="shown">{items[carouselNavigation.index]?.key}</output>
       <output data-testid="items">{items.map((item) => item.key).join(',')}</output>
+      {/* ImageDetail2's sidebar shows the anchor image of the carousel's slide */}
+      <output data-testid="sidebar">
+        {items[anchorImageIndex(items, carouselNavigation.index)]?.key}
+      </output>
       <ImageDetailCarousel
         images={IMAGES}
         items={items}
@@ -240,6 +245,18 @@ describe('text slides in the image detail carousel', () => {
     await openAt(101, { text: 7 });
     await expect.element(shown()).toHaveTextContent('txt:7');
     expect(location.pathname + location.search).toBe('/images/101?text=7');
+  });
+
+  test('a cold load of an image after a text stays on that image once the text arrives', async () => {
+    postGetDelay.value = true;
+    await openAt(102);
+    // Text 7 is inserted before image 102, which moves 102 up one slide.
+    await expect
+      .element(page.getByTestId('items'))
+      .toHaveTextContent('img:101,txt:7,img:102,img:103');
+    await expect.element(shown()).toHaveTextContent('img:102');
+    await expect.element(page.getByTestId('sidebar')).toHaveTextContent('img:102');
+    expect(location.pathname + location.search).toBe('/images/102');
   });
 
   test('an unknown text id opens the image the URL names', async () => {
