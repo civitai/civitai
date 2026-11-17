@@ -11,7 +11,7 @@ import {
 const state = vi.hoisted(() => ({
   src: 'https://tag.example.test/sparteo.js' as string | null,
   flags: { sparteoAds: true } as Record<string, boolean>,
-  ads: { adsEnabled: true, useDirectAds: false },
+  ads: { adsEnabled: true, useDirectAds: false, ready: true },
 }));
 
 vi.mock('~/components/Ads/sparteo.config', () => ({
@@ -29,10 +29,7 @@ const act = (React as unknown as { act: typeof actType }).act;
 
 let root: Root | undefined;
 
-function mount(consentAllowed = true) {
-  const container = document.createElement('div');
-  document.body.appendChild(container);
-  root = createRoot(container);
+function render(consentAllowed: boolean) {
   const consent = { ...CONSENT_NOT_REQUIRED, required: !consentAllowed, allowed: consentAllowed };
   act(() =>
     root?.render(
@@ -45,6 +42,13 @@ function mount(consentAllowed = true) {
   );
 }
 
+function mount(consentAllowed = true) {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  render(consentAllowed);
+}
+
 const headTag = () => document.head.querySelector<HTMLScriptElement>(`script#${SPARTEO_TAG_ID}`);
 
 afterEach(() => {
@@ -54,7 +58,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   state.src = 'https://tag.example.test/sparteo.js';
   state.flags = { sparteoAds: true };
-  state.ads = { adsEnabled: true, useDirectAds: false };
+  state.ads = { adsEnabled: true, useDirectAds: false, ready: true };
 });
 
 describe('SparteoTag', () => {
@@ -77,14 +81,29 @@ describe('SparteoTag', () => {
     expect(headTag()).toBeNull();
   });
 
+  it('adds the tag once the visitor accepts after the page has loaded', () => {
+    mount(false);
+    expect(headTag()).toBeNull();
+    render(true);
+    expect(headTag()?.src).toBe('https://tag.example.test/sparteo.js');
+    render(true);
+    expect(document.querySelectorAll(`#${SPARTEO_TAG_ID}`)).toHaveLength(1);
+  });
+
+  it('adds nothing until the TCF consent prompt has finished', () => {
+    state.ads = { adsEnabled: true, useDirectAds: false, ready: false };
+    mount();
+    expect(headTag()).toBeNull();
+  });
+
   it('adds nothing where the ad provider has ads off (gated page, member opt-out, blocked url)', () => {
-    state.ads = { adsEnabled: false, useDirectAds: false };
+    state.ads = { adsEnabled: false, useDirectAds: false, ready: true };
     mount();
     expect(headTag()).toBeNull();
   });
 
   it('adds nothing on the direct-ads domain', () => {
-    state.ads = { adsEnabled: true, useDirectAds: true };
+    state.ads = { adsEnabled: true, useDirectAds: true, ready: true };
     mount();
     expect(headTag()).toBeNull();
   });
