@@ -339,16 +339,19 @@ export const setTosViolationHandler = async ({
     // Remove image from all collections
     await removeEntityFromAllCollections('image', id);
 
-    if (image.pHash)
-      await addBlockedImage({
-        hash: image.pHash,
-        reason: held || written.underReview.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
-      });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
     // Re-queue the parent comic project (if any) so the search index
     // re-evaluates visibility against the new (Blocked) Image state.
     await queueComicsForPanelImage(id);
     if (image.postId) await bustCachesForPosts(image.postId);
+    // After the steps that hide the image: a blocklist write that throws must not skip them.
+    if (image.pHash)
+      await addBlockedImage({
+        hash: image.pHash,
+        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+        context: { step: 'block', imageIds: [id], actorUserId: user.id },
+      });
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);
