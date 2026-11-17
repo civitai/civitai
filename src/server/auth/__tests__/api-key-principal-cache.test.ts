@@ -97,7 +97,7 @@ describe('bearer lookup cache: hit, miss, TTL', () => {
     for (const s of [first, second]) {
       expect(s?.user.id).toBe(301);
       expect(s?.apiKeyId).toBe(31);
-      expect(s?.tokenScope).toBe(0b0110);
+      expect(s?.tokenScope).toBe(0b0110n);
       expect(s?.buzzLimit).toEqual({ limit: 777 });
       expect(s?.subject).toEqual({ type: 'apiKey', id: 31 });
     }

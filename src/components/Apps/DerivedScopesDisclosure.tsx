@@ -48,7 +48,7 @@ export function DerivedScopesDisclosure({
   forceShowErrors = false,
 }: {
   /** The derived requested-scope mask (= the selected client's `allowedScopes`). */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** enum-key → rationale (prefilled + edited here). */
   justifications: Record<string, string>;
   onJustificationChange: (key: string, text: string) => void;

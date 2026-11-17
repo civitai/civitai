@@ -37,12 +37,12 @@ vi.mock('~/server/middleware.trpc', async (importOriginal) => {
 const { platformFeedbackRouter } = await import('~/server/routers/platform-feedback.router');
 
 // Literals, so a renumbered enum fails the sanity test instead of moving every arm with it.
-const FULL = 33554431;
-const SUBMIT = 1 << 25; // 33554432
-const WITH_SUBMIT = 1 | SUBMIT; // UserRead | AppBlocksSubmit
+const FULL = 33554431n;
+const SUBMIT = 1n << 25n; // 33554432
+const WITH_SUBMIT = 1n | SUBMIT; // UserRead | AppBlocksSubmit
 const WITHOUT_SUBMIT = [
-  ['UserRead|AppBlocksDevTunnel', 1 | (1 << 26)],
-  ['Full minus UserWrite', FULL & ~2],
+  ['UserRead|AppBlocksDevTunnel', 1n | (1n << 26n)],
+  ['Full minus UserWrite', FULL & ~2n],
 ] as const;
 
 const SCOPE_GATE_ERROR = {
@@ -65,7 +65,7 @@ const sessionCtx = (u: User = user) =>
     res: { setHeader: () => undefined },
   } as never);
 
-const tokenCtx = (tokenScope: number) =>
+const tokenCtx = (tokenScope: bigint) =>
   ({
     ...(sessionCtx() as object),
     apiKeyId: 999,
@@ -132,7 +132,7 @@ describe('platformFeedback token-scope gate', () => {
     expect(TokenScope.AppBlocksSubmit).toBe(SUBMIT);
     expect(TokenScope.UserRead | TokenScope.AppBlocksSubmit).toBe(WITH_SUBMIT);
     expect(TokenScope.UserRead | TokenScope.AppBlocksDevTunnel).toBe(WITHOUT_SUBMIT[0][1]);
-    for (const [, mask] of WITHOUT_SUBMIT) expect(mask & SUBMIT).toBe(0);
+    for (const [, mask] of WITHOUT_SUBMIT) expect(mask & SUBMIT).toBe(0n);
   });
 
   // Read off the built router and lists every procedure: adding one, or dropping an annotation,

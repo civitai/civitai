@@ -384,7 +384,7 @@ describe('image.getInfinite by image id', () => {
     expect(idsOf(await run({ ids: [1, 2, 3, 4] }, false, ctx(false, true)))).toEqual([1, 2, 3, 4]);
   });
 
-  const key = (tokenScope: number) => ({
+  const key = (tokenScope: bigint) => ({
     apiKeyId: 1,
     apiKeyType: 'User',
     subject: { type: 'apiKey', id: 1 },
@@ -412,7 +412,7 @@ describe('image.getInfinite by image id', () => {
 });
 
 describe('a narrow-scope key reads the feeds as a plain signed-in viewer', () => {
-  const credential = (tokenScope: number) => ({
+  const credential = (tokenScope: bigint) => ({
     apiKeyId: 1,
     apiKeyType: 'User',
     subject: { type: 'apiKey', id: 1 },

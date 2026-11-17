@@ -109,9 +109,10 @@ export type OffsiteSubmitFormValues = {
    * `allowedScopes` (no longer author-picked). Kept in the view-model so the
    * read-only display + justification inputs iterate it and the client mirror can
    * assert the (now trivial) subset invariant; the SERVER re-snapshots it from the
-   * client's current `allowedScopes` at submit time (authoritative).
+   * client's current `allowedScopes` at submit time (authoritative). A number when it came from
+   * tRPC; a bigint is accepted too. Widened with `BigInt` before any bitwise use.
    */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** enum-key → rationale (only derived scopes get an entry). */
   scopeJustifications: Record<string, string>;
 };
@@ -208,7 +209,7 @@ export function isOffsiteSubmitFormDirty(values: OffsiteSubmitFormValues): boole
   if (values.category !== blank.category) return true;
   if (values.contentRating !== blank.contentRating) return true;
   if (values.connectClientId !== blank.connectClientId) return true;
-  if (values.requestedScopes !== blank.requestedScopes) return true;
+  if (BigInt(values.requestedScopes) !== BigInt(blank.requestedScopes)) return true;
   return Object.values(values.scopeJustifications ?? {}).some(
     (v) => String(v ?? '').trim().length > 0
   );
@@ -535,7 +536,7 @@ export function pruneJustificationsToMask(
  */
 export function deriveScopesFromClient(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): OffsiteSubmitFormValues {
   return {
     ...values,
@@ -571,7 +572,7 @@ export function shapeScopeJustifications(
  */
 export function validateConnectFields(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): OffsiteSubmitFormErrors {
   const errors: OffsiteSubmitFormErrors = {};
 
@@ -599,7 +600,7 @@ export function validateConnectFields(
  */
 export function validateExternalCreateForm(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): OffsiteSubmitFormErrors {
   return { ...validateOffsiteSubmitForm(values), ...validateConnectFields(values, allowedScopes) };
 }
@@ -621,7 +622,7 @@ export function isCreateUrlStepComplete(values: OffsiteSubmitFormValues): boolea
  */
 export function isClientStepComplete(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): boolean {
   return (
     !!values.connectClientId &&
@@ -633,7 +634,7 @@ export function isClientStepComplete(
 /** The CREATE wizard Details-step gate: the whole create mirror validates. */
 export function isCreateDetailsStepComplete(
   values: OffsiteSubmitFormValues,
-  allowedScopes: number
+  allowedScopes: number | bigint
 ): boolean {
   return Object.keys(validateExternalCreateForm(values, allowedScopes)).length === 0;
 }
@@ -670,7 +671,8 @@ export function toSubmitExternalInput(values: OffsiteSubmitFormValues): {
     slug: values.slug.trim(),
     name: values.name.trim(),
     connectClientId: values.connectClientId ?? '',
-    requestedScopes: values.requestedScopes,
+    // A JSON number on the wire.
+    requestedScopes: Number(values.requestedScopes),
     scopeJustifications,
     externalUrl: values.externalUrl.trim() || undefined,
     sourceRepoUrl: values.sourceRepoUrl.trim() || undefined,

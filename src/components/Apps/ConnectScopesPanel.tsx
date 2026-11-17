@@ -30,7 +30,7 @@ export function ConnectScopesPanel({
 }: {
   connectClientName?: string | null;
   /** The disclosed TokenScope bitmask the listing requests. */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** Per-scope rationale keyed by TokenScope enum-key (e.g. `{ ModelsWrite: '…' }`). */
   justifications?: Record<string, string> | null;
 }) {

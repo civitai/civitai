@@ -97,7 +97,7 @@ const baseInput: SubmitExternalListingInput = {
 };
 
 function ownedClient(
-  overrides: Partial<{ id: string; userId: number; allowedScopes: number }> = {}
+  overrides: Partial<{ id: string; userId: number; allowedScopes: bigint }> = {}
 ) {
   return { id: CLIENT_ID, userId: CALLER, allowedScopes: CEILING, ...overrides };
 }

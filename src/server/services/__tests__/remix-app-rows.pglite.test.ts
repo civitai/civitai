@@ -110,7 +110,7 @@ describe('remix apps seed migration', () => {
       secret: null,
       redirectUris: [],
       grants: [],
-      allowedScopes: 0,
+      allowedScopes: 0n,
       accessMode: 'disabled',
       userId: -1,
     });
@@ -225,7 +225,7 @@ describe('App Blocks reads that serve apps', () => {
         ...row,
         approvedScopes: [],
         currentVersionDeployedAt: new Date(),
-        app: { allowedScopes: 0 },
+        app: { allowedScopes: 0n },
         ...over,
       } as never);
 

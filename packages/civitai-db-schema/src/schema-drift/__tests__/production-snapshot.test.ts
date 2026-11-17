@@ -283,7 +283,9 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
     const inFlightColumns = new Set([
+      'ApiKey.tokenScopeWide',
       'BoxOpening.guaranteed',
       'ModActivity.credential',
       'ModActivity.reviewBatchId',

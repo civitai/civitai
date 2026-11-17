@@ -114,8 +114,8 @@ export type ListingEditContext = {
    *   - `connectScopeJustifications` — the STORED per-scope rationale (prefill).
    */
   connectClientId?: string | null;
-  connectAllowedScopes?: number | null;
-  connectRequestedScopes?: number | null;
+  connectAllowedScopes?: number | bigint | null;
+  connectRequestedScopes?: number | bigint | null;
   connectScopeJustifications?: Record<string, string> | null;
 };
 
@@ -280,7 +280,7 @@ export function scopeDisclosureLockedForEdit(
   // precondition directly: the lock applies in the unpublished state.
   if (!isUnpublishedEdit(ctx)) return false;
   if (ctx.connectClientId == null) return false;
-  return (ctx.connectAllowedScopes ?? 0) !== (ctx.connectRequestedScopes ?? 0);
+  return BigInt(ctx.connectAllowedScopes ?? 0) !== BigInt(ctx.connectRequestedScopes ?? 0);
 }
 
 /**
@@ -525,9 +525,10 @@ export function buildScalarPatch(
       storedSnapshot
     );
     const currentJust = shapeSensitiveJustifications(current.scopeJustifications, derived);
-    const drifted = derived !== storedSnapshot;
+    const drifted = BigInt(derived) !== BigInt(storedSnapshot);
     if (drifted || !shallowEqualStringMap(currentJust, storedJust)) {
-      patch.requestedScopes = derived;
+      // A JSON number on the wire.
+      patch.requestedScopes = Number(derived);
       patch.scopeJustifications = currentJust;
     }
   }

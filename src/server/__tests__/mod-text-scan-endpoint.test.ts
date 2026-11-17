@@ -232,7 +232,7 @@ describe('mod/text-scan', () => {
       bannedAt: null,
       permissions: ['textScanPromptPublish'],
     };
-    const asApiKey = (tokenScope: number) => {
+    const asApiKey = (tokenScope: bigint) => {
       vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
         user: MOD_USER,
         apiKeyId: 1,
