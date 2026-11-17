@@ -70,6 +70,12 @@ describe('Flag Race on the event page', () => {
     expect(cards()).toEqual(['30', '10']);
   });
 
+  test('is hidden when the viewer may see none of the flags, as the home row is', async () => {
+    h.images = [];
+    await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);
+    expect(section()).toBeNull();
+  });
+
   test('is hidden between race days and while the Flag Race flag is off', async () => {
     h.row = null;
     await renderWithProviders(<FlagRaceEventSection event="birthday2026" />);

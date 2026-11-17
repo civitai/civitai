@@ -27,7 +27,7 @@ export function FlagRaceEventSection({ event }: { event: string }) {
       withMeta: false,
       include: ['cosmetics'],
     },
-    { enabled: ids.length > 0, keepPreviousData: true }
+    { enabled: ids.length > 0 }
   );
   // In the day's flag order, not the feed's.
   const flags = useMemo(() => {
@@ -35,7 +35,8 @@ export function FlagRaceEventSection({ event }: { event: string }) {
     return ids.map((id) => byId.get(id)).filter((image) => !!image);
   }, [ids, images]);
 
-  if (!row || !ids.length) return null;
+  // Like the home row: nothing to show when the viewer may see none of the day's flags.
+  if (!row || !ids.length || (!isLoading && !flags.length)) return null;
   return (
     <div className={flagClasses.wrap} data-testid="flag-race-event-section">
       <section className={clsx(partyClasses.party, flagClasses.row)}>
