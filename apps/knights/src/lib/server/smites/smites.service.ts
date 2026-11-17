@@ -4,13 +4,15 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { ensureKeeper } from '../daily/daily.service';
 import { utcDay } from '../daily/days';
 import { metrics } from '../metrics';
-import { SMITES } from './config';
+import { ACOLYTE_WRONG_ANSWER_SMITE, SMITES } from './config';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
 export type ResetDeps = {
   /** Resets the career in the main app. Resolves once it is done or already done; a throw is retried by the tick. */
   resetPlayer: (playerId: number) => Promise<void>;
+  /** Whether Acolyte wrong-answer smites are on (`KNIGHTS_APPRENTICE_SMITES`). Without it, they are. */
+  acolyteSmites?: () => boolean;
 };
 
 export async function activeSmiteCount(db: Executor, playerId: number): Promise<number> {
@@ -81,17 +83,14 @@ export async function workOffSmites(trx: Executor, playerId: number, now: Date):
  * Lapses old smites, as the original game's nightly job does, except for a player whose reset is still due: expiry must not
  * undo it. The affected players are locked in id order first, the order votes and settlement take them in.
  */
-export async function expireSmites(db: Kysely<DB>, now: Date): Promise<number> {
+export async function expireSmites(
+  db: Kysely<DB>,
+  now: Date,
+  hold: HoldOption = {}
+): Promise<number> {
   const cutoff = new Date(now.getTime() - SMITES.expireAfterDays * 86_400_000);
   const resetDue = (eb: ExpressionBuilder<DB, 'NewOrderSmite'>) =>
-    eb('targetPlayerId', 'in', (sub) =>
-      sub
-        .selectFrom('NewOrderSmite as a')
-        .select('a.targetPlayerId')
-        .where('a.cleansedAt', 'is', null)
-        .groupBy('a.targetPlayerId')
-        .having((hb) => hb.fn.countAll(), '>=', SMITES.max)
-    );
+    eb('targetPlayerId', 'in', dueForReset(db, hold));
 
   return db.transaction().execute(async (trx) => {
     const players = await trx
@@ -126,14 +125,44 @@ export async function expireSmites(db: Kysely<DB>, now: Date): Promise<number> {
   });
 }
 
-export async function playersDueForReset(db: Executor, limit = 100): Promise<number[]> {
-  const rows = await db
-    .selectFrom('NewOrderSmite')
-    .select('targetPlayerId')
-    .where('cleansedAt', 'is', null)
-    .groupBy('targetPlayerId')
-    .having((eb) => eb.fn.countAll(), '>=', SMITES.max)
-    .orderBy('targetPlayerId', 'asc')
+type HoldOption = {
+  /** Leaves out Acolytes whose active smites are all wrong-answer smites (`KNIGHTS_APPRENTICE_SMITES=off`). */
+  holdAcolyteWrongAnswer?: boolean;
+};
+
+/** Players whose active smites make a career reset due. */
+function dueForReset(db: Executor, { holdAcolyteWrongAnswer = false }: HoldOption) {
+  let query = db
+    .selectFrom('NewOrderSmite as s')
+    .select('s.targetPlayerId')
+    .where('s.cleansedAt', 'is', null)
+    .groupBy('s.targetPlayerId')
+    .having((eb) => eb.fn.countAll(), '>=', SMITES.max);
+  if (holdAcolyteWrongAnswer) {
+    query = query.having((eb) =>
+      eb.not(
+        eb.and([
+          sql<boolean>`bool_and(s."reason" IS NOT DISTINCT FROM ${ACOLYTE_WRONG_ANSWER_SMITE})`,
+          eb.exists(
+            eb
+              .selectFrom('NewOrderPlayer as p')
+              .select(sql`1`.as('one'))
+              .whereRef('p.userId', '=', 's.targetPlayerId')
+              .where('p.rankType', '=', 'Acolyte')
+          ),
+        ])
+      )
+    );
+  }
+  return query;
+}
+
+export async function playersDueForReset(
+  db: Executor,
+  { limit = 100, ...hold }: { limit?: number } & HoldOption = {}
+): Promise<number[]> {
+  const rows = await dueForReset(db, hold)
+    .orderBy('s.targetPlayerId', 'asc')
     .limit(limit)
     .execute();
   return rows.map((r) => r.targetPlayerId);
@@ -155,7 +184,9 @@ export async function resetPendingPlayers(
   db: Kysely<DB>,
   deps: ResetDeps
 ): Promise<{ due: number; failed: number }> {
-  const due = await playersDueForReset(db);
+  const due = await playersDueForReset(db, {
+    holdAcolyteWrongAnswer: deps.acolyteSmites?.() === false,
+  });
   let failed = 0;
   for (const playerId of due) if (!(await resetNow(playerId, deps))) failed++;
   return { due: due.length, failed };
