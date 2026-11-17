@@ -844,6 +844,13 @@ export type AppUserScopeGrant = {
    * `ai:write:budgeted` scope (nothing else in a grant can spend).
    */
   buzz_budget_per_day: number | null;
+  /**
+   * Highest job price, in Buzz, the viewer lets this app run without a per-job confirm
+   * (within `buzzBudgetPerDay`); NULL = not opted in. MANUALLY APPLIED (migration
+   * 20271116180000). Read only through `readConfirmWithinLimit`, never in a shared grant
+   * select, so a database without it breaks no other grant read.
+   */
+  confirm_within_limit_max_job: number | null;
 };
 export type Article = {
   id: Generated<number>;
@@ -5258,8 +5265,23 @@ export type PostText = {
    * Set by a CSAM verdict and held for review. Only the hold's release clears it, never a scan.
    */
   csamHeld: Generated<boolean>;
+  /**
+   * A moderator refused it from a report: `refused` stays set until a moderator restores it, and no
+   * scan verdict lifts it.
+   */
+  refusedByModerator: Generated<boolean>;
+  /**
+   * The scan's own refusal while a moderator's covers it (`refused` is then the moderator's): what a
+   * restore falls back to. False whenever `refusedByModerator` is.
+   */
+  refusedByScan: Generated<boolean>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type PostTextReport = {
+  reportId: number;
+  postTextId: number | null;
+  postId: number;
 };
 export type PressMention = {
   id: Generated<number>;
@@ -7250,6 +7272,7 @@ export type DB = {
   PostStat: PostStat;
   PostTag: PostTag;
   PostText: PostText;
+  PostTextReport: PostTextReport;
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;

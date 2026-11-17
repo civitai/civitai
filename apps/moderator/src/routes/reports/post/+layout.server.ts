@@ -1,5 +1,6 @@
 import type { LayoutServerLoad } from './$types';
 import { postsByIds } from '$lib/server/image-lookup.service';
+import { getReportedPostTexts } from '$lib/server/post-text-reports.service';
 import { loadReportQueue } from '$lib/server/report-queue-load';
 import { getUnpublishedSourceCounts } from '$lib/server/reports.service';
 import { ReportEntity } from '$lib/reports';
@@ -24,11 +25,19 @@ export const load: LayoutServerLoad = async ({ url }) => {
 
   // The report row carries a post id and nothing else: the owner and how much of the post is already
   // gone come from the post.
-  const posts = await postsByIds(queue.items.map((r) => r.entityId ?? 0));
+  // A storyline text's report sits here too, labelled by the text it names.
+  const [posts, texts] = await Promise.all([
+    postsByIds(queue.items.map((r) => r.entityId ?? 0)),
+    getReportedPostTexts(queue.items.map((r) => r.id)),
+  ]);
 
   return {
     ...queue,
-    items: queue.items.map((r) => ({ ...r, post: posts.get(r.entityId ?? 0) ?? null })),
+    items: queue.items.map((r) => ({
+      ...r,
+      post: posts.get(r.entityId ?? 0) ?? null,
+      postText: texts.get(r.id) ?? null,
+    })),
     unpublishedCounts,
     fullBleed: true,
     headerInline: true,

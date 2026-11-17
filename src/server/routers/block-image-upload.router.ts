@@ -1,8 +1,8 @@
 import {
   gateBlockUploadImageSchema,
+  generationSourceUsesScannedRowsSchema,
   persistBlockUploadImageSchema,
 } from '~/server/schema/blocks/block-image-upload.schema';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
@@ -53,12 +53,21 @@ export const blockImageUploadRouter = router({
   /**
    * Whether a PRIVATE generation source the host just uploaded as a consumer blob (the
    * `generationSource` picker, a single `OPEN_MEDIA_UPLOAD` image) must be kept as a scanned row
-   * (`blocks.persistUploadedGenerationSource`) before an app can generate from it. It is the flag
-   * the generation gate reads to refuse an app's orchestrator urls, evaluated the same way (global,
-   * no entity), so the host copies the blob exactly when the gate would refuse it. Off, unknown or
-   * unreachable all answer false, as they do for the gate.
+   * (`blocks.persistUploadedGenerationSource`) before THIS app can generate from it. It is the
+   * gate's own read (`appUsesScannedSourceRows`), for the app named by the block token's
+   * `appBlockId` claim, the claim the copy and the gate read too, so the host copies the blob
+   * exactly when the gate would refuse it for that app. Off, unknown or unreachable all answer
+   * false, as they do for the gate. The token is verified as every bridge call verifies it
+   * (`authorizeBlockBridgeToken`); a refused token answers as that refusal.
    */
-  generationSourceUsesScannedRows: protectedProcedure.query(async () => ({
-    scannedRows: await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS),
-  })),
+  generationSourceUsesScannedRows: protectedProcedure
+    .input(generationSourceUsesScannedRowsSchema)
+    .query(async ({ input }) => {
+      const [{ authorizeBlockBridgeToken }, { appUsesScannedSourceRows }] = await Promise.all([
+        import('~/server/services/blocks/block-bridge-auth.service'),
+        import('~/server/services/blocks/source-scanned-rows'),
+      ]);
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      return { scannedRows: await appUsesScannedSourceRows(claims.appBlockId) };
+    }),
 });

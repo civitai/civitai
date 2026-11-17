@@ -81,6 +81,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { relatedPostsBrowsingLevel, requestServableLevels } from '~/server/utils/browsing-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -115,7 +116,7 @@ export const getAllCollectionsInfiniteHandler = async ({
         userId: true,
         user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
-        image: { select: { ...imageSelect, tosViolation: true } },
+        image: { select: { ...imageSelect, tosViolation: true, poi: true, minor: true } },
         mode: true,
         createdAt: true,
         metadata: true,
@@ -123,9 +124,12 @@ export const getAllCollectionsInfiniteHandler = async ({
       user: ctx.user,
     });
     const browsingLevel = relatedPostsBrowsingLevel(ctx, input.browsingLevel);
+    const showsImage = await getRequestImageFilter(ctx, input.browsingLevel);
     // A cover the viewer may not see falls through to the item covers below.
     const items = (await withServableCovers(rows, ctx.user)).map((row) =>
-      row.image && !isCoverWithinBrowsingLevel(row.image, browsingLevel)
+      row.image &&
+      (!isCoverWithinBrowsingLevel(row.image, browsingLevel) ||
+        !showsImage({ ...row.image, tags: row.image.tags.map((t) => t.tag) }))
         ? { ...row, image: null }
         : row
     );
@@ -142,6 +146,7 @@ export const getAllCollectionsInfiniteHandler = async ({
       collectionIds: collectionRequiringImages,
       imagesPerCollection: 10, // Some fallbacks
       browsingLevel,
+      showsImage,
     });
 
     // Get Item Counts
@@ -232,6 +237,21 @@ export const getAllUserCollectionsHandler = async ({
   }
 };
 
+/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
+async function isCoverShownByBrowsingRules(
+  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
+  ctx: Context
+) {
+  if (!image) return true;
+  const [showsImage, flags] = await Promise.all([
+    getRequestImageFilter(ctx),
+    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+  ]);
+  // No row means its flags are unread: hidden, as unread tags are.
+  if (!flags) return false;
+  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
+}
+
 export const getCollectionByIdHandler = async ({
   ctx,
   input,
@@ -263,6 +283,7 @@ export const getCollectionByIdHandler = async ({
     }
 
     const collection = await getCollectionById({ input, viewer: ctx.user });
+    const coverShown = await isCoverShownByBrowsingRules(collection.image, ctx);
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -296,7 +317,11 @@ export const getCollectionByIdHandler = async ({
 
     return {
       // Only an editor needs to know a cover is stored but hidden from them.
-      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      collection: {
+        ...collection,
+        image: coverShown ? collection.image : null,
+        coverHidden: permissions.manage && (collection.coverHidden || !coverShown),
+      },
       permissions,
       collaborators,
       pendingReviewCount,

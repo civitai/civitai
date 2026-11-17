@@ -320,6 +320,8 @@ export async function decideCsamHold(args: DecideArgs) {
           meta: {
             ...((hold.meta as Prisma.JsonObject | null) ?? {}),
             decision,
+            // A report counts a confirmed text as reviewed only when decided on its own.
+            reviewedDecision: !batched,
           },
         },
       });

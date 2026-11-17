@@ -55,6 +55,11 @@ export type BlockQuoteGrantRecord = BlockQuoteGrant & {
   bodyHash: string;
   expiresAt: string;
   consentedAt: string | null;
+  /**
+   * Set instead of `consentedBy` when the viewer's standing opt-in, not a click, consented
+   * (step quotes only). A separate field so a server that predates it refuses such a quote.
+   */
+  standingConsentBy?: number | null;
 };
 
 export type BlockQuoteBinding = { userId: number; appBlockId: string; blockInstanceId: string };
@@ -218,11 +223,22 @@ export async function recordQuoteGrantConsent<R extends BlockQuoteGrantRecord>(
   binding: BlockQuoteBinding,
   sessionUserId: number
 ): Promise<R | null> {
+  return writeQuoteGrantConsent<R>(kind, quoteId, binding, sessionUserId, 'click');
+}
+
+async function writeQuoteGrantConsent<R extends BlockQuoteGrantRecord>(
+  kind: BlockQuoteGrantKind,
+  quoteId: string,
+  binding: BlockQuoteBinding,
+  sessionUserId: number,
+  consentKind: 'click' | 'standing'
+): Promise<R | null> {
   const quote = await readQuoteGrant<R>(kind, quoteId, binding);
   if (!quote || quote.userId !== sessionUserId) return null;
   const updated: R = {
     ...quote,
-    consentedBy: sessionUserId,
+    consentedBy: consentKind === 'click' ? sessionUserId : quote.consentedBy,
+    standingConsentBy: consentKind === 'standing' ? sessionUserId : null,
     consentedAt: new Date().toISOString(),
   };
   const written = await sysRedis.set(quoteKey(kind, quoteId), JSON.stringify(updated), {
@@ -286,6 +302,24 @@ export function recordStepQuoteConsent(
   sessionUserId: number
 ) {
   return recordQuoteGrantConsent<BlockStepQuoteRecord>('step', quoteId, binding, sessionUserId);
+}
+
+/**
+ * Record that the viewer's standing opt-in consented to this step quote. The caller has
+ * already checked the opt-in, the limit and the burst bound for this session user.
+ */
+export function recordStepQuoteStandingConsent(
+  quoteId: string,
+  binding: BlockQuoteBinding,
+  sessionUserId: number
+) {
+  return writeQuoteGrantConsent<BlockStepQuoteRecord>(
+    'step',
+    quoteId,
+    binding,
+    sessionUserId,
+    'standing'
+  );
 }
 
 export function claimStepQuote(quoteId: string) {

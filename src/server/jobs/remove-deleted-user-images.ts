@@ -269,6 +269,7 @@ async function blockUserImages(
       const touched: TouchedImage[] = [];
 
       if (hide.length) {
+        // An existing CSAM reason is kept, and the reason is recorded so a restore puts it back.
         // `@updatedAt` is stamped by the Prisma client, so raw SQL has to set it. The
         // `ingestion <> 'Blocked'` guard is what preserves the real prior ingestion in metadata —
         // re-running over an already-blocked row would record 'Blocked' as its own predecessor.
@@ -277,9 +278,11 @@ async function blockUserImages(
             UPDATE "Image"
             SET ingestion = 'Blocked'::"ImageIngestionStatus",
                 "nsfwLevel" = ${NsfwLevel.Blocked},
-                "blockedFor" = ${BlockedReason.Moderated},
+                "blockedFor" = CASE WHEN "blockedFor" = ${
+                  BlockedReason.CSAM
+                } THEN "blockedFor" ELSE ${BlockedReason.Moderated} END,
                 "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam' END,
-                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text),
+                "metadata" = "metadata" || jsonb_build_object(${PRIOR_INGESTION_KEY}::text, ingestion::text, ${PRIOR_BLOCKED_FOR_KEY}::text, "blockedFor"),
                 "updatedAt" = now()
             WHERE id IN (${Prisma.join(hide)})
               AND "userId" = ${userId}

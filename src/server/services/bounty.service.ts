@@ -636,6 +636,7 @@ export const updateBountyById = async ({
   isModerator,
   addLockedProperties,
   blurbUses,
+  shownImageIds,
   ...data
 }: UpdateBountyInput & {
   userId: number;
@@ -787,6 +788,7 @@ export const updateBountyById = async ({
           entityType: 'Bounty',
           userId,
           keysCheckedFor,
+          shownImageIds,
         });
       }
 
@@ -1185,7 +1187,7 @@ export const getBountyImages = async ({
       entityType: 'Bounty',
       image: { OR: imageOr },
     },
-    select: { image: { select: imageSelect } },
+    select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
@@ -1339,7 +1341,7 @@ export const getImagesForBounties = async ({
     },
     select: {
       entityId: true,
-      image: { select: imageSelect },
+      image: { select: { ...imageSelect, poi: true, minor: true } },
     },
   });
 

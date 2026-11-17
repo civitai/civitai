@@ -61,13 +61,16 @@ const { default: DailyLimitRaiseDialog } = await import('./DailyLimitRaiseDialog
 const confirm = () => page.getByTestId('block-daily-limit-raise-confirm');
 const input = () => page.getByTestId('block-daily-limit-raise-input');
 
-function mount(props: { limit?: number; spentToday?: number } = {}) {
+function mount(
+  props: { limit?: number; spentToday?: number; confirmWithinLimitMaxJob?: number } = {}
+) {
   renderWithProviders(
     <DailyLimitRaiseDialog
       appBlockId="apb_test"
       appName="Live Gen"
       limit={props.limit ?? 1000}
       spentToday={props.spentToday ?? 980}
+      confirmWithinLimitMaxJob={props.confirmWithinLimitMaxJob}
       onRaised={mocks.onRaised}
     />
   );
@@ -151,5 +154,20 @@ describe('DailyLimitRaiseDialog', () => {
     mount({ limit: 50_000, spentToday: 50_000 });
     await expect.element(page.getByText(/already the highest daily limit/)).toBeVisible();
     expect(confirm().query()).toBeNull();
+  });
+
+  test('opted in: says jobs within the new limit will run without asking', async () => {
+    mount({ confirmWithinLimitMaxJob: 1040 });
+    await expect
+      .element(page.getByTestId('block-daily-limit-raise-standing'))
+      .toHaveTextContent(
+        'Jobs up to 1,040 Buzz that fit within the new limit will run without asking.'
+      );
+  });
+
+  test('control: not opted in, no such line', async () => {
+    mount();
+    await expect.element(input()).toBeVisible();
+    expect(page.getByTestId('block-daily-limit-raise-standing').query()).toBeNull();
   });
 });

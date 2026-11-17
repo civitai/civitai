@@ -2884,6 +2884,20 @@ export class AlreadyBannedError extends Error {
   }
 }
 
+/** The ban's media block: every image of the user not already Blocked. Keeps an existing CSAM reason. */
+export async function blockBannedUserImages(userId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      ingestion = 'Blocked'::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked},
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+        ELSE ${BlockedReason.Moderated} END,
+      "updatedAt" = NOW()
+    WHERE "userId" = ${userId} AND ingestion <> 'Blocked'::"ImageIngestionStatus"
+  `;
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -3132,14 +3146,7 @@ export const toggleBan = async ({
           });
         }
 
-        await dbWrite.image.updateMany({
-          where: { userId: id, ingestion: { not: 'Blocked' } },
-          data: {
-            ingestion: 'Blocked',
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-          },
-        });
+        await blockBannedUserImages(id);
 
         // Same reasoning as the CSAM block in `softDeleteUser`, but scoped to what this statement
         // actually blocked rather than to the account: a ban outranks a grace block, so the

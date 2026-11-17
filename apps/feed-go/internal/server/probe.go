@@ -199,7 +199,7 @@ func (s *Server) probeModelGetAll(ctx context.Context, req ProbeRequest, rec *hy
 	if err != nil {
 		return err
 	}
-	mreq, err := s.prepareModelGetAll(ctx, r)
+	mreq, _, err := s.prepareModelGetAll(ctx, r)
 	if err != nil {
 		return err
 	}

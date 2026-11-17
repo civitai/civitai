@@ -8,9 +8,14 @@ const { isFliptMock, isRevokedMock, sessionMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
 }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: isFliptMock }));
-const { viewerLevelMock } = vi.hoisted(() => ({ viewerLevelMock: vi.fn(() => 3) }));
+const { viewerLevelMock, userOwnLevelMock } = vi.hoisted(() => ({
+  viewerLevelMock: vi.fn(() => 3),
+  // An author whose own level covers every level: the forced-SFW ceiling alone decides.
+  userOwnLevelMock: vi.fn<(userId: number) => Promise<number>>(async () => 31),
+}));
 vi.mock('~/server/services/blocks/viewer-browsing-level', () => ({
   viewerEffectiveBrowsingLevel: viewerLevelMock,
+  userOwnBrowsingLevel: userOwnLevelMock,
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: isRevokedMock },
@@ -187,6 +192,23 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     });
     expect([...(claims?.scopes ?? [])].sort()).toEqual(['collections:read:self', SCOPE]);
     expect(tunnelMock).toHaveBeenCalledWith(USER_ID, 'my-app');
+  });
+
+  it('🔴 narrows a dev tunnel token by its author’s own level: a PG-only author reads PG', async () => {
+    userOwnLevelMock.mockResolvedValueOnce(1);
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 7,
+      subject: { type: 'oauth', id: `appdev-${USER_ID}-my-app` },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
+    tunnelMock.mockResolvedValue({ grantedScopes: [SCOPE] });
+    dbMock.dbRead.oauthConsent.findUnique.mockResolvedValue({ scope: TokenScope.UserRead });
+
+    const { claims } = await drive('civ_dev_oauth');
+
+    expect(userOwnLevelMock).toHaveBeenCalledWith(USER_ID);
+    expect(claims).toMatchObject({ maxBrowsingLevel: FORCED_SFW_CEILING, viewerBrowsingLevel: 1 });
   });
 
   it('never binds a dev client to anyone but its author, nor without a live tunnel', async () => {

@@ -26,7 +26,9 @@ import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyou
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
-import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
+import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
 import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
 import { SelectionNote } from '~/components/HomeBlocks/SelectionNote';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
@@ -123,6 +125,41 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   // A Flag Race row with no flags today (between race days, or before the first) hides, header and all.
   if (flagEvent && !isLoading && !loadingPreferences && !items.length) return null;
 
+  if (flagRow) {
+    const loading = isLoading || loadingPreferences;
+    return (
+      <HomeBlockWrapper py={32}>
+        <div className={flagClasses.wrap}>
+          <section className={clsx(partyClasses.party, flagClasses.row)}>
+            <FlagRacePanel event={flagRow.event} summary={flagRow.summary} />
+            <div className={flagClasses.flags}>
+              {loading ? (
+                Array.from({ length: flagRow.summary.flags.length }).map((_, index) => (
+                  <AspectRatio ratio={7 / 9} key={index}>
+                    <Skeleton width="100%" />
+                  </AspectRatio>
+                ))
+              ) : (
+                <FlagRowProviders row={flagRow}>
+                  <RemixFlyoutLayoutProvider layout="side">
+                    <ImagesProvider
+                      hideHatTurf={collectionHidesHatTurf(collection)}
+                      images={type === 'image' ? (items as any) : undefined}
+                    >
+                      {items.map((item) =>
+                        type === 'image' ? <ImageCard key={item.id} data={item as any} /> : null
+                      )}
+                    </ImagesProvider>
+                  </RemixFlyoutLayoutProvider>
+                </FlagRowProviders>
+              )}
+            </div>
+          </section>
+        </div>
+      </HomeBlockWrapper>
+    );
+  }
+
   const link = metadata.link || `/collections/${collection?.id ?? metadata.collection?.id}`;
   const itemType = collection?.items?.[0]?.type || 'model';
   const Icon = icons[itemType];
@@ -136,7 +173,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
           <Title className={classes.title} order={1} lineClamp={1}>
             {metadata.title ?? collection?.name ?? 'Collection'}{' '}
           </Title>
-          {flagRow && <FlagRaceHeader summary={flagRow.summary} />}
           {!metadata.descriptionAlwaysVisible && currentUser && hasInfo && (
             <Popover withArrow width={380}>
               <Popover.Target>

@@ -22,15 +22,7 @@ export function newValidator() {
  * each such key again where `additionalProperties` re-tests it, a pattern repeated counted every
  * time. Each place runs its pattern over every value it applies to, so the pattern work per body
  * is at most this many runs, each linear in the value's length with a factor of the pattern's
- * size ({@link FILTER_PATTERN_MAX_SIZE}).
- *
- * Measured through ajv against random `a`/`b` text, which keeps a pattern's DFA from fitting its
- * budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`), best of 3 to 6, `^x` 0 ms
- * throughout: the worst found is `.{0,254}[cx]` with `not` `.{0,253}[dy]` (sizes 255 and 254, two
- * places, both run to the end), ~190-200 ms per 20 000 characters and ~1.9-2.1 s per 200 000;
- * `.{0,254}[cx]` alone ~120 ms and ~1.0 s; `[ab]{0,125}b[ab]{125}c` in two places ~130-150 ms
- * and ~1.3 s. Before the DFA budget, a place whose input defeated re2js's 8 MiB DFA cost tens of
- * milliseconds whatever its size, and 8 places took ~610 ms per 20 000.
+ * size ({@link FILTER_PATTERN_MAX_SIZE}): at most places × size × value length.
  *
  * Distinct patterns are at most the places, so this also bounds the compiled patterns a filter
  * keeps.
@@ -80,11 +72,10 @@ export const FILTER_MAX_DEPTH = 32;
  * (`FILTER_PATTERN_DFA_BYTES`), a match is linear in the input with that factor, whatever the
  * input. So a pattern's size is bounded ({@link FILTER_PATTERN_MAX_SIZE}), and so are the places a
  * filter applies one ({@link FILTER_MAX_PATTERN_PLACES}) and their sizes' sum
- * ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}); the pattern work per body is then at most ~200 ms per
- * 20 000 characters of string (the worst measured, at {@link FILTER_MAX_PATTERN_PLACES}). A
- * pattern it cannot run
- * with ECMA-262's meaning (a lookaround, a backreference), one over its length or size bound, or a
- * filter over {@link FILTER_MAX_PATTERN_PLACES} or the total, is `bad_request` when it is compiled.
+ * ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}); the pattern work per body is then bounded by places ×
+ * size × string length. A pattern it cannot run with ECMA-262's meaning (a lookaround, a
+ * backreference), one over its length or size bound, or a filter over
+ * {@link FILTER_MAX_PATTERN_PLACES} or the total, is `bad_request` when it is compiled.
  */
 const REFUSED_FILTER_KEYS = [
   '$ref',
@@ -176,8 +167,7 @@ export function filterRefusal(filter: unknown): string | null {
  * filters cost compile time. The cache bounds only what it holds: a live subscription keeps its
  * own predicate for as long as it is open, whatever the cache does. What bounds a predicate's
  * memory is each pattern's DFA budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`) and the
- * {@link FILTER_MAX_PATTERN_PLACES} patterns per filter: measured, 40 live two-pattern filters each
- * run over ~42 000 characters retained ~6.7 MB in all, 120 retained ~15 MB.
+ * {@link FILTER_MAX_PATTERN_PLACES} patterns per filter.
  */
 export type BodyPredicate = (body: unknown) => boolean;
 
