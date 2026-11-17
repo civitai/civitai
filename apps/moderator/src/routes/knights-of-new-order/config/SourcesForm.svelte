@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
@@ -29,6 +30,7 @@
   let yesNoPercent = $state(
     seed.config.yesNoShare === undefined ? '' : rateToPercent(seed.config.yesNoShare)
   );
+  let yesNoDefault = $state(false);
   let confirming = $state(false);
 
   const form = new FormState({
@@ -113,12 +115,25 @@
         inputmode="decimal"
         autocomplete="off"
         placeholder="Knights default"
+        disabled={yesNoDefault}
         bind:value={() => yesNoPercent, (value) => ((yesNoPercent = value), (confirming = false))}
       />
       <p class="text-xs text-dark-2">
         0 stops serving yes/no questions; any other value serves them on the usual cadence. Takes
         effect in Knights within a minute. Leave blank to keep the current value.
       </p>
+      {#if settings.config.yesNoShare !== undefined}
+        <div class="flex items-center gap-2" data-touch-target>
+          {#if yesNoDefault}<input type="hidden" name="yesNoDefault" value="true" />{/if}
+          <Checkbox
+            id="sources-yesno-default"
+            bind:checked={() => yesNoDefault, (value) => ((yesNoDefault = value), (confirming = false))}
+          />
+          <Label for="sources-yesno-default" class="text-xs font-normal text-dark-2">
+            Clear the saved share and use the Knights default
+          </Label>
+        </div>
+      {/if}
     </div>
 
     {#if form.error}<ErrorAlert message={form.error} />{/if}

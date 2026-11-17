@@ -38,24 +38,31 @@ export async function getSourcesSettings(): Promise<SourcesSettings> {
 const isRate = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
-/** Nothing is coerced: a string "true" or a rate of 5 is a bug in the caller, not an intent to guess at. */
+/**
+ * Nothing is coerced: a string "true" or a rate of 5 is a bug in the caller, not an intent to guess at. `yesNoShare: null`
+ * asks to clear the stored share (`clearYesNoShare`), so Knights falls back to its environment default.
+ */
 export function validateSourcesInput(
   input: unknown
-): { ok: true; config: KnightsSourcesConfig } | { ok: false; error: string } {
+):
+  | { ok: true; config: KnightsSourcesConfig; clearYesNoShare: boolean }
+  | { ok: false; error: string } {
   const value = (input ?? {}) as Record<string, unknown>;
   if (typeof value.enabled !== 'boolean') return { ok: false, error: 'Enabled must be on or off.' };
   if (!isRate(value.sfwRate)) return { ok: false, error: 'The SFW rate must be between 0 and 1.' };
   if (!isRate(value.nsfwRate))
     return { ok: false, error: 'The NSFW rate must be between 0 and 1.' };
-  if (value.yesNoShare !== undefined && !isRate(value.yesNoShare))
+  const clearYesNoShare = value.yesNoShare === null;
+  if (value.yesNoShare !== undefined && !clearYesNoShare && !isRate(value.yesNoShare))
     return { ok: false, error: 'The yes/no share must be between 0 and 1.' };
   return {
     ok: true,
+    clearYesNoShare,
     config: {
       enabled: value.enabled,
       sfwRate: value.sfwRate,
       nsfwRate: value.nsfwRate,
-      ...(value.yesNoShare === undefined ? {} : { yesNoShare: value.yesNoShare }),
+      ...(isRate(value.yesNoShare) ? { yesNoShare: value.yesNoShare } : {}),
     },
   };
 }
@@ -69,7 +76,8 @@ const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
 /**
  * The switch and both rates are always written, so a later change to the reader's defaults cannot move a saved rate. A stored
  * `maxOpen` is carried over (the page does not edit it, and dropping it would reset the intake cap to the default), and so is a
- * stored `yesNoShare` when the input leaves it out, so saving the rates never turns yes/no questions back on.
+ * stored `yesNoShare` when the input leaves it out, so saving the rates never turns yes/no questions back on; `yesNoShare: null`
+ * removes it.
  */
 export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
   const checked = validateSourcesInput(input);
@@ -77,7 +85,9 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
 
   const before = await getSourcesSettings();
   const { maxOpen } = before.config;
-  const yesNoShare = checked.config.yesNoShare ?? before.config.yesNoShare;
+  const yesNoShare = checked.clearYesNoShare
+    ? undefined
+    : checked.config.yesNoShare ?? before.config.yesNoShare;
   const config: KnightsSourcesConfig = {
     enabled: checked.config.enabled,
     sfwRate: checked.config.sfwRate,

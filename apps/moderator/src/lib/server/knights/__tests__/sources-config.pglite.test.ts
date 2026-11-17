@@ -223,6 +223,30 @@ describe('saveSourcesConfig', () => {
     expect(JSON.parse(redisStore.get(KEY)!).yesNoShare).toBe(0);
   });
 
+  it('clears a stored yes/no share on request, so Knights falls back to its default, and audits it', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 })
+    );
+
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: null }, MOD)
+    ).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({ enabled: true, sfwRate: 1, nsfwRate: 0.3 });
+    const [row] = await activity();
+    expect(JSON.parse(row.activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1))).toEqual({
+      before: { enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0 },
+      after: { enabled: true, sfwRate: 1, nsfwRate: 0.3 },
+    });
+  });
+
+  it('records nothing when clearing a share that is not stored', async () => {
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }));
+    expect(
+      await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: null }, MOD)
+    ).toEqual({ ok: true, changed: false });
+  });
+
   it('records a change of the yes/no share alone', async () => {
     await saveSourcesConfig({ enabled: true, sfwRate: 1, nsfwRate: 0.3, yesNoShare: 0.7 }, MOD);
     expect(

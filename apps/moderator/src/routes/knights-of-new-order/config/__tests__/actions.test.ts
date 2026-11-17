@@ -84,6 +84,32 @@ describe('Knights of New Order sources config action', () => {
     expect(save).toHaveBeenCalledWith({ enabled: true, sfwRate: 0.05, nsfwRate: 0.05 }, 77);
   });
 
+  it('clears the stored yes/no share when "use the default" is ticked, whatever the box holds', async () => {
+    save.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.save(
+      formEvent({
+        enabled: 'true',
+        sfwPercent: '5',
+        nsfwPercent: '5',
+        yesNoPercent: '40',
+        yesNoDefault: 'true',
+      })
+    );
+    expect(save).toHaveBeenCalledWith(
+      { enabled: true, sfwRate: 0.05, nsfwRate: 0.05, yesNoShare: null },
+      77
+    );
+  });
+
+  it('refuses a "use the default" value that is not true or absent', async () => {
+    expect(
+      await actions.save(
+        formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNoDefault: 'maybe' })
+      )
+    ).toMatchObject({ status: 400 });
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('refuses a yes/no share over 100 without saving', async () => {
     expect(
       await actions.save(

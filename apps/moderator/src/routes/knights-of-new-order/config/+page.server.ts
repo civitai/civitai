@@ -42,6 +42,8 @@ const sourcesForm = z.object({
   sfwPercent: percent('The SFW rate'),
   nsfwPercent: percent('The NSFW rate'),
   yesNoPercent: optionalPercent('The yes/no share'),
+  // Ticked: clear the stored share, so Knights uses its environment default; it wins over the box.
+  yesNoDefault: z.enum(['true']).optional(),
 });
 
 export const load: PageServerLoad = async ({ url, locals }) => {
@@ -65,7 +67,11 @@ export const actions: Actions = {
           enabled: input.enabled,
           sfwRate: input.sfwPercent,
           nsfwRate: input.nsfwPercent,
-          ...(input.yesNoPercent === undefined ? {} : { yesNoShare: input.yesNoPercent }),
+          ...(input.yesNoDefault
+            ? { yesNoShare: null }
+            : input.yesNoPercent === undefined
+            ? {}
+            : { yesNoShare: input.yesNoPercent }),
         },
         locals.user.id
       );
