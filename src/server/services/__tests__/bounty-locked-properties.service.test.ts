@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
@@ -64,7 +64,6 @@ import {
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { bountyNsfwFlagLevel, ratedLevel } from '~/server/services/bounty-rated-level';
-import { updateBountyNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
 import {
   checkEntityImageKeys,
@@ -260,19 +259,43 @@ describe('updateBountyById — a moderator rating against a new nsfw flag', () =
   });
 });
 
-// The stored level an unflagged bounty is served at comes from updateBountyNsfwLevels' SQL. The
-// edits run through updateBountyById as above; the row they leave is then recomputed by that SQL
-// on real tables.
-describe('updateBountyById then updateBountyNsfwLevels on real rows', () => {
+// An unflagged bounty is served at its stored level, which updateBountyNsfwLevels' SQL computes.
+// Here the edit's own write, its raw queries and its job enqueue all land on real tables.
+describe('updateBountyById on real rows: the stored level after an nsfw toggle', () => {
+  type Row = { nsfw: boolean; moderatorNsfwLevel: number | null; nsfwLevel: number };
   const pg = { db: null as unknown as PGlite };
   const onPg = (query: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
     const q = 'text' in query ? query : Prisma.sql(query, ...(values as never[]));
-    return pg.db.query(q.text, q.values as unknown[]).then((r) => r.rows);
+    return pg.db.query(q.text, q.values as unknown[]);
+  };
+  const readRow = async () =>
+    (
+      await pg.db.query<Row>(
+        `SELECT nsfw, "moderatorNsfwLevel", "nsfwLevel" FROM "Bounty" WHERE id = $1`,
+        [BOUNTY_ID]
+      )
+    ).rows[0];
+  const queued = async () =>
+    (
+      await pg.db.query(
+        `SELECT 1 FROM "JobQueue" WHERE "entityId" = $1 AND "entityType" = 'Bounty' AND type = 'UpdateNsfwLevel'`,
+        [BOUNTY_ID]
+      )
+    ).rows.length;
+  const edit = async (nsfw: boolean) => {
+    mockStored(await readRow());
+    await updateBountyById({ ...baseUpdate, nsfw } as never);
   };
 
   beforeAll(async () => {
     pg.db = new PGlite();
     await pg.db.exec(`
+      CREATE TYPE "EntityType" AS ENUM ('Bounty');
+      CREATE TYPE "JobQueueType" AS ENUM ('UpdateNsfwLevel');
+      CREATE TABLE "JobQueue" (
+        "entityId" integer, "entityType" "EntityType", "type" "JobQueueType",
+        PRIMARY KEY ("entityType", "entityId", "type")
+      );
       CREATE TABLE "Bounty" (
         "id" integer PRIMARY KEY,
         "nsfw" boolean NOT NULL DEFAULT false,
@@ -293,38 +316,47 @@ describe('updateBountyById then updateBountyNsfwLevels on real rows', () => {
   }, 60_000);
   afterAll(() => pg.db?.close());
 
-  it('serves at R or above after the owner turns the flag on and off over a PG-13 rating', async () => {
+  const saved = {
+    queryRaw: mockDbWrite.$queryRaw.getMockImplementation(),
+    executeRaw: mockDbWrite.$executeRaw.getMockImplementation(),
+  };
+  beforeEach(() => {
+    mockDbWrite.$queryRaw.mockImplementation(((...a: Parameters<typeof onPg>) =>
+      onPg(...a).then((r) => r.rows)) as never);
+    mockDbWrite.$executeRaw.mockImplementation(((...a: Parameters<typeof onPg>) =>
+      onPg(...a).then((r) => r.affectedRows ?? 0)) as never);
+    // The edit's row write, reduced to the columns the stored level depends on.
+    mockDbWrite.bounty.update.mockImplementation((async ({ data }: { data: Partial<Row> }) => {
+      if (data.nsfw !== undefined)
+        await pg.db.query(`UPDATE "Bounty" SET nsfw = $2 WHERE id = $1`, [BOUNTY_ID, data.nsfw]);
+      if (data.moderatorNsfwLevel !== undefined)
+        await pg.db.query(`UPDATE "Bounty" SET "moderatorNsfwLevel" = $2 WHERE id = $1`, [
+          BOUNTY_ID,
+          data.moderatorNsfwLevel,
+        ]);
+      return { id: BOUNTY_ID, userId: OWNER_ID };
+    }) as never);
+  });
+  afterEach(() => {
+    mockDbWrite.$queryRaw.mockImplementation(saved.queryRaw as never);
+    mockDbWrite.$executeRaw.mockImplementation(saved.executeRaw as never);
+  });
+
+  it('stores R or above as soon as the owner turns the flag on over a PG-13 rating, and after turning it off', async () => {
     // Scan rated PG, moderator rated PG-13.
     await pg.db.exec(`
-      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13})
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13});
     `);
-    for (const nsfw of [true, false]) {
-      const [row] = (
-        await pg.db.query<{ nsfw: boolean; moderatorNsfwLevel: number | null }>(
-          `SELECT nsfw, "moderatorNsfwLevel" FROM "Bounty" WHERE id = $1`,
-          [BOUNTY_ID]
-        )
-      ).rows;
-      mockStored(row);
-      await updateBountyById({ ...baseUpdate, nsfw } as never);
-      const data = updateData();
-      await pg.db.query(`UPDATE "Bounty" SET nsfw = $2, "moderatorNsfwLevel" = $3 WHERE id = $1`, [
-        BOUNTY_ID,
-        data.nsfw ?? row.nsfw,
-        'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : row.moderatorNsfwLevel,
-      ]);
-    }
-    mockDbWrite.$queryRaw.mockImplementationOnce(onPg as never);
-    await updateBountyNsfwLevels([BOUNTY_ID]);
 
-    const [stored] = (
-      await pg.db.query<{ nsfw: boolean; nsfwLevel: number }>(
-        `SELECT nsfw, "nsfwLevel" FROM "Bounty" WHERE id = $1`,
-        [BOUNTY_ID]
-      )
-    ).rows;
-    expect(stored.nsfw).toBe(false);
-    expect(ratedLevel(stored.nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
+    await edit(true);
+    expect(ratedLevel((await readRow()).nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
+    expect(await queued()).toBe(1);
+
+    await edit(false);
+    const row = await readRow();
+    expect(row.nsfw).toBe(false);
+    expect(ratedLevel(row.nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
   });
 });
 
