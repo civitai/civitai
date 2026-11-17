@@ -59,6 +59,12 @@ function reviewTypeToBlockReason(reason: string | null | undefined): 'Ownership'
   }
 }
 
+/** Only a confirmed CSAM block (`csam`) writes a CSAM entry; the review flag alone maps to TOS. */
+function nonCsamReason(reason: string | null | undefined): 'Ownership' | 'TOS' {
+  const mapped = reviewTypeToBlockReason(reason);
+  return mapped === 'CSAM' ? 'TOS' : mapped;
+}
+
 export async function queueComicsForImages(imageIds: number[]): Promise<void> {
   if (!imageIds.length) return;
   const rows = await dbRead
@@ -125,8 +131,9 @@ type BlockableImage = {
 };
 
 /**
- * Hashes among these with a CSAM entry. The table keeps the newest row per hash when it merges,
- * so a later row of any other reason would replace that entry.
+ * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
+ * merges, so a later row of any other reason would replace that entry.
+ * The main app has the same guard (src/server/services/image.service.ts); change both.
  */
 async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
   if (!hashes.length) return new Set();
@@ -150,6 +157,8 @@ export const CSAM_BLOCKLIST_RETRY =
 /** A block that committed, but whose CSAM blocklist entry was not written. */
 export class CsamBlocklistWriteError extends Error {
   readonly status = 502;
+  /** What `blockImage` would have returned: a held image's reports stay open. */
+  skipped?: true;
   constructor(readonly imageId: number) {
     super(CSAM_BLOCKLIST_RETRY);
   }
@@ -158,7 +167,7 @@ export class CsamBlocklistWriteError extends Error {
 /** Who and what a blocklist write is for, so a write left undone can be traced and counted. */
 export type BlocklistWriteContext = { step: string; imageId?: number; actorUserId?: number };
 
-/** The CSAM-entry check failed, so these rows were left unwritten. Logged as an error to be counted. */
+/** The CSAM-entry check failed, so the blocklist was left unchanged for these hashes. Logged to be counted. */
 function logBlocklistCheckFailed(
   name: 'blocklist-insert-skipped' | 'blocklist-disable-refused',
   rows: { hash: string; reason: string }[],
@@ -192,7 +201,7 @@ export async function addImagesToBlocklist(
     .filter((i): i is BlockableImage & { pHash: string; csam?: boolean } => !!i.pHash)
     .map((i) => ({
       hash: i.pHash,
-      reason: i.csam ? 'CSAM' : reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
+      reason: i.csam ? 'CSAM' : nonCsamReason(i.blockedFor ?? i.needsReview),
     }));
   const write = async (values: typeof candidates) => {
     if (values.length)
@@ -248,6 +257,13 @@ export async function removeImagesFromBlocklist(
     );
     return;
   }
+  if (csam.size)
+    void logToAxiom({
+      type: 'info',
+      name: 'blocklist-disable-kept-csam',
+      message: 'an unblock left hashes with a live CSAM entry in place',
+      payload: { step: context?.step, imageId: context?.imageId, hashCount: csam.size },
+    });
   const disable = blocked.filter((b) => !csam.has(b.hash));
   if (!disable.length) return;
   await ch.insert({
@@ -468,6 +484,8 @@ export async function applyBlockSideEffects(
     violationDetails?: string;
     /** `HELD_IMAGE` as the block wrote it. */
     heldImage?: boolean;
+    /** `blockedFor = 'CSAM'` as the block wrote it: a confirmed CSAM removal. */
+    removedForCsam?: boolean;
     /** Under the review flag as the block wrote it. */
     underReview?: boolean;
   }
@@ -481,7 +499,8 @@ export async function applyBlockSideEffects(
       imageId,
       userId: img.userId,
     });
-  const csam = !!(heldImage || underReview);
+  // A CSAM entry only for a confirmed CSAM block; a block under the review flag alone writes TOS.
+  const csam = !!actor.removedForCsam;
   const writeBlocklist = () =>
     addImagesToBlocklist(
       [{ pHash: img.pHash, needsReview: img.needsReview, blockedFor: img.blockedFor, csam }],

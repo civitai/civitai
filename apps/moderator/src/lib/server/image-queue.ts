@@ -288,7 +288,7 @@ export const imageQueueActions = {
     }).catch((e: unknown) => {
       if (!(e instanceof CsamBlocklistWriteError)) throw e;
       csamBlocklistFailed = true;
-      return { held: undefined, skipped: undefined };
+      return { held: undefined, skipped: e.skipped };
     });
     // Not removed, so the report stays open; confirming the hold actions it.
     if (held) return { success: true, imageId, held: heldRemovalMessage([held]) };
@@ -516,7 +516,7 @@ export const imageQueueActions = {
         }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
           if (!(e instanceof CsamBlocklistWriteError)) throw e;
           csamBlocklistFailed.push(imageId);
-          return {};
+          return { skipped: e.skipped };
         })
       )
     );

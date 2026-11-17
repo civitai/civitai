@@ -1243,6 +1243,11 @@ async function deleteFromStorage(
   );
 }
 
+function nonCsamBlockReason(reason: string) {
+  const mapped = getReviewTypeToBlockedReason(reason);
+  return mapped === BlockImageReason.CSAM ? BlockImageReason.TOS : mapped;
+}
+
 function getReviewTypeToBlockedReason(reason: string) {
   switch (reason) {
     case 'csam':
@@ -1420,8 +1425,8 @@ const heldImageSql = Prisma.sql`("blockedFor" = ${BlockedReason.CSAM} OR ("needs
 export async function writeModeratorBlock(
   ids: number[],
   deferFor?: { blockedBy?: number; violationType?: string; reportReason?: ReportReason }
-): Promise<{ held: Set<number>; underReview: Set<number> }> {
-  if (!ids.length) return { held: new Set(), underReview: new Set() };
+): Promise<{ held: Set<number>; underReview: Set<number>; removedForCsam: Set<number> }> {
+  if (!ids.length) return { held: new Set(), underReview: new Set(), removedForCsam: new Set() };
   return dbWrite.$transaction(async (tx) => {
     // Locks the rows and reads what they were before this block.
     const prior = await tx.$queryRaw<{ id: number; removed: boolean }[]>`
@@ -1460,9 +1465,13 @@ export async function writeModeratorBlock(
           "notifyOwner" = "ImageDeferredBlockEffect"."notifyOwner" OR EXCLUDED."notifyOwner",
           "reportReason" = COALESCE("ImageDeferredBlockEffect"."reportReason", EXCLUDED."reportReason")
       `;
-    const idsWhere = (key: 'held' | 'underReview') =>
+    const idsWhere = (key: 'held' | 'underReview' | 'removedForCsam') =>
       new Set(rows.filter((r) => r[key]).map((r) => r.id));
-    return { held: idsWhere('held'), underReview: idsWhere('underReview') };
+    return {
+      held: idsWhere('held'),
+      underReview: idsWhere('underReview'),
+      removedForCsam: idsWhere('removedForCsam'),
+    };
   });
 }
 
@@ -1498,13 +1507,14 @@ export async function handleBlockImages({
 
     let held = new Set<number>();
     let underReview = new Set<number>();
+    let removedForCsam = new Set<number>();
     await Promise.all([
       writeModeratorBlock(
         ids,
         include?.includes('user-notification') ? { blockedBy: moderatorId } : undefined
       )
         .then((written) => {
-          ({ held, underReview } = written);
+          ({ held, underReview, removedForCsam } = written);
         })
         .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
@@ -1534,10 +1544,10 @@ export async function handleBlockImages({
             if (!pHash) return null;
             return {
               hash: pHash,
-              reason:
-                held.has(id) || underReview.has(id)
-                  ? BlockImageReason.CSAM
-                  : getReviewTypeToBlockedReason(blockedFor ?? BlockedReason.Moderated),
+              // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+              reason: removedForCsam.has(id)
+                ? BlockImageReason.CSAM
+                : nonCsamBlockReason(blockedFor ?? BlockedReason.Moderated),
             };
           })
           .filter(isDefined),
@@ -7062,6 +7072,7 @@ export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUs
 /**
  * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
  * merges, so a later row of any other reason would replace that entry.
+ * The moderator app has the same guard (apps/moderator image-moderation-effects.ts); change both.
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
   if (hashes.length === 0) return new Set();
@@ -7081,7 +7092,7 @@ function blocklistClient() {
   return clickhouse;
 }
 
-/** The CSAM-entry check failed, so these rows were left unwritten. Logged as an error to be counted. */
+/** The CSAM-entry check failed, so the blocklist was left unchanged for these hashes. Logged to be counted. */
 function logBlocklistCheckFailed(
   name: 'blocklist-insert-skipped' | 'blocklist-disable-refused',
   rows: { hash: bigint | string; reason: string }[],
@@ -7184,6 +7195,13 @@ export async function bulkRemoveBlockedImages(hashes: bigint[], context?: Blockl
     return;
   }
 
+  if (csam.size)
+    logToAxiom({
+      type: 'info',
+      name: 'blocklist-disable-kept-csam',
+      message: 'an unblock left hashes with a live CSAM entry in place',
+      payload: { step: context?.step, imageIds: context?.imageIds, hashCount: csam.size },
+    });
   const values = blocked
     .filter(({ hash }) => !csam.has(hash))
     .map(({ hash, reason }) => ({

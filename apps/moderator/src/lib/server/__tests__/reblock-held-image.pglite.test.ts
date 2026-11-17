@@ -17,7 +17,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const csamCheck = vi.hoisted(() => ({ fails: false }));
+const csamCheck = vi.hoisted(() => ({
+  fails: false,
+  live: [] as { hash: string; reason: string }[],
+}));
 const { dbHandle, createNotification, clickhouseInsert, setReportStatus, logToAxiom } = vi.hoisted(
   () => ({
     dbHandle: { current: null as unknown },
@@ -60,7 +63,8 @@ vi.mock('../clickhouse', () => ({
     insert: clickhouseInsert,
     query: async ({ query }: { query: string }) => {
       if (csamCheck.fails && query.includes("reason = 'CSAM'")) throw new Error('Socket hang up');
-      return { json: async () => [] };
+      if (query.includes("reason = 'CSAM'")) return { json: async () => [] };
+      return { json: async () => csamCheck.live };
     },
   }),
 }));
@@ -265,14 +269,16 @@ describe('blocking an image already removed with its block reason kept', () => {
 });
 
 describe('blocking an image under review that is not removed yet', () => {
-  it('removes it and keeps the flag, with a CSAM blocklist entry', async () => {
+  // Ruled by the Moderation Lead: only a confirmed CSAM removal writes a CSAM entry, so the review
+  // flag alone writes TOS, which a later clear-and-accept can lift.
+  it('removes it and keeps the flag, with a TOS blocklist entry', async () => {
     await block(FLAGGED_LIVE);
 
     expect(await row(FLAGGED_LIVE)).toMatchObject({ ingestion: 'Blocked', needsReview: 'csam' });
-    expect(blocklistReasons()).toEqual({ '103': 'CSAM' });
+    expect(blocklistReasons()).toEqual({ '103': 'TOS' });
   });
 
-  it('never replaces its CSAM blocklist entry with a TOS one when blocked again', async () => {
+  it('writes the same TOS entry when blocked again', async () => {
     await block(FLAGGED_LIVE);
     await block(FLAGGED_LIVE);
 
@@ -281,7 +287,7 @@ describe('blocking an image under review that is not removed yet', () => {
       .filter((a) => a.table === 'blocked_images')
       .flatMap((a) => a.values.filter((v) => String(v.hash) === '103').map((v) => v.reason));
     expect(reasons.length).toBeGreaterThan(0);
-    expect(new Set(reasons)).toEqual(new Set(['CSAM']));
+    expect(new Set(reasons)).toEqual(new Set(['TOS']));
   });
 
   it('sends no notice and leaves its report open, deferring both to the review', async () => {
@@ -318,7 +324,7 @@ describe('a bulk block over held and other images', () => {
     expect(actionedReports()).toEqual([report(OTHER_REASON)]);
     expect(await deferredImages()).toEqual([FLAG_ONLY, FLAGGED_LIVE]);
     // The image removed with only its flag left is not blocked again, so it adds no entry.
-    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'CSAM', '104': 'TOS' });
+    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'TOS', '104': 'TOS' });
   });
 
   it('completes when the blocklist check fails: one notice, reports actioned, the skip logged', async () => {
@@ -334,7 +340,7 @@ describe('a bulk block over held and other images', () => {
 
     expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
     expect(actionedReports()).toEqual([report(OTHER_REASON)]);
-    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'CSAM' });
+    expect(blocklistReasons()).toEqual({ '101': 'CSAM' });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',
@@ -446,14 +452,13 @@ describe('a CSAM blocklist write that fails', () => {
   it('fails the block action with a retry message, the block and its report still landing', async () => {
     failBlocklistInsert();
 
-    const result = await block(FLAGGED_LIVE);
+    const result = await block(HELD);
 
     expect(result).toMatchObject({
       status: 502,
       data: { error: expect.stringContaining('CSAM blocklist') },
     });
-    expect(await row(FLAGGED_LIVE)).toMatchObject({ ingestion: 'Blocked' });
-    expect(actionedReports()).toEqual([report(FLAGGED_LIVE)]);
+    expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', name: 'csam-blocklist-write-failed' })
     );
@@ -474,14 +479,34 @@ describe('a CSAM blocklist write that fails', () => {
       if (table === 'blocked_images' && values.some((v) => v.reason === 'CSAM'))
         throw new Error('Socket hang up');
     });
-    const ids = [FLAGGED_LIVE, OTHER_REASON];
+    const ids = [HELD, OTHER_REASON];
 
     const result = await imageQueueActions
       .bulkBlock(event({ imageIds: ids.join(','), reportIds: ids.map(report).join(',') }))
       .finally(() => clickhouseInsert.mockImplementation(async () => undefined));
 
-    expect(result).toMatchObject({ status: 502, data: { imageIds: [FLAGGED_LIVE] } });
+    expect(result).toMatchObject({ status: 502, data: { imageIds: [HELD] } });
     expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Blocked' });
-    expect(actionedReports().sort()).toEqual([report(FLAGGED_LIVE), report(OTHER_REASON)].sort());
+    expect(actionedReports()).toEqual([report(OTHER_REASON)]);
+  });
+});
+
+describe('a block under the review flag alone, later cleared', () => {
+  it('has its TOS entry disabled when the image is restored', async () => {
+    await block(FLAGGED_LIVE);
+    expect(blocklistReasons()).toEqual({ '103': 'TOS' });
+    clickhouseInsert.mockClear();
+    csamCheck.live = [{ hash: '103', reason: 'TOS' }];
+    try {
+      await acceptImage({ imageId: FLAGGED_LIVE, userId: 2, restoreRemoved: true });
+    } finally {
+      csamCheck.live = [];
+    }
+
+    const disabled = clickhouseInsert.mock.calls
+      .map(([a]) => a)
+      .filter((a) => a.table === 'blocked_images')
+      .flatMap((a) => a.values);
+    expect(disabled).toEqual([{ hash: '103', reason: 'TOS', disabled: true }]);
   });
 });

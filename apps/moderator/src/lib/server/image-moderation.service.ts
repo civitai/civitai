@@ -9,6 +9,7 @@ import {
   applyBlockSideEffects,
   applyAcceptSideEffects,
   applyVisibilitySideEffects,
+  CsamBlocklistWriteError,
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
@@ -402,6 +403,10 @@ export async function blockImage({
     violationDetails,
     heldImage: blocked.held,
     underReview: blocked.underReview,
+    removedForCsam: blocked.removedForCsam,
+  }).catch((e: unknown) => {
+    if (e instanceof CsamBlocklistWriteError && blocked.held) e.skipped = true;
+    throw e;
   });
   return blocked.held ? { skipped: true } : {};
 }

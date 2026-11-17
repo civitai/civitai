@@ -37,7 +37,7 @@ const HASH = '-1234567890123456789';
 const block = () =>
   applyBlockSideEffects(
     { pHash: HASH, needsReview: null, blockedFor: null, nsfwLevel: 1, postId: null, userId: 42 },
-    { imageId: 7, actorUserId: 9, heldImage: true }
+    { imageId: 7, actorUserId: 9, heldImage: true, removedForCsam: true }
   );
 
 const blocklistInserts = () =>

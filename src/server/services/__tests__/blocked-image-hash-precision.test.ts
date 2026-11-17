@@ -265,10 +265,15 @@ describe('a hash with a CSAM entry keeps it', () => {
     ]);
   });
 
-  it('counts only a live CSAM entry: a disabled one no longer blocks the hash', async () => {
-    await bulkAddBlockedImages({ data: [{ hash: OTHER, reason: 'TOS' as any }] });
+  it('a filed CSAM block lands over a live TOS entry, without waiting on the check', async () => {
+    queryResult = [{ hash: HASH.toString(), reason: 'TOS' }];
+    csamLookupFails = true;
 
-    const lookup = capturedQueries.find((q) => q.includes("reason = 'CSAM'"));
-    expect(lookup).toContain('disabled = false');
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] });
+
+    expect(capturedInserts.map((i) => i.values)).toEqual([
+      [{ hash: HASH.toString(), reason: 'CSAM' }],
+    ]);
+    expect(capturedQueries).toEqual([]);
   });
 });

@@ -348,7 +348,8 @@ export const setTosViolationHandler = async ({
     if (image.pHash)
       await addBlockedImage({
         hash: image.pHash,
-        reason: held || written.underReview.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
+        // A CSAM entry only for a confirmed CSAM block; the review flag alone writes TOS.
+        reason: written.removedForCsam.has(id) ? BlockImageReason.CSAM : BlockImageReason.TOS,
         context: { step: 'block', imageIds: [id], actorUserId: user.id },
       });
 
