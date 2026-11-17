@@ -385,6 +385,42 @@ object payload goes to `superjson.deserialize`. This service always writes super
 - devalue is not written: it is only ever chosen for web bundles on opted-in pools and never for a
   cacheable response, and every reader still decodes superjson.
 
+### 5.1 Input keys
+
+zod strips an input key its schema does not have, so for Node an unknown key is absent. Here a key
+outside the schema **falls back** (`input-unknown-key`) instead. A key the app later adds to a schema
+is one it reads, and a Go build that does not know the key must not answer as though it were absent.
+That holds even when the app's deploy runs ahead of this service's.
+
+- **The allow-list is generated.** `scripts/feed-go-input-schemas.ts` projects the schemas the routes
+  parse with `z.toJSONSchema` (`io: 'input'`) into `internal/inputschema/schemas.json`: each schema's
+  top-level keys, and the defaults the projection carries. The schemas are
+  `getInfiniteImagesSchema` (both image procedures), `getAllModelsSchema` with the router's `page`
+  (`model.getAll`), and `imagesEndpointSchema` (`/api/v1/images`, moved to
+  `src/server/schema/images-endpoint.schema.ts` so it can be loaded without the route).
+  `scripts/__tests__/feed-go-input-schemas.schema-drift.test.ts` fails when the file is stale.
+- **Every schema key is classified.** Each parser lists the keys it reads, the ones it falls back on
+  (`input-<key>`), and the ones it knowingly ignores. `TestInputKeyLedger` (in `feed` and `modelfeed`)
+  fails when that union differs from the schema's keys in either direction, so regenerating after a
+  schema change forces the new key to be ported, made a fallback, or ignored on purpose.
+- **Defaults** are read from the file: limit, sort, period and periodMode for the image procedures,
+  sort, period and periodMode for `model.getAll` (its limit, 100, is the handler's), and period and
+  sort for `/api/v1/images`. Its limit is not in the projection (`numericString`'s preprocess hides it)
+  and is the same `galleryFilterDefaults.limit` as the image schema's. Tests pin each default as a
+  literal, so a changed default is reviewed, not silently adopted. Each parser decodes them once,
+  at package init, so a file without one fails at startup, never on a request.
+- **The unknown-key check runs after the known fallbacks.** A request carrying an unported key
+  (`input-<key>`, or on `/api/v1/images` the `v1-image-id` / `v1-tags` / `v1-base-models` shapes) and an
+  unknown key too falls back under the unported key's reason, so the reason counts keep naming the
+  parity gap.
+- **Allowed without being schema keys:** for tRPC, `authed` (added by `authedCacheBypassLink` to every
+  object input when signed in) and `direction` (added by an infinite query). The site client sends
+  both and zod strips both. For REST, `token` (the API key, which then falls back as `bearer-token`).
+  The web client builds each input from the filter stores, whose keys are all schema keys. Every
+  query key seen on `/api/v1/images` is a schema key except a small tail of hand-written requests,
+  which now fall back. Before this, `/api/v1/images` kept an unknown key in `nextPage` and answered;
+  `nextPageURL` still does so for every key of the query.
+
 ## 6. How traffic reaches it
 
 **Batching is not in the way.** This procedure is already in `NEVER_BATCH_PROCEDURES`
@@ -501,8 +537,15 @@ to the service's internal port with:
 { "input": "<the raw ?input value>",
   "headers": { "cookie": "…", "host": "…", "cf-ipcountry": "…", "cf-region-code": "…",
                "x-isuk": "…", "authorization": "<present?>", "x-civitai-verified-bot": "…" },
-  "node": { "json": …, "meta": … } }
+  "node": { "json": …, "meta": … },
+  "responseHeaders": { "cache-control": "…", "vary": "…", "cache-tag": "…", "set-cookie": "present",
+                       "x-update-required": "…" } }
 ```
+
+`responseHeaders` holds only the compared headers Node's
+response carried (`FEED_GO_COMPARED_RESPONSE_HEADERS`): lowercased, each value cut at 1024
+characters, and Set-Cookie as the literal `present`, never its value. So the sample grows by a few
+hundred bytes at most.
 
 `node` is the superjson envelope Node already produced for the response (captured where the
 serializer runs, so the sample costs Node one JSON stringify of an object it already built, on the
@@ -534,7 +577,38 @@ path as serving, and compares decoded values:
 - every `feed_go_*` series carries `feed_endpoint` (`as-posts` for this procedure, `v1-images` for §13,
   `infinite` for §14, `model-getall` for §15, `v1-models` / `v1-models-id` for §16): six values, so the
   label at most multiplies a family's cardinality by six;
-- differing paths (never values) are logged for a sample, so a category can be traced to a field.
+- differing paths (never values) are logged for a sample, so a category can be traced to a field;
+- numbers compare numerically, except that two integer literals compare **exactly** (int64, else as
+  big integers). As float64, an integer above 2^53 cannot be told from its neighbour, and the
+  relative tolerance would also equate large integers that differ by one;
+- **response headers** compare as their own result,
+  `feed_go_shadow_response_total{result="match|mismatch|uncompared"}`. They are kept apart from the
+  body's `feed_go_shadow_compare_total`, so the match-rate queries keep their meaning; the go/no-go
+  needs both. Each difference is counted in `feed_go_shadow_field_diffs_total` under category
+  `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is what the
+  public route writes: its Cache-Control is `trpc.ResultCacheControl`, the one function
+  `trpc.WriteResult` also calls. Noise rules (`shadow.CompareResponse`):
+  - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
+    `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
+  - An empty value is absent.
+  - A sample without the fields (a sampler that predates them) is `uncompared`.
+  - X-Handled-By (the pod), Content-Type/Length and Date (transport), and the rate-limit,
+    Retry-After and site-alerts headers (per caller or per moment) are never compared.
+  - On the REST endpoints (`v1-images`, `v1-models`, `v1-models-id`) the response is `uncompared`:
+    their ports write no headers of their own yet, so a comparison would only count Node's as
+    missing here.
+  - **The status is not compared.** Node posts only the samples it answered 200, and an answer
+    computed here is a 200 by construction (a constant, not a status this service decided), so a
+    status compare could never fire. Comparing a status needs a sampler that posts its non-200
+    answers and a Go side that can answer one.
+
+  Expected differences until ported: `header:x-update-required/missing-in-go` (Node tells an
+  outdated web bundle to reload; this service does not), and on `model-getall` a public
+  `header:cache-control/value` from Node for signed-out samples (its compute records no edge TTL yet,
+  §15). They are still counted (as `mismatch`), but a sample whose only differences are these is
+  logged at Debug; a body difference or any other header difference is logged at Info.
+  `image.getInfinite` is not on the list: a signed-out unbatched call is cacheable in Node
+  (createContext), and its compute carries the same signed-out TTL as the gallery procedure's.
 
 **Expected noise.** Go answers milliseconds after Node, so a reaction count, a metric hash refresh or
 a newly published image can differ without a bug. These show up as `stats.*` value diffs and rare
@@ -1102,7 +1176,7 @@ compared at `POST /internal/shadow/api/v1/images`. Nothing serves it publicly.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Query | every member above except those on the right, `ids` (the legacy path, §13.2.1), `withMeta` / `flatMeta`, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `imageId` (`v1-image-id`) and a `modelId` without a version (`v1-model-only`): the legacy Postgres path; `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), an `ids` part that is not a plain decimal from 1 to 2^31-1, or more than 100 parts (`v1-input-ids`: hex, exponents and a `.0` read as integers there), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`) |
+| Query | every member above except those on the right, `ids` (the legacy path, §13.2.1), `withMeta` / `flatMeta`, Next's `req.query` parsing (repeated keys, `Object.keys` order for `nextPage`) | `imageId` (`v1-image-id`) and a `modelId` without a version (`v1-model-only`): the legacy Postgres path; `tags` (`v1-tags`), `baseModels` (`v1-base-models`), `withTags=true` (`v1-with-tags`); any value `Number()` would read differently from a plain integer (`v1-input-number`), an `ids` part that is not a plain decimal from 1 to 2^31-1, or more than 100 parts (`v1-input-ids`: hex, exponents and a `.0` read as integers there), a repeated schema key (`v1-input-duplicate`), a sort the feed does not have (`v1-sort`), `userId=0` (`v1-user-zero`), a malformed escape (`v1-query-encoding`), a key outside the schema other than `token` (`input-unknown-key`, §5.1) |
 | Viewer | signed out; session cookies (the same resolver as §4); a banned session as signed out | API keys / bearer tokens (`bearer-token`); the sampler does not send them at all (§13.4) |
 | Gates | withheld, held level, unknown version / post; the per-post hold on every page | a gallery settings key Node would rebuild (`gallery-settings-miss`); a held model whose settings carry no level (`v1-held-level-unset`) |
 | Pages | the feed's page, its cursor, the empty-page answers (`requiringMeta`, `limit=0`, an empty feed answer); the legacy page (§13.2.1) | a feed failure or a non-200 (`feed-unavailable`, `feed-status`), a refusal Node answers with a 400 (`feed-refused`, `v1-cursor`, `v1-page-limit`), a hydrate that errors or empties the page (`feed-hydrate-error`, `feed-hydrate-empty`: Node retries an empty one on another replica); on the legacy path a cursor that is not a positive integer (`v1-legacy-cursor`) and a query error (`v1-legacy-error`) |
@@ -1208,7 +1282,9 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="v1-images",
 cannot take. Node counts every request of the route, sampled or not and whatever the flag, by shape
 class in `civitai_app_feed_go_v1_shape_total{class}`: `ported` (a shape the port answers, `ids` and
 `withMeta` included), the `unported_*` shapes it falls back on by construction (`imageId`,
-`modelId_only`, `tags`, `baseModels`, `withTags`), `api_key`, and `non200`. The share of the route a Go service
+`modelId_only`, `tags`, `baseModels`, `withTags`), `unported_unknownKey` (a query key outside
+`imagesEndpointSchema` other than `token`, read from the raw query since zod strips it; §5.1),
+`api_key`, and `non200`. The share of the route a Go service
 could take is
 
 ```promql
@@ -1252,7 +1328,10 @@ domain cap.
 ### 14.1 What the Node path does
 
 1. **Middleware.** The same `applyDomainFeature` cap as §1 (every public procedure runs it). The
-   procedure is in `NEVER_BATCH_PROCEDURES`, so the client sends it alone.
+   procedure is in `NEVER_BATCH_PROCEDURES`, so the client sends it alone. Its cache policy is
+   createContext's (nothing in the chain lowers it): a signed-out, unbatched call that is not a
+   verified crawler is `public, max-age=60, s-maxage=60, stale-while-revalidate=30`, as for §1. The
+   compute here records the same signed-out TTL, so the shadow header compare reads it as expected.
 2. **Hat Turf.** `hatSort`, `hatTurfMine`, `hideTurfHats`, `hideWornHats` are acted on only with the
    `hatTurfFeedCard` and `hatTurfFeedSorts` features on, on an unscoped feed, and when
    `getHatTurfFeedEvent` finds a live event; then the page comes from the turf rank
@@ -1494,7 +1573,7 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,
   generated by `scripts/feed-go-basemodels.ts` from the Node functions and held to them by
-  `scripts/__tests__/feed-go-basemodels.test.ts`: a constants change that is not regenerated fails CI.
+  `scripts/__tests__/feed-go-basemodels.schema-drift.test.ts`: a constants change that is not regenerated fails CI.
 
 ## 16. `GET /api/v1/models` and `GET /api/v1/models/[id]` (REST, shadow only)
 

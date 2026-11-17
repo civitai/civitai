@@ -1,9 +1,11 @@
 import {
   MOD_ACTION,
   abuseReportInput,
+  feedbackTriageInput,
   imageModerateInput,
   relabelBuildBatchInput,
   type AbuseReportInput,
+  type FeedbackTriageInput,
   type ImageModerateInput,
   type ModActionName,
   type RelabelBuildBatchInput,
@@ -88,6 +90,9 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
 
   return {
     call,
+    /** Set one feedback report's triage status as the moderator queue does. Not retried. */
+    feedbackTriage: (input: FeedbackTriageInput): Promise<unknown> =>
+      call(MOD_ACTION.feedbackTriage, feedbackTriageInput.parse(input)),
     /** Block or unblock one or more images. Validates the payload locally before the network call. */
     imageModerate: (input: ImageModerateInput): Promise<unknown> =>
       call(MOD_ACTION.imageModerate, imageModerateInput.parse(input)),

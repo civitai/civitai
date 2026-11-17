@@ -130,10 +130,13 @@ func TestParseSearchIsReqQuery(t *testing.T) {
 }
 
 func TestNextPageURL(t *testing.T) {
-	in, err := ParseV1("limit=50&page=2&modelVersionId=9&utm=x")
+	in, err := ParseV1("limit=50&page=2&modelVersionId=9")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A key outside the schema falls back in ParseV1 (input-unknown-key), but nextPage's own rule is
+	// to keep every key of req.query in order, so it is exercised with one added after parsing.
+	in.Query = append(in.Query, QueryParam{Key: "utm", Values: []string{"x"}})
 	got, err := nextPageURL(in, "Civitai.Example:443", "/api/v1/images", true, true, "feed:1:2")
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +530,7 @@ func TestServeV1ViewerAndCreator(t *testing.T) {
 	f := newV1Fixture([]RawImage{row(11, 101, "image", "b", 1, "")})
 	f.feed.ans = feedsvc.Answer{Status: 200, IDs: []int{11}}
 	f.src.usernames = map[string]int{"alice": 5}
-	if _, err := serveV1(t, f, "username=alice&region=x", &Viewer{ID: 5}); err != nil {
+	if _, err := serveV1(t, f, "username=alice", &Viewer{ID: 5}); err != nil {
 		t.Fatal(err)
 	}
 	// A username is resolved for the feed; the viewer's own `username` does not make it their own feed
