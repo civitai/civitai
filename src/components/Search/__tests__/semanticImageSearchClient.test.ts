@@ -166,7 +166,7 @@ describe('createOwnerImageSearch', () => {
   const getMyImages = vi.fn(async () => ({
     items: [{ id: 1, nsfwLevel: 1, url: 'a', type: 'image', metadata: { hash: 'h' } }],
   }));
-  const caller = { id: 7, username: 'fox' };
+  const caller = { id: 7, username: 'fox', image: 'fox.png' };
   const run = (searchOwner: ReturnType<typeof createOwnerImageSearch>, query: string) =>
     searchOwner(IMAGES_SEARCH_INDEX, { query, hitsPerPage: 10, page: 0 } as never) as Promise<{
       hits: { user?: { id: number; username: string } }[];
@@ -178,7 +178,7 @@ describe('createOwnerImageSearch', () => {
       getUser: () => caller,
     });
     const { hits } = await run(searchOwner, '');
-    expect(hits[0].user).toMatchObject({ id: 7, username: 'fox' });
+    expect(hits[0].user).toMatchObject(caller);
   });
 
   it('leaves hits without a user when nobody is signed in', async () => {
