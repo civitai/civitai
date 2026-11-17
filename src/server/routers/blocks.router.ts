@@ -4282,11 +4282,10 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Turns the opt-in off: from the next job on, every above-budget job asks again. Allowed with
-   * the feature flag off too, so a viewer can always undo it.
+   * Turns the opt-in off: from the next job on, every above-budget job asks again. Not gated on
+   * any flag, so a viewer can always undo it.
    */
   optOutConfirmWithinLimit: protectedProcedure
-    .use(enforceAppBlocksFlag)
     .input(z.object({ appBlockId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
       const { optOutConfirmWithinLimit } = await import(

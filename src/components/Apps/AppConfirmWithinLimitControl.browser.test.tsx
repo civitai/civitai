@@ -74,7 +74,13 @@ describe('AppConfirmWithinLimitControl', () => {
 
   test('not opted in: renders nothing', async () => {
     mocks.data = null;
-    renderWithProviders(<AppConfirmWithinLimitControl appBlockId="apb_test" />);
+    renderWithProviders(
+      <>
+        <span data-testid="anchor">mounted</span>
+        <AppConfirmWithinLimitControl appBlockId="apb_test" />
+      </>
+    );
+    await expect.element(page.getByTestId('anchor')).toBeInTheDocument();
     expect(page.getByTestId('app-confirm-within-limit').query()).toBeNull();
   });
 });

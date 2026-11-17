@@ -379,4 +379,14 @@ describe('the "run without asking" opt-in', () => {
     await caller().optOutConfirmWithinLimit({ appBlockId: APP });
     expect(m.optOut).toHaveBeenCalledWith(USER, APP);
   });
+
+  it('switching off works with Apps itself turned off for the viewer', async () => {
+    mockIsAppBlocksEnabled.mockResolvedValue(false);
+    try {
+      await caller().optOutConfirmWithinLimit({ appBlockId: APP });
+    } finally {
+      mockIsAppBlocksEnabled.mockResolvedValue(true);
+    }
+    expect(m.optOut).toHaveBeenCalledWith(USER, APP);
+  });
 });
