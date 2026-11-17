@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ch = vi.hoisted(() => ({
   inserts: [] as { table: string; values: unknown[] }[],
+  queries: [] as string[],
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
   lookupFails: false,
@@ -22,6 +23,7 @@ vi.mock('../axiom', () => ({ logToAxiom, logAxiomError: vi.fn() }));
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     query: async ({ query }: { query: string }) => {
+      ch.queries.push(query);
       if (!query.includes("reason = 'CSAM'")) return { json: async () => ch.liveRows };
       if (ch.lookupFails) throw new Error('Socket hang up');
       if (ch.tableRows) {
@@ -51,11 +53,22 @@ const tosImage = (pHash: string) => ({ pHash, needsReview: null, blockedFor: 'mo
 
 beforeEach(() => {
   ch.inserts = [];
+  ch.queries = [];
   ch.liveRows = [];
   ch.csamHashes = [CSAM_HASH];
   ch.lookupFails = false;
   ch.tableRows = undefined;
   logToAxiom.mockClear();
+});
+
+// Deliberately a SQL-text assertion: a server setting's effect cannot be shown by the fake. With
+// the setting on, the reason/disabled filters may run in PREWHERE, before FINAL merges, and an
+// older live CSAM row would count again. Ruled to be pinned on the query; keep this.
+it('pins the setting that keeps the CSAM filters after the FINAL merge', async () => {
+  await addImagesToBlocklist([tosImage(CSAM_HASH)]);
+
+  const lookup = ch.queries.find((query) => query.includes("reason = 'CSAM'"));
+  expect(lookup).toContain('SETTINGS optimize_move_to_prewhere_if_final = 0');
 });
 
 it('a CSAM row a newer, unmerged row disabled is not live, so another block lands', async () => {

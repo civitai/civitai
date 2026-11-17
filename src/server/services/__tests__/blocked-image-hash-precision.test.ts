@@ -159,6 +159,16 @@ describe('a hash with a CSAM entry keeps it', () => {
     vi.mocked(logToAxiom).mockClear();
   });
 
+  // Deliberately a SQL-text assertion: a server setting's effect cannot be shown by the fake. With
+  // the setting on, the reason/disabled filters may run in PREWHERE, before FINAL merges, and an
+  // older live CSAM row would count again. Ruled to be pinned on the query; keep this.
+  it('pins the setting that keeps the CSAM filters after the FINAL merge', async () => {
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'TOS' as any }] });
+
+    const lookup = capturedQueries.find((query) => query.includes("reason = 'CSAM'"));
+    expect(lookup).toContain('SETTINGS optimize_move_to_prewhere_if_final = 0');
+  });
+
   it('a CSAM row a newer, unmerged row disabled is not live, so a TOS block lands', async () => {
     tableRows = [
       { hash: HASH.toString(), reason: 'CSAM', disabled: false },

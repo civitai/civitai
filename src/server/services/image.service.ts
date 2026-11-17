@@ -7072,8 +7072,9 @@ export type BlocklistWriteContext = { step: string; imageIds?: number[]; actorUs
 /**
  * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
  * merges, so a later row of any other reason would replace that entry. Read FINAL so a CSAM row
- * that a newer, unmerged row has already replaced or disabled does not count as live; the reason
- * and disabled filters sit outside it so they can only see the newest row.
+ * that a newer, unmerged row has already replaced or disabled does not count as live. The reason
+ * and disabled filters must run on the merged row: the optimizer moves them into the inner WHERE,
+ * and the pinned setting keeps them out of PREWHERE, which would run before FINAL merges.
  * The moderator app has the same guard (apps/moderator image-moderation-effects.ts); change both.
  */
 async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
@@ -7086,6 +7087,7 @@ async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
       WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')})
     )
     WHERE reason = 'CSAM' AND disabled = false
+    SETTINGS optimize_move_to_prewhere_if_final = 0
   `;
   return new Set(rows.map((row) => row.hash));
 }
