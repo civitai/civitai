@@ -1,15 +1,21 @@
-import { Badge, Button, Card, Group, Modal, Text } from '@mantine/core';
+import { Badge, Button, Card, Group, Text } from '@mantine/core';
 import { Popover } from '~/components/MantineOverlays';
 import { IconArticle, IconPlayerPlay, IconPlus, IconSparkles } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { SellGate } from '~/components/CreatorShop/Services/SellGate';
-import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+
+const ServiceOfferingFormModal = dynamic(() =>
+  import('~/components/CreatorShop/Services/ServiceOfferingFormModal').then(
+    (m) => m.ServiceOfferingFormModal
+  )
+);
+const VideoModal = dynamic(() => import('~/components/Events/ScoredEvent/HatTurfVideoModal'));
 
 /** 2400x800 PG art; its left ~35% is plain purple, where the copy sits from `lg` up. */
 export const SERVICES_HERO_IMAGE = 'cad28b23-f957-443e-9370-fc0bfd48a91c';
@@ -80,7 +86,12 @@ export function ServicesKickoffHero() {
             variant="subtle"
             color="gray"
             leftSection={<IconPlayerPlay size={18} />}
-            onClick={() => dialogStore.trigger({ component: ServicesLaunchVideoModal })}
+            onClick={() =>
+              dialogStore.trigger({
+                component: VideoModal,
+                props: { video: SERVICES_LAUNCH_VIDEO_URL, title: 'Hire a Pro' },
+              })
+            }
           >
             Watch the music video
           </Button>
@@ -94,6 +105,7 @@ function ListServiceButton() {
   const currentUser = useCurrentUser();
   const eligibility = trpc.creatorService.getSellEligibility.useQuery(undefined, {
     enabled: !!currentUser,
+    staleTime: 5 * 60 * 1000,
   });
 
   const button = (onClick?: () => void) => (
@@ -120,21 +132,8 @@ function ListServiceButton() {
       </Popover>
     );
 
-  return button(() => dialogStore.trigger({ component: ServiceOfferingFormModal }));
-}
+  if (eligibility.data?.canSell)
+    return button(() => dialogStore.trigger({ component: ServiceOfferingFormModal }));
 
-function ServicesLaunchVideoModal() {
-  const dialog = useDialogContext();
-  return (
-    <Modal {...dialog} size="xl" title="Hire a Pro" centered>
-      {/* Opened by the viewer's click, so playing on open is the play they asked for. */}
-      <video
-        src={SERVICES_LAUNCH_VIDEO_URL}
-        controls
-        autoPlay
-        playsInline
-        className="aspect-video w-full rounded-md bg-black"
-      />
-    </Modal>
-  );
+  return button(() => eligibility.refetch());
 }

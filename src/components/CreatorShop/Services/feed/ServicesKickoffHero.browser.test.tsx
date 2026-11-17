@@ -26,12 +26,11 @@ vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
   dialogStore: { trigger: state.trigger },
 }));
 vi.mock('~/components/CreatorShop/Services/ServiceOfferingFormModal', () => ({
-  ServiceOfferingFormModal: () => null,
+  ServiceOfferingFormModal: () => <p>new-service-form</p>,
 }));
 vi.mock('~/components/Login/requireLogin', () => ({ requireLogin: state.requireLogin }));
 vi.mock('next/router', () => ({ useRouter: () => ({ asPath: '/services' }) }));
 
-import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServicesKickoffHero } from '~/components/CreatorShop/Services/feed/ServicesKickoffHero';
 
 const listButton = () => page.getByRole('button', { name: 'List your service' });
@@ -48,7 +47,10 @@ describe('List your service on the services hero', () => {
     renderWithProviders(<ServicesKickoffHero />);
 
     await listButton().click();
-    expect(state.trigger).toHaveBeenCalledWith({ component: ServiceOfferingFormModal });
+    expect(state.trigger).toHaveBeenCalledTimes(1);
+    const { component: Opened } = state.trigger.mock.calls[0][0];
+    renderWithProviders(<Opened />);
+    await expect.element(page.getByText('new-service-form')).toBeInTheDocument();
   });
 
   test('shows why a viewer below the Creator Score bar cannot sell, and opens no form', async () => {
