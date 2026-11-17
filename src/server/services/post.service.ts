@@ -80,6 +80,7 @@ import {
   createImage,
   createImageResources,
   deleteImageFromS3,
+  purgesAllVersions,
   deleteImagesForModelVersionCache,
   getImageMetricsObject,
   getImagesForPosts,
@@ -1509,6 +1510,7 @@ export const deletePost = async ({
           deleteImageFromS3({
             id: image.id,
             url: image.url,
+            allVersions: purgesAllVersions(image, !!viewerIsModerator),
             keepShopArtwork: isPlainOwnerDelete(
               { ...image, openReport: reported.has(image.id) },
               deletedById

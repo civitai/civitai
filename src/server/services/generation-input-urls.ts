@@ -968,7 +968,8 @@ export async function assertGenerationInputsUsable({
     }
     if (cls === 'orchestrator') {
       if (appBlock) {
-        // On per app with scanned source rows: until then an app's uploaded source is a blob.
+        // Refused only once the app is on scanned source rows (per-app flag): until then the
+        // sources it uploads are orchestrator blobs, and refusing them would refuse its own uploads.
         refuseOrchestrator ??= await appUsesScannedSourceRows(appBlockLog?.appBlockId);
         if (refuseOrchestrator) {
           refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
