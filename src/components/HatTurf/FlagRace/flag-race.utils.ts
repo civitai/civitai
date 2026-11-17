@@ -54,3 +54,15 @@ export function flagClock(nowMs: number, closesAt: Date | string, closed: boolea
   if (nowMs >= finalAt) return { phase: 'final' as const, secondsLeft: 0 };
   return { phase: 'counting' as const, secondsLeft: Math.ceil((finalAt - nowMs) / 1000) };
 }
+
+/** Per team, how many flags it alone leads; a tied or empty flag counts for nobody. Most first. */
+export function flagsHeld(flags: { hatsByTeam: Record<string, number> }[]) {
+  const held = new Map<string, number>();
+  for (const flag of flags) {
+    const leader = flagLeader(flag.hatsByTeam);
+    if (leader) held.set(leader, (held.get(leader) ?? 0) + 1);
+  }
+  return [...held].sort(([, a], [, b]) => b - a);
+}
+
+export const flagsPot = (flags: { pot: number }[]) => flags.reduce((sum, f) => sum + f.pot, 0);

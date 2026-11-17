@@ -713,12 +713,12 @@ async function buildFlagSummary(
   return summary;
 }
 
-export type OpenFlagCrucible = { id: number; endAt: Date };
+export type OpenFlagCrucible = { id: number; endAt: Date; coverUrl: string | null };
 
 /**
- * The flag Crucible open for entries now, whose top places become the next day's flags. Its own
- * lookup, not a FlagSummary field: a frozen summary is cached for minutes and straddles the 22:00Z
- * handover, when the open Crucible changes.
+ * The flag Crucible open for entries now, whose top places become the next day's flags, with its
+ * cover only when visible and PG or PG-13. Its own lookup, not a FlagSummary field: a frozen summary
+ * is cached for minutes and straddles the 22:00Z handover, when the open Crucible changes.
  */
 export async function getOpenFlagCrucible(
   eventName: string,
@@ -727,7 +727,11 @@ export async function getOpenFlagCrucible(
   const { flags: config } = await readFlagRaceConfig(eventName);
   if (!config?.on) return null;
   const [row] = await dbRead.$queryRaw<OpenFlagCrucible[]>`
-    SELECT cr.id, cr."endAt" FROM "Crucible" cr
+    SELECT cr.id, cr."endAt", (
+      SELECT i.url FROM "Image" i JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id = cr."imageId" AND i."nsfwLevel" IN (1, 2) AND ${imageVisible}
+    ) AS "coverUrl"
+    FROM "Crucible" cr
     WHERE cr.status = 'Active'::"CrucibleStatus"
       AND cr."eventTags" @> ARRAY[${flagCrucibleTag(eventName)}]::text[]
       AND cr."startAt" <= ${now} AND cr."endAt" > ${now}
