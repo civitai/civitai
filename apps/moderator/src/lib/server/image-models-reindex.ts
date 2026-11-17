@@ -11,7 +11,10 @@ const childTagIds = new Set<number>(CHILD_TAG_IDS);
 type ImageChildTagChanges = {
   /** Images whose tags were written; those whose written tags include a child tag are queued. */
   tagWrites?: { imageId: number; tagId: number }[];
-  /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
+  /**
+   * Images whose nsfwLevel may have changed; queued while they carry a child tag or the minor flag,
+   * since either rule reads the level.
+   */
   levelImageIds?: number[];
   /** Images whose minor flag was written; always queued, since the minor rule reads no tags. */
   minorImageIds?: number[];
@@ -73,9 +76,15 @@ async function queueModels(
     const tagged = await dbWrite
       .selectFrom('TagsOnImageNew')
       .select('imageId')
-      .distinct()
       .where('imageId', 'in', levelOnly)
       .where('tagId', 'in', CHILD_TAG_IDS)
+      .union(
+        dbWrite
+          .selectFrom('Image')
+          .select('id as imageId')
+          .where('id', 'in', levelOnly)
+          .where('minor', '=', true)
+      )
       .execute();
     for (const { imageId } of tagged) imageIds.add(imageId);
   }

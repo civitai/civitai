@@ -34,7 +34,7 @@ const OTHER_TAG = 7;
 const SCHEMA = `
 CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL);
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER);
-CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER);
+CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "minor" BOOLEAN NOT NULL DEFAULT false);
 CREATE TABLE "TagsOnImageNew" ("imageId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL);
 INSERT INTO "ModelVersion" VALUES (10, 100), (11, 100);
 INSERT INTO "Post" VALUES (20, 10), (21, 11);
@@ -107,6 +107,17 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
     await queueModelsForImageChildTagChanges({ levelImageIds: [1, 2] });
     expect(queuedModels()).toEqual([{ entityType: 'model', entityIds: [100], action: 'update' }]);
     expect(busted(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION)).toEqual([[10]]);
+  });
+
+  // The minor rule reads the level, so a re-rate of a minor-flagged image counts without a child tag.
+  it('🔴 queues a re-rated minor-flagged image without a child tag', async () => {
+    await tag(2, OTHER_TAG);
+    await db.query(`UPDATE "Image" SET "minor" = true WHERE "id" = 2`);
+
+    await queueModelsForImageChildTagChanges({ levelImageIds: [2] });
+
+    expect(queuedModels()).toEqual([{ entityType: 'model', entityIds: [100], action: 'update' }]);
+    expect(busted(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION)).toEqual([[11]]);
   });
 
   // The minor rule reads no tags, so a minor-flag write cannot wait on the child-tag check.

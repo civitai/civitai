@@ -64,7 +64,10 @@ describe('a scan result, which writes the minor flag', () => {
   it('queues the models of an image the scan flagged minor', async () => {
     await applyIngestionSideEffects({
       image,
-      outcome: { ingestion: ImageIngestionStatus.Scanned, audit: audit(true) } as Outcome,
+      outcome: {
+        ingestion: ImageIngestionStatus.Scanned,
+        audit: audit(true),
+      } as unknown as Outcome,
     });
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
       levelImageIds: [IMAGE_ID],
@@ -75,7 +78,10 @@ describe('a scan result, which writes the minor flag', () => {
   it('leaves an image the scan did not flag minor to the child-tag check (control)', async () => {
     await applyIngestionSideEffects({
       image,
-      outcome: { ingestion: ImageIngestionStatus.Scanned, audit: audit(false) } as Outcome,
+      outcome: {
+        ingestion: ImageIngestionStatus.Scanned,
+        audit: audit(false),
+      } as unknown as Outcome,
     });
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });

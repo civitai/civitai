@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const { queueArticlesAndComicsForImages } = vi.hoisted(() => ({
-  queueArticlesAndComicsForImages: vi.fn(async () => undefined),
+  queueArticlesAndComicsForImages: vi.fn(async (_imageIds: number[]) => undefined),
 }));
 vi.mock('~/server/services/image-models-reindex.service', () => ({
   queueArticlesAndComicsForImages,
@@ -73,7 +73,7 @@ describe('update-nsfw-levels: article covers', () => {
   it('hands over no images when none were re-rated (control)', async () => {
     queue([[9, EntityType.Post]]);
     await runJob();
-    const ids = queueArticlesAndComicsForImages.mock.calls.flatMap((call) => call[0] as number[]);
+    const ids = queueArticlesAndComicsForImages.mock.calls.flatMap((call) => call[0]);
     expect(ids).toEqual([]);
   });
 });

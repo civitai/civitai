@@ -43,9 +43,11 @@ afterEach(async () => {
 });
 
 const queued = () =>
-  vi.mocked(syncSearchIndexBulk).mock.calls.flatMap(([batch]) =>
-    batch.entityIds.map((id) => [batch.entityType, id, batch.action])
-  );
+  vi
+    .mocked(syncSearchIndexBulk)
+    .mock.calls.flatMap(([batch]) =>
+      batch.entityIds.map((id) => [batch.entityType, id, batch.action])
+    );
 
 describe('spoke queueArticlesForCoverImages', () => {
   it('queues an article Update for each article whose cover or banner is one of the images', async () => {

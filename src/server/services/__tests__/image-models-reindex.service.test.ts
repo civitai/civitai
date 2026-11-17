@@ -55,6 +55,7 @@ const query = (table: string) => queries().find((q) => q.text.includes(table));
 function arm({
   models = [] as number[],
   childTagged = [] as number[],
+  minorFlagged = [] as number[],
   articles = [] as number[],
   comics = [] as number[],
   bounties = [] as number[],
@@ -62,7 +63,10 @@ function arm({
   dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) => {
     const text = sqlText(sql);
     if (text.includes('"ImageConnection"')) return bounties.map((id) => ({ id }));
-    if (text.includes('"TagsOnImageNew"')) return childTagged.map((imageId) => ({ imageId }));
+    if (text.includes('"TagsOnImageNew"'))
+      return [...childTagged, ...(/\bminor\b/.test(text) ? minorFlagged : [])].map((imageId) => ({
+        imageId,
+      }));
     if (text.includes('"Article"'))
       return [
         ...articles.map((id) => ({ kind: 'article', id })),
@@ -123,6 +127,30 @@ describe('queueModelsForImageChildTagChanges', () => {
     await queueModelsForImageChildTagChanges({ levelImageIds: [9] });
 
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+
+  // The minor rule reads the level, so a re-rate of a minor-flagged image counts without a child tag.
+  it('🔴 queues the models of a re-rated minor-flagged image without a child tag', async () => {
+    arm({ models: [600], childTagged: [], minorFlagged: [8] });
+
+    await queueModelsForImageChildTagChanges({ levelImageIds: [8, 9] });
+
+    expect(query('"TagsOnImageNew"')?.text).toMatch(/FROM "Image"[\s\S]*minor/);
+    expect(query('"ModelVersion"')?.values[0]).toEqual([8]);
+    expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([6000]);
+    expect(queued()).toEqual([600]);
+  });
+
+  it('reads a large minor-flag write in batches', async () => {
+    arm({ models: [700] });
+    const ids = Array.from({ length: 2500 }, (_, i) => i + 1);
+
+    await queueModelsForImageChildTagChanges({ minorImageIds: ids });
+
+    const batches = queries()
+      .filter((q) => q.text.includes('"ModelVersion"'))
+      .map((q) => (q.values[0] as number[]).length);
+    expect(batches).toEqual([1000, 1000, 500]);
   });
 
   // The minor rule reads no tags, so a minor-flag write cannot wait on the child-tag check.
