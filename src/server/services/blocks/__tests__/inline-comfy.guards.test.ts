@@ -40,7 +40,7 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *     🔴 READ THIS BEFORE ASSUMING WHAT THESE TESTS COVER. This gate does NOT
  *     stop an untrusted developer pinning a Private resource they do not own.
  *     A DIFFERENT guard does that, one check EARLIER — `!resource.canGenerate`
- *     — and a non-owner never reaches line 452 at all. Establishing that took a
+ *     — and a non-owner never reaches the subscription guard. Establishing that took a
  *     live production run; two prior drafts of this comment described the wrong
  *     population, so the mechanism is written out here rather than re-guessed.
  *
@@ -54,7 +54,7 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *     forces `canGenerate = false` for a non-owner non-moderator, and the
  *     canGenerate guard throws before `hasPrivate` is ever computed.
  *
- *     🔴 SO WHAT LINE 452 ACTUALLY GATES: the OWNER of a Private resource
+ *     🔴 SO WHAT THE SUBSCRIPTION GUARD ACTUALLY GATES: the OWNER of a Private resource
  *     who lacks an active subscription. Owners get `canGenerate: true` on their
  *     own private resources, so they are the population that arrives here.
  *     Moderators are exempt at BOTH layers.
