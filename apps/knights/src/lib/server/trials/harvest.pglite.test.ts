@@ -296,6 +296,20 @@ describe('resuming past the window', () => {
     expect(await references()).toMatchObject([{ imageId: 2 }]);
   });
 
+  it('counts only rulings past the cursor, and each one once', async () => {
+    await image(1);
+    await image(2);
+    const before = await ruling(1, { ageDays: 30 });
+    await pg.query(
+      `INSERT INTO "KnightsHarvestCursor" ("name","lastActivityId") VALUES ('trials',$1)`,
+      [before]
+    );
+    await ruling(2, { ageDays: 20 });
+
+    expect((await harvestRulings(db, { now: NOW })).skippedStale).toBe(1);
+    expect((await harvestRulings(db, { now: NOW })).skippedStale).toBe(0);
+  });
+
   it('reports nothing skipped on a first run, before any cursor exists', async () => {
     await image(1);
     await ruling(1, { ageDays: 20 });

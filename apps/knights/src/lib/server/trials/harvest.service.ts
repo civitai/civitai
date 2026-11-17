@@ -59,7 +59,12 @@ export async function harvestRulings(
   let lastActivityId = cursor?.lastActivityId ?? 0;
   let scanned = 0;
   let added = 0;
-  const skippedStale = cursor ? await countStaleSinceCursor(db, lastActivityId, cutoff) : 0;
+  // Rulings past the cursor that aged out (e.g. during a pause) can never be harvested: count them once and move past.
+  const stale = cursor
+    ? await staleSinceCursor(db, lastActivityId, cutoff)
+    : { n: 0, lastId: null };
+  const skippedStale = stale.n;
+  if (stale.lastId !== null) lastActivityId = stale.lastId;
 
   for (let batch = 0; batch < config.maxBatches; batch++) {
     const activities = await db
@@ -140,7 +145,7 @@ export async function harvestRulings(
     if (activities.length < config.batchSize) break;
   }
 
-  if (scanned > 0) {
+  if (scanned > 0 || skippedStale > 0) {
     await db
       .insertInto('KnightsHarvestCursor')
       .values({ name: config.cursorName, lastActivityId, updatedAt: utc(now) })
@@ -152,16 +157,18 @@ export async function harvestRulings(
   return { scanned, added, retired, skippedStale };
 }
 
-async function countStaleSinceCursor(db: Kysely<DB>, lastActivityId: number, cutoff: Date) {
+async function staleSinceCursor(db: Kysely<DB>, lastActivityId: number, cutoff: Date) {
   const row = await db
     .selectFrom('ModActivity')
-    .select((eb) => eb.fn.countAll<string>().as('n'))
+    .select((eb) => [eb.fn.countAll<string>().as('n'), eb.fn.max<number | null>('id').as('lastId')])
     .where('id', '>', lastActivityId)
     .where('activity', '=', MODERATOR_RULING_ACTIVITY)
     .where('entityType', '=', 'image')
+    .where('entityId', 'is not', null)
+    .where('userId', 'is not', null)
     .where('createdAt', '<', utc(cutoff))
     .executeTakeFirstOrThrow();
-  return Number(row.n);
+  return { n: Number(row.n), lastId: row.lastId };
 }
 
 async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Promise<number> {
