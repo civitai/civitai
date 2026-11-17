@@ -119,6 +119,27 @@ async function feedIds(input: Record<string, unknown>) {
 }
 
 describe('getModelsRaw with hidePaid', () => {
+  // A feed pinned to ids shows Private versions too, unless it asks for Public ones only.
+  it('counts a Private free version only where the feed shows Private versions', async () => {
+    expect(await feedIds({ hidePaid: true, ids: [FREE_ONLY_PRIVATE] })).toEqual([
+      FREE_ONLY_PRIVATE,
+    ]);
+    capturedQueries.length = 0;
+    await getModelsRaw({
+      input: {
+        browsingLevel: 1,
+        take: 20,
+        sort: 'Newest',
+        period: 'AllTime',
+        hidePaid: true,
+        ids: [FREE_ONLY_PRIVATE],
+      } as never,
+      publicVersionsOnly: true,
+    });
+    const q = capturedQueries[0];
+    expect((await db.query(q.text, q.values as never[])).rows).toEqual([]);
+  });
+
   // Signed out the feed shows Public versions only, so a Private free version cannot keep a model.
   it('keeps a model with a free Published version and hides the ones with none', async () => {
     expect(await feedIds({ hidePaid: true })).toEqual([FREE, MIXED, EXPIRED]);
@@ -157,7 +178,12 @@ describe('the all-paid set (Prisma getModels path)', () => {
   });
 
   it('lists the gated models with no free Published version', async () => {
-    expect((await queryAllPaidModelIds()).sort()).toEqual([ALL_PAID, PAID_PLUS_DRAFT, TIMED_LIVE]);
+    expect((await queryAllPaidModelIds()).sort()).toEqual([
+      ALL_PAID,
+      PAID_PLUS_DRAFT,
+      TIMED_LIVE,
+      FREE_ONLY_PRIVATE,
+    ]);
   });
 
   it('is what getModels excludes under hidePaid', async () => {
@@ -173,7 +199,9 @@ describe('the all-paid set (Prisma getModels path)', () => {
       const ids = (c as { id?: { notIn?: number[] } }).id?.notIn;
       return ids ? [ids] : [];
     });
-    expect(notIn.map((ids) => [...ids].sort())).toEqual([[ALL_PAID, PAID_PLUS_DRAFT, TIMED_LIVE]]);
+    expect(notIn.map((ids) => [...ids].sort())).toEqual([
+      [ALL_PAID, PAID_PLUS_DRAFT, TIMED_LIVE, FREE_ONLY_PRIVATE],
+    ]);
   });
 
   it('is busted under the key it is cached under', async () => {

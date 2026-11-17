@@ -903,8 +903,10 @@ export async function queryGatedModelIds(): Promise<number[]> {
 }
 
 /**
- * Every gated model with no free Published version — what Hide Paid hides on the Prisma `getModels`
- * path. A model with one paid and one free version is not in it. Same live-gate predicate as the badge.
+ * Every gated model with no free Public, Published version — what Hide Paid hides on the Prisma
+ * `getModels` path. A model with one paid and one free version is not in it. Viewer-independent, so it
+ * takes the signed-out feed's rule: a Private free version does not count. Same live-gate predicate as
+ * the badge.
  *
  * Uncached here so a test can run the statement; `getAllPaidModelIds` is the cached entry point.
  */
@@ -914,7 +916,7 @@ export async function queryAllPaidModelIds(): Promise<number[]> {
     FROM "PaidAccess" pa
     JOIN "ModelVersion" mv ON mv.id = pa."entityId"
     WHERE ${paidAccessLiveSql}
-      AND NOT ${freePublishedVersionExistsSql(Prisma.sql`mv."modelId"`)}
+      AND NOT ${freePublishedVersionExistsSql(Prisma.sql`mv."modelId"`, { publicOnly: true })}
   `;
   return rows.map((r) => Number(r.modelId));
 }
