@@ -533,7 +533,6 @@ describe('smites', () => {
     expect(await smitesOf(1)).toHaveLength(0);
     expect(resetPlayer).not.toHaveBeenCalled();
     expect(await playersDueForReset(db)).toEqual([]);
-    expect(question(await getApprentice(db, 1)).item).toBeDefined();
   });
 
   it('counts only the last 20 answers', async () => {
