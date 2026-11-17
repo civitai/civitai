@@ -940,6 +940,28 @@ describe('checkStorageMigrations — default values', () => {
     }
   });
 
+  const metaDefault = (value: unknown) =>
+    checkStorageMigrations(
+      manifest({ cards: cards(obj({ meta: {} }, { additionalProperties: false })) }),
+      manifest({
+        cards: cards(obj({ meta: {} }, { additionalProperties: false, required: ['meta'] }), [
+          { op: 'default', path: '/meta', value },
+        ]),
+      })
+    );
+
+  it('🔴 a default nested past the walk limit is refused, not checked as JSON text', () => {
+    let value: unknown = 'https://orchestration.civitai\n.com/x';
+    for (let i = 0; i < 40; i++) value = [value];
+    expect(metaDefault(value).errors).toEqual([
+      expect.stringMatching(/too large or too deeply nested/),
+    ]);
+  });
+
+  it('a large plain default under the limits is accepted', () => {
+    expect(metaDefault({ text: 'x'.repeat(3000), list: ['a', 'b', 'c'] }).errors).toEqual([]);
+  });
+
   it.each([
     ['a public image url', 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/a/width=450/1.jpeg'],
     ['plain text', 'untitled'],

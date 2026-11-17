@@ -51,21 +51,52 @@ function namesOrchestratorMedia(text: string, hosts: RegExp[]) {
   return isConsumerBlobUrl(text) || !!parseJobAssetUrl(text) || hosts.some((h) => h.test(text));
 }
 
-/**
- * Whether `text` carries a link to orchestrator media: a consumer-blob or job-asset path, or any
- * orchestrator host. That media belongs to the viewer who uploaded or generated it and is not
- * for other viewers of an app's shared data. Public image CDN urls do not match.
- */
-export function containsPrivateMediaUrl(raw: string): boolean {
-  const hosts = [...orchestratorHostnames().map(escapeRegex), ORCHESTRATOR_HOSTNAME_PATTERN].map(
+function hostPatterns(): RegExp[] {
+  return [...orchestratorHostnames().map(escapeRegex), ORCHESTRATOR_HOSTNAME_PATTERN].map(
     (h) => new RegExp(`(^|[^a-z0-9-])${h}($|[^a-z0-9-])`)
   );
+}
+
+function matches(raw: string, hosts: RegExp[]): boolean {
   let current = stripInvisible(raw);
   for (let pass = 0; pass < 8; pass++) {
     if (namesOrchestratorMedia(asParserReadsIt(current), hosts)) return true;
     const next = decodePercents(current);
     if (next === current) return false;
     current = next;
+  }
+  return false;
+}
+
+/**
+ * Whether `text` carries a link to orchestrator media: a consumer-blob or job-asset path, or any
+ * orchestrator host. That media belongs to the viewer who uploaded or generated it and is not
+ * for other viewers of an app's shared data. Public image CDN urls do not match.
+ */
+export function containsPrivateMediaUrl(raw: string): boolean {
+  return matches(raw, hostPatterns());
+}
+
+/**
+ * {@link containsPrivateMediaUrl} over every string and object key in a JSON value, each read as
+ * stored. Never matches serialised JSON, whose escapes (`\n` for a newline) hide what a URL
+ * parser would see. No walk cap: the caller's own size limit bounds the value.
+ */
+export function valueContainsPrivateMediaUrl(value: unknown): boolean {
+  const hosts = hostPatterns();
+  const stack: unknown[] = [value];
+  while (stack.length) {
+    const node = stack.pop();
+    if (typeof node === 'string') {
+      if (matches(node, hosts)) return true;
+    } else if (Array.isArray(node)) {
+      stack.push(...node);
+    } else if (node && typeof node === 'object') {
+      for (const [key, child] of Object.entries(node)) {
+        if (matches(key, hosts)) return true;
+        stack.push(child);
+      }
+    }
   }
   return false;
 }
