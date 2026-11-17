@@ -313,6 +313,12 @@ type goldenDB struct {
 		ModelID int `json:"modelId"`
 		TagID   int `json:"tagId"`
 	} `json:"tagsOnModels"`
+	// OfficialModels are the official, published models getOfficialModelIds' fetchFn reads (a fixture
+	// whose request reads the official-models entry).
+	OfficialModels []struct {
+		ID   int    `json:"id"`
+		Type string `json:"type"`
+	} `json:"officialModels"`
 	// Collections are the Collection rows Node's permission read found, each with the contributor
 	// rows it holds.
 	Collections []struct {
@@ -422,23 +428,23 @@ var goldenModelVersionColumns = []string{"id", "index", "modelId", "name", "earl
 	"baseModelType", "createdAt", "trainingStatus", "publishedAt", "status", "flags", "availability", "nsfwLevel",
 	"description", "trainedWords", "vaeId", "covered", "coveredNext"}
 
-// row is the version row as pgx hands it over: int4 as int32, text[] as []any.
+// row is the version row (int4 as int64, text[] as []any).
 func (g goldenModelVersionRow) row() []any {
 	var index any
 	if g.Index != nil {
-		index = int32(*g.Index)
+		index = int64(*g.Index)
 	}
 	var vae any
 	if g.VaeID != nil {
-		vae = int32(*g.VaeID)
+		vae = int64(*g.VaeID)
 	}
 	words := make([]any, len(g.TrainedWords))
 	for i, w := range g.TrainedWords {
 		words[i] = w
 	}
-	return []any{int32(g.ID), index, int32(g.ModelID), g.Name, int32(g.EarlyAccessTimeFrame), g.BaseModel,
+	return []any{int64(g.ID), index, int64(g.ModelID), g.Name, int64(g.EarlyAccessTimeFrame), g.BaseModel,
 		goldenPtr(g.BaseModelType), goldenTimeVal(g.CreatedAt), goldenPtr(g.TrainingStatus), goldenTimeVal(g.PublishedAt),
-		g.Status, int32(g.Flags), g.Availability, int32(g.NsfwLevel), goldenPtr(g.Description), words, vae, g.Covered,
+		g.Status, int64(g.Flags), g.Availability, int64(g.NsfwLevel), goldenPtr(g.Description), words, vae, g.Covered,
 		g.CoveredNext}
 }
 
@@ -1455,17 +1461,26 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 			var rows [][]any
 			for _, h := range db.ModelHashes {
 				if goldenHas(goldenInts(args[0]), h.ModelID) {
-					rows = append(rows, []any{int32(h.ModelID), h.Hash})
+					rows = append(rows, []any{int64(h.ModelID), h.Hash})
 				}
 			}
 			return testkit.NewRows([]string{"modelId", "hash"}, rows...), nil
+		}},
+		// getOfficialModelIds' fetchFn: only a copy whose official-models entry was emptied reads it
+		// (probe_test.go), from the fixture's official rows.
+		{Match: `"isOfficial" = true`, Rows: func(_ []any) (*testkit.Rows, error) {
+			rows := make([][]any, 0, len(db.OfficialModels))
+			for _, m := range db.OfficialModels {
+				rows = append(rows, []any{int64(m.ID), m.Type})
+			}
+			return testkit.NewRows([]string{"id", "type"}, rows...), nil
 		}},
 		// modelTagCache's lookup.
 		{Match: `SELECT "modelId", "tagId" FROM "TagsOnModels"`, Rows: func(args []any) (*testkit.Rows, error) {
 			var rows [][]any
 			for _, r := range db.TagsOnModels {
 				if goldenHas(goldenInts(args[0]), r.ModelID) {
-					rows = append(rows, []any{int32(r.ModelID), int32(r.TagID)})
+					rows = append(rows, []any{int64(r.ModelID), int64(r.TagID)})
 				}
 			}
 			return testkit.NewRows([]string{"modelId", "tagId"}, rows...), nil

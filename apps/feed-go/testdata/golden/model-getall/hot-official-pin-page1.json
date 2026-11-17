@@ -1295,7 +1295,25 @@
     ],
     "coverImages": [],
     "tags": [],
-    "creators": []
+    "creators": [],
+    "officialModels": [
+      {
+        "id": 5004,
+        "type": "Checkpoint"
+      },
+      {
+        "id": 5002,
+        "type": "LORA"
+      },
+      {
+        "id": 5009,
+        "type": "Checkpoint"
+      },
+      {
+        "id": 5098,
+        "type": "Checkpoint"
+      }
+    ]
   },
   "expect": {
     "envelope": {

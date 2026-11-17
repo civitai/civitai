@@ -1197,6 +1197,9 @@ function getOfficialModelIds() {
   if (NOW.getTime() - 300 * 1000 > value.cachedAt)
     throw new Error('the official entry is expired: not modelled');
   T.packed.set(K.official, value);
+  // The rows its fetchFn would read (the same world): the harness answers a copy whose entry was
+  // emptied from them.
+  T.db.officialModels = OFFICIAL;
   return structuredClone(value.data);
 }
 
@@ -1634,6 +1637,7 @@ function dbTables() {
   if (T.db.modelVersionRows.length) tables.modelDataVersions = T.db.modelVersionRows;
   if (T.db.modelHashes.length) tables.modelHashes = T.db.modelHashes;
   if (T.db.tagsOnModels.length) tables.tagsOnModels = T.db.tagsOnModels;
+  if (T.db.officialModels) tables.officialModels = T.db.officialModels;
   // Only a fixture that reads a collection lists the table (a missing collection is no row).
   if (T.db.collections.size)
     tables.collections = m2o(T.db.collections, ([, c]) => c)
