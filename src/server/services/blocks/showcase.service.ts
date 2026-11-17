@@ -107,9 +107,10 @@ export interface ShowcaseImage {
 }
 
 /**
- * Fetch up to N images for a model version, ordered by all-time reaction
- * count. The query goes through ImageResource (the M:N join) so we only
- * pull images that were actually generated using this specific version.
+ * Fetch up to N images for a model version: the most-reacted (all time) of
+ * its newest 50 eligible images. The query goes through ImageResource (the
+ * M:N join) so we only pull images that were actually generated using this
+ * specific version.
  *
  * Filters:
  *   - ingestion: Scanned (the moderation gate the rest of the platform
@@ -117,11 +118,12 @@ export interface ShowcaseImage {
  *   - `publicPostImageWhere`: no TOS violation, not held for review, and in a
  *     published post that is not Private (the block is a public read).
  *   - postId IS NOT NULL (orphaned images shouldn't show up).
- *   - nsfwLevel intersects the viewer's allowed browsing levels (see
+ *   - nsfwLevel is one of the viewer's allowed browsing levels (see
  *     `resolveAllowedBrowsingLevel` / `ShowcaseViewer`). Anon → SFW only.
- *     Images with `nsfwLevel = 0` (unrated / pending) never intersect and are
- *     therefore excluded — the same fail-closed stance the feed takes for
- *     non-own unrated content.
+ *     Images with `nsfwLevel = 0` (unrated / pending) are never in that list
+ *     — the same fail-closed stance the feed takes for non-own unrated content.
+ *   - per row, `classifyGatedImageForViewer`: the moderation flags the other
+ *     public block reads hide on.
  *
  * Returns an empty array when the version has no images yet — block UI
  * renders a "no preview images" state rather than crashing.
@@ -168,8 +170,7 @@ export async function getModelShowcaseImages(
     // showed up under multiple ImageResource rows (e.g. an image that
     // used both this version's checkpoint and a LoRA from the same
     // model) before slicing. Cap at 50 to bound the query cost.
-    // Newest first, so the 50 are the same on every request (served by the
-    // (modelVersionId, imageId) index, no sort).
+    // Newest first, so the 50 are the same on every request.
     orderBy: { imageId: 'desc' },
     take: 50,
   });

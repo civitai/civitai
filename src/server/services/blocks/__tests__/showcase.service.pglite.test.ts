@@ -78,7 +78,8 @@ async function image(id: number, postId: number, needsReview: string | null, tos
   );
 }
 
-const servedIds = async () => (await getModelShowcaseImages(VERSION)).map((i) => i.id).sort();
+const servedIds = async () =>
+  (await getModelShowcaseImages(VERSION)).map((i) => i.id).sort((a, b) => a - b);
 
 // One excluded image per case, beside a clean one, so the block's display cap never hides a miss.
 describe('getModelShowcaseImages: which images the block may serve', () => {
@@ -115,6 +116,13 @@ describe('getModelShowcaseImages: which images the block may serve', () => {
     await harness.pg.exec(`UPDATE "Image" SET "nsfwLevel" = ${R}`);
     await image(SFW, PUBLISHED, null);
     expect(await servedIds()).toEqual([SFW]);
+  });
+
+  it('serves a clean image even past 50 newer held ones', async () => {
+    // The SQL leaves held rows out before the 50-row fetch, not only the per-row gate after it.
+    for (let id = 100; id < 150; id++) await image(id, PUBLISHED, 'csam');
+    await image(CLEAN, PUBLISHED, null);
+    expect(await servedIds()).toEqual([CLEAN]);
   });
 
   it('takes the newest images first, so the served set is stable', async () => {
