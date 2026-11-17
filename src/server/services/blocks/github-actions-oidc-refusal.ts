@@ -17,17 +17,18 @@ export type ActionsOidcRefusalReason =
   | 'tag-version-mismatch'
   | 'sha-mismatch'
   | 'replayed'
+  | 'repository-mismatch'
   | 'unavailable';
 
 /**
  * A token the submit refuses. `status` 400 = the token or the pipeline is wrong (do not retry the
- * same way); 503 = a dependency (GitHub's key set, the replay store) could not answer, so re-run the
+ * same way); 409 = the token is from a different repository than the app is pinned to; 503 = a dependency (GitHub's key set, the replay store) could not answer, so re-run the
  * workflow. The message never includes the token.
  */
 export class GithubActionsOidcRefusal extends Error {
   readonly reason: ActionsOidcRefusalReason;
-  readonly status: 400 | 503;
-  constructor(reason: ActionsOidcRefusalReason, detail: string, status: 400 | 503 = 400) {
+  readonly status: 400 | 409 | 503;
+  constructor(reason: ActionsOidcRefusalReason, detail: string, status: 400 | 409 | 503 = 400) {
     super(`GitHub Actions OIDC token rejected: ${detail}`);
     this.name = 'GithubActionsOidcRefusal';
     this.reason = reason;

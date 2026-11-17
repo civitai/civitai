@@ -84,7 +84,7 @@ describe('the moderator provenance lines', () => {
       },
       {
         key: 'actions-run',
-        heading: 'Verified GitHub Actions run',
+        heading: 'GitHub-signed Actions run',
         value: 'harbor-tools/knot-tier @ v0.9.1 (b4c3d2e)',
         links: [
           { label: 'commit', href: `https://github.com/harbor-tools/knot-tier/commit/${SHA}` },

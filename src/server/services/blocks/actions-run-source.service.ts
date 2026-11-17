@@ -21,6 +21,7 @@ import type { ActionsRunSource } from '~/server/schema/blocks/actions-run-source
 import type { ListingActionsRunSource } from '~/server/schema/blocks/app-listing-read.schema';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
+import { GithubActionsOidcRefusal } from '~/server/services/blocks/github-actions-oidc-refusal';
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -186,5 +187,73 @@ export async function readLiveActionsRunSourceForListing(
   } catch (err) {
     if (!isMissingColumnError(err)) noteDegradedRead(ACTIONS_RUN_SOURCE_DEGRADED_EVENT, err);
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The repository pin (phase 1; repository linking replaces it)
+// ---------------------------------------------------------------------------
+
+/** The repository an app's verified submits are pinned to. */
+export type ActionsRunRepositoryPin = { repositoryId: string; repository: string };
+
+/**
+ * Refuse a verified run from a repository other than the one this app is PINNED to.
+ *
+ * 🔴 WHY. Without it, any repository the developer can tag could be named on any of their apps'
+ * store pages. The pin is GitHub's numeric `repository_id` (it survives a rename or transfer, a
+ * name does not) of the app's EARLIEST verified request that is pending or approved: the first
+ * verified submit sets it, and every later one must match. Rejected and withdrawn requests do not
+ * pin, so a mistaken first submit can be withdrawn and redone. Slug-keyed, because `slug` is the
+ * app's identity across a first request's lifecycle (`app_block_id` is NULL until approve), and
+ * the submit's ownership gate has already established the submitter may ship this slug.
+ *
+ * Throws `GithubActionsOidcRefusal`: 409 `repository-mismatch` naming the expected repository; 503
+ * when the pin cannot be read for any reason other than a missing column. A MISSING COLUMN (the
+ * manual-apply migration not applied) means no pin can exist, and nothing will be recorded either,
+ * so the submit proceeds exactly as it does today.
+ *
+ * Phase 2 (linking an app to a repository) replaces this pin with the explicit link.
+ */
+export async function assertActionsRunRepositoryPinned(
+  db: ActionsRunReadClient,
+  slug: string,
+  source: ActionsRunSource
+): Promise<void> {
+  let pin: ActionsRunRepositoryPin | null = null;
+  try {
+    const rows = (await db.$queryRaw`SELECT
+          "actions_run_repository_id" AS "repositoryId",
+          "actions_run_repository" AS "repository"
+        FROM "app_block_publish_requests"
+        WHERE "slug" = ${slug}
+          AND "actions_run_repository_id" IS NOT NULL
+          AND "status" IN ('pending', 'approved')
+        ORDER BY "submitted_at" ASC
+        LIMIT 1`) as Array<{ repositoryId: unknown; repository: unknown }> | null | undefined;
+    const row = Array.isArray(rows) ? rows[0] : undefined;
+    if (row && typeof row.repositoryId === 'string' && row.repositoryId.length > 0) {
+      pin = {
+        repositoryId: row.repositoryId,
+        repository: typeof row.repository === 'string' ? row.repository : row.repositoryId,
+      };
+    }
+  } catch (err) {
+    if (isMissingColumnError(err)) return;
+    noteDegradedRead(ACTIONS_RUN_SOURCE_DEGRADED_EVENT, err);
+    throw new GithubActionsOidcRefusal(
+      'unavailable',
+      "could not read this app's pinned repository; re-run the workflow",
+      503
+    );
+  }
+  if (pin && pin.repositoryId !== source.repositoryId) {
+    throw new GithubActionsOidcRefusal(
+      'repository-mismatch',
+      `this app's verified submits come from ${pin.repository} (repository id ${pin.repositoryId}), ` +
+        `but this token is from ${source.repository} (repository id ${source.repositoryId}). ` +
+        `Submit from ${pin.repository}.`,
+      409
+    );
   }
 }

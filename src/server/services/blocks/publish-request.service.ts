@@ -1419,18 +1419,30 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     });
   }
 
-  // GITHUB ACTIONS OIDC — verified HERE: after every validation gate above (so a submit refused
-  // for another reason never spends the token's one-use `jti`) and before the first side effect
-  // (the upload), so a refused token leaves nothing behind. The token is present only when the
-  // flag is on (the routes filter it). A token that fails refuses the submit: a bad token means a
-  // broken pipeline, not something to skip silently.
+  // GITHUB ACTIONS OIDC — verified HERE: after the validation gates above and before the first
+  // side effect (the upload), so a refused token leaves nothing behind. The token is present only
+  // when the flag is on (the routes filter it). A token that fails refuses the submit: a bad token
+  // means a broken pipeline, not something to skip silently.
+  //
+  // ⚠ THE ONE-USE `jti` IS SPENT HERE, NOT AT THE END. Verification records it, and the steps
+  // below can still fail after that: the bundle upload, the review-repo push, the request insert
+  // (including the one-pending-per-slug P2002 race) and the repository pin. Each of those leaves
+  // the token spent, so retrying needs a fresh token, i.e. a re-run of the workflow, which is
+  // what requests one. No failure here can leave a token accepted twice.
   let actionsRunSource: ActionsRunSource | null = null;
   if (githubOidcToken) {
-    const { verifyGithubActionsOidcToken } = await import('./github-actions-oidc.service');
+    const [{ verifyGithubActionsOidcToken }, { assertActionsRunRepositoryPinned }] =
+      await Promise.all([
+        import('./github-actions-oidc.service'),
+        import('./actions-run-source.service'),
+      ]);
     actionsRunSource = await verifyGithubActionsOidcToken(githubOidcToken, {
       manifestVersion: version,
       sourceCommit,
     });
+    // The repository this app's verified submits are pinned to (the first one's); a token from
+    // another repository is refused 409. No pin is possible while the columns are missing.
+    await assertActionsRunRepositoryPinned(dbRead, slug, actionsRunSource);
   }
 
   // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a

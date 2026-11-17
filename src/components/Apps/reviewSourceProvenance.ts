@@ -22,7 +22,7 @@ export type ReviewProvenanceLine = {
 };
 
 export const CLAIMED_COMMIT_LABEL = 'Claimed commit (sent by the client, not checked)';
-export const ACTIONS_RUN_LABEL = 'Verified GitHub Actions run';
+export const ACTIONS_RUN_LABEL = 'GitHub-signed Actions run';
 export const ACTIONS_RUN_NOTE =
   "GitHub signed this run's repository, tag and commit. The run uploaded the bundle itself, so this does not show the bundle was built from that commit.";
 

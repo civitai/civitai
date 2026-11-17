@@ -178,8 +178,17 @@ function mapJoseError(err: unknown): GithubActionsOidcRefusal {
   ) {
     return new GithubActionsOidcRefusal('malformed', 'the token is not a valid signed JWT');
   }
-  // Anything else is the key set fetch (timeout, network, a bad JWKS response): not the token's
-  // fault, and retryable.
+  // Any OTHER specific jose error is about the token, so it is a 400 like the ones above. Only the
+  // key-set fetch failing is a 503: a timeout, an unparseable key set, jose's bare `JOSEError`
+  // (which is what it throws for a non-200 key-set response) or a non-jose error (the network).
+  if (
+    err instanceof joseErrors.JOSEError &&
+    err.constructor !== joseErrors.JOSEError &&
+    !(err instanceof joseErrors.JWKSTimeout) &&
+    !(err instanceof joseErrors.JWKSInvalid)
+  ) {
+    return new GithubActionsOidcRefusal('malformed', 'the token is not a valid signed JWT');
+  }
   return new GithubActionsOidcRefusal(
     'unavailable',
     'could not fetch GitHub Actions signing keys; re-run the workflow',

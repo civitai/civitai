@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
 import type { JWTPayload, JWTVerifyGetKey } from 'jose';
-import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from 'jose';
+import { SignJWT, createLocalJWKSet, errors as joseErrors, exportJWK, generateKeyPair } from 'jose';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 
-const flipt = vi.hoisted(() => ({ isFlipt: vi.fn<(..._args: unknown[]) => Promise<boolean>>() }));
+const flipt = vi.hoisted(() => ({ isFlipt: vi.fn<typeof FliptClient.isFlipt>() }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   isFlipt: flipt.isFlipt,
@@ -13,6 +13,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type { ActionsRunSource } from '~/server/schema/blocks/actions-run-source.schema';
 import {
+  assertActionsRunRepositoryPinned,
   publicActionsRunSource,
   readActionsRunSourcesForRender,
   readLiveActionsRunSourceForListing,
@@ -304,6 +305,59 @@ describe('verifyGithubActionsOidcToken', () => {
   });
 });
 
+describe('verifyGithubActionsOidcToken — algorithms and the key set', () => {
+  const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const payload = () => ({
+    ...claims(),
+    iss: GITHUB_ISSUER,
+    aud: CIVITAI_AUDIENCE,
+    iat: NOW_S - 30,
+    exp: NOW_S + 270,
+  });
+
+  it('refuses an unsigned token (alg: none) as malformed, 400', async () => {
+    const token = `${b64({ alg: 'none', kid: KID })}.${b64(payload())}.`;
+    const err = await refusal(
+      verifyGithubActionsOidcToken(token, { manifestVersion: VERSION }, deps())
+    );
+    expect(err.reason).toBe('malformed');
+    expect(err.status).toBe(400);
+  });
+
+  it('refuses an HS256 token (a shared-secret algorithm GitHub never uses) as malformed, 400', async () => {
+    const token = await new SignJWT(payload())
+      .setProtectedHeader({ alg: 'HS256', kid: KID })
+      .sign(new TextEncoder().encode('a-shared-secret-of-at-least-32-bytes!!'));
+    const err = await refusal(
+      verifyGithubActionsOidcToken(token, { manifestVersion: VERSION }, deps())
+    );
+    expect(err.reason).toBe('malformed');
+    expect(err.status).toBe(400);
+  });
+
+  it.each([
+    ['a key-set timeout', () => new joseErrors.JWKSTimeout()],
+    [
+      'a non-200 key-set response',
+      () => new joseErrors.JOSEError('Expected 200 OK from the JSON Web Key Set HTTP response'),
+    ],
+    ['a network failure', () => new TypeError('fetch failed')],
+  ])('maps %s to a retryable 503, not a token error', async (_name, makeError) => {
+    const unavailable: JWTVerifyGetKey = async () => {
+      throw makeError();
+    };
+    const err = await refusal(
+      verifyGithubActionsOidcToken(
+        await sign(claims()),
+        { manifestVersion: VERSION },
+        { ...deps(), getKey: unavailable }
+      )
+    );
+    expect(err.reason).toBe('unavailable');
+    expect(err.status).toBe(503);
+  });
+});
+
 describe('actionsOidcTokenForSubmit — the flag', () => {
   const user = { id: 9104, username: 'pixel-dev' } as never;
 
@@ -425,5 +479,52 @@ describe('the public Source row is for public repositories only', () => {
       sha: SHA,
     });
     await expect(readLiveActionsRunSourceForListing(priv, 'apb_01TEST')).resolves.toBeNull();
+  });
+});
+
+describe("the repository pin: an app's verified submits stay on one repository", () => {
+  const SLUG = 'knot-tier-pin-4410';
+  const pinRow = (repositoryId: string, repository: string) => ({
+    $queryRaw: vi.fn().mockResolvedValue([{ repositoryId, repository }]),
+  });
+
+  it('the first verified submit is accepted (nothing pinned yet) — its stored repository_id becomes the pin', async () => {
+    const db = { $queryRaw: vi.fn().mockResolvedValue([]) };
+    await expect(assertActionsRunRepositoryPinned(db, SLUG, SOURCE)).resolves.toBeUndefined();
+    // The pin is read for THIS app, from earlier verified, non-withdrawn, non-rejected requests.
+    const [strings, ...values] = db.$queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+    expect(values).toEqual([SLUG]);
+    const sql = strings.join('?');
+    expect(sql).toContain('"actions_run_repository_id" IS NOT NULL');
+    expect(sql).toContain(`"status" IN ('pending', 'approved')`);
+    expect(sql).toContain('ORDER BY "submitted_at" ASC');
+  });
+
+  it('a later submit from the same repository is accepted, even after a rename', async () => {
+    const db = pinRow(SOURCE.repositoryId, 'acme-studio/old-name');
+    await expect(assertActionsRunRepositoryPinned(db, SLUG, SOURCE)).resolves.toBeUndefined();
+  });
+
+  it('a submit from a different repository is refused 409, naming the expected one', async () => {
+    const db = pinRow('550001234', 'acme-studio/pixel-garden-original');
+    const err = await refusal(assertActionsRunRepositoryPinned(db, SLUG, SOURCE));
+    expect(err.reason).toBe('repository-mismatch');
+    expect(err.status).toBe(409);
+    expect(err.message).toBe(
+      "GitHub Actions OIDC token rejected: this app's verified submits come from " +
+        'acme-studio/pixel-garden-original (repository id 550001234), but this token is from ' +
+        'acme-studio/pixel-garden (repository id 612340987). Submit from acme-studio/pixel-garden-original.'
+    );
+  });
+
+  it('columns absent: no pin can exist, so the submit proceeds as today', async () => {
+    const db = { $queryRaw: vi.fn().mockRejectedValue(missingColumn) };
+    await expect(assertActionsRunRepositoryPinned(db, SLUG, SOURCE)).resolves.toBeUndefined();
+  });
+
+  it('any other read failure refuses with a retryable 503 rather than skipping the pin', async () => {
+    const db = { $queryRaw: vi.fn().mockRejectedValue(new Error('connection terminated')) };
+    const err = await refusal(assertActionsRunRepositoryPinned(db, SLUG, SOURCE));
+    expect(err.status).toBe(503);
   });
 });

@@ -17,6 +17,7 @@ import type { ActionsRunSource } from '~/server/schema/blocks/actions-run-source
 const m = vi.hoisted(() => ({
   verify: vi.fn(),
   write: vi.fn(),
+  pin: vi.fn(),
   putObject: vi.fn(),
 }));
 
@@ -40,6 +41,7 @@ vi.mock('~/server/services/blocks/github-actions-oidc.service', async (importOri
 vi.mock('~/server/services/blocks/actions-run-source.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ActionsRunSourceService>()),
   writeActionsRunSource: m.write,
+  assertActionsRunRepositoryPinned: m.pin,
 }));
 vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AppDeveloperTermsService>()),
@@ -89,6 +91,7 @@ beforeEach(() => {
   m.putObject.mockResolvedValue({});
   m.verify.mockResolvedValue(SOURCE);
   m.write.mockResolvedValue(true);
+  m.pin.mockResolvedValue(undefined);
   dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
   dbMock.dbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
   dbMock.dbRead.appListing.findFirst.mockResolvedValue(null);
@@ -137,6 +140,34 @@ describe('submitVersion — GitHub Actions OIDC token', () => {
     expect(m.write).not.toHaveBeenCalled();
   });
 
+  it("checks the verified run against THIS app's repository pin", async () => {
+    await submitVersion({
+      bundleBuffer: await bundle(),
+      submittedByUserId: SUBMITTER_ID,
+      submitterIsModerator: false,
+      githubOidcToken: TOKEN,
+    });
+    expect(m.pin).toHaveBeenCalledTimes(1);
+    expect(m.pin).toHaveBeenCalledWith(expect.anything(), SLUG, SOURCE);
+  });
+
+  it('a token from another repository than the pinned one refuses the submit before any upload', async () => {
+    m.pin.mockRejectedValue(
+      new GithubActionsOidcRefusal('repository-mismatch', 'expected tidal-labs/tide-chart', 409)
+    );
+    await expect(
+      submitVersion({
+        bundleBuffer: await bundle(),
+        submittedByUserId: SUBMITTER_ID,
+        submitterIsModerator: false,
+        githubOidcToken: TOKEN,
+      })
+    ).rejects.toMatchObject({ reason: 'repository-mismatch', status: 409 });
+    expect(m.putObject).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    expect(m.write).not.toHaveBeenCalled();
+  });
+
   it('no token: nothing is verified or stored, and the response says nothing about it', async () => {
     const result = await submitVersion({
       bundleBuffer: await bundle(),
@@ -144,6 +175,7 @@ describe('submitVersion — GitHub Actions OIDC token', () => {
       submitterIsModerator: false,
     });
     expect(m.verify).not.toHaveBeenCalled();
+    expect(m.pin).not.toHaveBeenCalled();
     expect(m.write).not.toHaveBeenCalled();
     expect(result).not.toHaveProperty('actionsRunSourceRecorded');
   });
