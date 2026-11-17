@@ -53,7 +53,9 @@ const (
 // RaceSkewMargin widens the race threshold below the request's start: an entry filled from then on
 // counts as raced. It covers the clock difference between the Node pod that stamped `startedAt` and
 // the one that stamped the entry, and a fill by a concurrent request for the same ids just before
-// (which a Go-first serve could have missed too). Wider is more conservative (more raced).
+// (which a Go-first serve could have missed too). Wider is more conservative: more raced entries, so
+// more database reads counted for the caches Go answers itself, and more `raced` results (on the
+// caches Go falls back on only).
 const RaceSkewMargin = 100 * time.Millisecond
 
 // Caches checked before hydration: the fallback reasons a request raises on a miss there, by the
