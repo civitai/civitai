@@ -254,6 +254,8 @@ describe('getEntityCoverImage bounds the CONNECTIONS branch to one row per entit
         `WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL ` +
         // `imageNotFlagged`; its rows are in entity-cover-image-visibility.behavior.test.ts.
         'AND ( i."acceptableMinor" = FALSE OR (?::boolean AND i."userId" = ?) OR ?::boolean ) ' +
+        // `coverRated`: an unrated image is a cover for moderators only.
+        'AND (i."nsfwLevel" != 0 OR ?::boolean) ' +
         // `heldGalleryImageSql`, exempting the model owner and moderators; its rows are in
         // entity-cover-image-visibility.behavior.test.ts.
         'AND ( NOT (COALESCE(m.minor, FALSE) OR COALESCE(m."sfwOnly", FALSE)) ' +
