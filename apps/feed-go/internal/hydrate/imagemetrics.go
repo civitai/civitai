@@ -50,8 +50,12 @@ const (
 	metricPopulateBound = time.Minute
 )
 
-// metricHeartbeatEvery is how often a held lock is re-armed (LOCK_HEARTBEAT_MS; tests shorten it).
-var metricHeartbeatEvery = metricLockHeartbeat
+// metricHeartbeatTicks starts the ticker that re-arms held locks every LOCK_HEARTBEAT_MS and
+// returns its channel and its stop (tests drive the channel themselves).
+var metricHeartbeatTicks = func() (<-chan time.Time, func()) {
+	t := time.NewTicker(metricLockHeartbeat)
+	return t.C, t.Stop
+}
 
 // imageMetricTypes is ENTITY_METRIC_TYPES.Image (event-engine-common/types/metric-types.ts), in order.
 var imageMetricTypes = []string{"Cry", "Heart", "Laugh", "Like", "Collection", "commentCount", "tippedAmount", "tippedCount"}
@@ -113,14 +117,9 @@ func (s *Sources) metricsComputed() bool {
 	return s.Compute != nil && s.Compute.ClickHouse != nil && s.Cache != nil
 }
 
-// Node's budget for the whole read: getImageMetricsObject (src/server/services/image.service.ts)
-// bounds MetricService.fetch by CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS (3000 by default) and past it
-// answers from the cache, so a missed image is statsUnknown: true. A lookup here that ran longer
-// could answer counts, or the waiters' zeros, where Node answers "unknown". metricsTimeoutMax keeps
-// this lookup's bound under that budget whatever FEED_GO_CLICKHOUSE_TIMEOUT_MS and
-// FEED_GO_REQUEST_BUDGET_MS say, with room for what Node's budget also spends before its populate
-// (its own cache read and lock command, and with image-metrics-swr the SWR read): this bound starts
-// only after this service's cache read.
+// Node bounds MetricService.fetch by CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and past it answers
+// statsUnknown; a lookup here that outlived it would answer counts where Node answers "unknown".
+// metricsTimeoutMax stays under that budget, less what Node spends before its populate.
 const (
 	nodeMetricsBudget = 3000 * time.Millisecond
 	metricsTimeoutMax = nodeMetricsBudget - 500*time.Millisecond
@@ -183,21 +182,10 @@ func (s *Sources) fillMetrics(ctx context.Context, miss []int, out map[int]Metri
 // lookupImageMetrics is MetricService.fetch over ids that all missed: per id, the counts as fetch
 // returns them before its zero fill (a record of metricType → count; empty for an image with none).
 //
-//   - The populate lock (`metrics:lock:Image:<id>`). With write-back on it is taken as Node takes it
-//     (SET NX, 10 s, heartbeated every 5 s while the populate runs, released after; left to expire
-//     after a server timeout). With write-back off this service writes nothing: it only reads the
-//     lock (EXISTS), so an id another process is populating is waited on, never queried again.
-//   - The populate: the ids not locked elsewhere, fetchFromClickhouse's query in batches of 1000,
-//     with the point-lookup settings (at most 100 ids and none marked `metrics:timeout`), the retry
-//     settings (one marked), or none (more than 100). With write-back on each id's hash is written
-//     with hReplaceStampedEx as Node writes it, and a capped lookup the server stopped marks its ids.
-//     A write-back populate runs detached from the request: when the request's bound ends first the
-//     lookup fails (the request falls back) and the populate still finishes and fills the cache,
-//     as Node's un-aborted read does.
-//   - The waiters: an id locked elsewhere is re-read from the cache every 200 ms, up to 15 times; a
-//     hash that lands is taken (a `notFound` one as no counts). One that never does fails the lookup
-//     (errMetricsWaitExhausted): fetch's zero fill answers it only past its caller's budget, where
-//     Node answers statsUnknown.
+//   - With write-back off this service writes nothing: it only reads the populate lock, so an id
+//     another process is populating is waited on, never queried again.
+//   - A write-back populate outlives its request: when the request's bound ends first the lookup
+//     fails (the request falls back) and the populate still fills the cache, as Node's read does.
 func (s *Sources) lookupImageMetrics(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
 	c := s.Compute
 	writeBack := c.WriteBack
@@ -480,15 +468,15 @@ func (s *Sources) heartbeatMetricLocks(ctx context.Context, ids []int) func() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		t := time.NewTicker(metricHeartbeatEvery)
-		defer t.Stop()
+		ticks, stopTicks := metricHeartbeatTicks()
+		defer stopTicks()
 		for {
 			select {
 			case <-stop:
 				return
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-ticks:
 				_, _ = s.Cache.Pipelined(ctx, func(p redis.Pipeliner) error {
 					for _, id := range ids {
 						p.Expire(ctx, metricLockKey(id), metricLockTTL)

@@ -96,7 +96,6 @@ import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
-import { getMetricsSearchClient, withMeili } from '~/server/meilisearch/client';
 import { isStatementTimeout } from '~/server/utils/statement-timeout';
 import {
   createMetricRefresher,

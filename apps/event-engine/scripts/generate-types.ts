@@ -62,14 +62,6 @@ class DebugActions {
     // We don't use this in our handlers typically
   }
 
-  feedUpdate = (entityType: string, entityId: number | null | undefined, _type: string = 'update') => {
-    // Feed updates don't generate metrics, just track that it was called
-  }
-
-  feedDelete = (entityType: string, entityId: number | null | undefined) => this.feedUpdate(entityType, entityId, 'delete')
-
-  feedMetricUpdate = (entityType: string, entityId: number | null | undefined) => this.feedUpdate(entityType, entityId, 'metricUpdate')
-
   forMetric = (entityType: string, entityId: number | null | undefined) => {
     return {
       as: (userId?: number | null) => ({

@@ -43,6 +43,7 @@ import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 import { capNestedImages } from '~/server/utils/browsing-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -98,11 +99,14 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const images = await getImagesForBounties({
-      bountyIds: bountIds,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, showsImage] = await Promise.all([
+      getImagesForBounties({
+        bountyIds: bountIds,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      }),
+      getRequestImageFilter(ctx),
+    ]);
 
     return {
       nextCursor,
@@ -111,7 +115,7 @@ export const getInfiniteBountiesHandler = async ({
           const tags = item.tags;
           const user = item.user;
           const itemImages = capNestedImages(
-            (images[item.id] ?? []).map((image) => ({
+            (images[item.id] ?? []).filter(showsImage).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
               // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
@@ -184,11 +188,14 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
         : null;
     const { meta: _meta, ...publicBounty } = bounty;
 
-    const images = await getBountyImages({
-      id: bounty.id,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, showsImage] = await Promise.all([
+      getBountyImages({
+        id: bounty.id,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      }),
+      getRequestImageFilter(ctx),
+    ]);
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
@@ -202,11 +209,13 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       details: bounty.details
         ? publicBountyDetails(bounty.details as BountyDetailsSchema, ctx?.user?.isModerator)
         : ({} as BountyDetailsSchema),
-      images: capNestedImages(images, ctx, { ownerId: bounty.user?.id }).map((image) => ({
-        ...image,
-        meta: (image?.meta ?? {}) as ImageMetaProps,
-        metadata: image?.metadata as MixedObject,
-      })),
+      images: capNestedImages(images.filter(showsImage), ctx, { ownerId: bounty.user?.id }).map(
+        (image) => ({
+          ...image,
+          meta: (image?.meta ?? {}) as ImageMetaProps,
+          metadata: image?.metadata as MixedObject,
+        })
+      ),
       tags: bounty.tags.map(({ tag }) => tag),
       files,
     };
@@ -268,14 +277,17 @@ export const getBountyEntriesHandler = async ({
       nextCursor = nextItem?.id;
     }
 
-    const images = await getImagesByEntity({
-      ids: entries.map((entry) => entry.id),
-      type: 'BountyEntry',
-      imagesPerId: 4,
-      include: ['tags'],
-      isModerator: ctx.user?.isModerator,
-      userId: ctx.user?.id,
-    });
+    const [images, showsImage] = await Promise.all([
+      getImagesByEntity({
+        ids: entries.map((entry) => entry.id),
+        type: 'BountyEntry',
+        imagesPerId: 4,
+        include: ['tags'],
+        isModerator: ctx.user?.isModerator,
+        userId: ctx.user?.id,
+      }),
+      getRequestImageFilter(ctx),
+    ]);
 
     const files = await getFilesByEntity({
       ids: entries.map((entry) => entry.id),
@@ -301,7 +313,7 @@ export const getBountyEntriesHandler = async ({
             ...entry,
             user,
             images: capNestedImages(
-              images.filter((i) => i.entityId === entry.id),
+              images.filter((i) => i.entityId === entry.id && showsImage(i)),
               ctx,
               { ownerId: user.id }
             ).map((i) => ({

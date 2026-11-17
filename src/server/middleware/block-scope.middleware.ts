@@ -1462,6 +1462,7 @@ async function resolveDevTunnelHubClaims(args: {
     parseManifestBuzzBudget,
     resolveDevBuzzBudget,
     FORCED_SFW_CEILING,
+    forcedSfwViewerLevel,
   } = await import('~/server/services/blocks/dev-scoped-mint.service');
   const source = dev
     ? tunnel.grantedScopes ?? []
@@ -1489,7 +1490,7 @@ async function resolveDevTunnelHubClaims(args: {
     dev: true,
     ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     maxBrowsingLevel: FORCED_SFW_CEILING,
-    viewerBrowsingLevel: FORCED_SFW_CEILING,
+    viewerBrowsingLevel: await forcedSfwViewerLevel(userId),
   };
 }
 
