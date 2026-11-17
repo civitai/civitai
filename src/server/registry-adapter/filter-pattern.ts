@@ -55,6 +55,29 @@ export const FILTER_PATTERN_MAX_LENGTH = 1024;
  */
 export const FILTER_PATTERN_MAX_SIZE = 256;
 
+/**
+ * Longest value a filter pattern is run on, in UTF-16 code units (`string.length`): a body string
+ * for `pattern` (and `propertyNames`' `pattern`), a property name for `patternProperties` and the
+ * `additionalProperties` that re-tests its keys. Matching is linear in the value's length, and
+ * the strings a body holds have no length bound of their own, so this bounds the CPU a pattern
+ * can spend per value: at most this length times the pattern's size.
+ *
+ * A longer value counts as not matching: the compiled pattern's `test` returns false without
+ * running the engine ({@link compileFilterPattern}, the one object ajv calls `test` on). It is
+ * the `pattern` keyword that fails, not the filter, so the result composes as a failed keyword
+ * does: `not: {pattern: p}` PASSES for an oversized value whatever `p` is; an `anyOf` or `oneOf`
+ * branch holding the pattern fails, so another branch decides; an `if` with the pattern takes the
+ * `else`; a property name over the bound is matched by no `patternProperties` key, so
+ * `additionalProperties` applies to it unless `properties` names it. A pattern filter over a
+ * string longer than this (document text, say) therefore finds no match in it, not even one in
+ * its first characters.
+ *
+ * ajv's meta-schema patterns, which validate the filter itself and never a body, are compiled
+ * through the same engine and so carry the bound too; they never meet it, as no string in a filter
+ * is longer than the filter's own bound as JSON (`FILTER_MAX_BYTES` in `json-schema.ts`).
+ */
+export const FILTER_PATTERN_MAX_INPUT_LENGTH = 16384;
+
 /** A pattern this source will not evaluate. Its message is the `bad_request` sent. */
 export class FilterPatternError extends Error {}
 
@@ -494,7 +517,11 @@ export type CompiledFilterPattern = RegExpLike & {
   readonly dfaBytes: number | undefined;
 };
 
-/** `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. */
+/**
+ * `pattern` compiled for unanchored, linear-time matching; throws {@link FilterPatternError}. Its
+ * `test` is false, without matching, for a value longer than
+ * {@link FILTER_PATTERN_MAX_INPUT_LENGTH}.
+ */
 export function compileFilterPattern(pattern: string): CompiledFilterPattern {
   const { re2, size } = translate(pattern);
   let compiled: RE2JS;
@@ -510,8 +537,9 @@ export function compileFilterPattern(pattern: string): CompiledFilterPattern {
   }
   boundDfa(compiled);
   return {
-    // RE2JS `test` finds a match anywhere in the input, as ECMA's does: unanchored.
-    test: (s: string) => compiled.test(s),
+    // RE2JS `test` finds a match anywhere in the input, as ECMA's does: unanchored. A value over
+    // FILTER_PATTERN_MAX_INPUT_LENGTH is not matched, and the engine is not run on it.
+    test: (s: string) => s.length <= FILTER_PATTERN_MAX_INPUT_LENGTH && compiled.test(s),
     // ajv keys a compiled pattern by `toString()` within one schema, so it must name the pattern.
     toString: () => `/${pattern}/u (re2)`,
     size,

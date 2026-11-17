@@ -22,7 +22,8 @@ export function newValidator() {
  * each such key again where `additionalProperties` re-tests it, a pattern repeated counted every
  * time. Each place runs its pattern over every value it applies to, so the pattern work per body
  * is at most this many runs, each linear in the value's length with a factor of the pattern's
- * size ({@link FILTER_PATTERN_MAX_SIZE}): at most places × size × value length.
+ * size ({@link FILTER_PATTERN_MAX_SIZE}): at most places × size × value length, where a value
+ * longer than `FILTER_PATTERN_MAX_INPUT_LENGTH` is not matched and costs no pattern work.
  *
  * Distinct patterns are at most the places, so this also bounds the compiled patterns a filter
  * keeps.
@@ -73,8 +74,10 @@ export const FILTER_MAX_DEPTH = 32;
  * input. So a pattern's size is bounded ({@link FILTER_PATTERN_MAX_SIZE}), and so are the places a
  * filter applies one ({@link FILTER_MAX_PATTERN_PLACES}) and their sizes' sum
  * ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}); the pattern work per body is then bounded by places ×
- * size × string length. A pattern it cannot run with ECMA-262's meaning (a lookaround, a
- * backreference), one over its length or size bound, or a filter over
+ * size × string length, where a string longer than `FILTER_PATTERN_MAX_INPUT_LENGTH`
+ * (`filter-pattern.ts`) is not matched and costs no pattern work, so `not: {pattern}` passes for
+ * it. A pattern it cannot run with ECMA-262's meaning (a lookaround, a backreference), one over
+ * its length or size bound, or a filter over
  * {@link FILTER_MAX_PATTERN_PLACES} or the total, is `bad_request` when it is compiled.
  */
 const REFUSED_FILTER_KEYS = [

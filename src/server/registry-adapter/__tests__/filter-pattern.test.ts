@@ -2,6 +2,7 @@ import { RE2JS } from 're2js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   FILTER_PATTERN_DFA_BYTES,
+  FILTER_PATTERN_MAX_INPUT_LENGTH,
   FILTER_PATTERN_MAX_LENGTH,
   FILTER_PATTERN_MAX_SIZE,
   FilterPatternError,
@@ -524,5 +525,68 @@ describe('the filter cache counts patterns, not only filters', () => {
     const first = compile({ pattern: '^a' });
     for (let k = 0; k < 10; k++) compile({ pattern: `^b${k}` });
     expect(compile({ pattern: '^a' })).toBe(first);
+  });
+});
+
+// The values below are built from the literal 16384, not from FILTER_PATTERN_MAX_INPUT_LENGTH, so
+// moving the bound either way fails a test here. `^a` matches any run of `a` whatever its length,
+// so the bound is the only reason a value over it is not matched.
+describe('🔴 a pattern is not run on a value longer than the input bound', () => {
+  const atBound = 'a'.repeat(16384);
+  const overBound = 'a'.repeat(16385);
+
+  it('the bound is 16384', () => {
+    expect(FILTER_PATTERN_MAX_INPUT_LENGTH).toBe(16384);
+  });
+
+  it('^a matches a value of exactly 16384; one of 16385 is not matched and re2js is not run', () => {
+    const rx = compileFilterPattern('^a');
+    // Spied after the compile, whose self-test matches through re2js too.
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect([rx.test(atBound), rx.test(overBound)]).toEqual([true, false]);
+      expect(re2Test).toHaveBeenCalledTimes(1);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  // An astral code point is two UTF-16 code units: 8192 of them are 16384 units, 8192 code points.
+  it('the length is counted in UTF-16 code units, not code points', () => {
+    const rx = compileFilterPattern('^\\u{1F600}');
+    const astral = '\u{1F600}'.repeat(8192);
+    expect(astral.length).toBe(16384);
+    expect([rx.test(astral), rx.test(`${astral}a`)]).toEqual([true, false]);
+  });
+
+  describe('through a compiled filter, the pattern keyword fails on an oversized value', () => {
+    const compile = createFilterCompiler();
+
+    it('pattern: 16384 matches, 16385 does not', () => {
+      const f = compile({ properties: { text: { pattern: '^a' } } })!;
+      expect([f({ text: atBound }), f({ text: overBound })]).toEqual([true, false]);
+    });
+
+    it('not: {pattern} PASSES for an oversized value, and fails at the bound', () => {
+      const f = compile({ properties: { text: { not: { pattern: '^a' } } } })!;
+      expect([f({ text: atBound }), f({ text: overBound }), f({ text: 'b' })]).toEqual([
+        false,
+        true,
+        true,
+      ]);
+    });
+
+    it('patternProperties: a key over the bound is matched by no key, so additionalProperties applies', () => {
+      const f = compile({
+        patternProperties: { '^a': { type: 'number' } },
+        additionalProperties: false,
+      })!;
+      expect([f({ [atBound]: 1 }), f({ [overBound]: 1 })]).toEqual([true, false]);
+    });
+
+    it('propertyNames: a name over the bound does not match its pattern', () => {
+      const f = compile({ propertyNames: { pattern: '^a' } })!;
+      expect([f({ [atBound]: 1 }), f({ [overBound]: 1 })]).toEqual([true, false]);
+    });
   });
 });

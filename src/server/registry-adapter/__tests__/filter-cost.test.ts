@@ -161,3 +161,19 @@ describe('🔴 a backtracking pattern is applied in linear time', () => {
     expect(res.text.startsWith('event: upsert')).toBe(true);
   });
 });
+
+// Built from the literal 16384 (the bound, `FILTER_PATTERN_MAX_INPUT_LENGTH`), so moving the bound
+// fails here. `^a` matches any run of `a`, so only the bound excludes the longer slug.
+describe('🔴 a filter pattern is not run on a value longer than the input bound', () => {
+  it('a slug of exactly 16384 a matches ^a, and the entity is sent', async () => {
+    const res = await get({ properties: { slug: { pattern: '^a' } } }, serving('a'.repeat(16384)));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('a slug of 16385 a is not matched: the filter is applied, the entity excluded', async () => {
+    const res = await get({ properties: { slug: { pattern: '^a' } } }, serving('a'.repeat(16385)));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: live')).toBe(true);
+  });
+});
