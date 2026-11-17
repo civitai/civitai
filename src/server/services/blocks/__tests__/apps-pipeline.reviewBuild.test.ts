@@ -201,6 +201,19 @@ describe('triggerReviewBuild: directPublish', () => {
     expect(Object.keys(parsed)).toEqual([...legacyKeys.slice(0, -1), 'directPublish', 'ts']);
   });
 
+  it('a build-only environment never asks for a direct publish, even with both flags on', async () => {
+    // A direct publish writes the shared PRODUCTION static server; PR previews are build-only.
+    Object.assign(mockFlags, { direct: true, shared: true });
+    mockEnv.APPS_REVIEW_BUILD_ONLY = true;
+    try {
+      await triggerReviewBuild(args);
+    } finally {
+      delete mockEnv.APPS_REVIEW_BUILD_ONLY;
+    }
+    const parsed = JSON.parse(sentBody);
+    expect(Object.keys(parsed)).toEqual(legacyKeys);
+  });
+
   // INVARIANT GUARDS (green before the change too): OFF is the old body, byte for byte.
   it.each([
     ['both off', { direct: false, shared: false }],
