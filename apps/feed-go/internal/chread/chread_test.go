@@ -77,7 +77,8 @@ func TestQueryRequestAndRows(t *testing.T) {
 		"query":       {"SELECT 1 \nFORMAT JSONEachRow"},
 		"database":    {"metricsdb"},
 		"application": {"feed-go"},
-		"output_format_json_quote_64bit_integers": {"0"},
+		"output_format_json_quote_64bit_integers":      {"0"},
+		"cancel_http_readonly_queries_on_client_close": {"1"},
 		"max_threads":        {"1"},
 		"max_execution_time": {"6"},
 	}
@@ -101,7 +102,15 @@ func TestWireQuery(t *testing.T) {
 
 // A failed response is a ServerError carrying ClickHouse's code: from the exception header, else
 // from the body's "Code: N." text; IsServerTimeout is code 159 only. An exception written into a
-// started response (a 200 whose query then failed) is one too.
+// started response (a 200 whose query then failed) is one too, in each shape ClickHouse writes it:
+//   - JSONEachRow's own exception row (http_write_exception_in_output_format, on by default), as
+//     JSONEachRowRowOutputFormat::writeSuffix writes it;
+//   - the marker block of WriteBufferFromHTTPServerResponse::cancelWithException when the format did
+//     not write it: through 25.10 "__exception__\r\n<message>\n"; from 25.11 a 16-letter tag (also
+//     sent as X-ClickHouse-Exception-Tag) on its own line after the marker, and the block closed by
+//     "<length> <tag>\r\n__exception__\r\n" (the server then breaks the chunked stream).
+//
+// A tag on the marker's own line is not a shape any release writes; it is decoded the same way.
 func TestServerErrors(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -116,7 +125,11 @@ func TestServerErrors(t *testing.T) {
 		{"auth", 403, "516", "Code: 516. DB::Exception: default: Authentication failed", 516, false},
 		{"no code", 502, "", "bad gateway", 0, false},
 		{"mid-stream", 200, "", "{\"entityId\":1,\"metricType\":\"Like\",\"value\":1}\nCode: 159. DB::Exception: Timeout exceeded", 159, true},
-		{"mid-stream tagged", 200, "", "{\"x\":1}\n__exception__ab12\nCode: 159. DB::Exception: Timeout exceeded", 159, true},
+		{"mid-stream marker, 25.8", 200, "", "{\"x\":1}\n__exception__\r\nCode: 159. DB::Exception: Timeout exceeded: elapsed 1.000 sec., maximum: 1. (TIMEOUT_EXCEEDED) (version 25.8.9.20 (official build))\n", 159, true},
+		{"mid-stream marker, 25.11 tag on its own line", 200, "", "{\"x\":1}\n\r\n__exception__\r\nqwertyuiopasdfgh\r\nCode: 159. DB::Exception: Timeout exceeded: elapsed 1.000 sec., maximum: 1. (TIMEOUT_EXCEEDED) (version 25.11.9.34 (official build))\n116 qwertyuiopasdfgh\r\n__exception__\r\n", 159, true},
+		{"mid-stream marker, tag on the marker line", 200, "", "{\"x\":1}\n__exception__ qwertyuiopasdfgh\r\nCode: 159. DB::Exception: Timeout exceeded\n", 159, true},
+		{"mid-stream marker, 25.11, not a timeout", 200, "", "{\"x\":1}\n\r\n__exception__\r\nzxcvbnmlkjhgfdsa\r\nCode: 241. DB::Exception: Memory limit exceeded\n47 zxcvbnmlkjhgfdsa\r\n__exception__\r\n", 241, false},
+		{"exception row, timeout", 200, "", "{\"x\":1}\n{\"exception\":\"Code: 159. DB::Exception: Timeout exceeded: elapsed 1.000 sec., maximum: 1. (TIMEOUT_EXCEEDED) (version 25.8.9.20 (official build))\"}\n", 159, true},
 		{"exception object", 200, "", "{\"x\":1}\n{\"exception\":\"Code: 202. DB::Exception: Too many simultaneous queries\"}\n", 202, false},
 	}
 	for _, tc := range cases {
@@ -136,6 +149,11 @@ func TestServerErrors(t *testing.T) {
 			var se *ServerError
 			if !errors.As(err, &se) || se.Code != tc.code || se.Status != tc.status {
 				t.Fatalf("err %v, want a ServerError code %d status %d", err, tc.code, tc.status)
+			}
+			// The message is the exception text, without the marker block's tag or trailer.
+			if tc.code != 0 && (!strings.HasPrefix(se.Message, "Code: ") || strings.Contains(se.Message, "__exception__") ||
+				strings.Contains(se.Message, "qwertyuiopasdfgh") || strings.Contains(se.Message, "zxcvbnmlkjhgfdsa")) {
+				t.Fatalf("message %q, want the exception text alone", se.Message)
 			}
 			if IsServerTimeout(err) != tc.timeout {
 				t.Fatalf("IsServerTimeout = %v, want %v", IsServerTimeout(err), tc.timeout)

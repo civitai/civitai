@@ -298,15 +298,19 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	}
 }
 
-// The ClickHouse reader is configured only with the miss computation on and both CLICKHOUSE_HOST and
-// CLICKHOUSE_USERNAME set (Node's shouldConnect); its timeout defaults to 2 s and is held to half the
-// request budget; its read cap defaults to 4.
+// The ClickHouse reader is configured only from feed-go's own variables: the miss computation on and
+// both FEED_GO_CLICKHOUSE_HOST and FEED_GO_CLICKHOUSE_USERNAME set (Node's shouldConnect over those).
+// The app's own CLICKHOUSE_HOST / CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD, which the shared app
+// config carries into this service's environment with the app's read-write login, never configure
+// it, alone or alongside. Its timeout defaults to 2 s and is held to half the request budget; its
+// read cap defaults to 4.
 func TestLoadClickHouse(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
 	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CLICKHOUSE_TIMEOUT_MS", "FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT",
-		"FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD"} {
+		"FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME", "CLICKHOUSE_PASSWORD",
+		"FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
 		t.Setenv(k, "")
 	}
 	load := func() *Config {
@@ -320,13 +324,23 @@ func TestLoadClickHouse(t *testing.T) {
 	if c := load(); c.ClickHouseURL != "" || c.ClickHouseTimeout != 2*time.Second || c.ClickHouseMaxInFlight != 4 {
 		t.Fatalf("defaults: url %q timeout %v cap %d; want unset, 2s, 4", c.ClickHouseURL, c.ClickHouseTimeout, c.ClickHouseMaxInFlight)
 	}
-	t.Setenv("CLICKHOUSE_HOST", "https://ch.example.test:8443")
-	if c := load(); c.ClickHouseURL != "" {
-		t.Fatalf("host without username: url %q, want unset", c.ClickHouseURL)
+	// The app's variables alone: no reader.
+	t.Setenv("CLICKHOUSE_HOST", "https://app-ch.example.test:8443")
+	t.Setenv("CLICKHOUSE_USERNAME", "app-writer")
+	t.Setenv("CLICKHOUSE_PASSWORD", "app-pw")
+	if c := load(); c.ClickHouseURL != "" || c.ClickHouseUsername != "" || c.ClickHousePassword != "" {
+		t.Fatalf("app variables only: %q %q %q, want no reader (the app's login is never used)", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
 	}
-	t.Setenv("CLICKHOUSE_USERNAME", "reader")
-	t.Setenv("CLICKHOUSE_PASSWORD", "pw")
-	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "reader" || c.ClickHousePassword != "pw" {
+	t.Setenv("FEED_GO_CLICKHOUSE_HOST", "https://ch.example.test:8443")
+	if c := load(); c.ClickHouseURL != "" {
+		t.Fatalf("host without username (the app's username set): url %q, want unset", c.ClickHouseURL)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_USERNAME", "feed-go-reader")
+	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "" {
+		t.Fatalf("own host and username, no own password: %q %q %q; want the app's password not taken", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
+	}
+	t.Setenv("FEED_GO_CLICKHOUSE_PASSWORD", "feed-go-pw")
+	if c := load(); c.ClickHouseURL != "https://ch.example.test:8443" || c.ClickHouseUsername != "feed-go-reader" || c.ClickHousePassword != "feed-go-pw" {
 		t.Fatalf("set: %q %q %q", c.ClickHouseURL, c.ClickHouseUsername, c.ClickHousePassword)
 	}
 	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")

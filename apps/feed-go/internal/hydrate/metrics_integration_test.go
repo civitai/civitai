@@ -8,7 +8,12 @@ package hydrate
 // live in 1_160_000..1_160_999.
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
 	"reflect"
 	"strconv"
 	"testing"
@@ -108,4 +113,60 @@ func TestIntegrationClickHouseServerTimeout(t *testing.T) {
 	if !chread.IsServerTimeout(err) {
 		t.Fatalf("err %v, want a server timeout (code 159)", err)
 	}
+}
+
+// Every read asks ClickHouse to cancel it when the client goes away
+// (cancel_http_readonly_queries_on_client_close=1), and the server accepts that setting on a GET
+// (read-only mode 2 allows changing settings) and applies it, with the populate's own settings too.
+func TestIntegrationClickHouseCancelsOnClientClose(t *testing.T) {
+	ch := integtest.ClickHouse(t, 1)
+	for _, settings := range [][]chread.Setting{nil, metricPointSettings, metricRetrySettings} {
+		rows, err := ch.Query(integtest.Ctx(t), `SELECT toUInt8(getSetting('cancel_http_readonly_queries_on_client_close')) AS v`, settings)
+		if err != nil {
+			t.Fatalf("settings %v: %v", settings, err)
+		}
+		if want := []map[string]any{{"v": json.Number("1")}}; !reflect.DeepEqual(rows, want) {
+			t.Fatalf("settings %v: rows %v, want %v (the setting on)", settings, rows, want)
+		}
+	}
+}
+
+// A query the server stops at max_execution_time AFTER the response has started (more than the
+// server's output buffer already sent, so the status is a 200) is still a server timeout (code
+// 159). The raw tail of the same response is logged: the shape this server version writes.
+func TestIntegrationClickHouseTimeoutMidResponse(t *testing.T) {
+	ch := integtest.ClickHouse(t, 1)
+	const sql = `SELECT number, repeat('x', 100000) AS pad, sleepEachRow(0.01) AS s FROM numbers(100000)`
+	settings := []chread.Setting{{Name: "max_block_size", Value: "1"}, {Name: "max_execution_time", Value: "2"}, {Name: "timeout_overflow_mode", Value: "throw"}}
+	_, err := ch.Query(integtest.Ctx(t), sql, settings)
+	var se *chread.ServerError
+	if !errors.As(err, &se) || se.Status != http.StatusOK || !chread.IsServerTimeout(err) {
+		t.Fatalf("err %v, want a server timeout (code 159) inside a started (200) response", err)
+	}
+	t.Logf("mid-response exception: %q", se.Message)
+
+	u, err := url.Parse(os.Getenv(integtest.EnvClickHouseURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("query", chread.WireQuery(sql))
+	for _, s := range settings {
+		q.Set(s.Name, s.Value)
+	}
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(integtest.Ctx(t), http.MethodGet, u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth(os.Getenv(integtest.EnvClickHouseUser), os.Getenv(integtest.EnvClickHousePassword))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, readErr := io.ReadAll(resp.Body)
+	tail := body[max(0, len(body)-600):]
+	t.Logf("raw: status %d, exception-code header %q, tag header %q, %d bytes (read error %v), tail %q",
+		resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code"), resp.Header.Get("X-ClickHouse-Exception-Tag"), len(body), readErr, tail)
 }

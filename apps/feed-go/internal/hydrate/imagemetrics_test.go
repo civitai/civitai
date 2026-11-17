@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -231,8 +232,19 @@ func (c *goldenMetricsCase) ch(t *testing.T, r *testkit.Redis) *fakeCH {
 // answered; a failed read is the fallback, where Node throws), and with write-back on the same cache
 // afterwards (the hashes, their stamps and expiries, the timeout markers, the locks released or left).
 // The write is the same Lua script, byte for byte. With write-back off the cache is untouched.
+//
+// One case is recorded from fetch alone but never reaches a reader in Node: in locked-never-filled
+// fetch sleeps 15 × 200 ms on the held lock before it answers zeros, which is all of
+// getImageMetricsObject's 3 s budget (CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS) before its cache reads
+// and lock command, so the caller's timeout always wins and Node answers from the cache
+// (statsUnknown). There this service falls back.
 func TestMetricsMissGolden(t *testing.T) {
 	g := loadGoldenMetrics(t)
+	for name := range nodeBudgetExpires {
+		if !slices.ContainsFunc(g.Cases, func(c goldenMetricsCase) bool { return c.Name == name }) {
+			t.Fatalf("golden case %q is gone", name)
+		}
+	}
 	if g.Scripts["hReplaceStampedEx"] != hReplaceStampedEx {
 		t.Fatalf("hReplaceStampedEx differs from the script Node evaluates:\n got %q\nwant %q", hReplaceStampedEx, g.Scripts["hReplaceStampedEx"])
 	}
@@ -263,7 +275,7 @@ func TestMetricsMissGolden(t *testing.T) {
 					}
 				}
 
-				if c.Error != nil {
+				if c.Error != nil || nodeBudgetExpires[c.Name] {
 					if fallback.Reason(err) != "metrics-miss-failed" {
 						t.Fatalf("Node threw; got %v, %v (reason %q), want the metrics-miss-failed fallback", got, err, fallback.Reason(err))
 					}
@@ -308,6 +320,9 @@ func TestMetricsMissGolden(t *testing.T) {
 		}
 	}
 }
+
+// nodeBudgetExpires names the golden cases Node's caller times out on (TestMetricsMissGolden).
+var nodeBudgetExpires = map[string]bool{"locked-never-filled": true}
 
 func seedAndFill(s goldenStore, key string, fields map[string]string) goldenStore {
 	r := seedStore(s)
@@ -586,4 +601,66 @@ func TestMetricsMissLockReadFails(t *testing.T) {
 	if len(f.seen()) != 0 {
 		t.Fatal("queried past a failed lock read")
 	}
+}
+
+// The lookup's bound stays under Node's own: getImageMetricsObject gives the whole read 3 s
+// (CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS) and answers statsUnknown past it, so a lookup this service
+// let run longer could answer counts (or zeros) where Node answers "unknown". Whatever
+// FEED_GO_CLICKHOUSE_TIMEOUT_MS says, the bound is at most 2.5 s.
+func TestMetricsTimeoutBound(t *testing.T) {
+	for set, want := range map[time.Duration]time.Duration{
+		0:                       2000 * time.Millisecond,
+		900 * time.Millisecond:  900 * time.Millisecond,
+		2500 * time.Millisecond: 2500 * time.Millisecond,
+		2501 * time.Millisecond: 2500 * time.Millisecond,
+		3000 * time.Millisecond: 2500 * time.Millisecond,
+		10 * time.Second:        2500 * time.Millisecond,
+	} {
+		if got := (&MissCompute{MetricsTimeout: set}).metricsTimeout(); got != want {
+			t.Errorf("MetricsTimeout %v: bound %v, want %v", set, got, want)
+		}
+	}
+}
+
+// A ClickHouse read slower than Node's budget falls back even with a longer FEED_GO_CLICKHOUSE_TIMEOUT_MS:
+// Node would have answered statsUnknown at 3 s.
+func TestMetricsMissSlowerThanNodesBudgetFallsBack(t *testing.T) {
+	s, _, f := coldSources(false)
+	f.delay = 2800 * time.Millisecond
+	s.Compute.MetricsTimeout = 10 * time.Second
+	start := time.Now()
+	got, err := s.ImageMetrics(context.Background(), []int{32})
+	if fallback.Reason(err) != "metrics-miss-failed" {
+		t.Fatalf("got %v, %v (reason %q); want metrics-miss-failed", got, err, fallback.Reason(err))
+	}
+	if el := time.Since(start); el >= 2800*time.Millisecond {
+		t.Fatalf("took %v: the read was waited out", el)
+	}
+}
+
+// An id whose populate lock another process holds and never fills is not answered as zeros: Node's
+// fetch only answers zeros after 15 × 200 ms of waiting, past its caller's 3 s budget, so Node answers
+// statsUnknown. With the lookup bound (whatever FEED_GO_CLICKHOUSE_TIMEOUT_MS says) and without any
+// bound (the wait exhausted), the page falls back.
+func TestMetricsMissLockNeverFilledFallsBack(t *testing.T) {
+	t.Run("bounded", func(t *testing.T) {
+		s, r, f := coldSources(false)
+		r.SetString(metricLockKey(33), []byte("1"))
+		s.Compute.MetricsTimeout = 10 * time.Second
+		got, err := s.ImageMetrics(context.Background(), []int{33})
+		if fallback.Reason(err) != "metrics-miss-failed" {
+			t.Fatalf("got %v, %v (reason %q); want metrics-miss-failed", got, err, fallback.Reason(err))
+		}
+		if len(f.seen()) != 0 {
+			t.Fatal("queried an id another process holds the lock of")
+		}
+	})
+	t.Run("wait exhausted", func(t *testing.T) {
+		s, r, _ := coldSources(false)
+		r.SetString(metricLockKey(33), []byte("1"))
+		got, err := s.lookupImageMetrics(context.Background(), []int{33})
+		if err == nil {
+			t.Fatalf("got %v after the wait ran out, want an error (the fallback)", got)
+		}
+	})
 }

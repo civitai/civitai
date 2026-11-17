@@ -68,3 +68,35 @@ func TestMetricsReader(t *testing.T) {
 		}
 	}
 }
+
+// loadConfig is config.Load over the required variables plus env (every ClickHouse variable, the
+// app's and feed-go's, unset unless env sets it).
+func loadConfig(t *testing.T, env map[string]string) *config.Config {
+	t.Helper()
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_CLICKHOUSE_TIMEOUT_MS",
+		"FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", "FEED_GO_REQUEST_BUDGET_MS", "CLICKHOUSE_HOST", "CLICKHOUSE_USERNAME",
+		"CLICKHOUSE_PASSWORD", "FEED_GO_CLICKHOUSE_HOST", "FEED_GO_CLICKHOUSE_USERNAME", "FEED_GO_CLICKHOUSE_PASSWORD"} {
+		t.Setenv(k, env[k])
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+// The app's ClickHouse login, which the shared app config puts in this service's environment, never
+// builds a reader; feed-go's own variables do.
+func TestMetricsReaderIgnoresTheAppLogin(t *testing.T) {
+	app := map[string]string{"CLICKHOUSE_HOST": "https://app-ch.example.test:8443", "CLICKHOUSE_USERNAME": "app-writer", "CLICKHOUSE_PASSWORD": "app-pw"}
+	if r, err := metricsReader(loadConfig(t, app)); r != nil || err != nil {
+		t.Fatalf("the app's variables only = %v, %v; want no reader", r, err)
+	}
+	own := map[string]string{"FEED_GO_CLICKHOUSE_HOST": "https://ch.example.test:8443", "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader", "FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw"}
+	if r, err := metricsReader(loadConfig(t, own)); r == nil || err != nil {
+		t.Fatalf("feed-go's variables = %v, %v; want a reader", r, err)
+	}
+}
