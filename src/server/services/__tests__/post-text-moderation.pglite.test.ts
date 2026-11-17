@@ -32,6 +32,7 @@ const { postTextTextScanSubject } = await import(
   '~/server/services/text-scan/profiles/post-text.profile'
 );
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { scanLiftPostText } = await import('~/server/services/post-text-scan-refusal');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -372,6 +373,20 @@ describe("a moderator's refusal and the scan, on the table", () => {
     ).rows[0];
 
   beforeEach(scanWritesOnPglite);
+
+  // The lift is pinned to the words the verdict was about: an edit landing between the scan's read
+  // and its write must not be lifted on the old words' verdict.
+  it('a clean verdict does not lift the refusal of words the author has since changed', async () => {
+    await applyPostTextTextScan(verdict(true) as never);
+    await pg.query(`UPDATE "PostText" SET content = '<p>Edited words.</p>' WHERE id = $1`, [
+      reported,
+    ]);
+
+    await scanLiftPostText(reported, '<p>The reported words.</p>');
+
+    expect(await flags()).toMatchObject({ refused: true });
+    expect(await hiddenFromReaders(reported)).toBe(true);
+  });
 
   it("refuses with no moderator refusal as before: the scan's verdict is `refused` itself", async () => {
     await applyPostTextTextScan(verdict(true) as never);

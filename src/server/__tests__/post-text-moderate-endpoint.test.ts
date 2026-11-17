@@ -127,6 +127,13 @@ describe('/api/mod/post-text/moderate', () => {
     expect(json).toMatchObject({ textId: TEXT, action: 'refuse', changed: true });
   });
 
+  it('answers a restore under a hold with 409, and a text that is gone with 404', async () => {
+    svc.restorePostText.mockResolvedValueOnce({ ok: false, postId: 5, error: 'held' });
+    expect((await call({ textId: TEXT, action: 'restore', reason: 'why' })).status).toBe(409);
+    svc.restorePostText.mockResolvedValueOnce(null);
+    expect((await call({ textId: TEXT, action: 'restore', reason: 'why' })).status).toBe(404);
+  });
+
   it.each([
     ['an ordinary reason', { reason: 'TOSViolation', details: { violation: 'Graphic violence' } }],
     ['a report not on this text', null],

@@ -119,6 +119,9 @@ async function unchanged(textId: number): Promise<PostTextModerationResult | nul
 }
 
 /**
+ * A second writer of pending csam holds beside the scan's `writePendingHold` (csam-hold.ts): the row
+ * shape (lock key, hash, composed text and cap) must change with it.
+ *
  * Sends a reported text to the CSAM text-hold queue: a Pending csam hold on its current words, and
  * `csamHeld` set, which hides it from every reader and keeps it from being edited or deleted until
  * the hold is decided there. A text with a pending hold already is left in it (`changed: false`).

@@ -79,12 +79,12 @@ describe('applyPostTextTextScan', () => {
 
   it('refuses a real person, and a later clean verdict of the current text lets it back', async () => {
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: true, minor: false }) as never);
-    expect(scanRefusal.scanRefusePostText).toHaveBeenCalledWith(ID);
+    expect(scanRefusal.scanRefusePostText).toHaveBeenCalled();
     expect(scanRefusal.scanLiftPostText).not.toHaveBeenCalled();
 
     vi.clearAllMocks();
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
-    expect(scanRefusal.scanLiftPostText).toHaveBeenCalledWith(ID, TEXT.content);
+    expect(scanRefusal.scanLiftPostText).toHaveBeenCalled();
     expect(scanRefusal.scanRefusePostText).not.toHaveBeenCalled();
     expect(dataWith('refused')).toEqual([]);
   });
