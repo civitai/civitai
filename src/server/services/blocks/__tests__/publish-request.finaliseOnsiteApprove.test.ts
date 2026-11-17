@@ -14,6 +14,7 @@ import {
   finaliseOnsiteApprove,
   snapshotOnsiteListing,
 } from '~/server/services/blocks/publish-request-finalise.service';
+import { resetRestoreWhere } from '~/server/services/blocks/publish-request.service';
 import '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
@@ -95,7 +96,7 @@ describe('finaliseOnsiteApprove', () => {
     });
   });
 
-  it('🔴 a late hold after the listing sync leaves the listing as it was before the approve', async () => {
+  it('🔴 a late hold after the listing sync puts the prior copy back, pending re-approve', async () => {
     resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
     const tx = fakeTx();
     const before = {
@@ -119,7 +120,12 @@ describe('finaliseOnsiteApprove', () => {
     await finaliseOnsiteApprove(tx as never, { ...input, priorListing });
 
     const { id, ...fields } = before;
-    expect(tx.appListing.update).toHaveBeenCalledWith({ where: { id }, data: fields });
+    // Prior copy back, in the shape the post-hold re-approve restores (it un-suspends the block).
+    const reset = resetRestoreWhere('apb_1');
+    expect(tx.appListing.update).toHaveBeenCalledWith({
+      where: { id },
+      data: { ...fields, status: reset.status, appBlockId: reset.appBlockId },
+    });
     // The issue-tracker link goes back too (a raw write: the column is guarded).
     expect(tx.$executeRaw).toHaveBeenCalledWith(
       expect.anything(),
@@ -144,14 +150,33 @@ describe('finaliseOnsiteApprove', () => {
     expect(prior).not.toHaveProperty('issueTracker');
   });
 
-  it('🔴 a listing the approve created goes back to a draft on a late hold', async () => {
+  it('🔴 a listing the approve created is left for the post-hold re-approve to publish', async () => {
     resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
     const tx = fakeTx();
     await finaliseOnsiteApprove(tx as never, input);
+    const reset = resetRestoreWhere('apb_1');
     expect(tx.appListing.updateMany).toHaveBeenCalledWith({
-      where: { appBlockId: 'apb_1', kind: 'onsite' },
-      data: { status: 'draft' },
+      where: { appBlockId: reset.appBlockId, kind: reset.kind },
+      data: { status: reset.status },
     });
+  });
+
+  it('🔴 a draft-at-submit snapshot is not put back as a draft (that re-approve would leave the block suspended)', async () => {
+    resolveHoldsAtApprove.mockResolvedValue({ overridden: [], late: [12] });
+    const tx = fakeTx();
+    const draft = {
+      id: 'al_1',
+      status: 'draft',
+      contentRating: null,
+      name: 'n',
+      tagline: null,
+      description: null,
+      category: null,
+      appBlockId: null,
+    };
+    await finaliseOnsiteApprove(tx as never, { ...input, priorListing: draft });
+    const [[{ data }]] = tx.appListing.update.mock.calls as unknown as [[{ data: object }]];
+    expect(data).toMatchObject({ status: 'pending', appBlockId: 'apb_1' });
   });
 
   it('touches no listing without a late hold', async () => {

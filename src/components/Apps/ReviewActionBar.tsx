@@ -142,7 +142,7 @@ export function ReviewActionBar({
         showErrorNotification({
           title: 'App suspended: a review hold was placed during the approve',
           error: new Error(
-            `${request.slug} v${request.version} was not built and stays suspended until the hold is cleared and the app is restored.` +
+            `${request.slug} v${request.version} was not built. It stays suspended and off the store until the hold is cleared and this version is approved again.` +
               (result.liveNote ? ` ${result.liveNote}` : '')
           ),
         });

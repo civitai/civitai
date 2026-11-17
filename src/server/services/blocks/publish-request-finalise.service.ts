@@ -125,17 +125,22 @@ export async function finaliseOnsiteApprove(
       data: { allowedScopes: input.priorVersion.allowedScopes },
     });
   }
+  // The listing is left as a mod reset leaves it (`resetRestoreWhere`): hidden from the store, and
+  // the re-approve once the hold is cleared publishes it and un-suspends the block. Left approved,
+  // it would show a card for a suspended app that no restore path reaches.
   const prior = input.priorListing;
   if (!prior) {
-    // A listing this approve created never went through review: back to a draft.
     await tx.appListing.updateMany({
       where: { appBlockId: input.appBlockId, kind: 'onsite' },
-      data: { status: 'draft' },
+      data: { status: 'pending' },
     });
     return { lateHoldIds: late };
   }
-  const { id, issueTracker, ...fields } = prior;
-  await tx.appListing.update({ where: { id }, data: fields });
+  const { id, issueTracker, status, appBlockId, ...fields } = prior;
+  await tx.appListing.update({
+    where: { id },
+    data: { ...fields, status: 'pending', appBlockId: input.appBlockId },
+  });
   if (issueTracker) {
     const { writeListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
     await writeListingIssueTrackerUrl(tx, id, issueTracker.value);
