@@ -16,20 +16,29 @@ export type CollectionItemKey = 'imageId' | 'postId' | 'articleId' | 'modelId' |
 /**
  * Per item type, the table and what someone who doesn't own the item needs: the states a
  * collection's item covers require (collectionItemCoversSql), so what can be added can be shown.
+ * Built per call, not at module scope: this module sits in model.service's import graph, and a
+ * test that mocks collection-cover-visibility without these exports would fail on import.
  */
-const itemTables: Record<
-  Exclude<CollectionItemKey, 'imageId'>,
-  { from: Prisma.Sql; alias: Prisma.Sql; visible: Prisma.Sql }
-> = {
-  postId: { from: Prisma.sql`"Post" p`, alias: Prisma.sql`p`, visible: publishedPostSql },
-  articleId: { from: Prisma.sql`"Article" a`, alias: Prisma.sql`a`, visible: publishedArticleSql },
-  modelId: { from: Prisma.sql`"Model" m`, alias: Prisma.sql`m`, visible: publishedModelSql },
-  model3dId: {
-    from: Prisma.sql`"Model3D" m3`,
-    alias: Prisma.sql`m3`,
-    visible: publishedModel3dSql,
-  },
-};
+function itemTable(itemKey: Exclude<CollectionItemKey, 'imageId'>): {
+  from: Prisma.Sql;
+  alias: Prisma.Sql;
+  visible: Prisma.Sql;
+} {
+  switch (itemKey) {
+    case 'postId':
+      return { from: Prisma.sql`"Post" p`, alias: Prisma.sql`p`, visible: publishedPostSql };
+    case 'articleId':
+      return { from: Prisma.sql`"Article" a`, alias: Prisma.sql`a`, visible: publishedArticleSql };
+    case 'modelId':
+      return { from: Prisma.sql`"Model" m`, alias: Prisma.sql`m`, visible: publishedModelSql };
+    case 'model3dId':
+      return {
+        from: Prisma.sql`"Model3D" m3`,
+        alias: Prisma.sql`m3`,
+        visible: publishedModel3dSql,
+      };
+  }
+}
 
 /**
  * NOT_FOUND unless every item in `ids` exists and the viewer may see it: its owner, staff, or
@@ -53,7 +62,7 @@ export async function assertCollectionItemsVisibleToViewer({
   if (itemKey === 'imageId')
     return assertImagesVisibleToViewer({ ids: wanted, userId, isModerator });
 
-  const { from, alias, visible } = itemTables[itemKey];
+  const { from, alias, visible } = itemTable(itemKey);
   const viewable = isModerator
     ? Prisma.sql`TRUE`
     : userId

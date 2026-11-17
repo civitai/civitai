@@ -26,6 +26,8 @@ vi.mock('~/server/services/model-visibility.service', async (importOriginal) => 
 }));
 
 import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
+import { canViewModel3d } from '~/server/services/model3d.visibility';
+import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 const OWNER = 10;
 const VIEWER = 20;
@@ -233,5 +235,19 @@ describe('models with restricted visibility', () => {
 
   it('keeps an archived model addable', async () => {
     await expect(check('modelId', 6, { userId: VIEWER })).resolves.toBeUndefined();
+  });
+});
+
+describe('stricter than the 3D model view rule', () => {
+  const published = { status: Model3DStatus.Published, deletedAt: null, ownerId: OWNER };
+
+  it('refuses a Private published 3D model a stranger can view', async () => {
+    expect(canViewModel3d({ ...published, userId: VIEWER })).toBe(true);
+    await expect(check('model3dId', 3, { userId: VIEWER })).rejects.toMatchObject(refused);
+  });
+
+  it('accepts the Public one (control)', async () => {
+    expect(canViewModel3d({ ...published, userId: VIEWER })).toBe(true);
+    await expect(check('model3dId', 1, { userId: VIEWER })).resolves.toBeUndefined();
   });
 });
