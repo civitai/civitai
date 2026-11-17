@@ -281,7 +281,7 @@ export const oauthClientRouter = router({
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
       // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
-      return { ...result, allowedScopes: Number(result.allowedScopes) };
+      return result && { ...result, allowedScopes: Number(result.allowedScopes) };
     }),
 
   // Rotate client secret

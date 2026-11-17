@@ -266,7 +266,7 @@ describe('civitai generate — OAuth scope surface', () => {
       uncovered,
       `the generate path requires scope bits ${uncovered} that the civitai-cli client ` +
         `(allowedScopes=${CLI_GRANT}) does not grant — \`civitai generate\` would 403.`
-    ).toBe(0);
+    ).toBe(0n);
 
     // The grant literal must agree with the enum, or the check above is about the
     // wrong number.

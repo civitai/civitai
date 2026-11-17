@@ -176,8 +176,9 @@ describe.each(routes)('/api/$name', (route) => {
       name: 'orchestrator-endpoint-scope-refused',
       type: 'info',
       route: `/api/${route.name}`,
-      requiredScope: route.scope,
-      tokenScope,
+      // JSON numbers in the log line.
+      requiredScope: Number(route.scope),
+      tokenScope: Number(tokenScope),
       apiKeyType: ApiKeyType.User,
       client: 'personal-key',
       clientIdHash: undefined,

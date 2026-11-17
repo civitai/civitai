@@ -184,7 +184,7 @@ describe('appFeedback token-scope gate', () => {
   it('exactly the four procedures a token caller needs require AppBlocksSubmit', () => {
     const procedures = appFeedbackRouter._def.procedures as unknown as Record<
       string,
-      { _def: { meta?: { requiredScope?: number; blockApiKeys?: boolean } } }
+      { _def: { meta?: { requiredScope?: bigint; blockApiKeys?: boolean } } }
     >;
     const ledger = Object.fromEntries(
       Object.entries(procedures).map(([name, p]) => [name, p._def.meta ?? null])
@@ -192,11 +192,11 @@ describe('appFeedback token-scope gate', () => {
     expect(ledger).toEqual({
       getEligibility: null,
       create: null,
-      listForListing: { requiredScope: 33554432 },
+      listForListing: { requiredScope: 33554432n },
       hasAnyForListing: null,
-      setOwnerStatus: { requiredScope: 33554432 },
-      flagAbusive: { requiredScope: 33554432 },
-      countNewForMyListings: { requiredScope: 33554432 },
+      setOwnerStatus: { requiredScope: 33554432n },
+      flagAbusive: { requiredScope: 33554432n },
+      countNewForMyListings: { requiredScope: 33554432n },
       modList: null,
       modCountFlagged: null,
       modSetHidden: null,

@@ -31,7 +31,11 @@ const GRANTABLE_SCOPES: Record<string, bigint> = Object.fromEntries(
 );
 
 const scopeMask = (names: string[]) =>
-  names.reduce((mask, name) => mask | (GRANTABLE_SCOPES[name] ?? 0n), 0n);
+  // Own keys only: an inherited name (`toString`) is a function, which a bigint `|` throws on.
+  names.reduce(
+    (mask, name) => mask | (Object.hasOwn(GRANTABLE_SCOPES, name) ? GRANTABLE_SCOPES[name] : 0n),
+    0n
+  );
 
 // Without `scopes` a key stays read-only.
 const DEFAULT_SCOPE = TokenScope.UserRead | TokenScope.ModelsRead | TokenScope.MediaRead;

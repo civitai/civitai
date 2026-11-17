@@ -140,14 +140,14 @@ describe('platformFeedback token-scope gate', () => {
   it('the two agent procedures, and only these, require AppBlocksSubmit', () => {
     const procedures = platformFeedbackRouter._def.procedures as unknown as Record<
       string,
-      { _def: { type: string; meta?: { requiredScope?: number; blockApiKeys?: boolean } } }
+      { _def: { type: string; meta?: { requiredScope?: bigint; blockApiKeys?: boolean } } }
     >;
     const ledger = Object.fromEntries(
       Object.entries(procedures).map(([name, p]) => [name, [p._def.type, p._def.meta ?? null]])
     );
     expect(ledger).toEqual({
-      create: ['mutation', { requiredScope: 33554432 }],
-      getStatus: ['query', { requiredScope: 33554432 }],
+      create: ['mutation', { requiredScope: 33554432n }],
+      getStatus: ['query', { requiredScope: 33554432n }],
       // A moderator procedure: a token caller needs a full-scope personal key, whatever its meta.
       listChanges: ['query', null],
     });

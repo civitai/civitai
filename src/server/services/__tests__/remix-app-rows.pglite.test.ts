@@ -110,7 +110,7 @@ describe('remix apps seed migration', () => {
       secret: null,
       redirectUris: [],
       grants: [],
-      allowedScopes: 0n,
+      allowedScopes: 0,
       accessMode: 'disabled',
       userId: -1,
     });
