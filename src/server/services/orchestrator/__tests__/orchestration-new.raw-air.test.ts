@@ -364,6 +364,8 @@ describe('subscription gate for ModelVersion resources', () => {
     ] as never);
 
     expect(await submitVersion()).not.toMatch(/subscription/);
+    expect(getResourceData).toHaveBeenCalled();
+    expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
   });
 
   it("refuses someone else's unpublished epoch", async () => {
