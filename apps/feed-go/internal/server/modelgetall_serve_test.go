@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -132,5 +133,67 @@ func TestServeModelGetAllOnKeepsTheGates(t *testing.T) {
 	}
 	if got := w.Header().Get("Cache-Control"); got == "" || got == "public, max-age=60, s-maxage=60, stale-while-revalidate=30" {
 		t.Fatalf("a session answer (no ttl) carried Cache-Control %q, want the private default", got)
+	}
+}
+
+func inFlightOf(t *testing.T, reg *prometheus.Registry, endpoint string) (float64, bool) {
+	t.Helper()
+	return metricValue(t, reg, "feed_go_serve_in_flight", map[string]string{"feed_endpoint": endpoint})
+}
+
+// The serve slots are shared by both public routes, and feed_go_serve_in_flight says which route holds
+// them: a model.getAll compute in flight reads under feed_endpoint="model-getall", not "as-posts".
+func TestServeModelGetAllInFlightGaugeByEndpoint(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s, _, _ := serveModelsServer(reg, true, nil)
+	if g, ok := inFlightOf(t, reg, EndpointModelGetAll); !ok || g != 0 {
+		t.Fatalf("model-getall in-flight before any request = %v (exported %v), want an exported 0", g, ok)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	s.computeModelsFn = func(context.Context, *http.Request) (*computed, error) {
+		close(started)
+		<-release
+		return &computed{payload: []byte(modelsEnvelope)}, nil
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.ServeModelGetAllHTTP(httptest.NewRecorder(), modelsServeRequest("https://site.example"))
+	}()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the model.getAll compute never started")
+	}
+	m, _ := inFlightOf(t, reg, EndpointModelGetAll)
+	a, _ := inFlightOf(t, reg, EndpointAsPosts)
+	close(release)
+	<-done
+	if m != 1 || a != 0 {
+		t.Fatalf("in flight during a model.getAll compute: model-getall=%v as-posts=%v, want 1 and 0", m, a)
+	}
+	if g, _ := inFlightOf(t, reg, EndpointModelGetAll); g != 0 || s.InFlight() != 0 {
+		t.Fatalf("after the compute: model-getall gauge=%v slots=%d, want 0 and 0", g, s.InFlight())
+	}
+}
+
+// An answer that loaded no model row (computed.trivial) is still written, but counted as
+// `served_empty`, as the shadow path counts it, so the per-served-call figures cover only real work.
+func TestServeModelGetAllTrivialIsServedEmpty(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	s, proxied, _ := serveModelsServer(reg, true, nil)
+	s.computeModelsFn = func(context.Context, *http.Request) (*computed, error) {
+		return &computed{payload: []byte(`{"json":{"items":[],"nextCursor":null}}`), trivial: true}, nil
+	}
+	w := httptest.NewRecorder()
+	s.ServeModelGetAllHTTP(w, modelsServeRequest("https://site.example"))
+	if w.Code != http.StatusOK || *proxied != 0 {
+		t.Fatalf("trivial answer: code=%d proxied=%d, want 200 and 0", w.Code, *proxied)
+	}
+	if got := w.Body.String(); got != `{"result":{"data":{"json":{"items":[],"nextCursor":null}}}}` {
+		t.Fatalf("body = %s", got)
+	}
+	if e, s := modelsServeCount(t, reg, "served_empty"), modelsServeCount(t, reg, "served"); e != 1 || s != 0 {
+		t.Fatalf("served_empty=%v served=%v, want 1 and 0", e, s)
 	}
 }
