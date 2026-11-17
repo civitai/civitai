@@ -28,7 +28,7 @@ const leanOf = (lean: FlagsConfig['lean'], multiplier: number) =>
  * never computed again, so a later ban or catch-up change can't reprice it. Returns the rows inserted.
  */
 export async function freezeFlagDays(
-  event: { name: string; startDate: Date; endDate?: Date },
+  event: { name: string; startDate: Date; endDate?: Date; teams?: readonly string[] },
   flags: FlagsConfig,
   now: Date,
   { live = false }: { live?: boolean } = {}
@@ -88,8 +88,12 @@ export async function freezeFlagDays(
       RETURNING team, points
     `;
     inserted += written.length;
-    if (live && event.endDate)
-      await addToLiveTeams({ ...event, endDate: event.endDate }, day.cutAt, written);
+    if (live && event.endDate && event.teams)
+      await addToLiveTeams(
+        { ...event, endDate: event.endDate, teams: event.teams },
+        day.cutAt,
+        written
+      );
   }
   return inserted;
 }
@@ -100,7 +104,7 @@ export async function freezeFlagDays(
  * nothing. The settle that next counts the award recounts the totals from the frozen rows.
  */
 async function addToLiveTeams(
-  event: { name: string; startDate: Date; endDate: Date },
+  event: Parameters<typeof addLiveTeamPoints>[0],
   at: Date,
   written: { team: string | null; points: number }[]
 ) {
