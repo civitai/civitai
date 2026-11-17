@@ -494,9 +494,8 @@ export async function purgeResizeCache({
               message: 'image-cacher invalidate answered 429 (busy); not done',
               imageKey: url,
               scope,
-              retract,
               status: res.status,
-              retryAfter: res.headers.get('retry-after') ?? undefined,
+              payload: { retract, retryAfter: res.headers.get('retry-after') ?? undefined },
             });
             return 'busy';
           }
