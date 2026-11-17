@@ -650,10 +650,7 @@ export const redisRoutingRetryCounter = registerCounterWithLabels({
   labelNames: ['result'] as const,
 });
 
-// sysRedis READONLY retry counter (a primary failover's demotion window). Incremented once per sys
-// command that was rejected with READONLY and retried with backoff: `result` ∈ recovered|exhausted —
-// `recovered` means a later attempt reached the new primary, `exhausted` means every retry was used
-// and the original READONLY error re-threw. (See @civitai/redis sys-readonly-retry.)
+// sysRedis READONLY retry outcome (see @civitai/redis sys-readonly-retry).
 export const redisSysReadonlyRetryCounter = registerCounterWithLabels({
   name: 'redis_sys_readonly_retry_total',
   help: 'sysRedis commands rejected with READONLY and retried with backoff, by outcome (recovered, or exhausted with the original error re-thrown)',

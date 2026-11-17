@@ -12,9 +12,6 @@
  * the rejected command was not applied. That holds for one command (and for a MULTI, which aborts
  * as a whole) but not for a pipeline, whose earlier writes may have run on the primary before it
  * was demoted, so this wrapper never retries a pipeline: it runs under `withoutSysReadonlyRetry`.
- * (RedisSentinel's own internal rediscover-and-resend still applies to it, as before this change.)
- *
- * Pure (no redis/prom imports) so it can be unit-tested in isolation.
  */
 
 /** Delay before each retry (ms); its length is the number of retries. */

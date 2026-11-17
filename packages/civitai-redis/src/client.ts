@@ -1363,7 +1363,7 @@ export function instrumentCommands(
     isClusterClient &&
     (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
   // A pipeline that hits READONLY may already have applied earlier writes, so this wrapper never
-  // retries one (RedisSentinel's own internal rediscover-and-resend is unchanged).
+  // retries one.
   if (sysReadonlyRetry && typeof self._executePipeline === 'function') {
     const originalPipeline = self._executePipeline;
     self._executePipeline = function (this: any, ...args: any[]) {
