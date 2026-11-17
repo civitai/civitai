@@ -148,6 +148,16 @@ describe('bustCachesForPosts and the version showcase', () => {
     expect(refreshShowcase).not.toHaveBeenCalled();
     expect(queueModels).not.toHaveBeenCalled();
   });
+
+  // Featured community images are always someone else's posts, which the owner-showcase branch
+  // returns early for: the version showcase bust has to run before that.
+  it("still refreshes the version showcases holding someone else's post", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
+
+    await bustCachesForPosts([1]);
+
+    expect(bustShowcases).toHaveBeenCalledWith([1]);
+  });
 });
 
 describe('refreshShowcasesForUserModels', () => {
@@ -177,15 +187,5 @@ describe('refreshShowcasesForUserModels', () => {
 
     expect(queueModels).not.toHaveBeenCalled();
     expect(refreshShowcase).not.toHaveBeenCalled();
-  });
-
-  // Featured community images are always someone else's posts, which the owner-showcase branch
-  // returns early for: the version showcase bust has to run before that.
-  it("still refreshes the version showcases holding someone else's post", async () => {
-    mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
-
-    await bustCachesForPosts([1]);
-
-    expect(bustShowcases).toHaveBeenCalledWith([1]);
   });
 });
