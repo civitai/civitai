@@ -365,9 +365,8 @@ describe('assertBountyEntryFileUrlAllowed', () => {
         name: 'model-file-url-refused',
         op: 'bounty-award',
         userId: ME,
-        authorId: AUTHOR,
-        bountyEntryId: ENTRY,
         reason,
+        payload: { authorId: AUTHOR, bountyEntryId: ENTRY },
       })
     );
   });
