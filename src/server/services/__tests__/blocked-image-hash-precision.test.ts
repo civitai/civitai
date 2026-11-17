@@ -79,19 +79,32 @@ fakeClickhouse.client = makePermissive({
     capturedQueries.push(query);
     if (!query.includes("= 'CSAM'")) return Promise.resolve(queryResult);
     if (csamLookupFails) return Promise.reject(new Error('Socket hang up'));
-    if (tableRows) return Promise.resolve(liveCsamHashes(tableRows, query.includes('argMax(')));
+    if (tableRows) return Promise.resolve(liveCsamHashes(tableRows, query));
     return Promise.resolve(csamQueryResult);
   },
 });
 
-type TableRow = { hash: string; reason: string; disabled: boolean };
-// Rows oldest first. An argMax-per-hash query reads only each hash's newest row; a plain filter
-// reads every row.
+type TableRow = { hash: string; reason: string; disabled: boolean; at?: number };
+// Rows oldest first; `at` is created_at in seconds (default: list order). An argMax-per-hash query
+// reads only each hash's newest row, and with the live-CSAM tie-break a same-second live CSAM row
+// wins the tie; without it the later-listed row does. A plain filter reads every row.
 let tableRows: TableRow[] | undefined;
-function liveCsamHashes(rows: TableRow[], newestOnly: boolean) {
-  const read = newestOnly ? [...new Map(rows.map((row) => [row.hash, row])).values()] : rows;
-  const live = read.filter((row) => row.reason === 'CSAM' && !row.disabled);
-  return [...new Set(live.map((row) => row.hash))].map((hash) => ({ hash }));
+function liveCsamHashes(rows: TableRow[], query: string) {
+  const live = (row: TableRow) => row.reason === 'CSAM' && !row.disabled;
+  const tieBreak = query.includes("tuple(created_at, reason = 'CSAM' AND disabled = false)");
+  const newest = new Map<string, { row: TableRow; at: number }>();
+  rows.forEach((row, i) => {
+    const at = row.at ?? i;
+    const held = newest.get(row.hash);
+    if (
+      !held ||
+      at > held.at ||
+      (at === held.at && (!tieBreak || Number(live(row)) >= Number(live(held.row))))
+    )
+      newest.set(row.hash, { row, at });
+  });
+  const read = query.includes('argMax(') ? [...newest.values()].map(({ row }) => row) : rows;
+  return [...new Set(read.filter(live).map((row) => row.hash))].map((hash) => ({ hash }));
 }
 
 const { logToAxiom } = await import('~/server/logging/client');
@@ -166,7 +179,9 @@ describe('a hash with a CSAM entry keeps it', () => {
     await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'TOS' as any }] });
 
     const lookup = capturedQueries.find((query) => query.includes("= 'CSAM'"));
-    expect(lookup).toContain('argMax(tuple(reason, disabled), created_at)');
+    expect(lookup).toContain(
+      "argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false))"
+    );
     expect(lookup).not.toMatch(/\bFINAL\b|\bSETTINGS\b/);
   });
 
@@ -174,6 +189,17 @@ describe('a hash with a CSAM entry keeps it', () => {
     tableRows = [
       { hash: HASH.toString(), reason: 'TOS', disabled: false },
       { hash: HASH.toString(), reason: 'CSAM', disabled: false },
+    ];
+
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'TOS' as any }] });
+
+    expect(capturedInserts).toEqual([]);
+  });
+
+  it('a same-second tie between a live CSAM row and a disabled row keeps the CSAM entry', async () => {
+    tableRows = [
+      { hash: HASH.toString(), reason: 'CSAM', disabled: false, at: 100 },
+      { hash: HASH.toString(), reason: 'CSAM', disabled: true, at: 100 },
     ];
 
     await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'TOS' as any }] });

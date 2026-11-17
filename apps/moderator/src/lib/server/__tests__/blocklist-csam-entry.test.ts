@@ -11,9 +11,12 @@ const ch = vi.hoisted(() => ({
   liveRows: [] as { hash: string; reason: string }[],
   csamHashes: [] as string[],
   lookupFails: false,
-  // Rows oldest first. An argMax-per-hash query reads only each hash's newest row; a plain filter
-  // reads every row.
-  tableRows: undefined as { hash: string; reason: string; disabled: boolean }[] | undefined,
+  // Rows oldest first; `at` is created_at in seconds (default: list order). An argMax-per-hash
+  // query reads only each hash's newest row, and with the live-CSAM tie-break a same-second live
+  // CSAM row wins the tie; without it the later-listed row does. A plain filter reads every row.
+  tableRows: undefined as
+    | { hash: string; reason: string; disabled: boolean; at?: number }[]
+    | undefined,
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -27,12 +30,26 @@ vi.mock('$lib/server/clickhouse', () => ({
       if (!query.includes("= 'CSAM'")) return { json: async () => ch.liveRows };
       if (ch.lookupFails) throw new Error('Socket hang up');
       if (ch.tableRows) {
+        type Row = NonNullable<typeof ch.tableRows>[number];
+        const live = (row: Row) => row.reason === 'CSAM' && !row.disabled;
+        const tieBreak = query.includes("tuple(created_at, reason = 'CSAM' AND disabled = false)");
+        const newest = new Map<string, { row: Row; at: number }>();
+        ch.tableRows.forEach((row, i) => {
+          const at = row.at ?? i;
+          const held = newest.get(row.hash);
+          if (
+            !held ||
+            at > held.at ||
+            (at === held.at && (!tieBreak || Number(live(row)) >= Number(live(held.row))))
+          )
+            newest.set(row.hash, { row, at });
+        });
         const rows = query.includes('argMax(')
-          ? [...new Map(ch.tableRows.map((row) => [row.hash, row])).values()]
+          ? [...newest.values()].map(({ row }) => row)
           : ch.tableRows;
-        const live = rows.filter((row) => row.reason === 'CSAM' && !row.disabled);
         return {
-          json: async () => [...new Set(live.map((row) => row.hash))].map((hash) => ({ hash })),
+          json: async () =>
+            [...new Set(rows.filter(live).map((row) => row.hash))].map((hash) => ({ hash })),
         };
       }
       return { json: async () => ch.csamHashes.map((hash) => ({ hash })) };
@@ -68,7 +85,9 @@ it('reads the newest row per hash with argMax, with no FINAL or query setting', 
   await addImagesToBlocklist([tosImage(CSAM_HASH)]);
 
   const lookup = ch.queries.find((query) => query.includes("= 'CSAM'"));
-  expect(lookup).toContain('argMax(tuple(reason, disabled), created_at)');
+  expect(lookup).toContain(
+    "argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false))"
+  );
   expect(lookup).not.toMatch(/\bFINAL\b|\bSETTINGS\b/);
 });
 
@@ -76,6 +95,17 @@ it('a hash whose newest row is a live CSAM entry keeps it (control)', async () =
   ch.tableRows = [
     { hash: CSAM_HASH, reason: 'TOS', disabled: false },
     { hash: CSAM_HASH, reason: 'CSAM', disabled: false },
+  ];
+
+  await addImagesToBlocklist([tosImage(CSAM_HASH)]);
+
+  expect(ch.inserts).toEqual([]);
+});
+
+it('a same-second tie between a live CSAM row and a disabled row keeps the CSAM entry', async () => {
+  ch.tableRows = [
+    { hash: CSAM_HASH, reason: 'CSAM', disabled: false, at: 100 },
+    { hash: CSAM_HASH, reason: 'CSAM', disabled: true, at: 100 },
   ];
 
   await addImagesToBlocklist([tosImage(CSAM_HASH)]);

@@ -134,15 +134,16 @@ type BlockableImage = {
  * Hashes among these with a live CSAM entry. The table keeps the newest row per hash when it
  * merges, so a later row of any other reason would replace that entry. Only the newest row per
  * hash (argMax on created_at, merged or not) decides, so a CSAM row that a newer row has replaced
- * or disabled does not count as live. The filter runs on that row, outside the aggregate; this
- * needs no FINAL and no query setting.
+ * or disabled does not count as live. created_at is whole seconds; on a tie the live CSAM row wins,
+ * so a tie can over-block but never drops a live CSAM entry. The filter runs on that row, outside
+ * the aggregate; this needs no FINAL and no query setting.
  * The main app has the same guard (src/server/services/image.service.ts); change both.
  */
 async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
   if (!hashes.length) return new Set();
   try {
     const resultSet = await getClickhouse().query({
-      query: `SELECT toString(hash) AS hash FROM (SELECT hash, argMax(tuple(reason, disabled), created_at) AS newest FROM "blocked_images" WHERE hash IN (${hashes.join(
+      query: `SELECT toString(hash) AS hash FROM (SELECT hash, argMax(tuple(reason, disabled), tuple(created_at, reason = 'CSAM' AND disabled = false)) AS newest FROM "blocked_images" WHERE hash IN (${hashes.join(
         ','
       )}) GROUP BY hash) WHERE tupleElement(newest, 1) = 'CSAM' AND tupleElement(newest, 2) = false`,
       format: 'JSONEachRow',
