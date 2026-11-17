@@ -147,7 +147,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
     const result = await caller().search({ query: 'kuro', usernames: ['fox'] });
     expect(result).toEqual({
       items: [{ id: 1 }],
-      nextCursor: 50,
+      nextCursor: undefined,
       correctedQuery: undefined,
       latencyMs: 0,
     });

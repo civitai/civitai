@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
+import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
 import {
   type SemanticImageSearchInput,
   semanticImageSearchSchema,
@@ -58,6 +59,21 @@ const ownImagesInput = (
   userIds: [userId],
 });
 
+// The own-images path has its own, lower limit: the picker needs no more.
+const OWN_IMAGES_RATE_LIMIT = { limit: 20, period: 60 };
+const ownImagesRateLimit = middleware(async ({ ctx, path, next }) => {
+  if (!(ctx as { ownImagesOf?: number }).ownImagesOf) return next();
+  const recordAttempt = await claimRateLimitAttempt({
+    rules: [OWN_IMAGES_RATE_LIMIT],
+    keyName: `${path.replace('.', ':')}:own`,
+    scope: path,
+    user: ctx.user,
+    req: ctx.req,
+  });
+  await recordAttempt();
+  return next();
+});
+
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
 
@@ -72,6 +88,7 @@ export const semanticImageSearchRouter = router({
     )
     .input(semanticImageSearchSchema)
     .use(imageSearchOrOwnImages)
+    .use(ownImagesRateLimit)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
       const { ownImagesOf } = ctx;
@@ -97,11 +114,11 @@ export const semanticImageSearchRouter = router({
           .catch(() => undefined);
       }
 
-      // The picker shows neither a correction nor a timing.
+      // The picker reads one page and shows neither a correction nor a timing.
       if (ownImagesOf)
         return {
           items: result.items,
-          nextCursor: result.nextCursor,
+          nextCursor: undefined,
           correctedQuery: undefined,
           latencyMs: 0,
         };
