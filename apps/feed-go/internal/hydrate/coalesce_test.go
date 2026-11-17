@@ -177,23 +177,31 @@ func TestLookupRecheckedInFlight(t *testing.T) {
 	}
 }
 
+// recordingLookup is a lookup that records each call's ids (sorted) and answers every id but 13 with
+// a record whose "v" is 7 times its id (13 has no row).
+type recordingLookup struct {
+	calls [][]int
+}
+
+func (l *recordingLookup) lookup(_ context.Context, ids []int) (map[int]jspack.Obj, error) {
+	l.calls = append(l.calls, slices.Sorted(slices.Values(ids)))
+	out := map[int]jspack.Obj{}
+	for _, id := range ids {
+		if id != 13 {
+			out[id] = jspack.O("id", id, "v", id*7)
+		}
+	}
+	return out, nil
+}
+
 // When the in-flight recheck answers only some ids, the flight looks up the rest and answers the
 // union. The second caller (ids 10-13) is held in beforeFlight, past its first check, while a first
 // caller for the subset 10-11 runs to the end and keeps its answers. The second caller's flight then
 // finds 10-11 kept, looks up only 12-13, and must still answer all of its found ids (13 has no row).
 func TestLookupRecheckedInFlightMergesKept(t *testing.T) {
 	c := &MissCompute{Now: func() time.Time { return pageNow }}
-	var calls [][]int
-	lookup := func(_ context.Context, ids []int) (map[int]jspack.Obj, error) {
-		calls = append(calls, slices.Sorted(slices.Values(ids)))
-		out := map[int]jspack.Obj{}
-		for _, id := range ids {
-			if id != 13 {
-				out[id] = jspack.O("id", id, "v", id*7)
-			}
-		}
-		return out, nil
-	}
+	l := &recordingLookup{}
+	lookup := l.lookup
 	ctx := context.Background()
 	var hooks atomic.Int32
 	var first map[int]jspack.Obj
@@ -208,8 +216,8 @@ func TestLookupRecheckedInFlightMergesKept(t *testing.T) {
 		t.Fatalf("errors %v and %v", firstErr, err)
 	}
 	wantCalls := [][]int{{10, 11}, {12, 13}}
-	if !reflect.DeepEqual(calls, wantCalls) {
-		t.Fatalf("lookups %v, want %v: the second flight must look up only the ids the recheck did not answer", calls, wantCalls)
+	if !reflect.DeepEqual(l.calls, wantCalls) {
+		t.Fatalf("lookups %v, want %v: the second flight must look up only the ids the recheck did not answer", l.calls, wantCalls)
 	}
 	wantFirst := map[int]jspack.Obj{10: jspack.O("id", 10, "v", 70), 11: jspack.O("id", 11, "v", 77)}
 	if !reflect.DeepEqual(first, wantFirst) {
