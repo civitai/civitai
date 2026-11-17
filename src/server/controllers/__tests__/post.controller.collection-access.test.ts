@@ -9,19 +9,22 @@ const STAFF = 22;
 const COLLECTION_ID = 33;
 const IMAGE_ID = 44;
 
-const { mockUpdatePost, fakeDb, mockBulkSave, mockPermissions } = vi.hoisted(() => ({
-  mockUpdatePost: vi.fn(),
-  mockPermissions: vi.fn(),
-  fakeDb: { post: { findFirst: vi.fn() }, postTag: { findMany: vi.fn() } },
-  // Stands in for bulkSaveItems' visibility check: the image is only open to staff here.
-  mockBulkSave: vi.fn(
-    async ({ input }: { input: { imageIds?: number[]; isModerator?: boolean } }) => {
-      if (!input.isModerator)
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
-      return { imageIds: input.imageIds ?? [] };
-    }
-  ),
-}));
+const { mockUpdatePost, mockCreatePost, fakeDb, mockBulkSave, mockPermissions } = vi.hoisted(
+  () => ({
+    mockUpdatePost: vi.fn(),
+    mockCreatePost: vi.fn(),
+    mockPermissions: vi.fn(),
+    fakeDb: { post: { findFirst: vi.fn() }, postTag: { findMany: vi.fn() } },
+    // Stands in for bulkSaveItems' visibility check: the image is only open to staff here.
+    mockBulkSave: vi.fn(
+      async ({ input }: { input: { imageIds?: number[]; isModerator?: boolean } }) => {
+        if (!input.isModerator)
+          throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+        return { imageIds: input.imageIds ?? [] };
+      }
+    ),
+  })
+);
 
 vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => fakeDb }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
@@ -36,6 +39,7 @@ vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   updatePost: mockUpdatePost,
+  createPost: mockCreatePost,
 }));
 vi.mock('~/server/services/entity-collaborator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollaboratorService>()),
@@ -59,7 +63,7 @@ import type * as CollaboratorService from '~/server/services/entity-collaborator
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
 import type { ProtectedContext } from '~/server/createContext';
-import { updatePostHandler } from '~/server/controllers/post.controller';
+import { createPostHandler, updatePostHandler } from '~/server/controllers/post.controller';
 
 const ctx = {
   user: { id: POST_OWNER, isModerator: false },
@@ -126,5 +130,59 @@ describe('updatePostHandler setting a collection without publishing', () => {
     await update({ collectionId: COLLECTION_ID, title: 'New title' });
     expect(mockPermissions).not.toHaveBeenCalled();
     expect(mockUpdatePost).toHaveBeenCalled();
+  });
+});
+
+describe('createPostHandler with a collection', () => {
+  const create = (input: Record<string, unknown>) =>
+    createPostHandler({ input, ctx } as unknown as Parameters<typeof createPostHandler>[0]);
+
+  it('refuses a collection the creator cannot post to', async () => {
+    await expect(create({ collectionId: COLLECTION_ID })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockCreatePost).not.toHaveBeenCalled();
+  });
+
+  it('creates a post with no collection without asking (control)', async () => {
+    mockCreatePost.mockRejectedValue(new Error('reached createPost'));
+    await expect(create({})).rejects.toThrow('reached createPost');
+    expect(mockPermissions).not.toHaveBeenCalled();
+  });
+
+  it('reaches createPost for a collection the creator can post to (control)', async () => {
+    mockPermissions.mockResolvedValue({ write: false, writeReview: true });
+    mockCreatePost.mockRejectedValue(new Error('reached createPost'));
+    await expect(create({ collectionId: COLLECTION_ID })).rejects.toThrow('reached createPost');
+  });
+});
+
+describe('updatePostHandler publishing into the collection the post already has', () => {
+  beforeEach(() => {
+    fakeDb.post.findFirst.mockResolvedValue({
+      id: 1,
+      publishedAt: null,
+      collectionId: COLLECTION_ID,
+    });
+  });
+
+  it('refuses when the owner cannot post to that collection', async () => {
+    await expect(update({ publishedAt: new Date() })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockUpdatePost).not.toHaveBeenCalled();
+    expect(mockBulkSave).not.toHaveBeenCalled();
+  });
+
+  it('enters the post when the owner can post to it (control)', async () => {
+    mockPermissions.mockResolvedValue({ write: true, writeReview: false });
+    mockBulkSave.mockResolvedValue({ imageIds: [IMAGE_ID] });
+    await update({ publishedAt: new Date() });
+    expect(mockUpdatePost).toHaveBeenCalled();
+    expect(mockBulkSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ collectionId: COLLECTION_ID, imageIds: [IMAGE_ID] }),
+      })
+    );
   });
 });
