@@ -16,6 +16,7 @@ import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -170,13 +171,16 @@ export const transformData = async ({
       }
 
       const images = bountyImages
-        ? bountyImages.filter(isDefined).map((i) => ({
-            ...i,
-            tags: imageTags
-              .filter((t) => t.imageId === i.id)
-              .map((t) => ({ id: t.tagId, name: t.tag.name })),
-          }))
-        : [];
+        .filter(isDefined)
+        .map((i) => ({
+          ...i,
+          tags: imageTags
+            .filter((t) => t.imageId === i.id)
+            .map((t) => ({ id: t.tagId, name: t.tag.name })),
+        }))
+        .filter(
+          (i) => !isTaggedMatureImage({ nsfwLevel: i.nsfwLevel, tags: i.tags.map((tag) => tag.id) })
+        );
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
       return {
