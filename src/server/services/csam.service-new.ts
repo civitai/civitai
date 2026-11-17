@@ -737,7 +737,7 @@ function logSendFailure(
     message: (e as Error | undefined)?.message,
     reportId: report.id,
     ncmecReportId,
-    hoursPending: hoursSinceFiled(report),
+    payload: { hoursPending: hoursSinceFiled(report) },
   });
 }
 
@@ -757,7 +757,7 @@ export async function logBlockedCsamReports(reportIds: number[]) {
       subType: 'send-blocked',
       message: `report ${report.id} unsent after ${hoursPending} hours`,
       reportId: report.id,
-      hoursPending,
+      payload: { hoursPending },
     });
   }
 }
@@ -782,8 +782,7 @@ export async function logOverdueEvidenceApprovals() {
       subType: 'send-blocked',
       message: `report ${report.id} has waited ${hoursPending} hours for a moderator to approve its evidence`,
       reportId: report.id,
-      hoursPending,
-      awaiting: 'evidence-approval',
+      payload: { hoursPending, awaiting: 'evidence-approval' },
     });
   }
 }
@@ -1310,9 +1309,7 @@ async function reportImages(claim: SendClaim) {
       subType: 'send-all-unreadable',
       message: `report ${report.id} has no readable file`,
       reportId: report.id,
-      hoursPending,
-      filesUnreadable: failed.length,
-      filesAbsent: absent.length,
+      payload: { hoursPending, filesUnreadable: failed.length, filesAbsent: absent.length },
     });
     if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
       logToAxiom({
@@ -1321,7 +1318,7 @@ async function reportImages(claim: SendClaim) {
         subType: 'send-decision-needed',
         message: `report ${report.id} has had no readable file for ${hoursPending} hours`,
         reportId: report.id,
-        hoursPending,
+        payload: { hoursPending },
       });
     return logSendFailure(report, new Error('no file of the report could be read'), 'archive-data');
   }
@@ -3218,11 +3215,13 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
       message: `report ${report.id}: archived ${entries} of ${imageUrls.length} generated images`,
       reportId: report.id,
       expected: imageUrls.length,
-      strikeUrls: strikeUrls.size,
-      namedUrls: namedUrls.size,
-      entries,
-      unreadable,
-      strikesNotFound,
+      payload: {
+        strikeUrls: strikeUrls.size,
+        namedUrls: namedUrls.size,
+        entries,
+        unreadable,
+        strikesNotFound,
+      },
     });
 
     archived.push({

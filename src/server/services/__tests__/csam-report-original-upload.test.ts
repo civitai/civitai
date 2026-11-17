@@ -602,7 +602,10 @@ describe('NCMEC image upload', () => {
         expect.objectContaining({ where: { id: { in: [1, 2, 3] }, reportSentAt: null } })
       );
       expect(lines('send-blocked')).toEqual([
-        expect.objectContaining({ reportId: 2, hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS }),
+        expect.objectContaining({
+          reportId: 2,
+          payload: { hoursPending: CSAM_SEND_BLOCKED_AFTER_HOURS },
+        }),
       ]);
     });
   });
@@ -719,7 +722,9 @@ describe('NCMEC image upload', () => {
 
       expect(submitReport).not.toHaveBeenCalled();
       expect(lines('send-all-unreadable')).toEqual([
-        expect.objectContaining({ filesUnreadable: 1, filesAbsent: 1 }),
+        expect.objectContaining({
+          payload: expect.objectContaining({ filesUnreadable: 1, filesAbsent: 1 }),
+        }),
       ]);
     });
 
@@ -731,7 +736,10 @@ describe('NCMEC image upload', () => {
       it('alerts on the first run and never sends it short', async () => {
         await processCsamReport(filed(1));
         expect(lines('send-all-unreadable')).toEqual([
-          expect.objectContaining({ reportId: report.id, hoursPending: 1, filesUnreadable: 2 }),
+          expect.objectContaining({
+            reportId: report.id,
+            payload: expect.objectContaining({ hoursPending: 1, filesUnreadable: 2 }),
+          }),
         ]);
 
         await processCsamReport(filed(CSAM_SEND_SHORT_AFTER_HOURS + 1, { 501: 9, 502: 9 }));
@@ -747,7 +755,7 @@ describe('NCMEC image upload', () => {
         expect(lines('send-decision-needed')).toEqual([
           expect.objectContaining({
             reportId: report.id,
-            hoursPending: CSAM_SEND_DECISION_AFTER_HOURS,
+            payload: { hoursPending: CSAM_SEND_DECISION_AFTER_HOURS },
           }),
         ]);
       });
@@ -768,7 +776,10 @@ describe('NCMEC image upload', () => {
 
       expect(submitReport).not.toHaveBeenCalled();
       expect(lines('send-all-unreadable')).toEqual([
-        expect.objectContaining({ reportId: report.id, filesUnreadable: 0, filesAbsent: 1 }),
+        expect.objectContaining({
+          reportId: report.id,
+          payload: expect.objectContaining({ filesUnreadable: 0, filesAbsent: 1 }),
+        }),
       ]);
     });
 
