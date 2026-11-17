@@ -51,6 +51,7 @@ import {
 } from '~/shared/constants/creator-service-terms.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import { creatorAggregateScoreFromMeta } from '~/shared/utils/creator-score';
+import { escapeLike } from '~/server/utils/ilike';
 import {
   ImageIngestionStatus,
   ServiceOfferingIngestionStatus,
@@ -383,9 +384,10 @@ export async function getServiceOfferingFeed({
         ...(query
           ? [
               {
+                // Prisma passes `%` and `_` through to LIKE as wildcards.
                 OR: [
-                  { title: { contains: query, mode: 'insensitive' as const } },
-                  { description: { contains: query, mode: 'insensitive' as const } },
+                  { title: { contains: escapeLike(query), mode: 'insensitive' as const } },
+                  { description: { contains: escapeLike(query), mode: 'insensitive' as const } },
                 ],
               },
             ]
