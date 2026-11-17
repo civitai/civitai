@@ -82,4 +82,45 @@ describe('reorderPostImages with storyline text items', () => {
       [11, 1],
     ]);
   });
+
+  describe('when the editor did not list every image (held, or above the request cap)', () => {
+    // Images 10 (0), 11 (1) and 12 (2); 11 is hidden from the editor, which drags 12 first.
+    const listedHeld = [{ index: 0 }, { index: 2 }];
+
+    it('without `items`, the listed images take the slots they hold and the unlisted one keeps its own', async () => {
+      w.postText.count.mockResolvedValue(0 as never);
+      w.image.count.mockResolvedValue(1 as never);
+      w.image.findMany.mockResolvedValue(listedHeld as never);
+      await reorderPostImages({ id: POST, imageIds: [12, 10] });
+      expect(w.image.count).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { postId: POST, id: { notIn: [12, 10] } } })
+      );
+      // Not [12, 0], [10, 1]: index 1 is the hidden image's.
+      expect(imageIndexes()).toEqual([
+        [12, 0],
+        [10, 2],
+      ]);
+    });
+
+    it('with `items`, the listed rows take the slots they hold, texts included', async () => {
+      // A text at 3 after them.
+      w.image.count.mockResolvedValue(1 as never);
+      w.image.findMany.mockResolvedValue(listedHeld as never);
+      w.postText.findMany.mockResolvedValue([{ index: 3 }] as never);
+      await reorderPostImages({
+        id: POST,
+        imageIds: [],
+        items: [
+          { type: 'text', id: 1 },
+          { type: 'image', id: 12 },
+          { type: 'image', id: 10 },
+        ],
+      });
+      expect(textIndexes()).toEqual([[1, 0]]);
+      expect(imageIndexes()).toEqual([
+        [12, 2],
+        [10, 3],
+      ]);
+    });
+  });
 });

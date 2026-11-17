@@ -367,8 +367,6 @@ describe('getImageGenerationData visibility', () => {
     expect(await sees(OTHER)).toBe(false);
   });
 
-  // Moderation rule: an image held for csam or minor review is served to moderators only, not
-  // even to its owner or a manager of the collection its post was submitted to.
   describe.each(['csam', 'minor'])('an image held for %s review', (hold) => {
     beforeEach(async () => {
       await seed({ image: { '"needsReview"': `'${hold}'` }, post: { '"collectionId"': '7' } });

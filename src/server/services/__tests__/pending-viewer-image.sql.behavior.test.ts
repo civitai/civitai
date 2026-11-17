@@ -100,8 +100,6 @@ describe('a pending image read by a signed-in non-moderator', () => {
     expect(await visibleTo(UPLOADER)).toEqual([1, 2, 3, 6, 11, 20, 21, 22, 23, 25, 27, 28, 30]);
   });
 
-  // Moderation rule: an owner is never shown their own image held for csam or minor review
-  // (4, 5); any other review state (6) stays theirs to see.
   it('hides from the uploader their own images held for csam or minor review, and no other review state', async () => {
     const own = await visibleTo(UPLOADER);
     expect(own).not.toContain(4);

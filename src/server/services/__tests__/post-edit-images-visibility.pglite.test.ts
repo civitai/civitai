@@ -73,8 +73,6 @@ const editorIds = async (user: SessionUser, servableLevels = allBrowsingLevelsFl
   (await getPostEditImages({ id: POST, user, servableLevels })).map((i) => i.id);
 
 describe('getPostEditImages: images held for review', () => {
-  // Moderation rule: an owner is never shown their own image held for csam or minor review; any
-  // other review state stays theirs to see.
   it('leaves held images out of the owner’s editor and keeps every other image', async () => {
     expect(await editorIds(owner)).toEqual([CLEAN, OTHER_REVIEW, MATURE, UNRATED]);
   });

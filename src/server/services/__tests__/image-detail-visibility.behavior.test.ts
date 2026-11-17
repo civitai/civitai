@@ -218,7 +218,6 @@ describe('image.getDetail visibility', () => {
     expect(await sees(MOD)).toBe(true);
   });
 
-  // Moderation rule: a row held for csam or minor review is served to moderators only.
   it.each(['csam', 'minor'])(
     'an image held for %s review is refused to its owner; a moderator still gets it',
     async (hold) => {

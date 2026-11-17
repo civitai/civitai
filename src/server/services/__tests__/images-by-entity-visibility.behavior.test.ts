@@ -117,8 +117,6 @@ describe('getImagesByEntity', () => {
     expect(await imageOf(5, viewers.stranger)).toEqual([UNFLAGGED_R]);
   });
 
-  // Moderation rule: an owner is never shown their own image held for csam or minor review; any
-  // other review state stays theirs to see. Moderators see all of them.
   it.each([
     ['held for csam review', 6],
     ['held for minor review', 7],
