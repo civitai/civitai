@@ -1288,7 +1288,37 @@ describe('submitVersion', () => {
 
 // ---- withdrawRequest -------------------------------------------------------
 
+/** Raw statements that WRITE the review-holds table, on either client (tx runs on the write mock). */
+function holdWrites(): string[] {
+  return [mockDbWrite, mockDbRead]
+    .flatMap((c) =>
+      ['$executeRaw', '$executeRawUnsafe', '$queryRaw', '$queryRawUnsafe'].flatMap((m) => {
+        const fn = (c as unknown as Record<string, { mock?: { calls: unknown[][] } } | undefined>)[
+          m
+        ];
+        return (fn?.mock?.calls ?? []).map((call) =>
+          Array.isArray(call[0]) ? (call[0] as string[]).join('?') : String(call[0])
+        );
+      })
+    )
+    .filter((sql) => /app_publish_request_holds/.test(sql) && /\b(UPDATE|DELETE)\b/i.test(sql));
+}
+
 describe('withdrawRequest', () => {
+  it('🔴 a developer withdrawing their request never lifts a moderator hold on the app', async () => {
+    const { withdrawRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_x',
+      slug: 'held-app',
+      status: 'pending',
+      submittedByUserId: 42,
+    });
+    mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+    await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
+    expect(mockDbWrite.appBlockPublishRequest.updateMany).toHaveBeenCalled();
+    expect(holdWrites()).toEqual([]);
+  });
+
   it('moves pending → withdrawn for the owner via a status-guarded updateMany', async () => {
     const { withdrawRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
@@ -4184,6 +4214,22 @@ describe('approveRequest', () => {
 // ---- rejectRequest ---------------------------------------------------------
 
 describe('rejectRequest', () => {
+  it('🔴 rejecting a request leaves the app review holds open', async () => {
+    const { rejectRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({
+      id: 'pubreq_x',
+      slug: 'held-app',
+      status: 'pending',
+    });
+    await rejectRequest({
+      publishRequestId: 'pubreq_x',
+      reviewerUserId: 999,
+      rejectionReason: 'manifest contentRating mismatch',
+    });
+    expect(mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0].data.status).toBe('rejected');
+    expect(holdWrites()).toEqual([]);
+  });
+
   it('happy path moves pending → rejected with reason', async () => {
     const { rejectRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue({

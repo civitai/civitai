@@ -1845,9 +1845,27 @@ describe('republishOwnListing (🔴 the last-event safety guard)', () => {
       userId: OWNER,
     }).catch((e: unknown) => e);
     expect(err).toMatchObject({ code: 'NOT_TRANSITIONABLE' });
-    // 🔴 The owner never learns that a hold exists.
-    expect((err as Error).message).not.toMatch(/hold|review|moderat/i);
+    // 🔴 The owner is told plainly that a moderator hold is on the app, and nothing more.
+    expect((err as Error).message).toBe(
+      "A moderator hold is on this app, so it can't be republished right now. Contact support."
+    );
+    expect((err as Error).message).not.toContain('held-app');
     expect(mockWrite.appBlock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('once a moderator clears the hold, the same republish restores the app', async () => {
+    mockWrite.$queryRaw.mockImplementation(async () => []);
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(
+      ownerPrimary('removed', 'onsite', OWNER, BLOCK_ID)
+    );
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValueOnce(ownerUnpublishEvent());
+    await expect(
+      republishOwnListing({ input: { appListingId: APP_ID }, userId: OWNER })
+    ).resolves.toEqual({ appListingId: APP_ID, status: 'approved' });
+    expect(mockWrite.appBlock.updateMany).toHaveBeenCalledWith({
+      where: { id: BLOCK_ID, status: 'suspended' },
+      data: { status: 'approved' },
+    });
   });
 
   it('fails closed when the holds cannot be read', async () => {

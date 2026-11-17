@@ -4996,7 +4996,7 @@ async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
   if (open) {
     throw new RetriggerBuildError(
       'NOT_RETRIGGERABLE',
-      'This app has an open review hold. A moderator must clear it on the review page before its build can run.'
+      "This app has an open review hold, and a moderator must clear it before its build can run. Holds are listed on the app's pending review; if nothing is pending, ask an engineer."
     );
   }
 }

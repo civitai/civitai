@@ -569,6 +569,9 @@ async function flipBackingBlockStatus(
 
 const OWNER_RESTORE_UNAVAILABLE =
   "This app can't be republished right now. Contact support if this persists.";
+/** Shown to the owner: that a hold exists and who to ask, never its label or reason. */
+export const OWNER_RESTORE_HELD =
+  "A moderator hold is on this app, so it can't be republished right now. Contact support.";
 
 /**
  * A block suspended over an open review hold (the late-hold re-suspend) stays suspended until a
@@ -599,11 +602,10 @@ async function assertNoOpenReviewHold(
     );
   }
   if (!open) return;
-  if (ownerFacing)
-    throw new OffsiteModerationError('NOT_TRANSITIONABLE', OWNER_RESTORE_UNAVAILABLE);
+  if (ownerFacing) throw new OffsiteModerationError('NOT_TRANSITIONABLE', OWNER_RESTORE_HELD);
   throw new OffsiteModerationError(
     'FORBIDDEN',
-    'This app has an open review hold. A moderator must clear it on the review page before the app can be restored.'
+    "This app has an open review hold, and a moderator must clear it before the app can be restored. Holds are listed on the app's pending review; if nothing is pending, ask an engineer."
   );
 }
 
