@@ -57,7 +57,7 @@ const submitBody = {
   items: [{ mediaUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/a.png', key: 'a' }],
 };
 
-const userKey = (tokenScope: number) => ({
+const userKey = (tokenScope: bigint) => ({
   headers: { authorization: 'Bearer k' },
   context: {
     apiKeyId: 1,

@@ -139,7 +139,7 @@ describe('cookie writes must be JSON', () => {
       method: 'POST',
       body: { ids: [11], deltaMinutes: 60 },
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      context: { apiKeyId: 5, tokenScope: 0xff },
+      context: { apiKeyId: 5, tokenScope: 0xffn },
     });
 
     expect(res.statusCode).toBe(200);

@@ -113,6 +113,26 @@ describe('computeUserFeatureFlagsOverlay with gated eligibility', () => {
     expect(overlay.trainingStudioUi).toBe(false);
   });
 
+  it('pins the Training Studio on over a stored opt-back while the classic trainer is off', () => {
+    fliptAnswers({ 'training-studio-ui': true });
+    const overlay = computeUserFeatureFlagsOverlay(
+      { trainingStudioUi: false },
+      { classicTrainerOff: true } as FeatureAccess,
+      getFliptGatedEligibility({ user: regularUser })
+    );
+    expect(overlay.trainingStudioUi).toBe(true);
+  });
+
+  it('does not grant the Training Studio to an ineligible user when the classic trainer is off', () => {
+    fliptAnswers({ 'training-studio-ui': false });
+    const overlay = computeUserFeatureFlagsOverlay(
+      undefined,
+      { classicTrainerOff: true } as FeatureAccess,
+      getFliptGatedEligibility({ user: regularUser })
+    );
+    expect(overlay.trainingStudioUi).toBeUndefined();
+  });
+
   it('does not default an ineligible user in', () => {
     fliptAnswers({ 'training-studio-ui': false });
     const overlay = computeUserFeatureFlagsOverlay(
@@ -158,5 +178,20 @@ describe('computeUserFeatureFlagsOverlay with gated eligibility', () => {
     // "ineligible". Any new call site must thread getFliptGatedEligibility.
     const overlay = computeUserFeatureFlagsOverlay(toggledOn, hostFeatures);
     expect(overlay.trainingStudioUi).toBeUndefined();
+  });
+});
+
+describe('classicTrainerOff', () => {
+  // Distinct users: getFeatureFlagsAsync memoizes per user for a few seconds.
+  it('is off, even for a moderator, until the Flipt flag exists', async () => {
+    fliptAnswers({});
+    const flags = await getFeatureFlagsAsync({ user: { ...moderator, id: 301 } });
+    expect(flags.classicTrainerOff).toBeFalsy();
+  });
+
+  it('follows the Flipt flag once it exists', async () => {
+    fliptAnswers({ 'classic-trainer-off': true });
+    const flags = await getFeatureFlagsAsync({ user: { ...regularUser, id: 302 } });
+    expect(flags.classicTrainerOff).toBe(true);
   });
 });

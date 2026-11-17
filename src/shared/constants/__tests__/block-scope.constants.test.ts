@@ -135,7 +135,7 @@ describe('block-scope.constants', () => {
     // deriveOauthBitmaskFromBlockScopes and validateBlockScopesAgainstOauthClient
     // both index the map right after the predicate; a prototype key must never
     // reach that indexing.
-    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0);
+    expect(deriveOauthBitmaskFromBlockScopes(PROTOTYPE_KEYS)).toBe(0n);
     const check = validateBlockScopesAgainstOauthClient(PROTOTYPE_KEYS, TokenScope.Full);
     expect(check.valid).toBe(false);
     expect(check.rejectedScopes.sort()).toEqual([...PROTOTYPE_KEYS].sort());
@@ -436,7 +436,7 @@ describe('block-scope.constants', () => {
     });
 
     it('accepts no-bit scopes regardless of bitmask', () => {
-      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0);
+      const result = validateBlockScopesAgainstOauthClient(['apps:storage:read'], 0n);
       expect(result.valid).toBe(true);
     });
 
@@ -483,14 +483,14 @@ describe('block-scope.constants', () => {
     });
 
     it('returns 0 for an empty / scope-less manifest (NOT Full)', () => {
-      expect(deriveOauthBitmaskFromBlockScopes([])).toBe(0);
+      expect(deriveOauthBitmaskFromBlockScopes([])).toBe(0n);
       expect(deriveOauthBitmaskFromBlockScopes([])).not.toBe(TokenScope.Full);
     });
 
     it('SKIP_OAUTH_CHECK scopes contribute no bits', () => {
       // apps:storage:* are gated elsewhere (per-op server-side), not via the bit.
       expect(deriveOauthBitmaskFromBlockScopes(['apps:storage:read', 'apps:storage:write'])).toBe(
-        0
+        0n
       );
     });
 

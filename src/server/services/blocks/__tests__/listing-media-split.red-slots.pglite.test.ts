@@ -229,6 +229,7 @@ describe('both migrations applied', () => {
         tosViolation: true,
         acceptableMinor: true,
         blockedFor: 'x',
+        modelRestricted: false,
       },
       cover: null,
     });

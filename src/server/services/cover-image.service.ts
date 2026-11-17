@@ -9,6 +9,7 @@ import {
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
 } from '~/server/services/image-url-ownership';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
 
 /**
@@ -114,7 +115,7 @@ export type CoverImageDeps = {
     url: string;
     userId: number;
     currentCoverId?: number | null;
-  }) => Promise<number | null>;
+  }) => Promise<{ id: number; restricted: boolean } | null>;
   /** `true` present · `false` definitively absent · `null` bucket could not be consulted. */
   objectExists: (url: string) => Promise<boolean | null>;
   /** Throws {@link COVER_IMAGE_UNAVAILABLE_MESSAGE} when the caller may not use this url. */
@@ -126,7 +127,24 @@ export type CoverImageDeps = {
    * no-op measurable.
    */
   logExistenceUnknown: (args: { userId: number }) => void;
+  /** Throws {@link RESTRICTED_COVER_IMAGE_MESSAGE} for an image restricted by its base model. */
+  assertNotRestricted: (id: number) => Promise<void>;
 };
+
+export const RESTRICTED_COVER_IMAGE_MESSAGE = `This image can't be used as a cover: ${RESTRICTED_IMAGE_REASON}.`;
+
+const restrictedCoverError = () =>
+  new TRPCError({ code: 'BAD_REQUEST', message: RESTRICTED_COVER_IMAGE_MESSAGE });
+
+/** A missing id passes. */
+async function assertNotRestricted(id: number) {
+  // primary: guards the cover write, so a just-flagged image is seen.
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: { nsfwLevel: true, modelRestricted: true },
+  });
+  if (image && isRestrictedImage(image)) throw restrictedCoverError();
+}
 
 /** Reused rows must belong to the caller — see `findReusableImageId` below for why. */
 async function findReusableImageId({
@@ -156,15 +174,15 @@ async function findReusableImageId({
       article: { select: { id: true } },
       articleBanner: { select: { id: true } },
       _count: { select: { connections: true, challengesCover: true, challengeEventCovers: true } },
+      nsfwLevel: true,
+      modelRestricted: true,
     },
     orderBy: { id: 'desc' },
     take: 5,
   });
 
-  return (
-    candidates.find((c: ReusableCoverImageCandidate) => isReusableCoverImage(c, currentCoverId))
-      ?.id ?? null
-  );
+  const reusable = candidates.find((c) => isReusableCoverImage(c, currentCoverId));
+  return reusable ? { id: reusable.id, restricted: isRestrictedImage(reusable) } : null;
 }
 
 /**
@@ -227,6 +245,7 @@ export const productionCoverImageDeps: CoverImageDeps = {
     await assertClientKeysIssuedToCaller({ urls: [url], userId, alsoIssuedTo: uploaderId });
   },
   logExistenceUnknown,
+  assertNotRestricted,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
   // so every existing test that wholesale-`vi.mock`s `image.service` without re-stubbing
@@ -260,11 +279,16 @@ export async function resolveCoverImageId(
   // here should cost a url lookup or a bucket round-trip.
   if (id != null) {
     await assertOwnership?.(id);
+    // Keeping the cover already set (`currentCoverId`) is not choosing it, so a later flag doesn't block other edits.
+    if (id !== currentCoverId) await deps.assertNotRestricted(id);
     return id;
   }
 
-  const reusableId = await deps.findReusableImageId({ url: image.url, userId, currentCoverId });
-  if (reusableId != null) return reusableId;
+  const reusable = await deps.findReusableImageId({ url: image.url, userId, currentCoverId });
+  if (reusable) {
+    if (reusable.restricted && reusable.id !== currentCoverId) throw restrictedCoverError();
+    return reusable.id;
+  }
 
   const exists = await deps.objectExists(image.url);
   // 🔴 Only a DEFINITIVE `false` rejects. `null` means the bucket could not be consulted, and

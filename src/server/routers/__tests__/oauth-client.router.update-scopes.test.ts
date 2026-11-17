@@ -34,7 +34,7 @@ function caller() {
 
 const written = () => dbMock.dbWrite.oauthClient.update.mock.calls[0][0].data;
 
-function existing(allowedScopes: number) {
+function existing(allowedScopes: bigint) {
   dbMock.dbWrite.oauthClient.findFirst.mockResolvedValue({
     id: 'game-frame',
     userId: OWNER.id,
@@ -62,7 +62,7 @@ describe('oauthClient.update scopes', () => {
     existing(
       TokenScope.UserRead | TokenScope.AIServicesWrite | CATALOG | TokenScope.AppBlocksSubmit
     );
-    await caller().update({ id: 'game-frame', allowedScopes: TokenScope.UserRead });
+    await caller().update({ id: 'game-frame', allowedScopes: Number(TokenScope.UserRead) });
     expect(written().allowedScopes).toBe(
       TokenScope.UserRead | CATALOG | TokenScope.AppBlocksSubmit
     );
@@ -71,11 +71,11 @@ describe('oauthClient.update scopes', () => {
   it('a scope edit cannot add an opt-in bit', async () => {
     existing(TokenScope.UserRead);
     await expect(
-      caller().update({ id: 'game-frame', allowedScopes: TokenScope.UserRead | CATALOG })
+      caller().update({ id: 'game-frame', allowedScopes: Number(TokenScope.UserRead | CATALOG) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(dbMock.dbWrite.oauthClient.update).not.toHaveBeenCalled();
 
-    await caller().update({ id: 'game-frame', allowedScopes: TokenScope.Full });
+    await caller().update({ id: 'game-frame', allowedScopes: Number(TokenScope.Full) });
     expect(written().allowedScopes).toBe(TokenScope.Full);
   });
 });

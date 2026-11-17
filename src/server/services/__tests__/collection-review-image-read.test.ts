@@ -111,14 +111,23 @@ describe("a collection review's image read", () => {
     expect(text).toMatch(/p\."availability" != \$\d+/);
   });
 
+  // The owner's Restricted notice reads it; no viewer exception, so the uploader's row reads true.
+  it('returns whether each image is restricted, the same for every viewer', async () => {
+    const { text } = await statementFor({ id: REVIEWER }, { pending: true });
+    expect(text).toMatch(
+      /\(\(i\."nsfwLevel" & \$\d+\) = 0 OR NOT i\."modelRestricted"\) IS NOT TRUE AS "restricted"/
+    );
+  });
+
   it('opens unrated images only inside the rating check, not past the other filters', async () => {
     const { text } = await statementFor(
       { id: REVIEWER },
       { pending: true, reviewCollectionId: COLLECTION }
     );
     // The arm is the last OR inside the clause that starts with the rating check, so every other
-    // AND-ed filter still applies to the images it lets through.
-    const start = text.indexOf('((i."nsfwLevel" & $');
+    // AND-ed filter still applies to the images it lets through. Searched from the WHERE: the SELECT
+    // carries a `restricted` column with the same opening.
+    const start = text.indexOf('((i."nsfwLevel" & $', text.indexOf('WHERE'));
     expect(start, 'no rating clause in the read').toBeGreaterThan(-1);
     let depth = 0;
     let end = start;

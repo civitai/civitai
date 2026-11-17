@@ -44,6 +44,7 @@ const row = (
     userId: targetUserId,
     tosViolation: false,
     needsReview: null,
+    modelRestricted: false,
     ingestion: ImageIngestionStatus.Scanned,
     nsfwLevelLocked: false,
     post: postId
@@ -109,6 +110,10 @@ describe('getHiddenImagesForUser', () => {
       ['a Blocked rating', posted(2, { nsfwLevel: NsfwLevel.Blocked })],
       ['an unscanned image', posted(3, { ingestion: ImageIngestionStatus.Pending })],
       ['an image in a review queue', posted(13, { needsReview: 'minor' })],
+      [
+        'a mature image of a restricted base model',
+        posted(14, { nsfwLevel: NsfwLevel.R, modelRestricted: true }),
+      ],
       [
         'a Knights-locked errored scan',
         posted(10, {

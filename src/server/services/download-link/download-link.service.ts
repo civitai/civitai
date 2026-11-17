@@ -345,7 +345,7 @@ async function isCredentialLive(credential: DownloadLinkCredential, now: number)
     !!client &&
     secretEpoch(client.secret) === credential.epoch &&
     client.grants.includes('client_credentials') &&
-    (client.allowedScopes & TokenScope.DownloadLink) !== 0 &&
+    (client.allowedScopes & TokenScope.DownloadLink) !== 0n &&
     !client.user.bannedAt &&
     !client.user.deletedAt
   );

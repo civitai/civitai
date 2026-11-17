@@ -9,7 +9,8 @@
     "./schema": "./src/schema.ts",
     "./client": "./src/client.ts",
     "./model-rules": "./src/model-rules.ts",
-    "./model-rules-convert": "./src/model-rules-convert.ts"
+    "./model-rules-convert": "./src/model-rules-convert.ts",
+    "./process-definition": "./src/process-definition.ts"
   },
   "scripts": {
     "test": "vitest run",

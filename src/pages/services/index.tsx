@@ -1,11 +1,14 @@
 import { Center, Container, Group, Loader, Select, Stack, Text, Title } from '@mantine/core';
 import { useState } from 'react';
 import { ServiceFeedCard } from '~/components/CreatorShop/Services/feed/ServiceFeedCard';
+import { ServicesKickoffHero } from '~/components/CreatorShop/Services/feed/ServicesKickoffHero';
 import { useServiceOfferingFeed } from '~/components/CreatorShop/Services/creator-service.util';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ServiceOfferingFeedSort } from '~/server/schema/creator-service.schema';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 // The same flags as `creatorService.getForShop`, the storefront's offerings read.
@@ -23,8 +26,11 @@ const sortOptions: { value: ServiceOfferingFeedSort; label: string }[] = [
 
 export default function ServicesFeedPage() {
   const [sort, setSort] = useState<ServiceOfferingFeedSort>('newest');
+  const features = useFeatureFlags();
+  const feedQuery = useFeedSearchQuery();
+  const query = features.servicesFeedSearch ? feedQuery : undefined;
   const { offerings, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useServiceOfferingFeed(sort);
+    useServiceOfferingFeed(sort, query);
 
   return (
     <>
@@ -35,6 +41,7 @@ export default function ServicesFeedPage() {
       />
       <Container size="xl" py="lg">
         <Stack gap="md">
+          <ServicesKickoffHero />
           <Group justify="space-between" align="flex-end" gap="sm">
             <Stack gap={2}>
               <Title order={1} size="h2">
@@ -59,7 +66,9 @@ export default function ServicesFeedPage() {
               <Loader />
             </Center>
           ) : offerings.length === 0 ? (
-            <NoContent message="No services to show." />
+            <NoContent
+              message={query ? 'No services match your search.' : 'No services to show.'}
+            />
           ) : (
             <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
               {offerings.map((offering) => (

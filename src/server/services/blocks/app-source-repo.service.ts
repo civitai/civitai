@@ -40,7 +40,7 @@ import {
   type SourceFile,
 } from '~/server/services/blocks/app-source-repo.plan';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
-import { FORGEJO_SOURCE_ORG } from '~/shared/constants/app-source-repo.constants';
+import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
 
 export type SourceRepoOrigin = 'fork' | 'assistant' | 'backfill';
 

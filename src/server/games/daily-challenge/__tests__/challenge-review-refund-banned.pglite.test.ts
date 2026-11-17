@@ -26,7 +26,7 @@ vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { refundBannedEntrantReviews } = await import(
+const { challengeReviewRefundTxId, refundBannedEntrantReviews } = await import(
   '~/server/games/daily-challenge/challenge-rewards'
 );
 
@@ -43,7 +43,10 @@ async function seed() {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp);
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "modelRestricted" boolean NOT NULL DEFAULT false
+    );
     CREATE TABLE "CollectionItem" (
       "collectionId" int, "imageId" int, "tagId" int, note text, status text
     );
@@ -97,7 +100,7 @@ beforeEach(async () => {
     externalId === 'challenge-review-1-7'
       ? null
       : {
-          fromAccountId: externalId.endsWith('-4')
+          fromAccountId: /-(4|10|11)$/.test(externalId)
             ? CLEAN
             : externalId.endsWith('-9')
             ? 99
@@ -116,6 +119,20 @@ const refundedEntries = () =>
   mockCreateBuzzTransactionMany.mock.calls.flatMap(([txs]) =>
     (txs as { externalTransactionId: string }[]).map((tx) => tx.externalTransactionId)
   );
+
+it('refunds a clean entrant whose paid entry was restricted by its base model after payment', async () => {
+  await db!.exec(`
+    INSERT INTO "Image" VALUES (10, ${CLEAN}, 4, true), (11, ${CLEAN}, 1, true);
+    INSERT INTO "CollectionItem" VALUES
+      (100, 10, ${REVIEW_ME_TAG}, 'challenge-review-1-10', 'ACCEPTED'),
+      (100, 11, ${REVIEW_ME_TAG}, 'challenge-review-1-11', 'ACCEPTED');
+  `);
+  await refund();
+  // 11 is SFW, so the flag does not restrict it; 4 is a clean entrant's unrestricted entry.
+  expect(refundedEntries()).toContain(challengeReviewRefundTxId(1, 10));
+  expect(refundedEntries()).not.toContain(challengeReviewRefundTxId(1, 11));
+  expect(refundedEntries()).not.toContain(challengeReviewRefundTxId(1, 4));
+});
 
 it("refunds a banned entrant's waiting paid review, for what the purchase cost", async () => {
   expect(await refund()).toEqual([1, 8]);

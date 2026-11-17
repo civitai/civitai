@@ -580,7 +580,8 @@ export interface WithBlockScopeOpts {
    * per-app OauthClient.allowedScopes bit) with no security value. They need a
    * token ONLY for its signed `maxBrowsingLevel` claim — the authoritative
    * maturity ceiling source — NOT for authorization. Token validity + the
-   * clamp (resolveCatalogBrowsingLevel, fail-closed SFW) is the whole authority
+   * clamp (the viewer's level held to the domain cap,
+   * resolveCatalogViewerBrowsingLevel, fail-closed PG) is the whole authority
    * surface; the scope gate would add nothing.
    */
   requiredScope?: string;

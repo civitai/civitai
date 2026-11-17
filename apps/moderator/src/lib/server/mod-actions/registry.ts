@@ -14,6 +14,7 @@ import {
   ImageNotFoundError,
   ImageNotRestoredError,
 } from '../image-moderation.service';
+import { CSAM_BLOCKLIST_RETRY, CsamBlocklistWriteError } from '../image-moderation-effects';
 import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
@@ -72,6 +73,7 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
     const held: HeldRemoval[] = [];
     const notRestored: number[] = [];
     const notFound: number[] = [];
+    const csamBlocklistFailed: number[] = [];
     const restored: number[] = [];
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
@@ -92,10 +94,17 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
           userAgent,
           source: 'site.imageModerate',
           skipAppealCheck: canConfirmReRemoval,
+        }).catch((e: unknown): Awaited<ReturnType<typeof blockImage>> => {
+          if (!(e instanceof CsamBlocklistWriteError)) throw e;
+          csamBlocklistFailed.push(imageId);
+          return {};
         });
         if (result.held) held.push(result.held);
       }
     }
+    // The blocks committed; the moderator is told to retry the CSAM blocklist entry.
+    if (csamBlocklistFailed.length)
+      throw Object.assign(new Error(CSAM_BLOCKLIST_RETRY), { status: 502 });
     // A 409 so the main app shows the moderator why the image is still up.
     if (held.length) throw Object.assign(new Error(heldRemovalMessage(held)), { status: 409 });
     if (notRestored.length || notFound.length)
