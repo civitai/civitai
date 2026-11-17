@@ -268,3 +268,70 @@ func TestDecreaseDate(t *testing.T) {
 		}
 	}
 }
+
+// The collection semi-join, transcribed from getModelsRaw's non-Recently-Added branch with
+// getAvailableCollectionItemsFilterForUser's item filter (no statuses): pushed after the availability
+// clause and before the excluded users, the collection bound first, then the viewer kept for their
+// in-review items, then the collection tag.
+func TestBuildCollection(t *testing.T) {
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7, CollectionID: 42, CollectionTagID: 88, ExcludedUserIDs: []int{9}})
+	wantWhere := `WHERE (mm."mode" IS NULL OR mm."mode" != 'Archived'::"ModelModifier")
+		AND mm."status" = 'Published'::"ModelStatus"
+		AND mm."availability" != 'Private'::"Availability"
+		AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1
+		  AND (ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = $2))
+		  AND ci."tagId" = $3)
+		AND mm."userId" != ALL($4::int[])
+		AND (mm."nsfwLevel" & $5) != 0
+		ORDER BY`
+	if got := norm(stmt.Text); !strings.Contains(got, norm(wantWhere)) {
+		t.Fatalf("SQL:\n got  %s\n want …%s…", got, norm(wantWhere))
+	}
+	if want := []any{42, 7, 88, []int{9}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	// Signed out: accepted items only, nothing bound for a viewer; no tag clause without a tag.
+	stmt = build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, CollectionID: 42})
+	want := `AND EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1 AND ci."status" = 'ACCEPTED'::"CollectionItemStatus") AND (mm."nsfwLevel" & $2) != 0`
+	if got := norm(stmt.Text); !strings.Contains(got, want) {
+		t.Fatalf("signed out:\n got  %s\n want …%s…", got, want)
+	}
+	if want := []any{42, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("signed-out args %#v, want %#v", stmt.Args, want)
+	}
+	// The per-base-model paths keep ModelMetric joined as mm, which the semi-join reads.
+	for _, bm := range [][]string{{"Pony"}, {"Pony", "SDXL 1.0"}} {
+		got := norm(build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, BaseModels: bm, CollectionID: 42}).Text)
+		if !strings.Contains(got, `JOIN "ModelMetric" mm ON mm."modelId" =`) || !strings.Contains(got, `WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $`) {
+			t.Fatalf("base models %v: %s", bm, got)
+		}
+	}
+	// No collection, no semi-join.
+	if got := build(t, PageQuery{Take: 2, Sort: SortHighestRated, BrowsingLevel: 1, ViewerID: 7}).Text; strings.Contains(got, "CollectionItem") {
+		t.Fatalf("no collection: %s", norm(got))
+	}
+}
+
+// The read decision of getUserCollectionPermissionsByIds without the moderator branch.
+func TestReadGranted(t *testing.T) {
+	for _, c := range []struct {
+		read   string
+		owner  int
+		perms  []string
+		viewer int
+		want   bool
+	}{
+		{"Public", 5, nil, 0, true},
+		{"Unlisted", 5, nil, 0, true},
+		{"Private", 5, nil, 0, false},
+		{"Private", 5, nil, 5, true},
+		{"Private", 5, []string{"VIEW"}, 6, true},
+		{"Private", 5, []string{"ADD", "ADD_REVIEW", "MANAGE"}, 6, false},
+		{"Private", 5, []string{}, 6, false},
+		{"Private", 0, []string{"VIEW"}, 0, false}, // signed out never matches an owner or a row
+	} {
+		if got := readGranted(c.read, c.owner, c.perms, c.viewer); got != c.want {
+			t.Errorf("read %s owner %d perms %v viewer %d: %v, want %v", c.read, c.owner, c.perms, c.viewer, got, c.want)
+		}
+	}
+}

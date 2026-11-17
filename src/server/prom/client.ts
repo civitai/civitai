@@ -16,6 +16,7 @@ import {
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
+  redisSysReadonlyRetryCounter,
 } from '@civitai/telemetry/client';
 import {
   batchedDurationHistogram,
@@ -75,6 +76,7 @@ const redisMetricsBridge = {
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
+  redisSysReadonlyRetryCounter,
 } satisfies RedisMetricsBridge & Record<keyof RedisMetricsBridge, unknown>;
 
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =

@@ -704,7 +704,9 @@ describe('C1 cross-user overwrite', () => {
           blockToken: 't',
           value: {
             title: 'idea',
-            data: { img: 'https://orchestration.civitai.com/v2/consumer/blobs/LEG1.png?sig=s' },
+            data: {
+              split: 'https://orchestration.civitai\n.com/x',
+            },
           },
         } as never)
       ).rejects.toThrow(/blocked link/);

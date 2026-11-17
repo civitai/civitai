@@ -116,7 +116,11 @@ describe('POST /admin/yesno-import', () => {
     expect(first.body.result).toMatchObject({ inserted: 2, updated: 0, unchanged: 0 });
     expect(await count()).toBe(2);
     expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'knights-yesno-import', userId: 4, read: 2, inserted: 2 })
+      expect.objectContaining({
+        name: 'knights-yesno-import',
+        userId: 4,
+        payload: expect.objectContaining({ read: 2, toImport: 2, inserted: 2 }),
+      })
     );
 
     const again = await post(moderator, { csv, dryRun: false });
