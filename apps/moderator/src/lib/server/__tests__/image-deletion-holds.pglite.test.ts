@@ -347,6 +347,50 @@ describe('deleteImageRows', () => {
   });
 });
 
+// `deleteImageRows` refuses CSAM-marked images today, so these rows are fed to `finishImageDeletes`
+// directly: if one ever gets through, its earlier versions stay.
+describe('finishImageDeletes', () => {
+  const finish = (csamMarked: boolean) =>
+    finishImageDeletes({
+      deleted: [{ id: PLAIN, url: `key-${PLAIN}`, postId: null, parentId: null, csamMarked }],
+      notReturned: [],
+      avatarUserIds: [],
+    });
+  const queuedData = async () =>
+    (await db.query<{ data: unknown }>(`SELECT data FROM "JobQueue"`)).rows.map((r) => r.data);
+  const queue = (data: object) =>
+    db.query(`INSERT INTO "JobQueue" VALUES ($1, 'Image', 'ImageStorageDelete', $2::jsonb)`, [
+      PLAIN,
+      JSON.stringify(data),
+    ]);
+
+  it('deletes a CSAM-marked image by key alone, purging no versions', async () => {
+    await expect(finish(true)).resolves.toEqual({ storageFailed: [] });
+    expect(keyOnlyDeletes).toEqual([`key-${PLAIN}`]);
+    expect(deletedKeys).toEqual([]);
+  });
+
+  it('purges every version of an unmarked image', async () => {
+    await finish(false);
+    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
+    expect(keyOnlyDeletes).toEqual([]);
+  });
+
+  it('upgrades a queued key-only retry to an all-versions one', async () => {
+    await queue({ url: `key-${PLAIN}` });
+    purgeFails.current = true;
+    await finish(false);
+    expect(await queuedData()).toEqual([{ url: `key-${PLAIN}`, allVersions: true }]);
+  });
+
+  it('replaces a queued retry for another url', async () => {
+    await queue({ url: 'key-old', allVersions: true });
+    purgeFails.current = true;
+    await finish(false);
+    expect(await queuedData()).toEqual([{ url: `key-${PLAIN}`, allVersions: true }]);
+  });
+});
+
 // The hold marker's own delete trigger (the real migrations) keeps such an image and blocks it, so
 // the delete goes ahead rather than leaving a held owner's image live.
 describe('deleteImageRows on an owner with a hold marker', () => {

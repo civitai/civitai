@@ -3218,7 +3218,8 @@ export async function recomputeArticleIngestionInTx(
     textSucceeded && textModeration && current.ingestion !== ArticleIngestionStatus.Scanned
       ? articleTextVerdictMatch(textModeration, current)
       : 'current';
-  if (verdictMatch === 'legacy') logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' });
+  if (verdictMatch === 'legacy')
+    logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' });
   // A verdict for other text neither clears nor blocks it. One for part of this text blocks on a
   // hit in the part it judged, but cannot clear the rest.
   const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
