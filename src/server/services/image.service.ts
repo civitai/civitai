@@ -7264,13 +7264,13 @@ export async function createImageResources({
   return resources;
 }
 
-// `metadata` carries a video's duration, which the crucible picker needs to grey out clips
-// over a crucible's maxClipSeconds before the user spends a click on them.
 /** `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
 const notHeldForReviewWhere: Prisma.ImageWhereInput = {
   OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
 };
 
+// `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+// over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
   id: true,
   url: true,

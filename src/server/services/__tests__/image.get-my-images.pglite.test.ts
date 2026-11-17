@@ -48,10 +48,11 @@ beforeAll(async () => {
 });
 afterAll(() => harness.stop());
 
-const listedIds = async (isModerator?: boolean) => {
+const listedIds = async (isModerator?: boolean, publishedOnly?: boolean) => {
   const { items } = await getMyImages({
     userId: OWNER,
     isModerator,
+    publishedOnly,
     mediaTypes: [MediaType.image],
     limit: 10,
   });
@@ -61,6 +62,10 @@ const listedIds = async (isModerator?: boolean) => {
 describe('getMyImages: images held for review', () => {
   it('leaves held images out of the owner list and keeps every other image', async () => {
     expect(await listedIds()).toEqual([CLEAN, OTHER_REVIEW]);
+  });
+
+  it('leaves them out of the published-only list the image pickers ask for', async () => {
+    expect(await listedIds(undefined, true)).toEqual([CLEAN]);
   });
 
   it('still lists them for a moderator', async () => {
