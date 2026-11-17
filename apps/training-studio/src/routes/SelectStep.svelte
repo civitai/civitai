@@ -129,9 +129,7 @@
   const primary = $derived(runs[0]!);
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
-  // Engine is chosen beside Media and Type, before the model: every Kohya model sits in the "show more"
-  // tail, so a toggle that only appeared once one was picked went unfound. Kohya narrows the grid to
-  // the models it trains; like the tiles, the choice applies to the highlighted run.
+  // Like the tiles, the Engine choice applies to the highlighted run.
   const kohyaCards = $derived(
     editSection ? [] : cardsForMedia(media, enabledFlags).filter(cardSupportsKohya)
   );
@@ -292,7 +290,6 @@
         !cardUnavailability(c, enabledFlags, serviceStatus.value)
     )
   );
-  // Disabled with a reason rather than a click that silently does nothing.
   const kohyaBlockedReason = $derived(
     runSupportsKohya(focused) || kohyaFallbackCard
       ? null
@@ -403,7 +400,6 @@
 
 
 
-<!-- A sweep row's own engine control; the Engine row above acts on the highlighted run. -->
 {#snippet rowEnginePicker(run: Run, index: number)}
   {#if kohyaEnabled && runSupportsKohya(run)}
     <div
