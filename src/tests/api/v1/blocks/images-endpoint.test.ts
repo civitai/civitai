@@ -99,7 +99,8 @@ vi.mock('~/server/utils/request-bulkhead', () => ({
  * DOMAIN clamp reads the domain alone; the viewer-level cases below set it.
  */
 function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
-  const viewer = 'viewerBrowsingLevel' in over ? {} : { viewerBrowsingLevel: over.maxBrowsingLevel };
+  const viewer =
+    'viewerBrowsingLevel' in over ? {} : { viewerBrowsingLevel: over.maxBrowsingLevel };
   return {
     iss: 'civitai',
     aud: 'civitai-app-block',
@@ -504,7 +505,11 @@ describe('/api/v1/blocks/images — the viewer level narrows the domain ceiling'
   });
 
   it('an empty domain ceiling gets an empty page and searches nothing', async () => {
-    claimsBox.claims = fakeClaims({ maxBrowsingLevel: 0, viewerBrowsingLevel: undefined, domain: 'green' });
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: 0,
+      viewerBrowsingLevel: undefined,
+      domain: 'green',
+    });
     const res = await invoke({});
 
     expect(res.statusCode).toBe(200);

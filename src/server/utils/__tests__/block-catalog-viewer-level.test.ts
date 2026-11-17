@@ -34,14 +34,24 @@ describe('resolveCatalogViewerBrowsingLevel — the main site rule (requested & 
   });
 
   it('never returns Blocked, even when a claim carries it', () => {
-    expect(resolveCatalogViewerBrowsingLevel({ maxBrowsingLevel: ALL | 32, viewerBrowsingLevel: ALL | 32 })).toBe(ALL);
-    expect(resolveCatalogViewerBrowsingLevel({ maxBrowsingLevel: 32, viewerBrowsingLevel: 0 })).toBe(0);
+    expect(
+      resolveCatalogViewerBrowsingLevel({
+        maxBrowsingLevel: ALL | 32,
+        viewerBrowsingLevel: ALL | 32,
+      })
+    ).toBe(ALL);
+    expect(
+      resolveCatalogViewerBrowsingLevel({ maxBrowsingLevel: 32, viewerBrowsingLevel: 0 })
+    ).toBe(0);
   });
 
   it('is never wider than the domain cap, for every viewer level', () => {
     for (const cap of [1, SFW, 1 | 2 | 4, ALL]) {
       for (let viewer = 0; viewer <= ALL; viewer++) {
-        const level = resolveCatalogViewerBrowsingLevel({ maxBrowsingLevel: cap, viewerBrowsingLevel: viewer });
+        const level = resolveCatalogViewerBrowsingLevel({
+          maxBrowsingLevel: cap,
+          viewerBrowsingLevel: viewer,
+        });
         expect(level & ~cap).toBe(0);
         // Never above the viewer's own level when it shares any level with the cap.
         if (viewer & cap) expect(level & ~viewer).toBe(0);
