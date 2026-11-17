@@ -44,16 +44,24 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     // Not restored here: a CSAM block is lifted only through the moderator CSAM review.
     const skipped = found.filter((x) => x.blockedFor === BlockedReason.CSAM).map((x) => x.id);
-    const images = found.filter((x) => x.blockedFor !== BlockedReason.CSAM);
-    const imageIdsToUpdate = images.map((x) => x.id);
-    if (imageIdsToUpdate.length === 0) {
+    const candidates = found.filter((x) => x.blockedFor !== BlockedReason.CSAM);
+    if (candidates.length === 0) {
       return res.status(200).json({ images: 0, skipped });
     }
 
-    const imageChunks = chunk(imageIdsToUpdate, batchSize); // Process images in chunks
-    for (const chunkIds of imageChunks) {
-      await handleUnblockImages({ ids: chunkIds });
+    // Counted and tracked only as the service restored them: it re-checks each image itself.
+    const restoredIds = new Set<number>();
+    for (const chunkIds of chunk(
+      candidates.map((x) => x.id),
+      batchSize
+    )) {
+      for (const image of await handleUnblockImages({ ids: chunkIds })) restoredIds.add(image.id);
     }
+    const images = candidates.filter((x) => restoredIds.has(x.id));
+    if (images.length === 0) {
+      return res.status(200).json({ images: 0, skipped });
+    }
+    const imageIdsToUpdate = images.map((x) => x.id);
 
     const imageTags = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
       SELECT "imageId", t."name" as "tag"

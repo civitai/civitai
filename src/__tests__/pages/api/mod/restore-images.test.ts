@@ -45,7 +45,10 @@ const restore = async (imageIds: number[]) => {
 };
 
 beforeEach(() => {
-  h.unblock.mockReset().mockResolvedValue(undefined);
+  // The service answers with the images it restored; by default, all it was given.
+  h.unblock
+    .mockReset()
+    .mockImplementation(async ({ ids }: { ids: number[] }) => ids.map((id) => ({ id })));
 });
 
 describe('/api/mod/restore-images', () => {
@@ -75,5 +78,14 @@ describe('/api/mod/restore-images', () => {
 
     expect(h.unblock).not.toHaveBeenCalled();
     expect(body).toEqual({ images: 0, skipped: [1] });
+  });
+
+  it('counts only the images the service restored', async () => {
+    found([row(2, 'moderated'), row(3, 'moderated')]);
+    h.unblock.mockResolvedValueOnce([{ id: 3 }]);
+
+    const body = await restore([2, 3]);
+
+    expect(body).toEqual({ images: 1, skipped: [] });
   });
 });
