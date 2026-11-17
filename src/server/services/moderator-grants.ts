@@ -32,6 +32,29 @@ export type ModeratorGrantId =
   | 'apps.buzz.refund'
   | 'apps.buzz.refund.large';
 
+/**
+ * Whether the moderator app lets this user open `path`, by the page grant `/admin` writes (the
+ * `AppPageAccess` row keyed by the path itself). Only for a page granted by its own path: a queue under
+ * a shared section (`sharedAccess` in the app's `NAVIGATION`) is granted by the section's path.
+ */
+export async function hasModeratorPageAccess(
+  user: { roles?: string[] },
+  path: string
+): Promise<boolean> {
+  const roles = user.roles ?? [];
+  if (roles.includes(SUPER_ROLE)) return true;
+  if (roles.length === 0) return false;
+
+  // The primary, for the reason above.
+  const row = await kyselyWrite
+    .selectFrom('AppPageAccess')
+    .select('roles')
+    .where('app', '=', 'moderator')
+    .where('path', '=', path)
+    .executeTakeFirst();
+  return (row?.roles ?? []).some((role) => roles.includes(role));
+}
+
 export async function hasModeratorGrant(
   user: { roles?: string[] },
   id: ModeratorGrantId

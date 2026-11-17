@@ -52,6 +52,9 @@
     }))
   );
 
+  // The last text action's outcome, shown for the post it was taken on.
+  let textNotice = $state<{ postId: number; message: string } | null>(null);
+
   // Which report is in flight, so one ruling does not disable every report's buttons.
   let pendingId = $state<number | null>(null);
   // Once the post has nothing left to rule, the queue moves on to the next one.
@@ -254,6 +257,9 @@
     {/snippet}
 
     {#snippet actions()}
+      {#if textNotice && textNotice.postId === item.postId}
+        <p class="m-0 text-sm text-green-300" role="status">{textNotice.message}</p>
+      {/if}
       <!-- 1. The reports: what was said, by whom, and the ruling on each. -->
       <ReportList
         {reports}
@@ -272,6 +278,7 @@
                 details={r.details}
                 text={r.postText}
                 canAct
+                onDone={(message) => (textNotice = { postId: item.postId, message })}
               />
             {/key}
           {/if}

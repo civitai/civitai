@@ -202,6 +202,18 @@ export async function holdPostTextForCsam({
   return result;
 }
 
+/** The reason a report on this text gives, or null when the report is not on this text. */
+export async function getPostTextReportReason(reportId: number, textId: number) {
+  const row = await kyselyWrite
+    .selectFrom('PostTextReport as r')
+    .innerJoin('Report as rep', 'rep.id', 'r.reportId')
+    .select(['rep.reason', 'rep.details'])
+    .where('r.reportId', '=', reportId)
+    .where('r.postTextId', '=', textId)
+    .executeTakeFirst();
+  return row ?? null;
+}
+
 /** The words a report on this text snapshotted when it was filed (`createReport`), or null. */
 async function reportedWords(
   db: Pick<typeof kyselyWrite, 'selectFrom'>,

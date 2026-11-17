@@ -1,6 +1,9 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { postTextReportOpensCsamHold } from '@civitai/shared/post-text-report';
+import { hasModeratorPageAccess } from '~/server/services/moderator-grants';
 import {
+  getPostTextReportReason,
   holdPostTextForCsam,
   refusePostText,
   restorePostText,
@@ -13,7 +16,8 @@ export default defineModeratorEndpoint('postText.moderate', {
   notes: [
     '`refuse` hides the text from every reader until a moderator restores it; no scan verdict lifts it. The text and the rest of its post are kept.',
     "`restore` lifts a moderator's refusal; a refusal the text scan made stands (`stillRefused`). Refused with CONFLICT while the text is held for csam review or kept by a CSAM report or evidence hold.",
-    '`hold` opens a Pending csam hold on the text, decided in the CSAM text-hold queue, and hides it meanwhile.',
+    '`hold` opens a Pending csam hold on the text, decided in the CSAM text-hold queue, and hides it meanwhile. It needs `reportId`: a report on this text with a CSAM or minor-sexualization reason (BAD_REQUEST otherwise).',
+    "Requires the moderator app's post report queue, granted by its `/reports` section (FORBIDDEN otherwise).",
     '`changed` is false when the text was already in the requested state.',
     'Resolves no report: the caller sets the report status.',
   ],
@@ -25,8 +29,23 @@ export default defineModeratorEndpoint('postText.moderate', {
     reportId: z.coerce.number().int().positive().optional().describe('The report acted on.'),
   }),
   async handler(input, ctx) {
+    // The moderator app grants /reports/post through its shared `/reports` section (`sharedAccess`),
+    // so that row is the page grant the queue's actions run under.
+    if (!(await hasModeratorPageAccess(ctx.actor, '/reports')))
+      throw new TRPCError({
+        code: 'FORBIDDEN',
+        message: "Moderating a text needs the moderator app's report queues.",
+      });
     const moderatorId = ctx.actor.id;
     if (input.action === 'hold') {
+      const report = input.reportId
+        ? await getPostTextReportReason(input.reportId, input.textId)
+        : null;
+      if (!report || !postTextReportOpensCsamHold(report))
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Only a CSAM or minor-sexualization report on this text opens a CSAM hold.',
+        });
       const held = await holdPostTextForCsam({
         textId: input.textId,
         moderatorId,

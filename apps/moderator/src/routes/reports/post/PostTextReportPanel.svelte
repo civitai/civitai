@@ -17,15 +17,23 @@
     details,
     text,
     canAct,
+    onDone,
   }: {
     reportId: number;
     reason: string;
     details: unknown;
     text: ReportedPostText;
     canAct: boolean;
+    /** What the action did, for the page to show: the ruled report leaves this list on the reload. */
+    onDone: (message: string) => void;
   } = $props();
 
-  const form = new FormState({ onSuccess: null, reload: true });
+  const form = new FormState({
+    reload: true,
+    onSuccess: (data) => {
+      if (typeof data?.textAction === 'string') onDone(data.textAction);
+    },
+  });
 
   const offered = $derived(
     (['hold', 'refuse', 'restore'] as const).filter(
