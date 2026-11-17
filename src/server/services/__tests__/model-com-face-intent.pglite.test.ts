@@ -4,13 +4,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 import type { ModelMeta } from '~/server/schema/model.schema';
 
 /** The listing intent lock's own SQL against PGlite: which rows it may lock. Ids are invented. */
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { mockPreviewComFaceIntent } = vi.hoisted(() => ({ mockPreviewComFaceIntent: vi.fn() }));
+const { mockPreviewComFaceIntent, activeIntentPrompt } = vi.hoisted(() => ({
+  mockPreviewComFaceIntent: vi.fn(),
+  activeIntentPrompt: { id: 42 },
+}));
 
 vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbLag>()),
@@ -25,6 +29,16 @@ vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanPreview>()),
   previewComFaceIntent: mockPreviewComFaceIntent,
 }));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPrompt>()),
+  getActiveTextScanPrompts: vi.fn(async () => ({
+    'label:model-com-face-intent': {
+      id: activeIntentPrompt.id,
+      key: 'label:model-com-face-intent',
+      content: 'x',
+    },
+  })),
+}));
 
 const {
   comFaceIntentMetaAfterModeratorUnlock,
@@ -33,7 +47,8 @@ const {
   overturnComFaceIntentSql,
   recordComFaceIntent,
 } = await import('~/server/services/model-com-face-intent.service');
-const { assertComFaceAllowed } = await import('~/server/services/model-sfw-face.service');
+const { assertComFaceAllowed, COM_FACE_REFUSED_EDIT_MESSAGE, COM_FACE_REFUSED_MESSAGE } =
+  await import('~/server/services/model-sfw-face.service');
 
 const MODEL = 5;
 let db: PGlite;
@@ -212,7 +227,11 @@ describe('the face check after a moderator lifted the intent lock', () => {
   const OWNER = 1;
   const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
   const storedHash = comFaceIntentTextHash(stored);
-  const detects = (detected: boolean) => ({ status: 'ok', output: { detected, reason: 'r' } });
+  const detects = (detected: boolean) => ({
+    status: 'ok',
+    output: { detected, reason: 'r' },
+    promptId: 42,
+  });
   const faceCheck = (listing: typeof stored) =>
     assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
 
@@ -282,7 +301,12 @@ describe('the face check after a moderator unlocked from the model form', () => 
   const OWNER = 1;
   const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
   const storedHash = comFaceIntentTextHash(stored);
-  const detection = { detected: true, textHash: storedHash, at: '2026-01-01T00:00:00Z' };
+  const detection = {
+    detected: true,
+    textHash: storedHash,
+    at: '2026-01-01T00:00:00Z',
+    promptId: 42,
+  };
   const faceCheck = (listing = stored) =>
     assertComFaceAllowed({ ...listing, modelId: MODEL, userId: OWNER });
 
@@ -308,6 +332,7 @@ describe('the face check after a moderator unlocked from the model form', () => 
     mockPreviewComFaceIntent.mockResolvedValue({
       status: 'ok',
       output: { detected: true, reason: 'r' },
+      promptId: 42,
     });
     // The unlock's logged ruling, after the stored detection; the lookup honours its date.
     dbMock.dbWrite.modActivity.findFirst.mockImplementation((async (args: {
@@ -371,5 +396,121 @@ describe('the face check after a moderator unlocked from the model form', () => 
 
     expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(false);
     expect((await row()).meta.comFaceIntent.overturnedAt).toBeTruthy();
+  });
+});
+
+// A new prompt version never lifts a lock by itself: only a ruling or the existing lift paths do.
+describe('an intent lock when a new prompt version allows the listing', () => {
+  const OWNER = 1;
+  const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
+  const storedHash = comFaceIntentTextHash(stored);
+
+  it('passes the face check but keeps the lock', async () => {
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, NULL, true, '{}', $2)`,
+      [MODEL, stored.description]
+    );
+    await recordComFaceIntent(MODEL, { detected: true, textHash: storedHash, promptId: 41 });
+    expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(true);
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'r' },
+      promptId: 42,
+    });
+
+    await expect(
+      assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER })
+    ).resolves.toBeUndefined();
+
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+    const after = await row();
+    expect(after.lockedProperties).toEqual(['nsfw']);
+    expect(after.meta.systemNsfwLock).toMatchObject({ source: 'com-face-intent' });
+    expect(after.meta.comFaceIntent).toMatchObject({ detected: false, promptId: 42 });
+  });
+});
+
+// A moderator's ruling outranks a new prompt version: a fresh detection of the text they ruled
+// past does not re-lock it. Edited text since the ruling still locks.
+describe('a fresh detection under a new prompt version, after a moderator ruled', () => {
+  const OWNER = 1;
+  const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
+
+  async function ruledPast(description: string) {
+    const earlier = {
+      detected: true,
+      textHash: comFaceIntentTextHash(stored),
+      at: '2026-01-01T00:00:00Z',
+      promptId: 41,
+    };
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, '{}', true, $2, $3)`,
+      [MODEL, { comFaceIntent: earlier }, description]
+    );
+  }
+
+  beforeEach(() => {
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: true, reason: 'r' },
+      promptId: 42,
+    });
+    // The moderator's ruling, after the earlier verdict.
+    dbMock.dbWrite.modActivity.findFirst.mockImplementation((async (args: {
+      where: { createdAt: { gt: Date } };
+    }) => (args.where.createdAt.gt < new Date('2026-06-01') ? { id: 1 } : null)) as never);
+  });
+  afterEach(() => {
+    dbMock.dbWrite.modActivity.findFirst.mockReset();
+    activeIntentPrompt.id = 42;
+  });
+
+  it('does not re-lock the unchanged text, on this save or a later one', async () => {
+    await ruledPast(stored.description);
+    for (let save = 0; save < 2; save++) {
+      await expect(
+        assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER })
+      ).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
+      expect((await row()).lockedProperties).toEqual([]);
+    }
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-lock it after yet another prompt version either', async () => {
+    await ruledPast(stored.description);
+    const save = () => assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER });
+    await expect(save()).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
+    activeIntentPrompt.id = 43;
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: true, reason: 'r' },
+      promptId: 43,
+    });
+    await expect(save()).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
+    await expect(save()).rejects.toThrow(COM_FACE_REFUSED_EDIT_MESSAGE);
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(2);
+    expect((await row()).lockedProperties).toEqual([]);
+  });
+
+  it('writes no suppression, and locks, when no moderator has ruled (control)', async () => {
+    await ruledPast(stored.description);
+    dbMock.dbWrite.modActivity.findFirst.mockResolvedValue(null);
+    await expect(
+      assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER })
+    ).rejects.toThrow(COM_FACE_REFUSED_MESSAGE);
+    const after = await row();
+    expect(after.lockedProperties).toEqual(['nsfw']);
+    expect(after.meta).not.toHaveProperty('comFaceIntentRelockSuppressed');
+  });
+
+  it('re-locks text edited since the ruling (control)', async () => {
+    const edited = { ...stored, description: 'edited after the ruling' };
+    await ruledPast(edited.description);
+    await expect(
+      assertComFaceAllowed({ ...edited, modelId: MODEL, userId: OWNER })
+    ).rejects.toThrow(COM_FACE_REFUSED_MESSAGE);
+    expect((await row()).lockedProperties).toEqual(['nsfw']);
   });
 });

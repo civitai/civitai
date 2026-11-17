@@ -27,6 +27,7 @@ import { computePerceptualHash } from '~/server/services/orchestrator/orchestrat
 import { recordImageScanningResult } from '~/server/services/scanner-audit.service';
 import { recordScanLabelFlag } from '~/server/services/scan-label-flag.service';
 import { labelUploadPrompt } from '~/server/services/upload-prompt-scan.service';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -337,6 +338,8 @@ export async function processImageScanningWorkflow({
       },
       'webhooks'
     );
+    // The showcase bust runs late in the side effects; a step before it may be what threw.
+    if (image.postId) await bustPostCaches(image.postId);
   }
 
   // A label for moderators to verify, recorded after the verdict so it cannot change it.
@@ -369,4 +372,14 @@ export async function processImageScanningWorkflow({
     void labelUploadPrompt({ imageId, userId: image.userId, prompt, negativePrompt }).catch(
       () => null
     );
+}
+
+/** Never throws. Call-site import: post.service loads most of the server, which this handler's tests stub. */
+async function bustPostCaches(postId: number) {
+  try {
+    const { bustCachesForPosts } = await import('~/server/services/post.service');
+    await bustCachesForPosts(postId);
+  } catch (error) {
+    handleLogError(error as Error);
+  }
 }

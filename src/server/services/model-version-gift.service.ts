@@ -10,6 +10,7 @@ import {
   GIFT_PERMISSIONS_KEY,
   giftedPermissions,
   grantModelVersionAccess,
+  REVOCATIONS_KEY,
   purchasedPermissions,
 } from '~/server/services/model-version-access.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -684,7 +685,8 @@ export async function revokeGiftRedemption(
       "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
       AND "accessorId" = ${claimerId} AND "accessorType" = 'User'
     `;
-    if (permissions === 0 && purchased === 0)
+    // A row a moderator revoked is the record of a refunded purchase: it stays.
+    if (permissions === 0 && purchased === 0 && meta[REVOCATIONS_KEY] == null)
       await tx.$executeRaw`DELETE FROM "EntityAccess" WHERE ${where}`;
     else
       await tx.$executeRaw`

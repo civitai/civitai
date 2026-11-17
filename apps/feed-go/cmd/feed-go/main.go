@@ -215,6 +215,7 @@ func run(log *slog.Logger) error {
 			CreatorPromotions:       feed.ParsePromotionAudience(cfg.CreatorPromotion),
 			LazyPostImages:          cfg.LazyPostImages,
 			ImageIndexFeed:          cfg.ImageIndexFeed,
+			PrioritizedVersionCache: cfg.PrioritizedVersionCache,
 			VisibleDecorationEvents: cfg.DecorationEvents,
 			CompletionConcurrency:   cfg.CompletionConcurrency,
 		},

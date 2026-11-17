@@ -15,7 +15,7 @@ import { bustCacheTag, bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
-import { syncSearchIndex } from './search-index';
+import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
@@ -89,10 +89,12 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
   const rows = await dbRead
     .selectFrom('Post as p')
     .leftJoin('ModelVersion as mv', 'mv.id', 'p.modelVersionId')
+    .leftJoin('Model as m', 'm.id', 'mv.modelId')
     .select([
       'p.modelVersionId as modelVersionId',
       'mv.modelId as modelId',
       'p.model3dId as model3dId',
+      sql<boolean>`m."userId" = p."userId"`.as('isShowcase'),
     ])
     .where('p.id', 'in', ids)
     .execute();
@@ -114,6 +116,13 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
     tags.length ? bustCacheTag(tags) : Promise.resolve(),
     bustCachedObject(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION, modelVersionIds),
   ]);
+
+  // The models sync re-picks a model only when `Model.updatedAt` moves; a showcase image that stops
+  // qualifying would otherwise stay in its search document.
+  const showcaseModelIds = [
+    ...new Set(rows.filter((r) => r.isShowcase && r.modelId != null).map((r) => r.modelId!)),
+  ];
+  await syncSearchIndexBulk({ entityType: 'model', entityIds: showcaseModelIds, action: 'update' });
 }
 
 // Keep pHash as the full-precision string: it's a signed 64-bit value that overflows JS `number`

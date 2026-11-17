@@ -59,10 +59,12 @@ export async function checkReviewBatchRoutingMisses(now = new Date()) {
   logToAxiom({
     name: 'review-batch-routing-miss-check',
     type: fresh.length || !misses.scannerRead ? 'error' : 'info',
-    served: served.length,
-    misses: fresh.length,
-    batchHashes: [...new Set(fresh.map((miss) => miss.batchHash))],
-    scannerRead: misses.scannerRead,
+    payload: {
+      served: served.length,
+      misses: fresh.length,
+      batchHashes: [...new Set(fresh.map((miss) => miss.batchHash))],
+      scannerRead: misses.scannerRead,
+    },
   });
   return { served: served.length, misses: fresh.length, scannerRead: misses.scannerRead };
 }
