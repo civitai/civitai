@@ -131,8 +131,7 @@ export function ImageDetailCarousel({
   loop?: boolean;
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
-  const slides = items ?? imageSlides.map(asImageItem);
-  const slideCount = slides.length;
+  const slideCount = (items ?? imageSlides).length;
   const emblaRef = useRef<EmblaCarouselType | null>(null);
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
@@ -171,30 +170,19 @@ export function ImageDetailCarousel({
   // parent has set but not yet rendered (a cold `?text=` load names the text from an effect, in
   // the commit after the slide arrived) and undoes it. Only a slide that changed is passed on.
   const announcedRef = useRef(index);
-  const keysRef = useRef<string[]>([]);
-  keysRef.current = slides.map((slide) => slide.key);
-  // The slide embla last moved to. A slide inserted or removed ahead of it leaves embla on the same
-  // slide number, which then holds another slide.
-  const shownKeyRef = useRef(slides[index]?.key);
   const handleSlideChange = (slideIndex: number) => {
     const moved = slideIndex !== announcedRef.current;
     announcedRef.current = slideIndex;
-    if (moved) shownKeyRef.current = keysRef.current[slideIndex];
     if (moved && !syncingRef.current) navigate?.(slideIndex);
   };
 
   const followIndex = (api: EmblaCarouselType) => {
-    const at = api.selectedScrollSnap();
+    syncingRef.current = true;
     // A slide added in the same commit as the index that names it is not embla's yet: scrolling
     // there would miss it, so reInit embla onto it instead.
-    const unknownToEmbla = index >= api.slideNodes().length && index < slideCount;
-    if (!unknownToEmbla && at === index) return;
-    syncingRef.current = true;
-    if (unknownToEmbla) api.reInit({ startIndex: index });
-    // Out of a slide number that now holds another slide, jump: travelling would show it in passing.
-    else api.scrollTo(index, keysRef.current[at] !== shownKeyRef.current);
+    if (index >= api.slideNodes().length && index < slideCount) api.reInit({ startIndex: index });
+    else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
-    shownKeyRef.current = keysRef.current[index];
   };
 
   // The provider announces embla's start slide right after handing it over, so an index that moved
@@ -281,7 +269,7 @@ export function ImageDetailCarousel({
         {/* pan-y keeps vertical page scrolling native while horizontal drags go to embla */}
         <Embla.Viewport className="h-full touch-pan-y">
           <Embla.Container className="flex h-full">
-            {slides.map((item, i) => (
+            {(items ?? imageSlides.map(asImageItem)).map((item, i) => (
               <Embla.Slide
                 key={item.type === 'image' ? item.image.id : item.key}
                 index={i}

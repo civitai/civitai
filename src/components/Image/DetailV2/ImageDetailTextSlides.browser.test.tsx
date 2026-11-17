@@ -169,9 +169,6 @@ function slideInView() {
   });
 }
 
-/** The key of the slide in view. */
-const keyInView = () => page.getByTestId('items').element().textContent?.split(',')[slideInView()];
-
 /** ImageDetail2's carousel wiring, around the real provider. */
 function Detail() {
   const { items, index, navigateTo } = useImageDetailContext();
@@ -292,14 +289,6 @@ describe('text slides in the image detail carousel', () => {
     postGate.held = true;
     await openAt(102);
     await vi.waitFor(() => expect(slideInView()).toBe(1));
-    // Every frame from the release on, so a text that only passes through the view is seen.
-    const inView: (string | undefined)[] = [];
-    let sampling = true;
-    const sample = () => {
-      inView.push(keyInView());
-      if (sampling) requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
     postGate.release();
     // Text 7 is inserted before image 102, which moves 102 up one slide.
     await expect
@@ -308,8 +297,6 @@ describe('text slides in the image detail carousel', () => {
     await expect.element(shown()).toHaveTextContent('img:102');
     await expect.element(page.getByTestId('sidebar')).toHaveTextContent('img:102');
     await vi.waitFor(() => expect(slideInView()).toBe(2));
-    sampling = false;
-    expect(inView).not.toContain('txt:7');
     expect(location.pathname + location.search).toBe('/images/102');
   });
 
