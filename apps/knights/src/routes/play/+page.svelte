@@ -684,7 +684,7 @@
         {#each data.notices as notice (notice.key)}
           <div class="check-notice" class:close={notice.consequence === 'close'}>
             {#if notice.imageSrc}
-              <img class="check-thumb" src={notice.imageSrc} alt="The judged image" loading="lazy" />
+              <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
             {/if}
             <p>
               <strong>{notice.title}</strong>
