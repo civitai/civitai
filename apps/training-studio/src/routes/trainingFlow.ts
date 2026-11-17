@@ -245,6 +245,20 @@ export function recommendedCardFor(
   );
 }
 
+/** The card a Kohya run starts on for a LoRA type + media: the recommended card when Kohya trains it,
+ *  else the first available Kohya card. Undefined when the media has none (Kohya is image-only). */
+export function kohyaSeedCard(
+  loraTypeId: string,
+  media: Media,
+  enabledFlags: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): ModelCard | undefined {
+  return [
+    recommendedCardFor(loraTypeId, media, enabledFlags),
+    ...cardsForMedia(media, enabledFlags),
+  ].find((c) => cardSupportsKohya(c) && !cardUnavailability(c, enabledFlags, status));
+}
+
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
 export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';

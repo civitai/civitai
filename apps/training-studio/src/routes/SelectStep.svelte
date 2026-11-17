@@ -46,6 +46,7 @@
     versionStatusKey,
     runCard,
     cardSupportsKohya,
+    kohyaSeedCard,
     runEngine,
     runSupportsKohya,
     withEngine,
@@ -103,6 +104,9 @@
     )
   );
   let focus = $state(0);
+  // The last Engine pick, kept apart from the runs: Kohya is image-only, so a trip through Video drops
+  // it from the run, and returning to Image should bring it back.
+  let kohyaPicked = untrack(() => runs.some((r) => runEngine(r) === 'kohya'));
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
   // Until the user touches the base model it tracks the type's recommendation; after that a type
   // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
@@ -136,8 +140,8 @@
   const showEngine = $derived(kohyaEnabled && kohyaCards.length > 0);
   const kohyaMode = $derived(showEngine && runEngine(focused) === 'kohya');
   const recommendedType = $derived(type.recommended[media]);
-  // Undefined when the type has no recommendation for this media, or when the recommended model is gated
-  // off for this user — the banner then simply doesn't show.
+  // Undefined when the type has no recommendation for this media, when the recommended model is gated
+  // off for this user, or when Kohya is on and can't train it — the banner then simply doesn't show.
   const recommendedCard = $derived(
     recommendedType && !editSection
       ? cardsForMedia(media, enabledFlags).find(
@@ -212,10 +216,17 @@
     media = m;
     // A dataset can't span media, so the MODEL always resets. The type carries over when the new media
     // offers it — switching Image→Video with Style chosen should stay Style, not silently become Character.
+    // So does the engine, when the new media has a Kohya model.
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags)];
+    const kohyaCard =
+      kohyaEnabled && kohyaPicked ? kohyaSeedCard(t.id, m, enabledFlags, serviceStatus.value) : undefined;
+    runs = [
+      kohyaCard
+        ? withEngine(newRun(kohyaCard, enabledFlags, serviceStatus.value), 'kohya', enabledFlags)
+        : newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags),
+    ];
     userPickedModel = false;
     focus = 0;
     sweepOpen = false;
@@ -301,6 +312,7 @@
     if (engine === 'kohya' && !runSupportsKohya(runs[index]!)) {
       const card = kohyaFallbackCard;
       if (!card) return;
+      kohyaPicked = true;
       runs = runs.map((r, i) =>
         i === index
           ? withEngine(
@@ -312,6 +324,7 @@
       );
       return;
     }
+    kohyaPicked = engine === 'kohya';
     runs = runs.map((run, i) =>
       i !== index || !runSupportsKohya(run) ? run : withEngine(run, engine, enabledFlags)
     );
@@ -647,7 +660,7 @@
       {/if}
     </div>
 
-    <!-- base model: every model visible as an equal peer, recommended first; no disclosure -->
+    <!-- base model: featured models first, the rest behind "show more"; Kohya lists only its models -->
     <div>
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
