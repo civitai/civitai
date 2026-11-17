@@ -64,14 +64,8 @@ export const config = {
  *   client sends — there is no `nsfw` / `browsingLevel` knob on this endpoint's
  *   schema at all, so maturity is NEVER read from the request beyond the clamp.
  *
- *   🔴 The domain ceiling ALONE is not this route's clamp. It was until this
- *   change, and on `red` it let an app put R/X/XXX catalog images in front of a
- *   viewer whose own settings are PG — the very images the gated read hides
- *   from that viewer. A token with no viewer level (minted before the claim
- *   existed) fails closed to PG. A viewer level that shares NO level with the
- *   domain cap (minted as 0: e.g. a mature-only saved level on a SFW domain)
- *   is served the cap, as the main site serves that viewer, not an empty page;
- *   the region restriction narrows the cap first, by the same rule.
+ *   The domain ceiling alone is not this route's clamp: on `red` it would show
+ *   R/X/XXX images to a PG viewer.
  *
  * Why Option B (a block-gated endpoint) and NOT clamping the public
  * /api/v1/images: the public endpoint is the apex public-API contract +
@@ -195,14 +189,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
-  // AUTHORITATIVE clamp — maturity comes ONLY from the token: the domain ceiling
-  // narrowed to the VIEWER's own level (see the route doc), then narrowed to SFW
-  // for region-restricted viewers (mirrors the public /api/v1/images region
-  // override the shared search service does NOT apply). (The schema doesn't even
-  // expose nsfw/browsingLevel, so there is nothing to read from the request; this
-  // is the single maturity authority.)
-  // A viewer level sharing nothing with the cap falls back to the cap, as the
-  // main site serves that viewer (`resolveCatalogViewerBrowsingLevel`).
+  // AUTHORITATIVE clamp — maturity comes ONLY from the token (see the route doc);
+  // the schema exposes no nsfw/browsingLevel.
   let browsingLevel = resolveCatalogViewerBrowsingLevel(claims, {
     regionRestricted: isRegionRestricted(getRegion(req)),
   });

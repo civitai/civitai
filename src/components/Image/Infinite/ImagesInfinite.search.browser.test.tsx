@@ -142,7 +142,7 @@ describe('ImagesInfinite with a search', () => {
   });
 
   test('shows the images like ?similarTo= and keeps the plain feed switched off', async () => {
-    state.features = { feedSearch: true };
+    state.features = { feedSearch: true, moreLikeThis: true };
     useRouter().query = { similarTo: '42' };
     renderWithProviders(<ImagesInfiniteContent searchable />);
 
@@ -160,8 +160,17 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
   });
 
-  test('a refused query never falls back to ?similarTo=', async () => {
+  test('ignores ?similarTo= without moreLikeThis', async () => {
     state.features = { feedSearch: true };
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('a refused query never falls back to ?similarTo=', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
     state.refusal = 'illegal';
     useRouter().query = { query: 'bad words', similarTo: '42' };
     renderWithProviders(<ImagesInfiniteContent searchable />);
@@ -172,7 +181,7 @@ describe('ImagesInfinite with a search', () => {
   });
 
   test('a typed query replaces ?similarTo=', async () => {
-    state.features = { feedSearch: true };
+    state.features = { feedSearch: true, moreLikeThis: true };
     useRouter().query = { query: 'red dragon', similarTo: '42' };
     renderWithProviders(<ImagesInfiniteContent searchable />);
 

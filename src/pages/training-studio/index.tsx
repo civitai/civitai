@@ -324,14 +324,14 @@ function TrainingStudioEmbed({
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
-  const classicTrainerUrl =
-    isNew || !currentUser?.username
-      ? '/models/train'
-      : `/user/${currentUser.username}/models?section=training`;
+  const pastRunsUrl = currentUser?.username
+    ? `/user/${currentUser.username}/models?section=training`
+    : undefined;
+  const classicTrainerUrl = isNew || !pastRunsUrl ? '/models/train' : pastRunsUrl;
 
   return (
     <div className="mx-auto max-w-[1100px] p-4 sm:p-6">
-      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} pastRunsUrl={pastRunsUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );
