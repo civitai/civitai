@@ -124,8 +124,15 @@ describe('GET /play/next', () => {
     expect(pickYesNo.mock.calls[0][1].ahead).toEqual([3, 4]);
   });
 
-  it('hands the cadence every item named in after, then each one it picks, as served', async () => {
-    await ask([token('queue', 9), token('yesno', 3)], {}, 2);
+  it('hands the cadence what was handed out and not yet voted (ahead, every kind), then each one it picks; never after', async () => {
+    skipList.list.mockResolvedValue([{ kind: 'queue', id: 8 }]);
+    // `after` also names settled votes and skips: none of those are the cadence's.
+    await ask(
+      [token('queue', 1), token('queue', 2), token('queue', 9), token('yesno', 3)],
+      {},
+      2,
+      [token('queue', 9), token('queue', 8), token('yesno', 3)]
+    );
     expect(servedHistory.mock.calls.map((call) => call[2])).toEqual([
       [
         { kind: 'queue', id: 9 },
