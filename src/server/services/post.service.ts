@@ -2362,24 +2362,16 @@ async function linkGeneratedSongCover({
   const blob = readWorkflowCover(workflow.steps);
   if (!blob) return;
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const copy = stageGenerationOutputImage({
+  // Aborting stops the fetch and the store write, so a copy past the budget leaves no stored bytes.
+  const budget = new AbortController();
+  const timer = setTimeout(() => budget.abort(), GENERATED_COVER_COPY_TIMEOUT_MS);
+  const staged = await stageGenerationOutputImage({
     imageUrl: blob.url,
     width: blob.width,
     height: blob.height,
     source: 'song-generated-cover',
-  });
-  // A copy that loses the race still settles later; swallow it so it cannot go unhandled.
-  copy.catch(() => null);
-  const staged = await Promise.race([
-    copy,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('song cover copy timed out')),
-        GENERATED_COVER_COPY_TIMEOUT_MS
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
+    signal: budget.signal,
+  }).finally(() => clearTimeout(timer));
 
   const cover = await createImage({
     url: staged.url,
@@ -2391,13 +2383,16 @@ async function linkGeneratedSongCover({
     metadata: { ...staged.metadata, parentId: songId },
     userId,
   });
-  // Only a song still without a cover takes it; otherwise the row just made is removed.
+  // Only a song still without a cover takes it; a row left unlinked is removed.
   const linked = await dbWrite.$executeRaw`
     UPDATE "Image"
     SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('coverImageId', ${cover.id}::int),
       "updatedAt" = now()
     WHERE id = ${songId} AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')
-  `;
+  `.catch((error) => {
+    handleLogError(error);
+    return 0;
+  });
   if (!linked) await deleteImageById({ id: cover.id, deletedById: userId });
 }
 

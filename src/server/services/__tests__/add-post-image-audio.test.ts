@@ -477,12 +477,20 @@ describe('addPostImage — generated song cover', () => {
   /** The link statement's bound values: the cover id, then the song id. */
   const linkValues = () =>
     dbMock.dbWrite.$executeRaw.mock.calls.map(([, ...values]) => values);
+  const linkSql = () =>
+    (dbMock.dbWrite.$executeRaw.mock.calls[0][0] as unknown as TemplateStringsArray).join('');
 
   it("links the workflow's cover as the song's cover: a scanned row outside the post, named by the song", async () => {
     await postFromGenerator();
 
+    expect(mocks.stageGenerationOutputImage).toHaveBeenCalledTimes(1);
     expect(mocks.stageGenerationOutputImage).toHaveBeenCalledWith(
-      expect.objectContaining({ imageUrl: COVER_URL, width: 1024, height: 1024 })
+      expect.objectContaining({
+        imageUrl: COVER_URL,
+        width: 1024,
+        height: 1024,
+        signal: expect.any(AbortSignal),
+      })
     );
     expect(mocks.createImage).toHaveBeenCalledTimes(2);
     const coverArgs = mocks.createImage.mock.calls[1][0];
@@ -500,6 +508,10 @@ describe('addPostImage — generated song cover', () => {
     expect(coverArgs).not.toHaveProperty('postId');
     expect(coverArgs).not.toHaveProperty('skipIngestion');
     expect(linkValues()).toEqual([[12, 11]]);
+    // The link is the song's `coverImageId`, set only while it has none.
+    expect(linkSql()).toContain('UPDATE "Image"');
+    expect(linkSql()).toContain("jsonb_build_object('coverImageId'");
+    expect(linkSql()).toContain(`AND NOT (COALESCE(metadata, '{}'::jsonb) ? 'coverImageId')`);
     expect(mocks.deleteImageById).not.toHaveBeenCalled();
   });
 
@@ -509,28 +521,11 @@ describe('addPostImage — generated song cover', () => {
     expect(mocks.getWorkflow).toHaveBeenCalledWith({ token: 'token', path: { workflowId: 'wf-1' } });
   });
 
-  it('returns the linked cover on the add result', async () => {
-    const cover = { id: 12, url: staged.url, ingestion: 'Pending', nsfwLevel: 0, blockedFor: null };
-    dbMock.dbWrite.image.findUnique.mockResolvedValue({
-      id: 11,
-      index: 0,
-      type: 'audio',
-      metadata: { ...song, coverImageId: 12 },
-      tools: [],
-      techniques: [],
-      resourceHelper: [],
-    } as never);
-    dbMock.dbWrite.image.findMany.mockResolvedValue([
-      { id: 11, userId: 5, postId: 1, metadata: { coverImageId: 12 } },
-      { ...cover, userId: 5, postId: null, metadata: { parentId: 11 } },
-    ] as never);
-    vi.mocked(getVotableImageTags).mockResolvedValue([]);
-    vi.mocked(thumbnailCache.fetch).mockResolvedValue({} as never);
-    dbMock.dbWrite.trackLyrics.findMany.mockResolvedValue([] as never);
-
-    const image = await addSong({ generationWorkflowId: 'wf-1' });
-
-    expect(image.cover).toEqual(cover);
+  it('links the cover before reading the song back, so the add result carries it', async () => {
+    await postFromGenerator();
+    const [linkOrder] = dbMock.dbWrite.$executeRaw.mock.invocationCallOrder;
+    const [readOrder] = dbMock.dbWrite.image.findUnique.mock.invocationCallOrder;
+    expect(linkOrder).toBeLessThan(readOrder);
   });
 
   it.each([
@@ -542,6 +537,7 @@ describe('addPostImage — generated song cover', () => {
   ])('posts the song without a cover when %s', async (_, workflow) => {
     mocks.getWorkflow.mockResolvedValue(workflow);
     await postFromGenerator();
+    expect(mocks.getWorkflow).toHaveBeenCalledTimes(1);
     expect(mocks.stageGenerationOutputImage).not.toHaveBeenCalled();
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
@@ -550,18 +546,29 @@ describe('addPostImage — generated song cover', () => {
   it('posts the song without a cover when the copy fails', async () => {
     mocks.stageGenerationOutputImage.mockRejectedValue(new Error('not an allowed host'));
     await postFromGenerator();
+    expect(mocks.stageGenerationOutputImage).toHaveBeenCalledTimes(1);
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
   });
 
-  it('does not let a slow copy hold the post: the song posts without a cover', async () => {
+  it('abandons a slow copy at the budget, so nothing is stored, and posts the song without a cover', async () => {
     vi.useFakeTimers();
     try {
-      mocks.stageGenerationOutputImage.mockReturnValue(new Promise(() => undefined));
+      let signal: AbortSignal | undefined;
+      mocks.stageGenerationOutputImage.mockImplementation(
+        (args: { signal: AbortSignal }) =>
+          new Promise((_, reject) => {
+            signal = args.signal;
+            args.signal.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+      );
       const pending = postFromGenerator();
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(signal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
       await pending;
+      expect(signal?.aborted).toBe(true);
       expect(mocks.createImage).toHaveBeenCalledTimes(1);
       expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     } finally {
@@ -579,6 +586,13 @@ describe('addPostImage — generated song cover', () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
     await postFromGenerator();
     expect(mocks.deleteImageById).toHaveBeenCalledWith({ id: 12, deletedById: 5 });
+  });
+
+  it('removes the cover row when the link fails, and still posts the song', async () => {
+    dbMock.dbWrite.$executeRaw.mockRejectedValue(new Error('db down'));
+    await postFromGenerator();
+    expect(mocks.deleteImageById).toHaveBeenCalledWith({ id: 12, deletedById: 5 });
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
   });
 
   it('posts the song without a cover when the cover row cannot be created', async () => {
