@@ -56,4 +56,20 @@ describe('bounties search index images', () => {
 
     expect(record.images.map((i: { id: number }) => i.id)).toEqual([11, 12]);
   });
+
+  it('counts every image of a bounty marked nsfw as mature, as the feed does', async () => {
+    const images = [{ id: 12, nsfwLevel: NsfwLevel.PG13 }];
+    const [marked, unmarked] = await transformData({
+      bounties: [
+        { ...(withImages(images) as object), nsfw: true } as never,
+        { ...(withImages(images) as object), id: 2, nsfw: false } as never,
+      ],
+      imageTags: [tag(12, CHILD_TAG)],
+      profilePictures: [],
+    });
+
+    expect(marked.images).toEqual([]);
+    expect(unmarked.images.map((i: { id: number }) => i.id)).toEqual([12]);
+    expect(marked).not.toHaveProperty('nsfw');
+  });
 });
