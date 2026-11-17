@@ -1372,9 +1372,13 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		{Match: `settings->'hideModelBuzz'`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "hideModelBuzz", "hideModelDownloads", "hideModelGenerations"}), nil
 		}},
-		// The model frame miss lookup (hydrate.MissCompute), over the fixture's placed cosmetics.
+		// The model frame and decoration miss lookups (hydrate.MissCompute), over the fixture's placed
+		// cosmetics.
 		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			return goldenEntityCosmetics(db, sql, args, false, goldenFrameColumns)
+		}},
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, true, []string{"cosmeticId", "equippedToId", "userId"})
 		}},
 	}}
 	g.Routes = append(g.Routes, goldenTagRoutes(db)...)
