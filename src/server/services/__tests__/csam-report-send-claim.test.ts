@@ -395,8 +395,15 @@ describe('a report the send cannot file', () => {
 
     expect(dbMock.dbWrite.csamReport.deleteMany).not.toHaveBeenCalled();
     expect(submitReport).not.toHaveBeenCalled();
+    // Axiom monitors match top-level name + subType on csam-report lines: keep both out of payload.
     expect(lines('send-no-files')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1, case: 'no-files' }),
+      expect.objectContaining({
+        name: 'csam-report',
+        subType: 'send-no-files',
+        type: 'error',
+        reportId: 1,
+        payload: expect.objectContaining({ case: 'no-files' }),
+      }),
     ]);
     expect(writesWith('details').map(({ data }) => data.details.sendHold)).toEqual([
       { case: 'no-files', reason: expect.stringContaining('report 1'), at: expect.any(String) },
@@ -500,7 +507,11 @@ describe("this run's CyberTip, after a failed send", () => {
 
     expect(cancelReport).toHaveBeenLastCalledWith({ id: 99 });
     expect(lines('send-possible-duplicate')).toEqual([
-      expect.objectContaining({ reportId: 1, ncmecReportId: 99, cancelOutcome: 'failed' }),
+      expect.objectContaining({
+        reportId: 1,
+        ncmecReportId: 99,
+        payload: { cancelOutcome: 'failed' },
+      }),
     ]);
     expect(submitReport).toHaveBeenCalledTimes(2);
     expect(stamps().map(({ data }) => data.reportId)).toEqual([100]);
@@ -545,7 +556,11 @@ describe('a stored CyberTip id NCMEC answers for', () => {
     await processCsamReport(report);
 
     expect(lines('send-possible-duplicate')).toEqual([
-      expect.objectContaining({ type: 'error', ncmecReportId: 77, cancelOutcome: 'finished' }),
+      expect.objectContaining({
+        type: 'error',
+        ncmecReportId: 77,
+        payload: { cancelOutcome: 'finished' },
+      }),
     ]);
     expect(writesWith('details')[0].data.details).toEqual({ possibleDuplicateReportIds: [77] });
     expect(stamps()).toHaveLength(1);
@@ -937,7 +952,11 @@ describe('sending each type of report', () => {
         generatedImageUploads: [{ url: 'blob-1', fileId: 'file-1', hash: 'ncmec-md5' }],
       });
       expect(lines('send-short')).toEqual([
-        expect.objectContaining({ type: 'error', reportId: 1, filesMissing: 1 }),
+        expect.objectContaining({
+          type: 'error',
+          reportId: 1,
+          payload: expect.objectContaining({ filesMissing: 1 }),
+        }),
       ]);
     });
 

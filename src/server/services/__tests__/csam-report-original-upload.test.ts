@@ -683,7 +683,10 @@ describe('NCMEC image upload', () => {
         { id: 502, source: 'missing', reason: 'storage read failed after retries' },
       ]);
       expect(lines('send-short')).toEqual([
-        expect.objectContaining({ reportId: report.id, filesMissing: 1, filesAbsent: 0 }),
+        expect.objectContaining({
+          reportId: report.id,
+          payload: { filesMissing: 1, filesAbsent: 0 },
+        }),
       ]);
       expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
         '1 file(s) named in this report could not be read from storage after repeated attempts and are not included.'
@@ -752,8 +755,11 @@ describe('NCMEC image upload', () => {
         expect(lines('send-decision-needed')).toEqual([]);
 
         await processCsamReport(filed(CSAM_SEND_DECISION_AFTER_HOURS, { 501: 9, 502: 9 }));
+        // Axiom monitors match top-level name + subType on csam-report lines: keep both out of payload.
         expect(lines('send-decision-needed')).toEqual([
           expect.objectContaining({
+            name: 'csam-report',
+            subType: 'send-decision-needed',
             reportId: report.id,
             payload: { hoursPending: CSAM_SEND_DECISION_AFTER_HOURS },
           }),
@@ -802,7 +808,10 @@ describe('NCMEC image upload', () => {
         { id: 502, source: 'missing', reason: 'edge 404' },
       ]);
       expect(lines('send-short')).toEqual([
-        expect.objectContaining({ reportId: report.id, filesMissing: 1, filesAbsent: 1 }),
+        expect.objectContaining({
+          reportId: report.id,
+          payload: { filesMissing: 1, filesAbsent: 1 },
+        }),
       ]);
       expect(submitReport.mock.calls[0][0].additionalInfo).toBe(
         '1 file(s) named in this report are no longer stored and are not included.'

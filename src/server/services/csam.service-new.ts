@@ -920,8 +920,7 @@ async function recordSkippedEntries(claim: SendClaim, budget: SpoolBudget) {
     'send-entries-skipped',
     {
       message: `report ${claim.report.id} skips ${skipped.count} archive entries`,
-      empty: skipped.empty,
-      unreadable: skipped.unreadable,
+      payload: { empty: skipped.empty, unreadable: skipped.unreadable },
     },
     'error'
   );
@@ -1027,7 +1026,7 @@ async function cancelStoredCyberTip(
     logSendLine(
       claim,
       'send-possible-duplicate',
-      { ncmecReportId: stored, cancelOutcome: outcome, message },
+      { ncmecReportId: stored, message, payload: { cancelOutcome: outcome } },
       'error'
     );
   else
@@ -1048,19 +1047,17 @@ async function cancelStoredCyberTip(
 async function logNoFiles(claim: SendClaim, message: string) {
   const hoursPending = hoursSinceFiled(claim.report);
   // A CyberTip an earlier run left open is named, so whoever decides sees it.
-  const stored = {
-    case: 'no-files' satisfies SendHoldCase,
-    ncmecReportId: claim.report.reportId ?? undefined,
-  };
-  logSendLine(claim, 'send-no-files', { message, hoursPending, ...stored }, 'error');
+  const ncmecReportId = claim.report.reportId ?? undefined;
+  const payload = { hoursPending, case: 'no-files' satisfies SendHoldCase };
+  logSendLine(claim, 'send-no-files', { message, ncmecReportId, payload }, 'error');
   if (hoursPending >= CSAM_SEND_DECISION_AFTER_HOURS)
     logSendLine(
       claim,
       'send-decision-needed',
       {
         message: `report ${claim.report.id} has had no file to send for ${hoursPending} hours`,
-        hoursPending,
-        ...stored,
+        ncmecReportId,
+        payload,
       },
       'error'
     );
@@ -1073,10 +1070,15 @@ async function logNoFiles(claim: SendClaim, message: string) {
  */
 function logXmlProblem(claim: SendClaim, problem: string) {
   const hoursPending = hoursSinceFiled(claim.report);
-  const stored = { ncmecReportId: claim.report.reportId ?? undefined };
+  const ncmecReportId = claim.report.reportId ?? undefined;
   const message = `report ${claim.report.id} would not be well-formed XML: ${problem}`;
-  logSendLine(claim, 'send-xml', { message, hoursPending, ...stored }, 'error');
-  logSendLine(claim, 'send-decision-needed', { message, hoursPending, ...stored }, 'error');
+  logSendLine(claim, 'send-xml', { message, ncmecReportId, payload: { hoursPending } }, 'error');
+  logSendLine(
+    claim,
+    'send-decision-needed',
+    { message, ncmecReportId, payload: { hoursPending } },
+    'error'
+  );
 }
 
 /**
@@ -1108,8 +1110,7 @@ function logHeldOnUnconfirmedOpen(claim: SendClaim) {
     'send-decision-needed',
     {
       message: `report ${claim.report.id} is held: ${opens.length} earlier open(s) may have left a CyberTip at NCMEC with no id here. Check with NCMEC, then clear it to send.`,
-      hoursPending: hoursSinceFiled(claim.report),
-      unconfirmedOpens: opens.length,
+      payload: { hoursPending: hoursSinceFiled(claim.report), unconfirmedOpens: opens.length },
     },
     'error'
   );
@@ -1540,8 +1541,7 @@ async function reportImages(claim: SendClaim) {
       'send-short',
       {
         message: `report ${report.id} sent without ${filesMissing} file(s)`,
-        filesMissing,
-        filesAbsent: filesMissing - failed.length,
+        payload: { filesMissing, filesAbsent: filesMissing - failed.length },
       },
       'error'
     );
@@ -1715,8 +1715,7 @@ async function sendGenerationData(
       'send-short',
       {
         message: `report ${report.id} sent without ${failed.length} file(s)`,
-        filesMissing: failed.length,
-        filesAbsent: 0,
+        payload: { filesMissing: failed.length, filesAbsent: 0 },
       },
       'error'
     );
