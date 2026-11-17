@@ -9,10 +9,15 @@ import type * as ImageService from '~/server/services/image.service';
  * - `collection.getEntryCount` throws the same not-found error.
  * The permission rule runs for real over a mocked collection row.
  */
-const { mockGetAllImages, mockGetModels, mockGetArticles } = vi.hoisted(() => ({
+const { mockGetAllImages, mockGetModels, mockGetArticles, mockGetPosts } = vi.hoisted(() => ({
   mockGetAllImages: vi.fn(),
   mockGetModels: vi.fn(async () => ({ items: [] })),
   mockGetArticles: vi.fn(async () => ({ items: [] })),
+  mockGetPosts: vi.fn(async () => ({ items: [] })),
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getPostsInfinite: mockGetPosts,
 }));
 vi.mock('~/server/services/model.service', () => ({
   getModelsWithImagesAndModelVersions: mockGetModels,
@@ -164,7 +169,7 @@ describe('collection items of a collection the viewer may not read', () => {
   it.each([
     ["a moderator's narrow-scope key", false, undefined],
     ['a moderator on a full credential (control)', true, MOD],
-  ])('reads model and article items for %s with its own view', async (_, full, viewer) => {
+  ])('reads model, article and post items for %s with its own view', async (_, full, viewer) => {
     extraItems = [
       {
         id: 3,
@@ -184,6 +189,15 @@ describe('collection items of a collection the viewer may not read', () => {
         addedById: 1,
         status: 'ACCEPTED',
       },
+      {
+        id: 5,
+        postId: 50,
+        imageId: null,
+        articleId: null,
+        modelId: null,
+        addedById: 1,
+        status: 'ACCEPTED',
+      },
     ];
     try {
       collectionIs({ read: 'Public' });
@@ -195,6 +209,9 @@ describe('collection items of a collection the viewer may not read', () => {
         asOwner: full,
       });
       expect(mockGetModels).toHaveBeenCalledWith(expect.objectContaining({ user: viewer }));
+      expect(mockGetPosts).toHaveBeenCalledWith(
+        expect.objectContaining({ ids: [50], asModerator: full, asOwner: full })
+      );
       expect(mockGetArticles).toHaveBeenCalledWith(
         expect.objectContaining({ sessionUser: viewer })
       );
