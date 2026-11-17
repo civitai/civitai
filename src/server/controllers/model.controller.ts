@@ -41,6 +41,8 @@ import {
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
 import { canReadCollectionItems } from '~/server/services/collection-item-access';
+import { isCoverWithinBrowsingLevel } from '~/server/services/collection-cover-visibility';
+import { isCoverShownByBrowsingRules } from '~/server/services/blocked-browsing-tags.service';
 import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
@@ -200,6 +202,7 @@ import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import {
   getRequestBrowsingLevel,
+  relatedPostsBrowsingLevel,
   resolveRequestBrowsingLevels,
 } from '~/server/utils/browsing-level';
 import { hasCompleteSfwFace, resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
@@ -2593,7 +2596,16 @@ export async function getModelCollectionShowcaseHandler({
     });
     if (!canSeeCollectionDetails(permissions)) return null;
 
-    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const { coverHidden: _coverHidden, ...found } = await getCollectionById({
+      input: { id: modelMeta.showcaseCollectionId },
+      viewer: ctx.user,
+    });
+    // The cover as collection lists show it to this viewer: within their browsing level and rules.
+    const coverShown =
+      !!found.image &&
+      isCoverWithinBrowsingLevel(found.image, relatedPostsBrowsingLevel(ctx, undefined)) &&
+      (await isCoverShownByBrowsingRules(found.image, ctx));
+    const collection = { ...found, image: coverShown ? found.image : null };
     if (!canReadCollectionItems(permissions)) return { ...collection, itemCount: null };
     const [itemCount] = await getCollectionItemCount({
       collectionIds: [collection.id],

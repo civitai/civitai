@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CollectionService from '~/server/services/collection.service';
+import { NsfwLevel } from '~/server/common/enums';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type * as ModelService from '~/server/services/model.service';
 
 /**
@@ -8,6 +13,18 @@ import type * as ModelService from '~/server/services/model.service';
  * to, and a removal from a collection clears the showcase only when it named that collection.
  */
 
+const { viewerLevel, coverRulesAllow } = vi.hoisted(() => ({
+  viewerLevel: vi.fn(),
+  coverRulesAllow: vi.fn(),
+}));
+vi.mock('~/server/utils/browsing-level', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  relatedPostsBrowsingLevel: viewerLevel,
+}));
+vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  isCoverShownByBrowsingRules: coverRulesAllow,
+}));
 const { readModelMeta, permissions, getCollectionById, saveItemInCollections } = vi.hoisted(() => ({
   readModelMeta: vi.fn(),
   permissions: vi.fn(),
@@ -80,6 +97,66 @@ describe('the showcase collection shown on a model page', () => {
   it('is shown to a signed-out viewer when the collection is public (control)', async () => {
     permissions.mockResolvedValue({ ...noAccess, read: true });
     await expect(show()).resolves.toMatchObject({ id: SHOWCASE, name: 'Showcase', itemCount: 3 });
+  });
+});
+
+describe("the showcase collection's cover", () => {
+  const cover = (nsfwLevel: number) => ({
+    id: 70,
+    userId: 6,
+    nsfwLevel,
+    tags: [{ tag: { id: 1 } }],
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    readModelMeta.mockResolvedValue({ id: MODEL, meta: { showcaseCollectionId: SHOWCASE } });
+    permissions.mockResolvedValue({ ...noAccess, read: true });
+    viewerLevel.mockReturnValue(sfwBrowsingLevelsFlag);
+    coverRulesAllow.mockResolvedValue(true);
+  });
+
+  const show = () =>
+    getModelCollectionShowcaseHandler({ input: { id: MODEL }, ctx: { user: { id: 77 } } as never });
+
+  it('is left out for a viewer whose browsing level excludes it', async () => {
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: cover(NsfwLevel.R) });
+    await expect(show()).resolves.toMatchObject({ id: SHOWCASE, image: null });
+  });
+
+  it("is left out when the viewer's browsing rules hide it", async () => {
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: cover(NsfwLevel.PG) });
+    coverRulesAllow.mockResolvedValue(false);
+    await expect(show()).resolves.toMatchObject({ image: null });
+    const viewerCtx = expect.objectContaining({ user: { id: 77 } });
+    expect(coverRulesAllow).toHaveBeenCalledWith(cover(NsfwLevel.PG), viewerCtx);
+    expect(viewerLevel).toHaveBeenCalledWith(viewerCtx, undefined);
+  });
+
+  it('does not pass on whether a cover was withheld', async () => {
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: null, coverHidden: true });
+    const result = await show();
+    expect(result).not.toHaveProperty('coverHidden');
+  });
+
+  it("is shown when within the viewer's level and rules (control)", async () => {
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: cover(NsfwLevel.PG) });
+    await expect(show()).resolves.toMatchObject({ image: { id: 70 } });
+  });
+
+  it('is shown to a viewer whose level includes it (control)', async () => {
+    viewerLevel.mockReturnValue(allBrowsingLevelsFlag);
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: cover(NsfwLevel.R) });
+    await expect(show()).resolves.toMatchObject({ image: { id: 70 } });
+  });
+
+  it('is judged as servable for the viewer asking', async () => {
+    getCollectionById.mockResolvedValue({ id: SHOWCASE, image: null });
+    await show();
+    expect(getCollectionById).toHaveBeenCalledWith({
+      input: { id: SHOWCASE },
+      viewer: { id: 77 },
+    });
   });
 });
 

@@ -102,6 +102,12 @@ const spec: ParitySpec = {
       held: 'false, NULL, false, NULL, 32',
     }),
     challenge(21, 'userHasOwner', false, { owner: false }),
+    challenge(23, 'userCoverUnrated', false, { held: 'false, NULL, false, NULL, 0' }),
+    // System and Mod covers are trusted, as for the scan.
+    challenge(24, 'systemCoverUnrated', true, {
+      source: 'System',
+      held: 'false, NULL, false, NULL, 0',
+    }),
     // A System challenge needs no owner row.
     challenge(22, 'systemNoOwner', true, { source: 'System', owner: false }),
   ],
@@ -120,6 +126,7 @@ const spec: ParitySpec = {
     'coverNotBlockedIngestion',
     'coverNotBlockedLevel',
     'userHasOwner',
+    'userCoverUnrated',
   ],
   site: async (prisma) =>
     (
