@@ -6,7 +6,24 @@ import { dbRead } from '~/server/db/client';
 import { ratedEntityContentNsfwLevelSql } from '~/server/services/text-scan/scan-floor';
 import { BOUNTY_SCAN_DETAILS_KEY } from '~/server/utils/bounty-details';
 
-const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
+// Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.
+export const ratedLevel = (mask: number) =>
+  getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
+
+/**
+ * The level a text scan's moderation row rated a bounty at, or null when that verdict did not set
+ * its nsfw flag. The scan sets the flag only at R or above, so a later verdict below R leaves the
+ * flag set without naming a level.
+ */
+export function scanFlagLevel(scan: { nsfwLevel: number | null; result: unknown }) {
+  if (!isTextScanRaised({ entityType: 'Bounty', ...scan })) return null;
+  const scanned = ratedLevel(scan.nsfwLevel ?? 0);
+  return scanned >= NsfwLevel.R ? scanned : null;
+}
+
+/** Images can rate a text-rated bounty higher than its scan did. */
+export const withContentLevel = (scanned: number, content: number | null) =>
+  Math.max(scanned, ratedLevel(content ?? 0));
 
 type BountyLevelInput = { nsfw: boolean; nsfwLevel: number; moderatorNsfwLevel: number | null };
 
@@ -43,15 +60,12 @@ export async function getTextRatedBountyLevels(ids: number[]): Promise<Map<numbe
   `;
   for (const row of rows) {
     // A pending or failed rescan keeps the previous verdict on the row; only a settled one rates.
-    if (!row.byScan || !row.scanCurrent || row.scanLevel == null) continue;
-    const raised = isTextScanRaised({
-      entityType: 'Bounty',
+    if (!row.byScan || !row.scanCurrent) continue;
+    const scanned = scanFlagLevel({
       nsfwLevel: row.scanLevel,
       result: { version: row.scanVersion },
     });
-    const scanned = raised ? ratedLevel(row.scanLevel) : 0;
-    // The scan flags a bounty at R or above; a later, lower verdict does not lift the flag.
-    if (scanned >= NsfwLevel.R) levels.set(row.id, Math.max(scanned, ratedLevel(row.content ?? 0)));
+    if (scanned != null) levels.set(row.id, withContentLevel(scanned, row.content));
   }
   return levels;
 }

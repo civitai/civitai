@@ -118,7 +118,7 @@ export const getInfiniteBountiesHandler = async ({
         .map(({ moderatorNsfwLevel, ...item }) => {
           const tags = item.tags;
           const user = item.user;
-          // An nsfw flag outranks the images' own scans: they show at no less than the bounty's level.
+          // Images show at no less than the flag's level.
           const flagLevel = bountyNsfwFlagLevel(
             { ...item, moderatorNsfwLevel },
             textRated.get(item.id)
@@ -211,8 +211,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       }),
       mayBeTextRated(bounty) ? getTextRatedBountyLevels([bounty.id]) : new Map<number, number>(),
     ]);
-    // A rated flag lifts the images to the bounty's level; a flag with no rating leaves them at their
-    // own, as before.
+    // A rated flag raises the images to its level; a flag with no rating leaves them at their own.
     const ratedFlagLevel =
       bounty.moderatorNsfwLevel != null || textRated.has(bounty.id)
         ? bountyNsfwFlagLevel(bounty, textRated.get(bounty.id))

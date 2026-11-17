@@ -450,8 +450,8 @@ describe('an nsfw-flagged bounty in the feed', () => {
     tags: [],
     user: { id: 5 },
   });
-  const scanRow = (scanLevel: number | null, byScan = true) => [
-    { id: 1, byScan, scanCurrent: true, scanLevel, scanVersion: '1', content: NsfwLevel.PG },
+  const scanRow = (scanLevel: number | null, byScan = true, content: number = NsfwLevel.PG) => [
+    { id: 1, byScan, scanCurrent: true, scanLevel, scanVersion: '1', content },
   ];
   const feed = async (bounty: object, rows: object[]) => {
     dbMock.dbRead.bounty.findMany.mockResolvedValue([bounty]);
@@ -461,7 +461,6 @@ describe('an nsfw-flagged bounty in the feed', () => {
     });
     return (await getInfiniteBountiesHandler({ input: feedInput, ctx: stranger })).items;
   };
-  // What a browser at `browsingLevel` is shown of the feed.
   const visibleAt = (items: unknown[], browsingLevel: number) =>
     filterPreferences({
       type: 'bounties',
@@ -490,6 +489,13 @@ describe('an nsfw-flagged bounty in the feed', () => {
     });
     expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R)).toBe(true);
     expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13)).toBe(false);
+  });
+
+  it('rates a text-rated bounty up to its images when they rate higher', async () => {
+    const items = await feed(flagged(), scanRow(NsfwLevel.R, true, NsfwLevel.X));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.X });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R)).toBe(false);
+    expect(visibleAt(items, NsfwLevel.X)).toBe(true);
   });
 
   it('keeps a flag with no recorded rating XXX-only', async () => {
@@ -531,6 +537,12 @@ describe('an nsfw-flagged bounty in the feed', () => {
     expect(
       bountyNsfwFlagLevel({ ...bounty, moderatorNsfwLevel: NsfwLevel.PG13 }, NsfwLevel.X)
     ).toBe(NsfwLevel.PG13);
+  });
+
+  it('keeps a moderator rating with no browsing level XXX-only', async () => {
+    const items = await feed(flagged(NsfwLevel.Blocked), scanRow(NsfwLevel.R));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.XXX });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X)).toBe(false);
   });
 
   it('never shows an image below its own level', async () => {
