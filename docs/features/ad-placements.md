@@ -7,7 +7,7 @@
 | Snigel | Primary programmatic ads | `cdn.snigelweb.com/adengine/civitai.com/loader.js` |
 | Civitai Ads | Fallback (ad-blocked, NSFW, no consent) | `advertising.civitai.com/api/v1/serve` |
 | Kontext (Megabrain) | AI-powered contextual ads | `server.megabrain.co/sdk/js` |
-| Sparteo | Partner head tag on .com, beside Snigel; off unless the `sparteoAds` flag is on, ads are enabled and the visitor consents (`SparteoTag.tsx`) | `SPARTEO_TAG_SRC` in `sparteo.config.ts` (unset: nothing loads) |
+| Sparteo | Partner head tag on .com, beside Snigel (`SparteoTag.tsx`). Loads only when the `sparteoAds` flag is on, ads are enabled, the site's own consent allows third-party scripts, and the TCF prompt has answered: where GDPR applies, with Sparteo's vendor consent and the purposes in `SPARTEO_TCF` granted | `SPARTEO_TAG_SRC` in `sparteo.config.ts` (unset: nothing loads) |
 
 ## Global Ad Enable/Disable Logic
 
