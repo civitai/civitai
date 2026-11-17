@@ -171,10 +171,17 @@ export async function searchSemanticBounties({
       if (!bounty || excludedUsers.has(bounty.user.id)) continue;
       if (input.userId && bounty.user.id !== input.userId) continue;
       if (bounty.tags.some((tagId) => excludedTags.has(tagId))) continue;
+      // The feed caps images only to the domain; this search may have narrowed the level further,
+      // and a bounty's own level can sit below its images' (a moderator override, a re-rating the
+      // level job has not caught up with). A bounty left with no image is dropped, as on the feed.
+      const images = bounty.images.filter(
+        (image) => !!image.nsfwLevel && (image.nsfwLevel & ~browsingLevel) === 0
+      );
+      if (!images.length) continue;
       const count = perUser.get(bounty.user.id) ?? 0;
       if (count >= MAX_HITS_PER_USER) continue;
       perUser.set(bounty.user.id, count + 1);
-      kept.push(bounty);
+      kept.push({ ...bounty, images });
     }
     hydrated += kept.length;
     return kept;

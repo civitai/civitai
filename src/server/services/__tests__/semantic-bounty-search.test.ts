@@ -13,8 +13,8 @@ import { describeSemanticAuditContract } from './semantic-audit.harness';
 const h = vi.hoisted(() => ({
   recordAudit: vi.fn(),
   pg: null as null | PGlite,
-  // The feed card of each id, as getInfiniteBountiesHandler reads it: owner and tags.
-  cards: new Map<number, { userId: number; tags: number[] }>(),
+  // The feed card of each id, as getInfiniteBountiesHandler reads it: owner, tags, image levels.
+  cards: new Map<number, { userId: number; tags: number[]; imageLevels: number[] }>(),
   feedInput: [] as Record<string, unknown>[],
   fetched: [] as number[][],
   includesInappropriate:
@@ -39,7 +39,16 @@ vi.mock('~/server/controllers/bounty.controller', () => ({
     return {
       items: input.ids.flatMap((id) => {
         const card = h.cards.get(id);
-        return card ? [{ id, user: { id: card.userId }, tags: card.tags }] : [];
+        return card
+          ? [
+              {
+                id,
+                user: { id: card.userId },
+                tags: card.tags,
+                images: card.imageLevels.map((nsfwLevel, i) => ({ id: id * 10 + i, nsfwLevel })),
+              },
+            ]
+          : [];
       }),
     };
   },
@@ -86,7 +95,12 @@ const { PG, R, XXX } = NsfwLevel;
 /** An eligible bounty `id`, and its feed card. */
 async function bounty(
   id: number,
-  { owner = id, level = PG, tags = [] }: { owner?: number; level?: number; tags?: number[] } = {}
+  {
+    owner = id,
+    level = PG,
+    tags = [],
+    imageLevels = [level],
+  }: { owner?: number; level?: number; tags?: number[]; imageLevels?: number[] } = {}
 ) {
   await h.pg!.query(`INSERT INTO "User" (id) VALUES ($1) ON CONFLICT DO NOTHING`, [owner]);
   await h.pg!.query(`INSERT INTO "Bounty" (id, "userId", "nsfwLevel") VALUES ($1, $2, $3)`, [
@@ -94,7 +108,7 @@ async function bounty(
     owner,
     level,
   ]);
-  h.cards.set(id, { userId: owner, tags });
+  h.cards.set(id, { userId: owner, tags, imageLevels });
 }
 
 let sent: CandidateFilter[];
@@ -198,6 +212,15 @@ describe('semantic bounty search', () => {
     expect(shown(await search([3, 2, 1], { browsingLevel: PG | R | XXX, user: MOD }))).toEqual([
       3, 2, 1,
     ]);
+  });
+
+  it('drops images above the searched level, and a bounty left with none', async () => {
+    // Rated PG, its images not: a moderator override, or a re-rating the level job has not caught.
+    await bounty(1, { imageLevels: [PG, R] });
+    await bounty(2, { imageLevels: [R] });
+    const result = await search([2, 1], { browsingLevel: PG, user: MOD });
+    expect(shown(result)).toEqual([1]);
+    expect(result.items[0].images.map((i) => i.nsfwLevel)).toEqual([PG]);
   });
 
   it('drops hidden creators and tags, honours the creator filter, and caps one creator', async () => {

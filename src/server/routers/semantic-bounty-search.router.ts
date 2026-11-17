@@ -7,6 +7,7 @@ import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 export const semanticBountySearchRouter = router({
   search: publicProcedure
     .use(timeSemanticSearch('bounties'))
+    .use(isFlagProtected('bounties'))
     .use(isFlagProtected('semanticBountySearch'))
     // Signed-out visitors share an IP bucket, so theirs is lower.
     .use(

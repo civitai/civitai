@@ -7,6 +7,7 @@ import { isFlagProtected, publicProcedure, router } from '~/server/trpc';
 export const semanticCollectionSearchRouter = router({
   search: publicProcedure
     .use(timeSemanticSearch('collections'))
+    .use(isFlagProtected('profileCollections'))
     .use(isFlagProtected('semanticCollectionSearch'))
     // Signed-out visitors share an IP bucket, so theirs is lower.
     .use(
