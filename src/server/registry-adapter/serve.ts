@@ -271,8 +271,8 @@ export function handleRequest(
 export const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 100_000;
 
 /**
- * `KEEP_ALIVE_TIMEOUT` in ms, parsed as `scripts/trpc-server/server.cjs` parses it. An unset,
- * zero, negative or non-numeric value is the default above, never Node's 5 s.
+ * `KEEP_ALIVE_TIMEOUT` in ms (same env var as `scripts/trpc-server/server.cjs`). An unset, zero,
+ * negative or non-numeric value is the default above, never Node's 5 s.
  */
 export function keepAliveTimeoutFromEnv(env: Record<string, string | undefined>): number {
   const ms = parseInt(env.KEEP_ALIVE_TIMEOUT ?? '', 10);

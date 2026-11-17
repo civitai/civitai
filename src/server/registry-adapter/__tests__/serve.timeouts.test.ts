@@ -2,10 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Adapter } from '~/server/registry-adapter/protocol';
 import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 
-// A reverse proxy in front of the adapter keeps idle upstream connections open for 90 s. Node's
-// default keepAliveTimeout is 5 s, so the proxy could reuse a socket the adapter had just closed
-// and answer 502. The adapter's idle timeout has to outlast the proxy's, and headersTimeout has
-// to outlast keepAliveTimeout.
+// Rationale for the 100 s default: see DEFAULT_KEEP_ALIVE_TIMEOUT_MS in serve.ts.
 
 async function* nothing(): AsyncGenerator<never> {
   yield* [];
