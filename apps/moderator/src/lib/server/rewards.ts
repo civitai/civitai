@@ -70,8 +70,7 @@ export async function rewardReportReporters(input: {
         name: 'buzz-rewards',
         type: 'error',
         message: 'Buzz event multiplier was negative and was floored to 0',
-        flooredEvents: floored.length,
-        batchSize: rows.length,
+        payload: { flooredEvents: floored.length, batchSize: rows.length },
         // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
         // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
         ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
@@ -82,9 +81,11 @@ export async function rewardReportReporters(input: {
         name: 'buzz-rewards',
         type: 'error',
         message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
-        clampedEvents: clamped.length,
-        batchSize: rows.length,
-        maxRaw: Math.max(...clamped),
+        payload: {
+          clampedEvents: clamped.length,
+          batchSize: rows.length,
+          maxRaw: Math.max(...clamped),
+        },
       });
     }
     await getClickhouse().insert({ table: 'buzzEvents', values: rows, format: 'JSONEachRow' });

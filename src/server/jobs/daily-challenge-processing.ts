@@ -1931,8 +1931,10 @@ export async function pickWinnersForChallenge(
             name: 'challenge-winner-duplicate-pick',
             message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${currentChallenge.challengeId}`,
             challengeId: currentChallenge.challengeId,
-            droppedUserIds: droppedWinners.map((entry) => entry.userId),
-            droppedPlaces: droppedWinners.map((entry) => entry.position),
+            payload: {
+              droppedUserIds: droppedWinners.map((entry) => entry.userId),
+              droppedPlaces: droppedWinners.map((entry) => entry.position),
+            },
           });
           recordChallengeWinnerDuplicatePick({
             // Defaulted the same way the judging call at ~:1365 defaults it: the judge row is typed

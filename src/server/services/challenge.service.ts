@@ -2927,8 +2927,10 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
           name: 'challenge-winner-duplicate-pick',
           message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
           challengeId,
-          droppedUserIds: droppedWinners.map((entry) => entry.userId),
-          droppedPlaces: droppedWinners.map((entry) => entry.position),
+          payload: {
+            droppedUserIds: droppedWinners.map((entry) => entry.userId),
+            droppedPlaces: droppedWinners.map((entry) => entry.position),
+          },
         });
         recordChallengeWinnerDuplicatePick({
           source: challenge.source,
