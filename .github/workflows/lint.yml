@@ -954,7 +954,9 @@ jobs:
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
       - name: Unit tests
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+        env:
+          TESTPERF_LABEL: unit-shard-${{ matrix.shard }}
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json --reporter=./scripts/test-perf/reporter.mjs
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -977,7 +979,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: unit-report-${{ matrix.shard }}
-          path: unit-report.json
+          path: |
+            unit-report.json
+            .test-perf/runs/unit-shard-${{ matrix.shard }}.perf.json
           if-no-files-found: warn
           retention-days: 3
           # A re-run of a failed shard uploads again under the same name.
