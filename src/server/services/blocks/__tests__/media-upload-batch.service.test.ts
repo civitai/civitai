@@ -38,17 +38,18 @@ const missingTable = () =>
 beforeEach(() => {
   counters.clear();
   presignSpy.mockReset().mockResolvedValue({ uploadUrl: 'u', expiresAt: 'e' });
-  redisMock.sysRedis.incrBy.mockReset().mockImplementation(async (key: string, n: number) => {
+  redisMock.redis.incrBy.mockReset().mockImplementation(async (key: string, n: number) => {
     const next = (counters.get(key) ?? 0) + n;
     counters.set(key, next);
     return next;
   });
-  redisMock.sysRedis.decrBy.mockReset().mockImplementation(async (key: string, n: number) => {
+  redisMock.redis.decrBy.mockReset().mockImplementation(async (key: string, n: number) => {
     const next = (counters.get(key) ?? 0) - n;
     counters.set(key, next);
     return next;
   });
-  redisMock.sysRedis.expire.mockReset().mockResolvedValue(true);
+  redisMock.redis.expire.mockReset().mockResolvedValue(true);
+  redisMock.sysRedis.incrBy.mockClear();
   dbMock.dbRead.appBlock.findUnique.mockReset().mockResolvedValue({ version: '1.4.0' });
   dbMock.dbWrite.appBlockUploadBatch.create.mockReset().mockResolvedValue({ id: 91 });
   dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 91 }]);
@@ -75,6 +76,11 @@ describe('the daily batch quota', () => {
     });
     // The refused charge was handed back: the day still reads exactly 1,200.
     expect(used('items')).toBe(1200);
+    // A daily quota window: on the cache cluster, not in system Redis.
+    expect(
+      [...counters.keys()].every((k) => k.startsWith('system:blocks:media-upload-batch-daily:'))
+    ).toBe(true);
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
   });
 
   it('admits 10 GiB in a day and refuses one byte more', async () => {
@@ -105,12 +111,12 @@ describe('the daily batch quota', () => {
   });
 
   it('fails closed when the counter cannot be written, charging nothing', async () => {
-    redisMock.sysRedis.incrBy
+    redisMock.redis.incrBy
       .mockImplementationOnce(async (key: string, n: number) => {
         counters.set(key, (counters.get(key) ?? 0) + n);
         return counters.get(key)!;
       })
-      .mockRejectedValueOnce(new Error('sysredis down'));
+      .mockRejectedValueOnce(new Error('cache cluster down'));
     await expect(reserveMediaUploadBatchQuota(USER, 5, 10, NOW)).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });

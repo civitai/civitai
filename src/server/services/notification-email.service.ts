@@ -10,7 +10,7 @@ import {
   isEmailNotificationType,
   notificationProcessors,
 } from '~/server/notifications/utils.notifications';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -73,9 +73,9 @@ export async function optOutOfNotificationEmail(userId: number, type: string) {
  * at the cap for good. Throws on a Redis error.
  */
 async function bump(key: `${string}:${string}`, ttlSeconds: number) {
-  const count = await sysRedis.incrBy(key as never, 1);
-  if (count === 1 || (await sysRedis.ttl(key as never)) < 0)
-    await sysRedis.expire(key as never, ttlSeconds);
+  const count = await redis.incrBy(key as never, 1);
+  if (count === 1 || (await redis.ttl(key as never)) < 0)
+    await redis.expire(key as never, ttlSeconds);
   return count;
 }
 
@@ -83,7 +83,7 @@ async function bump(key: `${string}:${string}`, ttlSeconds: number) {
 async function underTypeCap(type: string) {
   const hour = new Date().toISOString().slice(0, 13);
   const count = await bump(
-    `${REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${type}:${hour}`,
+    `${REDIS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${type}:${hour}`,
     60 * 60 * 2
   );
   if (count === NOTIFICATION_EMAIL_TYPE_HOURLY_CAP + 1)
@@ -99,7 +99,7 @@ async function underTypeCap(type: string) {
 async function underUserCap(userId: number) {
   const day = new Date().toISOString().slice(0, 10);
   const count = await bump(
-    `${REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_USER_QUOTA}:${userId}:${day}`,
+    `${REDIS_KEYS.SYSTEM.NOTIFICATION_EMAIL_USER_QUOTA}:${userId}:${day}`,
     60 * 60 * 48
   );
   return count <= NOTIFICATION_EMAIL_USER_DAILY_CAP;

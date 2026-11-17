@@ -425,17 +425,28 @@ export async function readAutoBuildBudget(
 export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
 
 /**
+ * The submission-alert, listing-check-spend and agent-review reservation counters are TTL'd
+ * per-hour or per-day windows on the cache cluster, one key per command. Each call is bounded as
+ * the system Redis calls were (1s, that client's default read deadline) and throws on failure,
+ * which every caller already turns into its fail-safe answer.
+ */
+async function boundedCacheCall<T>(fn: string, op: () => Promise<T>): Promise<T> {
+  const { clusterCacheGuard } = await import('~/server/redis/cluster-cache-guard');
+  return clusterCacheGuard.call(fn, op, { deadlineMs: 1_000 });
+}
+
+/**
  * Whether this submitter's next alert is posted: `alert` up to the hourly limit, `rollup` exactly
  * once when it is passed (one "more submissions" notice), `silent` after that. Fails to SILENT:
  * when the counter cannot be read no alert is posted, so an outage can never flood the channel.
  */
 async function takeSubmissionAlertSlot(userId: number): Promise<'alert' | 'rollup' | 'silent'> {
   try {
-    const { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } = await import('~/server/redis/client');
+    const { redis, REDIS_KEYS } = await import('~/server/redis/client');
     const hour = new Date().toISOString().slice(0, 13);
-    const key = `${REDIS_SYS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
-    const res = await withSysReadDeadline(
-      sysRedis
+    const key = `${REDIS_KEYS.BLOCKS.REVIEW_SUBMISSION_ALERTS}:${userId}:${hour}` as const;
+    const res = await boundedCacheCall('takeSubmissionAlertSlot', () =>
+      redis
         .multi()
         .set(key, '0', { NX: true, EX: 2 * 60 * 60 })
         .incr(key)
@@ -597,8 +608,8 @@ export async function agentReviewSpendTodayUsd(now: Date = new Date()): Promise<
 }
 
 async function listingCheckSpendKey(now: Date) {
-  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
-  return `${REDIS_SYS_KEYS.BLOCKS.LISTING_CHECK_SPEND}:${now.toISOString().slice(0, 10)}` as const;
+  const { REDIS_KEYS } = await import('~/server/redis/client');
+  return `${REDIS_KEYS.BLOCKS.LISTING_CHECK_SPEND}:${now.toISOString().slice(0, 10)}` as const;
 }
 
 /**
@@ -609,8 +620,9 @@ async function listingCheckSpendKey(now: Date) {
  */
 async function readListingCheckSpendUsd(now: Date): Promise<number> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    const raw = await withSysReadDeadline(sysRedis.get(await listingCheckSpendKey(now)));
+    const { redis } = await import('~/server/redis/client');
+    const key = await listingCheckSpendKey(now);
+    const raw = await boundedCacheCall('readListingCheckSpendUsd', () => redis.get(key));
     const cents = Number(raw);
     return Number.isFinite(cents) && cents > 0 ? cents / 100 : 0;
   } catch {
@@ -622,10 +634,10 @@ async function readListingCheckSpendUsd(now: Date): Promise<number> {
 export async function recordListingCheckSpendUsd(usd: number): Promise<void> {
   if (!Number.isFinite(usd) || usd <= 0) return;
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const { redis } = await import('~/server/redis/client');
     const key = await listingCheckSpendKey(new Date());
-    await withSysReadDeadline(
-      sysRedis
+    await boundedCacheCall('recordListingCheckSpendUsd', () =>
+      redis
         .multi()
         .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
         .incrBy(key, Math.max(1, Math.round(usd * 100)))
@@ -712,9 +724,9 @@ export async function maybeAutoStartAgentReview(
 type AgentAutostartReservedKey = Awaited<ReturnType<typeof agentAutostartReservedKey>>;
 
 async function agentAutostartReservedKey() {
-  const { REDIS_SYS_KEYS } = await import('~/server/redis/client');
+  const { REDIS_KEYS } = await import('~/server/redis/client');
   const day = new Date().toISOString().slice(0, 10);
-  return `${REDIS_SYS_KEYS.BLOCKS.AGENT_REVIEW_AUTOSTART_RESERVED}:${day}` as const;
+  return `${REDIS_KEYS.BLOCKS.AGENT_REVIEW_AUTOSTART_RESERVED}:${day}` as const;
 }
 
 /**
@@ -725,10 +737,10 @@ async function reserveAgentAutostartBudget(
   cents: number
 ): Promise<{ totalCents: number; key: AgentAutostartReservedKey } | null> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
+    const { redis } = await import('~/server/redis/client');
     const key = await agentAutostartReservedKey();
-    const res = await withSysReadDeadline(
-      sysRedis
+    const res = await boundedCacheCall('reserveAgentAutostartBudget', () =>
+      redis
         .multi()
         .set(key, '0', { NX: true, EX: 26 * 60 * 60 })
         .incrBy(key, cents)
@@ -747,8 +759,8 @@ async function releaseAgentAutostartBudget(
   key: AgentAutostartReservedKey
 ): Promise<void> {
   try {
-    const { sysRedis, withSysReadDeadline } = await import('~/server/redis/client');
-    await withSysReadDeadline(sysRedis.incrBy(key, -cents));
+    const { redis } = await import('~/server/redis/client');
+    await boundedCacheCall('releaseAgentAutostartBudget', () => redis.incrBy(key, -cents));
   } catch {
     // The key expires with the day; a lost release only makes later starts more conservative.
   }

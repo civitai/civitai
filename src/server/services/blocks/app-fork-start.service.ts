@@ -41,7 +41,14 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import {
+  REDIS_KEYS,
+  REDIS_SYS_KEYS,
+  redis,
+  sysRedis,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -381,18 +388,24 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 // Rate limit
 // ---------------------------------------------------------------------------
 
+// The deadline the system Redis call had (1s, that client's default read deadline).
+const FORK_RATE_DEADLINE_MS = 1_000;
+
 /**
  * Count one fork start against each of the user's windows ({@link FORK_START_LIMITS}). Refuses
  * with TOO_MANY_REQUESTS past any cap, and FAILS CLOSED (SERVICE_UNAVAILABLE) when the counter
- * cannot be read: every start builds and uploads a copy of an app's source.
+ * cannot be read: every start builds and uploads a copy of an app's source. The windows are on
+ * the cache cluster, one single-key MULTI each.
  */
 async function consumeForkStart(userId: number): Promise<void> {
   for (const { windowSeconds, max } of FORK_START_LIMITS) {
-    const key = `${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
+    const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await withSysReadDeadline(
-        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
+      const result = await clusterCacheGuard.call(
+        'consumeForkStart',
+        () => redis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec(),
+        { deadlineMs: FORK_RATE_DEADLINE_MS }
       );
       count = Number((result as unknown[] | null)?.[1]);
     } catch {

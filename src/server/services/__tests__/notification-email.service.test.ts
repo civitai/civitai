@@ -15,7 +15,7 @@ import {
 } from '~/server/services/notification-email.service';
 import { getUserEmailSettings, toggleEmailSetting } from '~/server/services/notification.service';
 import { emailNotificationTypeList } from '~/server/notifications/utils.notifications';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
 
@@ -35,11 +35,11 @@ beforeEach(() => {
       ? { key: where.key, value: true }
       : null) as never);
   dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1, email: 'a@example.com' }] as never);
-  redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) => {
+  redisMock.redis.incrBy.mockImplementation((async (key: string, by: number) => {
     if (redisDown === 'all') throw new Error('redis down');
     if (
       redisDown === 'user-quota' &&
-      key.startsWith(REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_USER_QUOTA)
+      key.startsWith(REDIS_KEYS.SYSTEM.NOTIFICATION_EMAIL_USER_QUOTA)
     )
       throw new Error('redis down');
     const next = (counters.get(key) ?? 0) + by;
@@ -101,10 +101,10 @@ describe('sendNotificationEmails', () => {
   });
 
   it('sends the type its hourly ceiling and stops at the next one', async () => {
-    const typeKeyPrefix = `${REDIS_SYS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${DEAL}:`;
+    const typeKeyPrefix = `${REDIS_KEYS.SYSTEM.NOTIFICATION_EMAIL_TYPE_QUOTA}:${DEAL}:`;
     counters.set('type-count', NOTIFICATION_EMAIL_TYPE_HOURLY_CAP - 1);
-    const real = redisMock.sysRedis.incrBy.getMockImplementation()!;
-    redisMock.sysRedis.incrBy.mockImplementation((async (key: string, by: number) =>
+    const real = redisMock.redis.incrBy.getMockImplementation()!;
+    redisMock.redis.incrBy.mockImplementation((async (key: string, by: number) =>
       key.startsWith(typeKeyPrefix) ? real('type-count', by) : real(key, by)) as never);
     await sendNotificationEmails({ ...deal, userIds: [1] });
     expect(sendEmail).toHaveBeenCalledTimes(1);
@@ -113,13 +113,23 @@ describe('sendNotificationEmails', () => {
     expect(sendEmail).toHaveBeenCalledTimes(1);
   });
 
+  it('counts both caps on the cache cluster, not in system Redis', async () => {
+    redisMock.sysRedis.incrBy.mockClear();
+    await sendNotificationEmails({ ...deal, userIds: [1] });
+    expect([...counters.keys()].sort()).toEqual([
+      expect.stringMatching(/^system:notification-email-type-quota:/),
+      expect.stringMatching(/^system:notification-email-user-quota:1:/),
+    ]);
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+  });
+
   it('re-arms a cap key that lost its expiry', async () => {
-    redisMock.sysRedis.expire.mockClear();
-    redisMock.sysRedis.ttl.mockResolvedValue(-1 as never);
-    redisMock.sysRedis.incrBy.mockResolvedValue(5 as never);
+    redisMock.redis.expire.mockClear();
+    redisMock.redis.ttl.mockResolvedValue(-1 as never);
+    redisMock.redis.incrBy.mockResolvedValue(5 as never);
     await sendNotificationEmails({ ...deal, userIds: [1] });
     // Both keys (type and user) are past their first hit and report no TTL.
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledTimes(2);
+    expect(redisMock.redis.expire).toHaveBeenCalledTimes(2);
   });
 
   it('sends nothing when only the per-user cap cannot be read', async () => {

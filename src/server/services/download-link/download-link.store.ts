@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 
 /**
  * Redis storage for download links (sysRedis: single node or Sentinel, so MULTI spans keys).
@@ -336,8 +336,9 @@ export async function takeMintBudget(
   now: number
 ): Promise<{ allowed: boolean; granted: number; retryAfterSeconds: number }> {
   const windowStart = Math.floor(now / 60_000) * 60_000;
-  const key = `${REDIS_SYS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
-  const [used] = (await sysRedis.multi().incrBy(key, count).expire(key, 120).exec()) as unknown as [
+  // A rate window, so it lives on the cache cluster; the MULTI touches this one key.
+  const key = `${REDIS_KEYS.DOWNLOAD_LINK.MINT_RATE}:${bucket}:${windowStart}` as const;
+  const [used] = (await redis.multi().incrBy(key, count).expire(key, 120).exec()) as unknown as [
     number
   ];
   // One atomic INCRBY per take, so concurrent takes never grant past the limit between them.

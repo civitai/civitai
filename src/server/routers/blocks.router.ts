@@ -63,7 +63,7 @@ import {
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
   REVOKE_SCOPES_MAX_PER_CALL,
 } from '~/shared/constants/block-scope.constants';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import {
   buzzCapRedisKey,
   clearDailyCapRefusal,
@@ -1955,15 +1955,16 @@ async function readMyConfirmWithinLimit(
   }
 }
 
+// A rate window, so it lives on the cache cluster (one key, so no command spans slots).
 async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
-  const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
+  const key = `${REDIS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
   try {
-    const count = await sysRedis.incrBy(key, 1);
+    const count = await redis.incrBy(key, 1);
     if (count === 1) {
-      await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
+      await redis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
     } else {
-      const ttl = await sysRedis.ttl(key);
-      if (ttl < 0) await sysRedis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
+      const ttl = await redis.ttl(key);
+      if (ttl < 0) await redis.expire(key, DAILY_LIMIT_READ_RATE_LIMIT.windowSeconds);
     }
     return count <= DAILY_LIMIT_READ_RATE_LIMIT.max;
   } catch {

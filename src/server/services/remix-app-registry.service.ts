@@ -1,8 +1,10 @@
+import { randomUUID } from 'crypto';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { newBlockIdError } from '~/server/utils/apps-slug';
 import { isPrismaForeignKeyViolation } from '~/server/utils/errorHandling';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -132,6 +134,15 @@ function seedRegistry() {
 }
 
 const REGISTRY_TTL = CacheTTL.hour;
+/**
+ * Far longer than a registry entry is served (REGISTRY_TTL) or kept (fetchThroughCache stores it
+ * for twice that). Readers fall back to generation '0' when the
+ * key is gone, and only a reader that found no key writes the '0' entry, so by the time this
+ * expires, at least this long after the last bump, any '0' entry has expired too.
+ */
+const GENERATION_TTL_SECONDS = 24 * 60 * 60;
+// The menu and the quote wait on this read; the deadline the system Redis read had.
+const GENERATION_READ_DEADLINE_MS = 1_000;
 
 /**
  * On the primary: a mod's write is followed by this read, and a lagging replica would cache the
@@ -170,11 +181,16 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
  * that read the rows before a write landed fills the old generation's entry, which no reader uses
  * once the bump is done: a bust or a set can't promise that, since a refill already in flight
  * writes after either. `null` when Redis can't say; the caller then reads the primary uncached.
+ *
+ * The generation is a cache key's version, so it lives on the cache cluster with a TTL. Losing it
+ * costs one uncached read of the primary per reader until an entry is filled again.
  */
 async function registryGeneration() {
   try {
-    const generation = await withSysReadDeadline(
-      sysRedis.get(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION)
+    const generation = await clusterCacheGuard.call(
+      'remixAppRegistryGeneration',
+      () => redis.get(REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION),
+      { deadlineMs: GENERATION_READ_DEADLINE_MS }
     );
     return generation ?? '0';
   } catch {
@@ -182,9 +198,15 @@ async function registryGeneration() {
   }
 }
 
-/** After a mod write has committed: moves every reader to a fresh read of the primary. */
+/**
+ * After a mod write has committed: moves every reader to a fresh read of the primary. A random
+ * token rather than a counter, so a generation that expired and started again can never name an
+ * entry an earlier generation filled.
+ */
 export async function bumpRemixAppRegistry() {
-  await sysRedis.incr(REDIS_SYS_KEYS.REMIX_APP.REGISTRY_GENERATION);
+  await redis.set(REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION, randomUUID(), {
+    EX: GENERATION_TTL_SECONDS,
+  });
 }
 
 /** The apps the menu lists and the quote prices. */

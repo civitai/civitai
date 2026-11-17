@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock);
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(created());
-  redisMock.sysRedis.incrBy.mockResolvedValue(1);
+  redisMock.redis.incrBy.mockResolvedValue(1);
   isFliptMock.mockResolvedValue(false);
 });
 
@@ -158,33 +158,35 @@ describe('the per-reporter cap', () => {
   const KEY = 'system:feedback:hq-filing:42';
 
   it('files the tenth attempt in a window and refuses the eleventh', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValueOnce(10).mockResolvedValueOnce(11);
+    redisMock.redis.incrBy.mockResolvedValueOnce(10).mockResolvedValueOnce(11);
     await fileFeedbackToHq(report());
     await fileFeedbackToHq(report());
 
     expect(intakeCalls()).toHaveLength(1);
     expect(loggedStatuses()).toEqual(['filed', 'user-cap']);
-    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(KEY, 1);
+    expect(redisMock.redis.incrBy).toHaveBeenCalledWith(KEY, 1);
+    // A rate limit: it lives on the cache cluster, not in system Redis.
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
   });
 
   it('starts a 24-hour window on the first attempt', async () => {
     await fileFeedbackToHq(report());
 
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
+    expect(redisMock.redis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
   });
 
   it('re-arms a window that lost its expiry, and leaves a live one alone', async () => {
-    redisMock.sysRedis.incrBy.mockResolvedValue(5);
-    redisMock.sysRedis.ttl.mockResolvedValueOnce(-1).mockResolvedValueOnce(100);
+    redisMock.redis.incrBy.mockResolvedValue(5);
+    redisMock.redis.ttl.mockResolvedValueOnce(-1).mockResolvedValueOnce(100);
     await fileFeedbackToHq(report());
     await fileFeedbackToHq(report());
 
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledTimes(1);
-    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
+    expect(redisMock.redis.expire).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.expire).toHaveBeenCalledWith(KEY, 24 * 60 * 60);
   });
 
   it('files nothing when the count cannot be read', async () => {
-    redisMock.sysRedis.incrBy.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.incrBy.mockRejectedValue(new Error('redis down'));
     await fileFeedbackToHq(report());
 
     expect(fetchMock).not.toHaveBeenCalled();

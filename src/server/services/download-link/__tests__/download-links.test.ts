@@ -173,7 +173,7 @@ import type { DownloadLinkCredential } from '~/server/services/download-link/dow
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
 
 // ---------------------------------------------------------------------------------------------
-// In-memory sysRedis.
+// In-memory sysRedis (and the cache cluster, for the mint-rate windows).
 
 type Entry =
   | { type: 'hash'; value: Map<string, string>; expiresAt: number | null }
@@ -270,7 +270,18 @@ function installFakeSysRedis() {
       throw new Error('unknown script');
     }
   );
-  r.multi.mockImplementation(() => {
+  sysMultiKeys = [];
+  clusterMultiKeys = [];
+  r.multi.mockImplementation(fakeMulti(sysMultiKeys));
+  // The mint-rate windows are on the cache cluster; one store backs both clients here, and each
+  // records the keys its MULTIs touched.
+  redisMock.redis.multi.mockImplementation(fakeMulti(clusterMultiKeys));
+}
+
+let sysMultiKeys: string[] = [];
+let clusterMultiKeys: string[] = [];
+function fakeMulti(seen: string[]) {
+  return () => {
     const queued: (() => unknown)[] = [];
     const chain: Record<string, unknown> = {
       exec: async () => {
@@ -280,12 +291,13 @@ function installFakeSysRedis() {
     };
     for (const name of Object.keys(ops) as (keyof typeof ops)[]) {
       chain[name] = (...args: unknown[]) => {
+        seen.push(String(args[0]));
         queued.push(() => (ops[name] as (...a: unknown[]) => unknown)(...args));
         return chain;
       };
     }
     return chain;
-  });
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1093,6 +1105,13 @@ describe('reuse', () => {
 });
 
 describe('mint limits', () => {
+  it('counts the mint windows on the cache cluster, and only them', async () => {
+    await mintOne(userItem(PUBLIC_VERSION));
+    expect(clusterMultiKeys.length).toBeGreaterThan(0);
+    expect(clusterMultiKeys.every((key) => key.startsWith('dl:mint-rate:'))).toBe(true);
+    expect(sysMultiKeys.filter((key) => key.startsWith('dl:mint-rate:'))).toEqual([]);
+  });
+
   it('answers an item 429 past the per-user limit', async () => {
     setEnv({ DOWNLOAD_LINK_MINT_LIMIT_PER_USER: 2 });
     const res = await mint([

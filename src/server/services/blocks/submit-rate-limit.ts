@@ -1,4 +1,11 @@
-import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  sysRedis,
+  REDIS_SYS_KEYS,
+  withSysReadDeadline,
+} from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 
 /**
  * The bundle-submit rate limit, shared by both submit routes (the CLI's token route and the session
@@ -17,8 +24,40 @@ export type RateLimit = { readonly max: number; readonly windowSeconds: number }
 
 const RATE_KEYS = {
   submit: REDIS_SYS_KEYS.BLOCKS.SUBMIT_RATE_LIMIT,
-  push: REDIS_SYS_KEYS.BLOCKS.PUSH_REVIEW_RATE_LIMIT,
+  push: REDIS_KEYS.BLOCKS.PUSH_REVIEW_RATE_LIMIT,
 } as const;
+
+// The deadline the system Redis calls had (1s, that client's default read deadline).
+const PUSH_WINDOW_DEADLINE_MS = 1_000;
+
+/**
+ * One window's count after this take, and its TTL on the 429 path, from the store the family
+ * lives in. The push window moved to the cache cluster: it bounds build and alert churn and fails
+ * open anyway, so starting empty costs at most one window of pushes. The submit window is still
+ * in system Redis.
+ */
+function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
+  if (family === 'push') {
+    const key = `${RATE_KEYS.push}:${subject}` as const;
+    const bounded = <T>(op: () => Promise<T>) =>
+      clusterCacheGuard.call('takePushReviewSlot', op, { deadlineMs: PUSH_WINDOW_DEADLINE_MS });
+    return {
+      take: (): Promise<unknown> =>
+        bounded(() =>
+          redis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
+        ),
+      ttl: (): Promise<number> => bounded(() => redis.ttl(key)),
+    };
+  }
+  const key = `${RATE_KEYS.submit}:${subject}` as const;
+  return {
+    take: (): Promise<unknown> =>
+      withSysReadDeadline(
+        sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
+      ),
+    ttl: (): Promise<number> => withSysReadDeadline(sysRedis.ttl(key)),
+  };
+}
 
 export type SubmitRateDecision =
   | { ok: true }
@@ -59,12 +98,10 @@ async function takeRateSlot(
   subject: string,
   limit: RateLimit
 ): Promise<SubmitRateDecision> {
-  const rateKey = `${RATE_KEYS[family]}:${subject}` as const;
+  const store = rateStore(family, subject, limit.windowSeconds);
   let count: number;
   try {
-    const multiResult = await withSysReadDeadline(
-      sysRedis.multi().set(rateKey, '0', { NX: true, EX: limit.windowSeconds }).incr(rateKey).exec()
-    );
+    const multiResult = (await store.take()) as unknown[] | null;
     count = Number(multiResult?.[1]);
   } catch {
     return { ok: false, reason: 'unavailable' };
@@ -72,8 +109,6 @@ async function takeRateSlot(
   if (!Number.isFinite(count)) return { ok: false, reason: 'malformed' };
   if (count <= limit.max) return { ok: true };
   // Bound the 429-path TTL read (#28) too; on a deadline/throw fall back to the full window.
-  const retryAfterSeconds = await withSysReadDeadline(sysRedis.ttl(rateKey)).catch(
-    () => limit.windowSeconds
-  );
+  const retryAfterSeconds = await store.ttl().catch(() => limit.windowSeconds);
   return { ok: false, reason: 'limited', retryAfterSeconds };
 }
