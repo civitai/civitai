@@ -31,7 +31,8 @@ export type ModeratorGrantId =
   | 'labelStore.submitPrediction'
   | 'apps.buzz.refund'
   | 'apps.buzz.refund.large'
-  | 'feedback.status.set';
+  | 'feedback.status.set'
+  | 'tickets.escalate';
 
 /** Whether `user` holds a role on the moderator app's `AppPageAccess` row `path`; admin always. */
 async function holdsModeratorRow(user: { roles?: string[] }, path: string): Promise<boolean> {

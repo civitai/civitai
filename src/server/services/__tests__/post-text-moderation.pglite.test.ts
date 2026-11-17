@@ -31,6 +31,9 @@ const { postTextTextScanSubject } = await import(
   '~/server/services/text-scan/profiles/post-text.profile'
 );
 const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
+const { CSAM_HOLD_TEXT_CHARS, pendingCsamHoldFields } = await import(
+  '~/server/services/text-scan/actions/csam-hold'
+);
 const { scanLiftPostText } = await import('~/server/services/post-text-scan-refusal');
 
 const MIGRATIONS = path.resolve(
@@ -309,6 +312,20 @@ describe('holdPostTextForCsam', () => {
       (await pg.query(`SELECT "csamHeld" FROM "PostText" WHERE id = $1`, [reported])).rows
     ).toEqual([{ csamHeld: true }]);
     expect(trackModActivity).not.toHaveBeenCalled();
+  });
+
+  // The scan's writer stores the same fields (csam-hold.test.ts pins it), so the two rows match.
+  it('stores the author and text pendingCsamHoldFields builds, capped like the scan', async () => {
+    const content = `<p>${'y'.repeat(CSAM_HOLD_TEXT_CHARS + 10)}</p>`;
+    await pg.query(`UPDATE "PostText" SET content = $2 WHERE id = $1`, [reported, content]);
+
+    await holdPostTextForCsam({ textId: reported, moderatorId: 2 });
+
+    const [hold] = await holds();
+    expect({ userId: hold.userId, text: hold.text }).toEqual(
+      pendingCsamHoldFields(postTextTextScanSubject({ userId: AUTHOR, content }))
+    );
+    expect(hold.text).toHaveLength(CSAM_HOLD_TEXT_CHARS);
   });
 
   it('holds words an earlier hold dismissed', async () => {

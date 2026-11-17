@@ -6,11 +6,14 @@ import type { CasesTables } from './cases-tables';
 export const casesDb = () => getModeratorDb().withTables<CasesTables>();
 export type CasesDb = ReturnType<typeof casesDb>;
 
+/** `failed` errors a person set on purpose: retired after a failure, or withdrawn before any send. */
+export const DROPPED_ERRORS = ['Retired', 'Withdrawn'] as const;
+
 /**
  * `failed` errors a resend can't fix: the row was erased, its address no longer matches its hash, or a
- * person retired it. Such a row is never sent, exported or retried again.
+ * person dropped it. Such a row is never sent, exported or retried again.
  */
-export const RETIRED_ERRORS = ['Erased', 'AddressHashMismatch', 'Retired'] as const;
+export const RETIRED_ERRORS = ['Erased', 'AddressHashMismatch', ...DROPPED_ERRORS] as const;
 
 /**
  * A notice that may be sent: `pending`, or `failed` for a reason a resend can fix. Send, export and the

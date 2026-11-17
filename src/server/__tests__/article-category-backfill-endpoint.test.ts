@@ -63,4 +63,15 @@ describe('article-category-backfill endpoint', () => {
       includeMature: false,
     });
   });
+
+  it('includeMature alone is still a dry run', async () => {
+    expect(await post({ includeMature: true })).toBe(200);
+    expect(runBackfill).toHaveBeenCalledWith({
+      afterId: 0,
+      limit: 100,
+      concurrency: 2,
+      dryRun: true,
+      includeMature: true,
+    });
+  });
 });

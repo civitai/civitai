@@ -27,10 +27,14 @@ vi.mock('~/server/db/kyselyDb', () => ({
   get kyselyV3Read() {
     return holder.kysely;
   },
+  get kyselyWrite() {
+    return holder.kysely;
+  },
 }));
 
 const {
   getCsamContextCandidates,
+  readHeldCsamContextText,
   snapshotCsamContextText,
   reportedUserIdsOf,
   foldContextText,
@@ -81,7 +85,18 @@ CREATE TABLE "Post" (
 );
 CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "userId" INTEGER NOT NULL);
 CREATE TABLE "PostText" (
-  "id" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL, "index" INTEGER NOT NULL, "content" TEXT NOT NULL
+  "id" INTEGER PRIMARY KEY, "postId" INTEGER NOT NULL, "index" INTEGER NOT NULL, "content" TEXT NOT NULL,
+  "userId" INTEGER NOT NULL DEFAULT 20, "csamHeld" BOOLEAN NOT NULL DEFAULT false,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-10-02', "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT '2026-10-02'
+);
+CREATE TABLE "TextScanHold" (
+  "id" SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+  "label" TEXT NOT NULL, "status" TEXT NOT NULL, "decidedById" INTEGER, "decidedAt" TIMESTAMP(3),
+  "meta" JSONB, "createdAt" TIMESTAMP(3) NOT NULL, "updatedAt" TIMESTAMP(3) NOT NULL
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY, "userId" INTEGER, "activity" TEXT NOT NULL, "entityType" TEXT,
+  "entityId" INTEGER, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
 CREATE TABLE "CommentV3" (
   "id" INTEGER PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
@@ -102,7 +117,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.pg.exec(
-    `TRUNCATE "Post", "Image", "CommentV3", "PostText";
+    `TRUNCATE "Post", "Image", "CommentV3", "PostText", "TextScanHold", "ModActivity";
      INSERT INTO "Post" VALUES (100, ${OWNER}, '<p>caption &amp; <b>more</b></p>', '2026-10-01', '2026-10-02 08:30');
      INSERT INTO "Post" VALUES (200, ${OTHER}, '<p>unrelated post</p>', '2026-10-01', NULL);
      INSERT INTO "Post" VALUES (501, ${OTHER}, 'a post sharing an image id', '2026-10-01', NULL);
@@ -352,5 +367,143 @@ describe('what NCMEC is sent', () => {
         CSAM_CONTEXT_TEXT_MAX_CHARS
       )}"\n[Truncated: 7 further characters are preserved by Civitai with this report.]`
     );
+  });
+});
+
+describe('held text items', () => {
+  const MOD_B = 11;
+  // Item 1 is unheld; 2 has a Pending hold; 3 is held by its flag alone; 4's hold was confirmed
+  // on its own, 5's in a batch.
+  beforeEach(async () => {
+    await db.pg.exec(`
+      INSERT INTO "PostText" ("id", "postId", "index", "content", "csamHeld") VALUES
+        (1, 100, 1, '<p>open words</p>', false), (2, 100, 2, '<p>pending words</p>', false),
+        (3, 100, 3, '<p>flagged words</p>', true), (4, 100, 4, '<p>decided words</p>', true),
+        (5, 100, 5, '<p>batched words</p>', true);
+      INSERT INTO "TextScanHold" ("entityType", "entityId", "label", "status", "decidedById", "decidedAt", "meta", "createdAt", "updatedAt") VALUES
+        ('PostText', 2, 'csam', 'Pending', NULL, NULL, '{}', '2026-10-03', '2026-10-03'),
+        ('PostText', 4, 'csam', 'Confirmed', ${MOD_B}, '2026-10-04', '{"decision":"confirm","reviewedDecision":true}', '2026-10-03', '2026-10-04'),
+        ('PostText', 5, 'csam', 'Confirmed', ${MOD_B}, '2026-10-04', '{"decision":"confirm","reviewedDecision":false}', '2026-10-03', '2026-10-04');
+    `);
+  });
+
+  const snapshot = (capturedById = MOD, capturedAt = at(8)) =>
+    snapshotCsamContextText({
+      imageIds: [501],
+      sources: { postIds: [100], commentIds: [] },
+      reportedUserIds: [OWNER],
+      capturedById,
+      capturedAt,
+    });
+  const read = (postTextId: number, moderatorId = MOD) =>
+    readHeldCsamContextText({ userId: OWNER, imageIds: [501], postTextId, moderatorId });
+  const readAt = (postTextId: number, moderatorId: number, when: string) =>
+    db.pg.query(
+      `INSERT INTO "ModActivity" ("userId", "activity", "entityType", "entityId", "createdAt")
+       VALUES ($1, 'csamContextTextRead', 'PostText', $2, $3)`,
+      [moderatorId, postTextId, when]
+    );
+  const byId = (rows: { source: string; id: number }[], id: number) =>
+    rows.find((r) => r.source === 'postText' && r.id === id) as
+      | { reviewed?: { byId: number; at: string }; text: string }
+      | undefined;
+
+  it('are captured on their own, not inside the post text, and their words are not previewed', async () => {
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+
+    expect(candidates.find((r) => r.source === 'postDescription')?.text).toBe(
+      'caption & more\n\nopen words'
+    );
+    expect(candidates.filter((r) => r.source === 'postText').map((r) => r.id)).toEqual([
+      2, 3, 4, 5,
+    ]);
+    expect(candidates.filter((r) => r.source === 'postText').every((r) => r.text === '')).toBe(
+      true
+    );
+  });
+
+  it('go out marked not reviewed, unless confirmed on their own; filing alone marks nothing', async () => {
+    const rows = await snapshot();
+
+    expect(byId(rows, 2)?.reviewed).toBeUndefined();
+    expect(byId(rows, 3)?.reviewed).toBeUndefined();
+    expect(byId(rows, 5)?.reviewed).toBeUndefined();
+    expect(byId(rows, 4)?.reviewed).toEqual({
+      byId: MOD_B,
+      at: at(4).toISOString().replace('14:05', '00:00'),
+    });
+    const [incident] = contextWebPageIncidents(rows);
+    expect(incident.additionalInfo).toContain(
+      `Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed by Civitai:\n"pending words"`
+    );
+    expect(incident.additionalInfo).toContain(
+      'Text item 4 of this post, posted 10/02/2026 00:00 UTC by the reported account:\n"decided words"'
+    );
+    // Reading order: description, then items 2-5.
+    expect(incident.additionalInfo.indexOf('pending words')).toBeLessThan(
+      incident.additionalInfo.indexOf('batched words')
+    );
+  });
+
+  it("are marked reviewed by the filing moderator's own read, with who and when", async () => {
+    const result = await read(2);
+    expect(result.text).toBe('pending words');
+
+    const rows = await snapshot(MOD, new Date());
+    expect(byId(rows, 2)?.reviewed).toEqual({ byId: MOD, at: result.readAt });
+    expect(contextWebPageIncidents(rows)[0].additionalInfo).not.toContain(
+      'Text item 2 of this post, posted 10/02/2026 00:00 UTC by the reported account. Not reviewed'
+    );
+  });
+
+  it("are not marked reviewed by another moderator's read", async () => {
+    await read(2, MOD_B);
+
+    expect(byId(await snapshot(MOD, new Date()), 2)?.reviewed).toBeUndefined();
+    expect(byId(await snapshot(MOD_B, new Date()), 2)?.reviewed).toMatchObject({ byId: MOD_B });
+  });
+
+  it('are not marked reviewed by a read from before the hold last changed, or after filing', async () => {
+    await readAt(2, MOD, '2026-10-02 12:00');
+    await readAt(3, MOD, '2026-10-09 12:00');
+
+    const rows = await snapshot();
+    expect(byId(rows, 2)?.reviewed).toBeUndefined();
+    expect(byId(rows, 3)?.reviewed).toBeUndefined();
+  });
+
+  it('can be read only as held text on the report images', async () => {
+    await expect(read(1)).rejects.toThrow(/not held text/);
+    await expect(
+      readHeldCsamContextText({ userId: OWNER, imageIds: [502], postTextId: 2, moderatorId: MOD })
+    ).rejects.toThrow(/not held text/);
+    const { rows } = await db.pg.query('SELECT 1 FROM "ModActivity"');
+    expect(rows).toHaveLength(0);
+  });
+
+  it('leave their holds and flags as they were', async () => {
+    const before = await db.pg.query('SELECT * FROM "TextScanHold" ORDER BY id');
+    const flags = await db.pg.query('SELECT id, "csamHeld" FROM "PostText" ORDER BY id');
+    await read(2);
+    await snapshot();
+
+    expect((await db.pg.query('SELECT * FROM "TextScanHold" ORDER BY id')).rows).toEqual(
+      before.rows
+    );
+    expect((await db.pg.query('SELECT id, "csamHeld" FROM "PostText" ORDER BY id')).rows).toEqual(
+      flags.rows
+    );
+  });
+
+  it('let a post holding only held text be ticked, sending no empty description', async () => {
+    await db.pg.exec(
+      `UPDATE "Post" SET detail = NULL WHERE id = 100; DELETE FROM "PostText" WHERE id = 1;`
+    );
+    const { candidates } = await getCsamContextCandidates({ userId: OWNER, imageIds: [501] });
+    expect(candidates.some((c) => c.source === 'postDescription' && c.id === 100)).toBe(true);
+
+    const rows = await snapshot();
+    expect(rows.some((r) => r.source === 'postDescription')).toBe(false);
+    expect(rows.filter((r) => r.source === 'postText')).toHaveLength(4);
   });
 });

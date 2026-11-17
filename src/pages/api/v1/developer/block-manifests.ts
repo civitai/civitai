@@ -114,9 +114,8 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Store tagline/repository as the validator measured them (trimmed). BEFORE the I11
-  // byte-equal check below, so a CI re-upload of the same padded manifest still compares
-  // equal to the trimmed row it stored last time instead of re-entering moderation.
+  // BEFORE the I11 byte-equal check, so a re-upload of the same padded manifest compares equal
+  // to the stored trimmed row.
   trimManifestStringFields(body.manifest);
 
   const manifest = body.manifest as {

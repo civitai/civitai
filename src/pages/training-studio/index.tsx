@@ -165,8 +165,9 @@ function TrainingStudioEmbed({
           return (await r.json()).token as string;
         },
         checkTrainingText: checkStudioTriggerWord,
-        // Starting or pricing a run, and Review's mature count, are the Studio server's: this
-        // app forwards them (/api/training-studio/studio/*). The element refuses them without it.
+        // Every paid call, pricing a continuation, and Review's mature count are the Studio
+        // server's: this app forwards them (/api/training-studio/studio/*). The element refuses
+        // them without it.
         studioServer: (path: string, init?: RequestInit) => {
           if (!path.startsWith('/api/')) return Promise.reject(new Error(`Unknown route ${path}`));
           return fetch(`/api/training-studio/studio/${path.slice('/api/'.length)}`, init);
