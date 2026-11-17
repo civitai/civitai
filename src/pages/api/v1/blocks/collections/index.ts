@@ -31,7 +31,7 @@ import {
 import { getServableCoverCollectionIds } from '~/server/services/collection-cover-visibility';
 import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { recordBlockCollectionRankingSource } from '~/server/prom/block-collection-ranking.metrics';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionSort } from '~/server/common/enums';
@@ -364,7 +364,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  // The VIEWER's level held to the domain cap (the main site's rule), never the domain alone.
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   const subjectUser = await hydrateBlockSubject(subjectUserId);
   if (!subjectUser) {

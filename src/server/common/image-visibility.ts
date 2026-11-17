@@ -5,6 +5,8 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { Flags } from '~/shared/utils/flags';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
+import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
+import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
 
 export { KNIGHTS_VOTE_NSFW_LEVEL_REASON };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
@@ -208,3 +210,30 @@ export const ingestionKeptAfterVerdict = (
   current === ImageIngestionStatus.NotFound && verdict === ImageIngestionStatus.Scanned
     ? ImageIngestionStatus.NotFound
     : verdict;
+/** The image without its `minor` flag, read only to apply the rule below and never sent on. */
+export const withoutMinorFlag = <T extends { minor?: boolean | null }>({
+  minor: _minor,
+  ...image
+}: T) => image;
+
+/** The images `minorMatureImageVisibleSql` shows only to their owner and moderators. */
+export const isMinorMatureImage = (image: { minor?: boolean | null; nsfwLevel: number }) =>
+  isMinorContentRestricted({ minor: image.minor === true, nsfwLevel: image.nsfwLevel });
+
+/**
+ * A minor-flagged image the minor content rule restricts is shown only to its owner and
+ * moderators, whatever the viewer's browsing settings, as SQL over `"Image" i`. With no viewer it
+ * is shown to nobody, so a viewer-independent read (a shared cache, a search document) never
+ * carries one.
+ */
+export const minorMatureImageVisibleSql = (
+  viewer: { userId?: number; isModerator?: boolean } = {}
+) => {
+  if (viewer.isModerator) return Prisma.sql`TRUE`;
+  const ownImage = viewer.userId ? Prisma.sql` OR i."userId" = ${viewer.userId}` : Prisma.empty;
+  const restricted = minorContentRestrictedSql({
+    minor: Prisma.sql`COALESCE(i."minor", FALSE)`,
+    nsfwLevel: Prisma.sql`i."nsfwLevel"`,
+  });
+  return Prisma.sql`(NOT ${restricted}${ownImage})`;
+};

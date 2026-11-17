@@ -113,6 +113,17 @@ func TestMapRefusals(t *testing.T) {
 		{"completion past one feed page", func(q *Query) { q.PostIDs = []int{1}; q.Limit = 201 }, "postIds:limit>200", false},
 		// The mapper reports the FIRST reason: generation is checked before the cursor.
 		{"first reason wins", func(q *Query) { q.HasGeneration = true; q.CursorText = "abc" }, "input:generation", false},
+		// UNSUPPORTED_KEYS: prioritizedUserIds comes before generation, and before any refusal Node
+		// answers with a 400 (a malformed cursor, an unknown sort).
+		{"prioritizedUserIds", func(q *Query) { q.HasPrioritizedUserIDs = true }, "input:prioritizedUserIds", false},
+		{"prioritizedUserIds before generation", func(q *Query) { q.HasPrioritizedUserIDs = true; q.HasGeneration = true }, "input:prioritizedUserIds", false},
+		{"prioritizedUserIds before a bad cursor", func(q *Query) { q.HasPrioritizedUserIDs = true; q.CursorText = "abc" }, "input:prioritizedUserIds", false},
+		{"prioritizedUserIds before an unknown sort", func(q *Query) { q.HasPrioritizedUserIDs = true; q.Sort = "Random" }, "input:prioritizedUserIds", false},
+		// UNSUPPORTED_FLAGS: pending after requiringMeta, and after every unsupported key.
+		{"pending", func(q *Query) { q.Pending = true }, "flag:pending", false},
+		{"requiringMeta before pending", func(q *Query) { q.RequiringMeta = true; q.Pending = true }, "flag:requiringMeta", false},
+		{"remixOfId before pending", func(q *Query) { q.HasRemixOfID = true; q.Pending = true }, "input:remixOfId", false},
+		{"pending before a bad cursor", func(q *Query) { q.Pending = true; q.CursorText = "abc" }, "flag:pending", false},
 	}
 	for _, c := range cases {
 		q := base()

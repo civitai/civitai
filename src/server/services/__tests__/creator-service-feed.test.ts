@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { getServiceOfferingFeedSchema } from '~/server/schema/creator-service.schema';
 import { getServiceOfferingFeed } from '~/server/services/creator-service.service';
 import {
   BlockedByUsers,
@@ -25,6 +26,8 @@ import {
 
 type Row = {
   id: number;
+  title: string;
+  description: string;
   status: ServiceOfferingStatus;
   maxNsfwLevel: number;
   price: number;
@@ -58,6 +61,23 @@ function matches(value: unknown, filter: unknown): boolean {
         return (arg as unknown[]).some((clause) => matches(value, clause));
       case 'AND':
         return (arg as unknown[]).every((clause) => matches(value, clause));
+      case 'contains': {
+        // As Postgres runs Prisma's `contains`: a LIKE where an unescaped `%` or `_` is a
+        // wildcard, case-sensitive unless the clause asks otherwise.
+        const flags = (filter as { mode?: string }).mode === 'insensitive' ? 'i' : '';
+        const pattern = (arg as string).replace(
+          /\\(.)|([%_])|([^\\%_])/g,
+          (_, escaped, wild, char) =>
+            wild
+              ? wild === '%'
+                ? '.*'
+                : '.'
+              : (escaped ?? char).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        );
+        return new RegExp(pattern, flags).test(value as string);
+      }
+      case 'mode':
+        return true;
       case 'lte':
         return (value as number) <= (arg as number);
       case 'in':
@@ -103,6 +123,8 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
   const id = nextId++;
   return {
     id,
+    title: `Offering ${id}`,
+    description: 'Custom work.',
     status: ServiceOfferingStatus.Active,
     maxNsfwLevel: NsfwLevel.PG13,
     price: 1000,
@@ -126,7 +148,7 @@ const row = (patch: Partial<Omit<Row, 'seller'>> & { seller?: Partial<Row['selle
 
 let table: Row[] = [];
 const feedIds = async (
-  opts: { browsingLevel?: number; servable?: number; viewerId?: number } = {}
+  opts: { browsingLevel?: number; servable?: number; viewerId?: number; query?: string } = {}
 ) => {
   const { items } = await getServiceOfferingFeed({
     sort: 'newest',
@@ -273,5 +295,92 @@ describe('services feed', () => {
       if (!cursor) break;
     }
     expect(seen).toEqual(expected);
+  });
+
+  describe('with a search query', () => {
+    it('keeps only offerings whose title or description matches, ignoring case', async () => {
+      const byTitle = row({ title: 'Anime LoRA training' });
+      const byDescription = row({ description: 'I train a LoRA on your character.' });
+      const other = row({ title: 'Logo design', description: 'Vector logos.' });
+      table = [byTitle, byDescription, other];
+      expect(await feedIds({ query: 'lora' })).toEqual([byDescription.id, byTitle.id]);
+      expect(await feedIds({})).toEqual([other.id, byDescription.id, byTitle.id]);
+    });
+
+    it('never returns a mature match on civitai.com, and does on civitai.red', async () => {
+      const pg = row({ title: 'Portrait commission' });
+      const x = row({ title: 'Portrait commission, mature', maxNsfwLevel: NsfwLevel.X });
+      table = [pg, x];
+      const query = 'portrait';
+      // civitai.com serves nothing mature, whatever the viewer browses at.
+      expect(
+        await feedIds({
+          query,
+          browsingLevel: allBrowsingLevelsFlag,
+          servable: sfwBrowsingLevelsFlag,
+        })
+      ).toEqual([pg.id]);
+      // civitai.red, browsing X: the same query finds it.
+      expect(
+        await feedIds({
+          query,
+          browsingLevel: allBrowsingLevelsFlag,
+          servable: allBrowsingLevelsFlag,
+        })
+      ).toEqual([x.id, pg.id]);
+    });
+
+    it('matches `%` and `_` literally, not as wildcards', async () => {
+      const discount = row({ title: '50% off portraits' });
+      const other = row({ title: 'Logo design' });
+      table = [discount, other];
+      expect(await feedIds({ query: '%' })).toEqual([discount.id]);
+      expect(await feedIds({ query: '_' })).toEqual([]);
+    });
+
+    it("on civitai.red, still hides a mature match above the viewer's browsing level", async () => {
+      const r = row({ title: 'Portrait commission', maxNsfwLevel: NsfwLevel.R });
+      const x = row({ title: 'Portrait commission, mature', maxNsfwLevel: NsfwLevel.X });
+      table = [r, x];
+      expect(
+        await feedIds({
+          query: 'portrait',
+          browsingLevel: sfwBrowsingLevelsFlag | NsfwLevel.R,
+          servable: allBrowsingLevelsFlag,
+        })
+      ).toEqual([r.id]);
+    });
+
+    it("never returns a muted seller's matching offering", async () => {
+      const unmuted = row({ title: 'Portrait commission' });
+      const muted = row({ title: 'Portrait commission', sellerId: 8, seller: { muted: true } });
+      table = [unmuted, muted];
+      expect(await feedIds({ query: 'portrait' })).toEqual([unmuted.id]);
+    });
+
+    it('keeps the listing rule for a match whose cover is still being checked', async () => {
+      const pending = row({
+        title: 'Portrait commission',
+        coverImageId: 1,
+        coverImage: {
+          ingestion: ImageIngestionStatus.Pending,
+          needsReview: null,
+          tosViolation: false,
+          nsfwLevel: NsfwLevel.PG,
+        },
+      });
+      table = [pending];
+      expect(await feedIds({ query: 'portrait' })).toEqual([]);
+    });
+  });
+});
+
+describe('the feed query input', () => {
+  const parse = (query?: string) => getServiceOfferingFeedSchema.parse({ query }).query;
+
+  it('treats a blank query as no filter, and searches on at most 100 characters', () => {
+    expect(parse('   ')).toBeUndefined();
+    expect(parse('  lora  ')).toBe('lora');
+    expect(parse('a'.repeat(300))).toHaveLength(100);
   });
 });

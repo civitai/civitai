@@ -11,7 +11,7 @@ export type PriorRuntime = {
     trustTier: string;
   };
   oauthClientId: string;
-  allowedScopes: number;
+  allowedScopes: bigint;
 };
 
 /** The on-site store listing as it was before this approve synced the new version's copy. */

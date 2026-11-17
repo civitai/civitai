@@ -112,6 +112,11 @@ query (`modelFeedUrlFromLegacySearch`). Off, the feed's `?query=` stays the Meil
   feed filter, the private-model rule and moderation apply as on the feed. It never accepts `ids`.
 - The index filters on level, type, checkpoint type, base models, the feed's user and the
   published range. Period is not applied, as on today's searched feed. Sort is Best match.
+- Name and keyword matches rank first (`withWordMatchesFirst`): up to 200 models whose
+  `search_text` (which opens with the name) holds every query word, in similarity order, then the
+  rest of the ranking without them. The service's own exact-title pass still leads. A word common
+  to many documents (e.g. `WAI`) can still bury the model it names; a name-only text index would
+  fix that.
 - Hidden models and users are dropped on the server; hidden tags by the feed's client-side
   preferences. A failed search falls back to the keyword feed with a Retry banner.
 

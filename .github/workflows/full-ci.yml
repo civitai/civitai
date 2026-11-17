@@ -3,7 +3,7 @@ name: Full CI on label
 # Adding the `full-ci` label to a PR starts the full test suite on it, right away.
 #
 # lint.yml and apps.yml read the label themselves on every PR run (opened, synchronize,
-# reopened, ready_for_review): with it on, the four `Unit tests` shards run and the draft
+# reopened, ready_for_review): with it on, the six `Unit tests` shards run and the draft
 # ESLint-only gate is lifted. What they cannot do without help is react to the label being
 # ADDED, which is a `labeled` event. This file does that, by dispatching them on the PR branch,
 # along with moderator-boot.yml, feed-go.yml, beacon-go.yml and registry-adapter-image.yml, which
@@ -11,7 +11,7 @@ name: Full CI on label
 #
 # ── THE LABEL STAYS ON UNTIL THE FULL UNIT SUITE HAS PASSED ONCE ON THE PR ───────────────────
 #
-# lint.yml's `full-ci-done` job removes the label after a Lint run whose four unit shards all
+# lint.yml's `full-ci-done` job removes the label after a Lint run whose six unit shards all
 # passed, on some commit of the PR, not necessarily its head: the PR's own run (it carries the
 # label), or the dispatch below (it passes `pr`). So
 # the label buys one PASSING full unit run; after that, pushes go back to the normal PR run (no
@@ -59,7 +59,7 @@ name: Full CI on label
 # ── NO DISPATCH WHEN THE PR'S OWN RUN ALREADY HAS THE SHARDS ─────────────────────────────────
 #
 # A PR opened WITH the label (`gh pr create --label full-ci`) gets `opened` and `labeled` at
-# once. The `opened` Lint run already reads the label and starts the four `Unit tests` shards,
+# once. The `opened` Lint run already reads the label and starts the six `Unit tests` shards,
 # so dispatching here too ran the whole suite twice on the same commit, which was most of what
 # this job dispatched (measurement: docs/testing/reading-ci-results.md, "CI cost measurements").
 #

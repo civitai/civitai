@@ -14,9 +14,10 @@
  *     wire contracts (edge-url composed, maturity already clamped upstream).
  *
  * NOTE the maturity clamp itself is NOT applied here — the caller resolves the
- * token ceiling via `resolveCatalogBrowsingLevel(claims)` and passes the clamped
- * `browsingLevel` into the collection item service, so items are filtered at the
- * source (identical authority surface to /api/v1/blocks/images). Discovery
+ * viewer's level held to the token's domain ceiling via
+ * `resolveCatalogViewerBrowsingLevel(claims, { regionRestricted })` and passes it
+ * into the collection item service, so items are filtered at the source (the
+ * same clamp /api/v1/blocks/images uses). Discovery
  * additionally drops collections whose own `nsfwLevel` exceeds the ceiling.
  */
 

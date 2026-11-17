@@ -37,12 +37,25 @@ type InfiniteInput struct {
 	PostID int
 	// Tags is the tag inclusion scope (`tags`), as sent.
 	Tags []int
+	// PrioritizedUserIDs is `prioritizedUserIds`, as sent (the model page's showcase carousel sends
+	// the model owner's id alone). Non-empty with a model scope it routes the request to Postgres
+	// (requiresImageDbPath), where getAllImages keeps only those creators' images, drops the model
+	// join for `p."modelVersionId"`, and orders oldest post first; on the feed path the query mapper
+	// refuses it (an empty page).
+	PrioritizedUserIDs []int
+	// Pending is `pending`: getAllImages drops its published-before-now clause and, for a moderator or
+	// a signed-in viewer, applies the pending visibility instead of the reviewed one. The feed path's
+	// mapper refuses it (an empty page).
+	Pending bool
 }
 
 // infiniteUnsupported are the input keys this port falls back on when present: the gallery's list
-// without the scopes image.getInfinite answers here (userId, username, postId, tags).
+// without the inputs image.getInfinite answers here (userId, username, postId, tags,
+// prioritizedUserIds, pending).
 var infiniteUnsupported = func() []string {
-	ported := map[string]bool{"userId": true, "username": true, "postId": true, "tags": true}
+	ported := map[string]bool{
+		"userId": true, "username": true, "postId": true, "tags": true, "prioritizedUserIds": true, "pending": true,
+	}
 	out := make([]string, 0, len(unsupportedKeys))
 	for _, k := range unsupportedKeys {
 		if !ported[k] {
@@ -99,7 +112,28 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	if in.Tags, err = ints(m["tags"]); err != nil {
 		return nil, err
 	}
+	// z.array(z.number()): any length, negatives included (-1 is the system user).
+	if in.PrioritizedUserIDs, err = ints(m["prioritizedUserIds"]); err != nil {
+		return nil, err
+	}
+	if v, ok := m["pending"]; ok && v != nil {
+		b, isBool := v.(bool) // z.boolean(), not coerced: anything else is Node's BAD_REQUEST
+		if !isBool {
+			return nil, fallback.Newf("input-invalid", "pending: %v", v)
+		}
+		in.Pending = b
+	}
 	return in, nil
+}
+
+// prioritized is getAllImages' prioritizeUser: a non-empty prioritizedUserIds.
+func (in *InfiniteInput) prioritized() bool {
+	return len(in.PrioritizedUserIDs) > 0
+}
+
+// prioritizedSystemUser is getAllImages' prioritizseIsSystemUser: exactly the system user (-1).
+func (in *InfiniteInput) prioritizedSystemUser() bool {
+	return len(in.PrioritizedUserIDs) == 1 && in.PrioritizedUserIDs[0] == -1
 }
 
 // ownScoped is applyAddonExclusions' isOwnScoped for this input (see ownScope).
@@ -117,10 +151,12 @@ func ownScope(viewerID int, viewerUsername string, userID int, username string) 
 	return username != "" && viewerUsername != "" && strings.EqualFold(username, viewerUsername)
 }
 
-// dbPath is requiresImageDbPath for the supported inputs: a post's media, or a model without a
-// version (the feed has no model dimension). Every other shape it lists falls back in parsing.
+// dbPath is requiresImageDbPath for the supported inputs: a post's media, a model without a
+// version (the feed has no model dimension), or prioritizedUserIds with a model or version scope.
+// Every other shape it lists falls back in parsing.
 func (in *InfiniteInput) dbPath() bool {
-	return in.PostID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0)
+	return in.PostID != 0 || (in.ModelID != 0 && in.ModelVersionID == 0) ||
+		(in.prioritized() && (in.ModelID != 0 || in.ModelVersionID != 0))
 }
 
 // InfiniteSources is the lookups image.getInfinite reads beyond the page's hydration (implemented by
@@ -496,6 +532,10 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		TargetUserID:   userID,
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
+		Pending:        in.Pending,
+	}
+	if in.prioritized() {
+		q.PrioritizedUserIDs = in.PrioritizedUserIDs
 	}
 	if useIndex {
 		return infiniteFromFeed(ctx, d, in, q, viewer, now)
@@ -508,26 +548,28 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 // `{ items, nextCursor, source: 'feed' }`.
 func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q ImagesQuery, viewer Viewer, now time.Time) (*InfiniteAnswer, error) {
 	fq := feedsvc.Query{
-		BrowsingLevel:   q.BrowsingLevel,
-		ExcludedTagIDs:  q.ExcludedTagIDs,
-		ExcludedUserIDs: in.ExcludedUserIDs,
-		ModelID:         in.ModelID,
-		ModelVersionID:  in.ModelVersionID,
-		Model3DID:       in.Model3DID,
-		Types:           in.Types,
-		WithMeta:        in.WithMetaFlag,
-		FromPlatform:    in.FromPlatform,
-		DisableMinor:    q.DisableMinor,
-		DisablePoi:      q.DisablePoi,
-		ViewerID:        viewer.ID,
-		UserID:          q.TargetUserID,
-		Tags:            q.TagIDs,
-		Sort:            in.Sort,
-		Period:          in.Period,
-		Limit:           in.Limit,
-		HasGeneration:   len(in.Generation) > 0,
-		HasRemixOfID:    in.HasRemixOfID,
-		RequiringMeta:   in.RequiringMeta,
+		BrowsingLevel:         q.BrowsingLevel,
+		ExcludedTagIDs:        q.ExcludedTagIDs,
+		ExcludedUserIDs:       in.ExcludedUserIDs,
+		ModelID:               in.ModelID,
+		ModelVersionID:        in.ModelVersionID,
+		Model3DID:             in.Model3DID,
+		Types:                 in.Types,
+		WithMeta:              in.WithMetaFlag,
+		FromPlatform:          in.FromPlatform,
+		DisableMinor:          q.DisableMinor,
+		DisablePoi:            q.DisablePoi,
+		ViewerID:              viewer.ID,
+		UserID:                q.TargetUserID,
+		Tags:                  q.TagIDs,
+		Sort:                  in.Sort,
+		Period:                in.Period,
+		Limit:                 in.Limit,
+		HasGeneration:         len(in.Generation) > 0,
+		HasRemixOfID:          in.HasRemixOfID,
+		RequiringMeta:         in.RequiringMeta,
+		HasPrioritizedUserIDs: in.prioritized(),
+		Pending:               in.Pending,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText
@@ -572,7 +614,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 	hq.IDs, hq.Limit = ans.IDs, len(ans.IDs)
 	hq.Cursor, hq.ModelID, hq.ModelVersionID, hq.Period = 0, 0, 0, "AllTime"
 	hq.ThrowOnStatementTimeout = true
-	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.IncludeProfilePictures)
+	images, _, err := fetchInfiniteRows(ctx, d, hq, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
 	if err != nil {
 		if fallback.Reason(err) != "" {
 			return nil, err
@@ -606,7 +648,24 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 		// getCursor reads a single-field sort's cursor as one integer; anything else is a 400.
 		return nil, fallback.Newf("input-cursor", "%q", in.CursorText)
 	}
-	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.IncludeProfilePictures)
+	if in.prioritized() {
+		// getAllImages' prioritizeUser branches, for the sub-cases not computed here (Node answers):
+		if d.Config.PrioritizedVersionCache {
+			// `use-model-version-cache-for-images` on: the ids come from imagesForModelVersionsCache
+			// and the page is re-sorted into that cache's order. Not ported (off in production).
+			return nil, fallback.New("prioritized-version-cache")
+		}
+		if in.Cursor != 0 || in.CursorText != "" {
+			// A truthy cursor is Node's BAD_REQUEST 'Cannot use cursor with prioritizedUserIds'.
+			return nil, fallback.New("prioritized-cursor")
+		}
+		if in.prioritizedSystemUser() {
+			// The system user alone: one more read (does it have a post on the version?) decides
+			// between its own images and every creator's, ordered by an IIF over the index.
+			return nil, fallback.New("prioritized-system-user")
+		}
+	}
+	images, next, err := fetchInfiniteRows(ctx, d, q, viewer, now, in.IncludeProfilePictures, in.IncludeCosmetics)
 	if err != nil {
 		return nil, err
 	}
@@ -622,8 +681,9 @@ func infiniteFromDB(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q I
 // fetchInfiniteRows is one getAllImages call: the query (through the page cache), the hydration
 // and the per-image transform with image.getInfinite's wire trim. next is the response's
 // `nextCursor`: the look-ahead row's cursor column (the image id, or a post's nullable index), or
-// undefined at the end.
-func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, profilePictures bool) ([]Image, any, error) {
+// undefined at the end. profilePictures and cosmetics are the include list's 'profilePictures' and
+// 'cosmetics'.
+func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, viewer Viewer, now time.Time, profilePictures, cosmetics bool) ([]Image, any, error) {
 	rows, err := FetchRows(ctx, d.DB, d.Cache, q.Build())
 	if err != nil {
 		return nil, nil, err
@@ -638,7 +698,7 @@ func fetchInfiniteRows(ctx context.Context, d *InfiniteDeps, q ImagesQuery, view
 			next = int64(look.CursorID)
 		}
 	}
-	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, profilePictures)
+	hy, err := hydrateRows(ctx, d.Hydrator, rows, viewer, d.Config.VisibleDecorationEvents, profilePictures, cosmetics)
 	if err != nil {
 		return nil, nil, err
 	}

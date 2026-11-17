@@ -107,7 +107,7 @@ function installDb() {
     client.appBlock.updateMany.mockResolvedValue({ count: 0 });
     client.oauthClient.update.mockResolvedValue({});
     // The ceiling a late hold would put back, read on the primary before step (3).
-    client.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0 });
+    client.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
     client.appListing.findUnique.mockResolvedValue({ id: 'apl_existing', kind: 'onsite' });
     client.appListing.updateMany.mockResolvedValue({ count: 0 });
   }
@@ -118,7 +118,7 @@ const existingAppBlock = {
   appId: 'app_1',
   repoUrl: 'https://forgejo.example/cool-app',
   trustTier: 'unverified',
-  app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'], userId: 4242 },
+  app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'], userId: 4242 },
 };
 
 vi.mock('~/server/services/apps/doc-store.instance', () => ({ getDocStore: () => h.store }));

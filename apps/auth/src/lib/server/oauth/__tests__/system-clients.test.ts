@@ -155,7 +155,8 @@ describe('service clients', () => {
         allowedOrigins: [],
         grants: ['urn:civitai:grant:service'],
         isConfidential: true,
-        allowedScopes: TokenScope.UserRead,
+        // The bigint column, written as its decimal string.
+        allowedScopes: '1',
         userId: SYSTEM_USER_ID,
         isVerified: true,
       },
