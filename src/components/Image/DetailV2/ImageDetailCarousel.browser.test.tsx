@@ -37,6 +37,8 @@ const emblaCalls = vi.hoisted(() => ({
   seen: new WeakSet<object>(),
   latest: undefined as { reInit: () => void } | undefined,
 }));
+// Kept out of the DOM: text growing in the harness row would resize the carousel and reInit it.
+const settles = vi.hoisted(() => [] as number[]);
 vi.mock('embla-carousel-react', async (o) => {
   const actual = (await o<object>()) as typeof EmblaReact;
   const spied = (...args: Parameters<typeof actual.default>) => {
@@ -114,7 +116,6 @@ function Harness({
 }) {
   const [count, setCount] = useState(initialCount);
   const [offsets, setOffsets] = useState<number[]>([]);
-  const [settles, setSettles] = useState<number[]>([]);
   const images = Array.from({ length: count }, (_, i) => image(i + 1));
   const navigation = useCarouselNavigation({ items: images, initialIndex });
   const trackSlide = (i: number) => {
@@ -160,12 +161,11 @@ function Harness({
       <output data-testid="state">{navigation.index}</output>
       <output data-testid="count">{count}</output>
       <output data-testid="offsets">{offsets.join(',')}</output>
-      <output data-testid="settles">{settles.join(',')}</output>
       <ImageDetailCarousel
         images={images}
         {...navigation}
         loop={loop}
-        onSettle={(i) => setSettles((all) => [...all, i])}
+        onSettle={(i) => settles.push(i)}
       />
     </div>
   );
@@ -232,19 +232,21 @@ describe.each([false, true])('ImageDetailCarousel, loop %s', (loop) => {
     await page.viewport(1200, 800);
     renderWithProviders(<Harness loop={loop} initialCount={4} initialIndex={0} />);
     await vi.waitFor(() => expect(slideInView()).toBe(0));
+    settles.length = 0;
     await page.getByTestId('jump-then-reinit').click();
     await vi.waitFor(() => expect(slideInView()).toBe(2));
     await expect.element(page.getByTestId('state')).toHaveTextContent('2');
-    await expect.element(page.getByTestId('settles')).toHaveTextContent(/^2$/);
+    await vi.waitFor(() => expect(settles).toEqual([2]));
   });
 
   test('a reInit that leaves the slide where it was announces no settle', async () => {
     await page.viewport(1200, 800);
     renderWithProviders(<Harness loop={loop} initialCount={4} initialIndex={1} />);
     await vi.waitFor(() => expect(slideInView()).toBe(1));
+    settles.length = 0;
     await page.getByTestId('reinit').click();
     await wait(QUIET_MS);
-    expect(page.getByTestId('settles').element().textContent).toBe('');
+    expect(settles).toEqual([]);
     expect(slideInView()).toBe(1);
     await expect.element(page.getByTestId('state')).toHaveTextContent('1');
   });
