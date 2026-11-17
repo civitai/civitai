@@ -1,9 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import {
-  isModerationFlagSet,
-  type ListingMediaImage,
-} from '~/server/services/blocks/listing-media-audience';
+import type { ListingMediaImage } from '~/server/services/blocks/listing-media-audience';
 import { RED_SLOTS_UNAVAILABLE_MESSAGE } from '~/shared/constants/listing-media-split.constants';
 import {
   isComEligibleLevel,
@@ -416,23 +413,35 @@ export type ListingRedMediaImages = {
   cover: ListingRedMediaImage | null;
 };
 
-type RedMediaRenderRow = { app_listing_id: string; slot: string } & Record<string, unknown>;
+type RedMediaRenderRow = {
+  app_listing_id: string;
+  slot: 'icon' | 'cover';
+  image_id: number;
+  url: string;
+  nsfw_level: number;
+  ingestion: ListingMediaImage['ingestion'];
+  needs_review: string | null;
+  poi: boolean;
+  minor: boolean;
+  tos_violation: boolean;
+  acceptable_minor: boolean;
+  blocked_for: string | null;
+  model_restricted: boolean;
+};
 
-function redMediaImageFromRow(row: RedMediaRenderRow): ListingRedMediaImage | null {
-  const id = asImageId(row.image_id);
-  // A LEFT JOIN miss (the image is gone) has no ingestion: nothing to show.
-  if (id == null || typeof row.url !== 'string' || row.ingestion == null) return null;
+function redMediaImageFromRow(row: RedMediaRenderRow): ListingRedMediaImage {
   return {
-    id,
+    id: row.image_id,
     url: row.url,
-    nsfwLevel: typeof row.nsfw_level === 'number' ? row.nsfw_level : 0,
-    ingestion: String(row.ingestion),
-    needsReview: typeof row.needs_review === 'string' ? row.needs_review : null,
-    poi: isModerationFlagSet(row.poi),
-    minor: isModerationFlagSet(row.minor),
-    tosViolation: isModerationFlagSet(row.tos_violation),
-    acceptableMinor: isModerationFlagSet(row.acceptable_minor),
-    blockedFor: typeof row.blocked_for === 'string' ? row.blocked_for : null,
+    nsfwLevel: row.nsfw_level,
+    ingestion: row.ingestion,
+    needsReview: row.needs_review,
+    poi: row.poi,
+    minor: row.minor,
+    tosViolation: row.tos_violation,
+    acceptableMinor: row.acceptable_minor,
+    blockedFor: row.blocked_for,
+    modelRestricted: row.model_restricted,
   };
 }
 
@@ -464,7 +473,7 @@ export async function readListingRedMediaManyForRender(
              i."nsfwLevel" AS nsfw_level, i.ingestion::text AS ingestion,
              i."needsReview" AS needs_review, i.poi, i.minor,
              i."tosViolation" AS tos_violation, i."acceptableMinor" AS acceptable_minor,
-             i."blockedFor" AS blocked_for
+             i."blockedFor" AS blocked_for, i."modelRestricted" AS model_restricted
       FROM (
         SELECT app_listing_id, 'icon' AS slot, red_icon_id AS image_id
           FROM app_listing_red_media WHERE app_listing_id IN (${Prisma.join(ids)})
@@ -474,10 +483,8 @@ export async function readListingRedMediaManyForRender(
       ) AS s
       JOIN "Image" i ON i.id = s.image_id
     `;
-    if (!Array.isArray(rows)) return out;
     for (const row of rows) {
       const image = redMediaImageFromRow(row);
-      if (!image || (row.slot !== 'icon' && row.slot !== 'cover')) continue;
       const entry = out.get(row.app_listing_id) ?? { icon: null, cover: null };
       entry[row.slot] = image;
       out.set(row.app_listing_id, entry);

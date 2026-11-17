@@ -80,7 +80,13 @@ vi.mock('~/server/utils/pagination-helpers', () => ({
   getNextPage: () => ({ baseUrl: { origin: 'https://civitai.com' }, nextPage: undefined }),
 }));
 
+/**
+ * A minted token carries BOTH maturity claims. Unless a test names the viewer's
+ * own level, the viewer sits at the full domain ceiling, so a case about the
+ * DOMAIN clamp reads the domain alone; the viewer-level cases set it.
+ */
 function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
+  const viewer = 'viewerBrowsingLevel' in over ? {} : { viewerBrowsingLevel: over.maxBrowsingLevel };
   return {
     iss: 'civitai',
     aud: 'civitai-app-block',
@@ -97,6 +103,7 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     // (withBlockScope with no requiredScope). The handler never reads `scopes` —
     // its only authority is the maturity clamp on claims.maxBrowsingLevel.
     scopes: [],
+    ...viewer,
     ...over,
   };
 }
@@ -196,12 +203,49 @@ describe('/api/v1/blocks/models — authoritative clamp wiring', () => {
     // The Meili pre-step is clamped too — assert via a query so it's invoked.
   });
 
-  it('MISSING claim (legacy/pre-#2670 token) → fails closed to SFW', async () => {
-    claimsBox.claims = fakeClaims({}); // no maxBrowsingLevel
+  it('MISSING claims (legacy/pre-#2670 token) → fails closed to PG', async () => {
+    claimsBox.claims = fakeClaims({}); // no maxBrowsingLevel, no viewerBrowsingLevel
     const res = await invoke({ nsfw: 'true', browsingLevel: '31' });
 
     const [, ctx] = mockRunModelSearch.mock.calls[0];
-    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel).toBe(1);
+    expect(res.body.maturity.sfwOnly).toBe(true);
+  });
+
+  // The VIEWER's level held to the domain cap, not the domain alone: a viewer with
+  // mature content off on a mature domain must not get mature covers.
+  it('RED domain + a PG-only viewer → searched at PG, SFW-only', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: 1,
+      domain: 'red',
+    });
+    const res = await invoke({ query: 'x' });
+
+    const [, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(1);
+    expect(res.body.maturity).toEqual({ browsingLevel: 1, sfwOnly: true });
+  });
+
+  it('RED domain + a PG/PG13/R viewer → searched at exactly those, not SFW-only', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: 1 | 2 | 4,
+      domain: 'red',
+    });
+    const res = await invoke({});
+    expect(mockRunModelSearch.mock.calls[0][1].browsingLevel).toBe(1 | 2 | 4);
+    expect(res.body.maturity.sfwOnly).toBe(false);
+  });
+
+  it('a viewer level sharing nothing with the domain (minted as 0) is served the domain cap', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: sfwBrowsingLevelsFlag,
+      viewerBrowsingLevel: 0,
+      domain: 'green',
+    });
+    const res = await invoke({});
+    expect(mockRunModelSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
     expect(res.body.maturity.sfwOnly).toBe(true);
   });
 

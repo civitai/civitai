@@ -71,6 +71,15 @@ describe('the feed search flag on its own', () => {
     expect(feedSearchPathname(articlesOnly, 'articles')).toBe('/articles');
   });
 
+  it('filters /services in place under its own flag, only from the default target', () => {
+    const servicesOnly = { servicesFeedSearch: true };
+    expect(searchesFeedInPlace(servicesOnly, 'models', '/services')).toBe(true);
+    expect(searchesFeedInPlace({ modelFeedSearch: true }, 'models', '/services')).toBe(false);
+    // An explicit pick of another index still searches that index.
+    expect(searchesFeedInPlace(servicesOnly, 'users', '/services')).toBe(false);
+    expect(searchesFeedInPlace(servicesOnly, 'models', '/models')).toBe(false);
+  });
+
   it("filters a creator's profile tab in place under that feed's flag, but never lands there", () => {
     const all = { feedSearch: true, modelFeedSearch: true, articleFeedSearch: true };
     expect(searchesFeedInPlace(all, 'models', '/user/[username]/models')).toBe(true);

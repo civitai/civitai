@@ -56,6 +56,7 @@ const gated = (id: number) => {
     tosViolation: false,
     acceptableMinor: false,
     blockedFor: null,
+    modelRestricted: false,
   };
 };
 

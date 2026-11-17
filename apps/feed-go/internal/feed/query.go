@@ -262,6 +262,11 @@ func (q *ImagesQuery) Build() Built {
 		and = append(and, hydrate.ImageReviewedSQL("i"))
 	}
 
+	restrictedOwnerSQL := ""
+	if q.ViewerID != 0 {
+		restrictedOwnerSQL = ` OR i."userId" = ` + a.add(q.ViewerID)
+	}
+
 	offset := ""
 	if q.Skip > 0 {
 		// Inlined, as Node does: an int, never request text.
@@ -316,15 +321,17 @@ func (q *ImagesQuery) Build() Built {
       i.minor,
       i.poi,
       i."acceptableMinor",
+      -- No viewer exception: true for the uploader too (the owner's notice reads it).
+      ((i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0 OR NOT i."modelRestricted") IS NOT TRUE "restricted",
       ` + cursorCol + ` "cursorId"
     ` + from + `
     ` + strings.Join(joins, "\n    ") + `
     JOIN "Post" p ON p.id = i."postId"
     WHERE ` + strings.Join(and, " AND ") + `
-      -- Images with an R+ level may not use a license-restricted base model.
+      -- An R+ image on a license-restricted base model is its uploader's alone.
       AND (
         (i."nsfwLevel" & ` + strconv.Itoa(browsing.NSFWLevels) + `) = 0
-        OR NOT i."modelRestricted"
+        OR NOT i."modelRestricted"` + restrictedOwnerSQL + `
       )
     ORDER BY ` + orderBy + offset + `
     LIMIT ` + a.add(q.Limit+1)
