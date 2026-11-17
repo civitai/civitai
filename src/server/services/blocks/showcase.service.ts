@@ -7,6 +7,7 @@ import { Flags } from '~/shared/utils/flags';
 import {
   domainBrowsingCeiling,
   onlySelectableLevels,
+  parseBitwiseBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -139,6 +140,9 @@ export async function getModelShowcaseImages(
         ingestion: 'Scanned',
         postId: { not: null },
         ...publicPostImageWhere(),
+        // In SQL, not only after the fetch: past the 50-row cap a SFW viewer of a mostly-NSFW
+        // version would otherwise get few or no images.
+        nsfwLevel: { in: parseBitwiseBrowsingLevel(allowedBrowsingLevel) },
       },
     },
     select: {

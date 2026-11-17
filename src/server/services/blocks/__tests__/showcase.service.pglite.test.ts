@@ -19,6 +19,7 @@ const SCHEDULED = 1002;
 const PRIVATE = 1003;
 const UNSEARCHABLE = 1004;
 const PG = 1;
+const R = 4;
 
 const CLEAN = 1;
 const EXCLUDED = 2;
@@ -105,6 +106,15 @@ describe('getModelShowcaseImages: which images the block may serve', () => {
     await image(EXCLUDED, PUBLISHED, null);
     await harness.pg.exec(`UPDATE "Image" SET ${set} WHERE id = ${EXCLUDED}`);
     expect(await servedIds()).toEqual([CLEAN]);
+  });
+
+  it('serves a SFW image to a SFW viewer even past 50 mature ones', async () => {
+    // Ids above the mature ones: with no ORDER BY, rows come back in key order here.
+    const SFW = 500;
+    for (let id = 100; id < 150; id++) await image(id, PUBLISHED, null);
+    await harness.pg.exec(`UPDATE "Image" SET "nsfwLevel" = ${R}`);
+    await image(SFW, PUBLISHED, null);
+    expect(await servedIds()).toEqual([SFW]);
   });
 
   it('still serves an image in a published Unsearchable post', async () => {
