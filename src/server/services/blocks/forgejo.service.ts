@@ -10,7 +10,10 @@
  * All calls auth as the admin token (FORGEJO_ADMIN_TOKEN) — Forgejo's
  * Authorization: token <PAT> scheme. At v0 the writer set is
  * civitai-team-only, so the admin scope is acceptable; v1 (W5 + W11)
- * tightens to per-user OAuth tokens.
+ * tightens to per-user OAuth tokens. A PR preview's FORGEJO_ADMIN_TOKEN is NOT
+ * an admin: it is a bot that can write only the preview's own orgs
+ * (`forgejo-orgs.ts`), so the site-admin calls (per-developer identities under
+ * /admin/users) fail there, and so does deleting a repo (org-owner only).
  *
  * Network shape: civitai-web → <forgejo-service>.<namespace>.svc.cluster.local:3000
  * inside the cluster, or → https://forgejo.civitai.com from a PR-preview
@@ -26,18 +29,22 @@ import {
   versionTagName,
   type ExistingTag,
 } from '~/server/services/blocks/approve-provenance';
-import { FORGEJO_SOURCE_ORG } from '~/shared/constants/app-source-repo.constants';
+import {
+  FORGEJO_ORG,
+  FORGEJO_ORGS,
+  FORGEJO_REVIEW_ORG,
+  FORGEJO_SOURCE_ORG,
+} from '~/server/services/blocks/forgejo-orgs';
 
-export const FORGEJO_ORG = 'civitai-apps';
-const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
 /**
- * The developer-facing SOURCE repos (`civitai-apps-src/<slug>`): the git history of forks and of
- * App Assistant apps, which the developer can pull and push. Nothing here ever builds or files a
- * publish request: no push webhook is attached to these repos, and the push webhook's org gate
- * (`parseExpectedRepo` in `git-push.ts`) answers 403 for any org but {@link FORGEJO_ORG}.
- * Defined with no I/O around it, so a caller whose tests mock this module still names it.
+ * The org names come from `forgejo-orgs.ts` (production's unless the environment names its own).
+ * FORGEJO_ORG holds the canonical per-app repos; the developer-facing SOURCE repos
+ * (FORGEJO_SOURCE_ORG) are the git history of forks and of App Assistant apps, which the developer
+ * can pull and push. Nothing there ever builds or files a publish request: no push webhook is
+ * attached to those repos, and the push webhook's org gate (`parseExpectedRepo` in `git-push.ts`)
+ * answers 403 for any org but {@link FORGEJO_ORG}.
  */
-export { FORGEJO_SOURCE_ORG };
+export { FORGEJO_ORG, FORGEJO_REVIEW_ORG, FORGEJO_SOURCE_ORG };
 
 /** The orgs whose collaborator rows the developer-access helpers may change. */
 export type CollaboratorOrg = typeof FORGEJO_ORG | typeof FORGEJO_SOURCE_ORG;
@@ -108,6 +115,9 @@ async function fjFetch(
   init?: RequestInit,
   timeoutMs: number = apiTimeoutMs()
 ): Promise<Response> {
+  // A refused org config (forgejo-orgs.ts) must not reach Forgejo at all: with it, a call could
+  // land in an org this environment was never meant to write.
+  if (FORGEJO_ORGS.error) throw new Error(FORGEJO_ORGS.error);
   const url = `${getBaseUrl()}${path}`;
   const res = await fetch(url, {
     ...init,
@@ -1060,6 +1070,14 @@ export async function createForgejoUser(opts: {
       visibility: 'private',
     }),
   });
+  if (res.status === 403) {
+    // Creating a user takes a SITE-ADMIN token. A PR preview's bot token is scoped to its own
+    // orgs, so per-developer git identities cannot be provisioned there; say so instead of
+    // surfacing a bare 403.
+    throw new Error(
+      "Forgejo refused to create the developer git identity (403): this environment's Forgejo token is not a site admin"
+    );
+  }
   if (res.status === 409 || res.status === 422) {
     // Already exists — recover the row; password is unknown/unrecoverable.
     const existing = await getForgejoUser(opts.username);
@@ -1129,9 +1147,32 @@ export async function mintForgejoUserToken(opts: {
 }
 
 /**
- * Ensure the `civitai-apps-review` org exists and a per-slug repo under
- * it is ready to receive a commit. Idempotent: both the org POST and the
- * repo POST treat 422 / 409 as "already exists, fine". Returns nothing —
+ * Make sure an org exists, creating it only when Forgejo says it does not (404). Looking first
+ * matters for a token that is a member of the org but may not create orgs (the PR-preview bot):
+ * Forgejo answers its org POST with 403 before it checks the name, so POST-first would fail
+ * every submit. A 422 / 409 on the POST is a concurrent create, which is fine.
+ */
+async function ensureOrg(org: { username: string; full_name: string; description: string }) {
+  const got = await fjFetch(`/api/v1/orgs/${encodeURIComponent(org.username)}`);
+  if (got.ok) return;
+  if (got.status !== 404) {
+    const body = await got.text().catch(() => '');
+    throw new Error(`Forgejo org lookup ${org.username} ${got.status}: ${body.slice(0, 240)}`);
+  }
+  const res = await fjFetch('/api/v1/orgs', {
+    method: 'POST',
+    body: JSON.stringify({ ...org, visibility: 'private' }),
+  });
+  if (!res.ok && res.status !== 422 && res.status !== 409) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Forgejo org create ${org.username} ${res.status}: ${body.slice(0, 240)}`);
+  }
+}
+
+/**
+ * Ensure the in-review org (FORGEJO_REVIEW_ORG) exists and a per-slug repo under
+ * it is ready to receive a commit. Idempotent: the org is created only when
+ * missing, and the repo POST treats 422 / 409 as "already exists, fine". Returns nothing —
  * the caller proceeds straight to `commitFiles({ org: FORGEJO_REVIEW_ORG })`.
  *
  * Used by the W1 publish-request flow to push the dev's bundle into a
@@ -1139,22 +1180,13 @@ export async function mintForgejoUserToken(opts: {
  * deep-link mods into Forgejo's diff view.
  */
 export async function ensureReviewRepo(slug: string): Promise<void> {
-  // (1) Make sure the org exists. Forgejo accepts org creation via the
-  // admin API; 422 means "name taken" (i.e. org already exists).
-  const orgRes = await fjFetch('/api/v1/orgs', {
-    method: 'POST',
-    body: JSON.stringify({
-      username: FORGEJO_REVIEW_ORG,
-      full_name: 'Civitai App Blocks — in-review',
-      description:
-        'Disposable per-app repos for the W1 mod-review flow. Overwritten on each submitVersion; not used by the build pipeline.',
-      visibility: 'private',
-    }),
+  // (1) Make sure the org exists.
+  await ensureOrg({
+    username: FORGEJO_REVIEW_ORG,
+    full_name: 'Civitai App Blocks — in-review',
+    description:
+      'Disposable per-app repos for the W1 mod-review flow. Overwritten on each submitVersion; not used by the build pipeline.',
   });
-  if (!orgRes.ok && orgRes.status !== 422 && orgRes.status !== 409) {
-    const body = await orgRes.text().catch(() => '');
-    throw new Error(`Forgejo org create ${orgRes.status}: ${body.slice(0, 240)}`);
-  }
   // (2) Make sure the repo exists. auto_init=true so commitFiles can
   // immediately push to `main` (Forgejo refuses to push to a missing
   // branch). 409 / 422 = already exists.
@@ -1302,8 +1334,8 @@ export async function getReviewRepoHeadSha(slug: string): Promise<string> {
 }
 
 /**
- * Ensure the `civitai-apps-src` org and its `<slug>` repo exist. Idempotent: the org POST and the
- * repo POST both treat 409 / 422 as "already exists". The repo is created with `auto_init`, so
+ * Ensure the source org (FORGEJO_SOURCE_ORG) and its `<slug>` repo exist. Idempotent: the org is
+ * created only when missing, and the repo POST treats 409 / 422 as "already exists". The repo is created with `auto_init`, so
  * `main` exists for the first contents-API commit (Forgejo refuses a commit to a missing branch).
  *
  * Returns whether THIS call created the repo (a 201), so the caller seeds only a repo it made.
@@ -1315,20 +1347,12 @@ export async function getReviewRepoHeadSha(slug: string): Promise<string> {
  * webhook's org gate rejects this org as a second line, should a hook ever be added by hand.
  */
 export async function ensureSourceRepo(slug: string): Promise<{ created: boolean }> {
-  const orgRes = await fjFetch('/api/v1/orgs', {
-    method: 'POST',
-    body: JSON.stringify({
-      username: FORGEJO_SOURCE_ORG,
-      full_name: 'Civitai Apps — developer source',
-      description:
-        'The git history of forked and App Assistant apps. Pushing here never builds or submits anything.',
-      visibility: 'private',
-    }),
+  await ensureOrg({
+    username: FORGEJO_SOURCE_ORG,
+    full_name: 'Civitai Apps — developer source',
+    description:
+      'The git history of forked and App Assistant apps. Pushing here never builds or submits anything.',
   });
-  if (!orgRes.ok && orgRes.status !== 422 && orgRes.status !== 409) {
-    const body = await orgRes.text().catch(() => '');
-    throw new Error(`Forgejo source org create ${orgRes.status}: ${body.slice(0, 240)}`);
-  }
   const repoRes = await fjFetch(
     `/api/v1/orgs/${FORGEJO_SOURCE_ORG}/repos`,
     {
