@@ -2594,7 +2594,6 @@ export async function getModelCollectionShowcaseHandler({
     if (!canSeeCollectionDetails(permissions)) return null;
 
     const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
-    // A viewer who may see the collection but not its items gets no count of them.
     if (!canReadCollectionItems(permissions)) return { ...collection, itemCount: null };
     const [itemCount] = await getCollectionItemCount({
       collectionIds: [collection.id],

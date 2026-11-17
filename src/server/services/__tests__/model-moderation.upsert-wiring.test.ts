@@ -273,6 +273,7 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
 
   describe('create branch with a showcase collection', () => {
     beforeEach(() => {
+      mockDbWrite.collectionItem.findFirst.mockResolvedValue(null);
       mockDbWrite.model.create.mockResolvedValue({
         id: 555,
         nsfwLevel: 1,
@@ -324,6 +325,27 @@ describe('upsertModel — wires into submitModelTextModeration', () => {
       const writes = mockDbWrite.model.update.mock.calls;
       expect(writes).toHaveLength(1);
       expect(writes[0][0].data.meta).toMatchObject({ showcaseCollectionId: 12 });
+    });
+
+    it.each([
+      ['a collection the model is already in, without write access', { id: 1 }],
+      ['a private collection the caller is not a member of', null],
+    ])('keeps no showcase on %s', async (_, listed) => {
+      vi.mocked(getUserCollectionPermissionsById).mockResolvedValue({
+        write: false,
+        manage: false,
+        writeReview: false,
+      } as never);
+      mockDbWrite.collectionItem.findFirst.mockResolvedValue(listed as never);
+
+      const result = await create();
+
+      expect(result).toMatchObject({ id: 555 });
+      expect(saveItemInCollections).not.toHaveBeenCalled();
+      const writes = mockDbWrite.model.update.mock.calls;
+      expect(writes).toHaveLength(1);
+      expect(writes[0][0].data.meta).toMatchObject({ showcaseCollectionId: null });
+      expect(result?.meta).toMatchObject({ showcaseCollectionId: null });
     });
 
     it('keeps a showcase the add accepted (control)', async () => {

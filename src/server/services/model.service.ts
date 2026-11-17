@@ -7151,9 +7151,9 @@ export async function copyGallerySettingsToAllModelsByUser({
 }
 
 /**
- * A showcase collection must list its model, and the caller must be able to write to it. A model
- * already in it is not re-saved: that would demand a tag the caller may not have, and would clear
- * an existing item's tag.
+ * A showcase collection must list its model. A model already in it needs the caller's write access
+ * and is not re-saved: that would demand a tag the caller may not have, and would clear an existing
+ * item's tag. Otherwise it is added, which a caller who may only submit for review can do too.
  */
 async function addModelToShowcaseCollection({
   modelId,

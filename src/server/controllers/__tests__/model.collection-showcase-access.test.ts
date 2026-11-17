@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CollectionService from '~/server/services/collection.service';
+import type * as ModelService from '~/server/services/model.service';
 
 /**
  * A model's showcase collection is shown to whoever `collection.getById` would show the collection
@@ -27,6 +28,21 @@ vi.mock('~/server/services/collection.service', async (importOriginal) => ({
 }));
 // Reached at import through the orchestrator caller, which throws without a token.
 vi.mock('~/server/services/training.service', () => ({}));
+// The handler starts the clear without awaiting it; the tests await the one it started.
+const clears = vi.hoisted(() => [] as Promise<unknown>[]);
+vi.mock('~/server/services/model.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof ModelService>();
+  return {
+    ...actual,
+    clearModelShowcaseAfterRemoval: (
+      args: Parameters<typeof actual.clearModelShowcaseAfterRemoval>[0]
+    ) => {
+      const clear = actual.clearModelShowcaseAfterRemoval(args);
+      clears.push(clear);
+      return clear;
+    },
+  };
+});
 
 const { getModelCollectionShowcaseHandler } = await import('~/server/controllers/model.controller');
 const { saveItemHandler } = await import('~/server/controllers/collection.controller');
@@ -72,6 +88,7 @@ describe('removing a model from a collection', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clears.length = 0;
     storedMeta = { showcaseCollectionId: SHOWCASE };
     saveItemInCollections.mockResolvedValue('removed');
     const model = () => ({ id: MODEL, userId: MODEL_OWNER, meta: storedMeta });
@@ -105,17 +122,21 @@ describe('removing a model from a collection', () => {
       },
     } as never);
 
-  // The clear runs in the background after the response.
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+  const settle = async () => {
+    expect(clears).toHaveLength(1);
+    await clears[0];
+  };
 
   it("clears the showcase when the collection's owner removes the model from it", async () => {
     await remove(COLLECTION_OWNER, SHOWCASE);
-    await vi.waitFor(() => expect(storedMeta.showcaseCollectionId).toBeNull());
+    await settle();
+    expect(storedMeta.showcaseCollectionId).toBeNull();
   });
 
   it('clears the showcase when the model owner removes the model from it (control)', async () => {
     await remove(MODEL_OWNER, SHOWCASE);
-    await vi.waitFor(() => expect(storedMeta.showcaseCollectionId).toBeNull());
+    await settle();
+    expect(storedMeta.showcaseCollectionId).toBeNull();
   });
 
   it('keeps the showcase when the model leaves a different collection', async () => {
