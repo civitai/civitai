@@ -456,11 +456,20 @@ async function recordBatchEvent(tx: CasesDb, batchId: string, type: string, acto
  */
 export async function exportUnsent(
   batchId: string,
-  { actorId, db = casesDb() }: { actorId: number; db?: CasesDb }
+  {
+    actorId,
+    holdsLock = async () => true,
+    db = casesDb(),
+  }: {
+    actorId: number;
+    /** Renews the batch's run lock; false once the export no longer holds it. Checked before commit. */
+    holdsLock?: () => Promise<boolean>;
+    db?: CasesDb;
+  }
 ) {
   return db.transaction().execute(async (tx) => {
     await recordBatchEvent(tx as unknown as CasesDb, batchId, 'exported', actorId);
-    return noticesOfBatch(tx as unknown as CasesDb, batchId)
+    const rows = await noticesOfBatch(tx as unknown as CasesDb, batchId)
       .select([
         'n.id as rowId',
         'n.notice_id as noticeId',
@@ -470,6 +479,13 @@ export async function exportUnsent(
       .where(sendable('n'))
       .orderBy('n.id')
       .execute();
+    // A lock that lapsed may let a send start, and it can't see this uncommitted export: roll back
+    // rather than hand out rows that send may also claim.
+    if (!(await holdsLock().catch(() => false)))
+      throw new ImportRefusedError(
+        `the export of batch ${batchId} lost its run lock; export again`
+      );
+    return rows;
   });
 }
 
