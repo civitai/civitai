@@ -29,10 +29,9 @@ const HQ_HOST = 'hq.civitai.com';
 /** The one HQ origin: the task links stored on feedback rows, and the data API the sync reads. */
 export const HQ_ORIGIN = `https://${HQ_HOST}`;
 /**
- * The one shape of an HQ task id, as HQ issues them: lower-case letters, digits, `_` and `-`
- * (`abc_def_9xyz`). Shared by the intake reply check, `hqTaskFromUrl` and the feedback sync
- * reader. Other readers (the stored-link matcher, the store gate, the HQ webhook) keep their
- * own, looser or stricter, patterns.
+ * The shape of an HQ task id as HQ issues them: lower-case letters, digits, `_` and `-`
+ * (`abc_def_9xyz`). Not every reader of a task link uses it; some keep their own, looser or
+ * stricter, pattern, so grep for this constant rather than trusting a list here.
  */
 export const HQ_TASK_ID_PATTERN = /^[a-z0-9_-]{1,100}$/;
 

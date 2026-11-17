@@ -30,12 +30,19 @@ const mocks = vi.hoisted(() => ({
     username: string;
     isModerator: boolean;
   },
-  request: null as null | Request,
+  /** `undefined` = `getMine` has not answered yet; `null` = never asked. */
+  request: null as undefined | null | Request,
   submitted: [] as unknown[],
   submitPending: false,
   submitError: null as null | { message: string },
   requireLogin: vi.fn(),
+  openLoginHere: vi.fn(),
   onRequest: vi.fn(),
+  sessionStatus: 'authenticated' as 'authenticated' | 'unauthenticated' | 'loading',
+}));
+
+vi.mock('~/providers/SessionProvider', () => ({
+  useSession: () => ({ data: undefined, status: mocks.sessionStatus, update: async () => null }),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
@@ -43,6 +50,7 @@ vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/components/Login/requireLogin', async (importOriginal) => ({
   ...(await importOriginal<typeof RequireLoginMod>()),
   requireLogin: mocks.requireLogin,
+  openLoginHere: mocks.openLoginHere,
 }));
 vi.mock('~/components/Tours/ToursProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof ToursProviderMod>()),
@@ -68,6 +76,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppAccessRequestPanel } = await import('./AppAccessRequestPanel');
+// The pages-router is stubbed by `test/component-setup` as ONE shared object, and that module-level
+// mock wins over a per-file `vi.mock('next/router')` — so the deep-link cases drive that object.
+const { useRouter } = await import('next/router');
+const router = useRouter() as unknown as {
+  query: Record<string, string>;
+  asPath: string;
+  pathname: string;
+  replace: ReturnType<typeof vi.fn>;
+};
 const { DialogProvider } = await import('~/components/Dialog/DialogProvider');
 const { dialogStore, useDialogStore } = await import('~/components/Dialog/dialogStore');
 
@@ -102,7 +119,13 @@ beforeEach(() => {
   mocks.submitPending = false;
   mocks.submitError = null;
   mocks.requireLogin.mockReset();
+  mocks.openLoginHere.mockReset();
   mocks.onRequest.mockReset();
+  router.query = {};
+  router.asPath = '/apps/build';
+  router.pathname = '/apps/build';
+  router.replace.mockClear();
+  mocks.sessionStatus = 'authenticated';
 });
 
 describe('AppAccessRequestPanel — a first request', () => {
@@ -201,5 +224,133 @@ describe('AppAccessRequestPanel — signed out', () => {
     // The store, not the DOM, is the settled answer: a form opened in the click would already be
     // in it, while its DOM mounts later, behind a lazy import.
     expect(openDialogIds()).toEqual([]);
+  });
+});
+
+describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link', () => {
+  const withParam = (extra: Record<string, string> = {}) => {
+    router.query = { 'request-access': '1', ...extra };
+    const qs = new URLSearchParams(router.query).toString();
+    router.asPath = `/apps/build?${qs}`;
+  };
+  /** The param was dropped with a shallow replace that kept every other param. */
+  const expectParamDropped = (rest: Record<string, string> = {}) => {
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledWith(
+      { pathname: '/apps/build', query: rest },
+      undefined,
+      { shallow: true }
+    );
+  };
+
+  test('🔴 an eligible viewer gets the form, and the param is dropped', async () => {
+    withParam();
+    render();
+    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
+    await expect.element(whatToBuild()).toBeInTheDocument();
+    expectParamDropped();
+    // Not a pitch click, so the click's tracking does not fire.
+    expect(mocks.onRequest).not.toHaveBeenCalled();
+  });
+
+  test('other params survive the drop', async () => {
+    withParam({ ref: 'cli' });
+    render();
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expectParamDropped({ ref: 'cli' });
+  });
+
+  test('🔴 a PENDING viewer sees their status, no form, and the param is still dropped', async () => {
+    mocks.request = PENDING;
+    withParam();
+    render();
+    // Positive control first: the effect ran (it drops the param in the same pass that would open).
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expectParamDropped();
+    await expect
+      .element(page.getByTestId('app-access-request-status'))
+      .toHaveAttribute('data-status', 'pending');
+    expect(openDialogIds()).toEqual([]);
+  });
+
+  test('an APPROVED viewer gets no form either', async () => {
+    mocks.request = {
+      ...PENDING,
+      status: 'approved',
+      reviewedAt: new Date('2026-10-22T10:00:00Z'),
+    };
+    withParam();
+    render();
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expect(openDialogIds()).toEqual([]);
+  });
+
+  test('a DECLINED viewer may ask again, so the form opens', async () => {
+    mocks.request = {
+      ...PENDING,
+      status: 'declined',
+      reviewedAt: new Date('2026-10-22T10:00:00Z'),
+    };
+    withParam();
+    render();
+    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
+    expectParamDropped();
+  });
+
+  test('🔴 nothing happens until getMine answers — no form over a status that may be pending', async () => {
+    mocks.request = undefined;
+    withParam();
+    const ui = () => (
+      <>
+        <AppAccessRequestPanel onRequest={mocks.onRequest} />
+        <DialogProvider />
+      </>
+    );
+    const view = await renderWithProviders(ui());
+    await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
+    expect(router.replace).not.toHaveBeenCalled();
+    expect(openDialogIds()).toEqual([]);
+
+    // Positive control: once getMine answers "never asked", the same mount opens the form — so
+    // what held it back was the missing answer, not a slow or dead effect.
+    mocks.request = null;
+    await view.rerender(ui());
+    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
+  test('🔴 signed out: sign-in, returning to the URL WITH the param; no form', async () => {
+    mocks.user = null;
+    mocks.sessionStatus = 'unauthenticated';
+    withParam();
+    render();
+    await vi.waitFor(() => expect(mocks.openLoginHere).toHaveBeenCalledTimes(1));
+    expect(mocks.openLoginHere).toHaveBeenCalledWith(
+      'perform-action',
+      '/apps/build?request-access=1'
+    );
+    // Dropped BEFORE sign-in opens, so Back from sign-in does not bounce into it again.
+    expectParamDropped();
+    expect(router.replace.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.openLoginHere.mock.invocationCallOrder[0]
+    );
+    expect(openDialogIds()).toEqual([]);
+  });
+
+  test('🔴 a still-LOADING session is not a signed-out one: no sign-in, param kept', async () => {
+    mocks.user = null;
+    mocks.sessionStatus = 'loading';
+    withParam();
+    render();
+    await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
+    expect(mocks.openLoginHere).not.toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  test('without the param, nothing opens and the URL is left alone', async () => {
+    render();
+    await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
+    expect(openDialogIds()).toEqual([]);
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });

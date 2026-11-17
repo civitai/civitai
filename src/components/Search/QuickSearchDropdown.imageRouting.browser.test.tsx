@@ -4,9 +4,10 @@ import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
-// The showcase editor's Images picker, as ShowcaseSectionModal renders it. The InstantSearch
-// provider is a recorder: each test sends an images search through the client the picker handed
-// it, with Meili and the semantic search both faked.
+// Which client a QuickSearchDropdown hands InstantSearch for images. The InstantSearch provider is
+// a recorder: each test sends an images search through that client, with Meili and the semantic
+// search both faked. The showcase picker's owner scope is tested in
+// ShowcaseItemsInput.imageOwner.browser.test.tsx.
 
 const state = vi.hoisted(() => ({
   imageSearch: false,
@@ -52,7 +53,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpcVanilla: { semanticImageSearch: { search: { query: state.semanticQuery } } },
 }));
 
-const { ShowcaseItemsInput } = await import('~/components/Profile/ShowcaseItemsInput');
 const { QuickSearchDropdown } = await import('~/components/Search/QuickSearchDropdown');
 
 beforeEach(() => {
@@ -76,33 +76,10 @@ async function searchImages() {
 const hitIds = (response: Awaited<ReturnType<typeof searchImages>>) =>
   response.results[0].hits.map((hit) => hit.id);
 
-const renderShowcasePicker = () =>
-  renderWithProviders(
-    <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
-  );
 const renderPlainImagesDropdown = () =>
   renderWithProviders(
     <QuickSearchDropdown supportedIndexes={['images']} onItemSelected={() => undefined} />
   );
-
-describe('Images search in the showcase picker', () => {
-  test('without image search, the owner’s images come back from Meili', async () => {
-    renderShowcasePicker();
-
-    expect(hitIds(await searchImages())).toEqual([41]);
-    expect(state.semanticQuery).not.toHaveBeenCalled();
-  });
-
-  // The semantic search cannot scope to one owner, so the picker stays on Meili.
-  test('with image search on, it still answers from Meili', async () => {
-    state.imageSearch = true;
-    state.semanticQuery.mockResolvedValue({ items: [{ id: 99 }], latencyMs: 1 });
-    renderShowcasePicker();
-
-    expect(hitIds(await searchImages())).toEqual([41]);
-    expect(state.semanticQuery).not.toHaveBeenCalled();
-  });
-});
 
 describe('Images search in a QuickSearchDropdown with no owner scope', () => {
   test('without image search, it answers from Meili', async () => {
