@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+import {
+  containsBlockMediaReference,
+  isBlockMediaReference,
+} from '~/server/services/blocks/block-media-input-guard';
+
+const TOKEN = `bm1.${'I'.repeat(16)}.${'C'.repeat(40)}.${'T'.repeat(22)}`;
+const PATH = `/api/v1/blocks/media/${TOKEN}`;
+
+describe('isBlockMediaReference: no spelling gets a ticket past the guard', () => {
+  it.each([
+    ['the relative url as minted', PATH],
+    ['an absolute url', `https://civitai.com${PATH}`],
+    ['www', `https://www.civitai.com${PATH}`],
+    ['another Civitai host', `https://civitai.red${PATH}`],
+    ['a subdomain', `https://image.civitai.green${PATH}`],
+    ['upper case', `https://CIVITAI.COM${PATH.toUpperCase()}`],
+    ['a trailing slash', `https://civitai.com${PATH}/`],
+    ['a query string', `https://civitai.com${PATH}?w=512`],
+    ['a fragment', `https://civitai.com${PATH}#x`],
+    ['encoded slashes', `https://civitai.com/api%2Fv1%2Fblocks%2Fmedia%2F${TOKEN}`],
+    ['double-encoded slashes', `https://civitai.com/api%252Fv1%252Fblocks%252Fmedia%252F${TOKEN}`],
+    ['backslashes', `https://civitai.com\\api\\v1\\blocks\\media\\${TOKEN}`],
+    ['doubled slashes', `https://civitai.com//api//v1/blocks//media/${TOKEN}`],
+    ['the path with no token', 'https://civitai.com/api/v1/blocks/media'],
+    ['a bare ref or ticket token', TOKEN],
+    ['a token inside text', `use ${TOKEN} here`],
+    ['a malformed escape beside the path', `https://civitai.com/%zz/api%2Fv1/blocks/media/x`],
+  ])('%s', (_, value) => {
+    expect(isBlockMediaReference(value)).toBe(true);
+  });
+
+  it.each([
+    ['a Civitai image page', 'https://civitai.com/images/1'],
+    ['a CDN image', 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=512/a.jpeg'],
+    ['a version string with the prefix', 'bm1.2.3.4'],
+    ['a sibling api path', 'https://civitai.com/api/v1/blocks/mediator'],
+    ['prose', 'a cat in a hat'],
+  ])('CONTROL: %s is not host media', (_, value) => {
+    expect(isBlockMediaReference(value)).toBe(false);
+  });
+});
+
+describe('containsBlockMediaReference', () => {
+  it('finds a ticket anywhere in a body, at any depth', () => {
+    expect(
+      containsBlockMediaReference({ steps: [{ input: { images: ['a', { url: PATH }] } }] })
+    ).toBe(true);
+  });
+
+  it('CONTROL: a body with no host media passes', () => {
+    expect(containsBlockMediaReference({ steps: [{ input: { prompt: 'a cat', n: 2 } }] })).toBe(
+      false
+    );
+  });
+
+  it('a body nested past the walk bound is refused, never waved through', () => {
+    let deep: unknown = 'x';
+    for (let i = 0; i < 300; i++) deep = [deep];
+    expect(containsBlockMediaReference(deep)).toBe(true);
+  });
+});
