@@ -57,31 +57,27 @@ export const fliptClientModule = () => ({
   FLIPT_FEATURE_FLAGS: {},
 });
 
-export const pgDbModule = () => ({
-  pgDbRead: {
-    cancellableQuery: async () => ({
-      result: async () => [
-        {
-          id: MODEL,
-          userId: OWNER,
-          name: 'model',
-          type: 'LORA',
-          nsfw: modelRow.nsfw,
-          minor: modelRow.minor,
-          sfwOnly: modelRow.sfwOnly,
-          nsfwLevel: 31,
-          status: 'Published',
-          mode: null,
-          rank: {},
-          meta: null,
-          cursorId: null,
-        },
-      ],
-    }),
+/**
+ * The rows the feed query returns. pgDb itself stays an inline literal in each suite (its export
+ * set is checked by pgDbMock.parity.test.ts); only `cancellableQuery`'s answer comes from here.
+ */
+export const feedModelRows = () => [
+  {
+    id: MODEL,
+    userId: OWNER,
+    name: 'model',
+    type: 'LORA',
+    nsfw: modelRow.nsfw,
+    minor: modelRow.minor,
+    sfwOnly: modelRow.sfwOnly,
+    nsfwLevel: 31,
+    status: 'Published',
+    mode: null,
+    rank: {},
+    meta: null,
+    cursorId: null,
   },
-  pgDbWrite: {},
-  pgDbReadLong: {},
-});
+];
 
 export const cachesModule = async (importOriginal: ImportOriginal) => ({
   ...(await importOriginal()),

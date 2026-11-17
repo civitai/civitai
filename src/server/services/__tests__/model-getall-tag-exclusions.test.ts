@@ -42,7 +42,15 @@ vi.mock('~/server/services/model.service', async (importOriginal) => ({
 vi.mock('~/server/flipt/client', async () =>
   (await import('./getall-feed-harness')).fliptClientModule()
 );
-vi.mock('~/server/db/pgDb', async () => (await import('./getall-feed-harness')).pgDbModule());
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: {
+    cancellableQuery: async () => ({
+      result: async () => (await import('./getall-feed-harness')).feedModelRows(),
+    }),
+  },
+  pgDbWrite: {},
+  pgDbReadLong: {},
+}));
 vi.mock('~/server/redis/caches', async (importOriginal) =>
   (await import('./getall-feed-harness')).cachesModule(importOriginal)
 );
