@@ -154,7 +154,7 @@ export async function revokeModelVersionAccess({
   });
 }
 
-/** What pays for or gifted a grant: a moderator revoke keeps each under `revoked-<key>`. */
+/** What pays for or gifted a grant: a moderator revoke moves each into its `revocations` entry. */
 const ARCHIVED_ON_REVOKE_KEYS = [
   ...EARLY_ACCESS_PURCHASES.flatMap(({ transactionKey, purchasedAtKey }) => [
     transactionKey,
@@ -164,11 +164,15 @@ const ARCHIVED_ON_REVOKE_KEYS = [
   GIFT_PERMISSIONS_KEY,
 ];
 
+/** Meta key holding a grant's moderator revokes, oldest first. */
+export const REVOCATIONS_KEY = 'revocations';
+
 /**
  * A moderator's revoke, for a purchase refunded outside the unpublish refund. The row stays with no
- * permissions, as the record of what was paid; its purchase and gift keys move under `revoked-`, so
- * the unpublish refund, which reads only the live keys, can't refund it again, and a later purchase
- * starts a fresh refund window. Returns the grant as it was, or null when there was none to revoke.
+ * permissions, as the record of what was paid: its purchase and gift keys move into a new entry of
+ * `revocations`, with who revoked it and when. The unpublish refund reads only the live keys, so it
+ * can't refund it again, and a later purchase starts a fresh refund window. Returns the grant as it
+ * was, or null when there was none to revoke.
  */
 export async function archiveModelVersionAccess({
   client = dbWrite,
@@ -181,6 +185,7 @@ export async function archiveModelVersionAccess({
   modelVersionId: number;
   revokedById: number;
 }) {
+  const meta = asJsonbObjectSql('ea."meta"');
   const [before] = await client.$queryRaw<{ permissions: number; meta: unknown }[]>`
     WITH before AS (
       SELECT permissions, meta FROM "EntityAccess"
@@ -191,20 +196,20 @@ export async function archiveModelVersionAccess({
     )
     UPDATE "EntityAccess" ea
        SET permissions = 0,
-           meta = (
-             SELECT COALESCE(
-                      jsonb_object_agg(
-                        CASE WHEN e.key = ANY(${ARCHIVED_ON_REVOKE_KEYS}::text[])
-                             THEN 'revoked-' || e.key ELSE e.key END,
-                        e.value
-                      ),
-                      '{}'::jsonb
-                    )
-               FROM jsonb_each(${asJsonbObjectSql('ea."meta"')}) e
-           ) || jsonb_build_object(
-             'revokedAt', now(),
-             'revokedById', ${revokedById}::int,
-             'refundedExternally', true
+           meta = (${meta} - ${ARCHIVED_ON_REVOKE_KEYS}::text[]) || jsonb_build_object(
+             ${REVOCATIONS_KEY}::text,
+             (CASE WHEN jsonb_typeof(${meta} -> ${REVOCATIONS_KEY}::text) = 'array'
+                   THEN ${meta} -> ${REVOCATIONS_KEY}::text ELSE '[]'::jsonb END)
+             || jsonb_build_array(
+                  (SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+                     FROM jsonb_each(${meta}) e
+                    WHERE e.key = ANY(${ARCHIVED_ON_REVOKE_KEYS}::text[]))
+                  || jsonb_build_object(
+                       'revokedAt', now(),
+                       'revokedById', ${revokedById}::int,
+                       'refundedExternally', true
+                     )
+                )
            )
       FROM before
      WHERE ea."accessToId" = ${modelVersionId} AND ea."accessToType" = 'ModelVersion'

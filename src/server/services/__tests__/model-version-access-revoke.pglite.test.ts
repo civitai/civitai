@@ -163,13 +163,17 @@ describe('moderatorRevokeEarlyAccess', () => {
 
     const revoked = await grantOf(VERSION_ID, BUYER_A);
     expect(revoked.permissions).toBe(0);
-    expect(revoked.meta).toMatchObject({
-      'revoked-download-buzzTransactionId': `tx-${VERSION_ID}-${BUYER_A}`,
-      'revoked-download-purchasedAt': PURCHASED_AT,
-      revokedById: MODERATOR,
-      refundedExternally: true,
+    expect(revoked.meta).toEqual({
+      revocations: [
+        {
+          'download-buzzTransactionId': `tx-${VERSION_ID}-${BUYER_A}`,
+          'download-purchasedAt': PURCHASED_AT,
+          revokedAt: expect.any(String),
+          revokedById: MODERATOR,
+          refundedExternally: true,
+        },
+      ],
     });
-    expect(revoked.meta).not.toHaveProperty('download-buzzTransactionId');
     expect((await grantOf(VERSION_ID, BUYER_B)).permissions).toBe(3);
     expect((await grantOf(OTHER_VERSION_ID, BUYER_A)).permissions).toBe(3);
     expect((await grantOf(VERSION_ID, BUYER_A, 'Model')).permissions).toBe(3);
@@ -215,7 +219,8 @@ describe('moderatorRevokeEarlyAccess', () => {
       modelVersionId: VERSION_ID,
       permissions: 1,
       meta: {
-        'generation-buzzTransactionId': 'tx-new',
+        // A different purchase type: a same-type purchase reuses the revoked one's ledger prefix.
+        'generation-buzzTransactionId': `tx-gen-${VERSION_ID}-${BUYER_A}`,
         'generation-purchasedAt': new Date().toISOString(),
       },
       addedById: BUYER_A,
@@ -223,7 +228,31 @@ describe('moderatorRevokeEarlyAccess', () => {
 
     const requirement = await getModelVersionEarlyAccessRefundRequirement({ id: VERSION_ID });
     expect(requirement.purchases).toEqual([
-      expect.objectContaining({ buyerId: BUYER_A, buzzTransactionIds: ['tx-new'] }),
+      expect.objectContaining({
+        buyerId: BUYER_A,
+        buzzTransactionIds: [`tx-gen-${VERSION_ID}-${BUYER_A}`],
+      }),
+    ]);
+  });
+
+  it('keeps every revoke on record when a re-purchased grant is revoked again', async () => {
+    await buy(VERSION_ID, BUYER_A);
+    await revoke();
+    await grantModelVersionAccess({
+      userId: BUYER_A,
+      modelVersionId: VERSION_ID,
+      permissions: 3,
+      meta: { 'download-buzzTransactionId': 'tx-second', 'download-purchasedAt': 'second' },
+      addedById: BUYER_A,
+    });
+
+    await expect(revoke()).resolves.toEqual({ revoked: true, permissions: 3 });
+
+    const { meta } = await grantOf(VERSION_ID, BUYER_A);
+    expect(Object.keys(meta)).toEqual(['revocations']);
+    expect(meta.revocations).toEqual([
+      expect.objectContaining({ 'download-buzzTransactionId': `tx-${VERSION_ID}-${BUYER_A}` }),
+      expect.objectContaining({ 'download-buzzTransactionId': 'tx-second' }),
     ]);
   });
 
@@ -278,10 +307,9 @@ describe('moderatorRevokeEarlyAccess', () => {
 
     const row = await grantOf(VERSION_ID, BUYER_A);
     expect(row?.permissions).toBe(0);
-    expect(row?.meta).toHaveProperty(
-      'revoked-download-buzzTransactionId',
-      `tx-${VERSION_ID}-${BUYER_A}`
-    );
+    expect(row?.meta).toMatchObject({
+      revocations: [{ 'download-buzzTransactionId': `tx-${VERSION_ID}-${BUYER_A}` }],
+    });
   });
 
   it('is a no-op on a grant never there, or already revoked', async () => {
