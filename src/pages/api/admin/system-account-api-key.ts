@@ -131,7 +131,6 @@ export default HeaderTokenSecuredEndpoint(
         userId,
         keyId,
         name,
-        // Numbers in JSON (no bigint there; every scope bit is below 2^53).
         tokenScope: Number(tokenScope),
         asserted_actor: actorUserId,
         auditRecorded,

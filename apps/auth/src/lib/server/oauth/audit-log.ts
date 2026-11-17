@@ -40,7 +40,6 @@ export function logOAuthEvent(event: OAuthAuditEvent): void {
   const entry = {
     timestamp: new Date().toISOString(),
     ...event,
-    // A number: the log line is JSON, which has no bigint (every scope bit is below 2^53).
     scope: event.scope === undefined ? undefined : Number(event.scope),
   };
 

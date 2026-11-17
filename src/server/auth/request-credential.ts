@@ -26,7 +26,6 @@ export function getRequestCredential(req: unknown): RequestCredential {
 /** The credential's kind for a log line: no user, key id or address, and an OAuth client id hashed. */
 export function credentialLogFields({ tokenScope, apiKeyType, subject }: RequestCredential) {
   return {
-    // A number: log fields are serialised as JSON, which has no bigint (every bit is below 2^53).
     tokenScope: Number(tokenScope),
     apiKeyType: apiKeyType ?? null,
     client: subject?.type === 'oauth' ? 'oauth' : 'personal-key',

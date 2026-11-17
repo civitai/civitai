@@ -956,7 +956,6 @@ export function OrchestratorEndpoint(
         name: 'orchestrator-endpoint-scope-refused',
         type: 'info',
         route: req.url?.split('?')[0],
-        // A number: the log line is JSON, which has no bigint (every scope bit is below 2^53).
         requiredScope: Number(requiredScope),
         ...credentialLogFields(credential),
       });

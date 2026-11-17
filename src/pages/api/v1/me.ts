@@ -64,7 +64,6 @@ export default AuthedEndpoint(
       // `subject` carries the (type, id) pair the orchestrator buckets spend by.
       // For OAuth-issued tokens the id is the clientId (stable across refresh
       // rotations); for User-type keys it's the ApiKey row id.
-      // The scope as a JSON number, as before (every bit is below 2^53).
       ...(subject !== null
         ? { tokenScope: tokenScope == null ? tokenScope : Number(tokenScope), buzzLimit, subject }
         : {}),

@@ -116,7 +116,6 @@ export async function scopeRefusalMode(
     type: 'info',
     mode,
     route,
-    // Numbers: the log line is JSON, which has no bigint (every bit is below 2^53).
     requiredScope: Number(
       'requiredScope' in requirement
         ? requirement.requiredScope

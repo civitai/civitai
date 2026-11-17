@@ -33,7 +33,6 @@ async function insertToken(opts: {
     .values({
       key: generateSecretHash(token),
       name: `${prefix}${opts.clientId}`,
-      // Both columns: pods still on the previous build read `tokenScope` alone.
       ...apiKeyScopeInsert(opts.scope),
       userId: opts.userId,
       type: opts.type,

@@ -211,7 +211,6 @@ export async function writeExchangeRecord(
   nowSeconds: number
 ): Promise<void> {
   const ttl = Math.max(1, record.exp - nowSeconds + 60);
-  // `scopeBits` is stored as a JSON number, as before (JSON has no bigint; every bit is below 2^53).
   const stored = { ...record, scopeBits: Number(record.scopeBits) };
   await withSysRedis((redis) => redis.set(recordKey(jti), JSON.stringify(stored), { EX: ttl }));
 }

@@ -473,7 +473,6 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
       redirectUris: uris,
       allowedOrigins,
       isConfidential,
-      // A JSON number on the wire (every scope bit is below 2^53).
       allowedScopes: Number(tokenScope),
     });
   };

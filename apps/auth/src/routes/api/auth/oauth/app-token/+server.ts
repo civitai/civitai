@@ -98,7 +98,6 @@ export const POST: RequestHandler = async ({ request }) => {
     token_type: 'Bearer',
     expires_in: ttlSeconds,
     expires_at: expiresAt.toISOString(),
-    // A JSON number, as before (every scope bit is below 2^53).
     scope: Number(scope),
   });
 };

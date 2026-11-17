@@ -34,7 +34,6 @@ export async function getGrantedScope(
 
   const refreshScope = refresh?.scope == null ? null : scopeFromColumn(refresh.scope);
   if (!consent && refreshScope == null) return null;
-  // `scope` is NOT NULL; a row without one (a partial fixture) reads as no scope, as it did before.
   const consentScope = consent?.scope == null ? 0n : scopeFromColumn(consent.scope);
   return consentScope | (refreshScope ?? 0n);
 }

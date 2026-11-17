@@ -106,15 +106,12 @@ export const TokenScope = {
   // the `client_credentials` grant (see `CLIENT_CREDENTIALS_ONLY_SCOPES`).
   DownloadLink: 1n << 30n, // 1073741824
 
-  // Apps — see the Apps available to you in the App Blocks registry (the catalogue the registry
-  // serves to a signed-in user). A user scope, granted with consent through the normal OAuth flows,
-  // and one an exchange resource may receive. Opt-in and EXCLUDED from `Full`, so it never widens
-  // an existing key. The first bit past the old int4 range: it is why scopes are bigint.
+  // See the Apps available to you. Opt-in and EXCLUDED from `Full` (never widens an existing key);
+  // a user scope, so an exchange resource may list it.
   AppsRead: 1n << 31n, // 2147483648
 
-  // Apps — see your own data in Apps (what the Apps you use store for you). A user scope, granted
-  // with consent through the normal OAuth flows, and one an exchange resource may receive. Opt-in
-  // and EXCLUDED from `Full`.
+  // See your own data in Apps. Opt-in and EXCLUDED from `Full`; a user scope, so an exchange
+  // resource may list it.
   AppDataRead: 1n << 32n, // 4294967296
 
   // All scopes
@@ -166,8 +163,6 @@ export function parseTokenScope(raw: unknown): bigint | null {
   return value;
 }
 
-// ─── ApiKey storage ──────────────────────────────────────────
-//
 // `ApiKey.tokenScope` is a 32-bit `integer`; `ApiKey.tokenScopeWide` is a nullable `bigint` added
 // beside it. A writer fills both — the wide column with the whole scope, the old one with the bits
 // it can hold — so a reader that knows only `tokenScope` (code from before the wide column) keeps

@@ -27,11 +27,8 @@ export function carriesNonUserScope(requested: bigint): boolean {
   return (requested & NON_USER_SCOPES) !== 0n;
 }
 
-// ─── Storage ─────────────────────────────────────────────────
-//
-// The scope columns are `bigint`. The pg driver parses an `int8` to a JS number (lossless: every
-// scope bit is below 2^53) while the generated Kysely types call it a string, so a read goes through
-// `scopeFromColumn` and a write through `scopeToColumn`. `ApiKey` keeps its 32-bit `tokenScope`
+// The scope columns are `bigint`: pg parses an `int8` to a number while the generated Kysely types
+// call it a string, so a read goes through `scopeFromColumn` and a write through `scopeToColumn`. `ApiKey` keeps its 32-bit `tokenScope`
 // beside the wide column: see `apiKeyScopeColumns` in @civitai/auth/token-scope.
 
 /**

@@ -29,7 +29,6 @@ export async function mintAppToken(input: MintAppTokenInput): Promise<MintedAppT
   const res = await hubFetch('/api/auth/oauth/app-token', {
     method: 'POST',
     headers: { authorization: `Bearer ${internal}`, 'content-type': 'application/json' },
-    // The scope as a JSON number (JSON has no bigint; every scope bit is below 2^53).
     body: JSON.stringify({ ...input, scope: Number(input.scope) }),
   });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;

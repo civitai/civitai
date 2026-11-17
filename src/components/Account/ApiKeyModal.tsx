@@ -72,7 +72,6 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
     shouldUnregister: false,
     defaultValues: {
       name: initialName ?? '',
-      // The form holds the wire value: a number (JSON has no bigint).
       tokenScope: Number(startScope),
     },
   });

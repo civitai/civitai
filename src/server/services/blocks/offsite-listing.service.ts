@@ -2665,8 +2665,6 @@ export async function getMyListingForEdit(opts: {
   // requested-scope set the edit form displays read-only + re-submits (the server
   // re-snapshots `requestedScopes` from it on save). null when the listing has no
   // client or the client no longer exists.
-  // A number: this view is a tRPC response, whose scope fields stay JSON numbers (every bit is
-  // below 2^53).
   let connectAllowedScopes: number | null = null;
   if (listing.connectClientId != null) {
     const client = await dbRead.oauthClient.findUnique({

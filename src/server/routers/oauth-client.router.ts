@@ -100,7 +100,6 @@ export const oauthClientRouter = router({
         },
       });
       if (!client) throw new TRPCError({ code: 'NOT_FOUND', message: 'OAuth client not found' });
-      // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
       return { ...client, allowedScopes: Number(client.allowedScopes) };
     }),
 
@@ -125,7 +124,6 @@ export const oauthClientRouter = router({
       },
       orderBy: { createdAt: 'desc' },
     });
-    // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
     return clients.map((client) => ({ ...client, allowedScopes: Number(client.allowedScopes) }));
   }),
 
@@ -195,7 +193,6 @@ export const oauthClientRouter = router({
         nextCursor = nextItem?.id;
       }
 
-      // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
       const items = rows.map((row) => ({ ...row, allowedScopes: Number(row.allowedScopes) }));
       return { items, nextCursor };
     }),
@@ -280,7 +277,6 @@ export const oauthClientRouter = router({
             };
       const result = await dbWrite.oauthClient.update({ where: { id }, data });
       logOAuthEvent({ type: 'client.updated', userId: ctx.user.id, clientId: id });
-      // Scope fields stay JSON numbers on the tRPC wire (every bit is below 2^53).
       return result && { ...result, allowedScopes: Number(result.allowedScopes) };
     }),
 
