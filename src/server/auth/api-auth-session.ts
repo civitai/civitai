@@ -23,13 +23,11 @@ type ApiSessionContext = {
  */
 export type BannedSessionMode = 'refuse' | 'anonymous';
 
-/** How an API route treats a bearer credential short of its `scope`; the same two answers. */
-export type InsufficientScopeMode = 'refuse' | 'anonymous';
-
 type ApiSessionOptions = {
   whenBanned: BannedSessionMode;
   scope?: SessionScope;
-  insufficient?: InsufficientScopeMode;
+  /** A bearer credential short of `scope`: the same two answers as `whenBanned`. */
+  insufficient?: 'refuse' | 'anonymous';
 };
 
 /**

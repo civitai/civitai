@@ -5,7 +5,10 @@ import type * as ApiKeyService from '~/server/services/api-key.service';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const h = vi.hoisted(() => ({ bearer: null as Record<string, unknown> | null }));
+const h = vi.hoisted(() => ({
+  bearer: null as Record<string, unknown> | null,
+  hub: null as Record<string, unknown> | null,
+}));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
@@ -16,7 +19,7 @@ vi.mock('~/server/auth/bearer-token', () => ({
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: async () => null },
-  getHubSession: async () => null,
+  getHubSession: async () => h.hub,
   maybeRollHubCookie: async () => undefined,
 }));
 vi.mock('~/server/services/account-standing.service', async (importOriginal) => ({
@@ -51,11 +54,11 @@ function oauthToken(tokenScope: number) {
   };
 }
 
-async function call(handler: (req: never, res: never) => unknown) {
+async function call(handler: (req: never, res: never) => unknown, { bearer = true } = {}) {
   const req = {
     method: 'GET',
     url: '/api/v1/me',
-    headers: { authorization: 'Bearer t' },
+    headers: bearer ? { authorization: 'Bearer t' } : {},
     cookies: {},
     query: {},
   };
@@ -84,6 +87,8 @@ async function call(handler: (req: never, res: never) => unknown) {
 
 beforeEach(() => {
   resetEnv();
+  h.bearer = null;
+  h.hub = null;
   setEnv({ REST_SCOPE_ENFORCE: 'enforce' });
 });
 
@@ -102,6 +107,12 @@ describe('/api/v1/me by token scope', () => {
     });
   });
 
+  it('keeps the full answer for a browser session', async () => {
+    h.hub = { user: USER };
+    const res = await call(meHandler, { bearer: false });
+    expect(res.body).toMatchObject({ tier: 'gold', email: USER.email });
+  });
+
   it('keeps the full answer for a scoped token', async () => {
     oauthToken(TokenScope.UserRead);
     const res = await call(meHandler);
@@ -109,30 +120,33 @@ describe('/api/v1/me by token scope', () => {
   });
 });
 
-describe('wrapper answers to a token short of the route scope', () => {
-  const seen = vi.fn();
-  const route = { scope: { scope: TokenScope.VaultRead } };
+describe.each([{ allowBanned: false }, { allowBanned: true }])(
+  'wrapper answers to a token short of the route scope (%o)',
+  ({ allowBanned }) => {
+    const seen = vi.fn();
+    const route = { allowBanned, scope: { scope: TokenScope.VaultRead } };
 
-  it('AuthedEndpoint answers 403 without running the handler', async () => {
-    oauthToken(TokenScope.ModelsRead);
-    seen.mockClear();
-    const res = await call(
-      AuthedEndpoint(async (_req, r) => void seen() ?? r.status(200).json({}), ['GET'], route)
-    );
-    expect(res.statusCode).toBe(403);
-    expect(seen).not.toHaveBeenCalled();
-  });
+    it('AuthedEndpoint answers 403 without running the handler', async () => {
+      oauthToken(TokenScope.ModelsRead);
+      seen.mockClear();
+      const res = await call(
+        AuthedEndpoint(async (_req, r) => void seen() ?? r.status(200).json({}), ['GET'], route)
+      );
+      expect(res.statusCode).toBe(403);
+      expect(seen).not.toHaveBeenCalled();
+    });
 
-  it('MixedAuthEndpoint runs the handler as anonymous', async () => {
-    oauthToken(TokenScope.ModelsRead);
-    seen.mockClear();
-    await call(
-      MixedAuthEndpoint(
-        async (_req, r, user) => void seen(user) ?? r.status(200).json({}),
-        ['GET'],
-        route
-      )
-    );
-    expect(seen).toHaveBeenCalledWith(undefined);
-  });
-});
+    it('MixedAuthEndpoint runs the handler as anonymous', async () => {
+      oauthToken(TokenScope.ModelsRead);
+      seen.mockClear();
+      await call(
+        MixedAuthEndpoint(
+          async (_req, r, user) => void seen(user) ?? r.status(200).json({}),
+          ['GET'],
+          route
+        )
+      );
+      expect(seen).toHaveBeenCalledWith(undefined);
+    });
+  }
+);

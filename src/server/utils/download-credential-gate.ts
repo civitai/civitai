@@ -1,7 +1,10 @@
 import type { NextApiRequest } from 'next';
-import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
+import {
+  isFullScopeUserKey,
+  withholdsModerator,
+  type BearerCredential,
+} from '~/server/auth/full-user-credential';
 import { matchesOrchestratorServiceToken } from '~/server/auth/orchestrator-service-token';
-import { constants } from '~/server/common/constants';
 import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -71,11 +74,8 @@ export function downloadCredentialGate(
   if (!presentedBearer(req, context)) return { outcome: 'session', effectiveUser: user };
 
   let effectiveUser = user;
-  if (user?.isModerator && !isFullScopeUserKey(context)) {
-    if (user.id === constants.system.user.id && context?.subject?.type === 'apiKey')
-      logInternalModeratorKey(context);
-    else effectiveUser = { ...user, isModerator: false };
-  }
+  if (user && withholdsModerator(user, context)) effectiveUser = { ...user, isModerator: false };
+  else if (user?.isModerator && !isFullScopeUserKey(context)) logInternalModeratorKey(context);
   const scope = context?.tokenScope;
   const required =
     'requiredScope' in requirement ? [requirement.requiredScope] : requirement.anyOfScopes;

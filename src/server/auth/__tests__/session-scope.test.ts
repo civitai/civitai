@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CivitaiAuth from '@civitai/auth';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-import type { SessionScope } from '~/server/auth/session-scope';
+import { INSUFFICIENT_SCOPE_MESSAGE, type SessionScope } from '~/server/auth/session-scope';
+import { constants } from '~/server/common/constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const h = vi.hoisted(() => ({
@@ -107,8 +108,26 @@ describe('getServerAuthSession scope modes, enforcing', () => {
     ['anyScope, no bits', 'anyScope', TokenScope.None, true],
   ])('%s', async (_label, scope, tokenScope, served) => {
     bearerKey(tokenScope);
-    const session = await resolve(bearerRequest(), scope);
-    expect(session?.user?.id ?? null).toBe(served ? USER_ID : null);
+    const req = bearerRequest();
+    const expected = served ? USER_ID : null;
+    expect((await resolve(req, scope))?.user?.id ?? null).toBe(expected);
+    // Again from the session memoized on the request.
+    expect((await resolve(req, scope))?.user?.id ?? null).toBe(expected);
+    expect(h.getSessionFromBearerToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('records no credential when the bearer does not resolve or the session is a browser one', async () => {
+    const credentialFields = ['tokenScope', 'apiKeyId', 'apiKeyType', 'subject', 'buzzLimit'];
+    const invalid = bearerRequest();
+    expect(await resolve(invalid)).toBeNull();
+    for (const field of credentialFields) expect(invalid.context).not.toHaveProperty(field);
+
+    h.hub = { user: { id: USER_ID } };
+    const browser = { url: '/api/v1/models', headers: {}, cookies: {} } as ReturnType<
+      typeof bearerRequest
+    >;
+    expect((await resolve(browser, { scope: TokenScope.VaultWrite }))?.user?.id).toBe(USER_ID);
+    for (const field of credentialFields) expect(browser.context).not.toHaveProperty(field);
   });
 
   it('leaves a browser session alone whatever the mode', async () => {
@@ -173,6 +192,21 @@ describe('getServerAuthSession scope modes, enforcing', () => {
     expect((await resolve(bearerRequest()))?.user?.isModerator).toBe(true);
   });
 
+  it('withholds moderator rights from a narrow key on anyScope too', async () => {
+    bearerKey(TokenScope.None, { user: { id: USER_ID, isModerator: true } });
+    expect((await resolve(bearerRequest(), 'anyScope'))?.user?.isModerator).toBe(false);
+  });
+
+  it('keeps moderator rights for the internal system account’s key', async () => {
+    bearerKey(TokenScope.ModelsRead, {
+      user: { id: constants.system.user.id, isModerator: true },
+      apiKeyType: 'System',
+    });
+    expect(
+      (await resolve(bearerRequest(), { scope: TokenScope.ModelsRead }))?.user?.isModerator
+    ).toBe(true);
+  });
+
   it('keeps moderator rights where a per-operation check decides', async () => {
     bearerKey(TokenScope.ModelsRead, { user: { id: USER_ID, isModerator: true } });
     expect((await resolve(bearerRequest(), 'defer'))?.user?.isModerator).toBe(true);
@@ -204,6 +238,15 @@ describe('REST_SCOPE_ENFORCE', () => {
     });
     expect(entry.payload.apiKeyIdHash).toMatch(/^[0-9a-f]{16}$/);
     expect(JSON.stringify(entry)).not.toContain(String(USER_ID));
+    expect(Object.values(entry.payload)).not.toContain(41);
+  });
+
+  it('report logs a withheld moderator right and leaves it in place', async () => {
+    setEnv({ REST_SCOPE_ENFORCE: 'report' });
+    bearerKey(TokenScope.ModelsRead, { user: { id: USER_ID, isModerator: true } });
+    const session = await resolve(bearerRequest(), { scope: TokenScope.ModelsRead });
+    expect(session?.user?.isModerator).toBe(true);
+    expect(decisionLogs().map(([entry]) => entry.payload.outcome)).toEqual(['moderator-withheld']);
   });
 
   it('off neither refuses nor logs', async () => {
@@ -225,6 +268,7 @@ describe('getApiAuthSession insufficient scope', () => {
     );
     expect(result).toBe(false);
     expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith({ error: INSUFFICIENT_SCOPE_MESSAGE });
   });
 
   it('anonymous returns no session and sends nothing', async () => {

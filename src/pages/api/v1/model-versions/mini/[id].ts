@@ -72,10 +72,10 @@ import {
 } from '~/server/utils/mini-epoch-caller';
 import { downloadCredentialGate, scopeRefusalMode } from '~/server/utils/download-credential-gate';
 import { miniResponseExpiresAt } from '~/server/utils/mini-expires';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { MODEL_VIEW_SCOPES } from '~/server/auth/route-scopes';
 
 const MINI_ROUTE = '/api/v1/model-versions/mini/[id]';
-const MINI_SCOPES = { anyOfScopes: [TokenScope.ModelsRead, TokenScope.AIServicesRead] };
+const MINI_SCOPES = { anyOfScopes: MODEL_VIEW_SCOPES };
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).

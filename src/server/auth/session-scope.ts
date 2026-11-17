@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { env } from '~/env/server';
-import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
-import { constants } from '~/server/common/constants';
+import { withholdsModerator, type BearerCredential } from '~/server/auth/full-user-credential';
 import { logToAxiom } from '~/server/logging/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -22,7 +21,7 @@ export type SessionScope =
   | 'selfGated'
   | 'anyScope';
 
-export type RestScopeEnforcement = 'off' | 'report' | 'enforce';
+type RestScopeEnforcement = 'off' | 'report' | 'enforce';
 
 type ScopeContext = BearerCredential & {
   apiKeyId?: number | null;
@@ -33,20 +32,13 @@ type ScopeRequest = { url?: string; context?: Record<string, unknown> };
 export const INSUFFICIENT_SCOPE_MESSAGE =
   'Your API key does not have the required scope for this action';
 
-export function credentialMeetsScope(tokenScope: number, scope: SessionScope | undefined): boolean {
+function credentialMeetsScope(tokenScope: number, scope: SessionScope | undefined): boolean {
   if (scope === 'defer' || scope === 'anyScope') return true;
   if (scope === 'selfGated') return tokenScope !== TokenScope.None;
   if (scope === undefined) return Flags.hasFlag(tokenScope, TokenScope.Full);
   const required = 'scope' in scope ? [scope.scope] : scope.anyOf;
   // `hasFlag(x, 0)` is true for every x, so a zero bit never satisfies a requirement.
   return required.some((bit) => bit !== TokenScope.None && Flags.hasFlag(tokenScope, bit));
-}
-
-/** Moderator rights reach a bearer credential only through a full-scope personal key. */
-function withholdsModerator(user: NonNullable<Session['user']>, context: ScopeContext) {
-  if (!user.isModerator || isFullScopeUserKey(context)) return false;
-  // The internal system account's keys are limited to read scopes and keep its rights by id.
-  return !(user.id === constants.system.user.id && context.subject?.type === 'apiKey');
 }
 
 function requiredBits(scope: SessionScope | undefined): number {
@@ -90,7 +82,7 @@ function logScopeDecision(
   });
 }
 
-export type ScopedSession = { session: Session | null; insufficient: boolean };
+type ScopedSession = { session: Session | null; insufficient: boolean };
 
 /**
  * Holds a bearer credential to `scope`. Reads the credential `getServerAuthSession` recorded on
