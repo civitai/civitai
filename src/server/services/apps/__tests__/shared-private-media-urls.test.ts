@@ -73,4 +73,9 @@ describe('containsPrivateMediaUrl', () => {
       false
     );
   });
+
+  it('valueContainsPrivateMediaUrl handles a very long array without throwing', () => {
+    const long = Array.from({ length: 200_000 }, () => 0);
+    expect(valueContainsPrivateMediaUrl({ long })).toBe(false);
+  });
 });

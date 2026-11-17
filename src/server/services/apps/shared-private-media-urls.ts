@@ -90,7 +90,7 @@ export function valueContainsPrivateMediaUrl(value: unknown): boolean {
     if (typeof node === 'string') {
       if (matches(node, hosts)) return true;
     } else if (Array.isArray(node)) {
-      stack.push(...node);
+      for (const child of node) stack.push(child);
     } else if (node && typeof node === 'object') {
       for (const [key, child] of Object.entries(node)) {
         if (matches(key, hosts)) return true;
