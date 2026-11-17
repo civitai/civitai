@@ -2031,6 +2031,8 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   viewerId,
   isGreen = false,
   eventTag,
+  ids,
+  ownRowsExempt = true,
 }: {
   input: GetCruciblesInfiniteSchema;
   select: TSelect;
@@ -2040,9 +2042,17 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   isGreen?: boolean;
   /** Server-side only: event tags are moderator data, so no public input may filter on them. */
   eventTag?: string;
+  /** Server-only: only these crucibles, e.g. the semantic search's candidates. */
+  ids?: number[];
+  /** False holds the viewer's own crucibles to the same gates, as a narrowed search must. */
+  ownRowsExempt?: boolean;
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
   if (eventTag !== undefined) where.eventTags = { has: eventTag };
+  if (ids) {
+    if (!ids.length) return { items: [], nextCursor: undefined };
+    where.id = { in: ids };
+  }
 
   // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
   // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
@@ -2065,14 +2075,15 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     if (!Flags.intersects(effectiveLevel, nsfwBrowsingLevelsFlag))
       visible.push({ textNsfw: false });
   }
-  and.push(viewerId ? { OR: [{ userId: viewerId }, { AND: visible }] } : { AND: visible });
+  const own = viewerId && ownRowsExempt ? viewerId : undefined;
+  and.push(own ? { OR: [{ userId: own }, { AND: visible }] } : { AND: visible });
 
   if (isGreen) {
     const onSite: Prisma.CrucibleWhereInput = {
       nsfwLevel: { in: CRUCIBLE_SFW_LEVELS },
       textNsfw: false,
     };
-    and.push(viewerId ? { OR: [{ userId: viewerId }, onSite] } : onSite);
+    and.push(own ? { OR: [{ userId: own }, onSite] } : onSite);
   }
   where.AND = and;
 

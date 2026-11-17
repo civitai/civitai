@@ -8,12 +8,12 @@ import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import {
   isNonModClampOn,
+  makeRefusalOf,
+  type QueryTracker,
   queryVerdictLevel,
   recordRefusal,
   resolveSemanticBrowsingLevel,
   semanticQueryRefusal,
-  type QueryStage,
-  type QueryTracker,
 } from '~/server/services/semantic-query-guard';
 import {
   auditedTextCandidates,
@@ -114,15 +114,11 @@ export async function searchSemanticChallenges({
   const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
     isModerator: user?.isModerator,
   });
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
-      browsingLevel,
-      disablePoi,
-      isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'challenges_semantic', stage);
-    return refusal;
-  };
+  const refusalOf = makeRefusalOf({
+    index: 'challenges_semantic',
+    track,
+    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
+  });
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   if (verdictLevel === 'refuse') return none;
