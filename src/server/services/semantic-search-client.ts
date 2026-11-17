@@ -13,6 +13,8 @@ const MAX_HYDRATION_ROUNDS = 3;
 const MAX_HYDRATION_BATCH = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
+// The search service's page maximum: a larger `limit` is an error, not a short page.
+export const MAX_CANDIDATE_LIMIT = 100;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
 // and payload indexes are on disk), then well under 1 s.
 const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
@@ -178,6 +180,7 @@ export type CandidateSource = (args: {
   query: SearchQuery;
   filter: CandidateFilter;
   offset: number;
+  // At most MAX_CANDIDATE_LIMIT.
   limit: number;
   viewer: SearchViewer;
   // newest: the service orders its best matches by date and pages within them. Text queries only.
@@ -367,6 +370,7 @@ export async function collectPage<T extends { id: number }>({
     const batchSize = Math.min(
       (limit - items.length) * CANDIDATE_MULTIPLIER,
       MAX_HYDRATION_BATCH,
+      MAX_CANDIDATE_LIMIT,
       MAX_CANDIDATE_OFFSET - position
     );
     if (batchSize <= 0) {
