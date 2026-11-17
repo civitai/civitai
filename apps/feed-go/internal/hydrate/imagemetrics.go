@@ -511,7 +511,7 @@ func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]
 			}
 			rec := jspack.Obj{}
 			if m, ok := ParseMetricHash(hash); ok {
-				for _, k := range sortedKeys(m) {
+				for _, k := range metricNames(m) {
 					rec = append(rec, jspack.KV{K: k, V: m[k]})
 				}
 			}
@@ -522,7 +522,7 @@ func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]
 	return nil
 }
 
-func sortedKeys(m Metrics) []string {
+func metricNames(m Metrics) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
