@@ -2,7 +2,9 @@ package feed
 
 import (
 	"encoding/json"
+	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -152,6 +154,89 @@ func TestParseInfiniteIgnoresStrippedURLKeys(t *testing.T) {
 	// Scoped to image.getInfinite: the posts gallery (Parse) still falls back on them.
 	if _, err := Parse(parseObj(t, `{"limit":10,"view":"feed"}`)); fallback.Reason(err) != "input-unknown-key" {
 		t.Errorf("Parse with view: reason %q (err %v), want input-unknown-key", fallback.Reason(err), err)
+	}
+}
+
+// imagesQueryParamSchemaSource is the TS file that defines imagesQueryParamSchema, from this package.
+const imagesQueryParamSchemaSource = "../../../../src/components/Image/image-query-params.ts"
+
+// queryParamSchemaKeys reads the top-level keys of imagesQueryParamSchema's `z.object({…})` out of
+// its TS source: the lines indented one level inside the object literal.
+func queryParamSchemaKeys(src string) []string {
+	const start, end = "export const imagesQueryParamSchema = z\n  .object({\n", "\n  })\n  .partial();"
+	i := strings.Index(src, start)
+	if i < 0 {
+		return nil
+	}
+	body := src[i+len(start):]
+	j := strings.Index(body, end)
+	if j < 0 {
+		return nil
+	}
+	var keys []string
+	for _, m := range regexp.MustCompile(`(?m)^    ([A-Za-z0-9_]+):`).FindAllStringSubmatch(body[:j], -1) {
+		keys = append(keys, m[1])
+	}
+	return keys
+}
+
+// The URL keys ParseInfinite ignores are ignored because zod strips them: none may be a
+// getInfiniteImagesSchema key (schemas.json, kept in step with zod by its schema-drift test; a key the
+// schema starts reading must be parsed instead), and each must still be an imagesQueryParamSchema
+// key (else the list holds a key the site no longer sends, and should drop it).
+func TestStrippedURLKeysAreStrippedByZod(t *testing.T) {
+	if want := []string{"query", "section", "similarTo", "view"}; !reflect.DeepEqual(strippedURLKeys, want) {
+		t.Errorf("strippedURLKeys = %v, want %v (a change here is a reviewed parity decision)", strippedURLKeys, want)
+	}
+	inSchema := map[string]bool{}
+	for _, k := range imagesSchema.Keys() {
+		inSchema[k] = true
+	}
+	src, err := os.ReadFile(imagesQueryParamSchemaSource)
+	if err != nil {
+		t.Fatalf("read imagesQueryParamSchema's source: %v", err)
+	}
+	inQuery := map[string]bool{}
+	for _, k := range queryParamSchemaKeys(string(src)) {
+		inQuery[k] = true
+	}
+	// Positive control: the reader finds the object's keys, including ones the schema shares, so an
+	// empty or misparsed read cannot pass the membership checks below by finding nothing.
+	for _, k := range []string{"baseModels", "limit", "hideChallenges", "reactions", "view"} {
+		if !inQuery[k] {
+			t.Fatalf("imagesQueryParamSchema keys read from %s lack %q (read %d keys): the reader no longer matches the source", imagesQueryParamSchemaSource, k, len(inQuery))
+		}
+	}
+	for _, k := range strippedURLKeys {
+		if inSchema[k] {
+			t.Errorf("%s is a getInfiniteImagesSchema key now: parse it (or classify it) instead of ignoring it", k)
+		}
+		if !inQuery[k] {
+			t.Errorf("%s is no longer an imagesQueryParamSchema key: drop it from strippedURLKeys", k)
+		}
+		if !infiniteAbsentKeys[k] {
+			t.Errorf("%s is not in infiniteAbsentKeys", k)
+		}
+	}
+	// And the other way: every URL key zod strips is listed, so a key added to imagesQueryParamSchema
+	// alone is a decision here (ignore it, or add it to the schema), not a new fallback.
+	var stripped []string
+	for k := range inQuery {
+		if !inSchema[k] {
+			stripped = append(stripped, k)
+		}
+	}
+	sort.Strings(stripped)
+	if !reflect.DeepEqual(stripped, strippedURLKeys) {
+		t.Errorf("imagesQueryParamSchema keys outside getInfiniteImagesSchema = %v, strippedURLKeys = %v", stripped, strippedURLKeys)
+	}
+	// Controls on the reader: it ignores nested keys and reads nothing from a file without the schema.
+	nested := "export const imagesQueryParamSchema = z\n  .object({\n    a: z.object({\n      b: z.string(),\n    }),\n    c: x,\n  })\n  .partial();"
+	if got := queryParamSchemaKeys(nested); !reflect.DeepEqual(got, []string{"a", "c"}) {
+		t.Errorf("reader control (nested) = %v, want [a c]", got)
+	}
+	if got := queryParamSchemaKeys("const other = z.object({\n    view: x,\n});"); got != nil {
+		t.Errorf("reader control (no schema) = %v, want none", got)
 	}
 }
 

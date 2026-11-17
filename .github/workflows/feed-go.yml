@@ -26,12 +26,16 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/feed-go/**'
+      # Read by internal/feed's TestStrippedURLKeysAreStrippedByZod.
+      - 'src/components/Image/image-query-params.ts'
       - 'packages/civitai-flipt/parity/**'
       - '.github/workflows/feed-go.yml'
   push:
     branches: [main]
     paths:
       - 'apps/feed-go/**'
+      # Read by internal/feed's TestStrippedURLKeysAreStrippedByZod.
+      - 'src/components/Image/image-query-params.ts'
       - 'packages/civitai-flipt/parity/**'
       - '.github/workflows/feed-go.yml'
   workflow_dispatch:

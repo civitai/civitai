@@ -111,18 +111,19 @@ var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "
 // Parse validates the decoded input map. A shape outside the supported subset is a fallback; a value
 // the schema itself rejects is also a fallback (the Node app answers it with its own BAD_REQUEST).
 func Parse(m map[string]any) (*Input, error) {
-	return parseInput(m, unsupportedKeys)
+	return parseInput(m, unsupportedKeys, trpcTransportKeys)
 }
 
-// parseInput is Parse with the procedure's own list of keys that fall back when present.
-func parseInput(m map[string]any, unsupported []string) (*Input, error) {
+// parseInput is Parse with the procedure's own list of keys that fall back when present, and its own
+// set of keys outside the schema that zod strips, read as absent.
+func parseInput(m map[string]any, unsupported []string, absent map[string]bool) (*Input, error) {
 	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
 		}
 	}
 	// After unsupported keys so the reason names the parity gap.
-	if k, ok := imagesSchema.Unknown(mapKeys(m), trpcTransportKeys); ok {
+	if k, ok := imagesSchema.Unknown(mapKeys(m), absent); ok {
 		return nil, fallback.Newf("input-unknown-key", "%s", k)
 	}
 	in := &Input{

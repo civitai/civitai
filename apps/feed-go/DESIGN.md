@@ -468,8 +468,12 @@ That holds even when the app's deploy runs ahead of this service's.
   parity gap.
 - **Allowed without being schema keys:** for tRPC, `authed` (added by `authedCacheBypassLink` to every
   object input when signed in) and `direction` (added by an infinite query). The site client sends
-  both and zod strips both. For REST, `token` (the API key, which then falls back as `bearer-token`).
-  The web client builds each input from the filter stores, whose keys are all schema keys. Every
+  both and zod strips both. For `image.getInfinite` only, also `view`, `section`, `query` and
+  `similarTo` (`strippedURLKeys`): the keys of `imagesQueryParamSchema`, the images feeds' URL query,
+  that `getInfiniteImagesSchema` lacks. The site merges that query into the filter-store input, so
+  they arrive and zod strips them; `TestStrippedURLKeysAreStrippedByZod` fails when that set of keys
+  and the list differ, or when the schema gains one. For REST, `token` (the API key, which then
+  falls back as `bearer-token`). Every other input key the web client sends is a schema key. Every
   query key seen on `/api/v1/images` is a schema key except a small tail of hand-written requests,
   which now fall back. Before this, `/api/v1/images` kept an unknown key in `nextPage` and answered;
   `nextPageURL` still does so for every key of the query.
