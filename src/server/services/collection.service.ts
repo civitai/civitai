@@ -145,14 +145,12 @@ import {
   getServableCoverCollectionIds,
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
-import {
-  assertImagesVisibleToViewer,
-  assertImageVisibleToViewer,
-} from '~/server/services/image-visibility.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
 } from '~/shared/utils/block-provenance-metadata';
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
@@ -1166,11 +1164,13 @@ export const saveItemInCollections = async ({
   );
 
   // Before the contest gates: they can charge an entry fee.
-  if (
-    itemKey === 'imageId' &&
-    upsertCollectionItems.some((upsert) => !unwrittenCollectionIds.has(upsert.collectionId))
-  ) {
-    await assertImagesVisibleToViewer({ ids: [input.imageId as number], userId, isModerator });
+  if (upsertCollectionItems.some((upsert) => !unwrittenCollectionIds.has(upsert.collectionId))) {
+    await assertCollectionItemsVisibleToViewer({
+      itemKey,
+      ids: [input[itemKey] as number],
+      userId,
+      isModerator,
+    });
   }
 
   // Check if any contest collections are involved and validate ONCE
@@ -1906,7 +1906,16 @@ export const upsertCollection = async ({
     throw throwBadRequestError('3D model collections cannot be contests');
   }
 
-  if (imageId) await assertImagesVisibleToViewer({ ids: [imageId], userId, isModerator });
+  for (const [itemKey, itemId] of [
+    ['imageId', imageId],
+    ['postId', collectionItem.postId],
+    ['articleId', collectionItem.articleId],
+    ['modelId', collectionItem.modelId],
+    ['model3dId', collectionItem.model3dId],
+  ] as const) {
+    if (itemId)
+      await assertCollectionItemsVisibleToViewer({ itemKey, ids: [itemId], userId, isModerator });
+  }
 
   const hasInitialItem = [
     collectionItem.modelId,
@@ -3707,8 +3716,14 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
-  if (imageIds.length > 0)
-    await assertImagesVisibleToViewer({ ids: imageIds, userId, isModerator });
+  for (const [itemKey, ids] of [
+    ['imageId', imageIds],
+    ['postId', postIds],
+    ['articleId', articleIds],
+    ['modelId', modelIds],
+  ] as const) {
+    await assertCollectionItemsVisibleToViewer({ itemKey, ids, userId, isModerator });
+  }
   const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
   if (
