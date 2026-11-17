@@ -15,9 +15,8 @@ vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
   onSearchIndexDocumentsCleanup: (...args: unknown[]) => onSearchIndexDocumentsCleanup(...args),
 }));
 
-const { pullData, transformIndexData, pushData } = await import(
-  '~/server/search-index/comics.search-index'
-);
+const { pullData, transformIndexData, pushData, queueAllComicsForRefresh, comicsSearchIndex } =
+  await import('~/server/search-index/comics.search-index');
 
 const comicRow = (id: number) => ({
   id,
@@ -72,5 +71,27 @@ describe('comics search index :: documents whose comic no longer qualifies', () 
     await run({ type: 'new', startId: 1, endId: 1000 }, [comicRow(4)]);
 
     expect(onSearchIndexDocumentsCleanup).not.toHaveBeenCalled();
+  });
+});
+
+describe('comics search index :: the refresh pass', () => {
+  // A ban, hold or image flag changes no comic row, so only the pass brings such a comic back
+  // through pullData, which deletes it (above).
+  it('queues every comic for an update, never forwarded to the semantic sync', async () => {
+    const queueUpdate = vi
+      .spyOn(comicsSearchIndex, 'queueUpdate')
+      .mockResolvedValue(undefined as never);
+    const db = { $queryRaw: vi.fn().mockResolvedValue([{ id: 4 }, { id: 9 }]) };
+
+    await expect(queueAllComicsForRefresh(db as never)).resolves.toBe(2);
+
+    expect(queueUpdate).toHaveBeenCalledWith(
+      [
+        { id: 4, action: 'Update' },
+        { id: 9, action: 'Update' },
+      ],
+      { reason: 'refresh' }
+    );
+    queueUpdate.mockRestore();
   });
 });

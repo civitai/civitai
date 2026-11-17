@@ -7,6 +7,7 @@ import {
   type SearchIndexPullBatch,
 } from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
@@ -360,6 +361,20 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
     ...disqualifiedIds,
   ],
 });
+
+/**
+ * Queues every comic for an update, so one whose owner was banned, deleted or held, or whose cover
+ * or panel image was flagged, leaves the index (`pushData` deletes it) though no comic row changed.
+ */
+export async function queueAllComicsForRefresh(db: RawQueryClient) {
+  const rows = await db.$queryRaw<{ id: number }[]>`SELECT id FROM "ComicProject"`;
+  if (rows.length)
+    await comicsSearchIndex.queueUpdate(
+      rows.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+      { reason: 'refresh' }
+    );
+  return rows.length;
+}
 
 type PulledComics = NonNullable<Awaited<ReturnType<typeof pullComics>>> & {
   disqualifiedIds: number[];

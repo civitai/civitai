@@ -169,6 +169,17 @@ const spec: ParitySpec = {
     comic(33, 'coverPoi', false, { cover: `'Scanned', NULL, false, 1, NULL, false, true` }),
     comic(34, 'coverRated', false, { cover: `'Scanned', NULL, false, 1, NULL, false, false, 0` }),
     comic(35, 'coverHeld', false, { cover: `'Scanned', NULL, false, 4` }),
+    withSql(
+      comic(36, 'coverListed', false, { cover: `'Scanned', NULL, false` }),
+      `INSERT INTO "CsamReport" (images) VALUES ('[369]')`
+    ),
+    // Chapter 1 clean; a Ready panel in a second Public chapter is held.
+    withSql(
+      comic(37, 'heldPanelInSecondChapter', false),
+      `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (37, 2, 'Published')`,
+      `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (3701, 'Scanned', false, 5)`,
+      `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (37, 2, 3701, 'u', 'Ready')`
+    ),
   ],
   clauses: [
     'status',
@@ -202,6 +213,8 @@ const spec: ParitySpec = {
     'coverPoi',
     'coverRated',
     'coverHeld',
+    'coverListed',
+    'heldPanelInSecondChapter',
   ],
   site: async (prisma) =>
     (
