@@ -50,6 +50,7 @@ import {
   getPendingCollectionReviewCounts,
   getPendingReviewCount,
   getUserCollectionItemsByItem,
+  canSeeCollectionDetails,
   getUserCollectionPermissionsById,
   getUserCollectionPermissionsByIds,
   getUserCollectionsWithPermissions,
@@ -72,7 +73,7 @@ import {
 import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
 import type { Collaborator } from '~/server/services/collection-collaborator.service';
 import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
-import { setModelShowcaseCollection } from '~/server/services/model.service';
+import { clearModelShowcaseAfterRemoval } from '~/server/services/model.service';
 import { addPostImage, createPost, deletePost } from '~/server/services/post.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
@@ -237,6 +238,21 @@ export const getAllUserCollectionsHandler = async ({
   }
 };
 
+/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
+async function isCoverShownByBrowsingRules(
+  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
+  ctx: Context
+) {
+  if (!image) return true;
+  const [showsImage, flags] = await Promise.all([
+    getRequestImageFilter(ctx),
+    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+  ]);
+  // No row means its flags are unread: hidden, as unread tags are.
+  if (!flags) return false;
+  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
+}
+
 export const getCollectionByIdHandler = async ({
   ctx,
   input,
@@ -253,11 +269,8 @@ export const getCollectionByIdHandler = async ({
       isModerator: user?.isModerator,
     });
 
-    // If the user has 0 permission over this collection, they have no business asking for it.
-    // Unlike item reads (`canReadCollectionItems`), write (not writeReview) counts here: this returns
-    // metadata, not items.
     // The flags go back empty, as for a missing id, so the answer does not describe the collection.
-    if (!permissions.read && !permissions.write && !permissions.manage) {
+    if (!canSeeCollectionDetails(permissions)) {
       return {
         collection: null,
         permissions: createEmptyPermissions(input.id),
@@ -268,6 +281,7 @@ export const getCollectionByIdHandler = async ({
     }
 
     const collection = await getCollectionById({ input, viewer: ctx.user });
+    const coverShown = await isCoverShownByBrowsingRules(collection.image, ctx);
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -301,7 +315,11 @@ export const getCollectionByIdHandler = async ({
 
     return {
       // Only an editor needs to know a cover is stored but hidden from them.
-      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      collection: {
+        ...collection,
+        image: coverShown ? collection.image : null,
+        coverHidden: permissions.manage && (collection.coverHidden || !coverShown),
+      },
       permissions,
       collaborators,
       pendingReviewCount,
@@ -355,14 +373,11 @@ export const saveItemHandler = async ({
       });
     }
 
-    // Remove collection from model showcase if removed
-    if (input.type === 'Model' && status === 'removed' && input.modelId) {
+    if (input.type === 'Model' && input.modelId && input.removeFromCollectionIds?.length) {
       // letting this run in the background to avoid blocking the response
-      setModelShowcaseCollection({
-        id: input.modelId,
-        collectionId: null,
-        userId: user.id,
-        isModerator: user.isModerator,
+      clearModelShowcaseAfterRemoval({
+        modelId: input.modelId,
+        collectionIds: input.removeFromCollectionIds,
       }).catch((error) =>
         logToAxiom({
           name: 'remove-model-showcase-collection',

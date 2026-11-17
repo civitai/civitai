@@ -3,11 +3,23 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { composeUserText } from '~/server/services/text-scan/segment';
-import type { TextScanEntityType } from '~/server/services/text-scan/types';
+import type { TextScanEntityType, TextScanSubject } from '~/server/services/text-scan/types';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 import { sanitizeForPostgres } from '~/utils/string-helpers';
 
 export const CSAM_HOLD_TEXT_CHARS = 50_000;
+
+/**
+ * The author and text a pending csam hold stores for this subject. Every writer of one goes through it
+ * (the scan's `applyCsamHold`, a moderator's `holdPostTextForCsam`), so the rows cannot drift apart.
+ */
+export function pendingCsamHoldFields(subject: TextScanSubject) {
+  return {
+    userId: subject.userId && subject.userId > 0 ? subject.userId : null,
+    // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
+    text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
+  };
+}
 
 function storable(value: unknown): unknown {
   if (typeof value === 'string') return sanitizeForPostgres(value);
@@ -206,9 +218,7 @@ export async function applyCsamHold({
 }: ApplyTextScanArgs & { entityType: TextScanEntityType }) {
   if (!outcome.csam?.detected) return;
 
-  const userId = subject.userId && subject.userId > 0 ? subject.userId : null;
-  // Cut before well-forming, so a pair split by the cap is replaced rather than kept half.
-  const text = sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS));
+  const { userId, text } = pendingCsamHoldFields(subject);
   const reason = sanitizeForPostgres(outcome.csam.reason);
   const promptId = promptIds?.csam ?? null;
   const contentAt = contentAtOf(subject.meta);
