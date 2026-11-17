@@ -4,6 +4,7 @@ import path from 'path';
 
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+import TimingShardSequencer from './scripts/test-shard/sequencer.mjs';
 
 // CI runs in UTC, and date assertions are written against it. Set before any worker starts, so
 // every worker inherits it on any machine.
@@ -566,9 +567,10 @@ export default defineConfig({
   resolve: { alias },
   test: {
     maxWorkers,
-    // Root-level because vitest builds ONE sequencer for the whole run. It only ever skips files in
-    // the unit projects, and only when the cache is on.
-    ...(testCacheMode() !== 'off' ? { sequence: { sequencer: TestCacheSequencer } } : {}),
+    // Root-level because vitest builds ONE sequencer for the whole run. Both split a `--shard` run
+    // of the unit projects by recorded cost (scripts/test-shard/); the cache one also skips unit
+    // files, and only when the cache is on.
+    sequence: { sequencer: testCacheMode() !== 'off' ? TestCacheSequencer : TimingShardSequencer },
     projects: [
       // The `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`

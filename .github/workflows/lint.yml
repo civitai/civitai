@@ -922,8 +922,12 @@ jobs:
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # The last line falls back to ANY shard's entry: the content does not depend on which
+          # files a shard runs (see above), so a shard with no entry of its own — a new shard
+          # number after the matrix grows — starts from a sibling's bundles instead of cold.
           restore-keys: |
             vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+            vite-unit-${{ runner.os }}-${{ runner.arch }}-
 
       # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
       # `vitest run --project unit* ...args`, and its queueDecision() returns
