@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
+import { Prisma } from '@prisma/client';
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ModeModule from '~/server/services/text-scan/mode';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
@@ -50,6 +52,9 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/redis/caches', () => ({
   userBountyCountCache: { refresh: vi.fn() },
 }));
+vi.mock('~/server/search-index/bounties.search-index', () => ({
+  bountiesSearchIndex: { queueUpdate: vi.fn() },
+}));
 
 import {
   addBenefactorUnitAmount,
@@ -59,6 +64,7 @@ import {
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { bountyNsfwFlagLevel, ratedLevel } from '~/server/services/bounty-rated-level';
+import { updateBountyNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
 import {
   checkEntityImageKeys,
@@ -224,12 +230,8 @@ describe('updateBountyById — a moderator rating against a new nsfw flag', () =
         'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : stored.moderatorNsfwLevel,
     };
   };
-  // The level the feed serves a row at with no text rating. Unflagged, it is the stored level,
-  // which updateBountyNsfwLevels sets to COALESCE(moderatorNsfwLevel, the derived level).
-  const servedLevel = (row: Row, derived: number = NsfwLevel.PG) =>
-    row.nsfw
-      ? bountyNsfwFlagLevel({ ...row, nsfwLevel: 60 }, undefined)
-      : ratedLevel(row.moderatorNsfwLevel ?? derived);
+  // The level the feed serves a flagged row at with no text rating.
+  const servedLevel = (row: Row) => bountyNsfwFlagLevel({ ...row, nsfwLevel: 60 }, undefined);
 
   it('raises a rating below R to R when the edit sets the flag', async () => {
     for (const rated of [NsfwLevel.PG, NsfwLevel.PG13]) {
@@ -256,17 +258,73 @@ describe('updateBountyById — a moderator rating against a new nsfw flag', () =
       expect(servedLevel(applied(stored))).toBe(stored.moderatorNsfwLevel);
     }
   });
+});
 
-  it('never serves below the moderator once the owner turns the flag on and off again', async () => {
+// The stored level an unflagged bounty is served at comes from updateBountyNsfwLevels' SQL. The
+// edits run through updateBountyById as above; the row they leave is then recomputed by that SQL
+// on real tables.
+describe('updateBountyById then updateBountyNsfwLevels on real rows', () => {
+  const pg = { db: null as unknown as PGlite };
+  const onPg = (query: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+    const q = 'text' in query ? query : Prisma.sql(query, ...(values as never[]));
+    return pg.db.query(q.text, q.values as unknown[]).then((r) => r.rows);
+  };
+
+  beforeAll(async () => {
+    pg.db = new PGlite();
+    await pg.db.exec(`
+      CREATE TABLE "Bounty" (
+        "id" integer PRIMARY KEY,
+        "nsfw" boolean NOT NULL DEFAULT false,
+        "nsfwLevel" integer NOT NULL DEFAULT 0,
+        "moderatorNsfwLevel" integer
+      );
+      CREATE TABLE "Image" ("id" integer PRIMARY KEY, "nsfwLevel" integer NOT NULL);
+      CREATE TABLE "ImageConnection" ("imageId" integer, "entityType" text, "entityId" integer);
+      CREATE TABLE "EntityModeration" (
+        "entityType" text, "entityId" integer, "nsfwLevel" integer, "result" jsonb,
+        "blocked" boolean NOT NULL DEFAULT false, "triggeredLabels" text[] NOT NULL DEFAULT '{}'
+      );
+      INSERT INTO "Image" VALUES (10, ${NsfwLevel.PG});
+      INSERT INTO "ImageConnection" VALUES (10, 'Bounty', ${BOUNTY_ID});
+      INSERT INTO "EntityModeration" ("entityType", "entityId", "nsfwLevel", "result")
+        VALUES ('Bounty', ${BOUNTY_ID}, ${NsfwLevel.PG}, '{"version":"1"}');
+    `);
+  }, 60_000);
+  afterAll(() => pg.db?.close());
+
+  it('serves at R or above after the owner turns the flag on and off over a PG-13 rating', async () => {
     // Scan rated PG, moderator rated PG-13.
-    let row: Row = { nsfw: false, moderatorNsfwLevel: NsfwLevel.PG13 };
+    await pg.db.exec(`
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13})
+    `);
     for (const nsfw of [true, false]) {
+      const [row] = (
+        await pg.db.query<{ nsfw: boolean; moderatorNsfwLevel: number | null }>(
+          `SELECT nsfw, "moderatorNsfwLevel" FROM "Bounty" WHERE id = $1`,
+          [BOUNTY_ID]
+        )
+      ).rows;
       mockStored(row);
       await updateBountyById({ ...baseUpdate, nsfw } as never);
-      row = applied(row);
+      const data = updateData();
+      await pg.db.query(`UPDATE "Bounty" SET nsfw = $2, "moderatorNsfwLevel" = $3 WHERE id = $1`, [
+        BOUNTY_ID,
+        data.nsfw ?? row.nsfw,
+        'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : row.moderatorNsfwLevel,
+      ]);
     }
-    expect(row.nsfw).toBe(false);
-    expect(servedLevel(row, NsfwLevel.PG)).toBeGreaterThanOrEqual(NsfwLevel.R);
+    mockDbWrite.$queryRaw.mockImplementationOnce(onPg as never);
+    await updateBountyNsfwLevels([BOUNTY_ID]);
+
+    const [stored] = (
+      await pg.db.query<{ nsfw: boolean; nsfwLevel: number }>(
+        `SELECT nsfw, "nsfwLevel" FROM "Bounty" WHERE id = $1`,
+        [BOUNTY_ID]
+      )
+    ).rows;
+    expect(stored.nsfw).toBe(false);
+    expect(ratedLevel(stored.nsfwLevel)).toBeGreaterThanOrEqual(NsfwLevel.R);
   });
 });
 
