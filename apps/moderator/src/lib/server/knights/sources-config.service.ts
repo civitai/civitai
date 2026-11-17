@@ -83,15 +83,54 @@ const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
   a.yesNoShare === b.yesNoShare &&
   sameGame(a.game, b.game);
 
-/** The one writer of the key: stores `config` and audits it, or does nothing when it equals what is stored. */
-async function writeSourcesConfig(
+/** Sets the key only while it still holds what was read (ARGV[1] '0': absent; '1': equal to ARGV[2]). 1 when written. */
+const COMPARE_AND_SET = `local current = redis.call('get', KEYS[1])
+if (ARGV[1] == '0' and current == false) or (ARGV[1] == '1' and current == ARGV[2]) then
+  redis.call('set', KEYS[1], ARGV[3])
+  return 1
+end
+return 0`;
+
+const SAVE_ATTEMPTS = 3;
+const CONFLICT_ERROR =
+  'Another moderator saved the config at the same time. Reload the page to see their change, then try again.';
+
+type Built = { ok: true; config: KnightsSourcesConfig } | { ok: false; error: string };
+
+/**
+ * The one writer of the key. Reads it, builds the next value from what was read, and writes it only while the key still
+ * holds what was read (compare-and-set), so a save never overwrites another moderator's; on a conflict the whole
+ * read-build-write runs again, up to `SAVE_ATTEMPTS` times. A value equal to what is stored writes and audits nothing.
+ */
+async function updateSourcesConfig(
+  moderatorId: number,
+  build: (before: SourcesSettings) => Built
+): Promise<SaveOutcome> {
+  const redis = getSysRedis();
+  const key = REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES;
+  for (let attempt = 0; attempt < SAVE_ATTEMPTS; attempt++) {
+    const raw = await redis.get(key);
+    const before = readKnightsSourcesConfig(raw);
+    const next = build(before);
+    if (!next.ok) return next;
+    if (before.stored && same(before.config, next.config)) return { ok: true, changed: false };
+    const swapped = await redis.eval(COMPARE_AND_SET, {
+      keys: [key],
+      arguments: [raw === null ? '0' : '1', raw ?? '', JSON.stringify(next.config)],
+    });
+    if (Number(swapped) === 1) {
+      await auditSave(before, next.config, moderatorId);
+      return { ok: true, changed: true };
+    }
+  }
+  return { ok: false, error: CONFLICT_ERROR };
+}
+
+async function auditSave(
   before: SourcesSettings,
   config: KnightsSourcesConfig,
   moderatorId: number
-): Promise<SaveOutcome> {
-  if (before.stored && same(before.config, config)) return { ok: true, changed: false };
-
-  await getSysRedis().set(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES, JSON.stringify(config));
+) {
   await recordModActivity({
     userId: moderatorId,
     entityType: SOURCES_AUDIT_ENTITY.type,
@@ -101,7 +140,6 @@ async function writeSourcesConfig(
       after: config,
     })}`,
   });
-  return { ok: true, changed: true };
 }
 
 /**
@@ -114,20 +152,23 @@ export async function saveSourcesConfig(input: unknown, moderatorId: number): Pr
   const checked = validateSourcesInput(input);
   if (!checked.ok) return checked;
 
-  const before = await getSourcesSettings();
-  const { maxOpen, game } = before.config;
-  const yesNoShare = checked.clearYesNoShare
-    ? undefined
-    : checked.config.yesNoShare ?? before.config.yesNoShare;
-  const config: KnightsSourcesConfig = {
-    enabled: checked.config.enabled,
-    sfwRate: checked.config.sfwRate,
-    nsfwRate: checked.config.nsfwRate,
-    ...(maxOpen === undefined ? {} : { maxOpen }),
-    ...(yesNoShare === undefined ? {} : { yesNoShare }),
-    ...(game === undefined ? {} : { game }),
-  };
-  return writeSourcesConfig(before, config, moderatorId);
+  return updateSourcesConfig(moderatorId, (before) => {
+    const { maxOpen, game } = before.config;
+    const yesNoShare = checked.clearYesNoShare
+      ? undefined
+      : checked.config.yesNoShare ?? before.config.yesNoShare;
+    return {
+      ok: true,
+      config: {
+        enabled: checked.config.enabled,
+        sfwRate: checked.config.sfwRate,
+        nsfwRate: checked.config.nsfwRate,
+        ...(maxOpen === undefined ? {} : { maxOpen }),
+        ...(yesNoShare === undefined ? {} : { yesNoShare }),
+        ...(game === undefined ? {} : { game }),
+      },
+    };
+  });
 }
 
 /** A field set to a value stores it; `null` removes it, so Knights falls back to its environment; a field left out is untouched. */
@@ -178,28 +219,25 @@ export async function saveGameSettings(
   const checked = validateGameSettingsInput(input);
   if (!checked.ok) return checked;
 
-  const before = await getSourcesSettings();
-  const game: Record<string, number | boolean> = { ...before.config.game };
-  for (const [key, value] of Object.entries(checked.changes)) {
-    if (value === null) delete game[key];
-    else game[key] = value;
-  }
-  const next = game as KnightsGameSettings;
-  const flipped = KILL_SWITCHES.filter((key) => next[key] !== before.config.game?.[key]);
-  if (flipped.length && !killSwitchesConfirmed)
-    return {
-      ok: false,
-      error: `Confirm the change to ${flipped
-        .map((key) => KNIGHTS_GAME_SETTINGS[key].label)
-        .join(' and ')} before saving.`,
-    };
+  return updateSourcesConfig(moderatorId, (before) => {
+    const game: Record<string, number | boolean> = { ...before.config.game };
+    for (const [key, value] of Object.entries(checked.changes)) {
+      if (value === null) delete game[key];
+      else game[key] = value;
+    }
+    const next = game as KnightsGameSettings;
+    const flipped = KILL_SWITCHES.filter((key) => next[key] !== before.config.game?.[key]);
+    if (flipped.length && !killSwitchesConfirmed)
+      return {
+        ok: false,
+        error: `Confirm the change to ${flipped
+          .map((key) => KNIGHTS_GAME_SETTINGS[key].label)
+          .join(' and ')} before saving.`,
+      };
 
-  const { game: _previous, ...rest } = before.config;
-  const config: KnightsSourcesConfig = {
-    ...rest,
-    ...(Object.keys(next).length ? { game: next } : {}),
-  };
-  return writeSourcesConfig(before, config, moderatorId);
+    const { game: _previous, ...rest } = before.config;
+    return { ok: true, config: { ...rest, ...(Object.keys(next).length ? { game: next } : {}) } };
+  });
 }
 
 function parseChange(activity: string): Pick<SourcesChange, 'before' | 'after'> | null {

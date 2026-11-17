@@ -12,9 +12,11 @@ vi.setConfig({ hookTimeout: 60_000 });
 
 const KEY = REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES;
 
-const { dbHandle, redisStore } = vi.hoisted(() => ({
+const { dbHandle, redisStore, beforeSwap } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   redisStore: new Map<string, string>(),
+  // Runs inside the compare-and-set, before the compare: a write landing between the read and the write.
+  beforeSwap: { current: null as null | (() => void) },
 }));
 
 vi.mock('../../db', () => ({
@@ -32,6 +34,18 @@ vi.mock('../../redis', () => ({
     set: async (key: string, value: string) => {
       redisStore.set(key, value);
       return 'OK';
+    },
+    // The compare-and-set script: ARGV = [present ? '1' : '0', expected raw, new raw].
+    eval: async (
+      _script: string,
+      { keys, arguments: args }: { keys: string[]; arguments: string[] }
+    ) => {
+      beforeSwap.current?.();
+      const current = redisStore.get(keys[0]);
+      const matches = args[0] === '0' ? current === undefined : current === args[1];
+      if (!matches) return 0;
+      redisStore.set(keys[0], args[2]);
+      return 1;
     },
   }),
 }));
@@ -105,6 +119,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   redisStore.clear();
+  beforeSwap.current = null;
   await db.exec(
     `DELETE FROM "KnightsQueueItem"; DELETE FROM "ModActivity"; DELETE FROM "User"; DELETE FROM "Image";
      INSERT INTO "User" ("id","username") VALUES (${MOD},'mod-seven');`
@@ -388,6 +403,58 @@ describe('saveGameSettings', () => {
       game: { yesNoStretch: 2 },
     });
     expect((await audit())[0].before).toBeNull();
+  });
+});
+
+describe('concurrent saves', () => {
+  it('does not overwrite a write that lands between the read and the write, and applies on top of it', async () => {
+    redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }));
+    let raced = false;
+    beforeSwap.current = () => {
+      if (raced) return;
+      raced = true;
+      redisStore.set(
+        KEY,
+        JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3, game: { shopDisabled: true } })
+      );
+    };
+    expect(await saveGameSettings({ yesNoStretch: 2 }, MOD)).toEqual({ ok: true, changed: true });
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({ shopDisabled: true, yesNoStretch: 2 });
+    const rows = await activity();
+    expect(rows).toHaveLength(1);
+    expect(
+      JSON.parse(rows[0].activity.slice(SOURCES_AUDIT_ACTIVITY.length + 1)).before.game
+    ).toEqual({
+      shopDisabled: true,
+    });
+  });
+
+  it('treats a key created between the read and the write as a conflict', async () => {
+    let raced = false;
+    beforeSwap.current = () => {
+      if (raced) return;
+      raced = true;
+      redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 0.2, nsfwRate: 0.1 }));
+    };
+    await saveGameSettings({ yesNoStretch: 2 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      enabled: true,
+      sfwRate: 0.2,
+      nsfwRate: 0.1,
+      game: { yesNoStretch: 2 },
+    });
+  });
+
+  it('gives up with a clear error when every attempt conflicts, leaving the other write in place', async () => {
+    let n = 0;
+    beforeSwap.current = () => {
+      n++;
+      redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: n / 100 }));
+    };
+    const result = await saveSourcesConfig({ enabled: false, sfwRate: 0.5, nsfwRate: 0.5 }, MOD);
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/at the same time/) });
+    expect(JSON.parse(redisStore.get(KEY)!).enabled).toBe(true);
+    expect(await activity()).toEqual([]);
   });
 });
 

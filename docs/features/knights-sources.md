@@ -46,14 +46,21 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 
 - a saved value wins over the environment;
 - a read that fails or takes over 400 ms keeps the last value read;
-- before any good read, the environment (then the built-in default) applies.
+- before any good read, the environment (then the built-in default) applies;
+- a read that succeeds but finds the key absent, empty or unreadable (not JSON, not an object) counts as nothing saved: every
+  setting falls back to the environment at once. Only a failed read keeps the last value.
 
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
 The moderator Config page (`/knights-of-new-order/config`, "Game settings") groups them as Skill checks, Yes/no, Acolytes, and Shop
-and conversion. Each field says whether it is saved there or on the Knights default, and a saved field has a "Use the Knights
-default" checkbox that removes it. The form posts only the fields the moderator changed; `saveGameSettings`
+and conversion. Each number field says whether it is saved there or on the Knights default, and a saved one has a "Use the
+Knights default" checkbox that removes it. Each toggle is a three-way choice, "Knights default (env)" / On / Off, starting on
+"Knights default" when nothing is saved (the moderator app cannot see the Knights environment); On or Off saves that value
+explicitly, and "Knights default (env)" removes it. The form posts only the fields the moderator changed; `saveGameSettings`
 (`apps/moderator/src/lib/server/knights/sources-config.service.ts`) applies them over what is stored, carries every other field over
 (switch, rates, `maxOpen`, `yesNoShare`, other game settings), refuses an out-of-range or mistyped value without coercing it, and
-writes and audits through the same path as the sources form (`ModActivity`, `knights.sources.update`, with before and after). A
+writes and audits through the same path as the sources form (`ModActivity`, `knights.sources.update`, with before and after).
+The moderator app is the only writer of the key. Every save is a compare-and-set: it writes only if the key still holds what it
+read, otherwise it reads again and reapplies its change, up to three times, then refuses with "Another moderator saved the config
+at the same time", so two saves never overwrite each other. A
 change to either kill switch is refused unless confirmed; the page asks before saving one.
