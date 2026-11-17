@@ -25,6 +25,10 @@
   let enabled = $state(seed.config.enabled);
   let sfwPercent = $state(seed.stored ? rateToPercent(seed.config.sfwRate) : '');
   let nsfwPercent = $state(seed.stored ? rateToPercent(seed.config.nsfwRate) : '');
+  // Blank until a share is saved: Knights then uses its environment default.
+  let yesNoPercent = $state(
+    seed.config.yesNoShare === undefined ? '' : rateToPercent(seed.config.yesNoShare)
+  );
   let confirming = $state(false);
 
   const form = new FormState({
@@ -39,9 +43,12 @@
   // Turning the sources on starts filling the queue, so it is the one save that asks first.
   const startsFilling = $derived(enabled && !(settings.stored && settings.config.enabled));
 
-  const describe = (config: { enabled: boolean; sfwRate: number; nsfwRate: number } | null) =>
+  const describe = (
+    config: { enabled: boolean; sfwRate: number; nsfwRate: number; yesNoShare?: number } | null
+  ) =>
     config
-      ? `${config.enabled ? 'on' : 'off'}, SFW ${rateToPercent(config.sfwRate)}%, NSFW ${rateToPercent(config.nsfwRate)}%`
+      ? `${config.enabled ? 'on' : 'off'}, SFW ${rateToPercent(config.sfwRate)}%, NSFW ${rateToPercent(config.nsfwRate)}%` +
+        (config.yesNoShare === undefined ? '' : `, yes/no ${rateToPercent(config.yesNoShare)}%`)
       : 'not set';
 </script>
 
@@ -96,6 +103,23 @@
     <p class="-mt-2 text-xs text-dark-2">
       Share of scanned images that are enqueued, 0 to 100. Both rates are saved with the switch.
     </p>
+
+    <div class="grid gap-1.5">
+      <Label for="sources-yesno">Yes/no questions share (%)</Label>
+      <Input
+        id="sources-yesno"
+        name="yesNoPercent"
+        type="text"
+        inputmode="decimal"
+        autocomplete="off"
+        placeholder="Knights default"
+        bind:value={() => yesNoPercent, (value) => ((yesNoPercent = value), (confirming = false))}
+      />
+      <p class="text-xs text-dark-2">
+        0 stops serving yes/no questions; any other value serves them on the usual cadence. Takes
+        effect in Knights within a minute. Leave blank to keep the current value.
+      </p>
+    </div>
 
     {#if form.error}<ErrorAlert message={form.error} />{/if}
 

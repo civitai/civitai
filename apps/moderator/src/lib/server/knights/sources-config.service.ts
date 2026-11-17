@@ -47,33 +47,46 @@ export function validateSourcesInput(
   if (!isRate(value.sfwRate)) return { ok: false, error: 'The SFW rate must be between 0 and 1.' };
   if (!isRate(value.nsfwRate))
     return { ok: false, error: 'The NSFW rate must be between 0 and 1.' };
+  if (value.yesNoShare !== undefined && !isRate(value.yesNoShare))
+    return { ok: false, error: 'The yes/no share must be between 0 and 1.' };
   return {
     ok: true,
-    config: { enabled: value.enabled, sfwRate: value.sfwRate, nsfwRate: value.nsfwRate },
+    config: {
+      enabled: value.enabled,
+      sfwRate: value.sfwRate,
+      nsfwRate: value.nsfwRate,
+      ...(value.yesNoShare === undefined ? {} : { yesNoShare: value.yesNoShare }),
+    },
   };
 }
 
 const same = (a: KnightsSourcesConfig, b: KnightsSourcesConfig) =>
-  a.enabled === b.enabled && a.sfwRate === b.sfwRate && a.nsfwRate === b.nsfwRate;
+  a.enabled === b.enabled &&
+  a.sfwRate === b.sfwRate &&
+  a.nsfwRate === b.nsfwRate &&
+  a.yesNoShare === b.yesNoShare;
 
 /**
- * All three fields are written, so a later change to the reader's defaults cannot move a saved rate. A stored
- * `maxOpen` is carried over: the page does not edit it, and dropping it would reset the intake cap to the default.
+ * The switch and both rates are always written, so a later change to the reader's defaults cannot move a saved rate. A stored
+ * `maxOpen` is carried over (the page does not edit it, and dropping it would reset the intake cap to the default), and so is a
+ * stored `yesNoShare` when the input leaves it out, so saving the rates never turns yes/no questions back on.
  */
 export async function saveSourcesConfig(input: unknown, moderatorId: number): Promise<SaveOutcome> {
   const checked = validateSourcesInput(input);
   if (!checked.ok) return checked;
 
   const before = await getSourcesSettings();
-  if (before.stored && same(before.config, checked.config)) return { ok: true, changed: false };
-
   const { maxOpen } = before.config;
+  const yesNoShare = checked.config.yesNoShare ?? before.config.yesNoShare;
   const config: KnightsSourcesConfig = {
     enabled: checked.config.enabled,
     sfwRate: checked.config.sfwRate,
     nsfwRate: checked.config.nsfwRate,
     ...(maxOpen === undefined ? {} : { maxOpen }),
+    ...(yesNoShare === undefined ? {} : { yesNoShare }),
   };
+  if (before.stored && same(before.config, config)) return { ok: true, changed: false };
+
   await getSysRedis().set(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES, JSON.stringify(config));
   await recordModActivity({
     userId: moderatorId,
