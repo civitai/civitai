@@ -8,10 +8,14 @@ import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 
 /**
- * Authoritative App-Blocks catalog maturity clamp (Phase 3; GA-safety
- * follow-up to PR #2670). Catalog-generic: the SINGLE shared clamp for BOTH
- * block catalog endpoints (/api/v1/blocks/models AND /api/v1/blocks/images) —
- * there is no per-type duplicate. Kept in a server-import-free module so the
+ * App-Blocks catalog DOMAIN clamp (Phase 3; GA-safety follow-up to PR #2670):
+ * the token's color-domain ceiling, with no regard to the viewer's own level.
+ * `/api/v1/blocks/images` no longer serves at this level: it serves at the
+ * viewer's level held to this cap (`resolveCatalogViewerBrowsingLevel`,
+ * `block-catalog-viewer-level.ts`), which reads this function for the cap.
+ * The other block catalog routes (models, collections, generation-resources,
+ * resource-intent, tools) still clamp here, to the domain alone. Kept in a
+ * server-import-free module so the
  * security-critical clamp can be unit-tested without dragging the Prisma
  * client (both endpoints statically import a search service → eager Prisma
  * load).
