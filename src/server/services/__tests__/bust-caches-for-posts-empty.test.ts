@@ -84,7 +84,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
 }));
 
-const { bustCachesForPosts } = await import('../post.service');
+const { bustCachesForPosts, refreshShowcasesForUserModels } = await import('../post.service');
 
 describe('bustCachesForPosts', () => {
   beforeEach(() => {
@@ -142,5 +142,35 @@ describe('bustCachesForPosts and the version showcase', () => {
 
     expect(refreshShowcase).not.toHaveBeenCalled();
     expect(queueModels).not.toHaveBeenCalled();
+  });
+});
+
+describe('refreshShowcasesForUserModels', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findMany.mockResolvedValue([]);
+  });
+
+  it("refreshes and queues all of an account's models, in bounded chunks", async () => {
+    const rows = Array.from({ length: 1200 }, (_, i) => ({
+      modelId: i + 1,
+      modelVersionId: (i + 1) * 10,
+    }));
+    mockQueryRaw.mockResolvedValueOnce(rows as never);
+
+    await refreshShowcasesForUserModels(42);
+
+    const queued = queueModels.mock.calls.map(([items]) => items.length);
+    expect(queued).toEqual([500, 500, 200]);
+    expect(refreshShowcase.mock.calls.map(([ids]) => ids.length)).toEqual([500, 500, 200]);
+  });
+
+  it('queues nothing for an account with no models', async () => {
+    mockQueryRaw.mockResolvedValueOnce([] as never);
+
+    await refreshShowcasesForUserModels(42);
+
+    expect(queueModels).not.toHaveBeenCalled();
+    expect(refreshShowcase).not.toHaveBeenCalled();
   });
 });

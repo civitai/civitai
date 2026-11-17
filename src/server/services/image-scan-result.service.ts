@@ -1,5 +1,5 @@
 import type { MediaRatingOutput } from '@civitai/orchestration-client';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
@@ -10,6 +10,7 @@ import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { handleLogError } from '~/server/utils/errorHandling';
 import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
   readJobFailureReason,
@@ -234,6 +235,7 @@ export async function processImageScanWorkflow({
         'webhooks'
       );
       await refreshProfilePicturesForImagesLazy([imageId]);
+      await bustPostOfImage(imageId);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
@@ -307,6 +309,8 @@ export async function processImageScanWorkflow({
       },
       'webhooks'
     );
+    // The showcase bust runs late in the side effects; a step before it may be what threw.
+    if (image.postId) await bustPostCaches(image.postId);
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook
@@ -455,4 +459,27 @@ export async function blockImageFromRating({
         THEN "blockedFor" ELSE ${blockedReason ?? null} END
     WHERE id = ${imageId}
   `;
+}
+
+/** Never throws: the block it follows has committed, and the rest of the scan failed. */
+async function bustPostOfImage(imageId: number) {
+  try {
+    const row = await dbRead.image.findUnique({
+      where: { id: imageId },
+      select: { postId: true },
+    });
+    if (row?.postId) await bustPostCaches(row.postId);
+  } catch (error) {
+    handleLogError(error as Error);
+  }
+}
+
+/** Never throws. Call-site import: post.service loads most of the server, which this handler's tests stub. */
+async function bustPostCaches(postId: number) {
+  try {
+    const { bustCachesForPosts } = await import('~/server/services/post.service');
+    await bustCachesForPosts(postId);
+  } catch (error) {
+    handleLogError(error as Error);
+  }
 }

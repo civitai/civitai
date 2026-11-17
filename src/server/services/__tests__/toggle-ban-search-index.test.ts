@@ -81,6 +81,14 @@ vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) =>
   syncReviewsOfMovedPosts,
 }));
 
+const { refreshShowcases } = vi.hoisted(() => ({
+  refreshShowcases: vi.fn(async (_userId: number) => undefined),
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  refreshShowcasesForUserModels: refreshShowcases,
+}));
+
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
@@ -330,6 +338,21 @@ describe('toggleBan -> removeMedia', () => {
     expect(moderatedBlocks()).toBe(n);
   });
 
+  it("requeues the account's own models after the media block, and not without one", async () => {
+    await ban('Harassment', true);
+    expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
+
+    refreshShowcases.mockClear();
+    await ban('Harassment', false);
+    expect(refreshShowcases).not.toHaveBeenCalled();
+  });
+
+  it('finishes the ban when the model requeue fails', async () => {
+    refreshShowcases.mockRejectedValueOnce(new Error('redis down'));
+    await expect(ban('Harassment', true)).resolves.toBeDefined();
+    expect(moderatedBlocks()).toBe(1);
+  });
+
   // 🔴 Do not delete as redundant with the cases above: `softDeleteUser` applies its own CSAM
   // block right after `toggleBan`, so a Moderated block first is a wasted write over the whole
   // library. It skips it with `mediaBlockedByCaller`, which no request input can set.
@@ -342,6 +365,7 @@ describe('toggleBan -> removeMedia', () => {
       imageUpdateMany.mock.calls.some(([args]) => args?.data?.blockedFor === 'CSAM'),
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
+    expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
   });
 });
 

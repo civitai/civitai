@@ -4,7 +4,7 @@ import {
   onStorySparkPostsHidden,
   onStorySparkPostsRestored,
 } from '~/server/events/points/hooks';
-import { uniq } from 'lodash-es';
+import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -1860,30 +1860,57 @@ export async function bustCachesForPosts(postIds: number | number[]) {
     .map((x) => x.modelVersionId as number);
   if (!showcaseVersionIds.length) return;
 
-  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
-  // .com cover, which only the level computation re-checks.
   const showcaseModelIds = [
     ...new Set(
       results.filter((x) => x.isShowcase && x.modelId != null).map((x) => x.modelId as number)
     ),
   ];
-  await refreshSfwFaceLevels(showcaseModelIds);
+  await refreshModelShowcases(showcaseVersionIds, showcaseModelIds);
+}
+
+/**
+ * After every image of an account is blocked: the showcases and search documents of the models it
+ * owns. Bounded by that account's own models and versions, in chunks of `SHOWCASE_CHUNK`.
+ */
+export async function refreshShowcasesForUserModels(userId: number) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+    SELECT mv.id AS "modelVersionId", m.id AS "modelId"
+    FROM "Model" m
+    JOIN "ModelVersion" mv ON mv."modelId" = m.id
+    WHERE m."userId" = ${userId}
+  `;
+  if (!rows.length) return;
+  await refreshModelShowcases(
+    rows.map((r) => r.modelVersionId),
+    uniq(rows.map((r) => r.modelId))
+  );
+}
+
+const SHOWCASE_CHUNK = 500;
+
+async function refreshModelShowcases(versionIds: number[], modelIds: number[]) {
+  // A creator image that stops qualifying (deleted, blocked, unpublished) may be a mature model's
+  // .com cover, which only the level computation re-checks.
+  await refreshSfwFaceLevels(modelIds);
 
   // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss
   // path) routes to primary during the replication window. Then refresh
   // instead of bust — refresh actively repopulates from primary, so a
   // concurrent reader can't poison the cache with `images: []` during the
   // bust debounce window.
-  await preventReplicationLagBatch('modelVersion', showcaseVersionIds);
-  await imagesForModelVersionsCache.refresh(showcaseVersionIds);
+  for (const batch of chunk(versionIds, SHOWCASE_CHUNK)) {
+    await preventReplicationLagBatch('modelVersion', batch);
+    await imagesForModelVersionsCache.refresh(batch);
+  }
 
   // The models sync re-picks a model only when `Model.updatedAt` moves, so a showcase image that
   // stops qualifying would stay in its search document. Call-site import: models.search-index
   // imports image.service, which imports this module.
   const { modelsSearchIndex } = await import('~/server/search-index/models.search-index');
-  await modelsSearchIndex.queueUpdate(
-    showcaseModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-  );
+  for (const batch of chunk(modelIds, SHOWCASE_CHUNK))
+    await modelsSearchIndex.queueUpdate(
+      batch.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {

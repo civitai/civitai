@@ -1636,6 +1636,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
   // block's scope are the same set, which is what makes the wide form correct in this one place.
   await clearAccountDeletionImageMarkers({ userId: id });
   await refreshProfilePicturesForUsers([id]);
+  await refreshOwnModelShowcases(id);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -2896,6 +2897,13 @@ export async function blockBannedUserImages(userId: number) {
       "updatedAt" = NOW()
     WHERE "userId" = ${userId} AND ingestion <> 'Blocked'::"ImageIngestionStatus"
   `;
+  await refreshOwnModelShowcases(userId);
+}
+
+/** Never throws: the block has committed. Call-site import: post.service imports this module. */
+async function refreshOwnModelShowcases(userId: number) {
+  const { refreshShowcasesForUserModels } = await import('~/server/services/post.service');
+  await refreshShowcasesForUserModels(userId).catch(handleLogError);
 }
 
 export const toggleBan = async ({
