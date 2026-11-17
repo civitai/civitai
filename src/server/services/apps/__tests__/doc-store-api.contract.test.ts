@@ -4283,3 +4283,47 @@ describe('per-app refusal attribution: which limit, for which app', () => {
     });
   });
 });
+
+describe('orchestrator media links in shared data are refused in every moderation mode', () => {
+  const BLOB =
+    'https://orchestration.civitai.com/v2/consumer/blobs/ABC123DEF.png?sig=s1&exp=2099-01-01';
+  const PUBLIC = 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc-123/width=450/1.jpeg';
+
+  async function put(data: Record<string, unknown>, key = 'p1') {
+    const { A } = freshApps();
+    const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+    return call({ token: t, method: 'PUT', path: `/posts/${key}`, body: { data } });
+  }
+
+  it.each(['off', 'shadow', 'enforce'] as const)(
+    'a consumer-blob url is refused (%s)',
+    async (mode) => {
+      h.moderationMode = mode;
+      const r = await put({ caption: 'mine', img: BLOB });
+      expect(r.status).toBe(422);
+      expect(r.body).toMatchObject({ code: 'content_rejected' });
+      expect((r.body as { details: unknown }).details).toEqual({
+        category: 'link',
+        field: 'data',
+        fieldKind: 'value',
+      });
+      expect(JSON.stringify(r.body)).not.toContain('ABC123DEF');
+    }
+  );
+
+  it('a percent-encoded orchestrator link is refused', async () => {
+    h.moderationMode = 'off';
+    const r = await put({ img: encodeURIComponent(BLOB) });
+    expect(r.status).toBe(422);
+  });
+
+  it('a public image url saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ img: PUBLIC })).status).toBe(200);
+  });
+
+  it('plain text saves', async () => {
+    h.moderationMode = 'off';
+    expect((await put({ caption: 'a cat on a windowsill' })).status).toBe(200);
+  });
+});

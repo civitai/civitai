@@ -116,6 +116,7 @@ import {
   type SharedDataSurface,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
@@ -894,6 +895,33 @@ const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<str
 type AfterCommit = (committedKey?: string) => void;
 const nothingAfterCommit: AfterCommit = () => undefined;
 
+function assertNoPrivateMediaUrl(
+  access: StorageAccess,
+  input: { data?: Record<string, unknown>; key?: string }
+) {
+  const field =
+    input.data !== undefined && containsPrivateMediaUrl(JSON.stringify(input.data))
+      ? 'data'
+      : input.key !== undefined && containsPrivateMediaUrl(input.key)
+      ? 'key'
+      : null;
+  if (!field) return;
+  logToAxiom(
+    {
+      name: 'app-blocks-doc-store-private-media-url',
+      type: 'info',
+      appBlockId: access.ctx.appId,
+      field,
+    },
+    'block-audit'
+  );
+  throw new DocStoreError('content_rejected', 'content was rejected by moderation', {
+    category: 'link',
+    field,
+    fieldKind: 'value',
+  });
+}
+
 /**
  * Moderation of one shared write — every string leaf and object key of `data` and, when the app
  * chose it, the document key — in the app's shared-data moderation mode
@@ -921,6 +949,8 @@ async function moderate(
   input: { data?: Record<string, unknown>; key?: string },
   resolvedMode?: SharedDataModerationMode
 ): Promise<AfterCommit> {
+  // Runs whatever the app's moderation mode, so `off` and `shadow` apps are covered too.
+  assertNoPrivateMediaUrl(access, input);
   const mode = resolvedMode ?? (await resolveSharedDataModerationMode(access.ctx.appId));
   if (mode === 'off') return nothingAfterCommit;
   // Moderators are exempt from the pattern list here exactly as on the legacy surface.
