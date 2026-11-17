@@ -37,10 +37,10 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
  * bare 404 (never 403), so the endpoint is not a private-collection existence
  * oracle. The permission decision reuses `getUserCollectionPermissionsById`.
  *
- * MATURITY: media items are clamped to the token's `maxBrowsingLevel` ceiling
- * (region-narrowed) by threading the clamped `browsingLevel` into
- * `getCollectionItemsByCollectionId` — the identical authority surface
- * /api/v1/blocks/images uses. Only image/video (playable) items are returned;
+ * MATURITY: media items are clamped to the VIEWER's level held to the token's
+ * domain ceiling (`resolveCatalogViewerBrowsingLevel`, region-narrowed) by
+ * threading the clamped `browsingLevel` into `getCollectionItemsByCollectionId`
+ * — the same clamp /api/v1/blocks/images uses. Only image/video (playable) items are returned;
  * model/post/article items are omitted.
  *
  * Response: `{ collection: { id, name, description, curator:{ userId, username },
