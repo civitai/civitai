@@ -5,7 +5,8 @@
 // @clickhouse/client, which is this same HTTP interface with the same output format, so the wire is
 // reproduced exactly (the query text Node's client sends, JSONEachRow with
 // output_format_json_quote_64bit_integers=0, the same per-query settings) with no dependency to
-// vet or keep tidy.
+// vet or keep tidy. One setting is this client's own: cancel_http_readonly_queries_on_client_close=1
+// (Query says why).
 //
 // Read-only by construction: every query is a GET, and ClickHouse runs a GET with `readonly` set
 // (a statement that writes or changes the schema is refused, code 164), whatever the account's
@@ -28,11 +29,11 @@ import (
 
 // Config is where and how to read.
 type Config struct {
-	// URL is CLICKHOUSE_HOST, the Node app's variable: the HTTP(S) endpoint, e.g.
-	// https://host:8443. A path names the database, as @clickhouse/client reads it; query
-	// parameters in it are sent with every query.
+	// URL is FEED_GO_CLICKHOUSE_HOST: the HTTP(S) endpoint, e.g. https://host:8443. A path names the
+	// database, as @clickhouse/client reads it; query parameters in it are sent with every query.
 	URL string
-	// Username and Password are CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD (HTTP basic auth).
+	// Username and Password are FEED_GO_CLICKHOUSE_USERNAME / FEED_GO_CLICKHOUSE_PASSWORD (HTTP basic
+	// auth): a dedicated SELECT-only login.
 	Username, Password string
 	// MaxInFlight caps the reads one process sends at once (at least 1). A read past it is refused
 	// at once with ErrBusy: the caller falls back rather than queue behind a slow server.
@@ -84,7 +85,7 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("clickhouse url: want an absolute http(s) URL")
 	}
 	if u.User != nil {
-		return nil, errors.New("clickhouse url: credentials belong in CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD")
+		return nil, errors.New("clickhouse url: credentials belong in FEED_GO_CLICKHOUSE_USERNAME / FEED_GO_CLICKHOUSE_PASSWORD")
 	}
 	n := cfg.MaxInFlight
 	if n < 1 {
@@ -127,6 +128,16 @@ func (c *Client) Query(ctx context.Context, sql string, settings []Setting) ([]m
 	}
 	u.Path = "/"
 	q.Set("output_format_json_quote_64bit_integers", "0")
+	// Without it ClickHouse runs a read to its end after the client has gone: a read this service
+	// abandoned (its context ended, so the connection is closed; the request fell back to Node, which
+	// reads again) would keep holding one of the server's query slots and its CPU for nothing, up to
+	// max_execution_time or, under the retry settings, with no cap at all. With it the server cancels
+	// a read-only HTTP query once it sees the connection closed. Read-only mode 2, which a GET runs
+	// under, allows setting it. Node's client does not send it because Node never closes this read
+	// early: its late answer still fills the cache. Here only a write-back populate fills the cache,
+	// and that one runs detached from the request (hydrate.populateDetached), so its connection
+	// closes only at its own bound.
+	q.Set("cancel_http_readonly_queries_on_client_close", "1")
 	for _, s := range settings {
 		q.Set(s.Name, s.Value)
 	}
@@ -148,7 +159,7 @@ func (c *Client) Query(ctx context.Context, sql string, settings []Setting) ([]m
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		return nil, serverError(resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code"), string(body))
 	}
-	return decodeRows(resp.Body)
+	return decodeRows(resp.Body, resp.Header.Get("X-ClickHouse-Exception-Tag"))
 }
 
 // redact drops the request URL (it carries the query) from a transport error.
@@ -196,19 +207,38 @@ func exceptionText(s string) string {
 // maxRowLine bounds one JSONEachRow line.
 const maxRowLine = 1 << 20
 
-// decodeRows reads JSONEachRow: one JSON object per line. A line that is not an object is the
-// exception ClickHouse writes into a response it had already started (a 200 whose query then
-// failed), and is returned as a ServerError.
-func decodeRows(r io.Reader) ([]map[string]any, error) {
+// exceptionMarker opens (and from 25.11 closes) the block ClickHouse writes into a response it had
+// already started when the query then fails and the output format did not write the exception
+// itself (WriteBufferFromHTTPServerResponse::cancelWithException).
+const exceptionMarker = "__exception__"
+
+// decodeRows reads JSONEachRow: one JSON object per line. A failure ClickHouse writes into a response
+// it had already started (a 200 whose query then failed) is returned as a ServerError, in each shape
+// it is written:
+//   - the format's own exception row, {"exception": "Code: N. ..."} (http_write_exception_in_output_format,
+//     on by default, JSONEachRow supports it);
+//   - the marker block. Through 25.10: "__exception__\r\n<message>\n". From 25.11:
+//     "\r\n__exception__\r\n<tag>\r\n<message>\n<length> <tag>\r\n__exception__\r\n", the tag 16
+//     random letters, also sent as the X-ClickHouse-Exception-Tag header (tag, "" when absent). A tag
+//     on the marker's own line is read the same way;
+//   - a bare "Code: N. ..." line.
+//
+// After the marker the server breaks the chunked stream, so the read error that follows is expected
+// and ignored: the block is the answer.
+func decodeRows(r io.Reader, tag string) ([]map[string]any, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), maxRowLine)
 	var rows []map[string]any
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
-		// An empty line, or the tag line ClickHouse puts before an exception it writes mid-stream
-		// (the exception text follows it).
-		if len(line) == 0 || bytes.HasPrefix(line, []byte("__exception__")) {
+		if len(line) == 0 {
 			continue
+		}
+		if rest, ok := bytes.CutPrefix(line, []byte(exceptionMarker)); ok {
+			if t := strings.TrimSpace(string(rest)); tag == "" && t != "" {
+				tag = t
+			}
+			return nil, exceptionBlock(sc, tag)
 		}
 		if line[0] != '{' {
 			return nil, serverError(http.StatusOK, "", exceptionText(string(line)))
@@ -232,4 +262,30 @@ func decodeRows(r io.Reader) ([]map[string]any, error) {
 		return nil, fmt.Errorf("clickhouse: response: %w", err)
 	}
 	return rows, nil
+}
+
+// exceptionBlock reads the rest of a marker block (the lines after the opening marker) as the
+// ServerError it reports: the message is the text from its "Code: " on, without the tag line and the
+// closing "<length> <tag>" / marker lines.
+func exceptionBlock(sc *bufio.Scanner, tag string) *ServerError {
+	var msg []string
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == exceptionMarker {
+			break
+		}
+		if line == "" || (tag != "" && (line == tag || strings.HasSuffix(line, " "+tag))) {
+			continue
+		}
+		if len(msg) == 0 && !strings.Contains(line, "Code: ") {
+			// Before the message: the tag line, when the header did not name it. Taken as the tag so
+			// the closing "<length> <tag>" line is dropped too.
+			if tag == "" && !strings.ContainsRune(line, ' ') {
+				tag = line
+			}
+			continue
+		}
+		msg = append(msg, line)
+	}
+	return serverError(http.StatusOK, "", exceptionText(strings.Join(msg, "\n")))
 }

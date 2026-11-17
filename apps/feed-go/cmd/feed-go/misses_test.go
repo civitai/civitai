@@ -2,12 +2,18 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
@@ -98,5 +104,65 @@ func TestMetricsReaderIgnoresTheAppLogin(t *testing.T) {
 	own := map[string]string{"FEED_GO_CLICKHOUSE_HOST": "https://ch.example.test:8443", "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader", "FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw"}
 	if r, err := metricsReader(loadConfig(t, own)); r == nil || err != nil {
 		t.Fatalf("feed-go's variables = %v, %v; want a reader", r, err)
+	}
+}
+
+// What run() wires (attachMetricsReader over config.Load): with only the app's ClickHouse variables
+// the miss computation gets no reader (metric-hash misses then fall back `metrics-miss`,
+// hydrate.TestMetricsMissOnlyTheMisses); with feed-go's own, its reader reads feed-go's endpoint with
+// feed-go's login and never the app's, under a bound held below Node's 3 s budget (hydrate's
+// metricsTimeout) even when FEED_GO_CLICKHOUSE_TIMEOUT_MS and FEED_GO_REQUEST_BUDGET_MS are far above
+// it.
+func TestAttachMetricsReader(t *testing.T) {
+	type seen struct{ user, pass string }
+	var mu sync.Mutex
+	server := func(hits *[]seen) *httptest.Server {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			u, p, _ := r.BasicAuth()
+			mu.Lock()
+			*hits = append(*hits, seen{u, p})
+			mu.Unlock()
+			_, _ = w.Write([]byte("{\"entityId\":32,\"metricType\":\"Like\",\"value\":4}\n"))
+		}))
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	var appHits, ownHits []seen
+	appSrv, ownSrv := server(&appHits), server(&ownHits)
+	app := map[string]string{"CLICKHOUSE_HOST": appSrv.URL, "CLICKHOUSE_USERNAME": "app-writer", "CLICKHOUSE_PASSWORD": "app-pw"}
+	compute := func(cfg *config.Config) *hydrate.MissCompute {
+		c := missCompute(cfg, &testkit.DB{}, nil, &feed.BlockedTags{Cache: testkit.NewRedis()}, nil)
+		if c == nil {
+			t.Fatal("no miss computation")
+		}
+		return c
+	}
+
+	cfg := loadConfig(t, app)
+	c := compute(cfg)
+	if err := attachMetricsReader(cfg, c); err != nil || c.ClickHouse != nil {
+		t.Fatalf("the app's variables only: reader %v, %v; want none", c.ClickHouse, err)
+	}
+
+	env := map[string]string{"FEED_GO_CLICKHOUSE_HOST": ownSrv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader",
+		"FEED_GO_CLICKHOUSE_PASSWORD": "feed-go-pw", "FEED_GO_CLICKHOUSE_TIMEOUT_MS": "10000", "FEED_GO_REQUEST_BUDGET_MS": "60000"}
+	for k, v := range app {
+		env[k] = v
+	}
+	cfg = loadConfig(t, env)
+	c = compute(cfg)
+	if err := attachMetricsReader(cfg, c); err != nil || c.ClickHouse == nil {
+		t.Fatalf("feed-go's variables: reader %v, %v; want one", c.ClickHouse, err)
+	}
+	if c.MetricsTimeout != 10*time.Second {
+		t.Fatalf("MetricsTimeout %v, want FEED_GO_CLICKHOUSE_TIMEOUT_MS (10s; the lookup holds it under Node's budget)", c.MetricsTimeout)
+	}
+	if _, err := c.ClickHouse.Query(context.Background(), "SELECT 1", nil); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(appHits) != 0 || !reflect.DeepEqual(ownHits, []seen{{"feed-go-reader", "feed-go-pw"}}) {
+		t.Fatalf("app endpoint hit %v, own endpoint hit %v; want only the own endpoint, with feed-go's login", appHits, ownHits)
 	}
 }

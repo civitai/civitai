@@ -183,3 +183,32 @@ func ClickHouseExec(t *testing.T, sql string) {
 		t.Fatalf("clickhouse exec %q: %d %s", sql, resp.StatusCode, body)
 	}
 }
+
+// ClickHouseRaw sends sql as a GET with the given settings, as the read client sends it, and returns
+// the raw response: its status, headers, and as much of its body as could be read (with the read
+// error, e.g. the broken chunked stream after a mid-response exception).
+func ClickHouseRaw(t *testing.T, sql string, settings []chread.Setting) (int, http.Header, []byte, error) {
+	t.Helper()
+	u, err := url.Parse(env(t, EnvClickHouseURL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	q.Set("query", chread.WireQuery(sql))
+	for _, s := range settings {
+		q.Set(s.Name, s.Value)
+	}
+	u.RawQuery = q.Encode()
+	req, err := http.NewRequestWithContext(Ctx(t), http.MethodGet, u.String(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth(env(t, EnvClickHouseUser), os.Getenv(EnvClickHousePassword))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("clickhouse get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, readErr := io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header, body, readErr
+}

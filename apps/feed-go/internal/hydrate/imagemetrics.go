@@ -113,13 +113,36 @@ func (s *Sources) metricsComputed() bool {
 	return s.Compute != nil && s.Compute.ClickHouse != nil && s.Cache != nil
 }
 
-// metricsTimeout is the bound of one metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS).
+// Node's budget for the whole read: getImageMetricsObject (src/server/services/image.service.ts)
+// bounds MetricService.fetch by CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS (3000 by default) and past it
+// answers from the cache, so a missed image is statsUnknown: true. A lookup here that ran longer
+// could answer counts, or the waiters' zeros, where Node answers "unknown". metricsTimeoutMax keeps
+// this lookup's bound under that budget whatever FEED_GO_CLICKHOUSE_TIMEOUT_MS and
+// FEED_GO_REQUEST_BUDGET_MS say, with room for what Node's budget also spends before its populate
+// (its own cache read and lock command, and with image-metrics-swr the SWR read): this bound starts
+// only after this service's cache read.
+const (
+	nodeMetricsBudget = 3000 * time.Millisecond
+	metricsTimeoutMax = nodeMetricsBudget - 500*time.Millisecond
+)
+
+// metricsTimeout is the bound of one metrics lookup: FEED_GO_CLICKHOUSE_TIMEOUT_MS (default 2 s), at
+// most metricsTimeoutMax.
 func (c *MissCompute) metricsTimeout() time.Duration {
+	d := 2 * time.Second
 	if c.MetricsTimeout > 0 {
-		return c.MetricsTimeout
+		d = c.MetricsTimeout
 	}
-	return 2 * time.Second
+	return min(d, metricsTimeoutMax)
 }
+
+// errMetricsWaitExhausted is a lookup whose ids another process holds the populate lock of and never
+// filled while it waited. Node's fetch answers those ids zeros only after 15 × 200 ms of sleeps, which
+// is all of its caller's 3 s budget (nodeMetricsBudget) spent after the budget started, so the caller
+// always times out first and Node answers statsUnknown. The page falls back instead of answering
+// zeros. (metricsTimeoutMax already ends the lookup before the wait can run out; this holds without
+// that bound too.)
+var errMetricsWaitExhausted = errors.New("metrics wait: the populate lock's holder did not fill the hash within Node's budget")
 
 // fillMetrics answers the image ids whose metric hash is absent, into out, as
 // getImageMetricsObject answers them when its MetricService read resolves: every id gets an entry
@@ -172,8 +195,9 @@ func (s *Sources) fillMetrics(ctx context.Context, miss []int, out map[int]Metri
 //     lookup fails (the request falls back) and the populate still finishes and fills the cache,
 //     as Node's un-aborted read does.
 //   - The waiters: an id locked elsewhere is re-read from the cache every 200 ms, up to 15 times; a
-//     hash that lands is taken (a `notFound` one as no counts), and one that never does is no counts,
-//     as fetch's zero fill answers it.
+//     hash that lands is taken (a `notFound` one as no counts). One that never does fails the lookup
+//     (errMetricsWaitExhausted): fetch's zero fill answers it only past its caller's budget, where
+//     Node answers statsUnknown.
 func (s *Sources) lookupImageMetrics(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
 	c := s.Compute
 	writeBack := c.WriteBack
@@ -481,7 +505,8 @@ func (s *Sources) heartbeatMetricLocks(ctx context.Context, ids []int) func() {
 }
 
 // awaitMetricHashes is fetch's waiter loop over ids another process is populating: up to 15 reads,
-// 200 ms apart, each taking the hashes that landed. A failed read fails the lookup, as Node's throws.
+// 200 ms apart, each taking the hashes that landed. A failed read fails the lookup, as Node's throws;
+// so does an id still unfilled after the last read (errMetricsWaitExhausted).
 func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]jspack.Obj) error {
 	pending := slices.Clone(ids)
 	for retry := 0; len(pending) > 0 && retry < metricLockMaxRetries; retry++ {
@@ -518,6 +543,9 @@ func (s *Sources) awaitMetricHashes(ctx context.Context, ids []int, out map[int]
 			out[id] = rec
 		}
 		pending = still
+	}
+	if len(pending) > 0 {
+		return errMetricsWaitExhausted
 	}
 	return nil
 }

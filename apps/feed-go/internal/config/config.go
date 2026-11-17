@@ -108,13 +108,18 @@ type Config struct {
 	// the frame and event-decoration miss lookups then read it as Node's do (DESIGN.md §3.1).
 	PrimaryDatabaseURL string
 
-	// The ClickHouse reader the image metric-hash misses are computed with (DESIGN.md §3.1), under the
-	// Node app's variable names: CLICKHOUSE_HOST (the HTTP(S) endpoint), CLICKHOUSE_USERNAME,
-	// CLICKHOUSE_PASSWORD. Read only with ComputeMisses, and only when the host and the username
-	// are both set (Node's shouldConnect); otherwise those misses fall back (`metrics-miss`).
+	// The ClickHouse reader the image metric-hash misses are computed with (DESIGN.md §3.1), from this
+	// service's OWN variables only: FEED_GO_CLICKHOUSE_HOST (the HTTP(S) endpoint),
+	// FEED_GO_CLICKHOUSE_USERNAME, FEED_GO_CLICKHOUSE_PASSWORD, for a dedicated SELECT-only login. Read
+	// only with ComputeMisses, and only when the host and the username are both set (Node's
+	// shouldConnect, over these names); otherwise those misses fall back (`metrics-miss`). The app's
+	// CLICKHOUSE_HOST / CLICKHOUSE_USERNAME / CLICKHOUSE_PASSWORD are deliberately never read: the
+	// shared app config carries them (the app's read-write login) into this service's environment, and
+	// they must not switch the reader on.
 	ClickHouseURL, ClickHouseUsername, ClickHousePassword string
 	// ClickHouseTimeout is FEED_GO_CLICKHOUSE_TIMEOUT_MS (default 2000): the bound of one page's
-	// metrics lookup, at most half of RequestBudget. Past it the page falls back.
+	// metrics lookup, at most half of RequestBudget. Past it the page falls back. The lookup also holds
+	// it under Node's own budget (hydrate's metricsTimeoutMax), whatever this says.
 	ClickHouseTimeout time.Duration
 	// ClickHouseMaxInFlight is FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT (default 4): the ClickHouse reads one
 	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
@@ -190,10 +195,10 @@ func Load() (*Config, error) {
 	if c.CacheWriteBack {
 		c.PrimaryDatabaseURL = os.Getenv("DATABASE_URL")
 	}
-	if c.ComputeMisses && os.Getenv("CLICKHOUSE_HOST") != "" && os.Getenv("CLICKHOUSE_USERNAME") != "" {
-		c.ClickHouseURL = os.Getenv("CLICKHOUSE_HOST")
-		c.ClickHouseUsername = os.Getenv("CLICKHOUSE_USERNAME")
-		c.ClickHousePassword = os.Getenv("CLICKHOUSE_PASSWORD")
+	if c.ComputeMisses && os.Getenv("FEED_GO_CLICKHOUSE_HOST") != "" && os.Getenv("FEED_GO_CLICKHOUSE_USERNAME") != "" {
+		c.ClickHouseURL = os.Getenv("FEED_GO_CLICKHOUSE_HOST")
+		c.ClickHouseUsername = os.Getenv("FEED_GO_CLICKHOUSE_USERNAME")
+		c.ClickHousePassword = os.Getenv("FEED_GO_CLICKHOUSE_PASSWORD")
 	}
 	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
 	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)

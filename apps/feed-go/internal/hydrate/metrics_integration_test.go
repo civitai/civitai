@@ -10,10 +10,7 @@ package hydrate
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
-	"net/url"
-	"os"
 	"reflect"
 	"strconv"
 	"testing"
@@ -145,28 +142,8 @@ func TestIntegrationClickHouseTimeoutMidResponse(t *testing.T) {
 	}
 	t.Logf("mid-response exception: %q", se.Message)
 
-	u, err := url.Parse(os.Getenv(integtest.EnvClickHouseURL))
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := u.Query()
-	q.Set("query", chread.WireQuery(sql))
-	for _, s := range settings {
-		q.Set(s.Name, s.Value)
-	}
-	u.RawQuery = q.Encode()
-	req, err := http.NewRequestWithContext(integtest.Ctx(t), http.MethodGet, u.String(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.SetBasicAuth(os.Getenv(integtest.EnvClickHouseUser), os.Getenv(integtest.EnvClickHousePassword))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, readErr := io.ReadAll(resp.Body)
+	status, header, body, readErr := integtest.ClickHouseRaw(t, sql, settings)
 	tail := body[max(0, len(body)-600):]
 	t.Logf("raw: status %d, exception-code header %q, tag header %q, %d bytes (read error %v), tail %q",
-		resp.StatusCode, resp.Header.Get("X-ClickHouse-Exception-Code"), resp.Header.Get("X-ClickHouse-Exception-Tag"), len(body), readErr, tail)
+		status, header.Get("X-ClickHouse-Exception-Code"), header.Get("X-ClickHouse-Exception-Tag"), len(body), readErr, tail)
 }

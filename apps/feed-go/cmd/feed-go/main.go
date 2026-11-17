@@ -90,6 +90,17 @@ func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
 	return c, nil
 }
 
+// attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bound,
+// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). The error is metricsReader's.
+func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute) error {
+	reader, err := metricsReader(cfg)
+	if c != nil && reader != nil {
+		c.ClickHouse = reader
+		c.MetricsTimeout = cfg.ClickHouseTimeout
+	}
+	return err
+}
+
 // primaryMaxConns bounds the primary pool, used only by the write-back miss lookups (DESIGN.md §3.1).
 const primaryMaxConns = 4
 
@@ -152,13 +163,8 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
-	reader, err := metricsReader(cfg)
-	if err != nil {
+	if err := attachMetricsReader(cfg, sources.Compute); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
-	}
-	if sources.Compute != nil && reader != nil {
-		sources.Compute.ClickHouse = reader
-		sources.Compute.MetricsTimeout = cfg.ClickHouseTimeout
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.

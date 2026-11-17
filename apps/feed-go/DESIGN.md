@@ -197,8 +197,9 @@ internal/fallback    the fallback error and its reasons
   and put back in the feed's order. Not ported: `hydrateWithReadRescue` (an empty hydrate
   is retried on another replica this service does not reach — it falls back instead), and the
   `feed-service-degrade` breaker and last-good page (every failed call falls back).
-- **ClickHouse:** read only for a missing metric hash, and only when a reader is configured
-  (`CLICKHOUSE_HOST` + `CLICKHOUSE_USERNAME`, §3.1). Metric counts come from the watcher-fed Redis
+- **ClickHouse:** read only for a missing metric hash, and only when a reader is configured from
+  feed-go's own variables (`FEED_GO_CLICKHOUSE_HOST` + `FEED_GO_CLICKHOUSE_USERNAME`, §3.1; the app's
+  `CLICKHOUSE_*` are never read). Metric counts come from the watcher-fed Redis
   hashes; a missing hash is computed with Node's own populate query, or without a reader falls back
   (`metrics-miss`, counted in `feed_go_fallback_total` like every reason).
 
@@ -247,12 +248,19 @@ and are revalidated the same way, under the same lock key scheme.
 image endpoint). Node's `MetricService.fetch` (`event-engine-common/services/metrics.ts`, the pinned
 submodule) fills a missing hash from ClickHouse; `internal/hydrate/imagemetrics.go` ports its miss
 half. Only with a ClickHouse reader (`internal/chread`: the HTTP interface, stdlib only, every query a
-GET so ClickHouse runs it read-only; `CLICKHOUSE_HOST`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD`,
-the Node app's names); without one the miss falls back (`metrics-miss`) as before.
+GET so ClickHouse runs it read-only), configured from feed-go's OWN variables only:
+`FEED_GO_CLICKHOUSE_HOST`, `FEED_GO_CLICKHOUSE_USERNAME`, `FEED_GO_CLICKHOUSE_PASSWORD`, for a dedicated
+SELECT-only login. The app's `CLICKHOUSE_HOST` / `CLICKHOUSE_USERNAME` / `CLICKHOUSE_PASSWORD` are
+deliberately ignored: the shared app config carries them (the app's read-write login) into feed-go's
+environment, and they must never switch the reader on. Without a reader the miss falls back
+(`metrics-miss`) as before.
 
 - The query is Node's, byte for byte (`fetchFromClickhouse` over `buildPerDaySource`: `sum(total)` of
   `entityMetricDailyAgg_v2` per image and metric type, `HAVING value > 0`), in batches of 1000, as
-  JSONEachRow with `output_format_json_quote_64bit_integers=0`, with Node's per-query settings: the
+  JSONEachRow with `output_format_json_quote_64bit_integers=0`, plus this client's own
+  `cancel_http_readonly_queries_on_client_close=1` (a read the request gave up on is cancelled on
+  the server instead of running on; Node never gives this read up early, its late answer fills the
+  cache), with Node's per-query settings: the
   point-lookup ones (`max_threads=1`, `max_execution_time=6`, `timeout_overflow_mode=throw`) for at
   most 100 ids none of which is marked `metrics:timeout:Image:<id>`, `max_threads=1` alone when one
   is, none past 100.
@@ -260,8 +268,10 @@ the Node app's names); without one the miss falls back (`metrics-miss`) as befor
   count 0, `statsUnknown: false`. A count this service cannot hold exactly (fractional, past 2^53)
   fails the lookup instead.
 - The populate lock `metrics:lock:Image:<id>`: an id another process is populating is waited on as
-  Node's fetch waits (the hash re-read every 200 ms, up to 15 times; one that never lands is all
-  zeros), never queried again. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
+  Node's fetch waits (the hash re-read every 200 ms, up to 15 times), never queried again. One that
+  never lands falls back (`metrics-miss-failed`): fetch answers it zeros only after 15 × 200 ms of
+  sleeps, all of its caller's 3 s budget, so the caller always times out first and Node answers it
+  `statsUnknown`. With write-back on the lock is taken (`SET NX`, 10 s), re-armed every
   5 s while the populate runs and released after (left to expire after a server timeout, whose
   capped lookup also marks its ids `metrics:timeout`, 12 h); with it off it is only read (`EXISTS`).
 - Write-back on: each hash is written with `hReplaceStampedEx`, the Lua script Node evaluates (same
@@ -270,7 +280,10 @@ the Node app's names); without one the miss falls back (`metrics-miss`) as befor
   request, as Node's un-aborted read: when the request's bound ends first the request falls back and
   the populate still fills the cache.
 - Bounds: one page's lookup is bounded by `FEED_GO_CLICKHOUSE_TIMEOUT_MS` (default 2000, at most half
-  the request budget; Node's is `CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS`, 3000), and a pod sends at most
+  the request budget, and never more than 2500 whatever either is set to). Node's whole read is
+  bounded by `CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS` (3000) and answers `statsUnknown` past it; this
+  lookup starts after feed-go's own cache read, so 2500 leaves room for what Node's budget spends
+  before its populate, and a lookup Node would not have finished is never answered here. A pod sends at most
   `FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT` reads at once (default 4); a read past it is refused at once.
   A failed, refused or late read falls back `metrics-miss-failed` (Node then answers those images
   from the cache, i.e. `statsUnknown: true`; Go leaves that answer to Node).
@@ -281,7 +294,9 @@ the Node app's names); without one the miss falls back (`metrics-miss`) as befor
 
 `testdata/golden/metrics/populate.json` records what the real `MetricService.fetch` did on each miss
 case (`gen-metrics.mjs` runs it through tsx over recording fakes: the SQL, settings, answer, and the
-cache before and after); `TestMetricsMissGolden` holds Go to it with write-back on and off.
+cache before and after); `TestMetricsMissGolden` holds Go to it with write-back on and off. Its
+`locked-never-filled` case records fetch's zeros, which Node's caller never sees (its 3 s budget
+ends first): Go is held to the fallback there.
 
 Not computed: on the REST endpoint `image-resources-miss` (Node picks a replica by write lag). On
 model.getAll the other cache misses still fall back (§15.2). `input-techniques` is an input shape, not
@@ -1057,8 +1072,10 @@ None of this is in this PR.
   it to `frame-cache-negative`'s production value (and change it when the flag changes), or frame
   markers are read and written differently from Node (§8). `FEED_GO_CACHE_WRITEBACK` stays off until
   the operator decides; turning it on also needs `DATABASE_URL`, the primary (§3.1). The metric-hash
-  misses need `CLICKHOUSE_HOST`, `CLICKHOUSE_USERNAME`, `CLICKHOUSE_PASSWORD` (§3.1): a credential
-  scoped to SELECT on what the populate reads (the client is read-only either way).
+  misses need `FEED_GO_CLICKHOUSE_HOST`, `FEED_GO_CLICKHOUSE_USERNAME`, `FEED_GO_CLICKHOUSE_PASSWORD`
+  (§3.1): a dedicated SELECT-only login on what the populate reads, in feed-go's own Secret. The
+  app's `CLICKHOUSE_*` keys reach feed-go through the shared app config but are ignored, so until
+  that Secret exists the misses fall back (`metrics-miss`).
 - **Network:** Node pods → feed-go `:9090` (shadow); feed-go → replica, both Redis (and the system
   Redis Sentinels), the JWKS endpoint, the image feed service, the primary (only with write-back on),
   ClickHouse's HTTP endpoint (only with a reader configured), and (serving) the Node service.
@@ -1077,7 +1094,9 @@ Honest estimate, in order:
 3. **Cut fallbacks that matter by volume** — in fallback-rate order (pinned and sponsored posts were
    ported on 2026-11-14; the user-cosmetics, frame and event-decoration miss paths on
    2026-11-15, the tag-ids, model-frame and model-decoration ones after, and the metric-hash
-   ClickHouse populate, §3.1). Left: a ClickHouse credential for the deployment.
+   ClickHouse populate, §3.1). The populate stays off in a deployment until feed-go has its own
+   SELECT-only ClickHouse login in its own Secret (`FEED_GO_CLICKHOUSE_*`); the app's read-write
+   `CLICKHOUSE_*` keys it already receives through the shared app config are ignored by design.
 4. **Flags** — a Flipt evaluation client so the env mirrors go away (a few days).
 5. **Serving** — the client transport flag PR, a small cohort, then ramp while watching error rate,
    latency and the Node-side CPU drop. A week of ramp. The per-pod concurrency cap is in place

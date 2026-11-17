@@ -277,7 +277,7 @@ func TestMetricsMissGolden(t *testing.T) {
 
 				if c.Error != nil || nodeBudgetExpires[c.Name] {
 					if fallback.Reason(err) != "metrics-miss-failed" {
-						t.Fatalf("Node threw; got %v, %v (reason %q), want the metrics-miss-failed fallback", got, err, fallback.Reason(err))
+						t.Fatalf("Node threw or its caller timed out; got %v, %v (reason %q), want the metrics-miss-failed fallback", got, err, fallback.Reason(err))
 					}
 				} else {
 					if err != nil {

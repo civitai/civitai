@@ -72,10 +72,11 @@ type MissCompute struct {
 	TagGate func(context.Context) (map[int]bool, error)
 	// ClickHouse is the reader the image metric-hash misses are computed with (imagemetrics.go:
 	// MetricService's populate, its query and, with WriteBack, its locks and writes). nil (no
-	// CLICKHOUSE_HOST / CLICKHOUSE_USERNAME) leaves those misses falling back (`metrics-miss`).
+	// FEED_GO_CLICKHOUSE_HOST / FEED_GO_CLICKHOUSE_USERNAME) leaves those misses falling back
+	// (`metrics-miss`).
 	ClickHouse ClickHouse
-	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS); past it the
-	// page falls back (`metrics-miss-failed`).
+	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
+	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
 	MetricsTimeout time.Duration
 
 	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
