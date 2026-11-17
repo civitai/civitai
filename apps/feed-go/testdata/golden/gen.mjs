@@ -1409,7 +1409,8 @@ function runInfinite(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed };
-  return { value: infiniteHandler({ input, ctx: { user, features } }) };
+  // createContext's policy, as for the gallery procedure: cacheable without a session.
+  return { value: infiniteHandler({ input, ctx: { user, features } }), cacheable: !session };
 }
 
 // --- GET /api/v1/images ----------------------------------------------------------------------------
@@ -2465,9 +2466,9 @@ function emitInfinite() {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
       expect = { fallback: spec.fallback };
     } else {
-      const { value } = runInfinite({ ...spec, nodeFlags });
+      const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
-      expect = { envelope: superjson.serialize(value), cacheable: false, writes: writeEntries() };
+      expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
     // scope) is one feed-go must drop too, not one the fixture never held.

@@ -17,6 +17,7 @@ import {
   FEED_GO_SHADOW_MODEL_GET_ALL_PATH,
   FEED_GO_SHADOW_PATH,
   pickShadowHeaders,
+  pickShadowResponseHeaders,
   readFeedGoShadowConfig,
   SHADOW_DEFAULT_MAX_IN_FLIGHT,
   SHADOW_DEFAULT_MAX_PER_SECOND,
@@ -262,6 +263,103 @@ describe('pickSessionCookies / pickShadowHeaders', () => {
       authorization: 'present',
     });
     expect(pickShadowHeaders(request({ headers: { cookie: 'theme=dark' } }))).toEqual({});
+  });
+});
+
+describe('pickShadowResponseHeaders', () => {
+  it('keeps only the compared headers, lowercased, Set-Cookie as presence, each bounded', () => {
+    expect(
+      pickShadowResponseHeaders({
+        'Cache-Control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=30',
+        vary: ['Accept-Encoding', 'Cookie'],
+        'cache-tag': 'images, user-1',
+        'set-cookie': ['session=secret-value; HttpOnly'],
+        'x-update-required': 'true',
+        'x-handled-by': 'pod-a',
+        'content-length': 123,
+        'x-ratelimit-remaining': '9',
+      })
+    ).toEqual({
+      'cache-control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=30',
+      vary: 'Accept-Encoding, Cookie',
+      'cache-tag': 'images, user-1',
+      'set-cookie': 'present',
+      'x-update-required': 'true',
+    });
+    expect(pickShadowResponseHeaders({ 'cache-tag': 'x'.repeat(5000) })['cache-tag']).toHaveLength(
+      1024
+    );
+    expect(pickShadowResponseHeaders({})).toEqual({});
+  });
+
+  it('an empty Set-Cookie (no cookie) is absent, not present', () => {
+    expect(pickShadowResponseHeaders({ 'set-cookie': [] })).toEqual({});
+    expect(pickShadowResponseHeaders({ 'set-cookie': '' })).toEqual({});
+    expect(pickShadowResponseHeaders({ 'set-cookie': ['a=1'], vary: [] })).toEqual({
+      'set-cookie': 'present',
+    });
+  });
+});
+
+describe('createFeedGoShadow — response headers', () => {
+  it('posts the compared response headers the route passes to finish, and no status', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, {
+      getHeaders: () => ({
+        'cache-control': 'max-age=0, private, no-cache',
+        'set-cookie': 'a=secret',
+        'x-handled-by': 'pod-a',
+      }),
+    });
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('status');
+    expect(body.responseHeaders).toEqual({
+      'cache-control': 'max-age=0, private, no-cache',
+      'set-cookie': 'present',
+    });
+    // The cookie's value never leaves the process.
+    expect(h.fetchMock.mock.calls[0][1].body as string).not.toContain('secret');
+  });
+
+  it('omits responseHeaders for a response without getHeaders (a test double), and still sends', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    h.shadow.finish(sample, 200, {});
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaders');
+    expect(h.outcomes).toEqual(['sent']);
+  });
+
+  it('records skipped_headers, sends nothing and frees the slot when getHeaders throws', async () => {
+    const h = harness();
+    const sample = h.shadow.begin(request())!;
+    const data = { items: [] };
+    h.shadow.run(sample, () => h.shadow.capture(data, superjson.serialize(data), false));
+    expect(h.shadow.inFlight()).toBe(1);
+    h.shadow.finish(sample, 200, {
+      getHeaders: () => {
+        throw new Error('headers gone');
+      },
+    });
+    await h.flush();
+    expect(h.outcomes).toEqual(['skipped_headers']);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    expect(h.shadow.inFlight()).toBe(0);
+  });
+
+  it('omits responseHeaders when the route passes none', async () => {
+    const h = harness();
+    serve(h);
+    await h.flush();
+    const body = JSON.parse(h.fetchMock.mock.calls[0][1].body as string);
+    expect(body).not.toHaveProperty('responseHeaders');
   });
 });
 
