@@ -12,7 +12,6 @@ import { includesInappropriate, includesNsfw } from '~/utils/metadata/audit';
 const strip = vi.hoisted(() => ({ phrase: '' }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
-  // A benign phrase that happens to contain a word from the nsfw list.
   stripBenignPhrases: async (text: string) =>
     strip.phrase ? text.split(strip.phrase).join(' ').trim() : text,
 }));
@@ -20,7 +19,7 @@ vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async
 
 const { semanticQueryRefusal } = await import('~/server/services/semantic-query-guard');
 
-/** A word only the nsfw list flags, and a word the age check flags only alongside one. */
+/** Two words the audit flags together but not apart. */
 function pickPair() {
   for (const n of [...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle]) {
     if (!/^[a-z]+$/.test(n) || !includesNsfw(n)) continue;
@@ -41,7 +40,7 @@ describe('semanticQueryRefusal with benign phrases', () => {
     expect(await semanticQueryRefusal(`${n} ${y}`, opts)).toBe('minor');
   });
 
-  it('still flags it when a benign phrase strips the word that opened the check', async () => {
+  it('decides which checks run from the query as typed', async () => {
     strip.phrase = n;
     expect(await semanticQueryRefusal(`${n} ${y}`, opts)).toBe('minor');
   });
