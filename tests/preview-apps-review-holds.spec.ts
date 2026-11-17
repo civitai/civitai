@@ -1,14 +1,16 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext, Page } from '@playwright/test';
-import JSZip from 'jszip';
-import { previewAppBlockManifest } from './preview-app-block-manifest';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
 /**
- * Preview-e2e: app REVIEW HOLDS (#8721), run as `mod` on its own per-preview submissions.
+ * Preview-e2e: app REVIEW HOLDS (#8721), run as `mod` on its own per-preview off-site submission.
  *
  * No `getByTestId`: production builds strip `data-testid`, and the preview is one.
+ *
+ * Off-site, not on-site: holds are scoped by app slug and every review surface reads them the
+ * same way, and an off-site listing can be submitted from a preview without the review-repo push
+ * an on-site bundle needs.
  *
  * WHAT A PREVIEW CANNOT DO: complete an approve. The publish floor needs an icon and cover, and the
  * go-live scan gate needs those images `Scanned`, which never happens here (the scanner is
@@ -24,10 +26,10 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  *     through and the floor refused), and the hold is still open (nothing was stamped);
  *   - an override missing a hold → 412 again.
  *
- * SAFE ON THE SHARED DEV DB: per-preview slugs; nothing is approved (every approve here stops at a
- * gate, and the page's `blocks.approveRequest` is aborted at the network layer). Each hold is
- * cleared and each submission withdrawn in `finally`. A hold outlives a withdraw by design, so
- * leftover open holds on these slugs are cleared before and after each run.
+ * SAFE ON THE SHARED DEV DB: per-preview slug; nothing is approved (every approve here stops at a
+ * gate, and any approve the page sends is aborted at the network layer). The hold is cleared and
+ * the submission withdrawn in `finally`. A hold outlives a withdraw by design, so leftover open
+ * holds on this slug are cleared before and after each run.
  */
 
 const ROLE = 'mod' as const;
@@ -78,19 +80,6 @@ async function clearOpenHolds(request: APIRequestContext, slug: string) {
   }
 }
 
-async function placeHold(
-  request: APIRequestContext,
-  publishRequestId: string,
-  kind: 'onsite' | 'listing'
-): Promise<Hold> {
-  return trpcMutation<Hold>(request, 'blocks.placePublishRequestHold', {
-    publishRequestId,
-    kind,
-    label: HOLD_LABEL,
-    reason: HOLD_REASON,
-  });
-}
-
 /** Status code and body of a mutation that is expected to fail. */
 async function failingMutation(request: APIRequestContext, proc: string, input: unknown) {
   const res = await request.post(`/api/trpc/${proc}?batch=1`, {
@@ -100,48 +89,11 @@ async function failingMutation(request: APIRequestContext, proc: string, input: 
   return { status: res.status(), text: JSON.stringify(await res.json().catch(() => ({}))) };
 }
 
-// ── on-site fixture (same shape as preview-apps-review-flow.spec.ts) ──────────────────────────
-
-async function bundle(slug: string): Promise<string> {
-  const manifest = previewAppBlockManifest({ slug, name: `CI review holds ${slug.slice(-6)}` });
-  const zip = new JSZip();
-  zip.file('block.manifest.json', JSON.stringify(manifest, null, 2));
-  zip.file('index.html', '<!doctype html><html><body><p>ci review holds</p></body></html>');
-  return (await zip.generateAsync({ type: 'nodebuffer' })).toString('base64');
-}
-
-async function submitOnsite(request: APIRequestContext, slug: string): Promise<string> {
-  const res = await request.post('/api/blocks/submit-version', {
-    headers: { 'content-type': 'application/json', ...csrf() },
-    data: { bundleBase64: await bundle(slug) },
-  });
-  const body = (await res.json().catch(() => ({}))) as { publishRequestId?: string };
-  if (!res.ok() || !body.publishRequestId) {
-    throw new Error(
-      `submit-version ${slug} -> HTTP ${res.status()}: ${JSON.stringify(body).slice(0, 400)}`
-    );
-  }
-  return body.publishRequestId;
-}
-
-async function withdrawOnsite(request: APIRequestContext, slug: string) {
-  const r = await trpcQuery<{ pending: { id: string } | null }>(
-    request,
-    'blocks.getMyPendingForSlug',
-    {
-      slug,
-    }
-  ).catch(() => ({ pending: null }));
-  if (r?.pending?.id) {
-    await trpcMutation(request, 'blocks.withdrawPublishRequest', {
-      publishRequestId: r.pending.id,
-    }).catch(() => undefined);
-  }
-}
-
 async function abortApprovals(page: Page) {
   await page.route('**/api/trpc/**', async (route) => {
-    if (route.request().url().includes('blocks.approveRequest')) return route.abort();
+    const url = route.request().url();
+    if (url.includes('approveExternalRequest') || url.includes('blocks.approveRequest'))
+      return route.abort();
     return route.continue();
   });
 }
@@ -169,23 +121,6 @@ async function acceptTermsForThisDomain(page: Page) {
     },
   });
   if (!res.ok()) throw new Error(`user.setSettings (ToS acceptance) -> HTTP ${res.status()}`);
-}
-
-// ── off-site fixture (same shape as preview-apps-external-approve.spec.ts) ─────────────────────
-
-async function submitOffsite(request: APIRequestContext, slug: string, connectClientId: string) {
-  return trpcMutation<{ publishRequestId: string }>(request, 'appListings.submitExternalListing', {
-    slug,
-    name: 'CI Smoke — review holds',
-    externalUrl: 'https://example.com/ci-smoke-review-holds',
-    tagline: 'a pure external-link app',
-    category: 'utility',
-    contentRating: 'g',
-    changelog: 'ci-smoke review holds',
-    connectClientId,
-    requestedScopes: 0,
-    scopeJustifications: {},
-  });
 }
 
 async function withdrawOffsite(request: APIRequestContext, slug: string) {
@@ -229,19 +164,46 @@ test.describe('App review holds (mod, nothing approved)', () => {
     }
   });
 
-  test('on-site: a hold shows in the queue and on the review page, then clears', async ({
+  test('a hold shows in the queue and review modal, refuses approve, and clears', async ({
     page,
   }) => {
-    const SLUG = previewSlug('on');
+    const SLUG = previewSlug('off');
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await acceptTermsForThisDomain(page);
     const request = page.request;
-    await withdrawOnsite(request, SLUG);
+    await withdrawOffsite(request, SLUG);
     await clearOpenHolds(request, SLUG);
     await abortApprovals(page);
+    let clientId: string | null = null;
     try {
-      const requestId = await submitOnsite(request, SLUG);
-      const hold = await placeHold(request, requestId, 'onsite');
+      clientId = (
+        await trpcMutation<{ clientId: string }>(request, 'oauthClient.create', {
+          name: 'CI Smoke — review holds connect client',
+          redirectUris: ['https://example.com/ci-smoke-oauth-callback'],
+        })
+      ).clientId;
+      const { publishRequestId } = await trpcMutation<{ publishRequestId: string }>(
+        request,
+        'appListings.submitExternalListing',
+        {
+          slug: SLUG,
+          name: 'CI Smoke — review holds',
+          externalUrl: 'https://example.com/ci-smoke-review-holds',
+          tagline: 'a pure external-link app',
+          category: 'utility',
+          contentRating: 'g',
+          changelog: 'ci-smoke review holds',
+          connectClientId: clientId,
+          requestedScopes: 0,
+          scopeJustifications: {},
+        }
+      );
+      const hold = await trpcMutation<Hold>(request, 'blocks.placePublishRequestHold', {
+        publishRequestId,
+        kind: 'listing',
+        label: HOLD_LABEL,
+        reason: HOLD_REASON,
+      });
       expect(hold.clearedAt, 'a new hold is open').toBeNull();
 
       // Queue: the app's row carries the badge.
@@ -256,50 +218,15 @@ test.describe('App review holds (mod, nothing approved)', () => {
       await expect(row, 'the held app is in the queue').toHaveCount(1);
       await expect(row).toContainText('On hold · 1');
 
-      // Review page: the panel names the hold, and the override field is offered.
-      await page.goto(`/apps/review/${requestId}`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText('1 open review hold', { exact: true })).toBeVisible();
-      await expect(page.getByText(HOLD_LABEL).first()).toBeVisible();
-      await expect(page.getByText(HOLD_REASON).first()).toBeVisible();
+      // Review modal: the panel names the hold, and the override field is offered.
+      await row.getByRole('button', { name: 'Review', exact: true }).click();
+      const dialog = page.getByRole('dialog').filter({ hasText: SLUG });
+      await expect(dialog.getByText('1 open review hold', { exact: true })).toBeVisible();
+      await expect(dialog.getByText(HOLD_LABEL).first()).toBeVisible();
+      await expect(dialog.getByText(HOLD_REASON).first()).toBeVisible();
       await expect(
-        page.getByLabel(/Override reason \(required to approve while holds are open\)/)
+        dialog.getByLabel(/Override reason \(required to approve while holds are open\)/)
       ).toBeVisible();
-
-      // Clear with a reason, then read it back.
-      await trpcMutation(request, 'blocks.clearPublishRequestHold', {
-        holdId: hold.id,
-        reason: CLEAR_REASON,
-      });
-      const after = (await listHolds(request, SLUG)).find((h) => h.id === hold.id);
-      expect(after?.clearedKind, 'the hold reads back as cleared').toBe('cleared');
-      expect(after?.clearedAt).not.toBeNull();
-
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await expect(page.getByText('1 open review hold', { exact: true })).toHaveCount(0);
-    } finally {
-      await clearOpenHolds(request, SLUG);
-      await withdrawOnsite(request, SLUG);
-    }
-  });
-
-  test('off-site: approve refuses while held; an override passes the hold gate and stops at the floor', async ({
-    page,
-  }) => {
-    const SLUG = previewSlug('off');
-    await page.goto('/', { waitUntil: 'domcontentloaded' });
-    const request = page.request;
-    await withdrawOffsite(request, SLUG);
-    await clearOpenHolds(request, SLUG);
-    let clientId: string | null = null;
-    try {
-      clientId = (
-        await trpcMutation<{ clientId: string }>(request, 'oauthClient.create', {
-          name: 'CI Smoke — review holds connect client',
-          redirectUris: ['https://example.com/ci-smoke-oauth-callback'],
-        })
-      ).clientId;
-      const { publishRequestId } = await submitOffsite(request, SLUG, clientId);
-      const hold = await placeHold(request, publishRequestId, 'listing');
 
       // No override: the hold gate refuses.
       const plain = await failingMutation(request, 'appListings.approveExternalRequest', {
@@ -332,12 +259,14 @@ test.describe('App review holds (mod, nothing approved)', () => {
       expect(mid?.clearedAt, 'a refused approve leaves the hold open').toBeNull();
       expect(mid?.clearedKind).toBeNull();
 
+      // Clear with a reason, then read it back.
       await trpcMutation(request, 'blocks.clearPublishRequestHold', {
         holdId: hold.id,
         reason: CLEAR_REASON,
       });
       const after = (await listHolds(request, SLUG)).find((h) => h.id === hold.id);
-      expect(after?.clearedKind).toBe('cleared');
+      expect(after?.clearedKind, 'the hold reads back as cleared').toBe('cleared');
+      expect(after?.clearedAt).not.toBeNull();
     } finally {
       await clearOpenHolds(request, SLUG);
       await withdrawOffsite(request, SLUG);
