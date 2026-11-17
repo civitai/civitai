@@ -237,7 +237,7 @@ func TestPresenceReadFailures(t *testing.T) {
 
 // MissReason is the table's Reason without a miss computation, and "" for the caches it answers
 // (MissCaches, the computation's own list) with one; the caches it does not answer keep theirs. The
-// model frames are not a page cache: their reason is the computation's own.
+// model frames and decorations are not page caches: their reasons are the computation's own.
 func TestMissReason(t *testing.T) {
 	plain, computed := &Sources{}, &Sources{Compute: &MissCompute{}}
 	for _, c := range PageCaches {
@@ -245,16 +245,17 @@ func TestMissReason(t *testing.T) {
 			t.Errorf("no computation: %s = %q, want %q", c.Name, got, c.Reason)
 		}
 	}
-	// Not page caches: the model frames' reason is their lookup spec's; the image meta (not probed)
-	// has no spec, so none.
-	for name, w := range map[string]string{MissModelFrames: "model-frame-miss", MissImageMeta: ""} {
+	// Not page caches: the model frames', decorations' and version showcases' reasons are their lookup
+	// specs'; the image meta (not probed) has no spec, so none.
+	for name, w := range map[string]string{MissModelFrames: "model-frame-miss", MissModelDecorations: "model-decoration-miss",
+		MissVersionImages: "model-images-miss", MissImageMeta: ""} {
 		if got := plain.MissReason(name); got != w {
 			t.Errorf("no computation: %s = %q, want %q", name, got, w)
 		}
 	}
 	want := map[string]string{
 		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
-		CacheTagIDs: "", MissModelFrames: "", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
+		CacheTagIDs: "", MissModelFrames: "", MissModelDecorations: "", MissVersionImages: "", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
 	}
 	for name, w := range want {
 		if got := computed.MissReason(name); got != w {

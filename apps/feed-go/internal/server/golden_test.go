@@ -96,6 +96,9 @@ type goldenFixture struct {
 		LoadingOpenToAll bool `json:"loadingOpenToAll"`
 		// FrameCacheNegative is the frame-cache-negative flag the fixture's Node run had.
 		FrameCacheNegative bool `json:"frameCacheNegative"`
+		// ComputeMissesOff runs the model harness with FEED_GO_COMPUTE_MISSES off (a fixture of a
+		// fallback only that state still has).
+		ComputeMissesOff bool `json:"computeMissesOff"`
 	} `json:"config"`
 	Request struct {
 		Input   string            `json:"input"`
@@ -1311,6 +1314,11 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 	db := &fx.DB
 	g := &goldenModelPG{}
 	g.DB = &testkit.DB{Routes: []testkit.Route{
+		// The version showcase miss lookup: the fixtures record no showcase rows (only the cache
+		// entries Node read), so it fails rather than answer the cover-image route below.
+		{Match: `AS full_mv(id)`, Rows: func(_ []any) (*testkit.Rows, error) {
+			return nil, errors.New("golden: the fixture records no showcase rows")
+		}},
 		{Match: `"cursorId"`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			g.mu.Lock()
 			defer g.mu.Unlock()
@@ -1372,9 +1380,13 @@ func newGoldenModelPG(t *testing.T, fx *goldenFixture) *goldenModelPG {
 		{Match: `settings->'hideModelBuzz'`, Rows: func(_ []any) (*testkit.Rows, error) {
 			return testkit.NewRows([]string{"id", "hideModelBuzz", "hideModelDownloads", "hideModelGenerations"}), nil
 		}},
-		// The model frame miss lookup (hydrate.MissCompute), over the fixture's placed cosmetics.
+		// The model frame and decoration miss lookups (hydrate.MissCompute), over the fixture's placed
+		// cosmetics.
 		{Match: `jsonb_typeof(c.data->'event') IS DISTINCT FROM 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
 			return goldenEntityCosmetics(db, sql, args, false, goldenFrameColumns)
+		}},
+		{Match: `jsonb_typeof(c.data->'event') = 'string'`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+			return goldenEntityCosmetics(db, sql, args, true, []string{"cosmeticId", "equippedToId", "userId"})
 		}},
 	}}
 	g.Routes = append(g.Routes, goldenTagRoutes(db)...)
@@ -1453,6 +1465,10 @@ func goldenSetupModels(t *testing.T, fx *goldenFixture) *goldenEnv {
 	// As main: the model feed shares the miss computation (write-back off here: these fixtures record
 	// no writes).
 	compute := &hydrate.MissCompute{FrameNegative: fx.Config.FrameCacheNegative, Now: env.now, TagGate: feed.ImageTagGate(blocked, addons)}
+	if fx.Config.ComputeMissesOff {
+		compute = nil
+		env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+	}
 	env.server.Models = &modelfeed.Deps{
 		DB:      db,
 		Sources: &hydrate.Sources{Packed: packed, Cache: env.cache, Replica: db, Compute: compute},

@@ -13,14 +13,12 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBrowsingSettingAddons } from '~/server/services/system-cache';
 import {
   beginSemanticAudit,
-  queryVerdictLevel,
-  recordRefusal,
-  refusedTextCandidates,
   isNonModClampOn,
-  resolveSemanticBrowsingLevel,
-  semanticQueryRefusal,
-  type QueryStage,
+  makeRefusalOf,
   type QueryTracker,
+  queryVerdictLevel,
+  refusedTextCandidates,
+  resolveSemanticBrowsingLevel,
 } from '~/server/services/semantic-query-guard';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import {
@@ -104,16 +102,16 @@ export async function searchSemanticArticles({
     query: input.query,
     firstPage: !input.cursor,
   });
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
+  const refusalOf = makeRefusalOf({
+    index: 'articles_semantic',
+    track,
+    context: () => ({
       browsingLevel,
       disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'articles_semantic', stage);
-    audit.verdict(refusal);
-    return refusal;
-  };
+    }),
+    audit,
+  });
   const refusal = await refusalOf(input.query, 'query');
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
   const queryRefused = verdictLevel === 'refuse';

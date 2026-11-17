@@ -33,6 +33,7 @@
     syncNotice,
     type NoticeState,
   } from './level-notice';
+  import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
     createItemBuffer,
@@ -65,8 +66,8 @@
       : data.apprentice.kind === 'question' && data.apprentice.item.kind === 'yesno'
   );
   // The first-visit guide is dismissed once and recorded; the Guide button reopens it without recording anything more.
-  let guideReopened = $state(false);
-  let guideOpen = $derived(data.showGuide || guideReopened);
+  const guide = $state<GuideState>({ reopened: false, dismissed: false });
+  let guideOpen = $derived(guideShowing(data.showGuide, guide));
   // A title shows on hover and focus only; touch players get the same text from the Guide button.
   let levelHint = $derived(
     new Map(data.ratingGuide.map((entry) => [String(entry.level), `${entry.label}: ${entry.description}`]))
@@ -191,15 +192,13 @@
     };
   };
 
+  // "I understand" closes the guide at once; the dismissal is recorded in the background, and only a refused one reloads.
   const submitGuide: SubmitFunction = () => {
-    submitting = true;
+    const before = closeGuide(guide);
     return async ({ result, update }) => {
-      try {
-        await update();
-        if (result.type === 'success') guideReopened = false;
-      } finally {
-        submitting = false;
-      }
+      const stored = result.type === 'success';
+      settleGuide(guide, stored, before);
+      if (!stored) await update();
     };
   };
 
@@ -569,7 +568,7 @@
 {#snippet questionTools()}
   <div class="qtools">
     {#if !yesNo}
-      <button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>
+      <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>
         <Icon name="book-open" size={16} />Guide
       </button>
     {/if}
@@ -687,7 +686,7 @@
             {/each}
           </form>
           {#if !yesNo}
-            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button></span>
+            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
           {/if}
           <span class="rowtool">{@render soundToggle()}</span>
         </div>
@@ -703,7 +702,7 @@
         message={formMessage}
         {submitting}
         submit={submitCheckpoint}
-        onguide={() => (guideReopened = true)}
+        onguide={() => openGuide(guide)}
       />
     {:else}
       <div class="panel">
@@ -784,7 +783,7 @@
           </button>
         </form>
         {#if !yesNo}
-          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => (guideReopened = true)}>Rating guide</button></span>
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>
         {#if choosingReason}

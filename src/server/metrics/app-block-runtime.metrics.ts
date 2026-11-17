@@ -752,6 +752,7 @@ type Bundle = {
   docStoreEnabled: Gauge<string>;
   postSubjectRefusalsTotal: Counter<string>;
   rateLimitRefusalsTotal: Counter<string>;
+  docStoreUnchangedWritesTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   submitFailuresTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -1356,6 +1357,20 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['app_block_id', 'surface', 'bucket']
   );
 
+  // ── DOC STORE: UNCHANGED SHARED WRITES ──────────────────────────────────────
+  // One increment per shared PUT answered for free because it would change no stored row
+  // (`putIfUnchanged`, behind `app-blocks-storage-unchanged-writes-free`): no shared-write token,
+  // no moderation scan. Read it against the shared writes that did land to see what the flag saves.
+  // ONE recorder (`recordDocStoreUnchangedWrite`), called from the route's free path only.
+  // Cardinality: app (approved apps + 'dev' via `blockClaimsAppLabel`, 'other' without claims); no
+  // other label, nothing from request input.
+  const docStoreUnchangedWritesTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_doc_store_unchanged_writes_total',
+    'App Blocks document-store shared PUTs answered without writing because they would change no stored row (same content hash and index rows as the caller\'s own stored document), by app. Each spent no shared-write budget token and ran no moderation scan. Only while app-blocks-storage-unchanged-writes-free is on for the app. app_block_id="dev" is every dev token. Each child is born at 1 on its pod\'s first free write, so increase()/rate() miss it: read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['app_block_id']
+  );
+
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
   // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
   // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
@@ -1597,6 +1612,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     docStoreEnabled,
     postSubjectRefusalsTotal,
     rateLimitRefusalsTotal,
+    docStoreUnchangedWritesTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
     launchPhaseSeconds,
@@ -2046,6 +2062,17 @@ export function recordDocStoreError(endpoint: DocStoreEndpoint, code: StorageApi
     ensureRegisterAppBlockRuntimeMetrics().docStoreErrorsTotal.inc({ endpoint, code });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/** One shared PUT answered without writing (`putIfUnchanged`). Total. */
+export function recordDocStoreUnchangedWrite(appBlockIdLabel: string): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().docStoreUnchangedWritesTotal.inc({
+      app_block_id: appBlockIdLabel,
+    });
+  } catch {
+    /* instrument-only — never let a metrics error change a write's reply */
   }
 }
 
