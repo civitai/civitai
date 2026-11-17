@@ -10,7 +10,7 @@ const CHILD_TAG_IDS = [...childBrowsingTagIds];
 const childTagIds = new Set<number>(CHILD_TAG_IDS);
 
 type ImageChildTagChanges = {
-  /** Images whose tags were written; those that gained or lost a child tag are queued. */
+  /** Images whose tags were written; those whose written tags include a child tag are queued. */
   tagWrites?: { imageId: number; tagId: number }[];
   /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
   levelImageIds?: number[];
@@ -21,7 +21,9 @@ type ImageChildTagChanges = {
  * cached tags and showcase images from the primary. The models sync re-picks a model only when
  * `Model.updatedAt` moves, so a change to an image's child browsing tags or nsfwLevel reaches its
  * document only through here.
- * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once.
+ * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once;
+ * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
+ * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
  */
 export async function queueModelsForImageChildTagChanges(changes: ImageChildTagChanges) {
   for (let attempt = 1; ; attempt++) {
