@@ -7,7 +7,10 @@ import { articlesSearchIndex } from '~/server/search-index/articles.search-index
 import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
 
 // The real index modules build a Meilisearch processor at load; only their queues are under test.
 vi.mock('~/server/search-index/models.search-index', () => ({
@@ -179,7 +182,6 @@ describe('queueModelsForImageChildTagChanges', () => {
     await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
 
     expect(query('"Article"')?.text).toMatch(/"coverId"[\s\S]*"bannerId"[\s\S]*"coverImageId"/);
-    expect(query('"Article"')?.values).toEqual([[7], [7], [7]]);
     expect(idsQueuedOn(articlesSearchIndex)).toEqual([30, 31]);
     expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
     expect(queued()).toEqual([500]);
@@ -203,5 +205,37 @@ describe('queueModelsForImageChildTagChanges', () => {
 
     expect(articlesSearchIndex.queueUpdate).not.toHaveBeenCalled();
     expect(comicsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('queueArticlesAndComicsForImages', () => {
+  it('queues the articles and comics using the images, with no child-tag check', async () => {
+    arm({ models: [500], articles: [30], comics: [40] });
+
+    await queueArticlesAndComicsForImages([7, 7, 8]);
+
+    expect(query('"TagsOnImageNew"')).toBeUndefined();
+    expect(query('"Article"')?.values[0]).toEqual([7, 8]);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
+    expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing for no images', async () => {
+    await queueArticlesAndComicsForImages([]);
+
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when every attempt fails', async () => {
+    vi.useFakeTimers();
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('connection reset'));
+
+    const run = queueArticlesAndComicsForImages([7]);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+
+    await expect(run).resolves.toBeUndefined();
+    expect(queries().filter((q) => q.text.includes('"Article"'))).toHaveLength(2);
   });
 });

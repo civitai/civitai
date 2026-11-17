@@ -25,9 +25,22 @@ type ImageChildTagChanges = {
  * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
  */
 export async function queueModelsForImageChildTagChanges(changes: ImageChildTagChanges) {
+  await withRetry(() => queueChanged(changes));
+}
+
+/**
+ * Queue an update for the articles using these images as cover or banner and the comics using them
+ * as cover, whatever changed about the images. Never throws, with the same retry as above.
+ */
+export async function queueArticlesAndComicsForImages(imageIds: number[]) {
+  if (!imageIds.length) return;
+  await withRetry(() => queueArticlesAndComics([...new Set(imageIds)]));
+}
+
+async function withRetry(run: () => Promise<void>) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await queueChanged(changes);
+      return await run();
     } catch (e) {
       logError(e);
       if (attempt >= ATTEMPTS) return;
@@ -114,10 +127,12 @@ async function queueArticlesAndComics(imageIds: number[]) {
     import('~/server/search-index/comics.search-index'),
   ]);
   await Promise.all([
-    articleIds.length && articlesSearchIndex.queueUpdate(toUpdates(articleIds)),
-    comicIds.length && comicsSearchIndex.queueUpdate(toUpdates(comicIds)),
+    articleIds.length && articlesSearchIndex.queueUpdate(toUpdates(articleIds), { reason: REASON }),
+    comicIds.length && comicsSearchIndex.queueUpdate(toUpdates(comicIds), { reason: REASON }),
   ]);
 }
+
+const REASON = 'image-child-tag-change';
 
 const toUpdates = (ids: number[]) =>
   [...new Set(ids)].map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }));
