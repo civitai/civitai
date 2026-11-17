@@ -7051,46 +7051,70 @@ export async function getImagesByUserIdForModeration(
   });
 }
 
-export function addBlockedImage({ hash, reason }: { hash: bigint; reason: BlockImageReason }) {
-  return clickhouse?.insert({
-    table: 'blocked_images',
-    values: [{ hash: toClickhouseInt64(hash), reason }],
-    format: 'JSONEachRow',
-  });
+/**
+ * Hashes among these with a CSAM entry. The table keeps the newest row per hash when it merges,
+ * so a later row of any other reason would replace that entry.
+ */
+async function csamBlockedHashes(hashes: bigint[]): Promise<Set<string>> {
+  if (hashes.length === 0 || !clickhouse) return new Set();
+  const rows = await clickhouse.$query<{ hash: string }>`
+    SELECT DISTINCT toString(hash) AS hash
+    FROM "blocked_images"
+    WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND reason = 'CSAM'
+  `;
+  return new Set(rows.map((row) => row.hash));
 }
 
-export function bulkAddBlockedImages({
+export function addBlockedImage({ hash, reason }: { hash: bigint; reason: BlockImageReason }) {
+  return bulkAddBlockedImages({ data: [{ hash, reason }] });
+}
+
+/** A hash with a CSAM entry keeps it: other reasons are not written over it. */
+export async function bulkAddBlockedImages({
   data,
 }: {
   data: { hash: bigint; reason: BlockImageReason }[];
 }) {
-  if (data.length === 0) return;
+  if (data.length === 0 || !clickhouse) return;
 
-  const values = data.map(({ hash, reason }) => ({
-    hash: toClickhouseInt64(hash),
-    reason: reason.toString(),
-  }));
+  const csam = await csamBlockedHashes(
+    data.filter(({ reason }) => reason !== BlockImageReason.CSAM).map(({ hash }) => hash)
+  );
+  const values = data
+    .filter(({ hash, reason }) => reason === BlockImageReason.CSAM || !csam.has(hash.toString()))
+    .map(({ hash, reason }) => ({
+      hash: toClickhouseInt64(hash),
+      reason: reason.toString(),
+    }));
+  if (!values.length) return;
 
-  return clickhouse?.insert({
+  return clickhouse.insert({
     table: 'blocked_images',
     values,
     format: 'JSONEachRow',
   });
 }
 
+/** Disables the live entries of these hashes, except a hash with a CSAM entry. */
 export async function bulkRemoveBlockedImages(hashes: bigint[]) {
   if (hashes.length === 0 || !clickhouse) return;
-  const blocked = await clickhouse.$query<{ hash: string; reason: string }>`
-    SELECT toString(hash) AS hash, reason
-    FROM "blocked_images"
-    WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
-  `;
+  const [blocked, csam] = await Promise.all([
+    clickhouse.$query<{ hash: string; reason: string }>`
+      SELECT toString(hash) AS hash, reason
+      FROM "blocked_images"
+      WHERE hash IN (${hashes.map(toClickhouseInt64).join(',')}) AND disabled = false
+    `,
+    csamBlockedHashes(hashes),
+  ]);
 
-  const values = blocked.map(({ hash, reason }) => ({
-    hash: toClickhouseInt64(hash),
-    reason,
-    disabled: true,
-  }));
+  const values = blocked
+    .filter(({ hash }) => !csam.has(hash))
+    .map(({ hash, reason }) => ({
+      hash: toClickhouseInt64(hash),
+      reason,
+      disabled: true,
+    }));
+  if (!values.length) return;
 
   return await clickhouse.insert({
     table: 'blocked_images',

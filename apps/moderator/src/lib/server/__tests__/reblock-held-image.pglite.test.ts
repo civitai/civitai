@@ -55,7 +55,10 @@ vi.mock('../removal-hold', () => ({
 }));
 vi.mock('../notifications', () => ({ getNotifications: () => ({ createNotification }) }));
 vi.mock('../clickhouse', () => ({
-  getClickhouse: () => ({ insert: clickhouseInsert, query: vi.fn() }),
+  getClickhouse: () => ({
+    insert: clickhouseInsert,
+    query: async () => ({ json: async () => [] }),
+  }),
 }));
 vi.mock('../reports.service', () => ({ setReportStatus }));
 vi.mock('../thumbnail-cache', async (importOriginal) => ({

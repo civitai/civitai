@@ -89,7 +89,10 @@ let db: PGlite;
 
 beforeEach(async () => {
   chQuery.mockReset();
-  chQuery.mockResolvedValue({ json: async () => [{ hash: PHASH, reason: 'TOS' }] });
+  // The CSAM-entry lookup finds none; the live-row read finds the TOS entry.
+  chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+    json: async () => (query.includes("reason = 'CSAM'") ? [] : [{ hash: PHASH, reason: 'TOS' }]),
+  }));
   chInsert.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);

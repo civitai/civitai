@@ -13,6 +13,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const capturedInserts: Array<{ table: string; values: any[] }> = [];
 const capturedQueries: string[] = [];
 let queryResult: any[] = [];
+/** What the CSAM-entry lookup returns; every other query gets `queryResult`. */
+let csamQueryResult: any[] = [];
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -64,12 +66,11 @@ vi.mock('~/server/clickhouse/client', () => ({
       capturedInserts.push({ table: args.table, values: args.values });
     },
     $query: (strings: TemplateStringsArray, ...values: unknown[]) => {
-      capturedQueries.push(
-        Array.isArray(strings)
-          ? strings.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '')
-          : String(strings)
-      );
-      return Promise.resolve(queryResult);
+      const query = Array.isArray(strings)
+        ? strings.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '')
+        : String(strings);
+      capturedQueries.push(query);
+      return Promise.resolve(query.includes("reason = 'CSAM'") ? csamQueryResult : queryResult);
     },
   }),
 }));
@@ -88,6 +89,7 @@ describe('blocked-image hashes keep all 64 bits (ClickUp 868kta7p0)', () => {
     capturedInserts.length = 0;
     capturedQueries.length = 0;
     queryResult = [];
+    csamQueryResult = [];
   });
 
   it('addBlockedImage writes the exact hash', async () => {
@@ -119,5 +121,62 @@ describe('blocked-image hashes keep all 64 bits (ClickUp 868kta7p0)', () => {
 
   it('the rounded form these guards exclude really is a different value', () => {
     expect(ROUNDED).not.toBe(HASH.toString());
+  });
+});
+
+describe('a hash with a CSAM entry keeps it', () => {
+  const OTHER = 1234567890123n;
+  const csamEntryOn = (hash: bigint) => (csamQueryResult = [{ hash: hash.toString() }]);
+
+  beforeEach(() => {
+    capturedInserts.length = 0;
+    capturedQueries.length = 0;
+    queryResult = [];
+    csamQueryResult = [];
+  });
+
+  it('an unblock disables none of its rows and still disables an unrelated hash', async () => {
+    csamEntryOn(HASH);
+    queryResult = [
+      { hash: HASH.toString(), reason: 'TOS' },
+      { hash: OTHER.toString(), reason: 'TOS' },
+    ];
+
+    await bulkRemoveBlockedImages([HASH, OTHER]);
+
+    expect(capturedInserts).toHaveLength(1);
+    expect(capturedInserts[0].values).toEqual([
+      { hash: OTHER.toString(), reason: 'TOS', disabled: true },
+    ]);
+  });
+
+  it('a TOS block is not written over it, while one on another hash lands', async () => {
+    csamEntryOn(HASH);
+
+    await bulkAddBlockedImages({
+      data: [
+        { hash: HASH, reason: 'TOS' as any },
+        { hash: OTHER, reason: 'TOS' as any },
+      ],
+    });
+
+    expect(capturedInserts).toHaveLength(1);
+    expect(capturedInserts[0].values).toEqual([{ hash: OTHER.toString(), reason: 'TOS' }]);
+  });
+
+  it('addBlockedImage does not write a TOS row over it', async () => {
+    csamEntryOn(HASH);
+
+    await addBlockedImage({ hash: HASH, reason: 'TOS' as any });
+
+    expect(capturedInserts).toHaveLength(0);
+  });
+
+  it('a CSAM block still lands on it', async () => {
+    csamEntryOn(HASH);
+
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] });
+
+    expect(capturedInserts[0]?.values).toEqual([{ hash: HASH.toString(), reason: 'CSAM' }]);
   });
 });

@@ -124,34 +124,62 @@ type BlockableImage = {
   blockedFor: string | null;
 };
 
+/**
+ * Hashes among these with a CSAM entry. The table keeps the newest row per hash when it merges,
+ * so a later row of any other reason would replace that entry.
+ */
+async function csamBlockedHashes(hashes: string[]): Promise<Set<string>> {
+  if (!hashes.length) return new Set();
+  const resultSet = await getClickhouse().query({
+    query: `SELECT DISTINCT toString(hash) AS hash FROM "blocked_images" WHERE hash IN (${hashes.join(
+      ','
+    )}) AND reason = 'CSAM'`,
+    format: 'JSONEachRow',
+  });
+  const rows = await resultSet.json<{ hash: string }>();
+  return new Set(rows.map((row) => row.hash));
+}
+
+/** A hash with a CSAM entry keeps it: other reasons are not written over it. */
 export async function addImagesToBlocklist(
   images: (BlockableImage & { csam?: boolean })[]
 ): Promise<void> {
-  const values = images
+  const candidates = images
     .filter((i): i is BlockableImage & { pHash: string; csam?: boolean } => !!i.pHash)
     .map((i) => ({
       hash: i.pHash,
       reason: i.csam ? 'CSAM' : reviewTypeToBlockReason(i.blockedFor ?? i.needsReview),
     }));
+  if (!candidates.length) return;
+  const csam = await csamBlockedHashes(
+    candidates.filter((v) => v.reason !== 'CSAM').map((v) => v.hash)
+  );
+  const values = candidates.filter((v) => v.reason === 'CSAM' || !csam.has(v.hash));
   if (!values.length) return;
   await getClickhouse().insert({ table: 'blocked_images', values, format: 'JSONEachRow' });
 }
 
+/** Disables the live entries of these hashes, except a hash with a CSAM entry. */
 export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Promise<void> {
   const hashes = pHashes.filter((h): h is string => !!h);
   if (!hashes.length) return;
   const ch = getClickhouse();
-  const resultSet = await ch.query({
-    query: `SELECT hash, reason FROM "blocked_images" WHERE hash IN (${hashes.join(
-      ','
-    )}) AND disabled = false`,
-    format: 'JSONEachRow',
-  });
-  const blocked = await resultSet.json<{ hash: string; reason: string }>();
-  if (!blocked.length) return;
+  const [blocked, csam] = await Promise.all([
+    ch
+      .query({
+        query: `SELECT toString(hash) AS hash, reason FROM "blocked_images" WHERE hash IN (${hashes.join(
+          ','
+        )}) AND disabled = false`,
+        format: 'JSONEachRow',
+      })
+      .then((resultSet) => resultSet.json<{ hash: string; reason: string }>()),
+    csamBlockedHashes(hashes),
+  ]);
+  const disable = blocked.filter((b) => !csam.has(b.hash));
+  if (!disable.length) return;
   await ch.insert({
     table: 'blocked_images',
-    values: blocked.map((b) => ({ hash: b.hash, reason: b.reason, disabled: true })),
+    values: disable.map((b) => ({ hash: b.hash, reason: b.reason, disabled: true })),
     format: 'JSONEachRow',
   });
 }
