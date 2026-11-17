@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
@@ -309,7 +309,12 @@ describe('the face check after a moderator unlocked from the model form', () => 
       status: 'ok',
       output: { detected: true, reason: 'r' },
     });
+    // The unlock's logged ruling, after the stored detection; the lookup honours its date.
+    dbMock.dbWrite.modActivity.findFirst.mockImplementation((async (args: {
+      where: { createdAt: { gt: Date } };
+    }) => (args.where.createdAt.gt < new Date('2026-06-01') ? { id: 1 } : null)) as never);
   });
+  afterEach(() => dbMock.dbWrite.modActivity.findFirst.mockReset());
 
   it.each([
     ['a text-scan lock', 'text-scan'],
@@ -331,6 +336,30 @@ describe('the face check after a moderator unlocked from the model form', () => 
 
     await expect(faceCheck(saved)).rejects.toThrow();
 
+    expect((await row()).lockedProperties).toEqual(['nsfw']);
+  });
+
+  // Decision: a moderator's ruling holds for exactly the text it ruled on, through the stamp the
+  // unlock writes. Don't add a ruling-time skip for a fresh verdict: edited text must still lock.
+  it('keeps the ruled text unlocked across saves, from a stored or a fresh verdict', async () => {
+    await unlockedByModerator('text-scan');
+    await expect(faceCheck()).rejects.toThrow();
+    await expect(faceCheck()).rejects.toThrow();
+    // A verdict for other text since (a checked draft, say): the ruled text is judged fresh.
+    await db.query(
+      `UPDATE "Model" SET meta = jsonb_set(meta, '{comFaceIntent}', $2) WHERE id = $1`,
+      [MODEL, { detected: false, textHash: 'other', at: new Date().toISOString() }]
+    );
+    await expect(faceCheck()).rejects.toThrow();
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+    expect((await row()).lockedProperties).toEqual([]);
+    expect(activities).toHaveLength(0);
+  });
+
+  it("keeps a moderator's manual lock on the ruled text through later face saves", async () => {
+    await unlockedByModerator('text-scan');
+    await db.query(`UPDATE "Model" SET "lockedProperties" = '{nsfw}' WHERE id = $1`, [MODEL]);
+    await expect(faceCheck()).rejects.toThrow();
     expect((await row()).lockedProperties).toEqual(['nsfw']);
   });
 

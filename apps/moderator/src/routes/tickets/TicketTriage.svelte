@@ -22,6 +22,7 @@
     selectedMissing: string | null;
     canReply: boolean;
     canEscalate: boolean;
+    canPrivacy: boolean;
     canAccountAct: boolean;
     canUnban: boolean;
   };
@@ -216,6 +217,7 @@
             view={data.view}
             canReply={data.canReply}
             canEscalate={data.canEscalate}
+            canPrivacy={data.canPrivacy}
             canAccountAct={data.canAccountAct}
             canUnban={data.canUnban}
             onleave={leave}
