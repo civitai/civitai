@@ -31,7 +31,7 @@ export default defineModeratorEndpoint('textScan.harness', {
   notes: [
     'putPrompt/putConfig/putModes/putWebSearchModes/putLabelModes are attributed to the signed-in moderator; ids in the body are ignored.',
     'putPrompt, putConfig, putModes, putWebSearchModes and putLabelModes require the textScanPromptPublish permission.',
-    'putPrompt for label:model-com-face-intent also requires textScanPromptPublishIntent, unless the content is exactly an earlier version by a current holder that no later note revokes (a restore). A restore note should name the version it rolls back from as revokes:<id>.',
+    'putPrompt for label:model-com-face-intent also requires textScanPromptPublishIntent, unless the content is exactly an earlier version by a current holder that no later note by a holder revokes (a restore). A holder retires a version with revokes:<id> in a later note; the same text in a non-holder note is bookkeeping only and retires nothing.',
     'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'putWebSearchModes sets the web-search pass rollout the same way (Model only; capped by the putModes mode). getPrompts returns both as modes and webSearchModes.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
