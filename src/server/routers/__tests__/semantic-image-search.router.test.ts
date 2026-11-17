@@ -108,11 +108,23 @@ describe('semanticImageSearch router — own images without the flag', () => {
     expect(input.usernames).toBeUndefined();
   });
 
+  it('answers in the same shape whatever the search found, with no timing', async () => {
+    h.search.mockResolvedValue({ items: [{ id: 1 }], nextCursor: 50, correctedQuery: 'kuro' });
+    const result = await caller().search({ query: 'kuro', usernames: ['fox'] });
+    expect(result).toEqual({
+      items: [{ id: 1 }],
+      nextCursor: 50,
+      correctedQuery: undefined,
+      latencyMs: 0,
+    });
+  });
+
   it.each([
     ['another user', { usernames: ['vixen'] }],
     ['their own name mixed with another', { usernames: ['fox', 'vixen'] }],
     ['no owner at all', {}],
     ['an id beside their name', { usernames: ['fox'], userIds: [8] }],
+    ['a page past the first', { usernames: ['fox'], cursor: 50 }],
   ])('refuses %s', async (_, scope) => {
     await expect(caller().search({ query: 'kuro', ...scope })).rejects.toMatchObject({
       code: 'FORBIDDEN',

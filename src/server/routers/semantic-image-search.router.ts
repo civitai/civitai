@@ -30,10 +30,15 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
   if (guardFlagEnabled(ctx, 'imageSearch') || guardFlagEnabled(ctx, 'feedSearch'))
     return next({ ctx: { ownImagesOf: undefined as number | undefined } });
 
-  const { usernames, userIds } = input as SemanticImageSearchInput;
+  const { usernames, userIds, cursor } = input as SemanticImageSearchInput;
   const username = ctx.user?.username?.toLowerCase();
   const ownOnly =
-    !!username && usernames?.length === 1 && usernames[0].toLowerCase() === username && !userIds;
+    !!username &&
+    usernames?.length === 1 &&
+    usernames[0].toLowerCase() === username &&
+    !userIds &&
+    // The picker reads one page.
+    !cursor;
   if (!ownOnly) throw new TRPCError({ code: 'FORBIDDEN' });
 
   return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
@@ -75,6 +80,14 @@ export const semanticImageSearchRouter = router({
           .catch(() => undefined);
       }
 
+      // The picker shows neither a correction nor a timing.
+      if (ownImagesOf)
+        return {
+          items: result.items,
+          nextCursor: result.nextCursor,
+          correctedQuery: undefined,
+          latencyMs: 0,
+        };
       return { ...result, latencyMs };
     }),
 

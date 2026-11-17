@@ -6,9 +6,9 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // The showcase editor's Images picker, mounted with the real InstantSearch, Configure and search
-// client wiring. Only the transports are faked: Meilisearch has no images index any more (images_v6
-// was deleted), the semantic search fake applies `usernames` the way the server does, and
-// `image.getMyImages` answers the caller's own images (the server reads the caller from the session).
+// client wiring. Only the transports are faked: Meilisearch answers no images, the semantic search
+// fake applies `usernames` the way the server does, and `image.getMyImages` answers the caller's own
+// images (the server reads the caller from the session).
 
 const OWNER_IMAGE = 41;
 const OTHER_USERS_IMAGE = 99;
@@ -147,7 +147,6 @@ describe('Images search in the showcase picker', () => {
 
     await userEvent.type(page.getByPlaceholder('Search Civitai'), 'kuro');
 
-    // The failure that shipped: no images index answered, so nothing was offered.
     await vi.waitFor(() => expect(offeredIds()).toEqual([OWNER_IMAGE]), { timeout: 3000 });
     expect(state.semanticQuery).toHaveBeenCalledWith(expect.objectContaining({ query: 'kuro' }));
     for (const [input] of state.semanticQuery.mock.calls) expect(input.usernames).toEqual(['fox']);
