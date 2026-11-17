@@ -237,6 +237,19 @@ export const getAllUserCollectionsHandler = async ({
   }
 };
 
+/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
+async function isCoverShownByBrowsingRules(
+  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
+  ctx: Context
+) {
+  if (!image) return true;
+  const [showsImage, flags] = await Promise.all([
+    getRequestImageFilter(ctx),
+    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+  ]);
+  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
+}
+
 export const getCollectionByIdHandler = async ({
   ctx,
   input,
@@ -268,6 +281,7 @@ export const getCollectionByIdHandler = async ({
     }
 
     const collection = await getCollectionById({ input, viewer: ctx.user });
+    const coverShown = await isCoverShownByBrowsingRules(collection.image, ctx);
 
     // The catch covers the roster read alone — the reads above must still surface — because
     // getById backs the whole detail page and every other useCollection consumer.
@@ -301,7 +315,11 @@ export const getCollectionByIdHandler = async ({
 
     return {
       // Only an editor needs to know a cover is stored but hidden from them.
-      collection: { ...collection, coverHidden: permissions.manage && collection.coverHidden },
+      collection: {
+        ...collection,
+        image: coverShown ? collection.image : null,
+        coverHidden: permissions.manage && (collection.coverHidden || !coverShown),
+      },
       permissions,
       collaborators,
       pendingReviewCount,
