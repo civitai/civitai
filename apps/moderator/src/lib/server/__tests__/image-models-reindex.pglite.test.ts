@@ -46,6 +46,8 @@ let failNextQuery = false;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(syncSearchIndexBulk).mockReset().mockResolvedValue(undefined);
+  vi.mocked(bustCachedObject).mockReset().mockResolvedValue(undefined);
   db = await freshPglite();
   await db.exec(SCHEMA);
   failNextQuery = false;
@@ -123,16 +125,37 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
     expect(logAxiomError).toHaveBeenCalled();
   });
 
+  it('queues in strict mode, so a failed queue call is retried', async () => {
+    vi.useFakeTimers();
+    vi.mocked(syncSearchIndexBulk).mockRejectedValueOnce(new Error('main app down'));
+    try {
+      const run = queueModelsForImageChildTagChanges({
+        tagWrites: [{ imageId: 1, tagId: CHILD_TAG }],
+      });
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(syncSearchIndexBulk).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(syncSearchIndexBulk).mock.calls[1][1]).toEqual({ strict: true });
+    expect(logAxiomError).toHaveBeenCalledTimes(1);
+  });
+
   it('retries a failed read once, then queues', async () => {
     vi.useFakeTimers();
     failNextQuery = true;
 
-    const run = queueModelsForImageChildTagChanges({
-      tagWrites: [{ imageId: 1, tagId: CHILD_TAG }],
-    });
-    await vi.runAllTimersAsync();
-    await run;
-    vi.useRealTimers();
+    try {
+      const run = queueModelsForImageChildTagChanges({
+        tagWrites: [{ imageId: 1, tagId: CHILD_TAG }],
+      });
+      await vi.runAllTimersAsync();
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(logAxiomError).toHaveBeenCalledTimes(1);
     expect(queuedModels()).toEqual([{ entityType: 'model', entityIds: [100], action: 'update' }]);

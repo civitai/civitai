@@ -9,7 +9,7 @@ const CHILD_TAG_IDS = [...childBrowsingTagIds];
 const childTagIds = new Set<number>(CHILD_TAG_IDS);
 
 type ImageChildTagChanges = {
-  /** Images whose tags were written; those that gained or lost a child tag are queued. */
+  /** Images whose tags were written; those whose written tags include a child tag are queued. */
   tagWrites?: { imageId: number; tagId: number }[];
   /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
   levelImageIds?: number[];
@@ -17,10 +17,9 @@ type ImageChildTagChanges = {
 
 /**
  * For this app's tag and level writes: drops the cached tags and showcase images of the models whose
- * posts hold these images, then queues those models for a models-index rewrite. The queue call itself
- * is fire-and-forget (`syncSearchIndexBulk` logs and does not throw), so the retry covers the reads and
- * the busts. Never throws: it runs after the tag or level write has committed. A failed
- * attempt is retried once.
+ * posts hold these images, then queues those models for a models-index rewrite. Never throws: it runs
+ * after the tag or level write has committed. A failed attempt, the queue call included, is retried
+ * once; a second failure is logged and the requeue is dropped.
  */
 export async function queueModelsForImageChildTagChanges(
   changes: ImageChildTagChanges
@@ -66,17 +65,22 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
     .execute();
   if (!rows.length) return;
 
-  const modelVersionIds = [...new Set(rows.map((r) => r.modelVersionId).filter(isId))];
+  const modelVersionIds = [...new Set(rows.map((r) => r.modelVersionId).filter(isId))].sort(
+    (a, b) => a - b
+  );
   // A failed bust must not cost the other one or the queue.
   await Promise.all([
     bustCachedObject(REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES, [...imageIds]).catch(logError),
     bustCachedObject(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION, modelVersionIds).catch(logError),
   ]);
-  await syncSearchIndexBulk({
-    entityType: 'model',
-    entityIds: [...new Set(rows.map((r) => r.modelId))],
-    action: 'update',
-  });
+  await syncSearchIndexBulk(
+    {
+      entityType: 'model',
+      entityIds: [...new Set(rows.map((r) => r.modelId))],
+      action: 'update',
+    },
+    { strict: true }
+  );
 }
 
 const isId = (x: number | null): x is number => x != null;
