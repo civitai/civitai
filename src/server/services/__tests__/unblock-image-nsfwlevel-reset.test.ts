@@ -1,5 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -250,6 +251,67 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
     // The reset/unlock must be followed by the recompute — otherwise the row would
     // sit at Unrated instead of its true level.
     expect(capturedExecUnsafe.some((sql) => sql.includes('update_nsfw_levels_new'))).toBe(true);
+  });
+});
+
+describe('handleUnblockImages and a CSAM block', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFindMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'CSAM',
+        needsReview: null,
+      },
+      {
+        id: 2,
+        userId: 1,
+        pHash: null,
+        postId: null,
+        nsfwLevel: 32,
+        blockedFor: 'moderated',
+        needsReview: null,
+      },
+    ] as never);
+  });
+
+  it('leaves the CSAM-blocked image alone and unblocks the other', async () => {
+    const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+
+    const unblock = dbWrite.$queryRaw.mock.calls.filter(([strings]) =>
+      (strings as TemplateStringsArray).join('?').includes('"blockedFor" = NULL')
+    );
+    // The ids the UPDATE claimed, then the per-row CSAM re-check it carries.
+    const bound = unblock.map(
+      ([strings, ...values]) => Prisma.sql(strings as never, ...(values as never[])).values
+    );
+    expect(bound).toEqual([[2, 'CSAM']]);
+    expect(result.map((image) => image.id)).toEqual([2]);
+  });
+
+  it('leaves alone an image the replica still shows unblocked but the primary has CSAM-blocked', async () => {
+    const passthrough = dbWrite.$queryRaw.getMockImplementation()!;
+    dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) =>
+      (strings as unknown as string[]).join('?').includes('SELECT id FROM "Image"')
+        ? Promise.resolve([{ id: 2 }])
+        : passthrough(strings, ...values)) as never);
+    try {
+      const result = await handleUnblockImages({ ids: [1, 2], moderatorId: undefined } as any);
+
+      expect(result).toEqual([]);
+      const drops = dbWrite.$executeRaw.mock.calls.filter(([strings]) =>
+        (strings as TemplateStringsArray)
+          .join('?')
+          .includes('DELETE FROM "ImageDeferredBlockEffect"')
+      );
+      expect(drops).toEqual([]);
+    } finally {
+      dbWrite.$queryRaw.mockImplementation(passthrough as never);
+    }
   });
 });
 

@@ -1,4 +1,5 @@
-// Package server is the HTTP surface: the public tRPC path for the one procedure, and the internal
+// Package server is the HTTP surface: the public tRPC path for the one procedure (and `model.getAll`'s,
+// computed only with ServeModelGetAll), and the internal
 // shadow-compare endpoints (that procedure, `image.getInfinite`, `model.getAll`, and the public REST
 // `GET /api/v1/images`).
 package server
@@ -12,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,7 +38,8 @@ const Procedure = "image.getImagesAsPostsInfinite"
 // ProcedureInfinite is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
 const ProcedureInfinite = "image.getInfinite"
 
-// ProcedureModelGetAll is the tRPC procedure shadowed (never served) at /internal/shadow/<it>.
+// ProcedureModelGetAll is the tRPC procedure shadowed at /internal/shadow/<it>, and served on the public
+// route only with Server.ServeModelGetAll (FEED_GO_SERVE_MODEL_GETALL, default off).
 const ProcedureModelGetAll = "model.getAll"
 
 // Endpoint labels: every feed_go_* series carries `feed_endpoint`, one of these, so CPU per call and
@@ -47,7 +48,7 @@ const (
 	EndpointAsPosts     = "as-posts"     // tRPC image.getImagesAsPostsInfinite
 	EndpointV1Images    = "v1-images"    // REST GET /api/v1/images
 	EndpointInfinite    = "infinite"     // tRPC image.getInfinite (shadow only)
-	EndpointModelGetAll = "model-getall" // tRPC model.getAll (shadow only)
+	EndpointModelGetAll = "model-getall" // tRPC model.getAll (served only with ServeModelGetAll)
 )
 
 // Endpoints is every feed_endpoint value, in a fixed order (the seeded series are per endpoint).
@@ -98,17 +99,25 @@ type Server struct {
 	V1 *feed.V1Deps
 	// Infinite serves the `image.getInfinite` shadow; nil = every such sample falls back.
 	Infinite *feed.InfiniteDeps
-	// Models serves the `model.getAll` shadow; nil = every such sample falls back.
+	// Models serves the `model.getAll` shadow (and the public route, with ServeModelGetAll); nil = every
+	// such sample or request falls back.
 	Models *modelfeed.Deps
+	// ServeModelGetAll is FEED_GO_SERVE_MODEL_GETALL (default off): compute `model.getAll` on the public
+	// route. Off, every request there is the `model-getall-off` fallback (proxied to the Node app)
+	// before anything is computed or a serve slot taken.
+	ServeModelGetAll bool
 	// V1Models serves the REST `/api/v1/models` and `/api/v1/models/[id]` shadows (v1models.go); nil =
 	// every such sample falls back.
 	V1Models *V1ModelsDeps
 	// RequestBudget bounds one computation (0 = DefaultRequestBudget).
 	RequestBudget time.Duration
 	// MaxInFlight caps the public requests this pod computes at once (ResolveMaxInFlight; 0 =
-	// dbpool.DefaultMaxConns, never unlimited): the Node app's `heavy-image` bulkhead. A request past
-	// it is not computed: it is the `bulkhead` fallback, proxied to the Node app. Shadow samples and
-	// probes are bounded by their own queues and never take a serve slot.
+	// dbpool.DefaultMaxConns, never unlimited), across BOTH public routes: the gallery procedure and
+	// model.getAll share one pool of slots, so one route can hold slots the other then sheds for. For
+	// the gallery it stands in for the Node app's `heavy-image` bulkhead; Node has no bulkhead on
+	// model.getAll. A request past it is not computed: it is the `bulkhead` fallback, proxied to the
+	// Node app (feed_go_fallback_total and feed_go_serve_in_flight are per endpoint). Shadow samples
+	// and probes are bounded by their own queues and never take a serve slot.
 	MaxInFlight int
 
 	// inFlight counts the public requests holding a serve slot (feed_go_serve_in_flight).
@@ -311,11 +320,11 @@ func (s *Server) prepareInfinite(ctx context.Context, r *http.Request) (feed.Inf
 }
 
 // computeModelGetAll answers a `model.getAll` request (getModelsInfiniteHandler), or returns a
-// fallback/other error. The viewer, the domain cap and the region rules are read as for the gallery
-// procedure (the same middleware runs on both). It is only shadowed here, so no cache header is
-// computed (Node's: `public, s-maxage=60` signed out, none for a session).
+// fallback/other error. Viewer, domain cap and region rules are read as for the gallery procedure.
+// Cache policy is createContext's, not edgeCacheIt's (model.router.ts's skipEdgeCache hands it a copy
+// of ctx.cache): public TTL signed out, none for a session.
 func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*computed, error) {
-	req, err := s.prepareModelGetAll(ctx, r)
+	req, signedOut, err := s.prepareModelGetAll(ctx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -327,32 +336,37 @@ func (s *Server) computeModelGetAll(ctx context.Context, r *http.Request) (*comp
 	if err != nil {
 		return nil, err
 	}
-	return &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}, nil
+	out := &computed{payload: buf.Bytes(), buf: buf, trivial: ans.Trivial}
+	if signedOut {
+		// createContext: cacheable without a session user (a banned user still has one).
+		out.ttl = &trpc.SignedOutTTL
+	}
+	return out, nil
 }
 
-// prepareModelGetAll is computeModelGetAll up to the handler call; the Go-first probe runs the same
-// steps.
-func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, error) {
+// prepareModelGetAll is computeModelGetAll up to the handler call, and whether there is no session
+// user at all; the Go-first probe runs the same steps.
+func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (modelfeed.Request, bool, error) {
 	if s.Models == nil {
-		return modelfeed.Request{}, fallback.New("model-getall-unconfigured")
+		return modelfeed.Request{}, false, fallback.New("model-getall-unconfigured")
 	}
 	if r.Method != http.MethodGet {
-		return modelfeed.Request{}, fallback.New("method")
+		return modelfeed.Request{}, false, fallback.New("method")
 	}
 	raw, err := trpc.ParseInput(r)
 	if err != nil {
-		return modelfeed.Request{}, fallback.Newf("input-envelope", "%v", err)
+		return modelfeed.Request{}, false, fallback.Newf("input-envelope", "%v", err)
 	}
 	in, err := modelfeed.Parse(raw)
 	if err != nil {
-		return modelfeed.Request{}, err
+		return modelfeed.Request{}, false, err
 	}
 	if r.Header.Get(verifiedBotHeader) != "" {
-		return modelfeed.Request{}, fallback.New("verified-bot")
+		return modelfeed.Request{}, false, fallback.New("verified-bot")
 	}
 	user, err := s.Resolver.Resolve(ctx, r)
 	if err != nil {
-		return modelfeed.Request{}, err
+		return modelfeed.Request{}, false, err
 	}
 	authorized := user != nil && !user.Banned
 	isModerator := authorized && user.IsModerator
@@ -362,7 +376,7 @@ func (s *Server) prepareModelGetAll(ctx context.Context, r *http.Request) (model
 	if authorized {
 		req.Viewer = &modelfeed.Viewer{ID: user.ID, Username: user.Username, IsModerator: isModerator}
 	}
-	return req, nil
+	return req, user == nil, nil
 }
 
 // computeV1 answers a REST `/api/v1/images` request (handleImagesRequest), or returns a fallback/other
@@ -498,7 +512,6 @@ func (s *Server) acquireServe() bool {
 			return false
 		}
 		if s.inFlight.CompareAndSwap(n, n+1) {
-			s.Metrics.ServeInFlight.Inc()
 			return true
 		}
 	}
@@ -506,7 +519,6 @@ func (s *Server) acquireServe() bool {
 
 func (s *Server) releaseServe() {
 	s.inFlight.Add(-1)
-	s.Metrics.ServeInFlight.Dec()
 }
 
 // InFlight is the number of public requests computing now.
@@ -515,12 +527,18 @@ func (s *Server) InFlight() int64 { return s.inFlight.Load() }
 // computeServe is computeWithin for a public request, inside a serve slot. A full pod is the
 // `bulkhead` fallback without computing anything. The slot is held for the computation only, never
 // for the proxied fallback that may follow, and is released however the computation ends (answer,
-// fallback, error, panic, deadline, client gone) by the deferred release.
-func (s *Server) computeServe(r *http.Request, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
+// fallback, error, panic, deadline, client gone) by the deferred release. The slot shows on
+// feed_go_serve_in_flight under endpoint, the route holding it.
+func (s *Server) computeServe(r *http.Request, endpoint string, fn func(context.Context, *http.Request) (*computed, error)) (*computed, error) {
 	if !s.acquireServe() {
 		return nil, errBulkhead
 	}
-	defer s.releaseServe()
+	g := s.Metrics.ServeInFlight[endpoint]
+	g.Inc()
+	defer func() {
+		g.Dec()
+		s.releaseServe()
+	}()
 	return s.computeWithin(r.Context(), r, "serve", fn)
 }
 
@@ -606,49 +624,85 @@ func (s *Server) within(parent context.Context, where string, fn func(context.Co
 	return err
 }
 
-// ServeHTTP is the public route.
+// ServeHTTP is the public route of the gallery procedure (Procedure).
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	fn := s.compute
+	if s.computeFn != nil {
+		fn = s.computeFn
+	}
+	s.serve(w, r, EndpointAsPosts, Procedure, nil, fn)
+}
+
+// errModelGetAllOff is the `model-getall-off` fallback: the public model.getAll route with
+// ServeModelGetAll off.
+var errModelGetAllOff = fallback.New("model-getall-off")
+
+// ServeModelGetAllHTTP is the public route of `model.getAll`. With ServeModelGetAll off (the default)
+// every request is the `model-getall-off` fallback: nothing is computed and no serve slot is taken,
+// the request is proxied to the Node app as it came.
+func (s *Server) ServeModelGetAllHTTP(w http.ResponseWriter, r *http.Request) {
+	var off error
+	if !s.ServeModelGetAll {
+		off = errModelGetAllOff
+	}
+	fn := s.computeModelGetAll
+	if s.computeModelsFn != nil {
+		fn = s.computeModelsFn
+	}
+	s.serve(w, r, EndpointModelGetAll, ProcedureModelGetAll, off, fn)
+}
+
+// serve is a public route: off (non-nil) is the fallback answered before anything else; then the API
+// request policy, the origin check, and fn inside a serve slot. An answer is written here; any
+// fallback is proxied to the Node app. The serve slots (MaxInFlight) are shared by every public route.
+func (s *Server) serve(w http.ResponseWriter, r *http.Request, endpoint, procedure string, off error, fn func(context.Context, *http.Request) (*computed, error)) {
 	start := time.Now()
 	var (
 		c   *computed
 		err error
 	)
-	switch err = s.apiRequestPolicy(r); {
-	case err != nil:
-	case AcceptableOrigin(r, s.AllowedOrigins):
-		fn := s.compute
-		if s.computeFn != nil {
-			fn = s.computeFn
+	if off != nil {
+		err = off
+	} else {
+		switch err = s.apiRequestPolicy(r); {
+		case err != nil:
+		case AcceptableOrigin(r, s.AllowedOrigins):
+			c, err = s.computeServe(r, endpoint, fn)
+		default:
+			// The app's answer differs by environment and credential (non-production and bearer callers
+			// are accepted, a cookie caller in production is refused): never decided here.
+			err = fallback.New("origin")
 		}
-		c, err = s.computeServe(r, fn)
-	default:
-		// The app's answer differs by environment and credential (non-production and bearer callers
-		// are accepted, a cookie caller in production is refused): never decided here.
-		err = fallback.New("origin")
 	}
 	if err == nil {
+		// An answer that loaded no row is `served_empty`, as in the shadow path, so the per-served-call
+		// figures cover only answers that did the work.
+		served := "served"
+		if c.trivial {
+			served = "served_empty"
+		}
 		trpc.WriteResult(w, c.payload, c.ttl)
 		c.release() // WriteResult has sent payload and keeps no reference
-		s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", "served").Inc()
-		s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", "served").Observe(time.Since(start).Seconds())
+		s.Metrics.Requests.WithLabelValues(endpoint, "serve", served).Inc()
+		s.Metrics.Duration.WithLabelValues(endpoint, "serve", served).Observe(time.Since(start).Seconds())
 		return
 	}
 	outcome := "fallback"
 	reason := fallback.Reason(err)
 	if reason == "" {
 		outcome, reason = "error", "error"
-		s.Log.Error("feed compute failed; falling back", "err", err)
+		s.Log.Error("feed compute failed; falling back", "endpoint", endpoint, "err", err)
 	}
-	s.Metrics.Requests.WithLabelValues(EndpointAsPosts, "serve", outcome).Inc()
-	s.Metrics.Fallbacks.WithLabelValues(EndpointAsPosts, "serve", reason).Inc()
-	s.Metrics.Duration.WithLabelValues(EndpointAsPosts, "serve", outcome).Observe(time.Since(start).Seconds())
+	s.Metrics.Requests.WithLabelValues(endpoint, "serve", outcome).Inc()
+	s.Metrics.Fallbacks.WithLabelValues(endpoint, "serve", reason).Inc()
+	s.Metrics.Duration.WithLabelValues(endpoint, "serve", outcome).Observe(time.Since(start).Seconds())
 	if reason == "canceled" {
 		// The client has gone: nobody would read a proxied answer, and proxying would only make the
 		// Node app compute one.
 		return
 	}
 	if s.Fallback == nil {
-		trpc.WriteError(w, Procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
+		trpc.WriteError(w, procedure, &trpc.Error{Code: "INTERNAL_SERVER_ERROR", HTTPStatus: 503, Message: "unavailable"})
 		return
 	}
 	// The original request (and its context): the budget bounded only this service's own compute.
@@ -930,7 +984,7 @@ func (s *Server) compare(ctx context.Context, endpoint string, req ShadowRequest
 	}
 	unexpected := 0
 	for _, d := range respDiffs {
-		if !expectedResponseDiff(endpoint, d, c.ttl, req.ResponseHeaders) {
+		if !expectedResponseDiff(d) {
 			unexpected++
 		}
 	}
@@ -969,15 +1023,8 @@ func bodyDiffers(result string) bool {
 	return true
 }
 
-// expectedResponseDiff reports whether a header difference is one of the expected differences DESIGN.md
-// §7 lists: x-update-required only from Node (this service never tells a bundle to reload), and on
-// model.getAll a public Cache-Control from Node where this compute recorded no edge TTL (§15).
-func expectedResponseDiff(endpoint string, d shadow.Diff, ttl *trpc.CacheTTL, nodeHeaders map[string]string) bool {
-	switch {
-	case d.Category == "header:x-update-required" && d.Kind == "missing-in-go":
-		return true
-	case endpoint == EndpointModelGetAll && d.Category == "header:cache-control" && d.Kind == "value" && ttl == nil:
-		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(nodeHeaders["cache-control"])), "public")
-	}
-	return false
+// expectedResponseDiff reports whether a header difference is one DESIGN.md §7 lists: x-update-required
+// only from Node (this service never tells a bundle to reload).
+func expectedResponseDiff(d shadow.Diff) bool {
+	return d.Category == "header:x-update-required" && d.Kind == "missing-in-go"
 }

@@ -130,6 +130,39 @@ describe('/api/training-studio/studio/[route]', () => {
   });
 
   it.each([
+    ['edit-image', {}, { prompt: 'p' }, 'https://studio.example/api/edit-image'],
+    [
+      'suggest-instruction',
+      {},
+      { beforeUrl: 'a' },
+      'https://studio.example/api/suggest-instruction',
+    ],
+    [
+      'epoch-archive',
+      { id: 'wf', kind: 'weights' },
+      {},
+      'https://studio.example/api/epoch-archive?id=wf&kind=weights',
+    ],
+  ])('forwards a %s submit, with its query', async (route, query, body, url) => {
+    const res = await call({ route, query, body });
+    expect(res.statusCode).toBe(200);
+    const [sent, init] = outbound();
+    expect(sent).toBe(url);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual(body);
+  });
+
+  // Their quotes and polls stay browser calls; only the submit is forwarded.
+  it.each(['edit-image', 'suggest-instruction', 'epoch-archive'])(
+    'sends nothing for a GET to %s',
+    async (route) => {
+      const res = await call({ route, method: 'GET' });
+      expect(res.statusCode).toBe(405);
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
     ['a Studio route outside the list', 'rename'],
     ['a path', 'train/../rename'],
     ['an encoded path', 'train%2F..%2Frename'],

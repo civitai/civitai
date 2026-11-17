@@ -4,13 +4,16 @@ import { trainingStudioUrl } from '~/utils/training-studio-url';
 
 /**
  * The Training Studio server routes the embedded Studio reaches through this app, and the methods
- * each takes. These start or price a training run, or count a dataset's mature images for Review:
- * the Studio's server makes the count, so the embed sends them here rather than to the orchestrator.
+ * each takes: every call that spends (a training run, an edit, a suggestion, an epoch archive),
+ * pricing a continuation, and Review's mature count (the Studio's server makes the count).
  */
 export const STUDIO_FORWARD_ROUTES: Readonly<Record<string, readonly string[]>> = {
   train: ['POST'],
   'continue-training': ['GET', 'POST'],
   'dataset-rating': ['POST'],
+  'edit-image': ['POST'],
+  'suggest-instruction': ['POST'],
+  'epoch-archive': ['POST'],
 };
 
 // A submit can outlast this and still have started the run, so a timeout is reported as unconfirmed.

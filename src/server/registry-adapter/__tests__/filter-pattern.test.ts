@@ -1,7 +1,9 @@
 import { RE2JS } from 're2js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  FILTER_PATTERN_BODY_BUDGET,
   FILTER_PATTERN_DFA_BYTES,
+  FILTER_PATTERN_MAX_INPUT_LENGTH,
   FILTER_PATTERN_MAX_LENGTH,
   FILTER_PATTERN_MAX_SIZE,
   FilterPatternError,
@@ -20,6 +22,24 @@ import { ProtocolError } from '~/server/registry-adapter/protocol';
  * A filter's `pattern` and `patternProperties` run on a linear-time engine (RE2, via re2js) with
  * ECMA-262's meaning, or are refused with `bad_request`; never silently evaluated otherwise.
  */
+
+// First in the file. A pattern run by the platform RegExp backtracks, and a backtracking match is
+// synchronous, so no test timeout can interrupt it: this fails instead, and the backtracking case
+// below is short enough that the platform RegExp would still return.
+describe('🔴 a compiled pattern runs on re2js, not the platform RegExp', () => {
+  it('compileFilterPattern returns no RegExp, and its test is RE2JS#test', () => {
+    const rx = compileFilterPattern('^(a+)+$');
+    expect(rx).not.toBeInstanceOf(RegExp);
+    // Spied after the compile, whose self-test matches through re2js too.
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect([rx.test('aab'), rx.test('aa')]).toEqual([false, true]);
+      expect(re2Test).toHaveBeenCalledTimes(2);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+});
 
 /** Patterns whose meaning must equal the platform's ECMA-262 (`u` flag) on every input below. */
 const PATTERNS = [
@@ -368,8 +388,10 @@ describe('🔴 a re2js that does not keep the DFA bound makes every pattern bad_
 });
 
 describe('🔴 a backtracking pattern runs in linear time', () => {
-  // The platform RegExp takes time exponential in the run of `a`s here; these finish at once.
-  it.each([[30], [20_000]])('^(a+)+$ against %i a then b: no match, and it returns', (n) => {
+  // Linear time is what re2js gives; that the pattern runs on re2js is the first test in this
+  // file. The run here is short enough that the platform RegExp, which takes time exponential in
+  // it, would still return at once, so a regression fails that test rather than hanging here.
+  it.each([[20]])('^(a+)+$ against %i a then b: no match, and it returns', (n) => {
     const rx = compileFilterPattern('^(a+)+$');
     expect(rx.test(`${'a'.repeat(n)}b`)).toBe(false);
     expect(rx.test('a'.repeat(n))).toBe(true);
@@ -408,6 +430,15 @@ describe('createFilterCompiler with patterns', () => {
 
   it.each([
     ['a lookahead in pattern', { properties: { slug: { pattern: '(?=z)' } } }, 'a lookahead'],
+    // ajv compiles a root `$async` to a validator that answers a promise; nested, it ignores it
+    // under allOf and throws under properties. Each is refused by name.
+    ['$async at the root', { $async: true, properties: { slug: {} } }, 'filter uses "$async"'],
+    ['$async under allOf', { allOf: [{ $async: true }] }, 'filter uses "$async"'],
+    [
+      '$async under properties',
+      { properties: { slug: { $async: true, type: 'string' } } },
+      'filter uses "$async"',
+    ],
     [
       'a backreference in patternProperties',
       { patternProperties: { '(a)\\1': { type: 'number' } } },
@@ -504,5 +535,196 @@ describe('the filter cache counts patterns, not only filters', () => {
     const first = compile({ pattern: '^a' });
     for (let k = 0; k < 10; k++) compile({ pattern: `^b${k}` });
     expect(compile({ pattern: '^a' })).toBe(first);
+  });
+});
+
+// The values below are built from the literal 16384, not from FILTER_PATTERN_MAX_INPUT_LENGTH, so
+// moving the bound either way fails a test here. `^a` matches any run of `a` whatever its length,
+// so the bound is the only reason a value over it is not matched.
+describe('🔴 a pattern is not run on a value longer than the input bound', () => {
+  const atBound = 'a'.repeat(16384);
+  const overBound = 'a'.repeat(16385);
+
+  it('the bound is 16384', () => {
+    expect(FILTER_PATTERN_MAX_INPUT_LENGTH).toBe(16384);
+  });
+
+  it('^a matches a value of exactly 16384; one of 16385 is not matched and re2js is not run', () => {
+    const rx = compileFilterPattern('^a');
+    // Spied after the compile, whose self-test matches through re2js too.
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect([rx.test(atBound), rx.test(overBound)]).toEqual([true, false]);
+      expect(re2Test).toHaveBeenCalledTimes(1);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  // An astral code point is two UTF-16 code units: 8192 of them are 16384 units, 8192 code points.
+  it('the length is counted in UTF-16 code units, not code points', () => {
+    const rx = compileFilterPattern('^\\u{1F600}');
+    const astral = '\u{1F600}'.repeat(8192);
+    expect(astral.length).toBe(16384);
+    expect([rx.test(astral), rx.test(`${astral}a`)]).toEqual([true, false]);
+  });
+
+  describe('through a compiled filter, the pattern keyword fails on an oversized value', () => {
+    const compile = createFilterCompiler();
+
+    it('pattern: 16384 matches, 16385 does not', () => {
+      const f = compile({ properties: { text: { pattern: '^a' } } })!;
+      expect([f({ text: atBound }), f({ text: overBound })]).toEqual([true, false]);
+    });
+
+    it('not: {pattern} PASSES for an oversized value, and fails at the bound', () => {
+      const f = compile({ properties: { text: { not: { pattern: '^a' } } } })!;
+      expect([f({ text: atBound }), f({ text: overBound }), f({ text: 'b' })]).toEqual([
+        false,
+        true,
+        true,
+      ]);
+    });
+
+    it('patternProperties: a key over the bound is matched by no key, so additionalProperties applies', () => {
+      const f = compile({
+        patternProperties: { '^a': { type: 'number' } },
+        additionalProperties: false,
+      })!;
+      expect([f({ [atBound]: 1 }), f({ [overBound]: 1 })]).toEqual([true, false]);
+    });
+
+    it('propertyNames: a name over the bound does not match its pattern', () => {
+      const f = compile({ propertyNames: { pattern: '^a' } })!;
+      expect([f({ [atBound]: 1 }), f({ [overBound]: 1 })]).toEqual([true, false]);
+    });
+  });
+});
+
+// Built from literals (65536 = 4 × 16384), not from FILTER_PATTERN_BODY_BUDGET, so moving the
+// budget fails a test here. Every value is at the per-value bound (16384), so only the budget is
+// at stake.
+describe('🔴 one body evaluation runs at most 65536 characters of pattern input', () => {
+  const A = 'a'.repeat(16384);
+  const B = 'b'.repeat(16384);
+
+  it('the budget is 65536', () => {
+    expect(FILTER_PATTERN_BODY_BUDGET).toBe(65536);
+  });
+
+  it('items: 4 values of 16384 spend it exactly and match; a 5th is not matched, and not run', () => {
+    const f = createFilterCompiler()({ properties: { tags: { items: { pattern: '^a' } } } })!;
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect(f({ tags: [A, A, A, A] })).toBe(true);
+      expect(re2Test).toHaveBeenCalledTimes(4);
+      re2Test.mockClear();
+      expect(f({ tags: [A, A, A, A, 'a'] })).toBe(false);
+      expect(re2Test).toHaveBeenCalledTimes(4);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  it('a value after the budget is spent counts as not matching: not: {pattern} passes for it', () => {
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { not: { pattern: '^a' } } } },
+    })!;
+    // `a` matches ^a, so `not` fails for it while the budget lasts, and passes once it is spent.
+    expect([f({ tags: [B, B, B, 'a'] }), f({ tags: [B, B, B, B, 'a'] })]).toEqual([false, true]);
+  });
+
+  it('a value that does not fit ends the budget: a shorter value after it is not matched either', () => {
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { not: { pattern: '^a' } } } },
+    })!;
+    const b10k = 'b'.repeat(10000);
+    // After three B, 16384 is left: one b10k fits, the second does not, and then `a` (which would
+    // fit in the 6384 still unspent) is not matched, so `not` passes for it.
+    expect(f({ tags: [B, B, B, b10k, b10k, 'a'] })).toBe(true);
+  });
+
+  it("two patterns share one body's budget: 3 + 1 values match, 3 + 2 do not", () => {
+    const f = createFilterCompiler()({
+      properties: { a: { items: { pattern: '^a' } }, b: { items: { pattern: '^b' } } },
+    })!;
+    expect([f({ a: [A, A, A], b: [B] }), f({ a: [A, A, A], b: [B, B] })]).toEqual([true, false]);
+  });
+
+  it('a value over the per-value bound charges nothing: it never runs', () => {
+    const over = 'a'.repeat(16385);
+    // Each `over` fails the pattern and passes minLength; the four A then spend the whole budget.
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { anyOf: [{ pattern: '^a' }, { minLength: 16385 }] } } },
+    })!;
+    expect(f({ tags: [over, over, over, over, over, over, over, over, A, A, A, A] })).toBe(true);
+  });
+
+  it('each body gets a full budget: the same filter, body after body, even after one spent it', () => {
+    const f = createFilterCompiler()({ properties: { tags: { items: { pattern: '^a' } } } })!;
+    expect([
+      f({ tags: [A, A, A, A] }),
+      f({ tags: [A, A, A, A] }),
+      f({ tags: [A, A, A, A, A] }),
+      f({ tags: [A, A, A, A] }),
+    ]).toEqual([true, true, false, true]);
+  });
+
+  it('a filter shared through the cache by two subscriptions: each body gets a full budget', () => {
+    const compile = createFilterCompiler();
+    const filter = { properties: { tags: { items: { pattern: '^a' } } } };
+    const first = compile(filter)!;
+    const second = compile(filter)!;
+    expect(second).toBe(first);
+    expect([
+      first({ tags: [A, A, A, A, A] }),
+      second({ tags: [A, A, A, A] }),
+      first({ tags: [A, A, A, A] }),
+    ]).toEqual([false, true, true]);
+  });
+});
+
+describe('🔴 the body budget charges every run and is full for the first body', () => {
+  const A = 'a'.repeat(16384);
+  const B = 'b'.repeat(16384);
+
+  it("an empty value after the budget is spent is not run: not: {pattern: '^$'} passes for it", () => {
+    const f = createFilterCompiler()({
+      properties: { tags: { items: { not: { pattern: '^$' } } } },
+    })!;
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      // Four B spend the budget; `a` does not fit and ends it; `''` would match ^$ if it ran.
+      expect(f({ tags: [B, B, B, B, 'a', ''] })).toBe(true);
+      expect(re2Test).toHaveBeenCalledTimes(4);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  it('empty values cost 1 each: 65536 of them run, the 65537th does not', () => {
+    const f = createFilterCompiler()({ properties: { tags: { items: { pattern: '^$' } } } })!;
+    const re2Test = vi.spyOn(RE2JS.prototype, 'test');
+    try {
+      expect(f({ tags: new Array<string>(65536).fill('') })).toBe(true);
+      expect(re2Test).toHaveBeenCalledTimes(65536);
+      re2Test.mockClear();
+      expect(f({ tags: new Array<string>(65537).fill('') })).toBe(false);
+      expect(re2Test).toHaveBeenCalledTimes(65536);
+    } finally {
+      re2Test.mockRestore();
+    }
+  });
+
+  // ajv's meta-schema runs a pattern on `$id` when the filter is compiled, through the same engine,
+  // so the budget is part spent before the first body: it must be refilled before that body runs.
+  it('a 7000-character $id spends budget at compile time; the first body still gets all of it', () => {
+    const filter = {
+      $id: `urn:example:${'x'.repeat(7000)}`,
+      properties: { tags: { items: { pattern: '^a' } } },
+    };
+    expect(JSON.stringify(filter).length).toBeLessThan(8192);
+    const f = createFilterCompiler()(filter)!;
+    expect(f({ tags: [A, A, A, A] })).toBe(true);
   });
 });
