@@ -261,6 +261,13 @@ describe('nextFeedSearchQuery', () => {
   it('changes nothing for the query already applied', () => {
     expect(nextFeedSearchQuery({ query: 'red dragon' }, '  red   dragon ')).toBeNull();
   });
+
+  it('replaces a "more like this" with a typed query', () => {
+    expect(nextFeedSearchQuery({ similarTo: '42', period: 'AllTime' }, 'red dragon')).toEqual({
+      period: 'AllTime',
+      query: 'red dragon',
+    });
+  });
 });
 
 describe('nextFeedSearchQuery and the user filter', () => {
