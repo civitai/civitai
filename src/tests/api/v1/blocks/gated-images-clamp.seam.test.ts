@@ -86,6 +86,7 @@ vi.mock('~/client-utils/edge-url', () => ({
 // upload service's env/S3 graph. Same stub the service's own unit test uses.
 vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
   BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
+  BLOCK_UPLOADED_APP_ID_META_KEY: 'blockUploadedAppId',
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -149,6 +150,8 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  // The row carries THIS app's published key (the SQL's `viaPublished`).
+  viaPublished: true,
   ...over,
 });
 

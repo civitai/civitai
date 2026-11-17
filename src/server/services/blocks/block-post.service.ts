@@ -563,9 +563,9 @@ const POST_PREVIEW_EDGE_WIDTH = 450;
  *     copying it here unchanged would have let a block pull ANOTHER viewer's
  *     image of the same app into this viewer's post.
  *   - `blockPublishedAppId` OR `blockUploadedAppId` = <token appId> — only what
- *     THIS app published or uploaded. The uploaded key is safe here, and only
- *     here, because the owner conjunct above binds the row to this viewer; the
- *     cross-user gated read must never accept it.
+ *     THIS app published or uploaded. The owner conjunct above binds the row to
+ *     this viewer. (The cross-user gated read also accepts the uploaded key, but
+ *     only for scanned, SFW rows; see `getBlockGatedImagesByIds`.)
  *   - `postId IS NULL` — an image already in a post is not adoptable. This also
  *     makes double-posting impossible without a second check.
  *   - `classifyGatedImageForViewer` — terminally `Scanned`, unflagged, and within

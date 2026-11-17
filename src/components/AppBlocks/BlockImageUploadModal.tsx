@@ -74,6 +74,7 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
 export default function BlockImageUploadModal({
   onResolved,
   onAccepted,
+  blockToken,
 }: {
   /** Called ONCE with the moderated result when a clean+SFW+unflagged image lands.
    *  BLOCKING mode only (ignored when `onAccepted` is provided). */
@@ -84,6 +85,10 @@ export default function BlockImageUploadModal({
    *  by a host-mounted poller. The `url` is the author's OWN just-uploaded edge
    *  URL (unguessable UUID key), for author preview only. */
   onAccepted?: (handle: { imageId: number; url: string }) => void;
+  /** The requesting block's token. Sent with the persist so the server stamps the row with that
+   *  app's verified id (`blockUploadedAppId`), which lets the app show it to its other viewers
+   *  once scanned. Omitted ⇒ an unstamped row, as before. */
+  blockToken?: string;
 }) {
   const dialog = useDialogContext();
   const { uploadToCF } = useCFImageUpload();
@@ -196,6 +201,7 @@ export default function BlockImageUploadModal({
         height,
         mimeType: file.type || undefined,
         sizeBytes: file.size,
+        ...(blockToken ? { blockToken } : {}),
       });
       if (epoch !== epochRef.current) return;
       // ASYNC (non-blocking) mode: the caller wants the modal to resolve the

@@ -1,3 +1,6 @@
+import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
+
 import {
   gateBlockUploadImageSchema,
   generationSourceUsesScannedRowsSchema,
@@ -13,10 +16,14 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
  * let the user upload an image; the bytes flow through civitai's OWN authenticated
  * upload path (the block iframe never sees them), so these are `protectedProcedure`
  * (the logged-in user), NOT block-JWT routes and NOT a new block scope — a generic
- * peer of `OPEN_RESOURCE_PICKER`.
+ * peer of `OPEN_RESOURCE_PICKER`. The optional block token on `persist` only decides
+ * the provenance stamp; the session user is still what authorises the call.
  *
  *   - persist — materialise the CF upload into a scannable `Image` (real
- *     `createImage` + `ingestImage`, NO trust-stamp).
+ *     `createImage` + `ingestImage`, NO trust-stamp). When the host also sends its
+ *     block token, the row is stamped `blockUploadedAppId` = that token's verified
+ *     appId, so the app can show it to its other viewers once scanned (see
+ *     `persistPickedUploadAppId`).
  *   - gate    — poll the scan; return the moderated id ONLY once scanned-clean,
  *     within the SFW ceiling, and unflagged (else throw). See the service + pure
  *     classifier.
@@ -31,24 +38,26 @@ export const blockImageUploadRouter = router({
         errorMessage: 'Too many image uploads — slow down.',
       })
     )
-    .input(persistBlockUploadImageSchema)
+    .input(persistBlockUploadImageSchema.extend({ blockToken: z.string().min(1).optional() }))
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { blockToken, ...upload } = input;
+      const pickedForAppId = blockToken
+        ? await persistPickedUploadAppId(blockToken, ctx.user.id)
+        : undefined;
       const { persistBlockUploadImage } = await import(
         '~/server/services/blocks/block-image-upload.service'
       );
-      return persistBlockUploadImage({ input, userId: ctx.user.id });
+      return persistBlockUploadImage({ input: upload, userId: ctx.user.id, pickedForAppId });
     }),
 
-  gate: protectedProcedure
-    .input(gateBlockUploadImageSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
-      const { gateBlockUploadImage } = await import(
-        '~/server/services/blocks/block-image-upload.service'
-      );
-      return gateBlockUploadImage({ imageId: input.imageId, user: ctx.user });
-    }),
+  gate: protectedProcedure.input(gateBlockUploadImageSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+    const { gateBlockUploadImage } = await import(
+      '~/server/services/blocks/block-image-upload.service'
+    );
+    return gateBlockUploadImage({ imageId: input.imageId, user: ctx.user });
+  }),
 
   /**
    * Whether a PRIVATE generation source the host just uploaded as a consumer blob (the
@@ -71,3 +80,31 @@ export const blockImageUploadRouter = router({
       return { scannedRows: await appUsesScannedSourceRows(claims.appBlockId) };
     }),
 });
+
+/**
+ * The app a viewer-picked upload is stamped for: the appId of the host's block token, verified as
+ * every bridge call verifies it (`authorizeBlockBridgeToken`: signature, expiry, revocation, the
+ * backing app still approved), and only when the token's subject (`sub`, `user:<id>`) is the
+ * session user doing the upload. A token for anyone else, or an anonymous one, is REFUSED rather
+ * than ignored: a host that sends a token expects a stamped row, and silently writing an unstamped
+ * one would leave the app believing its viewers can see an image nobody else ever will.
+ *
+ * The appId never comes from the request: it is the verified claim or nothing.
+ */
+async function persistPickedUploadAppId(blockToken: string, userId: number): Promise<string> {
+  const [{ authorizeBlockBridgeToken }, { parseSubjectUserId }] = await Promise.all([
+    import('~/server/services/blocks/block-bridge-auth.service'),
+    import('~/server/middleware/block-scope.middleware'),
+  ]);
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  let subject: number | null;
+  try {
+    subject = parseSubjectUserId(claims.sub);
+  } catch {
+    subject = null;
+  }
+  if (subject !== userId) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token is not for this viewer' });
+  }
+  return claims.appId;
+}

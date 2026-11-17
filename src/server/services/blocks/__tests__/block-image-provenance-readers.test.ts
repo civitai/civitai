@@ -11,11 +11,13 @@ import { BLOCK_PROVENANCE_METADATA_KEYS } from '~/shared/utils/block-provenance-
  * directions, so adding or removing a reader fails here whether or not its author knew this file
  * existed.
  *
- * 🔴 THE PROPERTY IT EXISTS FOR: `blockUploadedAppId` (an app's own `bytes` upload) is accepted
- * by POST readers, which bind the row to its owner, and by NOTHING that reads cross-user. A
- * gated read that accepted it would let an app read every viewer's uploads. The behaviour of the
- * two live readers is pinned against real SQL in `block-image-provenance.behavior.test.ts`; this
- * file pins that there are no others.
+ * 🔴 THE PROPERTY IT EXISTS FOR: `blockUploadedAppId` (an image uploaded through an app) is
+ * accepted by exactly two kinds of reader: the POST readers, which bind the row to its owner, and
+ * the ONE cross-user gated read, which shows an app's own uploads to its other viewers only once
+ * scanned, rated, unflagged and within the viewer's and the SFW ceilings, and never another app's.
+ * Any other cross-user reader of the key would bypass those limits. The behaviour of the live
+ * readers is pinned against real SQL in `block-image-provenance.behavior.test.ts`; this file pins
+ * that there are no others.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
@@ -226,11 +228,15 @@ describe('App Blocks image provenance-key sites', () => {
     }
   });
 
-  it('🔴 the GATED reader names the published key and nothing that could admit an upload', () => {
+  it('🔴 the ONE gated reader names exactly the published and the uploaded key', () => {
+    // Widened deliberately from the published key alone: an app may show its own SCANNED uploads
+    // to its other viewers. The limits on those rows (scanned only, SFW, no owner pending branch,
+    // equality with the verified appId) are pinned in block-image-provenance.behavior.test.ts.
+    // The postable-set constant must NOT appear here: the gated read spells each key it accepts.
     const gated = Object.entries(LEDGER).filter(([, r]) => r === 'gated-reader');
     expect(gated.length).toBe(1);
     for (const [site] of gated) {
-      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED]);
+      expect([...(sites.get(site) ?? [])].sort()).toEqual([PUBLISHED, UPLOADED].sort());
     }
   });
 
@@ -244,7 +250,7 @@ describe('App Blocks image provenance-key sites', () => {
     }
   });
 
-  it('only the bytes-upload writer stamps the uploaded key', () => {
+  it('only the upload writer stamps the uploaded key (bytes and verified viewer-picked uploads)', () => {
     const stampers = [...sites.entries()]
       .filter(([site, tokens]) => LEDGER[site] === 'writer' && tokens.has(UPLOADED))
       .map(([site]) => site);

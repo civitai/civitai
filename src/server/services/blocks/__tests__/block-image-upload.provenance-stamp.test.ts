@@ -120,6 +120,40 @@ describe('persistBlockUploadImage → real createImage', () => {
 
     expect(storedMeta()).toBe(Prisma.JsonNull);
   });
+
+  it('🔴 a viewer-picked upload made for an app stores blockUploadedAppId = that verified appId', async () => {
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      pickedForAppId: APP_ID,
+    });
+
+    const metadata = storedMetadata();
+    expect(metadata?.blockUploadedAppId).toBe(APP_ID);
+    expect(metadata && 'blockPublishedAppId' in metadata).toBe(false);
+  });
+
+  it('a viewer-picked upload made for an app still reads no embedded parameters', async () => {
+    await persistBlockUploadImage({
+      input: { url: KEY } as never,
+      userId: CALLER,
+      pickedForAppId: APP_ID,
+    });
+
+    expect(storedMeta()).toBe(Prisma.JsonNull);
+  });
+
+  it('refuses both stamp sources at once, before writing', async () => {
+    await expect(
+      persistBlockUploadImage({
+        input: { url: KEY } as never,
+        userId: CALLER,
+        uploadedByAppId: APP_ID,
+        pickedForAppId: 'appblk-other',
+      })
+    ).rejects.toThrow(/not both/);
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('createImage (default ingestion) with client metadata', () => {

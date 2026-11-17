@@ -24,6 +24,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 // stub it so the test doesn't pull that module's env/s3 graph.
 vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
   BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
+  BLOCK_UPLOADED_APP_ID_META_KEY: 'blockUploadedAppId',
 }));
 
 import {
@@ -59,6 +60,8 @@ const clean = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  // The row carries THIS app's published key (the SQL's `viaPublished`).
+  viaPublished: true,
   ...over,
 });
 

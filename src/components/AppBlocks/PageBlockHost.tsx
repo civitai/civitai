@@ -4661,7 +4661,10 @@ export function PageBlockHost({
   //     routes through civitai's SESSION-AUTHED path → REAL createImage +
   //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
   //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
-  //     and unflagged is returned. UNCHANGED behavior.
+  //     and unflagged is returned. The host sends its block token with the persist,
+  //     so the row is stamped `blockUploadedAppId` = this app's verified id: the app
+  //     may show it to its other viewers through the gated read once it is scanned
+  //     (never another app, never before the scan).
   //
   //   • 'generationSource' (PRIVATE generation input — an img2img source): the
   //     upload routes through the SAME lightweight consumer-blob util the generator
@@ -4674,7 +4677,8 @@ export function PageBlockHost({
   //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
   //   • `bytes` (an ArrayBuffer the block made — no picker, display only): see imageUploadBytes.ts.
-  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else.
+  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and show it to its
+  //     other viewers once scanned (the gated read), and no other app anything.
   //     Always BLOCKING: `asyncScan` is ignored, so the app never holds the id or a CDN url of
   //     bytes the scan refused (the SDK already treats a blocking reply to an async request as
   //     an immediately-scanned image).
@@ -4840,6 +4844,9 @@ export function PageBlockHost({
           id: `block-image-upload-${requestId}`,
           component: BlockImageUploadModal,
           props: {
+            // The persist stamps the row with this token's verified app id
+            // (`blockUploadedAppId`): see `blockImageUpload.persist`.
+            blockToken: token ?? undefined,
             // BLOCKING-mode callback — unused in async mode (onAccepted drives the
             // early resolve); a no-op that satisfies the modal's required prop.
             onResolved: () => undefined,
@@ -4871,7 +4878,8 @@ export function PageBlockHost({
         return;
       }
 
-      // display (default): moderated public-image path — UNCHANGED.
+      // display (default): moderated public-image path. The persist is stamped with
+      // this token's verified app id (`blockUploadedAppId`): see `blockImageUpload.persist`.
       let resolved: BlockUploadedImageInfo | null = null;
       dialogStore.trigger({
         // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
@@ -4879,6 +4887,7 @@ export function PageBlockHost({
         id: `block-image-upload-${requestId}`,
         component: BlockImageUploadModal,
         props: {
+          blockToken: token ?? undefined,
           onResolved: (result: BlockUploadedImageInfo) => {
             resolved = result;
           },

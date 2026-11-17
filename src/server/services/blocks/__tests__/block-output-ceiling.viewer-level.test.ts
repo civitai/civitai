@@ -12,6 +12,7 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 }));
 vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
   BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
+  BLOCK_UPLOADED_APP_ID_META_KEY: 'blockUploadedAppId',
 }));
 
 import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
