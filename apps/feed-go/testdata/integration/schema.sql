@@ -28,6 +28,9 @@ CREATE TYPE "PaidAccessEntityType" AS ENUM ('ModelVersion', 'ComicChapter');
 CREATE TYPE "SaleDiscountType" AS ENUM ('Fixed', 'Percent');
 CREATE TYPE "CosmeticEntity" AS ENUM ('Model', 'Image', 'Article', 'Post', 'Model3D');
 CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
+CREATE TYPE "TagType" AS ENUM ('UserGenerated', 'Label', 'Moderation', 'System');
+CREATE TYPE "TagSource" AS ENUM ('User', 'Rekognition', 'WD14', 'Computed', 'ImageHash', 'Hive', 'MinorDetection',
+  'HiveDemographics', 'Clavata', 'SpineRating', 'AiRecognition', 'AnimeRecognition');
 
 CREATE TABLE "User" (
   id                 integer PRIMARY KEY,
@@ -75,7 +78,8 @@ CREATE TABLE "Image" (
   minor               boolean NOT NULL DEFAULT false,
   poi                 boolean NOT NULL DEFAULT false,
   "acceptableMinor"   boolean NOT NULL DEFAULT false,
-  "modelRestricted"   boolean NOT NULL DEFAULT false
+  "modelRestricted"   boolean NOT NULL DEFAULT false,
+  "tosViolation"      boolean NOT NULL DEFAULT false
 );
 
 CREATE TABLE "ImageResourceNew" (
@@ -85,10 +89,13 @@ CREATE TABLE "ImageResourceNew" (
   PRIMARY KEY ("imageId", "modelVersionId")
 );
 
+-- source: the tag-ids miss lookup (internal/hydrate/misses.go). A view in the app with no default;
+-- the default here only spares the feed tests' inserts from naming it.
 CREATE TABLE "TagsOnImageDetails" (
   "imageId"     integer NOT NULL,
   "tagId"       integer NOT NULL,
   disabled      boolean NOT NULL,
+  source        "TagSource" NOT NULL DEFAULT 'User',
   PRIMARY KEY ("imageId", "tagId")
 );
 
@@ -234,9 +241,11 @@ CREATE TABLE "ModelBaseModelMetric" (
   PRIMARY KEY ("modelId", "baseModel")
 );
 
+-- type: the tag-ids miss lookup's tag records (the app's default).
 CREATE TABLE "Tag" (
   id   integer PRIMARY KEY,
-  name citext NOT NULL UNIQUE
+  name citext NOT NULL UNIQUE,
+  type "TagType" NOT NULL DEFAULT 'UserGenerated'
 );
 
 CREATE TABLE "TagsOnModels" (

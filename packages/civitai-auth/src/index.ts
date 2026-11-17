@@ -9,7 +9,7 @@
 //                       session-revocation marker protocol (createSessionRegistry).
 export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
-export { createAuthVerifier, createAccessTokenJwtVerifier } from './verify';
+export { createAuthVerifier, createAccessTokenJwtVerifier, isAccessTokenJwt } from './verify';
 export type { AuthVerifier, AuthVerifierConfig, AccessTokenJwtVerifierConfig } from './verify';
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.

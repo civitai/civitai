@@ -279,7 +279,7 @@ describe('approving a lock review', () => {
     expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
     expect(mocks.settleResolvedAppeals).toHaveBeenCalledWith(
       [expect.objectContaining({ id: 1, userId: OWNER, status: 'Approved' })],
-      { status: AppealStatus.Approved, lockReview: { unlocked: ['nsfw'] } }
+      { status: AppealStatus.Approved, lockReview: { unlocked: ['nsfw'], cooldown: false } }
     );
     expect(loggedActivities()).toEqual(['approveLockReview', 'unlockProperty:nsfw']);
   });
@@ -817,7 +817,7 @@ describe('rejecting a lock review', () => {
     await reject();
 
     const told = await ownerNotice();
-    expect(told.message).toBe(DECLINED);
+    expect(told.message).toMatch(new RegExp(`^${escapeRegExp(DECLINED)}${NEXT_REQUEST}$`));
     expect(
       JSON.stringify([mocks.createNotification.mock.calls, mocks.sendEmail.mock.calls])
     ).not.toMatch(/hold/i);
@@ -874,6 +874,9 @@ describe('rejecting a lock review', () => {
 const APPROVED = 'Your request to review the locked settings on your model was approved.';
 const DECLINED =
   'Your request to review the locked settings on your model was declined, so those settings stay locked.';
+/** The closing line every rejection ends with; the date itself is pinned in the shared package. */
+const NEXT_REQUEST = String.raw` You can request another review after [A-Z][a-z]+ \d{1,2}(st|nd|rd|th)(, \d{4})?\.`;
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** What the owner reads of the ruling: the in-app notice and the email, rendered as sent. */
 async function ownerNotice() {
@@ -885,7 +888,8 @@ async function ownerNotice() {
 
   expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
-  const [notification] = mocks.createNotification.mock.calls[0];
+  // Round-tripped as the notification store does, so `resolvedAt` arrives as a string.
+  const notification = JSON.parse(JSON.stringify(mocks.createNotification.mock.calls[0][0]));
   const rendered = reportNotifications['entity-appeal-resolved'].prepareMessage(
     notification as never
   );
@@ -934,22 +938,56 @@ describe('telling the owner of a lock review ruling', () => {
     expect(told.email).not.toContain('You can now change');
   });
 
-  // The Moderation Lead's call: one line for every rejection reason, so no reason reads as a verdict.
-  it('declines in one line whatever the reason, never the reason or notes', async () => {
-    await seed({ locked: ['nsfw'] });
-    await resolveLockReviewAppeal({
+  const rejectFor = (resolvedReason: string, internalNotes = 'mod-only note') =>
+    resolveLockReviewAppeal({
       appealId: 1,
       modelId: MODEL,
       approve: false,
       userId: MODERATOR,
-      resolvedReason: 'lock-stands',
-      internalNotes: 'mod-only note',
+      resolvedReason,
+      internalNotes,
     });
 
+  it.each([
+    [
+      'lock-stands',
+      ['tags'],
+      'A moderator reviewed your model and found the locked settings correct for it.',
+    ],
+    [
+      'sexual-purpose',
+      ['nsfw'],
+      'A moderator reviewed your model and found that its main purpose is sexual content, so it keeps the mature setting.',
+    ],
+    ['other', ['nsfw'], DECLINED],
+  ])(
+    'declines for %s with its line and the next request date, never the notes',
+    async (reason, asked, line) => {
+      await seed({ locked: ['nsfw', 'tags'], asked });
+      await rejectFor(reason);
+
+      const told = await ownerNotice();
+      expect(told.message).toMatch(new RegExp(`^${escapeRegExp(line)}${NEXT_REQUEST}$`));
+      expect(told.email).toContain(told.message);
+      expect(JSON.stringify([told.message, told.email])).not.toMatch(/mod-only/i);
+    }
+  );
+
+  it('promises no date when a setting it asked about was unlocked meanwhile, as no cooldown starts', async () => {
+    await seed({ locked: ['tags'], asked: ['nsfw', 'tags'] });
+    await rejectFor('lock-stands');
+
     const told = await ownerNotice();
-    expect(told.message).toBe(DECLINED);
-    expect(told.email).toContain(DECLINED);
-    expect(JSON.stringify([told.message, told.email])).not.toMatch(/lock[- ]stands|mod-only/i);
+    const line = 'A moderator reviewed your model and found the locked settings correct for it.';
+    expect(told.message).toBe(line);
+    expect(told.email).toContain(line);
+    expect(told.email).not.toContain('request another review');
+  });
+
+  it('refuses the sexual-purpose reason when the mature setting was not asked about', async () => {
+    await seed({ locked: ['nsfw', 'tags'], asked: ['tags'] });
+    await expect(rejectFor('sexual-purpose')).rejects.toThrow(/does not apply/);
+    expect(await appealRow()).toMatchObject({ status: 'Pending' });
   });
 });
 

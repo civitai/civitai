@@ -79,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       name: 'download-link',
       type: 'error',
       message: 'mint-failed',
-    }).catch(() => undefined);
+    });
     return handleEndpointError(res, error);
   }
 }

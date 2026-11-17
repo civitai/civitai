@@ -241,7 +241,7 @@ async function warnOnServiceClients(resources: ExchangeResource[]): Promise<void
           type: 'warning',
           name: 'oauth-exchange-service-client',
           message: `service client ${id} ${problem}`,
-        }).catch(() => undefined);
+        });
       }
     }
   } catch (err) {
@@ -249,7 +249,7 @@ async function warnOnServiceClients(resources: ExchangeResource[]): Promise<void
       type: 'warning',
       name: 'oauth-exchange-service-client',
       message: `service clients not checked: ${String(err)}`,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -279,13 +279,11 @@ async function load(raw: string | undefined): Promise<ExchangeResource[]> {
       type: 'error',
       name: 'oauth-exchange-resources-invalid',
       message: parsed.error,
-    }).catch(() => undefined);
+    });
     return [];
   }
   for (const message of parsed.serviceErrors) {
-    void logToAxiom({ type: 'error', name: 'oauth-exchange-services-invalid', message }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'oauth-exchange-services-invalid', message });
   }
   if (parsed.resources.length === 0) return [];
   // A resource string must never also be a client id: an `aud` names one or the other.
@@ -303,7 +301,7 @@ async function load(raw: string | undefined): Promise<ExchangeResource[]> {
       type: 'error',
       name: 'oauth-exchange-resources-invalid',
       message: `resource ${collisions[0].id} is also an OAuth client id`,
-    }).catch(() => undefined);
+    });
     return [];
   }
   void warnOnServiceClients(parsed.resources);

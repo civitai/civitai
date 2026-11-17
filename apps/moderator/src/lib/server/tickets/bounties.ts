@@ -1,6 +1,6 @@
 import type { getBounties, getBountyEntries } from '../user-account.service';
 import { SUPPORT_ROWS } from '$lib/tickets/support-panels';
-import { section, type CardSection } from './section';
+import { section, type CardSection } from '$lib/server/section';
 
 /** Free-text descriptions are deliberately not carried: the card names the bounty, User Lookup holds the rest. */
 export type BountyRow = {

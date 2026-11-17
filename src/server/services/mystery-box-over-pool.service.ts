@@ -28,7 +28,7 @@ import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const log = (level: 'info' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ level, name: 'mystery-box-over-pool', message, data }).catch(() => undefined);
+  logToAxiom({ level, name: 'mystery-box-over-pool', message, data });
 
 type Holding = { boxDefinitionId: number; userId: number; held: number; params: unknown };
 

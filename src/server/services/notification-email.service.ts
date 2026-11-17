@@ -92,7 +92,7 @@ async function underTypeCap(type: string) {
       type: 'error',
       message: 'per-type hourly email cap tripped; sending stopped for the rest of the hour',
       notificationType: type,
-    }).catch(() => null);
+    });
   return count <= NOTIFICATION_EMAIL_TYPE_HOURLY_CAP;
 }
 
@@ -171,7 +171,7 @@ export async function sendNotificationEmails({
         userId: recipient.id,
         // Never the error message: a rejected send names the recipient's address.
         error: (error as Error)?.name,
-      }).catch(() => null);
+      });
     }
   }
   return outcome;

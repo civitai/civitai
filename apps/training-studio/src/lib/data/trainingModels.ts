@@ -119,6 +119,12 @@ export interface ModelCard {
   versions: ModelVersionInfo[];
 }
 
+/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
+ *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
+export function isFlux2(engine?: string): boolean {
+  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
+}
+
 export const MODEL_CARDS: ModelCard[] = [
   // ---- Image · captions ----
   {

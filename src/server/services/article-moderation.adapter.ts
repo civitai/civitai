@@ -98,7 +98,7 @@ export const articleModerationAdapter: ModerationAdapter = {
           type: 'warning',
           name: 'article-blocked-verdict-text-mismatch',
           articleId: entityId,
-        }).catch();
+        });
 
       const article = await dbWrite.$transaction(async (tx) => {
         await lockAccessTokens(tx, entityId);

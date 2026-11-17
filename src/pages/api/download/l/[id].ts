@@ -27,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       name: 'download-link',
       type: 'error',
       message: 'use-failed',
-    }).catch(() => undefined);
+    });
     if (res.headersSent) return;
     // A literal, not handleEndpointError: that helper logs the request's route, and this path is the id.
     return res.status(500).json({ error: 'An unexpected error occurred' });

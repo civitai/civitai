@@ -153,7 +153,7 @@ async function hatSyncEvents(now: Date) {
 }
 
 const logSyncError = (fn: string, error: unknown, extra: object) =>
-  logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra }).catch(() => undefined);
+  logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra });
 
 // The safety net under the write-through: rebuilds which content wears which hat from the
 // placements, and seeds the live weights from the event config where none are set. Runs hourly; the
@@ -197,7 +197,7 @@ async function syncOneEvent(eventDef: ScoredEvent, now: Date) {
       removedCount: changes.remove.length,
       set: changes.set.slice(0, LOGGED_KEYS_MAX).map(([key]) => key),
       removed: changes.remove.slice(0, LOGGED_KEYS_MAX),
-    }).catch(() => undefined);
+    });
   }
 
   for (const [type, rule] of Object.entries(scoring.types))
@@ -336,7 +336,7 @@ async function runOwnerHatSync(
     fn: 'runOwnerHatSync',
     message: 'gave up after max passes; the reconcile finishes it',
     ownerId,
-  }).catch(() => undefined);
+  });
 }
 
 const entityKeysOf = (pending: string[]) => pending.filter((key) => key !== PENDING_ALL);

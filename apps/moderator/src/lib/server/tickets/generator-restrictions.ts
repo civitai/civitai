@@ -2,7 +2,7 @@ import type { getBlockedPrompts } from '../user-signals.service';
 import type { getGenerationRestrictions } from '../user-restriction.service';
 import { GENERATOR_RESTRICTIONS_PATH, unwiredRulingReason } from '$lib/restriction-types';
 import { BLOCKED_PROMPTS_PATH, GENERATOR_ROWS } from '$lib/tickets/generator-panel';
-import { capped, section, type CardSection } from './section';
+import { capped, section, type CardSection } from '$lib/server/section';
 
 /** A prompt is shown whole up to this, so one pasted essay cannot fill the card. */
 const PROMPT_CHARS = 300;

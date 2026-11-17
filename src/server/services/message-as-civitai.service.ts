@@ -213,7 +213,7 @@ async function sendLocked({
         entityType,
         entityId,
         message: e.message,
-      }).catch(() => undefined)
+      })
     );
   await audit('chatMessage', sent.id);
   if (context?.reportId) {
@@ -221,7 +221,7 @@ async function sendLocked({
     const concerns = await reportConcernsUser(reportId, userId).catch((e: Error) => e);
     if (concerns === true) await audit('report', reportId);
     else
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'message-as-civitai-report-link-dropped',
         reason: concerns === false ? 'not-about-recipient' : 'check-failed',
@@ -230,7 +230,7 @@ async function sendLocked({
         userId,
         reportId,
         chatMessageId: sent.id,
-      }).catch(() => undefined);
+      });
   }
   // Delivered already; a failed tray notice must not free the idempotency key for a second send.
   await nudge({ userId, chatId, messageId: sent.id }).catch(() => undefined);

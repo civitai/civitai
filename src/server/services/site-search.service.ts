@@ -356,7 +356,7 @@ async function postToSearch(
       message: 'Search backend unreachable',
       cause: (error as Error).message,
       path,
-    }).catch(() => undefined);
+    });
     throw searchUnavailable();
   }
 
@@ -381,7 +381,7 @@ async function postToSearch(
     status: res.status,
     code: (responseBody as { code?: string } | undefined)?.code,
     path,
-  }).catch(() => undefined);
+  });
   if (res.status >= 500) throw searchUnavailable();
   throw new SiteSearchError(502, 'search_unavailable', 'Search is temporarily unavailable');
 }

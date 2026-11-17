@@ -207,7 +207,7 @@ async function submitTrainingDataScanOutcome(
       op,
       fileId: target.fileId,
       modelVersionId: target.modelVersionId,
-    }).catch(() => undefined);
+    });
     return unreadable ? 'unreadable' : 'failed';
   }
 }
@@ -450,7 +450,7 @@ export async function healStalledTrainingDataScans() {
         name: 'training-data-scan-gave-up',
         fileId: file.id,
         reason,
-      }).catch(() => undefined);
+      });
       return false;
     },
     onSubmitted: async (file, outcome) => {
@@ -476,6 +476,6 @@ export async function healStalledTrainingDataScans() {
       type: 'warning',
       name: 'training-data-scan-heal-submit-failed',
       count: failed.length - unreadableRuns,
-    }).catch(() => undefined);
+    });
   return { picked: claimed.length, submitted, failed, gaveUp };
 }

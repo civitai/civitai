@@ -258,7 +258,7 @@ describe('image-upload relay', () => {
     expect(opts).toEqual({ contentType: 'image/png' });
     // The upload-request IP is recorded against the key the store minted.
     expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid', 7);
-    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+    expect(redisMock.redis.set).toHaveBeenCalledExactlyOnceWith(
       'system:upload-key-owner:server-minted-uuid',
       '7',
       { EX: 30 * 24 * 60 * 60 }
@@ -266,7 +266,7 @@ describe('image-upload relay', () => {
   });
 
   it('still returns a key whose issue record could not be written, by default', async () => {
-    redisMock.sysRedis.set
+    redisMock.redis.set
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'));
@@ -277,13 +277,13 @@ describe('image-upload relay', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ id: 'server-minted-uuid' });
-    expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(3);
+    expect(redisMock.redis.set).toHaveBeenCalledTimes(3);
     expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid', 7);
   });
 
   it('returns no key whose issue record could not be written when refusing is on, and says to retry', async () => {
     setEnv({ UPLOAD_KEY_REFUSE_UNRECORDED: true });
-    redisMock.sysRedis.set
+    redisMock.redis.set
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'))
       .mockRejectedValueOnce(new Error('down'));
@@ -294,7 +294,7 @@ describe('image-upload relay', () => {
     expect(res.statusCode).toBe(503);
     expect(res.headers['Retry-After']).toBe('2');
     expect(res.body).toEqual({ error: UPLOAD_KEY_UNRECORDED_MESSAGE });
-    expect(redisMock.sysRedis.set).toHaveBeenCalledTimes(3);
+    expect(redisMock.redis.set).toHaveBeenCalledTimes(3);
     expect(mockTrackImageUpload).not.toHaveBeenCalled();
   });
 

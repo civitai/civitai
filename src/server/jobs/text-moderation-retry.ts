@@ -116,7 +116,7 @@ export const retryFailedTextModeration = createJob(
         // Unknown entityType — likely a row left over after an entity was
         // removed from the adapter registry. Log loudly and skip.
         errors += items.length;
-        await logToAxiom({
+        logToAxiom({
           name: 'retry-failed-text-moderation',
           type: 'error',
           message: `no moderation adapter registered for entityType: ${entityType}`,
@@ -131,7 +131,7 @@ export const retryFailedTextModeration = createJob(
         contentMap = await adapter.resolveContent(items.map((x) => x.entityId));
       } catch (error) {
         errors += items.length;
-        await logToAxiom({
+        logToAxiom({
           name: 'retry-failed-text-moderation',
           type: 'error',
           message: `Bulk content resolve failed: ${(error as Error).message}`,
@@ -163,7 +163,7 @@ export const retryFailedTextModeration = createJob(
           else errors++;
         } catch (error) {
           errors++;
-          await logToAxiom({
+          logToAxiom({
             name: 'retry-failed-text-moderation',
             type: 'error',
             message: (error as Error).message,

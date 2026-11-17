@@ -265,7 +265,7 @@ export async function resolveLockReviewAppeal({
       });
       throw throwBadRequestError(LOCK_REVIEW_MATCH_CHECK_FAILED);
     });
-  const { claimed, unlocked, dispute } = await dbWrite.$transaction(async (tx) => {
+  const { claimed, unlocked, dispute, cooldown } = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<
       {
         id: number;
@@ -304,6 +304,11 @@ export async function resolveLockReviewAppeal({
     const asked = parseLockReviewContext(row?.context);
     if (!row || !asked)
       throw throwBadRequestError('This model has no pending locked-setting review');
+    // The moderator UI filters these, but the endpoint is callable directly.
+    const misapplied =
+      resolvedReason &&
+      resolutionReasonError('lockReview', status, resolvedReason, internalNotes, asked.locks);
+    if (misapplied) throw throwBadRequestError(misapplied);
 
     let lift: RequestableLock[] = [];
     if (approve) {
@@ -387,6 +392,9 @@ export async function resolveLockReviewAppeal({
     return {
       claimed,
       unlocked: lift,
+      // As `getLockReviewState` decides it: only a ruling that left every asked setting locked.
+      cooldown:
+        asked.locks.every((key) => (row.lockedProperties ?? []).includes(key)) && !lift.length,
       dispute: asked.dispute === COM_FACE_INTENT_DISPUTE ? row : null,
     };
   });
@@ -405,12 +413,15 @@ export async function resolveLockReviewAppeal({
       autoReview: context?.autoReview ?? null,
       autoReviewAttempts: context?.autoReviewAttempts ?? null,
       firstPromptId: dispute.intentPromptId,
-    }).catch(() => undefined);
+    });
   }
 
   if (unlocked.length) await preventReplicationLag('model', modelId);
   // The ruling is committed: a failed notice must not read as a failed ruling, which cannot be retried.
-  await settleResolvedAppeals(claimed, { status, lockReview: { unlocked } }).catch((error: Error) =>
+  await settleResolvedAppeals(claimed, {
+    status,
+    lockReview: { unlocked, reason: resolvedReason, cooldown },
+  }).catch((error: Error) =>
     logToAxiom({
       type: 'error',
       name: 'lock-review-settle',

@@ -9,12 +9,13 @@ import {
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { DISMISS_FAILED } from '$lib/notice-copy';
-import { requireMember } from '$lib/server/membership';
+import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
 import { ratingGuide } from '$lib/server/rules';
+import { ratingExamples, withExamples } from '$lib/server/rating-examples';
 import {
   dismissGuide,
   dismissProgress,
@@ -34,7 +35,7 @@ import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.se
 import { yesNoConfig } from '$lib/server/yesno/runtime';
 import { castYesNoVote } from '$lib/server/yesno/vote';
 import { apprenticeDeps } from '$lib/server/apprenticeship/runtime';
-import { crossedMilestone, previousMilestone } from '$lib/server/apprenticeship/standing';
+import { crossedMilestone } from '$lib/server/apprenticeship/standing';
 import { acolyteLevelGoldSince } from '$lib/server/apprenticeship/level-gold';
 import {
   acknowledgeCheckpoint,
@@ -64,6 +65,7 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
 const APPRENTICE_REJECTION_TEXT = {
   'no-player': 'You have not joined the Order yet.',
   'not-acolyte': 'Your apprenticeship is over.',
+  'reset-pending': 'Your career is being reset. Return in a moment.',
   'checkpoint-pending': 'Take a look at your recap first.',
   'not-current': 'That is not the image before you now.',
   'bad-answer': 'That answer is not on offer.',
@@ -95,27 +97,16 @@ function withRankPerks(progress: ProgressNotice | null): Notice | null {
   };
 }
 
-// An Acolyte levels up every few answers, so only the milestone levels are celebrated; every other level is recorded as seen.
-async function acolyteMilestone(
-  progress: Notice | null,
-  status: { rank: string; level: number },
-  userId: number
-): Promise<Notice | null> {
+// Every Acolyte level gets a card; levels 5, 10 and 15 carry the milestone words. Its gold is the levels since the one the
+// player last saw, up to the level the card shows, so it does not grow while the card is open.
+async function acolyteLevelCard(progress: Notice | null, userId: number): Promise<Notice | null> {
   if (progress?.kind !== 'level') return progress;
   const milestone = crossedMilestone(progress.from, progress.level);
-  if (milestone) {
-    // The card celebrates this milestone: its gold is the levels since the one before it (not since the level last seen,
-    // which a quiet load moves up every level), and stops here, so it does not grow with the levels the player reaches while the card is open.
-    const levelGold = await acolyteLevelGoldSince(
-      db,
-      userId,
-      previousMilestone(milestone.level),
-      milestone.level
-    );
-    return { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level, levelGold };
-  }
-  await dismissProgress(seenStore, userId, status);
-  return null;
+  const shown = milestone?.level ?? progress.level;
+  const levelGold = await acolyteLevelGoldSince(db, userId, progress.from, shown);
+  return milestone
+    ? { ...progress, milestone: milestone.copy, milestoneLevel: milestone.level, levelGold }
+    : { ...progress, levelGold };
 }
 
 export const load: PageServerLoad = async ({ locals, depends }) => {
@@ -124,11 +115,13 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     requireMember(db, locals.user.id),
     getStanding(db, locals.user.id),
   ]);
+  await requireConsent(locals.user.id);
   const now = queueDeps.now();
-  const [resetNotice, notices, seen] = await Promise.all([
+  const [resetNotice, notices, seen, examples] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
     readHiddenNotices(db, locals.user.id),
     readNotices(seenStore, locals.user.id, status),
+    ratingExamples(db),
   ]);
   const common = {
     status,
@@ -138,16 +131,17 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     whatsNew: seen.whatsNew ? whatsNewCopy(isReturningPlayer(status)) : null,
     showGuide: seen.guide,
     progress: withRankPerks(seen.progress),
-    ratingGuide: ratingGuide(),
+    ratingGuide: withExamples(ratingGuide(), examples),
   };
 
-  if (status.rank === 'Acolyte' && !muted) {
+  // An Acolyte whose career reset is due falls through to the queue page, which serves nothing until it lands.
+  if (status.rank === 'Acolyte' && !muted && !(status.smites >= status.maxSmites)) {
     const view = await getApprentice(db, locals.user.id);
     if (view.kind !== 'not-acolyte') {
       return {
         mode: 'apprentice' as const,
         ...common,
-        progress: await acolyteMilestone(common.progress, status, locals.user.id),
+        progress: await acolyteLevelCard(common.progress, locals.user.id),
         apprentice: apprenticePayload(view),
       };
     }
@@ -310,6 +304,7 @@ export const actions: Actions = {
   // Every kind of vote (rating, yes/no, hidden check) passes the Redis vote limits here, before any database work.
   vote: async (event) => {
     if ((await getStanding(db, event.locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(event.locals.user.id))) return consentFailure();
     const parsed = await readVote(event);
     if ('failure' in parsed) return parsed.failure;
     const outcome = await voteGate.guard(
@@ -326,6 +321,7 @@ export const actions: Actions = {
   // again. Every kind of item is handled and answered alike, so a skip does not show what the item was.
   skip: async ({ request, locals }) => {
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(locals.user.id))) return consentFailure();
     const token = (await request.formData()).get('item');
     let ref: ReturnType<typeof openItem> = null;
     try {
@@ -385,6 +381,7 @@ export const actions: Actions = {
 
   apprentice: async ({ request, locals }) => {
     if ((await getStanding(db, locals.user.id)).muted) return mutedFailure();
+    if (!(await consented(locals.user.id))) return consentFailure();
     const form = await request.formData();
     const kind = form.get('kind');
     const referenceId = Number(form.get('referenceId'));

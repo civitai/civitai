@@ -80,6 +80,12 @@ export type BlockMediaUploadInfo = {
   width?: number;
   height?: number;
   durationMs?: number;
+  /**
+   * An image kept as a private scanned row (`app-block-source-scanned-rows` on): its `Image` id,
+   * and whether its scan had finished. Absent on a blob.
+   */
+  imageId?: number;
+  ready?: boolean;
 };
 
 export type MediaUploadRequest = {

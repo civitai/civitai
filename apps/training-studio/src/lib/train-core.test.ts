@@ -22,6 +22,7 @@ import {
   trainingDataReady,
   type TrainingRunInput,
   type TrainingTextCheck,
+  unavailableRunMessage,
 } from './train-core';
 import type { DatasetRating, StoredRating } from './dataset-rating';
 
@@ -319,7 +320,7 @@ describe('custom base model', () => {
   const custom = 'urn:air:sdxl:checkpoint:civitai:1@2';
 
   it('trains an SDXL run on the pasted base', async () => {
-    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    getResource.mockResolvedValueOnce({ data: { air: custom, fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
     await submitTrainingBatch(client, [{ ...baseRun(), customModel: custom }], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(custom);
@@ -1084,6 +1085,57 @@ describe('a model that is down', () => {
   });
 });
 
+describe('Flux.2 (imageResourceTraining takes only a zip URL, the Studio holds blobs)', () => {
+  const flux2 = cardByType('flux2')!.versions[0]!;
+  const flux2Run = (over: Partial<TrainingRunInput> = {}): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: flux2.ecosystem,
+    engine: flux2.engine,
+    model: flux2.air,
+    ...over,
+  });
+  const message = 'Flux.2 is temporarily unavailable for training. Use another base model for now.';
+
+  it.each([
+    ['its catalog base', flux2Run()],
+    [
+      'a base the catalog does not name',
+      flux2Run({ model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
+    ],
+    [
+      'the edit engine',
+      flux2Run({ engine: 'flux2-dev-edit', model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
+    ],
+  ])('refuses %s before any orchestrator call or trigger word check', async (_label, run) => {
+    vi.clearAllMocks();
+    const check = vi.fn(async () => undefined);
+    for (const status of [undefined, parseServiceStatus(null)])
+      await expect(
+        submitTrainingBatch(client, [baseRun(), run], { checkText: check, status })
+      ).rejects.toThrow(message);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  // The batch cases above stop at validateRun's engine check; this one reaches the status path, which
+  // must refuse a catalog Flux.2 base even when no status was loaded.
+  it('reports its catalog base unavailable with or without a loaded status', () => {
+    for (const status of [undefined, null, parseServiceStatus(null)])
+      expect(unavailableRunMessage(flux2Run(), status)).toBe(message);
+  });
+
+  it('still sends an ai-toolkit run its dataset as a blob list', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ai' } });
+    await submitTraining(client, baseRun());
+    const step = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    expect(step.$type).toBe('training');
+    expect(step.input.trainingData).toEqual({
+      type: 'blobs',
+      items: [{ air: 'blob-1', caption: 'ohwx, 1girl' }],
+    });
+  });
+});
+
 describe('keep-training a custom-base run while a sibling model is down', () => {
   const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
   const source = {
@@ -1142,7 +1194,7 @@ describe('the checkpoint a run actually trains', () => {
 
   it('checks a custom base by its own AIR, even when the base it overrides is blocked', async () => {
     const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
-    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    getResource.mockResolvedValueOnce({ data: { air: customAir, fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
     const blockedBase = parseServiceStatus({ blockedModels: ['sdxl'] });
     await expect(
@@ -1157,6 +1209,22 @@ describe('the checkpoint a run actually trains', () => {
         status: parseServiceStatus({ blockedModels: [customAir] }),
       })
     ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+
+  it('refuses a custom base whose version belongs to a blocked model, whatever model id its AIR names', async () => {
+    // 53761 is blocked; the submitted AIR pairs one of its versions with an unblocked model id.
+    getResource.mockResolvedValueOnce({
+      data: { air: 'urn:air:sdxl:checkpoint:civitai:53761@67890', fileFormat: 'SafeTensor' },
+    });
+    submitWorkflow.mockClear();
+    await expect(
+      submitTrainingBatch(
+        client,
+        [{ ...baseRun(), customModel: 'urn:air:sdxl:checkpoint:civitai:12345@67890' }],
+        { checkText }
+      )
+    ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 });
 
@@ -1232,10 +1300,10 @@ describe('Kohya training', () => {
     'accepts an arbitrary compatible %s checkpoint',
     async (family) => {
       const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
-      getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+      const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
+      getResource.mockResolvedValueOnce({ data: { air: customModel, fileFormat: 'SafeTensor' } });
       headBlob.mockResolvedValue({ data: {}, response: { ok: true } });
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom-kohya' } });
-      const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
       await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], {
         checkText,
         kohyaAllowed: true,
@@ -1333,6 +1401,9 @@ describe('Kohya training', () => {
     await expect(submitTrainingBatch(client, [run()], { checkText })).rejects.toThrow(
       KOHYA_UNAVAILABLE
     );
+    await expect(
+      submitTrainingBatch(client, [run()], { checkText, kohyaAllowed: false })
+    ).rejects.toThrow(KOHYA_UNAVAILABLE);
     await expect(continueTrainingWhatIf(client, opts)).rejects.toThrow(KOHYA_UNAVAILABLE);
     await expect(continueTraining(client, opts, { checkText })).rejects.toThrow(KOHYA_UNAVAILABLE);
     expect(submitWorkflow.mock.calls.length).toBe(calls);
@@ -1594,7 +1665,9 @@ describe('dataset maturity under the v2 rating', () => {
 
     it('a custom base that is not SafeTensor', async () => {
       const calls = submitWorkflow.mock.calls.length;
-      getResource.mockResolvedValueOnce({ data: { fileFormat: 'PickleTensor' } });
+      getResource.mockResolvedValueOnce({
+        data: { air: 'urn:air:sdxl:checkpoint:civitai:1@2', fileFormat: 'PickleTensor' },
+      });
       await expect(
         submitTrainingBatch(
           client,
