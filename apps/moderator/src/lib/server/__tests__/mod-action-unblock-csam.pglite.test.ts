@@ -174,9 +174,10 @@ describe('imageModerate unblock when the replica has not caught up', () => {
       MODERATED,
     ]);
     expect(pending.rows).toHaveLength(0);
-    expect(vi.mocked(trackImageRestore)).toHaveBeenLastCalledWith(
-      expect.objectContaining({ imageId: MODERATED, db: dbHandle.current })
-    );
+    // By identity: vitest's deep equality calls any two Kysely instances equal.
+    const restoreEvent = vi.mocked(trackImageRestore).mock.lastCall?.[0];
+    expect(restoreEvent?.imageId).toBe(MODERATED);
+    expect(restoreEvent?.db).toBe(dbHandle.current);
   });
 
   it('names every image a batch left down', async () => {
