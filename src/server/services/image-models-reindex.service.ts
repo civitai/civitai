@@ -16,10 +16,10 @@ type ImageChildTagChanges = {
 };
 
 /**
- * Queue a models-index rewrite for the models whose posts hold these images, after re-reading their
- * cached tags and showcase images from the primary. The models sync re-picks a model only when
- * `Model.updatedAt` moves, so a change to an image's child browsing tags or nsfwLevel reaches its
- * document only through here.
+ * Queue a search-index rewrite for the models whose posts hold these images (after re-reading their
+ * cached tags and showcase images from the primary), and for the articles and comics using them as a
+ * cover or banner. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
+ * an image's child browsing tags or nsfwLevel reaches its model documents only through here.
  * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once;
  * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
  * refuses the ids; past that, ids are lost only if the queue's own fallback also fails.
@@ -27,7 +27,7 @@ type ImageChildTagChanges = {
 export async function queueModelsForImageChildTagChanges(changes: ImageChildTagChanges) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await queueModels(changes);
+      return await queueChanged(changes);
     } catch (e) {
       logError(e);
       if (attempt >= ATTEMPTS) return;
@@ -49,7 +49,7 @@ function logError(e: unknown) {
   });
 }
 
-async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) {
+async function queueChanged({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) {
   const imageIds = new Set(tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId));
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
@@ -65,13 +65,18 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
   }
 
   if (!imageIds.size) return;
+  const ids = [...imageIds];
+  await Promise.all([queueModels(ids), queueArticlesAndComics(ids)]);
+}
+
+async function queueModels(imageIds: number[]) {
   // Primary: the image or its post may be moments old.
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
     SELECT DISTINCT p."modelVersionId", mv."modelId"
     FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    WHERE i.id = ANY(${[...imageIds]}::int[])
+    WHERE i.id = ANY(${imageIds}::int[])
   `;
   if (!rows.length) return;
 
@@ -83,16 +88,36 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
   // The index reads both caches. Refresh reads the primary; after a bust the next reader could
   // refill them from a lagging replica. A failure here must not cost the other refresh or the queue.
   await Promise.all([
-    tagIdsForImagesCache.refresh([...imageIds]).catch(logError),
+    tagIdsForImagesCache.refresh(imageIds).catch(logError),
     imagesForModelVersionsCache
       .refresh([...new Set(rows.map((r) => r.modelVersionId))])
       .catch(logError),
   ]);
   // Doesn't throw when Redis refuses.
-  await modelsSearchIndex.queueUpdate(
-    [...new Set(rows.map((r) => r.modelId))].map((id) => ({
-      id,
-      action: SearchIndexUpdateQueueAction.Update,
-    }))
-  );
+  await modelsSearchIndex.queueUpdate(toUpdates(rows.map((r) => r.modelId)));
 }
+
+async function queueArticlesAndComics(imageIds: number[]) {
+  const rows = await dbWrite.$queryRaw<{ kind: 'article' | 'comic'; id: number }[]>`
+    SELECT 'article' AS kind, id FROM "Article"
+    WHERE "coverId" = ANY(${imageIds}::int[]) OR "bannerId" = ANY(${imageIds}::int[])
+    UNION
+    SELECT 'comic' AS kind, id FROM "ComicProject"
+    WHERE "coverImageId" = ANY(${imageIds}::int[])
+  `;
+  const articleIds = rows.filter((r) => r.kind === 'article').map((r) => r.id);
+  const comicIds = rows.filter((r) => r.kind === 'comic').map((r) => r.id);
+  if (!articleIds.length && !comicIds.length) return;
+
+  const [{ articlesSearchIndex }, { comicsSearchIndex }] = await Promise.all([
+    import('~/server/search-index/articles.search-index'),
+    import('~/server/search-index/comics.search-index'),
+  ]);
+  await Promise.all([
+    articleIds.length && articlesSearchIndex.queueUpdate(toUpdates(articleIds)),
+    comicIds.length && comicsSearchIndex.queueUpdate(toUpdates(comicIds)),
+  ]);
+}
+
+const toUpdates = (ids: number[]) =>
+  [...new Set(ids)].map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }));
