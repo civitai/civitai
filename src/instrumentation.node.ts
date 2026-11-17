@@ -190,8 +190,7 @@ void startWarmupAndHealthMetricsLoop({
 // single call armed the one copy that happened to be merged alongside this file (which is
 // why `eventloop-longtask`, merged into this same runtime module, was the ONLY call site
 // that ever emitted) and left the other 13 permanently dark. See the header of
-// `~/server/logging/structured-log-sink`, and `scripts/check-server-graph-singletons.mjs`,
-// which fails the build if a copy of that module ever loses the globalThis pin.
+// `~/server/logging/structured-log-sink`.
 //
 // Unconditional on purpose: `emitOtelLog` is itself gated on OTEL_LOGS_ENABLED (default
 // off), so wiring it here keeps ONE gate rather than two, and its skip counter is then a
