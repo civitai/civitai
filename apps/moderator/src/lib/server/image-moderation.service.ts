@@ -73,20 +73,39 @@ const recompute = async (imageId: number) => {
   await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
 };
 
-// The recompute rates an image from its live tags, so one with none (blocked before its scan landed,
-// or whose review tags an accept just disabled) stays at level 0. Rather than leave it Scanned with no
-// rating, send it back to the scanner, as the main app's rescanUnratedImages does.
+// The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
+// its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to the
+// scanner, as the main app's rescanUnratedImages does. An image with tags, live or disabled by this
+// ruling, is left as it is: a rescan would re-audit it over the moderator's decision. One out of
+// rescan retries goes to Error instead.
+const IMAGE_RESCAN_RETRY_LIMIT = 9; // the main app's IMAGE_RESCAN_RETRY_LIMIT (image-scan-failure.ts)
 const rescanIfUnrated = async (imageId: number) => {
-  const queued = await dbWrite
+  // Read first: most restores are rated, and need neither the tag check nor the write.
+  const image = await dbWrite
+    .selectFrom('Image')
+    .select(['ingestion', 'nsfwLevel', 'blockedFor'])
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  if (!image || image.ingestion !== 'Scanned' || image.nsfwLevel !== 0 || image.blockedFor) return;
+  const tagged = await sql<{ one: number }>`
+    SELECT 1 AS one FROM "TagsOnImageDetails" WHERE "imageId" = ${imageId} LIMIT 1`.execute(
+    dbWrite
+  );
+  if (tagged.rows.length) return;
+  const { rows } = await sql<{ retryCount: number | null }>`
+    SELECT ("scanJobs"->>'retryCount')::int AS "retryCount" FROM "Image" WHERE id = ${imageId}`.execute(
+    dbWrite
+  );
+  const outOfRetries = (rows[0]?.retryCount ?? 0) >= IMAGE_RESCAN_RETRY_LIMIT;
+  const updated = await dbWrite
     .updateTable('Image')
-    .set({ ingestion: 'Rescan' })
+    .set({ ingestion: outOfRetries ? 'Error' : 'Rescan' })
     .where('id', '=', imageId)
     .where('ingestion', '=', 'Scanned')
     .where('nsfwLevel', '=', 0)
     .where('blockedFor', 'is', null)
-    .returning('id')
     .executeTakeFirst();
-  if (!queued) return;
+  if (outOfRetries || !updated.numUpdatedRows) return;
   await dbWrite
     .insertInto('JobQueue')
     .values({ type: 'ImageScan', entityType: 'Image', entityId: imageId })

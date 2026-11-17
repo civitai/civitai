@@ -359,6 +359,20 @@ describe('resolveScanOutcome with a collection judge rating', () => {
     expect(rows[0].nsfwLevelLocked).toBe(false);
   });
 
+  it('keeps a rating a moderator locked after the scan loaded the image', async () => {
+    scanTagLevel = X;
+    holder.beforeVerdict = () =>
+      db.query(`UPDATE "Image" SET "nsfwLevel" = $1, "nsfwLevelLocked" = true WHERE id = $2`, [
+        PG13,
+        ID,
+      ]);
+    const { row } = await scan(
+      await arrange({ ingestion: 'Scanned', nsfwLevel: 0, nsfwLevelLocked: true })
+    );
+
+    expect(row.nsfwLevel).toBe(PG13);
+  });
+
   it('keeps the lock on a moderator rating it respects', async () => {
     scanTagLevel = X;
     await scan(await arrange({ nsfwLevel: PG13, nsfwLevelLocked: true }));

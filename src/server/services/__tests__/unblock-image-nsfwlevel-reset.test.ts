@@ -561,10 +561,11 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
 describe('handleUnblockImages — minor queue Accept truth table', () => {
   it('clears the minor flag on mature images and keeps it on safe ones', async () => {
     const pg = new PGlite();
-    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan');
+    await pg.exec(`CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Rescan', 'Error');
       CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int NOT NULL,
       minor boolean NOT NULL, "needsReview" text, "blockedFor" text, metadata jsonb,
-      "scannedAt" timestamp, ingestion "ImageIngestionStatus")`);
+      "scannedAt" timestamp, ingestion "ImageIngestionStatus", "scanJobs" jsonb);
+      CREATE TABLE "TagsOnImageDetails" ("imageId" int, disabled boolean);`);
     const levels: [number, boolean][] = [
       [0, true],
       [1, true],

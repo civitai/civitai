@@ -33,6 +33,8 @@ vi.mock('../image-moderation-effects', async (importOriginal) => ({
   applyVisibilitySideEffects: vi.fn(async () => undefined),
 }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
+// Disabling review tags writes TagsOnImageNew and recomputes; the recompute here is the stand-in's.
+vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../image-models-reindex', () => ({
@@ -55,11 +57,13 @@ CREATE TABLE "Image" (
   "pHash" BIGINT,
   "postId" INTEGER,
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
-  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
+  "scanJobs" JSONB
 );
 ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
@@ -241,5 +245,40 @@ describe('a restore that leaves the image with no rating', () => {
 
     expect(await imageRow()).toEqual({ ingestion: 'Rescan', nsfwLevel: 0, nsfwLevelLocked: false });
     expect(await queued()).toBe(1);
+  });
+
+  it('keeps the ruling on an accept from the review queue: no rescan, nothing queued', async () => {
+    // The accept disables the review tags; the row stays, so the scanner has tagged this image.
+    await db.query(`INSERT INTO "ImageTagForReview" ("imageId", "tagId") VALUES ($1, 5)`, [
+      IMAGE_ID,
+    ]);
+    await db.query(`INSERT INTO "TagsOnImageDetails" VALUES ($1, 5, TRUE)`, [IMAGE_ID]);
+
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
+    expect(await queued()).toBe(0);
+  });
+
+  it('leaves an image already queued for a scan queued once', async () => {
+    await db.query(
+      `INSERT INTO "JobQueue" ("type", "entityType", "entityId") VALUES ('ImageScan', 'Image', $1)`,
+      [IMAGE_ID]
+    );
+
+    await approve();
+
+    expect(await queued()).toBe(1);
+  });
+
+  it('keeps an image the recompute rates Scanned, with nothing queued (control)', async () => {
+    await db.exec(`CREATE OR REPLACE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID
+      LANGUAGE SQL AS $$ UPDATE "Image" SET "nsfwLevel" = 1 WHERE id = ANY(ids)
+        AND NOT "nsfwLevelLocked" AND "ingestion" = 'Scanned' AND "blockedFor" IS NULL; $$;`);
+
+    await approve();
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 1 });
+    expect(await queued()).toBe(0);
   });
 });

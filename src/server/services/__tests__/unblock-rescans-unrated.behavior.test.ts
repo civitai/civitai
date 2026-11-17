@@ -25,6 +25,8 @@ const UNTAGGED = 1; // blocked before its scan landed: no tags at all
 const TAGGED = 2; // blocked after a scan: an R tag is live
 const REVIEW_TAGS_ONLY = 3; // its only tags are review tags the unblock disabled
 const STILL_BLOCKED = 4; // a CSAM block the unblock did not lift
+const REASON_KEPT = 5; // Scanned, but a block reason is still on the row
+const OUT_OF_RETRIES = 6; // untagged, and its scans already ran out of retries
 
 let db: PGlite;
 
@@ -36,7 +38,7 @@ beforeAll(async () => {
     CREATE TYPE "EntityType" AS ENUM ('Image');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL, "nsfwLevel" int NOT NULL,
-      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "blockedFor" text
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "blockedFor" text, "scanJobs" jsonb
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "nsfwLevel" int, disabled boolean);
     CREATE TABLE "JobQueue" (
@@ -72,11 +74,13 @@ beforeEach(async () => {
   // and locked. The CSAM row keeps its block.
   await db.exec(`
     DELETE FROM "Image"; DELETE FROM "TagsOnImageDetails"; DELETE FROM "JobQueue";
-    INSERT INTO "Image" VALUES
-      (${UNTAGGED}, 'Scanned', 32, true, NULL),
-      (${TAGGED}, 'Scanned', 32, true, NULL),
-      (${REVIEW_TAGS_ONLY}, 'Scanned', 32, true, NULL),
-      (${STILL_BLOCKED}, 'Blocked', 32, true, 'CSAM');
+    INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", "blockedFor", "scanJobs") VALUES
+      (${UNTAGGED}, 'Scanned', 32, true, NULL, NULL),
+      (${TAGGED}, 'Scanned', 32, true, NULL, NULL),
+      (${REVIEW_TAGS_ONLY}, 'Scanned', 32, true, NULL, NULL),
+      (${STILL_BLOCKED}, 'Blocked', 32, true, 'CSAM', NULL),
+      (${REASON_KEPT}, 'Scanned', 32, true, 'Moderated', NULL),
+      (${OUT_OF_RETRIES}, 'Scanned', 32, true, NULL, '{"retryCount": 9}');
     INSERT INTO "TagsOnImageDetails" VALUES (${TAGGED}, 4, false), (${REVIEW_TAGS_ONLY}, 4, true);
   `);
 });
@@ -92,17 +96,45 @@ async function state(id: number) {
 }
 
 describe('resetBlockedNsfwLevel', () => {
-  it.each([
-    ['has no tags', UNTAGGED],
-    ['has only disabled review tags', REVIEW_TAGS_ONLY],
-  ])('sends an unblocked image that %s back to the scanner', async (_, id) => {
+  it('sends an unblocked image the scanner never tagged back to the scanner', async () => {
     await resetBlockedNsfwLevel([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
-    expect(await state(id)).toEqual({ ingestion: 'Rescan', nsfwLevel: 0, queued: true });
+    expect(await state(UNTAGGED)).toEqual({ ingestion: 'Rescan', nsfwLevel: 0, queued: true });
+  });
+
+  it('keeps a moderator ruling: an image whose tags a moderator disabled is not rescanned', async () => {
+    await resetBlockedNsfwLevel([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
+    expect(await state(REVIEW_TAGS_ONLY)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 0,
+      queued: false,
+    });
   });
 
   it('rates an unblocked image from its live tags and leaves it Scanned (control)', async () => {
     await resetBlockedNsfwLevel([UNTAGGED, TAGGED, REVIEW_TAGS_ONLY, STILL_BLOCKED]);
     expect(await state(TAGGED)).toEqual({ ingestion: 'Scanned', nsfwLevel: 4, queued: false });
+  });
+
+  it('does not send an image that still carries a block reason to the scanner', async () => {
+    await resetBlockedNsfwLevel([REASON_KEPT]);
+    expect(await state(REASON_KEPT)).toMatchObject({ ingestion: 'Scanned', queued: false });
+  });
+
+  it('marks an unrated image out of scan retries Error, with nothing queued', async () => {
+    await resetBlockedNsfwLevel([OUT_OF_RETRIES]);
+    expect(await state(OUT_OF_RETRIES)).toEqual({
+      ingestion: 'Error',
+      nsfwLevel: 0,
+      queued: false,
+    });
+  });
+
+  it('leaves an image already queued for a scan queued once', async () => {
+    await db.exec(`INSERT INTO "JobQueue" VALUES ('ImageScan', 'Image', ${UNTAGGED})`);
+    await resetBlockedNsfwLevel([UNTAGGED]);
+    const { rows } = await db.query(`SELECT 1 FROM "JobQueue" WHERE "entityId" = $1`, [UNTAGGED]);
+    expect(rows).toHaveLength(1);
+    expect(await state(UNTAGGED)).toMatchObject({ ingestion: 'Rescan' });
   });
 
   it('does not send an image that is still blocked to the scanner', async () => {

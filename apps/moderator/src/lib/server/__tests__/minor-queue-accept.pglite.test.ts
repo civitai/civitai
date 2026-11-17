@@ -76,6 +76,8 @@ CREATE TABLE "Image" (
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
   PRIMARY KEY ("entityType", "entityId", "type"));
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "disabled" BOOLEAN);
+ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "scanJobs" JSONB;
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,

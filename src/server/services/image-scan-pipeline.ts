@@ -716,6 +716,8 @@ export async function resolveScanOutcome({
       "blockedFor" = CASE WHEN ${csamBlocked} THEN "blockedFor"
         ELSE ${(toUpdate.blockedFor as string) ?? null} END,
       "nsfwLevel" = CASE WHEN ${csamBlocked} THEN ${Prisma.raw(String(NsfwLevel.Blocked))}
+        -- A rating locked since the image was loaded stands; a lock that holds no level does not.
+        WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0 THEN "nsfwLevel"
         ELSE ${scanLevel}::int END,
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
