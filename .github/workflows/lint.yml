@@ -764,7 +764,8 @@ jobs:
     #   N=6                  816-964s        69-70
     #   N=8 (cost split)     648-883s        69-79
     #
-    # 4 -> 6 takes ~20% off the slowest shard for a few more job-minutes. N=8 cuts the
+    # 4 -> 6 takes ~15% off the slowest shard (mean 1040s -> 890s over these runs) for a
+    # few more job-minutes. N=8 cuts the
     # wall further but adds the fixed cost per extra shard (and one more slot of the
     # plan's org-wide concurrent-job limit, which this workflow already saturates —
     # each extra shard queues someone else's job), and exposes more runners to a slow
@@ -895,9 +896,9 @@ jobs:
       # feature branch is scoped to that ref, readable by nothing else, and counts
       # against the same 10 GB repo budget as everything useful — the leak a
       # sibling change once cleaned up (20 orphans, 9.65 GB, 95.3% of the budget).
-      # Saving only on `main` keeps this at FOUR entries total.
+      # Saving only on `main` keeps this at SIX entries total (one per shard).
       #
-      # Budget: 4 x 302 MB = 1.21 GB worst case, and that is an over-estimate
+      # Budget: 6 x 302 MB = 1.81 GB worst case, and that is an over-estimate
       # twice over — the 302 MB is the full local project set (this job runs
       # `--project unit*`, a subset) and Actions compresses on upload.
       #
