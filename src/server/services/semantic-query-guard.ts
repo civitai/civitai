@@ -119,8 +119,7 @@ export async function semanticQueryRefusal(
     if (verdict && includesMinor(audited)) return 'poi-minor';
     if (verdict) return verdict;
     if ((disablePoi || !isModerator) && includesPoi(audited)) return 'poi';
-    // Mirrors the search boxes, which a request can skip: raw text, since the benign phrases do not
-    // carve out this list, and moderators exempt.
+    // Raw text: the benign phrases do not carve out this list.
     if (!isModerator && getBlockedNsfwWords(query).length) return 'blocked';
     // Mods are exempt from the POI additions even with `disablePoi`, by design. A minor addition is
     // its own verdict, so the help event and its counts stay the minor list's.
