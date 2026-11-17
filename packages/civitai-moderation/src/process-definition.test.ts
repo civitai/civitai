@@ -104,6 +104,18 @@ describe('processDefinitionSchema', () => {
     );
   });
 
+  it('refuses a reroute to another process unless the same transition escalates to Legal', () => {
+    const d = valid();
+    const reroute = { kind: 'rerouteTo', process: 'other-process' };
+    d.transitions[0].effects = [reroute] as (typeof d.transitions)[0]['effects'];
+    expect(errors(d)).toContain('a reroute must also escalate to Legal');
+    d.transitions[0].effects = [
+      reroute,
+      { kind: 'escalateToLegal' },
+    ] as (typeof d.transitions)[0]['effects'];
+    expect(errors(d)).toEqual([]);
+  });
+
   it('refuses a transition out of a terminal state', () => {
     const d = valid();
     d.transitions[0].from = 'closed';

@@ -6,7 +6,8 @@ import { z } from 'zod';
  * versioned rows and a case pins the version it started on.
  *
  * What a definition may not do is enforced here, not left to whoever writes the row:
- * - effects come from a fixed set (`EFFECT_KINDS`); an unknown one fails to parse;
+ * - effects come from a fixed set (`effectSchema`); an unknown one fails to parse, and a reroute to another
+ *   process always escalates to Legal;
  * - removing or restoring content, and sending notices, happen only on transitions a moderator presses. A
  *   public action (what a claimant or uploader can do from their case page) has no effects at all: it records an
  *   event, takes its fields and may only move the case into a state marked `needsReview`;
@@ -51,8 +52,9 @@ const effectSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('startClock'), clock: id }),
   z.strictObject({ kind: z.literal('stopClock'), clock: id }),
   z.strictObject({ kind: z.literal('escalateToLegal') }),
+  /** Move the case to another process (a removal request that is really a DMCA notice, say). */
+  z.strictObject({ kind: z.literal('rerouteTo'), process: id }),
 ]);
-export const EFFECT_KINDS = effectSchema.options.map((o) => o.shape.kind.value);
 
 const noticeBodySchema = z.strictObject({ subject: z.string().min(1), body: z.string().min(1) });
 
@@ -93,6 +95,12 @@ const definitionShape = z.strictObject({
         .strictObject({
           id,
           label: z.string().min(1),
+          /**
+           * `receipt` runs from the case's original receivedAt, even when the case was rerouted here from
+           * another process (a statutory deadline runs from the valid request, whatever form it came on).
+           * `effect` runs from the transition whose startClock effect starts it.
+           */
+          startsOn: z.enum(['receipt', 'effect']).default('effect'),
           hours: z.number().int().positive().optional(),
           businessDays: z.number().int().positive().optional(),
           warnBeforeHours: z.number().int().positive().optional(),
@@ -175,7 +183,14 @@ export const processDefinitionSchema = definitionShape.superRefine((d, ctx) => {
         issue(['transitions', i, 'effects', j], `unknown notice "${e.notice}"`);
       if ((e.kind === 'startClock' || e.kind === 'stopClock') && !clockIds.has(e.clock))
         issue(['transitions', i, 'effects', j], `unknown clock "${e.clock}"`);
+      if (e.kind === 'rerouteTo' && e.process === d.key)
+        issue(['transitions', i, 'effects', j], 'a process cannot reroute to itself');
     });
+    if (
+      t.effects.some((e) => e.kind === 'rerouteTo') &&
+      !t.effects.some((e) => e.kind === 'escalateToLegal')
+    )
+      issue(['transitions', i, 'effects'], 'a reroute must also escalate to Legal');
   });
 
   const checkSlots = (text: string, path: (string | number)[]) => {
