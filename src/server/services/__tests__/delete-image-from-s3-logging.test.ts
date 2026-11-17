@@ -478,7 +478,7 @@ describe('deleteImageFromS3', () => {
           type: 'error',
           name: 'delete-image-from-s3-failed',
           imageId: 4242,
-          allVersions: true,
+          payload: { allVersions: true },
         })
       );
       const [insert] = retryInserts();

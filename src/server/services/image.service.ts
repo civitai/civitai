@@ -740,8 +740,8 @@ async function deleteImageFromStorage({
       message: 'S3 delete failed; the object may still be public',
       imageId: id,
       url,
-      allVersions,
       error: safeError(error),
+      payload: { allVersions },
     });
     await queueImageStorageDeleteRetry({ id, url, allVersions });
   }
