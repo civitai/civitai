@@ -57,8 +57,14 @@ export const POST: RequestHandler = async ({ request }) => {
     })
   );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
-  const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
-  const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
+  // One read for both steps, so a reset the first leaves due is not lapsed by the second.
+  const acolyteSmites = resetDeps.acolyteSmites?.() ?? true;
+  const resets = await settle('career resets', () =>
+    resetPendingPlayers(db, { ...resetDeps, acolyteSmites: () => acolyteSmites })
+  );
+  const smites = await settle('smite expiry', () =>
+    expireSmites(db, new Date(), { holdAcolyteWrongAnswer: !acolyteSmites })
+  );
   const conversions = await settle('conversion retries', async () => {
     if (!conversionEnabled()) return { retried: 0, paid: 0, failed: 0 };
     if (!buzzConfigured()) {

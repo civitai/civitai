@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
@@ -87,10 +88,12 @@ export const transformData = async ({
   /** Cover or banner images their model withholds: a withheld cover leaves no card image. */
   modelWithheldImageIds?: Set<number>;
 }) => {
-  // A restricted minor image is withheld like one its model withholds: the index has no viewer.
+  // A restricted minor image, or one restricted by its base model, is withheld like one its model
+  // withholds: the index has no viewer.
   const withheld = (image: NonNullable<Article['coverImage']>) =>
     modelWithheldImageIds.has(image.id) ||
     isMinorMatureImage(image) ||
+    isRestrictedImage(image) ||
     isTaggedMatureImage({ nsfwLevel: image.nsfwLevel, tags: image.tags.map((x) => x.tag.id) });
   const servable = (image: Article['coverImage']) =>
     image && !withheld(image) ? servableArticleImage(image) : null;

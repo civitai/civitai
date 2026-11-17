@@ -3608,6 +3608,10 @@ export type Image = {
   minor: Generated<boolean>;
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
+  /**
+   * Made with a base model that restricts mature images. Read through imageNotRestrictedSql / imageNotRestrictedWhere.
+   */
+  modelRestricted: Generated<boolean>;
 };
 export type ImageAudioScan = {
   imageId: number;

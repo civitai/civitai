@@ -101,6 +101,7 @@ import {
   appOwnerTermsRefusalMessage,
   AppDeveloperTermsNotAcceptedError,
 } from '~/shared/constants/app-developer-terms.constants';
+import { FORGEJO_REVIEW_ORG } from '~/server/services/blocks/forgejo-orgs';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
 import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
@@ -284,7 +285,7 @@ const MANIFEST_PATH = 'block.manifest.json';
 /** Org holding the per-slug in-review snapshot repos a review preview builds
  *  from. Deliberately separate from the canonical build org so commits here
  *  never fire the production build webhook. */
-const REVIEW_REPO_ORG = 'civitai-apps-review';
+const REVIEW_REPO_ORG = FORGEJO_REVIEW_ORG;
 
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
