@@ -478,8 +478,9 @@ export function validateConnectScopeJustifications(
  *                every `*Write` that implicitly spends Buzz (`AIServicesWrite`,
  *                `BountiesWrite`).
  *  - private:    `UserRead` (profile, settings & EMAIL / PII) + the private-data
- *                reads `NotificationsRead` (a user's personal notifications) and
- *                `VaultRead` (the user's PRIVATE model vault). Mirrors the App Blocks
+ *                reads `NotificationsRead` (a user's personal notifications),
+ *                `VaultRead` (the user's PRIVATE model vault) and `AppDataRead` (the
+ *                user's own data stored in Apps). Mirrors the App Blocks
  *                sensitivity principle where private-data reads (e.g.
  *                `collections:read:private`) are sensitive.
  *  - cross-user / destructive: every `*Write` + `*Delete` (they create, mutate or
@@ -489,7 +490,8 @@ export function validateConnectScopeJustifications(
  * moderator can eyeball exactly which permissions are flagged, and adding a new
  * scope bit never silently folds it in. Deliberately EXCLUDES the read-only scopes
  * that expose only PUBLIC data (`ModelsRead`/`MediaRead`/`ArticlesRead`/
- * `BountiesRead`/`AIServicesRead`/`CollectionsRead`) and the opt-in scopes
+ * `BountiesRead`/`AIServicesRead`/`CollectionsRead`, and `AppsRead` — the Apps
+ * catalog) and the opt-in scopes
  * (`AppBlocksSubmit`/`AppBlocksDevTunnel`/`LinkConnect`/`AppStoreCatalogWrite`, never part of a
  * connect ceiling).
  * `NotificationsWrite`/`VaultWrite` are included as account-mutating writes even
@@ -514,7 +516,8 @@ export const SENSITIVE_TOKEN_SCOPES: bigint =
   TokenScope.NotificationsRead | // private: a user's personal notifications (mentions/alerts/transaction notices)
   TokenScope.NotificationsWrite |
   TokenScope.VaultRead | // private: the user's PRIVATE model vault (what private models they've stored)
-  TokenScope.VaultWrite;
+  TokenScope.VaultWrite |
+  TokenScope.AppDataRead; // private: the user's own data stored in Apps
 
 /**
  * True iff `bit` carries ANY sensitive scope bit (see {@link SENSITIVE_TOKEN_SCOPES}).
