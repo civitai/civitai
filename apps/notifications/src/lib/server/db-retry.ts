@@ -27,14 +27,10 @@ function hasConnectTimeoutInChain(err: unknown): boolean {
 }
 
 /**
- * What isDbConnectionError counts (from @civitai/db), plus the pooler's auth failure above, minus pg's
- * connect timeout. That covers: a pg server error of the connection-exception class (08xxx) or a
- * shutdown / cannot-connect-now (57P01-57P03, 53300); pg's "Connection terminated unexpectedly",
- * whether the connection dropped while connecting or mid-statement; and a raw socket error
- * (ECONNREFUSED, ECONNRESET, …) only when createPool marked it as raised while connecting — an
- * ECONNRESET during a statement is not marked and is not retried. Never an error raised by a
- * statement's own SQL or data (a constraint, a cast, a syntax error). A pooled-connection wait that
- * timed out is not included either: retrying it only queues behind a saturated pool again.
+ * isDbConnectionError (@civitai/db) plus the pooler's auth failure, minus pg's connect timeout. A raw
+ * socket error counts only when createPool marked it as raised while connecting, so an ECONNRESET
+ * mid-statement is not retried. Pool-wait timeouts are excluded too: retrying only queues behind a
+ * saturated pool again.
  */
 export function isTransientDbConnectionError(err: unknown): boolean {
   if (hasConnectTimeoutInChain(err)) return false;
@@ -74,6 +70,8 @@ export async function withDbRetry<T>(fn: () => Promise<T>, opts: DbRetryOptions 
       // A broken hook must not change what the caller gets.
     }
   };
+  // A local loop on purpose: the app cannot import ~/utils (withRetries has no error predicate,
+  // backoffDelay's jitter is additive), and this one needs a classifier and multiplicative jitter.
   for (let attempt = 0; ; attempt++) {
     try {
       const value = await fn();
