@@ -10,12 +10,7 @@
     type ReportedPostText,
   } from '$lib/post-text-report';
 
-  /**
-   * The storyline text a post-queue report names, and what can be done to that one text: refuse it
-   * (hidden from readers, kept for its author and here), restore it, or, for a CSAM or
-   * minor-sexualization report, send it to the CSAM text-hold queue. Each asks why, for the audit row,
-   * and rules on the report.
-   */
+  /** A post-queue report's storyline text: refuse, restore, or (CSAM reasons) hold it, with a reason. */
   let {
     reportId,
     reason,
@@ -72,10 +67,17 @@
     {/if}
   </div>
 
+  <!-- Plain text from the server (`htmlToText`): rendered as text, never as HTML. -->
+  {#if text.reportedText != null}
+    <p class="m-0 text-muted-foreground">As reported</p>
+    <p class="m-0 max-h-64 overflow-auto whitespace-pre-wrap rounded border bg-muted/40 p-2 text-sm">
+      {text.reportedText || '(empty)'}
+    </p>
+  {/if}
   {#if text.text == null}
-    <p class="m-0 text-dark-2">The text has been deleted. Its report can still be ruled on.</p>
-  {:else}
-    <!-- Plain text from the server (`htmlToText`): rendered as text, never as HTML. -->
+    <p class="m-0 text-dark-2">The text has since been deleted. Its report can still be ruled on.</p>
+  {:else if text.text !== text.reportedText}
+    <p class="m-0 text-muted-foreground">{text.reportedText != null ? 'Now reads' : 'Text'}</p>
     <p class="m-0 max-h-64 overflow-auto whitespace-pre-wrap rounded border bg-muted/40 p-2 text-sm">
       {text.text || '(empty)'}
     </p>

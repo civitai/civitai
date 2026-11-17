@@ -156,6 +156,22 @@ export async function holdPostTextForCsam({
     let holdId = pending?.id;
     if (!holdId) {
       const subject = postTextTextScanSubject(text);
+      const reported = reportId ? await reportedWords(trx, reportId, textId) : null;
+      // The hold is on the words the text has now (its hash is what a decision checks); the words as
+      // reported, when the author has changed them since, are held beside them for the reviewer.
+      const shown =
+        reported != null && reported !== text.content
+          ? {
+              ...subject,
+              fields: [
+                ...subject.fields,
+                {
+                  heading: 'As reported',
+                  text: postTextTextScanSubject({ ...text, content: reported }).fields[0].text,
+                },
+              ],
+            }
+          : subject;
       const meta = { kind: 'moderator', moderatorId, ...(reportId ? { reportId } : {}) };
       const hold = await trx
         .insertInto('TextScanHold')
@@ -165,7 +181,7 @@ export async function holdPostTextForCsam({
           label: 'csam',
           textHash: textScanTextHash(subject),
           userId: text.userId > 0 ? text.userId : null,
-          text: sanitizeForPostgres(composeUserText(subject).slice(0, CSAM_HOLD_TEXT_CHARS)),
+          text: sanitizeForPostgres(composeUserText(shown).slice(0, CSAM_HOLD_TEXT_CHARS)),
           reason: reportId ? `Moderator hold from report #${reportId}` : 'Moderator hold',
           meta: sql`${JSON.stringify(meta)}::jsonb`,
           updatedAt: sql`now()`,
@@ -184,4 +200,20 @@ export async function holdPostTextForCsam({
       activity: 'csamHold',
     });
   return result;
+}
+
+/** The words a report on this text snapshotted when it was filed (`createReport`), or null. */
+async function reportedWords(
+  db: Pick<typeof kyselyWrite, 'selectFrom'>,
+  reportId: number,
+  textId: number
+) {
+  const row = await db
+    .selectFrom('PostTextReport as r')
+    .innerJoin('Report as rep', 'rep.id', 'r.reportId')
+    .select(sql<string | null>`rep.details -> 'postText' ->> 'content'`.as('content'))
+    .where('r.reportId', '=', reportId)
+    .where('r.postTextId', '=', textId)
+    .executeTakeFirst();
+  return row?.content ?? null;
 }

@@ -477,12 +477,19 @@ export const createReport = async ({
     !(await dbRead.serviceOffering.findUnique({ where: { id }, select: { id: true } }))
   )
     throw throwNotFoundError('That service no longer exists.');
-  // The report keeps no copy of the words; the queue reads the text's own row.
+  // Read here for the author guard; the words it also yields are stamped below the dedupe, as the
+  // announcement's are.
   const readReportedText = () =>
     // primary: the author guard, and the text may have been written a moment ago.
     dbWrite.postText.findUnique({
       where: { id },
-      select: { postId: true, userId: true, post: { select: { userId: true } } },
+      select: {
+        postId: true,
+        userId: true,
+        index: true,
+        content: true,
+        post: { select: { userId: true } },
+      },
     });
   const reportedText = type === ReportEntity.PostText ? await readReportedText() : null;
   if (type === ReportEntity.PostText) {
@@ -519,6 +526,8 @@ export const createReport = async ({
   const details = data.details as MixedObject;
   if (castsNoTagVotes) details[NO_REPORT_REWARD_KEY] = true;
   else delete details[NO_REPORT_REWARD_KEY];
+  // The server's snapshot of a reported text (stamped below); never one the reporter sent.
+  delete details.postText;
   const validReport =
     (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -552,6 +561,15 @@ export const createReport = async ({
       userId: reportedAnnouncement.userId,
     };
   }
+
+  // The words as reported, from the row and never from `details`, for the reason above: the author
+  // can still edit or delete the text, and the moderator and a CSAM hold need what was reported.
+  if (reportedText)
+    (data.details as MixedObject).postText = {
+      content: reportedText.content,
+      index: reportedText.index,
+      postId: reportedText.postId,
+    };
 
   let recomputeArticleNsfwLevelId: number | null = null;
 

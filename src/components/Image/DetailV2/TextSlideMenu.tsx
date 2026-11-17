@@ -7,7 +7,9 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
  * A text slide reports the text itself, or its post. The slide is only shown to a viewer who may
- * read the text, and the text's author is not offered its report (nor while the author is unknown).
+ * read the text, and its author is not offered its report (nor while the author is unknown).
+ * `authorId` is the post's owner: a text is written by its post's author (`PostText.userId` is set
+ * from it), and `createReport` refuses either.
  */
 export function TextSlideMenu({
   postId,

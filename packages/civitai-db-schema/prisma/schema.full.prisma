@@ -11238,7 +11238,8 @@ model PostText {
 }
 
 /// A report on one storyline text. Filed in the post report queue, so it names the text's post too;
-/// it outlives the text (`postTextId` goes NULL), and the report's details keep the reported words.
+/// it outlives the text (`postTextId` goes NULL), and `Report.details.postText` keeps the words as
+/// reported, stamped from the row when it was filed.
 model PostTextReport {
   reportId   Int       @id
   report     Report    @relation(fields: [reportId], references: [id], onDelete: Cascade)

@@ -10,6 +10,8 @@ export type ReportedPostText = {
   slideCount: number | null;
   /** Plain text: render it as text, never as HTML (`htmlToText` on the server). */
   text: string | null;
+  /** The words when reported (the report's snapshot), as plain text; null on a report without one. */
+  reportedText: string | null;
   refused: boolean;
   refusedByModerator: boolean;
   /** The scan refuses it too, under the moderator's refusal: a restore leaves it hidden. */

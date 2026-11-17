@@ -80,9 +80,10 @@ INSERT INTO "Image" VALUES (1, ${POST}, 0), (2, ${POST}, 1);
 INSERT INTO "PostText" ("id", "postId", "userId", "index", "content", "refused", "refusedByModerator")
   VALUES (71, ${POST}, ${OWNER}, 0, '<p>First <b>words</b>.</p>', false, false),
          (72, ${POST}, ${OWNER}, 1, '<p>Refused words.</p>', true, true);
-INSERT INTO "Report" ("id", "reason", "userId") VALUES
-  (100, 'TOSViolation', ${REPORTER}), (200, 'TOSViolation', ${REPORTER}),
-  (300, 'Spam', ${REPORTER}), (400, 'TOSViolation', ${REPORTER});
+INSERT INTO "Report" ("id", "reason", "userId", "details") VALUES
+  (100, 'TOSViolation', ${REPORTER}, null),
+  (200, 'TOSViolation', ${REPORTER}, '{"postText": {"content": "<p>Words <i>before</i> the edit.</p>"}}'),
+  (300, 'Spam', ${REPORTER}, null), (400, 'TOSViolation', ${REPORTER}, null);
 -- 100 is about the post itself; 200 and 300 about its texts; 400 about another post.
 INSERT INTO "PostReport" ("reportId", "postId") VALUES (100, ${POST}), (400, ${OTHER_POST});
 INSERT INTO "PostTextReport" ("reportId", "postTextId", "postId") VALUES (200, 71, ${POST}), (300, 72, ${POST});
@@ -155,6 +156,7 @@ describe('getReportedPostTexts', () => {
       position: 2,
       slideCount: 4,
       text: 'First words.',
+      reportedText: 'Words before the edit.',
       refused: false,
       refusedByModerator: false,
       refusedByScan: false,
@@ -162,6 +164,7 @@ describe('getReportedPostTexts', () => {
     });
     expect(texts.get(300)).toMatchObject({
       textId: 72,
+      reportedText: null,
       position: 4,
       text: 'Refused words.',
       refused: true,
@@ -181,6 +184,7 @@ describe('getReportedPostTexts', () => {
     expect((await getReportedPostTexts([200])).get(200)).toMatchObject({
       textId: null,
       text: null,
+      reportedText: 'Words before the edit.',
       position: null,
     });
   });

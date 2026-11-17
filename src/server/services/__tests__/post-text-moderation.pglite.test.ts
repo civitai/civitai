@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -22,6 +23,15 @@ const { holdPostTextForCsam, refusePostText, restorePostText } = await import(
   '~/server/services/post-text-moderation.service'
 );
 const { postTextGateRowSql } = await import('~/server/services/post-text-hold');
+vi.mock('~/server/services/text-scan/rated-entities', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recomputeRatedEntityNsfwLevel: vi.fn(),
+}));
+const { applyPostTextTextScan } = await import('~/server/services/text-scan/actions/image-caption');
+const { postTextTextScanSubject } = await import(
+  '~/server/services/text-scan/profiles/post-text.profile'
+);
+const { textScanTextHash } = await import('~/server/services/text-scan/prompt');
 
 const MIGRATIONS = path.resolve(
   __dirname,
@@ -32,7 +42,7 @@ const migration = (dir: string) =>
 
 const SCHEMA = `
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "title" TEXT);
-CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY);
+CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "details" JSONB);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
@@ -93,6 +103,7 @@ beforeEach(async () => {
   await pg.exec(`
     DELETE FROM "CsamReport"; DELETE FROM "EvidenceHeldUser"; DELETE FROM "TextScanHold";
     UPDATE "PostText" SET "csamHeld" = false;
+    DELETE FROM "PostTextReport"; DELETE FROM "Report";
     DELETE FROM "PostText"; DELETE FROM "Post";
     INSERT INTO "Post" ("id", "userId", "title") VALUES (${POST}, ${AUTHOR}, 'Chapter one');
   `);
@@ -262,6 +273,23 @@ describe('holdPostTextForCsam', () => {
     expect(trackModActivity).toHaveBeenCalledTimes(1);
   });
 
+  it('holds the words as reported beside the words it reads now, when the author changed them', async () => {
+    await pg.query(
+      `INSERT INTO "Report" (id, details) VALUES (300, '{"postText": {"content": "<p>What was reported.</p>"}}')`
+    );
+    await pg.query(
+      `INSERT INTO "PostTextReport" ("reportId", "postTextId", "postId") VALUES (300, $1, $2)`,
+      [reported, POST]
+    );
+
+    await holdPostTextForCsam({ textId: reported, moderatorId: 2, reportId: 300 });
+
+    const [hold] = await holds();
+    expect(hold.text).toContain('The reported words.');
+    expect(hold.text).toContain('As reported');
+    expect(hold.text).toContain('What was reported.');
+  });
+
   it('holds words an earlier hold dismissed', async () => {
     await pg.query(
       `INSERT INTO "TextScanHold" ("entityType", "entityId", label, status) VALUES ('PostText', $1, 'csam', 'Dismissed')`,
@@ -276,5 +304,102 @@ describe('holdPostTextForCsam', () => {
   it('is null for a text that is gone, and holds nothing', async () => {
     expect(await holdPostTextForCsam({ textId: 9999, moderatorId: 2 })).toBeNull();
     expect(await holds()).toEqual([]);
+  });
+});
+
+/** The scan's Prisma writes on "PostText", run on the pglite table: equality filters and the `nsfwLevel` range. */
+function scanWritesOnPglite() {
+  dbMock.dbWrite.postText.findUnique.mockImplementation(
+    (async ({ where }: { where: { id: number } }) =>
+      (
+        await pg.query(
+          `SELECT "userId", content, "nsfwLevel", "postId" FROM "PostText" WHERE id = $1`,
+          [where.id]
+        )
+      ).rows[0] ?? null) as never
+  );
+  dbMock.dbWrite.postText.updateMany.mockImplementation((async ({
+    where,
+    data,
+  }: {
+    where: Record<string, unknown>;
+    data: Record<string, unknown>;
+  }) => {
+    const params: unknown[] = [];
+    const bind = (v: unknown) => {
+      params.push(v);
+      return '$' + params.length;
+    };
+    const conds = Object.entries(where).flatMap(([k, v]) =>
+      v && typeof v === 'object'
+        ? Object.entries(v as Record<string, number>).map(
+            ([op, n]) => `"${k}" ${op === 'lt' ? '<' : '>'} ${bind(n)}`
+          )
+        : [`"${k}" = ${bind(v)}`]
+    );
+    const sets = Object.entries(data).map(([k, v]) => `"${k}" = ${bind(v)}`);
+    const { affectedRows } = await pg.query(
+      `UPDATE "PostText" SET ${sets.join(', ')} WHERE ${conds.join(' AND ') || 'true'}`,
+      params
+    );
+    return { count: affectedRows ?? 0 };
+  }) as never);
+  dbMock.dbWrite.textScanHold.findFirst.mockResolvedValue(null as never);
+}
+
+describe("a moderator's refusal and the scan, on the table", () => {
+  const verdict = (poi: boolean) => ({
+    entityId: reported,
+    workflowId: 'wf-1',
+    textHash: textScanTextHash(
+      postTextTextScanSubject({ userId: AUTHOR, content: '<p>The reported words.</p>' })
+    ),
+    subject: { fields: [], declared: {} },
+    outcome: {
+      triggeredLabels: [],
+      nsfwLevel: 1,
+      nsfw: { detectedLevel: 1, declaredLevel: 0, raised: false, reason: 'r' },
+      poi: { detected: poi, declared: false, newlyDetected: poi, names: [], reason: 'r' },
+      minor: { detected: false, declared: false, newlyDetected: false, reason: 'r' },
+    },
+  });
+  const flags = async () =>
+    (
+      await pg.query(
+        `SELECT refused, "refusedByModerator", "refusedByScan" FROM "PostText" WHERE id = $1`,
+        [reported]
+      )
+    ).rows[0];
+
+  beforeEach(scanWritesOnPglite);
+
+  it('keeps a scan refusal made under the refusal through the restore, and a clean verdict lets the text back', async () => {
+    await refusePostText({ textId: reported, moderatorId: 2 });
+
+    await applyPostTextTextScan(verdict(true) as never);
+    expect(await flags()).toEqual({ refused: true, refusedByModerator: true, refusedByScan: true });
+
+    // A clean verdict does not lift the moderator's refusal.
+    await applyPostTextTextScan(verdict(false) as never);
+    expect(await flags()).toEqual({
+      refused: true,
+      refusedByModerator: true,
+      refusedByScan: false,
+    });
+    expect(await hiddenFromReaders(reported)).toBe(true);
+
+    await applyPostTextTextScan(verdict(true) as never);
+    expect(await restorePostText({ textId: reported, moderatorId: 2 })).toMatchObject({
+      stillRefused: true,
+    });
+    expect(await hiddenFromReaders(reported)).toBe(true);
+
+    await applyPostTextTextScan(verdict(false) as never);
+    expect(await flags()).toEqual({
+      refused: false,
+      refusedByModerator: false,
+      refusedByScan: false,
+    });
+    expect(await hiddenFromReaders(reported)).toBe(false);
   });
 });

@@ -33,12 +33,19 @@ const report = (userId: number, reason: ReportReason = ReportReason.TOSViolation
     id: TEXT,
     type: ReportEntity.PostText,
     reason,
-    details: { violation: 'Graphic violence', comment: 'slide three' },
+    // Its details shape follows the reason, which varies here.
+    details: { violation: 'Graphic violence', comment: 'slide three' } as never,
   });
 
 beforeEach(() => {
   vi.clearAllMocks();
-  textFind.mockResolvedValue({ postId: POST, userId: AUTHOR, post: { userId: AUTHOR } } as never);
+  textFind.mockResolvedValue({
+    postId: POST,
+    userId: AUTHOR,
+    index: 3,
+    content: '<p>The reported words.</p>',
+    post: { userId: AUTHOR },
+  } as never);
   reportFindFirst.mockResolvedValue(null);
   reportCreate.mockResolvedValue({ id: 74, status: ReportStatus.Pending, details: {} });
 });
@@ -70,6 +77,47 @@ describe('reporting a storyline text', () => {
     expect(data.status).toBe(ReportStatus.Pending);
     expect(data.details).toMatchObject({ reportType: 'postText' });
     expect(JSON.stringify(reportFindFirst.mock.calls[0][0].where)).toContain('"postTextId":17');
+  });
+
+  // The author can still edit or delete the text, so the report keeps the words it was about.
+  it('keeps the words as reported, from the row, never from what the reporter sent', async () => {
+    await createReport({
+      userId: READER,
+      id: TEXT,
+      type: ReportEntity.PostText,
+      reason: ReportReason.TOSViolation,
+      details: {
+        violation: 'Graphic violence',
+        postText: { content: 'forged', index: 0, postId: 1 },
+      } as never,
+    });
+
+    expect(reportCreate.mock.calls[0][0].data.details.postText).toEqual({
+      content: '<p>The reported words.</p>',
+      index: 3,
+      postId: POST,
+    });
+  });
+
+  it('drops a snapshot a folded-in reporter sent', async () => {
+    reportFindFirst.mockResolvedValueOnce({
+      id: 9,
+      alsoReportedBy: [],
+      previouslyReviewedCount: 0,
+      details: {},
+    } as never);
+    dbMock.dbWrite.report.update.mockResolvedValueOnce({ id: 9 } as never);
+
+    await createReport({
+      userId: READER,
+      id: TEXT,
+      type: ReportEntity.PostText,
+      reason: ReportReason.TOSViolation,
+      details: { violation: 'Graphic violence', postText: { content: 'forged' } } as never,
+    });
+
+    expect(reportCreate).not.toHaveBeenCalled();
+    expect(JSON.stringify(dbMock.dbWrite.report.update.mock.calls[0][0])).not.toContain('forged');
   });
 });
 

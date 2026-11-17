@@ -18,10 +18,12 @@ export async function getReportedPostTexts(
   const rows = await dbWrite
     .selectFrom('PostTextReport as r')
     .leftJoin('PostText as t', 't.id', 'r.postTextId')
+    .innerJoin('Report as rep', 'rep.id', 'r.reportId')
     .select([
       'r.reportId',
       'r.postTextId as textId',
       't.content',
+      sql<string | null>`rep.details -> 'postText' ->> 'content'`.as('reportedContent'),
       't.refused',
       't.refusedByModerator',
       't.refusedByScan',
@@ -52,6 +54,7 @@ export async function getReportedPostTexts(
         position: r.position,
         slideCount: r.slideCount,
         text: r.content == null ? null : htmlToText(r.content),
+        reportedText: r.reportedContent == null ? null : htmlToText(r.reportedContent),
         refused: !!r.refused,
         refusedByModerator: !!r.refusedByModerator,
         refusedByScan: !!r.refusedByScan,
