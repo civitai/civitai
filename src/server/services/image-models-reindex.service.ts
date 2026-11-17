@@ -26,14 +26,18 @@ export async function queueModelsForImageChildTagChanges(changes: ImageChildTagC
   try {
     await queueModels(changes);
   } catch (e) {
-    const error = e as Error;
-    logToAxiom({
-      type: 'error',
-      name: 'image-models-reindex',
-      message: error.message,
-      stack: error.stack,
-    });
+    logError(e);
   }
+}
+
+function logError(e: unknown) {
+  const error = e as Error;
+  logToAxiom({
+    type: 'error',
+    name: 'image-models-reindex',
+    message: error.message,
+    stack: error.stack,
+  });
 }
 
 async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) {
@@ -68,9 +72,14 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
     import('~/server/search-index/models.search-index'),
   ]);
   // The index reads both caches. Refresh reads the primary; after a bust the next reader could
-  // refill them from a lagging replica.
-  await tagIdsForImagesCache.refresh([...imageIds]);
-  await imagesForModelVersionsCache.refresh([...new Set(rows.map((r) => r.modelVersionId))]);
+  // refill them from a lagging replica. A failure here must not cost the queue below.
+  try {
+    await tagIdsForImagesCache.refresh([...imageIds]);
+    await imagesForModelVersionsCache.refresh([...new Set(rows.map((r) => r.modelVersionId))]);
+  } catch (e) {
+    logError(e);
+  }
+  // Parks the ids in Postgres rather than throwing when Redis refuses them.
   await modelsSearchIndex.queueUpdate(
     [...new Set(rows.map((r) => r.modelId))].map((id) => ({
       id,

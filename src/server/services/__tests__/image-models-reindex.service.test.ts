@@ -108,6 +108,15 @@ describe('queueModelsForImageChildTagChanges', () => {
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
 
+  it('still queues the models when a cache refresh fails', async () => {
+    arm({ models: [500] });
+    tagRefresh.mockRejectedValueOnce(new Error('redis down'));
+
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+
+    expect(queued()).toEqual([500]);
+  });
+
   it('does not throw when the queue fails, so the committed write is not reported as failed', async () => {
     arm({ models: [500] });
     vi.mocked(modelsSearchIndex.queueUpdate).mockRejectedValueOnce(new Error('redis down'));
