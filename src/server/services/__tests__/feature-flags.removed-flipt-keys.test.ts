@@ -82,7 +82,7 @@ const EXPECTED: Record<string, Row> = {
   collectionAiReview: MOD,
   creatorMysteryPacks: MOD,
   cashManagement: GRANTED,
-  generationAirResources: MOD,
+  generationAirResources: USER,
   ideogram4Training: MOD,
   imageTraining: USER,
   imageTrainingResults: USER,
