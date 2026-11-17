@@ -66,8 +66,15 @@ export async function unblockAccountDeletionImages(userId: number) {
       { id: number; postId: number | null; ingestion: string; blockedFor: string | null }[]
     >`
       UPDATE "Image"
-      SET ingestion = ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus",
-          "blockedFor" = "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text,
+      SET ingestion = CASE
+            WHEN "blockedFor" = ${BlockedReason.CSAM} OR "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text = ${BlockedReason.CSAM}
+            THEN 'Blocked'::"ImageIngestionStatus"
+            ELSE ("metadata"->>${PRIOR_INGESTION_KEY}::text)::"ImageIngestionStatus"
+          END,
+          "blockedFor" = CASE
+            WHEN "blockedFor" = ${BlockedReason.CSAM} THEN "blockedFor"
+            ELSE "metadata"->>${PRIOR_BLOCKED_FOR_KEY}::text
+          END,
           "metadata" = "metadata" - ${PRIOR_INGESTION_KEY}::text - ${PRIOR_BLOCKED_FOR_KEY}::text
       WHERE id IN (
         SELECT i.id
@@ -86,7 +93,7 @@ export async function unblockAccountDeletionImages(userId: number) {
       break;
     }
 
-    // A restored CSAM reason keeps the image hidden whatever its prior ingestion.
+    // A CSAM row comes back Blocked, but the reason check stays as a second guard.
     const visible = restored.filter(
       (x) => x.ingestion !== 'Blocked' && x.blockedFor !== BlockedReason.CSAM
     );
