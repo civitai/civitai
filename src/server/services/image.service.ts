@@ -1362,7 +1362,8 @@ export async function handleUnblockImages({
       resetBlockedNsfwLevel(ids),
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
-      // A minor-queue accept rewrites "minor", which no trigger watches.
+      // An unblock changes what the models, articles and collections may show, and a minor-queue
+      // accept rewrites "minor", which no trigger watches.
       queueModelsForImageChildTagChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),

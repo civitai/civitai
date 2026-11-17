@@ -606,6 +606,7 @@ export const getArticles = async ({
     );
 
     const coverIds = articles.map((x) => x.coverId).filter(isDefined);
+    const minorHiddenCoverIds = new Set<number>();
     const coverImages = (
       coverIds.length
         ? await dbRead.image.findMany({
@@ -614,7 +615,11 @@ export const getArticles = async ({
           })
         : []
     )
-      .filter((image) => !minorMatureHidden(image, userId, isModerator))
+      .filter((image) => {
+        const hidden = minorMatureHidden(image, userId, isModerator);
+        if (hidden) minorHiddenCoverIds.add(image.id);
+        return !hidden;
+      })
       .map(withoutMinorFlag);
 
     const articleCategories = await getCategoryTags('article');
@@ -652,6 +657,9 @@ export const getArticles = async ({
 
         return {
           ...article,
+          // The legacy `cover` is the same image's key.
+          ...(article.coverId != null &&
+            minorHiddenCoverIds.has(article.coverId) && { cover: null }),
           tags: tags.map(({ tag }) => ({
             ...tag,
             isCategory: articleCategories.some((c) => c.id === tag.id),

@@ -101,10 +101,14 @@ export const transformData = async ({
       const cover = articleRecord.coverImage;
       if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
       // As on the feed card, a withheld cover does not fall back to the banner.
-      const coverImage = cover && withheld(cover) ? null : servable(cover) ?? servable(bannerImage);
+      const coverWithheld = !!cover && withheld(cover);
+      const coverImage = coverWithheld ? null : servable(cover) ?? servable(bannerImage);
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
+        // The legacy `cover` is the same image's key. Null, not absent: an update merges into the
+        // stored document.
+        ...(coverWithheld && { cover: null }),
         // `content` is a searchable attribute and is stored as HTML, so tag and
         // attribute names were indexed as prose — a query for `iframe` could
         // match on markup. Regex-strip rather than a full HTML-to-text pass:

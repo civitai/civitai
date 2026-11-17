@@ -29,7 +29,7 @@ const image = (id: number, nsfwLevel: number, needsReview: string | null = null)
   tags: [],
 });
 
-const article = (images: { coverImage: unknown; bannerImage: unknown }) =>
+const article = (images: { coverImage: unknown; bannerImage: unknown; cover?: string }) =>
   ({
     id: 1,
     nsfwLevel: 1,
@@ -85,6 +85,22 @@ describe('articles search index', () => {
     });
     expect(record).toBeDefined();
     expect(record?.coverImage).toBeUndefined();
+  });
+
+  it('🔴 clears the legacy cover key of an article whose cover is a restricted minor image', async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: restricted(10), bannerImage: null, cover: 'key-10' })],
+      cosmetics: {},
+    });
+    expect(record).toHaveProperty('cover', null);
+  });
+
+  it('keeps the legacy cover key of an article whose cover is shown (control)', async () => {
+    const [record] = await recordsOf({
+      articles: [article({ coverImage: image(10, 4), bannerImage: null, cover: 'key-10' })],
+      cosmetics: {},
+    });
+    expect(record).toHaveProperty('cover', 'key-10');
   });
 
   it('🔴 leaves out a banner-only article whose banner is a restricted minor image', async () => {
