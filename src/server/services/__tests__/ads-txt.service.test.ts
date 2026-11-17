@@ -125,6 +125,31 @@ describe('buildAdsTxt', () => {
     expect(store.get('snigel')?.recordCount).toBe(1);
   });
 
+  it('restarts the day of grace when a full file comes back in between', async () => {
+    const { deps, store } = fakeDeps();
+    await buildAdsTxt(deps);
+    const shrunk = withSnigel(deps, { status: 200, body: shrunkSnigel });
+    expect(await buildAdsTxt(shrunk)).toContain(
+      '# snigel (smaller file held back since 2026-11-17T20:00:00.000Z; last good copy confirmed'
+    );
+    advance(3 * HOUR);
+    await buildAdsTxt(deps);
+    advance(22 * HOUR);
+    expect(recordLines(await buildAdsTxt(shrunk))).toContain('appnexus.com, 10040, RESELLER');
+    expect(store.get('snigel')?.recordCount).toBe(3);
+  });
+
+  it('writes nothing over a stored copy it could not read', async () => {
+    const { deps, store } = fakeDeps();
+    await buildAdsTxt(deps);
+    const blind = withSnigel(
+      { ...deps, getLastGood: async () => Promise.reject(new Error('db down')) },
+      { status: 200, body: shrunkSnigel }
+    );
+    await buildAdsTxt(blind);
+    expect(store.get('snigel')?.body).toBe(snigelBody);
+  });
+
   it('serves the stored copy when a source answers a non-200 that still looks like a file', async () => {
     const { deps } = fakeDeps();
     await buildAdsTxt(deps);

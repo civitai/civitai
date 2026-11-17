@@ -140,14 +140,22 @@ const ageMs = (now: Date, iso: string | undefined) =>
   iso ? now.getTime() - Date.parse(iso) : Infinity;
 
 async function resolveSource(source: AdsTxtSource, deps: AdsTxtDeps) {
-  const lastGood = await deps.getLastGood(source.name).catch(() => undefined);
+  let readFailed = false;
+  const lastGood = await deps.getLastGood(source.name).catch(() => {
+    readFailed = true;
+    return undefined;
+  });
   const now = deps.now();
-  const store = (value: SourceBody) =>
-    deps
+  // Without the stored copy there is no baseline to judge against, so nothing is written over it.
+  const store = async (value: SourceBody) => {
+    if (readFailed) return;
+    await deps
       .setLastGood(source.name, value)
       .catch((error: Error) =>
         deps.log({ message: 'last-good write failed', source: source.name, error: error.message })
       );
+  };
+  let reason = 'upstream unavailable';
 
   try {
     const res = await deps.fetchSource(source.url);
@@ -175,8 +183,10 @@ async function resolveSource(source: AdsTxtSource, deps: AdsTxtDeps) {
         await store(fresh);
       return { body: fresh.body, note: `fetched ${fresh.checkedAt}` };
     }
-    if (verdict === 'shrunk' && lastGood && !lastGood.shrinkSince)
-      await store({ ...lastGood, shrinkSince: now.toISOString() });
+    if (verdict === 'shrunk' && lastGood) {
+      reason = `smaller file held back since ${lastGood.shrinkSince ?? now.toISOString()}`;
+      if (!lastGood.shrinkSince) await store({ ...lastGood, shrinkSince: now.toISOString() });
+    }
     deps.log({ message: 'upstream rejected', source: source.name, status: res.status, verdict });
   } catch (error) {
     deps.log({ message: 'upstream failed', source: source.name, error: (error as Error).message });
@@ -190,7 +200,7 @@ async function resolveSource(source: AdsTxtSource, deps: AdsTxtDeps) {
   }
   return {
     body: lastGood.body,
-    note: `upstream unavailable; last good copy confirmed ${confirmedAt}`,
+    note: `${reason}; last good copy confirmed ${confirmedAt}`,
   };
 }
 
