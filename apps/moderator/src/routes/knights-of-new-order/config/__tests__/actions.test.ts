@@ -65,6 +65,60 @@ describe('Knights of New Order sources config action', () => {
     expect(save).toHaveBeenCalledWith({ enabled: true, sfwRate: 0.05, nsfwRate: 0.125 }, 77);
   });
 
+  it('saves the yes/no share as a 0–1 share, 0 turning questions off', async () => {
+    save.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNoPercent: '0' })
+    );
+    expect(save).toHaveBeenCalledWith(
+      { enabled: true, sfwRate: 0.05, nsfwRate: 0.05, yesNoShare: 0 },
+      77
+    );
+  });
+
+  it('leaves the yes/no share out when its box is blank, so the stored one is kept', async () => {
+    save.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNoPercent: ' ' })
+    );
+    expect(save).toHaveBeenCalledWith({ enabled: true, sfwRate: 0.05, nsfwRate: 0.05 }, 77);
+  });
+
+  it('clears the stored yes/no share when "use the default" is ticked, whatever the box holds', async () => {
+    save.mockResolvedValueOnce({ ok: true, changed: true });
+    await actions.save(
+      formEvent({
+        enabled: 'true',
+        sfwPercent: '5',
+        nsfwPercent: '5',
+        yesNoPercent: '40',
+        yesNoDefault: 'true',
+      })
+    );
+    expect(save).toHaveBeenCalledWith(
+      { enabled: true, sfwRate: 0.05, nsfwRate: 0.05, yesNoShare: null },
+      77
+    );
+  });
+
+  it('refuses a "use the default" value that is not true or absent', async () => {
+    expect(
+      await actions.save(
+        formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNoDefault: 'maybe' })
+      )
+    ).toMatchObject({ status: 400 });
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a yes/no share over 100 without saving', async () => {
+    expect(
+      await actions.save(
+        formEvent({ enabled: 'true', sfwPercent: '5', nsfwPercent: '5', yesNoPercent: '120' })
+      )
+    ).toMatchObject({ status: 400 });
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it('shows the service refusing as a 400', async () => {
     save.mockResolvedValueOnce({ ok: false, error: 'nope' });
     expect(
