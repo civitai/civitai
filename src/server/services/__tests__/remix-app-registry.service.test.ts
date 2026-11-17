@@ -63,8 +63,9 @@ beforeEach(() => {
   redisMock.redis.set.mockImplementation((async (
     key: string,
     value: string,
-    opts?: { EX?: number }
+    opts?: { EX?: number; NX?: boolean }
   ) => {
+    if (opts?.NX && redis.generation.has(key)) return null;
     redis.generation.set(key, { value, ex: opts?.EX });
     return 'OK';
   }) as never);
@@ -184,6 +185,27 @@ describe('the registry generation', () => {
     await expect(
       getRegisteredRemixApp('pixel-art', { allowDisabled: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // The cache cluster can evict the generation key at any time. A reader that finds it gone must
+  // not land on an entry filled before the mod write it lost.
+  it('serves a mod write after the generation key it bumped is evicted', async () => {
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1, 'remix')] as never);
+    expect((await getRegisteredRemixApp('pixel-art', { allowDisabled: false })).enabled).toBe(true);
+
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+      stored(pixelArt, 1, 'remix_disabled'),
+    ] as never);
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    redis.generation.delete(GENERATION_KEY);
+
+    await expect(
+      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const minted = redis.generation.get(GENERATION_KEY);
+    expect(minted?.value).toMatch(/^[0-9a-f-]{36}$/);
+    expect(minted?.ex).toBe(24 * 60 * 60);
   });
 });
 

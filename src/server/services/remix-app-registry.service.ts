@@ -135,10 +135,10 @@ function seedRegistry() {
 
 const REGISTRY_TTL = CacheTTL.hour;
 /**
- * Far longer than a registry entry is served (REGISTRY_TTL) or kept (fetchThroughCache stores it
- * for twice that). Readers fall back to generation '0' when the
- * key is gone, and only a reader that found no key writes the '0' entry, so by the time this
- * expires, at least this long after the last bump, any '0' entry has expired too.
+ * Bounds how long the generation key is kept between mod writes. Correctness does not depend on
+ * it: a reader that finds no key (expired, evicted, or never set) starts a fresh generation
+ * rather than falling back to a fixed one, so no entry filled before a mod write can be served
+ * after it.
  */
 const GENERATION_TTL_SECONDS = 24 * 60 * 60;
 // The menu and the quote wait on this read; the deadline the system Redis read had.
@@ -182,17 +182,26 @@ export async function getRemixAppRegistry(): Promise<RegisteredRemixApp[]> {
  * once the bump is done: a bust or a set can't promise that, since a refill already in flight
  * writes after either. `null` when Redis can't say; the caller then reads the primary uncached.
  *
- * The generation is a cache key's version, so it lives on the cache cluster with a TTL. Losing it
- * costs one uncached read of the primary per reader until an entry is filled again.
+ * The generation is a cache key's version, so it lives on the cache cluster with a TTL, and the
+ * cluster can evict it at any time. A reader that finds no key starts a fresh generation (SET NX,
+ * so concurrent readers agree on one). It must not fall back to a fixed name: an entry filled under
+ * that name before a mod write would be served again once the bumped key was evicted. Losing the
+ * key costs one read of the primary per reader until the new generation's entry is filled.
  */
 async function registryGeneration() {
+  const key = REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION;
+  const bounded = <T>(op: () => Promise<T>) =>
+    clusterCacheGuard.call('remixAppRegistryGeneration', op, {
+      deadlineMs: GENERATION_READ_DEADLINE_MS,
+    });
   try {
-    const generation = await clusterCacheGuard.call(
-      'remixAppRegistryGeneration',
-      () => redis.get(REDIS_KEYS.REMIX_APP.REGISTRY_GENERATION),
-      { deadlineMs: GENERATION_READ_DEADLINE_MS }
-    );
-    return generation ?? '0';
+    const generation = await bounded(() => redis.get(key));
+    if (generation) return generation;
+    const fresh = randomUUID();
+    if (await bounded(() => redis.set(key, fresh, { NX: true, EX: GENERATION_TTL_SECONDS })))
+      return fresh;
+    // Another reader started one between the GET and the SET NX.
+    return (await bounded(() => redis.get(key))) ?? null;
   } catch {
     return null;
   }
