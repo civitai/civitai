@@ -19,16 +19,7 @@ vi.mock('~/components/Image/Filters/MediaFiltersDropdown', () => ({
   MediaFiltersDropdown: () => null,
 }));
 
-// Reads tRPC, which the harness does not mount; the sort menu is what is under test.
-vi.mock('~/components/HatTurf/useHatTurfFeedPlayer', () => ({ useHatTurfFeedPlayer: () => null }));
-
-vi.mock('~/components/Filters/useSortAvailability', () => ({
-  useSortAvailability: () => ({ isModerator: false, canViewNsfw: true, showNsfw: true }),
-}));
-vi.mock('~/hooks/useIsClient', () => ({ default: () => true }));
-vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'blue' }));
-
-// The sort menus read the filters store the app mounts above the page.
+// FollowedFilter reads the filters store the app mounts above the page.
 const renderFilters = () =>
   renderWithProviders(
     <FiltersProvider>
@@ -38,8 +29,10 @@ const renderFilters = () =>
 
 // The mocked router is one singleton: the default export is what `useRouter()` returns.
 const router = vi.mocked(Router);
-const lastReplaceQuery = () =>
-  (router.replace.mock.lastCall?.[0] as { query: Record<string, unknown> }).query;
+const lastReplaceQuery = () => {
+  expect(router.replace).toHaveBeenCalledTimes(1);
+  return (router.replace.mock.lastCall?.[0] as { query: Record<string, unknown> }).query;
+};
 
 describe('ImageFeedFilters sort while searching', () => {
   beforeEach(() => {
