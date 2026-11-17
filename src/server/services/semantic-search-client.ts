@@ -187,6 +187,8 @@ export type CandidateSource = (args: {
   sort?: 'relevance' | 'newest';
 }) => Promise<{ ids: number[]; correctedQuery?: string; guard?: GuardRead; cacheHit?: boolean }>;
 
+type CandidateResult = Awaited<ReturnType<CandidateSource>>;
+
 export function searchServiceUrl(path: string) {
   if (!env.SEARCH_SERVICE_URL)
     throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Semantic search is not set up' });
@@ -295,25 +297,49 @@ const MAX_WORD_MATCHES = 200;
  * order), then the rest of the semantic ranking without them. Embeddings rank meaning, so a query
  * that is a model's name, or a word of it, otherwise loses to look-alike names and spellings.
  * Make one per request: the word matches are fetched once and reused for every later block.
+ *
+ * The first page also asks for the plain ranking alongside the word matches, so the two service calls
+ * run in parallel rather than one after the other; the rest is then the plain ranking without the
+ * matches. That call is wasted when the matches fill the page, so it is made only when `canSpeculate`
+ * says the pod has a slot to spare, and its failure falls back to the serial query.
  */
-export function withWordMatchesFirst(source: CandidateSource, key: string): CandidateSource {
+export function withWordMatchesFirst(
+  source: CandidateSource,
+  key: string,
+  { canSpeculate = () => true }: { canSpeculate?: () => boolean } = {}
+): CandidateSource {
   let matches: ReturnType<CandidateSource> | undefined;
+  let plain: { result: Promise<CandidateResult | undefined>; limit: number } | undefined;
   return async (args) => {
     if (!('text' in args.query) || !args.query.text.trim()) return source(args);
-    matches ??= source({
-      ...args,
-      filter: { ...args.filter, allWords: { key, text: args.query.text } },
-      offset: 0,
-      limit: MAX_WORD_MATCHES,
-    });
+    if (!matches) {
+      matches = source({
+        ...args,
+        filter: { ...args.filter, allWords: { key, text: args.query.text } },
+        offset: 0,
+        limit: MAX_WORD_MATCHES,
+      });
+      if (args.offset === 0 && canSpeculate())
+        plain = { result: source(args).catch(() => undefined), limit: args.limit };
+    }
     const first = await matches;
-    const rest = (offset: number, limit: number) =>
-      source({
+    const rest = async (offset: number, limit: number) => {
+      const speculated = await plain?.result;
+      if (plain && speculated) {
+        const { ids, ...meta } = speculated;
+        const matched = new Set(first.ids);
+        const unmatched = ids.filter((id) => !matched.has(id));
+        // A short plain ranking is all of it, so its remainder is the whole rest.
+        if (offset + limit <= unmatched.length || ids.length < plain.limit)
+          return { ...meta, ids: unmatched.slice(offset, offset + limit) };
+      }
+      return source({
         ...args,
         filter: { ...args.filter, excludedIds: [...(args.filter.excludedIds ?? []), ...first.ids] },
         offset,
         limit,
       });
+    };
     if (args.offset >= first.ids.length) return rest(args.offset - first.ids.length, args.limit);
     const head = first.ids.slice(args.offset, args.offset + args.limit);
     const tail = head.length < args.limit ? await rest(0, args.limit - head.length) : undefined;

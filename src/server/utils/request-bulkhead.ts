@@ -130,6 +130,11 @@ export async function withBulkheadSlotOrBusy<T>(
   }
 }
 
+/** Slots of `key` in flight now. */
+export function bulkheadActive(key: string) {
+  return slots.get(key)?.active ?? 0;
+}
+
 /** Snapshot of current in-flight + cumulative rejects per key (for logging/metrics). */
 export function bulkheadSnapshot() {
   return [...slots].map(([key, s]) => ({ key, active: s.active, rejects: rejects.get(key) ?? 0 }));

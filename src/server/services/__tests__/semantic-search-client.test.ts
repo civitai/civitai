@@ -224,6 +224,51 @@ describe('withWordMatchesFirst', () => {
     expect(wordCalls[0].filter.allWords).toEqual({ key: 'search_text', text: 'civetai' });
   });
 
+  it('asks for the word matches and the ranking at once on the first page', async () => {
+    // 3 and 7 also rank in the plain slice: they must not repeat in the tail.
+    const { source } = index([7, 3], [3, 1, 7, 2, 4]);
+    const issued: Parameters<CandidateSource>[0][] = [];
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const ranked = withWordMatchesFirst(async (args) => {
+      issued.push(args);
+      await held;
+      return source(args);
+    }, 'search_text');
+    const ids = page(ranked, 0, 4).then((r) => r.ids);
+    await Promise.resolve();
+    // Both in flight before either answers.
+    expect(issued.map((call) => !!call.filter.allWords)).toEqual([true, false]);
+    release();
+    expect(await ids).toEqual([7, 3, 1, 2]);
+    expect(issued).toHaveLength(2);
+  });
+
+  it('falls back to the serial rest when the plain call fails, e.g. on a busy pod', async () => {
+    const { source, calls } = index([7, 3], [3, 1, 7, 2, 4]);
+    const ranked = withWordMatchesFirst(async (args) => {
+      if (!args.filter.allWords && !args.filter.excludedIds) throw new Error('Server busy');
+      return source(args);
+    }, 'search_text');
+    expect((await page(ranked, 0, 4)).ids).toEqual([7, 3, 1, 2]);
+    expect(calls.at(-1)?.filter.excludedIds).toEqual([7, 3]);
+  });
+
+  it('makes no plain call when no slot is spare', async () => {
+    const { source, calls } = index([7, 3], [3, 1, 7, 2, 4]);
+    const ranked = withWordMatchesFirst(source, 'search_text', { canSpeculate: () => false });
+    expect((await page(ranked, 0, 4)).ids).toEqual([7, 3, 1, 2]);
+    expect(calls.filter((call) => !call.filter.allWords && !call.filter.excludedIds)).toEqual([]);
+  });
+
+  it('fetches the rest past the first page without the matches', async () => {
+    const { source, calls } = index([7, 3], [1, 2, 3, 4, 5, 6, 7]);
+    const ranked = withWordMatchesFirst(source, 'search_text');
+    expect((await page(ranked, 0, 3)).ids).toEqual([7, 3, 1]);
+    expect((await page(ranked, 3, 3)).ids).toEqual([2, 4, 5]);
+    expect(calls.at(-1)?.filter.excludedIds).toEqual([7, 3]);
+  });
+
   it('asks for no word matches for blank text or "more like this"', async () => {
     const { source, calls } = index([7], [1, 2]);
     const ranked = withWordMatchesFirst(source, 'search_text');

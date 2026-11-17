@@ -4,7 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { semanticSearchCandidateCache } from '~/server/metrics/semantic-search.metrics';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createSingleFlight } from '~/server/utils/cache-helpers';
-import { withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
+import { bulkheadActive, withBulkheadSlotOrBusy } from '~/server/utils/request-bulkhead';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
@@ -24,6 +24,12 @@ import {
 // collectPage asks for at most 100 ids at a time, so a request spans one or two blocks. Blocks are
 // aligned so viewers whose hydration drops different images still share them past page 1.
 export const CANDIDATE_BLOCK = 100;
+
+const slotKey = (collection: SearchCollection) => `semantic-search:${collection}`;
+
+/** Service calls this pod can still start for `collection` before a block is refused as busy. */
+export const freeCandidateSlots = (collection: SearchCollection) =>
+  env.SEMANTIC_SEARCH_CONCURRENCY - bulkheadActive(slotKey(collection));
 
 type Block = { ids: number[]; correctedQuery?: string; guard?: GuardRead };
 type Read = { block: Block; hit: boolean };
@@ -79,7 +85,7 @@ export function withCandidateCache(
     const guard = await guardKeyOnce();
     const uncached = guard === UNKNOWN_GUARD_STATUS.key;
     const fetchBlock = (start: number) =>
-      withBulkheadSlotOrBusy(`semantic-search:${collection}`, env.SEMANTIC_SEARCH_CONCURRENCY, () =>
+      withBulkheadSlotOrBusy(slotKey(collection), env.SEMANTIC_SEARCH_CONCURRENCY, () =>
         source({ ...args, offset: start, limit: CANDIDATE_BLOCK })
       ).then(
         (fresh): Block => ({

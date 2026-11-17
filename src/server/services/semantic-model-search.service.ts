@@ -3,7 +3,7 @@ import { ModelSort } from '~/server/common/enums';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import type { SemanticModelSearchInput } from '~/server/schema/semantic-model-search.schema';
 import { getModelsWithImagesAndModelVersions } from '~/server/services/model.service';
-import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
+import { freeCandidateSlots, withCandidateCache } from '~/server/services/semantic-candidate-cache';
 import {
   beginSemanticAudit,
   isNonModClampOn,
@@ -168,7 +168,10 @@ export async function searchSemanticModels({
   };
 
   // Name and keyword matches first (search_text opens with the model's name), then by meaning.
-  const ranked = withWordMatchesFirst(cachedSource, 'search_text');
+  const ranked = withWordMatchesFirst(cachedSource, 'search_text', {
+    // Busy slots refuse rather than queue: the two word-match blocks and the plain block, or none.
+    canSpeculate: () => freeCandidateSlots(MODEL_COLLECTION) >= 3,
+  });
   const search = auditedTextCandidates({
     source: (args) => timed('candidates', ranked(args)),
     viewer,
