@@ -39,7 +39,6 @@ beforeEach(() => {
   standing.isAccountMuted.mockReset();
 });
 
-// The real router and middleware chain: accept is refused to a muted seller before the service runs.
 describe('accepting a deal as a muted seller', () => {
   it('refuses a seller whose stored standing is muted, even on an older unmuted session', async () => {
     standing.isAccountMuted.mockResolvedValue(true);
