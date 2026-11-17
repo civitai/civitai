@@ -48,7 +48,8 @@ export const getInfiniteBountiesHandler = async ({
   input,
   ctx,
 }: {
-  input: GetInfiniteBountySchema;
+  // ids: semantic search hydrates its ranked bounties through the feed's own query.
+  input: GetInfiniteBountySchema & { ids?: number[] };
   ctx: Context;
 }) => {
   const { user } = ctx;

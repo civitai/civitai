@@ -19,6 +19,7 @@ import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
 import { linkedAccountReview } from '~/server/jobs/linked-account-review';
 import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
+import { feedbackHqSyncJob } from '~/server/jobs/feedback-hq-sync';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { bluePaidAccessDetection } from '~/server/jobs/blue-buzz-paid-access-detection';
@@ -294,6 +295,7 @@ export const jobs: Job[] = [
   botAccountDetection,
   linkedAccountReview,
   relabelBuildBatchJob,
+  feedbackHqSyncJob,
   reactionWithdrawalDetection,
   bluePaidAccessDetection,
   creatorProgramCounterpartyReview,
