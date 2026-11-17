@@ -900,3 +900,36 @@ describe('collectionStorageKey — what the approve gate and the runner compare'
     expect(collectionStorageKey(null, 'cards')).toBeNull();
   });
 });
+
+describe('checkStorageMigrations — default values', () => {
+  const REQUIRES_TITLE = obj(
+    { title: { type: 'string' }, stars: { type: 'integer', maximum: 10 }, legacy: {} },
+    { additionalProperties: false, required: ['title'] }
+  );
+  const withDefault = (value: unknown) =>
+    checkStorageMigrations(
+      manifest({ cards: cards(V1) }),
+      manifest({ cards: cards(REQUIRES_TITLE, [{ op: 'default', path: '/title', value }]) })
+    );
+
+  it.each([
+    ['a consumer-blob url', 'https://orchestration.civitai.com/v2/consumer/blobs/D1.png?sig=s'],
+    [
+      'a resolved content url',
+      'https://orchestration-new.civitai.com/v2/consumer/blobs/content/Tk1',
+    ],
+  ])('🔴 a default carrying %s is refused', (_label, value) => {
+    const check = withDefault(value);
+    expect(check.errors).toEqual([expect.stringMatching(/orchestrator media link/)]);
+    expect(() => assertStorageMigrationsCover(check)).toThrow(StorageMigrationRefusal);
+  });
+
+  it.each([
+    ['a public image url', 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/a/width=450/1.jpeg'],
+    ['plain text', 'untitled'],
+  ])('a default of %s is accepted', (_label, value) => {
+    const check = withDefault(value);
+    expect(check.errors).toEqual([]);
+    expect(() => assertStorageMigrationsCover(check)).not.toThrow();
+  });
+});

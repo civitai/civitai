@@ -38,6 +38,7 @@
 // `additionalProperties` schema).
 
 import { firstSchemaFailure, jsonEqual } from '~/server/services/apps/doc-store-schema';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import type {
   AppStorageBreakingKeyword,
   AppStorageCollectionSchema,
@@ -464,6 +465,18 @@ export function checkStorageMigrations(
       }
     });
     if (plan.length > 0) check.plans.set(name, plan);
+
+    // A default is written into documents other viewers read, so it is held to the shared-data rule.
+    ops.forEach((op, i) => {
+      if (op.op === 'default' && containsPrivateMediaUrl(JSON.stringify(op.value) ?? '')) {
+        check.errors.push(
+          `${opLabel(
+            name,
+            i
+          )}.value carries an orchestrator media link, which app storage does not accept`
+        );
+      }
+    });
 
     // What a mutation op writes must be what the new schema accepts there.
     const schema = collection.schema as Node | undefined;
