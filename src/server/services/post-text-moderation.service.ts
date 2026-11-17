@@ -3,13 +3,11 @@ import { kyselyWrite } from '~/server/db/kyselyDb';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updatePostNsfwLevels } from '~/server/services/nsfwLevels.service';
 import {
-  CSAM_HOLD_TEXT_CHARS,
   csamHoldLockKey,
+  pendingCsamHoldFields,
 } from '~/server/services/text-scan/actions/csam-hold';
 import { postTextTextScanSubject } from '~/server/services/text-scan/profiles/post-text.profile';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
-import { composeUserText } from '~/server/services/text-scan/segment';
-import { sanitizeForPostgres } from '~/utils/string-helpers';
 
 /**
  * Whether text `t` may be restored: no csam flag, no csam hold Pending or Confirmed on it, and nothing
@@ -118,8 +116,9 @@ async function unchanged(textId: number): Promise<PostTextModerationResult | nul
 }
 
 /**
- * A second writer of pending csam holds beside the scan's `writePendingHold` (csam-hold.ts): the row
- * shape (lock key, hash, composed text and cap) must change with it.
+ * A second writer of pending csam holds beside the scan's `writePendingHold`: the lock key and the
+ * row's author and text come from csam-hold.ts (`csamHoldLockKey`, `pendingCsamHoldFields`); only the
+ * policy on existing holds differs.
  *
  * Sends a reported text to the CSAM text-hold queue: a Pending csam hold on its current words, and
  * `csamHeld` set, which hides it from every reader and keeps it from being edited or deleted until
@@ -182,8 +181,7 @@ export async function holdPostTextForCsam({
           entityId: textId,
           label: 'csam',
           textHash: textScanTextHash(subject),
-          userId: text.userId > 0 ? text.userId : null,
-          text: sanitizeForPostgres(composeUserText(shown).slice(0, CSAM_HOLD_TEXT_CHARS)),
+          ...pendingCsamHoldFields(shown),
           reason: reportId ? `Moderator hold from report #${reportId}` : 'Moderator hold',
           meta: sql`${JSON.stringify(meta)}::jsonb`,
           updatedAt: sql`now()`,
