@@ -42,6 +42,9 @@ async function blockedForClauses(
   profileUserId?: number
 ) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'published',
