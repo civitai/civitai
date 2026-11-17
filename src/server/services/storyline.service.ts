@@ -891,7 +891,8 @@ export const createRootChapter = (
 export const STORYLINE_SPARK_START_LOCK_CLASS = 0x53544c31;
 
 /**
- * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
+ * The user's own storyline from this spark that has no chapter 1, nor a draft of one, and is not
+ * taken down.
  */
 export async function findUnwrittenSparkStoryline(
   { userId, sparkImageId }: { userId: number; sparkImageId: number },
@@ -903,6 +904,10 @@ export async function findUnwrittenSparkStoryline(
       AND s."tosViolation" = false
       AND NOT EXISTS (
         SELECT 1 FROM "StorylineChapter" c WHERE c."storylineId" = s.id AND c.depth = 0
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "StorylinePendingChapter" d
+        WHERE d."storylineId" = s.id AND d."parentChapterId" IS NULL
       )
     ORDER BY s.id DESC
     LIMIT 1
@@ -947,8 +952,14 @@ export async function createStoryline({
         // Relies on READ COMMITTED: the lookup's snapshot is taken after the lock, so a waiter sees
         // the row the holder committed.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STORYLINE_SPARK_START_LOCK_CLASS}::int, hashtext(${userId}::text || ':' || ${sparkImageId}::text)::int)`;
-        const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
-        if (unwritten) {
+        const found = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
+        if (found)
+          // Waits out a `setFirstChapter` or `linkPendingChapter` on it, and blocks later ones until
+          // this commits. The second lookup's fresh snapshot then sees a chapter 1 or draft they wrote.
+          await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${found.id} FOR NO KEY UPDATE`;
+        const unwritten =
+          found && (await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx));
+        if (unwritten && unwritten.id === found?.id) {
           // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
           await tx.storyline.update({
             where: { id: unwritten.id },

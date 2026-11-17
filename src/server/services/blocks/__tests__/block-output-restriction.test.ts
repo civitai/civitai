@@ -403,7 +403,10 @@ describe('🔴 F1 — unrated outputs are held, at every level', () => {
           $type: 'imageResourceTraining',
           name: BLOCK_STEP_NAME,
           status: 'succeeded',
-          output: { epochs: [{ epochNumber: 1, sampleImages: ['https://cdn/sample.png'] }] },
+          output: {
+            moderationStatus: 'approved',
+            epochs: [{ epochNumber: 1, sampleImages: ['https://cdn/sample.png'] }],
+          },
         },
       ],
     });

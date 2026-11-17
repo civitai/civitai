@@ -14360,6 +14360,14 @@ function prepareMultiStepWorkflow(
         return { refusal: multiStepRefusal('workflow_step_denied', e.message) };
       }
     }
+    if (step.stepTypes.some(isTrainingStepTypeIgnoringCase)) {
+      return {
+        refusal: multiStepRefusal(
+          'workflow_step_denied',
+          `workflow step ${index}: a training step cannot run inside kind:'workflow' — use kind:'training'`
+        ),
+      };
+    }
   }
   return { steps: graph.steps };
 }
