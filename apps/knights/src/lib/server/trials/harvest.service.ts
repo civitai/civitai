@@ -12,15 +12,29 @@ import {
   REFERENCE_STATUS,
   servableImage,
 } from '@civitai/db/knights';
-import { HARVEST, type HarvestConfig } from './config';
+import { HARVEST, type HarvestConfig, type HarvestSettings } from './config';
 import { poolFor } from './pool';
 
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
 const RERATING_ACTIVITIES = [MODERATOR_RULING_ACTIVITY, 'setNsfwLevelKono'];
 const DAY_MS = 86_400_000;
+/** The lock reason the moderator image queue records (apps/moderator image-queue.ts); too often wrong to grade against. */
+export const MODERATOR_QUEUE_RATING_REASON = 'Moderator queue rating';
 
 export type HarvestResult = { scanned: number; added: number; retired: number };
+
+/** The harvest job: nothing is read or written while it is paused, so the cursor holds where it was. */
+export async function runHarvestJob(
+  db: Kysely<DB>,
+  { now, settings }: { now: Date; settings: HarvestSettings }
+): Promise<HarvestResult | { paused: true }> {
+  if (settings.paused) return { paused: true };
+  return harvestRulings(db, {
+    now,
+    config: { ...HARVEST, hiddenCheckShare: settings.hiddenCheckShare },
+  });
+}
 
 /** Idempotent; safe to re-run. */
 export async function harvestRulings(
@@ -65,6 +79,9 @@ export async function harvestRulings(
       .where('img.nsfwLevelLocked', '=', true)
       .where(
         sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
+      )
+      .where(
+        sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${MODERATOR_QUEUE_RATING_REASON}`
       )
       .where((eb) =>
         eb.not(

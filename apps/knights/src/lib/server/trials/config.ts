@@ -14,7 +14,25 @@ export const HARVEST: HarvestConfig = {
   batchSize: 500,
   maxBatches: 10,
   maxRulingAgeDays: 14,
-  hiddenCheckShare: 0.3,
+  /** A single ruling is not enough to grade Knights against, so harvested rulings go to trials unless an operator opts in. */
+  hiddenCheckShare: 0,
   freshMaxAgeDays: 60,
   spotCheck: false,
 };
+
+export type HarvestSettings = {
+  paused: boolean;
+  hiddenCheckShare: number;
+};
+
+/**
+ * Operator switches from the environment (see `.env.example`): `KNIGHTS_HARVEST=off` pauses the harvest job, and
+ * `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` (0 to 1) sends that share of new rulings to hidden checks.
+ */
+export function harvestSettings(env: Record<string, string | undefined>): HarvestSettings {
+  const share = Number(env.KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE?.trim() || NaN);
+  return {
+    paused: env.KNIGHTS_HARVEST?.trim().toLowerCase() === 'off',
+    hiddenCheckShare: share >= 0 && share <= 1 ? share : HARVEST.hiddenCheckShare,
+  };
+}

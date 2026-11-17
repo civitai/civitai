@@ -11,6 +11,13 @@ Players see these as "skill checks"; the code, tables and config keep the name "
 Known-answer images (`KnightsReferenceImage`, pool `hiddenCheck`) served in a Knight's feed beside queue items. A check is an
 ordinary vote in every way a player can see.
 
+- Where checks come from: the ruling harvest (`trials/harvest.service.ts`) sends new rulings to `trials` unless
+  `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` sends a share to `hiddenCheck`, skips rulings from the moderator image queue, and
+  pauses entirely with `KNIGHTS_HARVEST=off`. A retired reference keeps its image, so that image is never harvested again.
+- `pnpm run rebuild:hidden-checks` (`trials/hidden-rebuild.service.ts`) retires every live harvested check that fewer than
+  `KEEP_MIN_PLAYERS` players answered or that most of its players answered differently, plus any `--exclude` image ids.
+  It changes only `status`, never deletes, and is a dry run without `--apply`; `--print-sql` prints the update.
+
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
   its size, so a mostly-PG pool does not mean mostly-PG checks. Inside the bucket it takes the first eligible check from a

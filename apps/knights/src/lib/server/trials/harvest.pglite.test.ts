@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { HARVEST } from './config';
-import { harvestRulings } from './harvest.service';
+import { harvestRulings, runHarvestJob } from './harvest.service';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
 const daysAgo = (days: number) => new Date(NOW.getTime() - days * 86_400_000).toISOString();
@@ -96,6 +96,7 @@ describe('harvestRulings', () => {
 
   it.each([
     ['a Knights vote lock', { reason: 'Knights Vote' }],
+    ['a moderator queue rating', { reason: 'Moderator queue rating' }],
     ['an image nobody locked', { locked: false }],
     ['a Blocked rating', { level: 32 }],
     ['an unrated image', { level: 0 }],
@@ -142,9 +143,10 @@ describe('harvestRulings', () => {
       await image(id);
       await ruling(id);
     }
-    await harvestRulings(db, { now: NOW });
+    const split = { ...HARVEST, hiddenCheckShare: 0.3 };
+    await harvestRulings(db, { now: NOW, config: split });
     const first = await references();
-    const second = await harvestRulings(db, { now: NOW });
+    const second = await harvestRulings(db, { now: NOW, config: split });
 
     expect(first).toHaveLength(60);
     expect(new Set(first.map((r) => r.pool))).toEqual(new Set(['trials', 'hiddenCheck']));
@@ -222,6 +224,59 @@ describe('harvestRulings', () => {
       [4, 'retired'],
       [5, 'retired'],
     ]);
+  });
+});
+
+describe('harvest defaults and the job switch', () => {
+  it('sends every ruling to trials unless a hidden-check share is set', async () => {
+    for (let id = 1; id <= 40; id++) {
+      await image(id);
+      await ruling(id);
+    }
+    await harvestRulings(db, { now: NOW });
+    const pools = new Set((await references()).map((r) => r.pool));
+    expect(pools).toEqual(new Set(['trials']));
+  });
+
+  it('never harvests an image again once its reference is retired, while a new image still comes in', async () => {
+    await image(1, { level: 8 });
+    await ruling(1);
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status")
+       VALUES (1,'hiddenCheck','8','harvested','retired')`
+    );
+    await image(2);
+    await ruling(2);
+
+    await harvestRulings(db, { now: NOW });
+
+    expect(await references()).toMatchObject([
+      { imageId: 1, pool: 'hiddenCheck', status: 'retired' },
+      { imageId: 2, pool: 'trials', status: 'active' },
+    ]);
+  });
+
+  it('reads and writes nothing while paused, so the cursor holds, and harvests once resumed', async () => {
+    await image(1);
+    await ruling(1);
+    const cursor = async () =>
+      (await pg.query(`SELECT "lastActivityId" FROM "KnightsHarvestCursor"`)).rows;
+
+    const paused = await runHarvestJob(db, {
+      now: NOW,
+      settings: { paused: true, hiddenCheckShare: 1 },
+    });
+    expect(paused).toEqual({ paused: true });
+    expect(await references()).toEqual([]);
+    expect(await cursor()).toEqual([]);
+
+    const resumed = await runHarvestJob(db, {
+      now: NOW,
+      settings: { paused: false, hiddenCheckShare: 1 },
+    });
+    expect(resumed).toMatchObject({ scanned: 1, added: 1 });
+    expect(await references()).toMatchObject([{ imageId: 1, pool: 'hiddenCheck' }]);
+    expect(await cursor()).toHaveLength(1);
   });
 });
 
