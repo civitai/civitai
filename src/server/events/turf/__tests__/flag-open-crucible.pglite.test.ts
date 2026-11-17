@@ -61,15 +61,21 @@ beforeAll(async () => {
     CREATE TYPE "CrucibleStatus" AS ENUM ('Pending', 'Active', 'Completed', 'Cancelled');
     CREATE TABLE "Crucible" (
       id int PRIMARY KEY, status "CrucibleStatus", "startAt" timestamptz, "endAt" timestamptz,
-      "eventTags" text[]
+      "eventTags" text[], "imageId" int
     );
+    CREATE TABLE "Post" (id int PRIMARY KEY, "publishedAt" timestamptz, availability text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "postId" int, url text, "nsfwLevel" int, ingestion text DEFAULT 'Scanned',
+      "tosViolation" boolean DEFAULT false, "needsReview" text, "blockedFor" text
+    );
+    INSERT INTO "Post" VALUES (1, '2026-10-01', 'Public');
   `);
 });
 afterAll(async () => db.close());
 
 beforeEach(async () => {
   config = { flags: FLAGS };
-  await db.exec(`DELETE FROM "Crucible"`);
+  await db.exec(`DELETE FROM "Crucible"; DELETE FROM "Image"`);
   const raw = pgliteRaw(db);
   for (const client of [dbMock.dbRead, dbMock.dbWrite])
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
@@ -86,7 +92,21 @@ describe('the open flag Crucible', () => {
     await crucible(13, 'Active', ['e'], DAY_START, new Date(DAY_END.getTime() - 2));
     await crucible(14, 'Active', ['x-flag'], DAY_START, new Date(DAY_END.getTime() - 3));
     await crucible(15, 'Cancelled', ['e-flag'], DAY_START, new Date(DAY_END.getTime() - 1));
-    expect(await getOpenFlagCrucible('e', NOW)).toEqual({ id: 11, endAt: DAY_END });
+    expect(await getOpenFlagCrucible('e', NOW)).toEqual({ id: 11, endAt: DAY_END, coverUrl: null });
+  });
+
+  it('carries its cover only while the cover is visible and PG or PG-13', async () => {
+    await db.exec(
+      `INSERT INTO "Image" (id, "postId", url, "nsfwLevel") VALUES (50, 1, 'cover', 1)`
+    );
+    await crucible(11, 'Active', ['e-flag'], DAY_START, DAY_END);
+    await db.exec(`UPDATE "Crucible" SET "imageId" = 50`);
+    const cover = async () => (await getOpenFlagCrucible('e', NOW))?.coverUrl;
+    expect(await cover()).toBe('cover');
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'poi'`);
+    expect(await cover()).toBeNull();
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL, "nsfwLevel" = 4`);
+    expect(await cover()).toBeNull();
   });
 
   it('is gone once its window ends, before the next one is Active', async () => {
