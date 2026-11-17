@@ -423,3 +423,55 @@ describe('an intent lock when a new prompt version allows the listing', () => {
     expect(after.meta.comFaceIntent).toMatchObject({ detected: false, promptId: 42 });
   });
 });
+
+// A moderator's ruling outranks a new prompt version: a fresh detection of the text they ruled
+// past does not re-lock it. Edited text since the ruling still locks.
+describe('a fresh detection under a new prompt version, after a moderator ruled', () => {
+  const OWNER = 1;
+  const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
+
+  async function ruledPast(description: string) {
+    const earlier = {
+      detected: true,
+      textHash: comFaceIntentTextHash(stored),
+      at: '2026-01-01T00:00:00Z',
+      promptId: 41,
+    };
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, '{}', true, $2, $3)`,
+      [MODEL, { comFaceIntent: earlier }, description]
+    );
+  }
+
+  beforeEach(() => {
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: true, reason: 'r' },
+      promptId: 42,
+    });
+    // The moderator's ruling, after the earlier verdict.
+    dbMock.dbWrite.modActivity.findFirst.mockImplementation((async (args: {
+      where: { createdAt: { gt: Date } };
+    }) => (args.where.createdAt.gt < new Date('2026-06-01') ? { id: 1 } : null)) as never);
+  });
+  afterEach(() => dbMock.dbWrite.modActivity.findFirst.mockReset());
+
+  it('does not re-lock the unchanged text', async () => {
+    await ruledPast(stored.description);
+    await expect(
+      assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER })
+    ).rejects.toThrow();
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+    expect((await row()).lockedProperties).toEqual([]);
+  });
+
+  it('re-locks text edited since the ruling (control)', async () => {
+    const edited = { ...stored, description: 'edited after the ruling' };
+    await ruledPast(edited.description);
+    await expect(
+      assertComFaceAllowed({ ...edited, modelId: MODEL, userId: OWNER })
+    ).rejects.toThrow();
+    expect((await row()).lockedProperties).toEqual(['nsfw']);
+  });
+});

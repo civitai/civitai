@@ -253,8 +253,10 @@ export async function resolveComFaceIntent(
 
   // Locked only for the text the model lists now, never for an unsaved edit or a draft.
   if (storedHash !== textHash || !model.nsfw) return verdict;
-  // A stored detection a moderator has ruled past (an unlock from the model form) is not re-applied.
-  const recordedAt = stored && meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;
+  // A moderator's ruling since this text was last judged (an unlock from the model form, say) is not
+  // undone: neither by the stored detection nor by a fresh one under a new prompt version.
+  const earlier = meta?.comFaceIntent;
+  const recordedAt = earlier?.textHash === textHash && earlier.at ? new Date(earlier.at) : null;
   if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) return verdict;
 
   const locked = await writes.lock(model.id, textHash).catch((error: Error) => {
