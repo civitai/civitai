@@ -130,7 +130,8 @@ func (c *Client) Query(ctx context.Context, sql string, settings []Setting) ([]m
 	q.Set("output_format_json_quote_64bit_integers", "0")
 	// Without it ClickHouse keeps running a read after the client closes the connection, holding a
 	// query slot until max_execution_time (or indefinitely under the retry settings). A GET runs
-	// read-only mode 2, which allows setting it.
+	// read-only mode 2, which allows setting it. Safe to cancel here because the only read that fills
+	// the cache (hydrate.populateDetached, write-back on) runs on a context detached from the request.
 	q.Set("cancel_http_readonly_queries_on_client_close", "1")
 	for _, s := range settings {
 		q.Set(s.Name, s.Value)

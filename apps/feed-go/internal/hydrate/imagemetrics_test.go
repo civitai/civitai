@@ -519,6 +519,10 @@ type lockLog struct {
 	key string
 	mu  sync.Mutex
 	log []string
+	// holdSecondExpire delays the second re-arm before it is recorded, so a release that does
+	// not wait for an in-flight re-arm logs its DEL first.
+	holdSecondExpire time.Duration
+	expires          int
 }
 
 func (l *lockLog) Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
@@ -550,6 +554,15 @@ func (p *lockLogPipe) SetNX(ctx context.Context, key string, val any, ttl time.D
 }
 
 func (p *lockLogPipe) Expire(ctx context.Context, key string, d time.Duration) *redis.BoolCmd {
+	if key == p.l.key {
+		p.l.mu.Lock()
+		p.l.expires++
+		hold := p.l.expires == 2 && p.l.holdSecondExpire > 0
+		p.l.mu.Unlock()
+		if hold {
+			time.Sleep(p.l.holdSecondExpire)
+		}
+	}
 	p.l.add(key, "EXPIRE")
 	return p.Pipeliner.Expire(ctx, key, d)
 }
@@ -564,21 +577,29 @@ func (p *lockLogPipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
 // The held lock is re-armed on every heartbeat tick while a populate runs, and the release waits for
 // an in-flight re-arm, so the DEL is the last write. The ticks are sent while the query is in flight:
 // the second send is taken only after the first re-arm finished, so exactly two re-arms precede the
-// DEL, with no wall-clock dependence.
+// DEL. The second re-arm is held 100 ms before it is recorded: the release waits it out, so the DEL
+// still comes last, while a release that did not wait would log its DEL first.
+// The heartbeat must re-arm before the lock it keeps alive can expire.
+func TestMetricLockHeartbeatUnderTTL(t *testing.T) {
+	if metricLockHeartbeat >= metricLockTTL {
+		t.Fatalf("heartbeat %s is not under the lock TTL %s", metricLockHeartbeat, metricLockTTL)
+	}
+}
+
 func TestMetricsMissLockHeartbeat(t *testing.T) {
 	ticks := make(chan time.Time)
 	old := metricHeartbeatTicks
 	metricHeartbeatTicks = func() (<-chan time.Time, func()) { return ticks, func() {} }
 	t.Cleanup(func() { metricHeartbeatTicks = old })
 	s, r, f := coldSources(true)
-	l := &lockLog{Redis: r, key: metricLockKey(32)}
+	l := &lockLog{Redis: r, key: metricLockKey(32), holdSecondExpire: 100 * time.Millisecond}
 	s.Cache = l
-	s.Compute.MetricsTimeout = 5 * time.Second
 	f.onQuery = func() {
 		for i := 0; i < 2; i++ {
 			select {
 			case ticks <- time.Time{}:
-			case <-time.After(5 * time.Second):
+			// under the request's 2.5 s cap, so a heartbeat that never ticks fails before the test ends
+			case <-time.After(time.Second):
 				t.Errorf("heartbeat tick %d was never taken", i+1)
 				return
 			}
