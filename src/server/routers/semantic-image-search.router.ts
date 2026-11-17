@@ -65,9 +65,8 @@ const ownImagesRateLimit = rateLimit(
   { sharedKey: 'semanticImageSearch:search:own' }
 );
 
-// Every own-images answer, whatever it found and even an error, waits until a jittered floor after the search began.
-// shortcut: own-images latency is not measured yet. Searches scoped to a username ran p25/p50/p75
-// 45/217/899 ms over a week in 2026-11 (n=54); re-derive from the `ownImages` log rows.
+// shortcut: estimated, as own-images latency was not yet logged; re-derive from the `ownImages`
+// search log rows.
 export const OWN_IMAGES_FLOOR_MS = 200;
 export const OWN_IMAGES_JITTER_MS = 500;
 const holdOwnImages = async (started: number) => {

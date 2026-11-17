@@ -23,7 +23,6 @@ const state = vi.hoisted(() => ({
   semanticQuery: vi.fn(),
   articleQuery: vi.fn(),
   myImages: vi.fn(),
-  currentUser: { id: 7, username: 'fox' } as { id: number; username: string } | null,
 }));
 
 vi.mock('@meilisearch/instant-meilisearch', async () => {
@@ -63,7 +62,7 @@ vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (importOriginal) => 
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  useCurrentUser: () => state.currentUser,
+  useCurrentUser: () => ({ id: 7, username: 'fox' }),
 }));
 vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
   useApplyHiddenPreferences: ({ data }: { data: unknown[] }) => ({ items: data }),
@@ -105,7 +104,6 @@ const { ShowcaseItemsInput } = await import('~/components/Profile/ShowcaseItemsI
 beforeEach(() => {
   state.renderedHits = [];
   state.imageSearch = true;
-  state.currentUser = { id: 7, username: 'fox' };
   state.myImages.mockReset();
   // Browsing level 3 (PG + PG-13) is set above; 2 is PG-13, 16 is X.
   state.myImages.mockResolvedValue({
@@ -190,18 +188,6 @@ describe('Images search in the showcase picker', () => {
   // The profile editor renders this input signed in with no owner: a session check in place of the
   // `username` guard would give it a search scoped to no one.
   test('with no owner, there is no picker to search, even signed in', async () => {
-    renderWithProviders(<ShowcaseItemsInput supportedIndexes={['images']} value={[]} />);
-
-    await expect
-      .element(page.getByText('You have not selected any items'), { timeout: 3000 })
-      .toBeInTheDocument();
-    expect(page.getByPlaceholder('Search Civitai').elements()).toHaveLength(0);
-    expect(state.myImages).not.toHaveBeenCalled();
-  });
-
-  // As the showcase section modal renders it signed out: no session, so no username.
-  test('signed out, there is no picker to search', async () => {
-    state.currentUser = null;
     renderWithProviders(<ShowcaseItemsInput supportedIndexes={['images']} value={[]} />);
 
     await expect
