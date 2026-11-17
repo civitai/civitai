@@ -1209,11 +1209,14 @@ describe('POST review-build-callback — build-only environment', () => {
       'preview-failed',
       expect.objectContaining({
         buildOnly: true,
-        error: 'review build passed; this environment builds review previews but does not serve them',
+        error:
+          'review build passed; this environment builds review previews but does not serve them',
       }),
       { requireActivePreview: true }
     );
-    expect(mockRecordAttempt).toHaveBeenCalledWith(expect.objectContaining({ status: 'succeeded' }));
+    expect(mockRecordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'succeeded' })
+    );
   });
 
   it('failure: unchanged — marked failed without buildOnly', async () => {

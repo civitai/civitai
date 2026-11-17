@@ -5566,6 +5566,11 @@ export type ReviewPreviewDetail = {
    * value.
    */
   sharedServer?: boolean;
+  /**
+   * Set (with state `preview-failed`) when the review build PASSED in a build-only environment
+   * (APPS_REVIEW_BUILD_ONLY, PR previews): the build is recorded and no preview is served.
+   */
+  buildOnly?: boolean;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */

@@ -575,6 +575,10 @@ export type TriggerReviewBuildArgs = {
  * are on (a direct publish only exists on the shared server). Any flag-read error is OFF.
  */
 export async function isReviewDirectPublishOn(): Promise<boolean> {
+  // A direct publish writes the shared static server, i.e. a production review host. A
+  // build-only environment (PR previews, APPS_REVIEW_BUILD_ONLY) never asks for one, whatever the
+  // shared flags say.
+  if (env.APPS_REVIEW_BUILD_ONLY) return false;
   try {
     const { isAppBlocksReviewDirectPublishEnabled, isAppBlocksReviewSharedServerEnabled } =
       await import('~/server/services/app-blocks-flag');
