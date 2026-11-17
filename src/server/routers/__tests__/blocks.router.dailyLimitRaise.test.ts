@@ -101,11 +101,11 @@ const appBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 const USER = 42;
 const APP = 'apb_x';
 
-function caller() {
+function caller(apiKeyId: number | null = null) {
   return blocksRouter.createCaller({
     acceptableOrigin: true,
     user: { id: USER, isModerator: false, onboarding: 0x1f } as never,
-    apiKeyId: null,
+    apiKeyId,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
@@ -348,6 +348,26 @@ describe('the "run without asking" opt-in', () => {
       spentToday: 980,
     });
     expect(m.optedIn).toHaveBeenCalledWith(USER, APP, 'read');
+  });
+
+  it('with the flag rolled back, a kept opt-in is still shown so it can be turned off', async () => {
+    m.optedIn.mockResolvedValue(1040);
+    expect(await caller().getMyConfirmWithinLimit({ appBlockId: APP })).toMatchObject({
+      maxJob: 1040,
+    });
+  });
+
+  it('a full-scope API key or OAuth token can neither opt in nor raise the limit', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optIn.mockResolvedValue({ limit: 1000 });
+    await expect(
+      caller(5).optInConfirmWithinLimit({ appBlockId: APP, maxJobBuzz: 1040 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      caller(5).raiseAppDailyLimit({ appBlockId: APP, buzzBudgetPerDay: 2000 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(m.optIn).not.toHaveBeenCalled();
+    expect(m.raise).not.toHaveBeenCalled();
   });
 
   it('control: not opted in, nothing to show', async () => {

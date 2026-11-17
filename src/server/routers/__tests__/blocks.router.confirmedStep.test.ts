@@ -1648,6 +1648,21 @@ describe('STANDING consent — an opted-in viewer, within their daily limit', ()
     expect(realSubmits()).toHaveLength(0);
   });
 
+  it('a standing consent submitted after the burst window is refused, so the bound holds at submit', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(Date.now() + 61_000);
+      await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+        message: /not been confirmed/,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(realSubmits()).toHaveLength(0);
+  });
+
   it('the flag off: no standing, no offer, and the consent is refused', async () => {
     h.withinLimitFlag.mockImplementation(async () => false);
     const quoteId = await unconfirmedQuote();

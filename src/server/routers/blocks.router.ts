@@ -107,6 +107,7 @@ import {
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
   checkBlockUploadedGenerationSourceUserRateLimit,
+  BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -4194,6 +4195,7 @@ export const blocksRouter = router({
    * viewer who has no limit sets one in the same write. Session only; never grants a scope.
    */
   optInConfirmWithinLimit: protectedProcedure
+    .meta({ blockApiKeys: true })
     .use(enforceAppBlocksFlag)
     .input(
       z
@@ -4262,16 +4264,13 @@ export const blocksRouter = router({
 
   /**
    * The viewer's opt-in for one app on /apps/activity, with today's spend against the limit it
-   * runs within; `null` when not opted in or the feature is off.
+   * runs within; `null` when not opted in. Not flag-gated, so an opt-in kept through a flag
+   * rollback stays visible and can be turned off.
    */
   getMyConfirmWithinLimit: protectedProcedure
     .use(enforceAppBlocksFlag)
     .input(z.object({ appBlockId: z.string().min(1).max(64) }))
     .query(async ({ ctx, input }) => {
-      const { isAppConfirmedStepWithinLimitEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
-      if (!(await isAppConfirmedStepWithinLimitEnabled({ user: ctx.user }))) return null;
       const { readConfirmWithinLimit, readConsentDailyLimit } = await import(
         '~/server/services/blocks/scope-grant.service'
       );
@@ -4303,6 +4302,7 @@ export const blocksRouter = router({
    * is set, and the new value is higher (`raiseConsentDailyLimit`).
    */
   raiseAppDailyLimit: protectedProcedure
+    .meta({ blockApiKeys: true })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -15315,6 +15315,19 @@ async function previewStandingConsent(
 }
 
 /**
+ * A standing consent counts only if submitted within the burst window of being given, so the
+ * burst bound taken at consent also bounds the submits: at most two windows' worth can land in
+ * any one window.
+ */
+function isFreshStandingConsent(consentedAt: string | null): boolean {
+  const at = consentedAt ? Date.parse(consentedAt) : NaN;
+  return (
+    Number.isFinite(at) &&
+    Date.now() - at <= BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS * 1000
+  );
+}
+
+/**
  * Records a STANDING consent to one step quote: no click, because the viewer opted in for this
  * app and the job fits what is left of their daily limit. Session only, like the click. Every
  * condition the preview reported is checked again here on the primary, then one burst slot is
@@ -16245,7 +16258,8 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           standingMaxJob != null &&
           quote.total <= standingMaxJob &&
           quote.consentedBy == null &&
-          quote.standingConsentBy === userId;
+          quote.standingConsentBy === userId &&
+          isFreshStandingConsent(quote.consentedAt);
         const grant = blockConfirmedStepCeiling(
           claims,
           standing ? { ...quote, consentedBy: userId } : quote,
