@@ -136,9 +136,9 @@ export const publishedPostSql = Prisma.sql`(p."publishedAt" < now() AND p."avail
 
 /**
  * A published, non-private model that is not deleted or taken down, as SQL over `"Model" m`.
- * Stricter than getModelIdsVisibleToViewer, which lets others see Private and taken-down models:
- * collection items are shown to everyone who sees the collection, so those can't be added by a
- * viewer who doesn't own them.
+ * As the add-to-collection gate, stricter than view (getModelIdsVisibleToViewer) for non-owners,
+ * which lets them see Private and taken-down models: collection items are shown to everyone who
+ * sees the collection. Owners may add their own.
  */
 export const publishedModelSql = Prisma.sql`(
   m.status = 'Published' AND m."deletedAt" IS NULL AND m.availability != 'Private'
@@ -146,8 +146,9 @@ export const publishedModelSql = Prisma.sql`(
 )`;
 
 /**
- * A published, non-private 3D model that is not deleted, as SQL over `"Model3D" m3`. Stricter than
- * canViewModel3d, which ignores availability, for the reason given on publishedModelSql.
+ * A published, non-private 3D model that is not deleted, as SQL over `"Model3D" m3`. As the add
+ * gate, stricter than view (canViewModel3d, which ignores availability) for non-owners, for the
+ * reason given on publishedModelSql. Owners may add their own.
  */
 export const publishedModel3dSql = Prisma.sql`(
   m3.status = 'Published' AND m3."deletedAt" IS NULL AND m3.availability != 'Private'
