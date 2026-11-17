@@ -318,22 +318,25 @@ describe('the shared flag summary', () => {
     expect(writes()).toBe(before + 1);
   });
 
-  it('links the running flag Crucible that ends first, with its cover only when PG or PG-13', async () => {
+  it('links the running flag Crucible that ends first, its cover only when visible and PG or PG-13', async () => {
     expect((await getFlagSummary('e', BEFORE))?.nextCrucible).toBeNull();
     await db.exec(`
       INSERT INTO "Image" (id, "userId", "postId", url, "nsfwLevel") VALUES
         (950, ${OWNER_OFF}, 1, 'pg-cover', 1), (951, ${OWNER_OFF}, 1, 'r-cover', 4);
       INSERT INTO "Crucible" (id, status, "eventTags", "endAt", "imageId") VALUES
         (388, 'Completed', '{e-flag}', '2026-11-14T22:00:00Z', 950),
-        (390, 'Active', '{e-flag}', '2026-11-16T22:00:00Z', 950),
-        (389, 'Active', '{e-flag}', '2026-11-15T22:00:00Z', 950),
-        (500, 'Active', '{other}', '2026-11-15T12:00:00Z', 950);
+        (390, 'Active', '{e-flag}', '2099-11-16T22:00:00Z', 950),
+        (389, 'Active', '{e-flag}', '2099-11-15T22:00:00Z', 950),
+        (387, 'Active', '{e-flag}', '2026-11-01T22:00:00Z', 950),
+        (500, 'Active', '{other}', '2099-11-15T12:00:00Z', 950);
     `);
     expect((await getFlagSummary('e', BEFORE))?.nextCrucible).toEqual({
       id: 389,
-      endAt: new Date('2026-11-15T22:00:00Z'),
+      endAt: new Date('2099-11-15T22:00:00Z'),
       coverUrl: 'pg-cover',
     });
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'poi' WHERE id = 950`);
+    expect((await getFlagSummary('e', BEFORE))?.nextCrucible?.coverUrl).toBeNull();
     await db.exec(`UPDATE "Crucible" SET "imageId" = 951 WHERE id = 389`);
     expect((await getFlagSummary('e', BEFORE))?.nextCrucible?.coverUrl).toBeNull();
   });

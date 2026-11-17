@@ -79,8 +79,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
 
   const features = useFeatureFlags();
   const flagEvent = features.flagRace ? metadata.collection?.flagRace : undefined;
-  // Two rows' worth, so the cap keeps all of a day's flags.
-  const rows = flagEvent ? 2 : metadata.collection?.rows ?? 2;
+
   const { data: flagSummary } = trpc.hatTurf.getFlags.useQuery(
     { event: flagEvent ?? '' },
     {
@@ -95,6 +94,8 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
     () => (flagEvent && flagSummary ? { event: flagEvent, summary: flagSummary } : null),
     [flagEvent, flagSummary]
   );
+  // The panel layout takes all of a day's flags; without a summary the row stays one row, as before.
+  const rows = flagRow ? 2 : flagEvent ? 1 : metadata.collection?.rows ?? 2;
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
     return shuffle([...collection.items]);

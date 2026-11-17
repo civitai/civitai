@@ -589,13 +589,17 @@ export type FlagSummary = {
 
 export type FlagCrucible = { id: number; endAt: Date | null; coverUrl: string | null };
 
-/** The flag Crucible taking entries now, soonest to end first; its cover only when rated PG or PG-13. */
+/** The flag Crucible taking entries now, soonest to end first; its cover only when visible and PG or PG-13. */
 async function activeFlagCrucible(event: string): Promise<FlagCrucible | null> {
   const [row] = await dbRead.$queryRaw<FlagCrucible[]>`
-    SELECT cr.id, cr."endAt", CASE WHEN i."nsfwLevel" IN (1, 2) THEN i.url END AS "coverUrl"
-    FROM "Crucible" cr LEFT JOIN "Image" i ON i.id = cr."imageId"
+    SELECT cr.id, cr."endAt", (
+      SELECT i.url FROM "Image" i JOIN "Post" p ON p.id = i."postId"
+      WHERE i.id = cr."imageId" AND i."nsfwLevel" IN (1, 2) AND ${imageVisible}
+    ) AS "coverUrl"
+    FROM "Crucible" cr
     WHERE cr.status = 'Active'::"CrucibleStatus"
       AND cr."eventTags" @> ARRAY[${flagCrucibleTag(event)}]::text[]
+      AND (cr."endAt" IS NULL OR cr."endAt" > now())
     ORDER BY cr."endAt" ASC NULLS LAST LIMIT 1
   `;
   return row ?? null;

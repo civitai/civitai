@@ -70,7 +70,8 @@ describe('FlagRacePanel', () => {
     await cleanup();
 
     const second = await renderWithProviders(<FlagRacePanel summary={summary()} />);
-    await expect.poll(() => q('flag-race-howto')).toBeNull();
+    await expect.element(second.getByText('How it works')).toBeVisible();
+    expect(q('flag-race-howto')).toBeNull();
     await second.getByText('How it works').click();
     expect(q('flag-race-howto')).not.toBeNull();
     expect(localStorage.getItem(HOWTO_DISMISSED_KEY)).toBeNull();

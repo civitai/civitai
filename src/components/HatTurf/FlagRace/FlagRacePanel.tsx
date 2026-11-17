@@ -26,8 +26,8 @@ const RULES_ARTICLE = '/articles/38657';
 export const HOWTO_DISMISSED_KEY = 'flag-race-howto-dismissed';
 
 function useHowtoDismissed() {
-  // Starts open on the server and the first paint, then reads the device's choice.
-  const [dismissed, setDismissed] = useState(false);
+  // Unknown (null) until mounted, so neither the box nor its pill flashes before the device's choice is read.
+  const [dismissed, setDismissed] = useState<boolean | null>(null);
   useEffect(() => {
     try {
       setDismissed(localStorage.getItem(HOWTO_DISMISSED_KEY) === '1');
@@ -76,7 +76,7 @@ export function FlagRacePanel({ summary }: { summary: FlagSummary }) {
         )}
       </div>
 
-      {dismissed && (
+      {dismissed === true && (
         <div className="mt-3">
           <UnstyledButton onClick={() => setDismissed(false)}>
             <Badge
@@ -120,7 +120,7 @@ export function FlagRacePanel({ summary }: { summary: FlagSummary }) {
         </>
       )}
 
-      {!dismissed && (
+      {dismissed === false && (
         <div className={classes.howto} data-testid="flag-race-howto">
           <ActionIcon
             variant="subtle"
@@ -179,7 +179,7 @@ export function FlagRacePanel({ summary }: { summary: FlagSummary }) {
             {next.coverUrl && <img src={getEdgeUrl(next.coverUrl, { width: 96 })} alt="" />}
             <span className="min-w-0">
               <b className="block text-[13px]">Enter tomorrow&apos;s flags</b>
-              {next.endAt && (
+              {next.endAt && new Date(next.endAt).getTime() > Date.now() && (
                 <small>
                   Today&apos;s Crucible ·{' '}
                   <Countdown endTime={new Date(next.endAt)} format="short" /> left
