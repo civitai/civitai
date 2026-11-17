@@ -48,6 +48,7 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { modActions } = await import('../mod-actions/registry');
+const { trackImageRestore } = await import('../image-moderation-effects');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -104,7 +105,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image";
+    TRUNCATE "Image", "ImageTagForReview";
     INSERT INTO "Image" ("id", "userId", "ingestion", "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${CSAM}, 7, 'Blocked', 'CSAM', 32, 'csam'),
       (${MODERATED}, 8, 'Blocked', 'moderated', 32, NULL);
@@ -158,7 +159,8 @@ describe('imageModerate unblock of a CSAM-blocked image', () => {
 });
 
 describe('imageModerate unblock when the replica has not caught up', () => {
-  it('reads the primary and restores the image', async () => {
+  it('reads the primary for the image, its review tags and the restore event', async () => {
+    await db.exec(`INSERT INTO "ImageTagForReview" ("imageId", "tagId") VALUES (${MODERATED}, 5);`);
     replicaHandle.current = new Kysely({ dialect: pgliteDialect(laggingReplica) });
 
     await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
@@ -166,6 +168,28 @@ describe('imageModerate unblock when the replica has not caught up', () => {
       ingestion: 'Scanned',
       blockedFor: null,
       needsReview: null,
+    });
+    // Consumed only if the tag read went to the primary; the replica has none.
+    const pending = await db.query(`SELECT 1 FROM "ImageTagForReview" WHERE "imageId" = $1`, [
+      MODERATED,
+    ]);
+    expect(pending.rows).toHaveLength(0);
+    expect(vi.mocked(trackImageRestore)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ imageId: MODERATED, db: dbHandle.current })
+    );
+  });
+
+  it('names every image a batch left down', async () => {
+    const OTHER_CSAM = 3;
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "ingestion", "blockedFor", "nsfwLevel", "needsReview")
+      VALUES (${OTHER_CSAM}, 9, 'Blocked', 'CSAM', 32, 'csam');
+    `);
+    const answer = await unblock([CSAM, OTHER_CSAM, MODERATED]).catch((e: unknown) => e);
+
+    expect(answer).toMatchObject({
+      status: 409,
+      message: `Images ${CSAM}, ${OTHER_CSAM} were not restored: each can only be restored through its own review. Image ${MODERATED} was restored.`,
     });
   });
 

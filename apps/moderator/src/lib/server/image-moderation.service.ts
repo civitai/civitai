@@ -124,8 +124,10 @@ export async function acceptImage({
       .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
       .where('id', '=', imageId)
       .executeTakeFirst();
-  // A replica miss is usually lag, not a deleted image.
-  const img = (await readImage(dbRead)) ?? (await readImage(dbWrite));
+  // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
+  const fromReplica = await readImage(dbRead);
+  const reader = fromReplica ? dbRead : dbWrite;
+  const img = fromReplica ?? (await readImage(dbWrite));
   if (!img) {
     if (restoreRemoved) throw new ImageNotFoundError(imageId);
     return;
@@ -181,7 +183,7 @@ export async function acceptImage({
   await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
-  const reviewTags = await dbRead
+  const reviewTags = await reader
     .selectFrom('ImageTagForReview')
     .select('tagId')
     .where('imageId', '=', imageId)
@@ -205,7 +207,7 @@ export async function acceptImage({
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
   if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
-    await trackImageRestore({ imageId, actorUserId: userId });
+    await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows

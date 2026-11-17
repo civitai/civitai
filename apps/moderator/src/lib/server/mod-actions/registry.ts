@@ -44,7 +44,9 @@ const listIds = (ids: number[]) => ids.join(', ');
 const notRestoredMessage = (notRestored: number[], notFound: number[], restored: number[]) =>
   [
     notRestored.length > 1
-      ? `${notRestored.length} images were not restored: each can only be restored through its own review.`
+      ? `Images ${listIds(
+          notRestored
+        )} were not restored: each can only be restored through its own review.`
       : notRestored.length
       ? `Image ${notRestored[0]} was not restored: it can only be restored through its own review.`
       : '',
