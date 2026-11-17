@@ -144,7 +144,7 @@ describe('/api/generation/data media viewer', () => {
       apiKeyId: 9,
       apiKeyType: 'User',
       subject: { type: 'apiKey', id: 9 },
-      tokenScope: 2,
+      tokenScope: 2n,
     };
     mockSession.mockImplementation(async ({ req }: { req: { context?: unknown } }) => {
       req.context = credential;

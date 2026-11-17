@@ -225,7 +225,7 @@ describe('App Blocks reads that serve apps', () => {
         ...row,
         approvedScopes: [],
         currentVersionDeployedAt: new Date(),
-        app: { allowedScopes: 0 },
+        app: { allowedScopes: 0n },
         ...over,
       } as never);
 

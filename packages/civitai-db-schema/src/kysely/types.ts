@@ -310,6 +310,12 @@ export type ApiKey = {
   key: string;
   name: string;
   tokenScope: Generated<number>;
+  /**
+   * The whole scope, past the 31 bits `tokenScope` holds. Read `tokenScopeWide ?? tokenScope`; a write sets both
+   * (`apiKeyScopeColumns` in @civitai/auth/token-scope), `tokenScope` to the low 31 bits. Null on rows written
+   * before the column existed, all of which fit `tokenScope`.
+   */
+  tokenScopeWide: string | null;
   userId: number;
   createdAt: Generated<Timestamp>;
   type: Generated<ApiKeyType>;
@@ -4806,7 +4812,7 @@ export type OauthClient = {
   redirectUris: Generated<string[]>;
   allowedOrigins: Generated<string[]>;
   grants: Generated<string[]>;
-  allowedScopes: Generated<number>;
+  allowedScopes: Generated<string>;
   isConfidential: Generated<boolean>;
   /**
    * Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
@@ -4832,7 +4838,7 @@ export type OauthConsent = {
   id: Generated<number>;
   userId: number;
   clientId: string;
-  scope: number;
+  scope: string;
   buzzLimit: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Generated<Timestamp>;
