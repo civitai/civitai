@@ -262,6 +262,28 @@ describe('bounty detail and feed visibility', () => {
     expect(result).not.toHaveProperty('meta');
   });
 
+  it("sends the text scan's record to a moderator only, from getBounty and upsert", async () => {
+    const details = { baseModel: 'SD 1.5', textScanNsfw: { workflowId: 'w', level: 4 } };
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      ...privateBounty,
+      availability: 'Public',
+      details,
+    });
+    mockAssert.mockResolvedValue(undefined);
+    mockUpsertBounty.mockResolvedValue({ id: 9, name: 'B', details });
+    const track = { bounty: vi.fn(async () => undefined) };
+    for (const [user, expected] of [
+      [{ id: OWNER }, { baseModel: 'SD 1.5' }],
+      [{ id: 77, isModerator: true }, details],
+    ] as const) {
+      const ctx = { user, ...uncapped, track } as never;
+      expect((await getBountyHandler({ input: { id: 9 }, ctx })).details).toEqual(expected);
+      expect((await upsertBountyHandler({ input: { id: 9 } as never, ctx })).details).toEqual(
+        expected
+      );
+    }
+  });
+
   it("getInfinite filters by the viewer's own id, not the profile being browsed", async () => {
     dbMock.dbRead.bounty.findMany.mockResolvedValue([]);
     await getInfiniteBountiesHandler({

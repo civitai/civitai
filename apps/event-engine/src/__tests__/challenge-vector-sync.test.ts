@@ -10,8 +10,11 @@ describe('challenge payload, against the real query', () => {
     await pg.exec(`
       CREATE TYPE "ChallengeStatus" AS ENUM ('Scheduled', 'Active', 'Completing', 'Completed', 'Cancelled');
       CREATE TYPE "ChallengeSource" AS ENUM ('System', 'Mod', 'User');
-      CREATE TABLE "User" (id int PRIMARY KEY, username text);
-      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int, poi boolean, ingestion text);
+      CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp,
+        "deletedAt" timestamp);
+      CREATE TABLE "Image" (id int PRIMARY KEY, "nsfwLevel" int, poi boolean, ingestion text,
+        "tosViolation" boolean DEFAULT false, "needsReview" text, minor boolean DEFAULT false,
+        "blockedFor" text);
       CREATE TABLE "ChallengeEvent" (id int PRIMARY KEY, title text);
       CREATE TABLE "Challenge" (id int PRIMARY KEY, title text, theme text, invitation text,
         description text, status "ChallengeStatus", source "ChallengeSource", "buzzType" text,

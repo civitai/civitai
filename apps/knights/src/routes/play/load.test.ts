@@ -18,6 +18,12 @@ const queueDeps = vi.hoisted(() => ({
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({ db: {} }));
+// Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
+vi.mock('$lib/server/membership', async (original) => ({
+  ...(await original<typeof import('$lib/server/membership')>()),
+  consented: vi.fn(async () => true),
+  requireConsent: vi.fn(async () => undefined),
+}));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
@@ -84,7 +90,13 @@ beforeEach(() => {
   skipList.list.mockReset();
   skipList.list.mockResolvedValue([]);
   seenStore.get.mockReset();
-  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: true, whatsNew: true });
+  seenStore.get.mockResolvedValue({
+    rank: 'Knight',
+    level: 5,
+    guide: true,
+    whatsNew: true,
+    consent: true,
+  });
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
@@ -653,6 +665,7 @@ describe('play progress actions', () => {
       level: 12,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
   });
 

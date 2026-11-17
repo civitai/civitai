@@ -99,6 +99,7 @@
       hidingAutomated={queue.hidingAutomated}
       statusCounts={queue.statusCounts}
       dates={dates ? { from: queue.reportedFrom, to: queue.reportedTo } : undefined}
+      agentFilter={queue.agentFilter}
       {navigate}
       compact={compactFilters}
       extra={extraFilters}

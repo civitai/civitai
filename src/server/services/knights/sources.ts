@@ -65,7 +65,8 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
 }
 
 /**
- * Open Knight-stage items, counted only up to `limit` so the read stays short on the (status, minRank, ...) index. The result is
+ * Open Knight-stage rating items, counted only up to `limit` so the read stays short on the (status, minRank, ...) index. Yes/no
+ * questions share the queue table but not this intake, so they are left out: an imported backlog must not stop sampling. The result is
  * cached for a minute whenever the query lands. A failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
  */
 function startOpenCount(limit: number): Promise<number | null> {
@@ -76,6 +77,7 @@ function startOpenCount(limit: number): Promise<number | null> {
         .select(sql<number>`1`.as('one'))
         .where('status', '=', 'Open')
         .where('minRank', '=', 'Knight')
+        .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
         .limit(limit)
         .as('open')
     )

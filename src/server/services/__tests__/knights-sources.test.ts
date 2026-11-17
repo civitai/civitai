@@ -174,7 +174,7 @@ describe('queueOwnerRatingForKnights', () => {
 });
 
 describe('intake backpressure', () => {
-  it('skips scan samples while more Knight-stage items are open than maxOpen, and still queues owner ratings', async () => {
+  it('skips scan samples while more Knight-stage rating items are open than maxOpen, and still queues owner ratings', async () => {
     configured({ enabled: true, maxOpen: 10 });
     openItems(11);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
@@ -182,7 +182,13 @@ describe('intake backpressure', () => {
     await queueOwnerRatingForKnights(3);
 
     expect(queuedIds()).toEqual([3]);
-    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 11]);
+    // Only rating items count: open yes/no questions never hold image intake back.
+    expect(openCount.mock.calls[0].slice(1)).toEqual([
+      'Open',
+      'Knight',
+      'knights.image.nsfwLevel',
+      11,
+    ]);
   });
 
   it('queues scan samples again at the cap', async () => {
@@ -197,7 +203,12 @@ describe('intake backpressure', () => {
     openItems(5001);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(openCount.mock.calls[0].slice(1)).toEqual(['Open', 'Knight', 5001]);
+    expect(openCount.mock.calls[0].slice(1)).toEqual([
+      'Open',
+      'Knight',
+      'knights.image.nsfwLevel',
+      5001,
+    ]);
 
     clearKnightsSourcesConfigCache();
     openItems(5000);
