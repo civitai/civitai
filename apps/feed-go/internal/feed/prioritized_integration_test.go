@@ -45,6 +45,10 @@ import (
 //	2106021  O     2106502  3      1     needsReview            210650203
 //	2106022  O     2106501  150    1     index past 100         210650250 (after 2106502's index 0)
 //	2106023  O     2106502  0      1     ties 2106010           210650200 (id breaks the tie)
+//	2106024  O     2106502  4      1     acceptableMinor        210650204
+//	2106025  X     2106504  1      1     acceptableMinor        210650401
+//	2106026  O     2106507  1      0     managed collection     210650701 (unrated)
+//	2106027  O     2106507  2      32    managed collection     210650702 (Blocked level)
 //
 // Every image is Scanned unless the row says otherwise; no image is in ImageResourceNew but 2106014.
 func integSeedPrioritized(t *testing.T, pool *pgxpool.Pool) {
@@ -63,20 +67,24 @@ func integSeedPrioritized(t *testing.T, pool *pgxpool.Pool) {
 		  (2106505, 2106901, 2106601, NULL, NULL),
 		  (2106506, 2106901, 2106601, '2999-01-01 00:00:00', NULL),
 		  (2106507, 2106901, 2106601, '2021-03-01 00:00:00', 2106701);
-		INSERT INTO "Image" (id, url, "userId", "postId", index, "nsfwLevel", ingestion, "needsReview") VALUES
-		  (2106010, 'p-u10', 2106901, 2106502, 0, 1, 'Scanned', NULL),
-		  (2106011, 'p-u11', 2106901, 2106501, 2, 1, 'Scanned', NULL),
-		  (2106012, 'p-u12', 2106901, 2106501, 1, 1, 'Scanned', NULL),
-		  (2106013, 'p-u13', 2106901, 2106501, NULL, 1, 'Scanned', NULL),
-		  (2106014, 'p-u14', 2106901, 2106503, 0, 1, 'Scanned', NULL),
-		  (2106015, 'p-u15', 2106902, 2106504, 0, 1, 'Scanned', NULL),
-		  (2106016, 'p-u16', 2106901, 2106505, 0, 1, 'Scanned', NULL),
-		  (2106017, 'p-u17', 2106901, 2106506, 0, 1, 'Scanned', NULL),
-		  (2106019, 'p-u19', 2106901, 2106502, 1, 0, 'Pending', NULL),
-		  (2106020, 'p-u20', 2106901, 2106507, 0, 4, 'Scanned', NULL),
-		  (2106021, 'p-u21', 2106901, 2106502, 3, 1, 'Scanned', 'minor'),
-		  (2106022, 'p-u22', 2106901, 2106501, 150, 1, 'Scanned', NULL),
-		  (2106023, 'p-u23', 2106901, 2106502, 0, 1, 'Scanned', NULL);
+		INSERT INTO "Image" (id, url, "userId", "postId", index, "nsfwLevel", ingestion, "needsReview", "acceptableMinor") VALUES
+		  (2106010, 'p-u10', 2106901, 2106502, 0, 1, 'Scanned', NULL, false),
+		  (2106011, 'p-u11', 2106901, 2106501, 2, 1, 'Scanned', NULL, false),
+		  (2106012, 'p-u12', 2106901, 2106501, 1, 1, 'Scanned', NULL, false),
+		  (2106013, 'p-u13', 2106901, 2106501, NULL, 1, 'Scanned', NULL, false),
+		  (2106014, 'p-u14', 2106901, 2106503, 0, 1, 'Scanned', NULL, false),
+		  (2106015, 'p-u15', 2106902, 2106504, 0, 1, 'Scanned', NULL, false),
+		  (2106016, 'p-u16', 2106901, 2106505, 0, 1, 'Scanned', NULL, false),
+		  (2106017, 'p-u17', 2106901, 2106506, 0, 1, 'Scanned', NULL, false),
+		  (2106019, 'p-u19', 2106901, 2106502, 1, 0, 'Pending', NULL, false),
+		  (2106020, 'p-u20', 2106901, 2106507, 0, 4, 'Scanned', NULL, false),
+		  (2106021, 'p-u21', 2106901, 2106502, 3, 1, 'Scanned', 'minor', false),
+		  (2106022, 'p-u22', 2106901, 2106501, 150, 1, 'Scanned', NULL, false),
+		  (2106023, 'p-u23', 2106901, 2106502, 0, 1, 'Scanned', NULL, false),
+		  (2106024, 'p-u24', 2106901, 2106502, 4, 1, 'Scanned', NULL, true),
+		  (2106025, 'p-u25', 2106902, 2106504, 1, 1, 'Scanned', NULL, true),
+		  (2106026, 'p-u26', 2106901, 2106507, 1, 0, 'Scanned', NULL, false),
+		  (2106027, 'p-u27', 2106901, 2106507, 2, 32, 'Scanned', NULL, false);
 		INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId") VALUES (2106014, 2106601);
 		INSERT INTO "CollectionContributor" ("userId", "collectionId", permissions) VALUES
 		  (2106903, 2106701, ARRAY['MANAGE']::"CollectionContributorPermission"[]),
@@ -112,18 +120,28 @@ func TestIntegrationPrioritizedPage(t *testing.T) {
 		// transform drops them for anyone but the owner), visibility still the reviewed one.
 		{"pending, signed out", func(q *ImagesQuery) { q.Pending = true },
 			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106016, 2106017}},
-		// Pending, the owner: their unrated and needsReview images too.
+		// Pending, the owner: their unrated (2106019, and 2106026 though in a collection post),
+		// needsReview and acceptableMinor (2106024) images too; never the Blocked level (2106027).
 		{"pending, the owner", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = owner },
-			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106022, 2106016, 2106017}},
-		// Pending, a viewer who MANAGEs the collection: the rated image of its post above their level.
+			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106022, 2106016, 2106017, 2106026}},
+		// The owner beside another creator: the owner's acceptableMinor image (2106024) shows, the other
+		// creator's (2106025) does not; the other creator's ordinary image (2106015) does.
+		{"pending, the owner, two creators", func(q *ImagesQuery) {
+			q.Pending = true
+			q.ViewerID = owner
+			q.PrioritizedUserIDs = []int{owner, other}
+		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106022, 2106015, 2106016, 2106017, 2106026}},
+		// Pending, a viewer who MANAGEs the collection: the rated image of its post above their level,
+		// never its unrated (2106026) or Blocked-level (2106027) one, nor another creator's
+		// acceptableMinor image (2106024).
 		{"pending, a collection manager", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = 2106903 },
 			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106016, 2106017, 2106020}},
 		// Control: VIEW on the collection is not MANAGE.
 		{"pending, a collection viewer", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = 2106904 },
 			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106016, 2106017}},
-		// Pending, a moderator: unrated images and needsReview ones, nothing above the level.
+		// Pending, a moderator: unrated, needsReview and acceptableMinor images, nothing above the level.
 		{"pending, a moderator", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = 2106999; q.IsModerator = true },
-			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106022, 2106016, 2106017}},
+			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106022, 2106016, 2106017, 2106026}},
 	}
 	for _, c := range cases {
 		q := carousel()
