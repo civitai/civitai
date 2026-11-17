@@ -3,13 +3,24 @@ import { childBrowsingTagIds } from '@civitai/shared';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
+import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
 
-// The real index module builds a Meilisearch processor at load; only its queue is under test.
+// The real index modules build a Meilisearch processor at load; only their queues are under test.
 vi.mock('~/server/search-index/models.search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
+}));
+vi.mock('~/server/search-index/articles.search-index', () => ({
+  articlesSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
+}));
+vi.mock('~/server/search-index/comics.search-index', () => ({
+  comicsSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
 }));
 // Hand-listed: the real image.service pulls in most of the server; only this cache is touched.
 vi.mock('~/server/services/image.service', () => ({
@@ -27,17 +38,31 @@ const queries = () =>
   }));
 const query = (table: string) => queries().find((q) => q.text.includes(table));
 
-/** Answers the child-tag check and the image -> model lookup, both on the primary. */
-function arm({ models = [] as number[], childTagged = [] as number[] } = {}) {
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
-    sqlText(sql).includes('"TagsOnImageNew"')
-      ? childTagged.map((imageId) => ({ imageId }))
-      : models.map((modelId) => ({ modelId, modelVersionId: modelId * 10 }))) as never);
+/** Answers the child-tag check and the image -> model and -> article/comic lookups, on the primary. */
+function arm({
+  models = [] as number[],
+  childTagged = [] as number[],
+  articles = [] as number[],
+  comics = [] as number[],
+} = {}) {
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) => {
+    const text = sqlText(sql);
+    if (text.includes('"TagsOnImageNew"')) return childTagged.map((imageId) => ({ imageId }));
+    if (text.includes('"Article"'))
+      return [
+        ...articles.map((id) => ({ kind: 'article', id })),
+        ...comics.map((id) => ({ kind: 'comic', id })),
+      ];
+    return models.map((modelId) => ({ modelId, modelVersionId: modelId * 10 }));
+  }) as never);
 }
 
 const tagRefresh = vi.spyOn(tagIdsForImagesCache, 'refresh');
-const queued = () =>
-  vi.mocked(modelsSearchIndex.queueUpdate).mock.calls.flatMap(([items]) => items.map((x) => x.id));
+const idsQueuedOn = (index: { queueUpdate: unknown }) =>
+  vi
+    .mocked(index.queueUpdate as typeof modelsSearchIndex.queueUpdate)
+    .mock.calls.flatMap(([items]) => items.map((x) => x.id));
+const queued = () => idsQueuedOn(modelsSearchIndex);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -147,7 +172,70 @@ describe('queueModelsForImageChildTagChanges', () => {
     vi.useRealTimers();
 
     await expect(run).resolves.toBeUndefined();
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(queries().filter((q) => q.text.includes('"ModelVersion"'))).toHaveLength(2);
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('queues the articles using the image as cover or banner, and the comics using it as cover', async () => {
+    arm({ models: [500], articles: [30, 31], comics: [40] });
+
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+
+    expect(query('"Article"')?.text).toMatch(/"coverId"[\s\S]*"bannerId"[\s\S]*"coverImageId"/);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([30, 31]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
+    expect(queued()).toEqual([500]);
+  });
+
+  it('queues the article or comic of an image on no model', async () => {
+    arm({ models: [], articles: [30], comics: [40] });
+
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+
+    expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
+  });
+
+  it('queues no article or comic for a write of other tags, or for an image no article or comic uses', async () => {
+    arm({ models: [500] });
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+    arm({ articles: [30], comics: [40] });
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: OTHER_TAG }] });
+
+    expect(articlesSearchIndex.queueUpdate).not.toHaveBeenCalled();
+    expect(comicsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('queueArticlesAndComicsForImages', () => {
+  it('queues the articles and comics using the images, with no child-tag check', async () => {
+    arm({ models: [500], articles: [30], comics: [40] });
+
+    await queueArticlesAndComicsForImages([7, 7, 8]);
+
+    expect(query('"TagsOnImageNew"')).toBeUndefined();
+    expect(query('"Article"')?.values[0]).toEqual([7, 8]);
+    expect(idsQueuedOn(articlesSearchIndex)).toEqual([30]);
+    expect(idsQueuedOn(comicsSearchIndex)).toEqual([40]);
+    expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('reads nothing for no images', async () => {
+    await queueArticlesAndComicsForImages([]);
+
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when every attempt fails', async () => {
+    vi.useFakeTimers();
+    dbMock.dbWrite.$queryRaw.mockRejectedValue(new Error('connection reset'));
+
+    const run = queueArticlesAndComicsForImages([7]);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+
+    await expect(run).resolves.toBeUndefined();
+    expect(queries().filter((q) => q.text.includes('"Article"'))).toHaveLength(2);
   });
 });

@@ -91,9 +91,9 @@ function logInternalModeratorKey(context: Context | undefined) {
   logToAxiom({
     name: 'download-internal-moderator-key',
     type: 'info',
-    apiKeyId: context?.apiKeyId ?? null,
     apiKeyType: context?.apiKeyType ?? null,
     client: context?.subject?.type ?? null,
+    payload: { apiKeyId: context?.apiKeyId ?? null },
   });
 }
 

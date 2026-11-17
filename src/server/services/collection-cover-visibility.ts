@@ -18,11 +18,12 @@ const baseModelAllowedSql = Prisma.sql`(
 )`;
 
 /**
- * Scanned, not awaiting review, not removed or a ToS violation, allowed by its base model: as SQL
- * over `"Image" i`.
+ * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
+ * as SQL over `"Image" i`.
  */
 const servableImageSql = Prisma.sql`(
   i."ingestion" = 'Scanned'
+  AND i."nsfwLevel" != 0
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i."tosViolation" IS NOT TRUE
@@ -130,6 +131,29 @@ export const publishedArticleSql = Prisma.sql`(
   AND a.ingestion = 'Scanned'
 )`;
 
+/** A published, non-private post, as SQL over `"Post" p`. */
+export const publishedPostSql = Prisma.sql`(p."publishedAt" < now() AND p."availability" != 'Private')`;
+
+/**
+ * A published, non-private model that is not deleted or taken down, as SQL over `"Model" m`.
+ * As the add-to-collection gate, stricter than view (getModelIdsVisibleToViewer) for non-owners,
+ * which lets them see Private and taken-down models: collection items are shown to everyone who
+ * sees the collection. Owners may add their own.
+ */
+export const publishedModelSql = Prisma.sql`(
+  m.status = 'Published' AND m."deletedAt" IS NULL AND m.availability != 'Private'
+  AND m.mode IS DISTINCT FROM 'TakenDown'
+)`;
+
+/**
+ * A published, non-private 3D model that is not deleted, as SQL over `"Model3D" m3`. As the add
+ * gate, stricter than view (canViewModel3d, which ignores availability) for non-owners, for the
+ * reason given on publishedModelSql. Owners may add their own.
+ */
+export const publishedModel3dSql = Prisma.sql`(
+  m3.status = 'Published' AND m3."deletedAt" IS NULL AND m3.availability != 'Private'
+)`;
+
 /**
  * Whether article `"Article" a`'s legacy cover string may be served: beside a servable cover or
  * banner image within `imageLevels` and its model's gallery level, on no taken-down model, or, with
@@ -208,8 +232,7 @@ export function collectionItemCoversSql({
           JOIN "Post" p ON p.id = i."postId"
           WHERE i."postId" IN (SELECT "postId" FROM target WHERE "postId" IS NOT NULL)
             AND ${servableImageSql}
-            AND p."publishedAt" < now()
-            AND p."availability" != 'Private'
+            AND ${publishedPostSql}
             AND ${withinItsModelSql}
       ) t
       WHERE t.rn = 1
@@ -225,12 +248,8 @@ export function collectionItemCoversSql({
           JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
           WHERE m."id" IN (SELECT "modelId" FROM target WHERE "modelId" IS NOT NULL)
               AND ${servableImageSql}
-              AND p."publishedAt" < now()
-              AND p."availability" != 'Private'
-              AND m.status = 'Published'
-              AND m."deletedAt" IS NULL
-              AND m.availability != 'Private'
-              AND m.mode IS DISTINCT FROM 'TakenDown'
+              AND ${publishedPostSql}
+              AND ${publishedModelSql}
               AND ${heldGalleryImageSql()}
               AND mv.status = 'Published'
               AND mv.availability != 'Private'
@@ -264,9 +283,7 @@ export function collectionItemCoversSql({
         JOIN "Image" i ON i.id = m3."thumbnailImageId"
         WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
           AND ${servableImageSql}
-          AND m3.status = 'Published'
-          AND m3."deletedAt" IS NULL
-          AND m3.availability != 'Private'
+          AND ${publishedModel3dSql}
     )
     SELECT
         target."collectionId" id,

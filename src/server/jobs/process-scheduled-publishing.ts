@@ -522,7 +522,7 @@ export const processScheduledPublishing = createJob(
         name: 'process-scheduled-publishing',
         type: 'warning',
         message: 'Reward sweep hit its row limit; the remainder of this window is dropped',
-        windowStart: rewardWindowStart.toISOString(),
+        payload: { windowStart: rewardWindowStart.toISOString() },
       });
     }
     // A post can reach this sweep already paid for: anything scheduled before the
