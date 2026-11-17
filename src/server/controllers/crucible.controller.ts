@@ -110,17 +110,21 @@ export const getInfiniteCruciblesHandler = async ({
   return { items: await withEntryCounts(items), nextCursor };
 };
 
-/** The cover's review fields decide visibility on the server; they never reach the client. */
+/** The images' review fields decide visibility on the server; they never reach the client. */
 const withoutCoverReview = <
   I extends { needsReview?: unknown; tosViolation?: unknown },
-  T extends { image: I | null }
+  H extends { needsReview?: unknown },
+  T extends { image: I | null; heroImage?: H | null }
 >(
   crucible: T | null
 ) => {
   if (!crucible) return crucible;
-  if (!crucible.image) return crucible as T & { image: null };
+  const heroImage = crucible.heroImage
+    ? (({ needsReview: _review, ...hero }) => hero)(crucible.heroImage)
+    : crucible.heroImage;
+  if (!crucible.image) return { ...crucible, heroImage } as T & { image: null };
   const { needsReview: _review, tosViolation: _tos, ...image } = crucible.image;
-  return { ...crucible, image };
+  return { ...crucible, image, heroImage };
 };
 
 export const getCrucibleByIdHandler = async (args: {
@@ -158,12 +162,13 @@ const crucibleForViewer = async ({
   // On green a non-SFW crucible is returned so the page can point to the mature site; its adult
   // text stays off green.
   const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;
-  // A background image that hasn't passed its scan, or has no rating, falls back to the cover for
-  // everyone else.
+  // A background image that hasn't passed its scan, has no rating or is held for review falls back
+  // to the cover for everyone else.
   const withheldHero =
     !!crucible?.heroImage &&
     (crucible.heroImage.ingestion !== ImageIngestionStatus.Scanned ||
-      crucible.heroImage.nsfwLevel === 0) &&
+      crucible.heroImage.nsfwLevel === 0 ||
+      crucible.heroImage.needsReview != null) &&
     !canPreview;
   const served = crucible && withheldHero ? { ...crucible, heroImage: null } : crucible;
   if (served && ctx.features?.isGreen && served.textNsfw && !canPreview)

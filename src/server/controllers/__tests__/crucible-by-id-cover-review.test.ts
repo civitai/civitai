@@ -91,4 +91,22 @@ describe('getCrucibleByIdHandler and the cover review fields', () => {
     expect(onGreen?.name).toBe('Crucible');
     expect(onGreen?.heroImage).toBeNull();
   });
+
+  it('falls back to the cover when the background image is held for review, except for its owner', async () => {
+    const held = { id: 11, url: 'hero', ingestion: 'Scanned', nsfwLevel: 1, needsReview: 'minor' };
+    h.detail = { ...detail({ needsReview: null, tosViolation: false }), heroImage: held };
+    expect((await asViewer(9))?.heroImage).toBeNull();
+    h.detail = { ...detail({ needsReview: null, tosViolation: false }), heroImage: held };
+    const own = await asViewer(OWNER);
+    expect(own?.heroImage).toMatchObject({ id: 11 });
+    expect(own?.heroImage).not.toHaveProperty('needsReview');
+  });
+
+  it('serves a scanned, rated background image not held for review (control)', async () => {
+    const clean = { id: 11, url: 'hero', ingestion: 'Scanned', nsfwLevel: 1, needsReview: null };
+    h.detail = { ...detail({ needsReview: null, tosViolation: false }), heroImage: clean };
+    const other = await asViewer(9);
+    expect(other?.heroImage).toMatchObject({ id: 11, url: 'hero' });
+    expect(other?.heroImage).not.toHaveProperty('needsReview');
+  });
 });
