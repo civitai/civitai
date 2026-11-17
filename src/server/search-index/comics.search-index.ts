@@ -131,6 +131,16 @@ export const comicSearchEligibleWhere = [
     SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
     WHERE hp."projectId" = cp.id AND ${semanticImageHeldText('hi')}
   )`),
+  Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "ComicChapter" fc
+    JOIN "ComicPanel" fp ON fp."projectId" = fc."projectId" AND fp."chapterPosition" = fc."position"
+    JOIN "Image" fi ON fi.id = fp."imageId"
+    WHERE fc."projectId" = cp.id
+    AND fc."status" = 'Published'::"ComicChapterStatus"
+    AND fc."availability" = 'Public'::"Availability"
+    AND fp."status" = 'Ready'::"ComicPanelStatus"
+    AND (fi."blockedFor" IS NOT NULL OR fi.minor = TRUE OR fi.poi = TRUE)
+  )`,
   Prisma.sql`EXISTS (
     SELECT 1 FROM "ComicChapter" cc
     WHERE cc."projectId" = cp.id

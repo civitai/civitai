@@ -17,6 +17,11 @@ export const COMIC_ELIGIBLE_SQL = `cp."status" = 'Active' AND cp."tosViolation" 
   AND ${coverImageCleanSql('cp."coverImageId"')}
   AND NOT EXISTS (SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
     WHERE hp."projectId" = cp.id AND ${heldImageSql('hi')})
+  AND NOT EXISTS (SELECT 1 FROM "ComicChapter" fc
+    JOIN "ComicPanel" fp ON fp."projectId" = fc."projectId" AND fp."chapterPosition" = fc."position"
+    JOIN "Image" fi ON fi.id = fp."imageId"
+    WHERE fc."projectId" = cp.id AND fc."status" = 'Published' AND fc.availability = 'Public'
+      AND fp."status" = 'Ready' AND (fi."blockedFor" IS NOT NULL OR fi.minor OR fi.poi))
   AND EXISTS (
     SELECT 1 FROM "ComicChapter" cc
     WHERE cc."projectId" = cp.id AND cc."status" = 'Published' AND cc.availability = 'Public'

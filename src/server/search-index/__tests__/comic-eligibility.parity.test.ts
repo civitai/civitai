@@ -180,6 +180,20 @@ const spec: ParitySpec = {
       `INSERT INTO "Image" (id, ingestion, "tosViolation", "userId") VALUES (3701, 'Scanned', false, 5)`,
       `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (37, 2, 3701, 'u', 'Ready')`
     ),
+    // Chapter 1 clean; a Ready panel in a second Published, Public chapter is of a minor.
+    withSql(
+      comic(38, 'flaggedPanelInSecondChapter', false),
+      `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (38, 2, 'Published')`,
+      `INSERT INTO "Image" (id, ingestion, "tosViolation", minor) VALUES (3801, 'Scanned', false, true)`,
+      `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (38, 2, 3801, 'u', 'Ready')`
+    ),
+    // The same panel in a Draft chapter, which is not served, leaves the comic eligible.
+    withSql(
+      comic(39, 'eligible:flaggedPanelInDraftChapter', true),
+      `INSERT INTO "ComicChapter" ("projectId", position, status) VALUES (39, 2, 'Draft')`,
+      `INSERT INTO "Image" (id, ingestion, "tosViolation", minor) VALUES (3901, 'Scanned', false, true)`,
+      `INSERT INTO "ComicPanel" ("projectId", "chapterPosition", "imageId", "imageUrl", status) VALUES (39, 2, 3901, 'u', 'Ready')`
+    ),
   ],
   clauses: [
     'status',
@@ -215,6 +229,7 @@ const spec: ParitySpec = {
     'coverHeld',
     'coverListed',
     'heldPanelInSecondChapter',
+    'flaggedPanelInSecondChapter',
   ],
   site: async (prisma) =>
     (
