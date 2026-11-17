@@ -132,7 +132,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel, "phase", "outcome"}),
 		GoFirst: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_total",
-			Help: "Go-first probes by result: would_serve, would_miss (a cache Go falls back on missed), raced (an entry filled after the request began), unsupported (another fallback), error.",
+			Help: "Go-first probes by result: would_serve, would_miss (a cache Go falls back on missed), raced (an entry of a cache Go falls back on, filled after the request began), unsupported (another fallback), error.",
 		}, []string{EndpointLabel, "result"}),
 		GoFirstMiss: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_miss_total",
@@ -144,11 +144,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{EndpointLabel}),
 		GoFirstRaced: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_raced_total",
-			Help: "Go-first probes in which the cache held an entry filled at or after the request began (less the skew margin): the probe likely lost the race to Node's fill there.",
+			Help: "Go-first probes in which the cache held an entry filled at or after the request began (less the skew margin), every cache whatever the probe's result: the probe likely lost the race to Node's fill there.",
 		}, []string{EndpointLabel, "cache"}),
 		GoFirstDBReads: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_db_reads_total",
-			Help: "Database queries a Go-first serve would make for the cache misses Go answers itself (replica path or computed), by cache; served probes (would_serve, raced) only. A lower bound.",
+			Help: "Database queries a Go-first serve would make for the cache misses, and the entries filled after the request began, of the caches Go answers itself (replica path or computed), by cache; served probes (would_serve, raced) only. A lower bound.",
 		}, []string{EndpointLabel, "cache"}),
 		GoFirstPages: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_gofirst_pages_total",
