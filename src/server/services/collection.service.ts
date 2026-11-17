@@ -23,6 +23,7 @@ import {
 } from '~/server/common/enums';
 import { hasBlockMarker } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getImageTagRows } from '~/server/redis/image-tag-rows';
 import {
   bustContestCollectionItemsCache,
   bustContestCollectionItemsCacheForItems,
@@ -3944,7 +3945,7 @@ export const getCollectionCoverImages = async ({
     userId?: number;
     poi?: boolean;
     minor?: boolean;
-    tags: number[];
+    tags?: number[];
   }) => boolean;
 }) => {
   const imageSql = Prisma.sql`
@@ -3986,18 +3987,31 @@ export const getCollectionCoverImages = async ({
   // Past the L1: these ids decide which images are served.
   const imageIds = [...new Set(withinLevel.map(({ image }) => image?.id).filter(isDefined))];
   const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds, { bypassLocal: true });
-  const tagIdsOf = (imageId: number) => imageTagsCache[imageId]?.tags ?? [];
+  const tagIdsByImage = new Map<number, number[]>(
+    Object.values(imageTagsCache).map(({ imageId, tags }) => [imageId, tags])
+  );
+  // The cache keeps no entry for an untagged image, so a miss is read from the tag table: an image
+  // it has no rows for is untagged.
+  const missed = imageIds.filter((imageId) => !tagIdsByImage.has(imageId));
+  if (missed.length) {
+    for (const imageId of missed) tagIdsByImage.set(imageId, []);
+    for (const row of await getImageTagRows(dbRead, missed))
+      tagIdsByImage.get(row.imageId)?.push(row.tagId);
+  }
 
   // An article's cover string carries no rating of its own: it is served only beside a cover
   // image that passed.
   return withinLevel.flatMap(({ id, image, src }) => {
     if (!image) return [];
-    const tags = tagIdsOf(image.id);
+    const tags = tagIdsByImage.get(image.id);
     if (!showsImage({ ...image, tags })) return [];
     return [
       {
         id,
-        image: { ...omit(image, 'tosViolation'), tags: tags.map((tagId) => ({ id: tagId })) },
+        image: {
+          ...omit(image, 'tosViolation'),
+          tags: (tags ?? []).map((tagId) => ({ id: tagId })),
+        },
         src,
       },
     ];

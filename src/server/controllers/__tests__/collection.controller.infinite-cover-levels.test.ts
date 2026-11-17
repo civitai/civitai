@@ -30,6 +30,9 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   tagIdsForImagesCache: { fetch: mockTagIdsFetch },
 }));
 
+const { mockImageTagRows } = vi.hoisted(() => ({ mockImageTagRows: vi.fn() }));
+vi.mock('~/server/redis/image-tag-rows', () => ({ getImageTagRows: mockImageTagRows }));
+
 vi.mock('~/server/services/system-cache', async (importOriginal) => {
   const { DEFAULT_BROWSING_SETTINGS_ADDONS } = await import(
     '~/shared/constants/browsing-settings-addons'
@@ -92,6 +95,7 @@ async function feed(ctx: object, browsingLevel?: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockTagIdsFetch.mockResolvedValue({});
+  mockImageTagRows.mockResolvedValue([]);
   mockGetAllCollections.mockResolvedValue([
     ownCover(1, NsfwLevel.PG),
     ownCover(2, NsfwLevel.XXX),
@@ -271,6 +275,15 @@ describe('getAllCollectionsInfiniteHandler browsing-tag rules', () => {
       { id: 2, own: 102, items: [] },
       { id: 3, own: null, items: [300, 301, 302] },
     ]);
+  });
+
+  it('reads a cache miss from the tag table: a tagged image is dropped, an untagged one kept', async () => {
+    mockTagIdsFetch.mockResolvedValue({ 301: { imageId: 301, tags: [OTHER_TAG] } });
+    mockImageTagRows.mockResolvedValue([{ imageId: 300, tagId: CHILD_TAG, source: 'WD14' }]);
+    const result = await feed(MATURE_VIEWER);
+    expect(result.find((c) => c.id === 3)).toEqual({ id: 3, own: null, items: [301] });
+    expect(result.find((c) => c.id === 1)).toEqual({ id: 1, own: null, items: [400] });
+    expect(mockImageTagRows).toHaveBeenCalledWith(expect.anything(), [400, 300]);
   });
 
   it('reads the tag ids past the local cache', async () => {

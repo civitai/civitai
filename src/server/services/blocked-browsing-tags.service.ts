@@ -192,9 +192,10 @@ export async function getRequestImageFilter(
     browsingLevel: relatedPostsBrowsingLevel(ctx, requestedBrowsingLevel),
     viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
   });
-  return (image: Omit<ShowcaseImage, 'tags'> & { tags: (number | { id: number })[] }) =>
+  // Unread tags stay unread, so `getShowcaseImageFilter` hides the image while any tag is excluded.
+  return (image: Omit<ShowcaseImage, 'tags'> & { tags?: (number | { id: number })[] | null }) =>
     showsImage({
       ...image,
-      tags: image.tags.map((tag) => (typeof tag === 'number' ? tag : tag.id)),
+      tags: image.tags?.map((tag) => (typeof tag === 'number' ? tag : tag.id)),
     });
 }
