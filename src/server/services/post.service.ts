@@ -1,3 +1,4 @@
+import { escapeLike } from '~/server/utils/ilike';
 import { Prisma } from '@prisma/client';
 import {
   onStorySparkLost,
@@ -411,8 +412,14 @@ export const getPostsInfinite = async ({
       WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
     )`);
 
-  // Applies to owner requests too, unlike the tag filter.
-  if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
+  // Applies to owner requests too, unlike the tag filter. One creator's posts (a profile search)
+  // match the words anywhere in the title, cheap over that one user's rows; across everyone, a prefix.
+  if (query)
+    AND.push(
+      targetUser
+        ? Prisma.sql`p.title ILIKE ${'%' + escapeLike(query) + '%'}`
+        : Prisma.sql`p.title ILIKE ${query + '%'}`
+    );
 
   if (period !== 'AllTime') {
     const interval = period.toLowerCase();

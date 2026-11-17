@@ -279,7 +279,7 @@ const IndexSearch = withSearchBrowsingScope(AutocompleteSearchInner);
 /** The header bar: a plain search of the page on pages that search their own content, else the index search. */
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>((props, ref) => {
   const features = useFeatureFlags();
-  const page = pageSearchFor(features, usePathname());
+  const page = pageSearchFor(features, useRouter().pathname);
   if (!page) return <IndexSearch {...props} ref={ref} />;
   return (
     <PageSearchBar

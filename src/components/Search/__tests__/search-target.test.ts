@@ -150,6 +150,15 @@ describe('pageSearchFor', () => {
     });
   });
 
+  it("searches a creator's posts and collections tabs by their route pattern", () => {
+    expect(pageSearchFor({ pageSearch: true }, '/user/[username]/posts')).toEqual({
+      placeholder: 'Search their posts',
+    });
+    expect(pageSearchFor({ pageSearch: true }, '/user/[username]/collections')).toEqual({
+      placeholder: 'Search their collections',
+    });
+  });
+
   it('leaves the index search everywhere else, and on a page whose flag is off', () => {
     expect(pageSearchFor({ pageSearch: true }, '/models')).toBeUndefined();
     expect(pageSearchFor({}, '/shop')).toBeUndefined();

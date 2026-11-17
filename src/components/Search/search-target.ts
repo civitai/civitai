@@ -140,9 +140,15 @@ const PAGE_SEARCH: Record<string, { flag: keyof PageSearchFlags; placeholder: st
   '/shop': { flag: 'pageSearch', placeholder: 'Search the shop' },
   '/apps/store': { flag: 'pageSearch', placeholder: 'Search apps' },
   '/changelog': { flag: 'pageSearch', placeholder: 'Search updates' },
+  // A creator's tabs without a search index: their own feeds filter by text.
+  '/user/[username]/posts': { flag: 'pageSearch', placeholder: 'Search their posts' },
+  '/user/[username]/collections': { flag: 'pageSearch', placeholder: 'Search their collections' },
 };
 
-/** The header bar's search on a page that answers its own `?query=`, or undefined elsewhere. */
+/**
+ * The header bar's search on a page that answers its own `?query=`, or undefined elsewhere.
+ * `pathname` is the route pattern (`router.pathname`).
+ */
 export function pageSearchFor(features: PageSearchFlags, pathname: string) {
   const page = PAGE_SEARCH[pathname];
   return page && features[page.flag] ? { placeholder: page.placeholder } : undefined;
