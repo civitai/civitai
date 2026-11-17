@@ -14,7 +14,8 @@ import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-out
  * on exactly that snapshot, so such an app saved an empty result for a paid
  * generation. The host now reports `processing` while an output is held, and after a
  * bounded wait from the workflow's completion reports the real status with the output
- * restricted. An unrated url is never handed out at any point.
+ * still pending, exactly as #8994 sends it. An unrated url is never handed out at any
+ * point.
  *
  * Every url is distinct, and the held one is asserted absent from the whole serialised
  * reply, so a leak through any field fails.
@@ -66,6 +67,17 @@ function wf(
 }
 
 const held = () => ({ ...image('held-7f3a', null) });
+
+function step(name: string, completedAt: string, images: Array<Record<string, unknown>>) {
+  return {
+    $type: 'textToImage',
+    name,
+    status: 'succeeded',
+    completedAt,
+    metadata: {},
+    output: { images },
+  };
+}
 const rated = () => ({ ...image('held-7f3a', 'pg') });
 
 describe('a succeeded workflow with an output held for its rating', () => {
@@ -103,44 +115,44 @@ describe('a succeeded workflow with an output held for its rating', () => {
     expect(snap).not.toHaveProperty('ratingPending');
   });
 
-  it('after the deadline: terminal, the output restricted, no ratingPending, no url anywhere', () => {
+  it('after the deadline: the real status, the output STILL pending (never restricted), no url', () => {
     const workflow = wf('succeeded', [held(), image('ok-21c9', 'pg')]);
     const now = DONE + HOLD_MS + 1_000;
     const snap = snapshotFromWorkflow(workflow, SFW, { now });
     expect(snap.status).toBe('succeeded');
+    // Not `{ restricted: true, reason: 'unrated' }`: that reason means no rating will ever
+    // come, and a late rating still can.
     expect(snap.outputs).toStrictEqual([
-      { restricted: true, reason: 'unrated' },
+      { pending: true },
       { url: 'https://cdn/ok-21c9.png', nsfwLevel: 'pg' },
     ]);
     expect(snap.imageUrls).toStrictEqual(['https://cdn/ok-21c9.png']);
-    expect(snap).not.toHaveProperty('ratingPending');
+    expect(snap.ratingPending).toBe(true);
     expect(JSON.stringify(snap)).not.toContain(HELD_URL);
 
     const { workflow: listed, positions } = projectAppWorkflowWithPositions(workflow, SFW, { now });
     expect(listed.status).toBe('succeeded');
     expect(listed.outputs).toStrictEqual(snap.outputs);
-    expect(listed).not.toHaveProperty('ratingPending');
+    expect(listed.ratingPending).toBe(true);
     expect(JSON.stringify(listed)).not.toContain(HELD_URL);
-    // Publish / post / persist refuse the position as restricted.
-    expect(positions[0].output).toStrictEqual({ restricted: true, reason: 'unrated' });
+    // Publish / post / persist still refuse it as "still being rated".
+    expect(positions[0].output).toStrictEqual({ pending: true });
   });
 
-  it('measures the deadline from the latest step completion when the workflow has no completedAt', () => {
+  it('measures the deadline from the LATEST step completion when the workflow has no completedAt', () => {
     const workflow = wf('succeeded', [held()], {
       completedAt: null,
+      // The latest (12:10) is neither first nor last, so taking the first step, the last
+      // step, the earliest step or createdAt each put the 60s read below past the hold.
       steps: [
-        {
-          $type: 'textToImage',
-          name: 's1',
-          status: 'succeeded',
-          completedAt: '2026-11-17T12:10:00.000Z',
-          metadata: {},
-          output: { images: [held()] },
-        },
+        step('s1', '2026-11-17T12:04:00.000Z', [image('first-3b1c', 'pg')]),
+        step('s2', '2026-11-17T12:10:00.000Z', [held()]),
+        step('s3', '2026-11-17T12:05:30.000Z', [image('last-5e7a', 'pg')]),
       ],
     });
     const stepDone = Date.parse('2026-11-17T12:10:00.000Z');
-    // Inside the hold measured from the step; past it measured from createdAt.
+    // Inside the hold measured from the latest step (12:10, read at 12:11); past it from
+    // 12:05:30 (5.5 min), 12:04 (7 min) or createdAt.
     expect(snapshotFromWorkflow(workflow, SFW, { now: stepDone + 60_000 }).status).toBe(
       'processing'
     );
@@ -154,7 +166,8 @@ describe('a succeeded workflow with an output held for its rating', () => {
     const created = Date.parse('2026-11-17T11:58:30.000Z');
     const late = snapshotFromWorkflow(workflow, SFW, { now: created + HOLD_MS + 1_000 });
     expect(late.status).toBe('succeeded');
-    expect(late.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(late.outputs).toStrictEqual([{ pending: true }]);
+    expect(late.ratingPending).toBe(true);
   });
 
   it('leaves failed / canceled alone, and a still-running workflow is never cut short', () => {
@@ -223,12 +236,12 @@ describe('an app polling with the OLD logic', () => {
     expect(result.snap.status).toBe('succeeded');
   });
 
-  it('stops after the deadline, with the output restricted, when the rating never lands', () => {
+  it('stops after the deadline, with the output still pending, when the rating never lands', () => {
     const result = runOldLoop(timeline(null), DONE - 4_000, 2_000);
     expect(result.t).toBeGreaterThanOrEqual(DONE + HOLD_MS);
     expect(result.t).toBeLessThan(DONE + HOLD_MS + 2_000 + 1);
     expect(result.saved).toStrictEqual([]);
-    expect(result.snap.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(result.snap.outputs).toStrictEqual([{ pending: true }]);
     expect(JSON.stringify(result.snap)).not.toContain(HELD_URL);
   });
 });
@@ -244,7 +257,8 @@ describe('the NEW SDK watch path is unaffected', () => {
   it('ends on a terminal snapshot (not its own timeout) when the rating never lands', () => {
     const result = runNewLoop(timeline(null), DONE - 4_000, 1_500);
     expect(result.snap?.status).toBe('succeeded');
-    expect(result.snap?.outputs).toStrictEqual([{ restricted: true, reason: 'unrated' }]);
+    expect(result.snap?.outputs).toStrictEqual([{ pending: true }]);
+    expect(result.snap?.ratingPending).toBe(true);
     expect(result.t).toBeLessThan(DONE - 4_000 + 10 * 60_000);
   });
 });

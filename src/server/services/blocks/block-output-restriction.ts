@@ -48,10 +48,7 @@ import type {
  *      an output the orchestrator rates (`isUnratedOutput`: not audio). The
  *      orchestrator marks a workflow succeeded seconds before it rates the last output,
  *      so a url handed out now would be a restricted output's url a moment later.
- *      When nothing could restrict it, `{ url }`. Once the hold has run out
- *      (`opts.holdExpired`, decided per workflow by `isRatingHoldExpired` in
- *      `services/blocks/workflow.service`), the same output is
- *      `{ restricted: true, reason: 'unrated' }` instead: terminal, still no url.
+ *      When nothing could restrict it, `{ url }`.
  *   1b. NEVER TO BE RATED (`opts.neverRated`: an `imageResourceTraining` sample, a
  *      mesh on a finished step with no rating source): where a rating could restrict
  *      it, `{ restricted: true, reason: 'unrated' }` — terminal, no url, no
@@ -102,10 +99,8 @@ export function classifyBlockOutput(
    * `neverRated`: no rating will EVER arrive for this output (rule 1b).
    * `unratedDelivered`: an unrated output the site delivers as is — a never-rated
    * video engine's, whose provider moderates it (rule 1c).
-   * `holdExpired`: the workflow finished longer ago than the rating hold allows, so an
-   * output rule 1 would hold is reported restricted (`'unrated'`) instead (rule 1).
    */
-  opts: { neverRated?: boolean; unratedDelivered?: boolean; holdExpired?: boolean } = {}
+  opts: { neverRated?: boolean; unratedDelivered?: boolean } = {}
 ): BlockWorkflowOutput {
   const blockedReason = media.blockedReason;
   if (typeof blockedReason === 'string' && blockedReason.toLowerCase() !== 'none') {
@@ -136,9 +131,7 @@ export function classifyBlockOutput(
       },
       false
     );
-    if (!holdable || !ratingCouldRestrict(workflow, ceiling)) return { url: media.url };
-    // The hold ran out: report it restricted so the app stops waiting. Never a url.
-    return opts.holdExpired ? restricted('unrated') : PENDING;
+    return holdable && ratingCouldRestrict(workflow, ceiling) ? PENDING : { url: media.url };
   }
   const rating = RATING_BY_SPELLING.get(raw);
   if (rating === undefined) return restricted('ceiling');

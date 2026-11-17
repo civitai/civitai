@@ -404,6 +404,23 @@ describe('🔴 F1 — an output still being rated is held, and naming it is refu
     expect(JSON.stringify(snapshot)).not.toContain(SECRET);
   });
 
+  it("pollWorkflow's own bookkeeping keys on the REAL status while the app is told processing", async () => {
+    mockUpdateBlockWorkflowStatus.mockResolvedValue(1 as never);
+    const { snapshot } = await READS.pollWorkflow();
+    expect(snapshot.status).toBe('processing');
+    // The read model records the terminal status and settle runs now, not after the rating.
+    expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledTimes(1);
+    expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledWith({
+      workflowId: OWN_ID,
+      status: 'succeeded',
+    });
+    expect(mockSettleCustomComfySpend).toHaveBeenCalledTimes(1);
+    expect(mockSettleCustomComfySpend).toHaveBeenCalledWith({
+      workflowId: OWN_ID,
+      actualCost: 17,
+    });
+  });
+
   it('publish of the pending position, or of "every output", is refused and writes nothing', async () => {
     for (const imageIndexes of [[1], undefined]) {
       await expect(

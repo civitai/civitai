@@ -164,7 +164,7 @@ export function snapshotFromWorkflow(
 ): BlockWorkflowSnapshot {
   // The orchestrator's status. The app is told `appWorkflowStatus(...)` of it instead.
   const status = orchestratorBlockStatus(workflow);
-  const holdExpired = isRatingHoldExpired(workflow, extra?.now ?? Date.now());
+  const now = extra?.now ?? Date.now();
   const imageUrls: string[] = [];
   const outputs: BlockWorkflowOutput[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
@@ -185,7 +185,7 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
-      const stepOutputList = classifyOutputs(extracted.media, step, workflow, view, holdExpired);
+      const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
       const stepUrls = unrestrictedUrls(stepOutputList);
       if (!member.suppressOutput) {
         imageUrls.push(...stepUrls);
@@ -216,7 +216,7 @@ export function snapshotFromWorkflow(
       continue;
     }
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
-    const stepOutputList = classifyOutputs(extracted.media, step, workflow, view, holdExpired);
+    const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
     const stepUrls = unrestrictedUrls(stepOutputList);
     imageUrls.push(...stepUrls);
     outputs.push(...stepOutputList);
@@ -281,7 +281,7 @@ export function snapshotFromWorkflow(
     // treats estimate results as a cost quote only and never polls on this id
     // (the request is correlated by requestId, not workflowId).
     workflowId: workflow.id ?? 'whatif',
-    status: appWorkflowStatus(status, outputs),
+    status: appWorkflowStatus(workflow, status, outputs, now),
     ...(typeof total === 'number'
       ? { cost: { total, ...(addedAuthorFee !== undefined ? { authorFee: addedAuthorFee } : {}) } }
       : {}),
@@ -320,9 +320,7 @@ function classifyOutputs(
   slots: readonly StepOutputSlot[],
   step: { $type: string; status?: string; output?: unknown; metadata?: unknown; input?: unknown },
   workflow: Workflow,
-  view: BlockOutputView,
-  /** {@link isRatingHoldExpired} for this workflow, computed once by the producer. */
-  holdExpired: boolean
+  view: BlockOutputView
 ): BlockWorkflowOutput[] {
   const neverRatedVideo = isBlockNeverRatedVideoStep(step, workflow);
   const mintStep = view.mint
@@ -340,7 +338,6 @@ function classifyOutputs(
       // one is delivered — neither held nor locked — whatever the ceiling. A rating
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
-      holdExpired,
     });
     if (view.mint && mintStep) {
       return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
@@ -510,8 +507,11 @@ export function propagateMeshRating(
 /**
  * 🔴 HOW LONG A FINISHED WORKFLOW MAY STILL BE REPORTED `processing` WHILE AN OUTPUT
  * WAITS FOR ITS RATING, measured from the workflow's completion
- * ({@link ratingHoldAnchorMs}). After it, a held output is reported restricted
- * (`'unrated'`) and the workflow its real terminal status, so no app polls forever.
+ * ({@link ratingHoldAnchorMs}). After it the workflow's real terminal status is
+ * reported again, the output still `{ pending: true }` with `ratingPending` (exactly
+ * what #8994 sends), so no app polls forever. The output is NOT turned into a
+ * restricted `'unrated'` entry: that reason means "no rating will ever come" and is
+ * terminal in the wire contract, and the unlock dialog answers it as such.
  *
  * WHY 5 MINUTES. The orchestrator's blob scan latency histogram
  * (`orchestration_blob_scan_latency_seconds`, the 7 days to 2026-11-17) puts the median
@@ -575,16 +575,29 @@ export function orchestratorBlockStatus(
  * WHY. Apps built on `@civitai/app-sdk` before `ratingPending` existed stop polling at
  * the first `succeeded` and keep whatever `imageUrls` it carried, so an output held for
  * its rating was lost for good although the viewer paid for it. Every app already keeps
- * polling on `processing`, and newer SDKs (`watch`) keep polling on it too. The hold is
- * bounded: after {@link RATING_HOLD_MAX_MS} the output is restricted and the real status
- * returns. `failed` / `expired` / `canceled` are passed through: no app keeps outputs on
- * them as a success, and the cancel and refund paths key on them.
+ * polling on `processing`. The hold is bounded: after {@link RATING_HOLD_MAX_MS} the
+ * real status returns with the output still pending. `failed` / `expired` / `canceled`
+ * are passed through: no app keeps outputs on them as a success, and the cancel and
+ * refund paths key on them.
+ *
+ * ⚠️ IT APPLIES TO EVERY APP, NEW SDKS INCLUDED — the host cannot tell which apps need
+ * it. The only SDK signal is the `sdkVersion` a `@civitai/blocks-react` >= 0.72.3 block
+ * reports in `BLOCK_READY`: informational by its own contract, absent from `@civitai/sdk`
+ * (REST) callers, and not read by the host. And an SDK version is not app behaviour: an
+ * app on a `ratingPending`-aware SDK that polls by hand and stops at `succeeded` loses
+ * the image exactly like an old one. The cost to a `watch` caller: while masked it is
+ * outside `watch`'s 2-minute rating window, so its own `timeoutMs` (blocks-react: 10
+ * minutes from the watch's start) can end it on this `processing` snapshot, and a run
+ * of transport failures rejects instead of resolving with the last snapshot.
  */
 export function appWorkflowStatus(
+  workflow: Workflow,
   status: BlockWorkflowSnapshot['status'],
-  outputs: readonly BlockWorkflowOutput[]
+  outputs: readonly BlockWorkflowOutput[],
+  now: number
 ): BlockWorkflowSnapshot['status'] {
-  return status === 'succeeded' && anyPending(outputs) ? 'processing' : status;
+  if (status !== 'succeeded' || !anyPending(outputs)) return status;
+  return isRatingHoldExpired(workflow, now) ? status : 'processing';
 }
 
 /** True when any entry is held for its rating — what sets `ratingPending`. */
@@ -1205,14 +1218,14 @@ export function projectAppWorkflowWithPositions(
   opts?: { now?: number }
 ): { workflow: AppWorkflow; positions: AppWorkflowOutputPosition[] } {
   const status = orchestratorBlockStatus(workflow);
-  const holdExpired = isRatingHoldExpired(workflow, opts?.now ?? Date.now());
+  const now = opts?.now ?? Date.now();
   // Every output position (surfaceable and blocked), in order, and its verdict —
   // classified PER STEP, the same call `snapshotFromWorkflow` makes.
   const available: StepOutputSlot[] = [];
   const outputs: BlockWorkflowOutput[] = [];
   const add = (step: Parameters<typeof classifyOutputs>[1], slots: readonly StepOutputSlot[]) => {
     available.push(...slots);
-    outputs.push(...classifyOutputs(slots, step, workflow, view, holdExpired));
+    outputs.push(...classifyOutputs(slots, step, workflow, view));
   };
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
@@ -1295,7 +1308,7 @@ export function projectAppWorkflowWithPositions(
       // A real LIST/GET item always carries an id; empty-string only if the
       // orchestrator ever omits it (never for a persisted workflow).
       workflowId: workflow.id ?? '',
-      status: appWorkflowStatus(status, outputs),
+      status: appWorkflowStatus(workflow, status, outputs, now),
       images,
       cost: typeof total === 'number' ? total : null,
       createdAt: workflow.createdAt,
