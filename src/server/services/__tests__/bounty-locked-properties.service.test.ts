@@ -58,7 +58,7 @@ import {
 } from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { bountyNsfwFlagLevel } from '~/server/services/bounty-rated-level';
+import { bountyNsfwFlagLevel, ratedLevel } from '~/server/services/bounty-rated-level';
 import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
 import {
   checkEntityImageKeys,
@@ -213,42 +213,60 @@ describe('updateBountyById — lock enforcement', () => {
 });
 
 describe('updateBountyById — a moderator rating against a new nsfw flag', () => {
+  type Row = { nsfw: boolean; moderatorNsfwLevel: number | null };
   const modEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, nsfw: true };
-  // The level the feed serves the row at after this edit, with no text rating.
-  const servedLevel = (stored: { nsfw: boolean; moderatorNsfwLevel: number | null }) => {
+  // The row after the last update.
+  const applied = (stored: Row): Row => {
     const data = updateData();
-    const moderatorNsfwLevel =
-      'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : stored.moderatorNsfwLevel;
-    return bountyNsfwFlagLevel(
-      { nsfw: data.nsfw ?? stored.nsfw, nsfwLevel: 60, moderatorNsfwLevel },
-      undefined
-    );
+    return {
+      nsfw: data.nsfw ?? stored.nsfw,
+      moderatorNsfwLevel:
+        'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : stored.moderatorNsfwLevel,
+    };
   };
+  // The level the feed serves a row at with no text rating. Unflagged, it is the stored level,
+  // which updateBountyNsfwLevels sets to COALESCE(moderatorNsfwLevel, the derived level).
+  const servedLevel = (row: Row, derived: number = NsfwLevel.PG) =>
+    row.nsfw
+      ? bountyNsfwFlagLevel({ ...row, nsfwLevel: 60 }, undefined)
+      : ratedLevel(row.moderatorNsfwLevel ?? derived);
 
-  it('drops a rating below R when the edit sets the flag, so the feed serves R or above', async () => {
+  it('raises a rating below R to R when the edit sets the flag', async () => {
     for (const rated of [NsfwLevel.PG, NsfwLevel.PG13]) {
       const stored = { nsfw: false, moderatorNsfwLevel: rated };
       mockStored(stored);
       await updateBountyById(modEdit as never);
       expect(updateData()).toMatchObject({
-        moderatorNsfwLevel: null,
+        moderatorNsfwLevel: NsfwLevel.R,
         moderatorNsfwLevelBasis: null,
       });
-      expect(servedLevel(stored)).toBeGreaterThanOrEqual(NsfwLevel.R);
+      expect(servedLevel(applied(stored))).toBe(NsfwLevel.R);
     }
   });
 
   it('keeps a rating made after the flag, and one at R or above', async () => {
     const cases = [
       { nsfw: true, moderatorNsfwLevel: NsfwLevel.PG13 },
-      { nsfw: false, moderatorNsfwLevel: NsfwLevel.R },
+      { nsfw: false, moderatorNsfwLevel: NsfwLevel.X },
     ];
     for (const stored of cases) {
       mockStored(stored);
       await updateBountyById(modEdit as never);
       expect(updateData()).not.toHaveProperty('moderatorNsfwLevel');
-      expect(servedLevel(stored)).toBe(stored.moderatorNsfwLevel);
+      expect(servedLevel(applied(stored))).toBe(stored.moderatorNsfwLevel);
     }
+  });
+
+  it('never serves below the moderator once the owner turns the flag on and off again', async () => {
+    // Scan rated PG, moderator rated PG-13.
+    let row: Row = { nsfw: false, moderatorNsfwLevel: NsfwLevel.PG13 };
+    for (const nsfw of [true, false]) {
+      mockStored(row);
+      await updateBountyById({ ...baseUpdate, nsfw } as never);
+      row = applied(row);
+    }
+    expect(row.nsfw).toBe(false);
+    expect(servedLevel(row, NsfwLevel.PG)).toBeGreaterThanOrEqual(NsfwLevel.R);
   });
 });
 

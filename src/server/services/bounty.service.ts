@@ -691,9 +691,10 @@ export const updateBountyById = async ({
         existing.poi &&
         data.poi === false &&
         hasOpenTextScanFlag(existing.meta, 'poi');
-      // A rating below R is older than a flag set now, and it would outrank the flag. Dropping it
-      // rates the bounty by the flag until a moderator rates it again.
-      const clearsStaleRating =
+      // A rating below R is older than a flag set now, and it would outrank the flag. It is raised to
+      // R, never cleared: a cleared rating would let the bounty fall below it once the flag is
+      // turned off again. No basis, so the rating review cannot auto-lower it; a moderator must.
+      const raisesStaleRating =
         data.nsfw === true &&
         !existing.nsfw &&
         existing.moderatorNsfwLevel != null &&
@@ -725,7 +726,10 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
-          ...(clearsStaleRating && { moderatorNsfwLevel: null, moderatorNsfwLevelBasis: null }),
+          ...(raisesStaleRating && {
+            moderatorNsfwLevel: NsfwLevel.R,
+            moderatorNsfwLevelBasis: null,
+          }),
           ...(liftedTextScanPoi && {
             availability:
               (readTextScanFlags(existing.meta).poi?.prev?.availability as
