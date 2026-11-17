@@ -1056,7 +1056,7 @@ export function projectListingDetail(
       row.kind === 'offsite' &&
       Boolean(row.connectClientId) &&
       typeof connectRequestedScopes === 'number'
-        ? tokenScopeMaskToList(connectRequestedScopes).map((s) => s.key)
+        ? tokenScopeMaskToList(BigInt(connectRequestedScopes)).map((s) => s.key)
         : [],
   };
 }

@@ -29,7 +29,10 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp);
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, "nsfwLevel" int NOT NULL DEFAULT 1,
+      "modelRestricted" boolean NOT NULL DEFAULT false
+    );
     CREATE TABLE "CollectionItem" ("collectionId" int, "imageId" int, status text);
     INSERT INTO "User" VALUES (10, NULL), (20, NULL);
     INSERT INTO "Image" VALUES (1, 10), (2, 20);
@@ -63,4 +66,11 @@ it('pays participation Buzz to every earner except a banned one', async () => {
 
   await db.query(`UPDATE "User" SET "bannedAt" = now() WHERE id = 20`);
   expect(await pay()).toEqual([10]);
+});
+
+it('does not count an entry restricted by its base model after it was accepted', async () => {
+  await db.query(`UPDATE "User" SET "bannedAt" = NULL`);
+  await db.query(`UPDATE "Image" SET "nsfwLevel" = 4, "modelRestricted" = true WHERE id = 1`);
+  // Image 2 stays an unrestricted PG entry, so its entrant still earns.
+  expect(await pay()).toEqual([20]);
 });

@@ -35,6 +35,7 @@ import {
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
 import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -260,6 +261,11 @@ export async function acceptImage({
   } else {
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
+  }
+  // A minor-queue accept rewrites "minor", which no trigger watches.
+  if (nr === 'minor') {
+    await queueArticlesForCoverImages([imageId]);
+    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
   }
   await rescanIfUnrated(imageId);
 

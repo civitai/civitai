@@ -37,7 +37,7 @@ export const oauthConsentRouter = router({
         description: consent.client.description,
         logoUrl: consent.client.logoUrl,
         isVerified: consent.client.isVerified,
-        scope: consent.scope,
+        scope: Number(consent.scope),
         buzzLimit: consent.buzzLimit as BuzzLimit | null,
         authorizedAt: consent.createdAt,
       }));

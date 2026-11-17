@@ -30,11 +30,12 @@ export function ConnectScopesPanel({
 }: {
   connectClientName?: string | null;
   /** The disclosed TokenScope bitmask the listing requests. */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** Per-scope rationale keyed by TokenScope enum-key (e.g. `{ ModelsWrite: '…' }`). */
   justifications?: Record<string, string> | null;
 }) {
-  const scopes = tokenScopeMaskToList(requestedScopes);
+  // The mask arrives from tRPC as a number; widened before it is decoded.
+  const scopes = tokenScopeMaskToList(BigInt(requestedScopes));
   const sensitiveScopes = scopes.filter((s) => isSensitiveTokenScope(s.bit));
   const normalScopes = scopes.filter((s) => !isSensitiveTokenScope(s.bit));
 
@@ -86,7 +87,7 @@ export function ConnectScopesPanel({
                   </Tooltip>
                 </Group>
                 {sensitiveScopes.map((s) => (
-                  <ConnectScopeRow key={s.bit} scopeKey={s.key} label={s.label} sensitive>
+                  <ConnectScopeRow key={s.key} scopeKey={s.key} label={s.label} sensitive>
                     <ConnectScopeJustification scopeKey={s.key} justifications={justifications} />
                   </ConnectScopeRow>
                 ))}
@@ -106,7 +107,7 @@ export function ConnectScopesPanel({
             ) : (
               <Stack gap={8} data-testid="connect-scopes-normal-group">
                 {normalScopes.map((s) => (
-                  <ConnectScopeRow key={s.bit} scopeKey={s.key} label={s.label}>
+                  <ConnectScopeRow key={s.key} scopeKey={s.key} label={s.label}>
                     <ConnectScopeJustification scopeKey={s.key} justifications={justifications} />
                   </ConnectScopeRow>
                 ))}

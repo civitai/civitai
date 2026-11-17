@@ -83,6 +83,7 @@ CREATE TABLE "hot_reads_10_parity"."Image" (
   "generationProcess" "hot_reads_10_parity"."ImageGenerationProcess",
   "postId"            INTEGER,
   "needsReview"       TEXT,
+  "modelRestricted"   BOOLEAN                                          NOT NULL DEFAULT false,
   "hideMeta"          BOOLEAN                                          NOT NULL DEFAULT false,
   "scannedAt"         TIMESTAMP(3),
   "ingestion"         "hot_reads_10_parity"."ImageIngestionStatus"     NOT NULL DEFAULT 'Pending',

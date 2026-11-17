@@ -174,7 +174,7 @@ describe('/api/v1/me spend limit', () => {
 
   it('takes an OAuth subject’s limit from the request (its consent row is read per request)', async () => {
     const { body } = await me({
-      tokenScope: 1,
+      tokenScope: 1n,
       buzzLimit: { limit: 42 },
       subject: { type: 'oauth', id: 'client-1' },
     } as never);

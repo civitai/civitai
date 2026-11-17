@@ -69,6 +69,7 @@ const winnerRow = (imageNsfwLevel: number, image: Record<string, unknown> = {}) 
   imageIngestion: 'Scanned',
   imageBlockedFor: null,
   imageReviewed: true,
+  imageNotRestricted: true,
   ...image,
   place: 1,
   buzzAwarded: 0,
@@ -199,7 +200,7 @@ describe('getChallengeDetail — cover image', () => {
   ) {
     mockGetChallengeById.mockResolvedValue({ ...challenge, coverImageId: 80 });
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
       id: 80,
       url: 'cover-image-url',
       nsfwLevel,

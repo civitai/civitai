@@ -168,7 +168,11 @@ export async function readUserCreatorViaKysely(
       },
     })),
     // Shared by every viewer (cached, edge-cached), so the owner gets no exception here.
-    profilePicture: servableProfilePicture(profilePictureOf(row), row.profilePictureNeedsReview),
+    profilePicture: servableProfilePicture(
+      profilePictureOf(row),
+      row.profilePictureNeedsReview,
+      row.profilePictureModelRestricted
+    ),
   };
 
   return { user: user as unknown as UserCreatorUser, modelCount: row.modelCount ?? 0 };

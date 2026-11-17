@@ -84,7 +84,7 @@ describe('finaliseOnsiteApprove', () => {
     };
     await finaliseOnsiteApprove(tx as never, {
       ...input,
-      priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5 },
+      priorVersion: { block, oauthClientId: 'oc_1', allowedScopes: 5n },
     });
     expect(tx.appBlock.update).toHaveBeenCalledWith({
       where: { id: 'apb_1' },
@@ -92,7 +92,7 @@ describe('finaliseOnsiteApprove', () => {
     });
     expect(tx.oauthClient.update).toHaveBeenCalledWith({
       where: { id: 'oc_1' },
-      data: { allowedScopes: 5 },
+      data: { allowedScopes: 5n },
     });
   });
 
@@ -224,7 +224,7 @@ describe('finaliseOnsiteApprove', () => {
           trustTier: 'unverified',
         },
         oauthClientId: 'oc_1',
-        allowedScopes: 5,
+        allowedScopes: 5n,
       },
     });
     const [{ data }] = tx.appBlock.update.mock.calls[0] as unknown as [{ data: object }];

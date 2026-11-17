@@ -27,6 +27,8 @@ import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { servableProfilePicture } from '~/server/services/profile-picture.servable';
 import { servableArticleImage } from '~/shared/utils/article-card-image';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getProfilePictureOfUser } from '~/server/services/profile-picture.sql';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -149,7 +151,10 @@ export const getUserWithProfile = async ({
 
     const shapeCoverImage = (coverImage: NonNullable<typeof profile>['coverImage']) => {
       if (!coverImage) return null;
-      if (!canEdit && !servableArticleImage(coverImage)) return null;
+      const hidden = isModerator
+        ? isRestrictedImage(coverImage)
+        : !servableArticleImage(coverImage);
+      if (!sameUser && hidden) return null;
 
       return {
         ...coverImage,
@@ -180,10 +185,17 @@ export const getUserWithProfile = async ({
     return {
       ...user,
       profilePicture: canEdit
-        ? user.profilePicture ??
-          (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
-        : // csam is already dropped upstream for every viewer; only the Scanned check remains.
-          servableProfilePicture(user.profilePicture, null),
+        ? await withoutRestrictedPictureFor(
+            sameUser,
+            user.profilePicture ??
+              (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
+          )
+        : // csam is already dropped upstream for every viewer.
+          servableProfilePicture(
+            user.profilePicture,
+            null,
+            await isPictureModelRestricted(user.profilePicture)
+          ),
       // Claim keys are owner-only; withheld from every other viewer, moderators included.
       cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
         ...c,
@@ -628,3 +640,25 @@ export const updateUserProfile = async ({
 
   return getUserWithProfile({ id: userId, sessionUserId, domain });
 };
+
+/**
+ * A profile picture's `modelRestricted`, read only for a mature one: `profilePictureOf` drops the
+ * flag the Kysely row selects.
+ */
+async function isPictureModelRestricted(picture: { id: number; nsfwLevel: number } | null) {
+  if (!picture || (picture.nsfwLevel & nsfwBrowsingLevelsFlag) === 0) return false;
+  const image = await dbRead.image.findUnique({
+    where: { id: picture.id },
+    select: { modelRestricted: true },
+  });
+  return image?.modelRestricted ?? true;
+}
+
+/** Null for a restricted picture unless `sameUser`: a moderator never sees one. */
+async function withoutRestrictedPictureFor<T extends { id: number; nsfwLevel: number }>(
+  sameUser: boolean,
+  picture: T | null
+) {
+  if (sameUser || !(await isPictureModelRestricted(picture))) return picture;
+  return null;
+}

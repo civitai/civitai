@@ -1749,6 +1749,7 @@ export interface Image {
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
+  modelRestricted: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   tags?: TagsOnImageDetails[];
@@ -2223,6 +2224,7 @@ export interface ApiKey {
   key: string;
   name: string;
   tokenScope: number;
+  tokenScopeWide: bigint | null;
   userId: number;
   user?: User;
   createdAt: Date;
@@ -2245,7 +2247,7 @@ export interface OauthClient {
   redirectUris: string[];
   allowedOrigins: string[];
   grants: string[];
-  allowedScopes: number;
+  allowedScopes: bigint;
   isConfidential: boolean;
   accessMode: string;
   skipConsent: boolean;
@@ -2982,7 +2984,7 @@ export interface OauthConsent {
   user?: User;
   clientId: string;
   client?: OauthClient;
-  scope: number;
+  scope: bigint;
   buzzLimit: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;

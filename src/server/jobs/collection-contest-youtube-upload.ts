@@ -1,6 +1,7 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -74,6 +75,7 @@ export const contestCollectionYoutubeUpload = createJob(
             AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
+            AND ${imageNotRestrictedSql()}
             -- We only want to upload videos that are longer than 30 seconds
             AND (i.metadata->'duration')::int > 30
             AND (i.metadata->'youtubeVideoId') IS NULL

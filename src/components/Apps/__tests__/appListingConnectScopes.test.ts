@@ -58,7 +58,8 @@ const project = (overrides: Record<string, unknown> = {}) => {
     null,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     { isBeta: false, betaMessage: null } as any,
-    r.connectRequestedScopes as number | null
+    // The int4 column hands the mask back as a number; fixtures build it from the bigint enum.
+    r.connectRequestedScopes == null ? null : Number(r.connectRequestedScopes as number | bigint)
   );
 };
 

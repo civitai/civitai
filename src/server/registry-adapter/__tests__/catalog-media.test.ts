@@ -15,6 +15,7 @@ const icon = (url: string, nsfwLevel: number): ListingMediaImage => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  modelRestricted: false,
 });
 
 describe('registryIconUrl — an app entity carries no icon rated above its rating tag', () => {
