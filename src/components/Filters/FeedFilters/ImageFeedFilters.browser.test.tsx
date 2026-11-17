@@ -19,6 +19,23 @@ vi.mock('~/components/Image/Filters/MediaFiltersDropdown', () => ({
   MediaFiltersDropdown: () => null,
 }));
 
+// Reads tRPC, which the harness does not mount; the sort menu is what is under test.
+vi.mock('~/components/HatTurf/useHatTurfFeedPlayer', () => ({ useHatTurfFeedPlayer: () => null }));
+
+vi.mock('~/components/Filters/useSortAvailability', () => ({
+  useSortAvailability: () => ({ isModerator: false, canViewNsfw: true, showNsfw: true }),
+}));
+vi.mock('~/hooks/useIsClient', () => ({ default: () => true }));
+vi.mock('~/hooks/useDomainColor', () => ({ useDomainColor: () => 'blue' }));
+
+// The sort menus read the filters store the app mounts above the page.
+const renderFilters = () =>
+  renderWithProviders(
+    <FiltersProvider>
+      <ImageFeedFilters />
+    </FiltersProvider>
+  );
+
 // The mocked router is one singleton: the default export is what `useRouter()` returns.
 const router = vi.mocked(Router);
 const lastReplaceQuery = () =>
@@ -33,7 +50,7 @@ describe('ImageFeedFilters sort while searching', () => {
 
   test('picking Newest matches puts searchSort=newest on the URL', async () => {
     router.query = { query: 'red dragon' };
-    renderWithProviders(<ImageFeedFilters />);
+    renderFilters();
 
     await page.getByText('Best match').click();
     await page.getByText('Newest matches').click();
@@ -43,7 +60,7 @@ describe('ImageFeedFilters sort while searching', () => {
 
   test('picking Best match takes searchSort off the URL', async () => {
     router.query = { query: 'red dragon', searchSort: 'newest' };
-    renderWithProviders(<ImageFeedFilters />);
+    renderFilters();
 
     await page.getByText('Newest matches').click();
     await page.getByText('Best match').click();
@@ -54,7 +71,7 @@ describe('ImageFeedFilters sort while searching', () => {
   test('without the flag the sort stays locked on Best match', async () => {
     flags.value = { feedSearch: true };
     router.query = { query: 'red dragon', searchSort: 'newest' };
-    renderWithProviders(<ImageFeedFilters />);
+    renderFilters();
 
     await expect.element(page.getByRole('button', { name: 'Best match' })).toBeDisabled();
     expect(page.getByText('Newest matches').query()).toBeNull();
@@ -69,9 +86,9 @@ describe('ImageFeedFilters sort while searching', () => {
   }
 
   test('tapping the locked sort says why it is locked, and a tap elsewhere closes it', async () => {
-    flags.value = { feedSearch: true };
+    flags.value = { feedSearch: true, moreLikeThis: true };
     router.query = { similarTo: '123' };
-    renderWithProviders(<ImageFeedFilters />);
+    renderFilters();
     const reason = page.getByText('Clear the search to sort the feed');
 
     await tapLock('Best match');
@@ -82,23 +99,19 @@ describe('ImageFeedFilters sort while searching', () => {
   });
 
   test('the locked sort shows no reason until tapped', async () => {
-    flags.value = { feedSearch: true };
+    flags.value = { feedSearch: true, moreLikeThis: true };
     router.query = { similarTo: '123' };
-    renderWithProviders(<ImageFeedFilters />);
+    renderFilters();
 
     await expect.element(page.getByRole('button', { name: 'Best match' })).toBeDisabled();
     expect(page.getByText('Clear the search to sort the feed').query()).toBeNull();
   });
 
   test('tapping the locked audience says why it is locked', async () => {
-    flags.value = { feedSearch: true };
+    flags.value = { feedSearch: true, moreLikeThis: true };
     currentUser.value = { id: 1 };
     router.query = { similarTo: '123' };
-    renderWithProviders(
-      <FiltersProvider>
-        <ImageFeedFilters />
-      </FiltersProvider>
-    );
+    renderFilters();
 
     await tapLock('Everyone');
     await expect.element(page.getByText('Clear the search to filter by who posted')).toBeVisible();
