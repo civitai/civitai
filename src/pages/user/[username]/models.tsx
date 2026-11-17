@@ -1,7 +1,6 @@
 import type { SegmentedControlProps } from '@mantine/core';
-import { Box, Center, Group, Loader, SegmentedControl, Stack } from '@mantine/core';
-import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { Box, Group, SegmentedControl, Stack } from '@mantine/core';
+import { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -166,11 +165,7 @@ function UserModelsPage() {
             ) : viewingDraft ? (
               <UserDraftModels />
             ) : viewingTraining ? (
-              features.classicTrainerOff && features.trainingStudioUi ? (
-                <TrainingStudioRedirect />
-              ) : (
-                <UserTrainingModels />
-              )
+              <UserTrainingModels />
             ) : (
               <NotFound />
             )}
@@ -178,18 +173,6 @@ function UserModelsPage() {
         </MasonryContainer>
       </MasonryProvider>
     </Box>
-  );
-}
-
-function TrainingStudioRedirect() {
-  const router = useRouter();
-  useEffect(() => {
-    void router.replace('/training-studio');
-  }, [router]);
-  return (
-    <Center h="40vh">
-      <Loader />
-    </Center>
   );
 }
 
