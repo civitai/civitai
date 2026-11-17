@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { publicPostImageWhere } from '~/server/selectors/image.selector';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Flags } from '~/shared/utils/flags';
@@ -111,8 +112,8 @@ export interface ShowcaseImage {
  * Filters:
  *   - ingestion: Scanned (the moderation gate the rest of the platform
  *     already enforces; unmoderated images are never surfaced).
- *   - tosViolation: false (defense in depth — Scanned alone is supposed
- *     to drop these, but enforce here too).
+ *   - `publicPostImageWhere`: no TOS violation, not held for review, and in a
+ *     published post that is not Private (the block is a public read).
  *   - postId IS NOT NULL (orphaned images shouldn't show up).
  *   - nsfwLevel intersects the viewer's allowed browsing levels (see
  *     `resolveAllowedBrowsingLevel` / `ShowcaseViewer`). Anon → SFW only.
@@ -135,8 +136,8 @@ export async function getModelShowcaseImages(
       modelVersionId,
       image: {
         ingestion: 'Scanned',
-        tosViolation: false,
         postId: { not: null },
+        ...publicPostImageWhere(),
       },
     },
     select: {
