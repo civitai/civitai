@@ -41,7 +41,9 @@ describe('isCrucibleHiddenByScan', () => {
   ) => ({
     userId: CREATOR,
     ingestion,
-    image: cover ? { ingestion: cover, needsReview: null, tosViolation: false, ...review } : null,
+    image: cover
+      ? { ingestion: cover, nsfwLevel: 1, needsReview: null, tosViolation: false, ...review }
+      : null,
   });
 
   it('shows a crucible whose text and cover both passed', () => {
@@ -356,13 +358,14 @@ describe('list surfaces — the public feed', () => {
     dbMock.dbRead.crucible.findMany.mockResolvedValue([]);
   });
 
-  it('lists only crucibles whose cover passed its scan, is out of review and is not a ToS violation', async () => {
+  it('lists only crucibles whose cover passed its scan, is rated, is out of review and is not a ToS violation', async () => {
     await getCrucibles({ input: { limit: 20 } as never, select: { id: true } });
 
     const where = JSON.stringify(dbMock.dbRead.crucible.findMany.mock.calls[0][0]?.where);
     expect(where).toContain(
       JSON.stringify({
         ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: { notIn: [0] },
         needsReview: null,
         tosViolation: false,
       })

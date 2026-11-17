@@ -5,7 +5,7 @@ import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as ImageService from '~/server/services/image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const h = vi.hoisted(() => ({ unblock: vi.fn() }));
+const h = vi.hoisted(() => ({ unblock: vi.fn(), trackImages: vi.fn() }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -14,7 +14,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   Tracker: class {
-    images = vi.fn();
+    images = h.trackImages;
   },
 }));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -33,7 +33,7 @@ const row = (id: number, blockedFor: string | null) => ({
 });
 
 const found = (rows: ReturnType<typeof row>[]) =>
-  vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue(rows as never);
+  vi.mocked(dbMock.dbWrite.image.findMany).mockResolvedValue(rows as never);
 
 const restore = async (imageIds: number[]) => {
   const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
@@ -45,7 +45,11 @@ const restore = async (imageIds: number[]) => {
 };
 
 beforeEach(() => {
-  h.unblock.mockReset().mockResolvedValue(undefined);
+  // The service answers with the images it restored; by default, all it was given.
+  h.unblock
+    .mockReset()
+    .mockImplementation(async ({ ids }: { ids: number[] }) => ids.map((id) => ({ id })));
+  h.trackImages.mockReset();
 });
 
 describe('/api/mod/restore-images', () => {
@@ -65,5 +69,25 @@ describe('/api/mod/restore-images', () => {
 
     expect(h.unblock).not.toHaveBeenCalled();
     expect(body).toEqual({ images: 0, skipped: [1] });
+  });
+
+  it('skips an image the replica has not yet seen CSAM-blocked', async () => {
+    vi.mocked(dbMock.dbRead.image.findMany).mockResolvedValue([row(1, 'moderated')] as never);
+    found([row(1, 'CSAM')]);
+
+    const body = await restore([1]);
+
+    expect(h.unblock).not.toHaveBeenCalled();
+    expect(body).toEqual({ images: 0, skipped: [1] });
+  });
+
+  it('counts only the images the service restored', async () => {
+    found([row(2, 'moderated'), row(3, 'moderated')]);
+    h.unblock.mockResolvedValueOnce([{ id: 3 }]);
+
+    const body = await restore([2, 3]);
+
+    expect(body).toEqual({ images: 1, skipped: [] });
+    expect(h.trackImages.mock.calls[0][0].map((e: { imageId: number }) => e.imageId)).toEqual([3]);
   });
 });

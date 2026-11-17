@@ -61,7 +61,10 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 vi.mock('../storage', () => ({
-  getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
+  getStorage: () => ({
+    deleteObject: vi.fn(async () => undefined),
+    purgeObjectVersions: vi.fn(async () => ({ versionsDeleted: 1, remaining: 0 })),
+  }),
 }));
 
 const { invalidateThumbnails } = await import('../thumbnail-cache');

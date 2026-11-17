@@ -20,6 +20,10 @@ import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
+import type {
+  PriorListing,
+  PriorRuntime,
+} from '~/server/services/blocks/publish-request-finalise.service';
 import { createHash } from 'crypto';
 import { structuredPatch } from 'diff';
 import JSZip from 'jszip';
@@ -95,6 +99,7 @@ import {
 } from '~/shared/constants/app-developer-terms.constants';
 import type { BuildAttemptSignals } from '~/shared/constants/app-block-build.constants';
 import type { ReviewStorageCleanupOutcome } from '~/server/metrics/app-block-runtime.metrics';
+import type { ApproveClaim } from '~/server/services/blocks/publish-request-holds.service';
 
 // dbRead/dbWrite/newUlid/bundle-s3 are dynamically imported inside the
 // functions that need them so the pure helpers (extract/diff) can be
@@ -1180,7 +1185,6 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // OauthClient.allowedOrigins. Mirrors how trustTier is server-owned.
   const { env } = await import('~/env/server');
   stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
-  // Store tagline/repository as the validator measures them (trimmed).
   trimManifestStringFields(manifest);
 
   // 🔴 Before the pending-conflict check, so a non-owner learns nothing about pending state. One
@@ -2332,8 +2336,7 @@ export async function recordPendingFromPush(args: {
   /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
   pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
-  // The one store sink for both the git-push webhook and the web manifest editor: store
-  // tagline/repository as the validator measures them (trimmed).
+  // Single sink for every push-recorded manifest.
   trimManifestStringFields(args.manifest as Record<string, unknown>);
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
@@ -3010,12 +3013,17 @@ export async function listPendingRequests(
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const [listingFacts, agentSummaries, liveFingerprints] = await Promise.all([
+  const { getOpenHoldCountsBySlug } = await import('./publish-request-holds.service');
+  const [listingFacts, agentSummaries, liveFingerprints, holdCounts] = await Promise.all([
     listingFactsForRequests(items as ListingJoinSubject[]),
     opts.includeAgentReview
       ? agentReviewSummariesForRequests(items.map((r) => r.id))
       : Promise.resolve(null),
     opts.includeAgentReview ? liveListingFingerprints(dbRead, items) : Promise.resolve(null),
+    getOpenHoldCountsBySlug(
+      dbRead,
+      items.map((r) => r.slug)
+    ),
   ]);
   // The impersonation check is STALE when the listing changed after it ran (a new app's draft
   // or pending listing is edited in place); a stale check never fast-lanes the row.
@@ -3036,6 +3044,8 @@ export async function listPendingRequests(
       ({ deployState, deployDetail, deployUpdatedAt, ...r }: (typeof rows)[number]) => ({
         ...r,
         ...listingFacts(r.id),
+        // null: the holds could not be read (shown as unknown, never as clean).
+        openHoldCount: holdCounts ? holdCounts.get(r.slug) ?? 0 : null,
         // The SAME reported state `getReviewStatus` gives the review page (one rule, including
         // #8240's expiry from the build's start), so the queue chip and the page agree.
         previewState: reportedReviewPreviewState(deployState, deployDetail, deployUpdatedAt, now),
@@ -3242,6 +3252,10 @@ export type ApproveRequestParams = {
   approvalNotes?: string;
   /** The moderator's media-split decision for the listing this approve publishes; omitted means `rate-mature`. */
   mediaSplit?: ListingMediaSplitDecision | null;
+  /** Required to approve while the app has open review holds; recorded on each hold. */
+  holdOverrideReason?: string | null;
+  /** The open holds the moderator was shown; an open hold not in this list refuses. */
+  holdOverrideIds?: number[] | null;
 };
 
 export type ApproveRequestResult = {
@@ -3249,6 +3263,12 @@ export type ApproveRequestResult = {
   appBlockId: string;
   forgejoCommitSha: string;
   isFirstVersion: boolean;
+  /** Holds placed after the approve claim expired. When set, the block was re-suspended and
+   * nothing after the final writes ran: no build, no deploy, no approval notice. */
+  lateHoldIds?: number[];
+  /** Set when the live takedown for a late hold left the app serving: the shared static server's
+   * readiness-probe app is never taken down. */
+  liveNote?: string;
 };
 
 /**
@@ -3274,6 +3294,28 @@ export type ApproveRequestResult = {
  * adds a compensation transaction.
  */
 export async function approveRequest(params: ApproveRequestParams): Promise<ApproveRequestResult> {
+  const held: { claim?: ApproveClaim } = {};
+  try {
+    return await approveRequestUnderClaim(params, held);
+  } finally {
+    const { claim } = held;
+    if (claim) {
+      const [{ dbWrite }, { releaseApproveClaim }] = await Promise.all([
+        import('~/server/db/client'),
+        import('./publish-request-holds.service'),
+      ]);
+      await releaseApproveClaim(dbWrite, claim).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.error('[approveRequest] approve claim release failed; it expires on its own', err)
+      );
+    }
+  }
+}
+
+async function approveRequestUnderClaim(
+  params: ApproveRequestParams,
+  held: { claim?: ApproveClaim }
+): Promise<ApproveRequestResult> {
   const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -3321,6 +3363,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   if (request.status !== 'pending') {
     throw new Error(`cannot approve a request in status ${request.status}`);
   }
+  const { checkHoldsBeforeApprove, claimApprove } = await import('./publish-request-holds.service');
+  const holdDecision = {
+    slug: request.slug,
+    overrideReason: params.holdOverrideReason,
+    shownHoldIds: params.holdOverrideIds,
+  };
+  await checkHoldsBeforeApprove(dbWrite, holdDecision);
   // Captured BEFORE markRequestDeployState below flips deploy_state to a
   // production 'building' value — drives the end-of-flow review teardown.
   const hadReviewPreview =
@@ -3358,6 +3407,7 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     where: { blockId: request.slug },
     select: {
       id: true,
+      currentVersionSha: true,
       appId: true,
       repoUrl: true,
       trustTier: true,
@@ -3400,7 +3450,6 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // makes the value the validator (below), the app_blocks.manifest write, and
   // the committed block.manifest.json (step 5) all see consistent.
   stampCanonicalIframeSrc(manifest, request.slug, env.APPS_DOMAIN);
-  // Store tagline/repository as the validator measures them (trimmed) in app_blocks.manifest.
   trimManifestStringFields(manifest);
 
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
@@ -3534,7 +3583,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // 🔴 PUBLISH FLOOR. Refuse before anything is written: the listing writes below are
   // log-and-continue, so a refusal there would deploy the app and leave only a log line.
   // Ungated paths: see listing-publish-floor.ts.
-  if (goLive?.firstGoLive) {
+  // A reset listing is exempt (it already went live), except a first version's left by a late
+  // hold: it never went live, and the hold doubted its content after the first check ran.
+  const lateHeldFirstVersion =
+    goLive != null &&
+    !goLive.firstGoLive &&
+    !existingAppBlock?.currentVersionSha &&
+    (await import('./publish-request-holds.service').then((m) =>
+      m.hadLateHold(dbWrite, request.slug)
+    ));
+  if (goLive && (goLive.firstGoLive || lateHeldFirstVersion)) {
     const floor = checkListingMeetsFloor(goLive.listing);
     if (!floor.ok) throw new Error(listingFloorApproveRefusal(floor.missing));
   }
@@ -3560,6 +3618,16 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
     }
   }
 
+  // From here on this approve writes and calls Forgejo, so a hold placed now could not stop it:
+  // the claim makes placing one refuse until the approve ends.
+  held.claim = await dbWrite.$transaction((tx) =>
+    claimApprove(tx, {
+      ...holdDecision,
+      publishRequestId: request.id,
+      actorUserId: params.reviewerUserId,
+    })
+  );
+
   // APP STORAGE SCHEMA MIGRATIONS — the approve gate, LAST among the refusals and still before
   // anything is written (so a refused approve reserves nothing): refused while an earlier run of
   // the app is unfinished on a collection this version touches, or when a plan could not be
@@ -3576,6 +3644,9 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
 
   let appBlockId: string;
   let repoUrl: string;
+  let priorVersion: PriorRuntime | undefined;
+  // The on-site listing as it was before (3b) writes it, for a late hold to put back.
+  let priorListing: PriorListing | undefined;
 
   if (isFirstVersion) {
     const blockIdError = newBlockIdError(request.slug);
@@ -3720,6 +3791,38 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   } else {
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';
+    // What the app runs under now, put back if the final hold check finds a late hold.
+    // primary: the rollback snapshot must match the row this approve is about to overwrite.
+    const prior = await dbWrite.appBlock.findUnique({
+      where: { id: appBlockId },
+      select: {
+        manifest: true,
+        version: true,
+        approvedScopes: true,
+        contentRating: true,
+        renderMode: true,
+        trustTier: true,
+      },
+    });
+    // primary: the scope ceiling restored on a late hold must be the one this approve raises.
+    const client = await dbWrite.oauthClient.findUnique({
+      where: { id: existingAppBlock.appId },
+      select: { allowedScopes: true },
+    });
+    // A late hold must be able to put the ceiling back, so refuse before any write if it can't be
+    // read. (A missing block row fails the update below the same way.)
+    if (!client) {
+      throw new Error(
+        `approve refused: could not read the OAuth client of ${request.slug} to restore on a late hold`
+      );
+    }
+    if (prior) {
+      priorVersion = {
+        block: { ...prior, manifest: prior.manifest as Prisma.InputJsonValue },
+        oauthClientId: existingAppBlock.appId,
+        allowedScopes: client.allowedScopes,
+      };
+    }
     // Subsequent version: refresh manifest + version + approvedScopes
     // on the existing row. currentVersionSha is stamped in step (6) below,
     // right after the Forgejo commit returns the approved sha.
@@ -3847,6 +3950,13 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
       writeOnsiteListingIssueTrackerUrlByAppBlock,
     } = await import('./app-listing-issue-tracker.service');
     const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
+    // Before any listing write below. A throw is caught by this block's catch (the approve goes
+    // on) and leaves no snapshot, so a late hold drafts the listing rather than restoring it.
+    const { snapshotOnsiteListing } = await import('./publish-request-finalise.service');
+    priorListing = await snapshotOnsiteListing(dbWrite, request.slug, {
+      sourceRepoAvailable,
+      issueTrackerAvailable,
+    });
     // (3b-transition) W13 draft-at-submit — an app SUBMITTED after this feature
     // shipped has a pre-approval on-site DRAFT AppListing (kind='onsite',
     // appBlockId=NULL, status='draft', slug=request.slug) minted at submit, carrying
@@ -4486,29 +4596,49 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // from the `Publish-Request` trailer above and the pushing account. Any push
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
-  await dbWrite.appBlock.update({
-    where: { id: appBlockId },
-    data: {
-      currentVersionSha: forgejoCommitSha,
-      // F-E E5 — persist the validated, uploaded screenshot records. Replaces
-      // the prior set on a re-approve (the storeScreenshots keys are stable per
-      // appBlockId+index, so the objects are overwritten in place). An empty
-      // gallery is stored as [] so a re-submit that REMOVES all screenshots
-      // clears the old set rather than leaving stale entries.
-      screenshots: storedScreenshots as object,
-    },
-  });
-  await dbWrite.appBlockPublishRequest.update({
-    where: { id: request.id },
-    data: {
-      status: 'approved',
-      reviewedByUserId: params.reviewerUserId,
-      reviewedAt: new Date(),
+  const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
+  const { lateHoldIds } = await dbWrite.$transaction((tx) =>
+    finaliseOnsiteApprove(tx, {
+      holdDecision,
+      reviewerUserId: params.reviewerUserId,
       approvalNotes: params.approvalNotes,
-      forgejoCommitSha,
+      publishRequestId: request.id,
       appBlockId,
-    },
-  });
+      forgejoCommitSha,
+      screenshots: storedScreenshots as object,
+      priorVersion,
+      priorListing,
+    })
+  );
+  // A held version must not build, deploy or be announced; a moderator clears the hold first.
+  // The suspended block stops only the on-site runtime, so the live pointer comes down too.
+  if (lateHoldIds.length) {
+    // The store listing was put back in the same transaction; drop the cached catalog copy.
+    try {
+      const { bustAppListingCatalogCache } = await import(
+        '~/server/services/blocks/app-listing.service'
+      );
+      await bustAppListingCatalogCache();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[approveRequest] catalog cache bust failed after a late hold (id=${request.id}); ` +
+          `the store self-corrects within CacheTTL.sm: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+      );
+    }
+    const { takeDownLiveApp } = await import('./live-unpublish.service');
+    const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    return {
+      publishRequestId: request.id,
+      appBlockId,
+      forgejoCommitSha,
+      isFirstVersion,
+      lateHoldIds,
+      liveNote,
+    };
+  }
 
   // (6a) VERSION TAG — an annotated `v<version>` on the approved commit (or, when that tag
   // already names another commit, `approved-<request id>`; see decideVersionTag). Runs after the
@@ -4846,6 +4976,32 @@ export type RetriggerBuildResult = {
 };
 
 /**
+ * No rebuild while the app has an open review hold: after a late hold the app is suspended and
+ * taken down, and rebuilding its last approved version would put it back live.
+ */
+async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
+  const { dbWrite } = await import('~/server/db/client');
+  const { getOpenHoldsBySlug } = await import('./publish-request-holds.service');
+  let open: number;
+  try {
+    open = (await getOpenHoldsBySlug(dbWrite, [slug])).length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[retriggerBuild] hold read failed; refusing to rebuild', err);
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      "Could not read this app's review holds, so its build cannot be re-triggered. Try again, or ask an engineer to check the review-holds tables."
+    );
+  }
+  if (open) {
+    throw new RetriggerBuildError(
+      'NOT_RETRIGGERABLE',
+      "This app has an open review hold, and a moderator must clear it before its build can run. Holds are listed on the app's pending review; if nothing is pending, ask an engineer."
+    );
+  }
+}
+
+/**
  * "APPROVED BUT NOT SUCCESSFULLY BUILT" — the precise, documented definition of a
  * request this function will re-fire a build for:
  *
@@ -5038,6 +5194,8 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
       'A newer version has since been approved for this app — re-triggering this older version would deploy stale code.'
     );
   }
+
+  await assertNoOpenHoldForRetrigger(request.slug);
 
   // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
   assertRetriggerableDeployState(

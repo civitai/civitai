@@ -371,14 +371,24 @@ describe('active crucibles on the green site', () => {
     await expect(caller(signedIn(1, true), green).getUserActiveCrucibles({})).resolves.toEqual([]);
   });
 
-  it.each([null, 0])('withholds an unrated cover (level %s) on green', async (nsfwLevel) => {
+  it('withholds a cover with no level on green', async () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
-      entryWith({ image: { url: 'cover', nsfwLevel, ingestion: 'Scanned' } }),
+      entryWith({ image: { url: 'cover', nsfwLevel: null, ingestion: 'Scanned' } }),
     ]);
 
     await expect(
       caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})
     ).resolves.toMatchObject([{ id: CRUCIBLE_ID, imageUrl: null }]);
+  });
+
+  it('hides a crucible whose cover is unrated (level 0), as one whose cover is unscanned', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
+      entryWith({ image: { url: 'cover', nsfwLevel: 0, ingestion: 'Scanned' } }),
+    ]);
+
+    await expect(caller(signedIn(VIEWER_ID), green).getUserActiveCrucibles({})).resolves.toEqual(
+      []
+    );
   });
 
   it('shows a PG-13 cover to a signed-in viewer on green', async () => {

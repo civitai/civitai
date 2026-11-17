@@ -35,6 +35,20 @@ export type DeleteObjectInput = z.infer<typeof deleteObjectInput>;
 export const deleteManyObjectsInput = target.extend({ keys: z.array(z.string()) });
 export type DeleteManyObjectsInput = z.infer<typeof deleteManyObjectsInput>;
 
+// Deletes every version and delete marker of one key and lists again. Never the CSAM backend.
+export const purgeObjectVersionsInput = z.object({
+  backend: publicStorageBackend.default('default'),
+  bucket: z.string().optional(),
+  key: z.string().min(1),
+});
+export type PurgeObjectVersionsInput = z.infer<typeof purgeObjectVersionsInput>;
+
+export const purgeObjectVersionsResult = z.object({
+  versionsDeleted: z.number().int(),
+  remaining: z.number().int(),
+});
+export type PurgeObjectVersionsResult = z.infer<typeof purgeObjectVersionsResult>;
+
 // ---- head (exists + metadata) -------------------------------------------------------------------
 export const headObjectInput = target.extend({ key: z.string() });
 export type HeadObjectInput = z.infer<typeof headObjectInput>;

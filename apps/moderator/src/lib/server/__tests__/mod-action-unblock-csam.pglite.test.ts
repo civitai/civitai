@@ -13,13 +13,17 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+const { dbHandle, replicaHandle } = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  // Set to stand in for a replica that has not caught up; null reads the primary.
+  replicaHandle: { current: null as unknown },
+}));
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
-    return dbHandle.current;
+    return replicaHandle.current ?? dbHandle.current;
   },
   get dbWrite() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -44,6 +48,7 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { modActions } = await import('../mod-actions/registry');
+const { trackImageRestore } = await import('../image-moderation-effects');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -93,25 +98,31 @@ const CSAM = 1;
 const MODERATED = 2;
 
 let db: PGlite;
+let laggingReplica: PGlite;
 
 beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+  laggingReplica = await freshPglite();
+  await laggingReplica.exec(SCHEMA);
 });
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Image";
+    TRUNCATE "Image", "ImageTagForReview";
     INSERT INTO "Image" ("id", "userId", "ingestion", "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${CSAM}, 7, 'Blocked', 'CSAM', 32, 'csam'),
       (${MODERATED}, 8, 'Blocked', 'moderated', 32, NULL);
   `);
+  replicaHandle.current = null;
 });
 
 afterAll(async () => {
   dbHandle.current = null;
+  replicaHandle.current = null;
   await db.close();
+  await laggingReplica.close();
 });
 
 const row = async (id: number) =>
@@ -143,11 +154,60 @@ describe('imageModerate unblock of a CSAM-blocked image', () => {
     // A 409 is what makes the main app show the moderator the image is still down.
     expect(answer).toMatchObject({
       status: 409,
-      message: `Image ${CSAM} was not restored: it can only be restored through its own review.`,
+      message: `Image ${CSAM} was not restored: it can only be restored through its own review. Image ${MODERATED} was restored.`,
     });
   });
 
   it('answers as before when nothing in the batch is CSAM-blocked', async () => {
     await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
+  });
+});
+
+describe('imageModerate unblock when the replica has not caught up', () => {
+  it('reads the primary for the image, its review tags and the restore event', async () => {
+    await db.exec(`INSERT INTO "ImageTagForReview" ("imageId", "tagId") VALUES (${MODERATED}, 5);`);
+    replicaHandle.current = new Kysely({ dialect: pgliteDialect(laggingReplica) });
+    vi.mocked(trackImageRestore).mockClear();
+
+    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
+    expect(await row(MODERATED)).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      needsReview: null,
+    });
+    // Consumed only if the tag read went to the primary; the replica has none.
+    const pending = await db.query(`SELECT 1 FROM "ImageTagForReview" WHERE "imageId" = $1`, [
+      MODERATED,
+    ]);
+    expect(pending.rows).toHaveLength(0);
+    // By identity: vitest's deep equality calls any two Kysely instances equal.
+    expect(trackImageRestore).toHaveBeenCalledTimes(1);
+    const restoreEvent = vi.mocked(trackImageRestore).mock.lastCall?.[0];
+    expect(restoreEvent?.imageId).toBe(MODERATED);
+    expect(restoreEvent?.db).toBe(dbHandle.current);
+  });
+
+  it('names every image a batch left down', async () => {
+    const OTHER_CSAM = 3;
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "ingestion", "blockedFor", "nsfwLevel", "needsReview")
+      VALUES (${OTHER_CSAM}, 9, 'Blocked', 'CSAM', 32, 'csam');
+    `);
+    const answer = await unblock([CSAM, OTHER_CSAM, MODERATED]).catch((e: unknown) => e);
+
+    expect(answer).toMatchObject({
+      status: 409,
+      message: `Images ${CSAM}, ${OTHER_CSAM} were not restored: each can only be restored through its own review. Image ${MODERATED} was restored.`,
+    });
+  });
+
+  it('answers 409 for an id on neither, naming what it did restore', async () => {
+    const MISSING = 999;
+    const answer = await unblock([MISSING, MODERATED]).catch((e: unknown) => e);
+
+    expect(answer).toMatchObject({
+      status: 409,
+      message: `Image ${MISSING} was not found. Image ${MODERATED} was restored.`,
+    });
   });
 });
