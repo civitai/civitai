@@ -514,6 +514,21 @@ describe('request', () => {
     expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
   });
 
+  it("answers a muted seller's offering exactly as a full one, so the answer reveals nothing", async () => {
+    const answer = (error: unknown) => {
+      const { name, code, message } = error as { name: string; code: string; message: string };
+      return { name, code, message };
+    };
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    const muted = answer(await request().catch((e) => e));
+    await q(`UPDATE "User" SET muted = false WHERE id = $1`, [SELLER]);
+    await q(`UPDATE "ServiceOffering" SET "maxOpenDeals" = 1`);
+    await request();
+    const full = answer(await request({ buyerId: STRANGER }).catch((e) => e));
+    expect(muted.code).toBeDefined();
+    expect(muted).toEqual(full);
+  });
+
   it('takes the same request once the seller is no longer muted', async () => {
     await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
     await expect(request()).rejects.toThrow();
