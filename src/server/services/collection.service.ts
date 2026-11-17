@@ -2075,6 +2075,8 @@ export const getCollectionItemsByCollectionId = async ({
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
   const isModerator = asModerator ?? user?.isModerator ?? false;
+  // Ownership and contributor rights follow the user even on a scoped key: it is their own
+  // collection. The post and image reads inside still get no owner or moderator view.
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     userId: user?.id,
