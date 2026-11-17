@@ -165,6 +165,26 @@ describe('fileCsamReport', () => {
       expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
     );
   });
+
+  it('leaves the blocklist write to after the removal, not to the report service', async () => {
+    await file(OWNER, [IMAGE]);
+
+    expect(createCsamReport).toHaveBeenCalledWith(
+      expect.objectContaining({ writeBlocklist: false })
+    );
+  });
+
+  it('still writes the hashes when the account removal throws, then throws its error', async () => {
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    vi.mocked(bulkAddBlockedImages).mockClear();
+    softDeleteUser.mockRejectedValueOnce(new Error('ban failed'));
+
+    await expect(file(OWNER, [IMAGE])).rejects.toThrow('ban failed');
+
+    expect(bulkAddBlockedImages).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+    );
+  });
 });
 
 describe('fileCsamReport with attached text', () => {

@@ -74,41 +74,39 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   };
   const filed = contextText.length ? { ...filing, details: withContext } : filing;
   if (supplementalOf) await createSupplementalCsamReport({ ...filed, supplementalOf });
-  else await createCsamReport(filed);
+  else await createCsamReport({ ...filed, writeBlocklist: false });
 
   // Written after the account removal below, so a failed blocklist write cannot hold that up.
-  let blocklistHashes: bigint[] = [];
+  const blocklistHashes = imageIds.length
+    ? (await dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }))
+        .map((img) => img.pHash)
+        .filter(isDefined)
+    : [];
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
-    const [affectedImages, imageReports] = await Promise.all([
-      dbWrite.image.findMany({ where: { id: { in: imageIds } }, select: { pHash: true } }),
-      dbWrite.imageReport.findMany({
-        where: { imageId: { in: imageIds } },
-        select: { reportId: true, image: { select: { userId: true } } },
-      }),
-    ]);
+    const imageReports = await dbWrite.imageReport.findMany({
+      where: { imageId: { in: imageIds } },
+      select: { reportId: true, image: { select: { userId: true } } },
+    });
 
-    blocklistHashes = affectedImages.map((img) => img.pHash).filter(isDefined);
-    await Promise.all([
-      // Bookkeeping only: a failure here must not stop the account being removed below.
-      bulkSetReportStatus({
-        ids: imageReports.map((report) => report.reportId),
-        status: ReportStatus.Actioned,
-        userId: reportedById,
-        noRewardFor: csamReportRewardExclusions(userId, imageReports),
-        rewardRemovedReporters: false,
-      }).catch((e) =>
-        logToAxiom({
-          name: 'csam-report',
-          type: 'error',
-          important: true,
-          message: 'actioning the reports on filed images failed',
-          userId,
-          reportedById,
-          error: (e as Error)?.message,
-        })
-      ),
-    ]);
+    // Bookkeeping only: a failure here must not stop the account being removed below.
+    await bulkSetReportStatus({
+      ids: imageReports.map((report) => report.reportId),
+      status: ReportStatus.Actioned,
+      userId: reportedById,
+      noRewardFor: csamReportRewardExclusions(userId, imageReports),
+      rewardRemovedReporters: false,
+    }).catch((e) =>
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        important: true,
+        message: 'actioning the reports on filed images failed',
+        userId,
+        reportedById,
+        error: (e as Error)?.message,
+      })
+    );
   } else if (type === 'TrainingData') {
     const modelVersionId = details?.modelVersionIds?.[0];
     if (modelVersionId) {
@@ -144,14 +142,18 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   // A supplemental report follows one that removed the account for this; one restored or banned for
   // something else since is removed again.
   const removed = !!supplementalOf && (await removedForCsam(userId));
-  if (userId !== -1 && !removed) {
-    await softDeleteUser({ id: userId, userId: reportedById });
+  let removalError: unknown;
+  try {
+    if (userId !== -1 && !removed) await softDeleteUser({ id: userId, userId: reportedById });
+  } catch (error) {
+    removalError = error;
   }
-  // Throws on failure, so the filing shows the error; the report and the removal already landed.
+  // Written whether or not the removal succeeded, and throws on failure so the filing shows it.
   await bulkAddBlockedImages({
     data: blocklistHashes.map((hash) => ({ hash, reason: BlockImageReason.CSAM })),
     context: { step: 'csam-report', imageIds, actorUserId: reportedById },
   });
+  if (removalError) throw removalError;
 
   if (type === 'GeneratedImage') {
     // After the removal, so a slow or failing orchestrator can never hold it up. A 404 is the retired

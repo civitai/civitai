@@ -209,9 +209,12 @@ export async function createCsamReport({
   imageIds = [],
   details,
   type,
+  writeBlocklist = true,
 }: Omit<CreateCsamReportSchema, 'details'> & {
   reportedById: number;
   details?: CreateCsamReportSchema['details'] | GeneratorEvidenceDetails;
+  /** Off for a caller that writes the blocklist itself, after the account removal. */
+  writeBlocklist?: boolean;
 }) {
   const isInternalReport = userId === -1;
   const data = {
@@ -295,7 +298,7 @@ export async function createCsamReport({
         });
       });
 
-  if (imageIds.length) {
+  if (writeBlocklist && imageIds.length) {
     const affectedImages = await dbWrite.image.findMany({
       where: { id: { in: imageIds } },
       select: { pHash: true },
