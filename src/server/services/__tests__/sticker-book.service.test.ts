@@ -333,6 +333,8 @@ describe('getStickerBook — what leaves the server', () => {
 
     expect(book.isOwner).toBe(owner);
     expect(book.earnedBuzz === null).toBe(!owner);
+    // Both sections hydrate, or the loop below checks nothing.
+    expect(allImages).toHaveBeenCalledTimes(2);
     for (const [args] of allImages.mock.calls)
       expect(args).toMatchObject({ asOwner: owner, asModerator: false });
   });
