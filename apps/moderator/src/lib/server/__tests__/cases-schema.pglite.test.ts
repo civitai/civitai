@@ -205,6 +205,18 @@ describe('cases/schema.sql', () => {
     expect((await headerReadBack())[3]).toBe(false);
   });
 
+  it.each([
+    ['to the role', `GRANT SELECT ON ALL TABLES IN SCHEMA public TO internal_tools_ro`],
+    ['to PUBLIC', `GRANT SELECT ON case_notice TO PUBLIC`],
+  ])('reports a read grant made after the apply %s as open', async (_, grant) => {
+    await db.exec(`CREATE ROLE internal_tools_ro`);
+    await db.exec(DDL);
+    expect(await lockdown()).toBe('ok');
+    await db.exec(grant);
+    expect(await lockdown()).toBe('open');
+    expect((await headerReadBack())[3]).toBe(false);
+  });
+
   it('reports a write grant made after the apply, and a re-run removes it', async () => {
     await db.exec(`CREATE ROLE internal_tools_ro`);
     await db.exec(DDL);
