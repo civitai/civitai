@@ -35,12 +35,14 @@ const emblaCalls = vi.hoisted(() => ({
   reInit: [] as unknown[][],
   scrollTo: [] as unknown[][],
   seen: new WeakSet<object>(),
+  latest: undefined as { reInit: () => void } | undefined,
 }));
 vi.mock('embla-carousel-react', async (o) => {
   const actual = (await o<object>()) as typeof EmblaReact;
   const spied = (...args: Parameters<typeof actual.default>) => {
     const result = actual.default(...args);
     const api = result[1];
+    if (api) emblaCalls.latest = api;
     if (api && !emblaCalls.seen.has(api)) {
       emblaCalls.seen.add(api);
       for (const method of ['reInit', 'scrollTo'] as const) {
@@ -112,6 +114,7 @@ function Harness({
 }) {
   const [count, setCount] = useState(initialCount);
   const [offsets, setOffsets] = useState<number[]>([]);
+  const [settles, setSettles] = useState<number[]>([]);
   const images = Array.from({ length: count }, (_, i) => image(i + 1));
   const navigation = useCarouselNavigation({ items: images, initialIndex });
   const trackSlide = (i: number) => {
@@ -134,6 +137,17 @@ function Harness({
         }}
       />
       <button type="button" data-testid="append" onClick={() => setCount(count + 1)} />
+      {/* embla's slide watcher or the resize observer reInits before the carousel has rendered an
+          index set from outside it (a cold `?text=` load names its text from an effect) */}
+      <button
+        type="button"
+        data-testid="jump-then-reinit"
+        onClick={() => {
+          navigation.navigate(2);
+          emblaCalls.latest?.reInit();
+        }}
+      />
+      <button type="button" data-testid="reinit" onClick={() => emblaCalls.latest?.reInit()} />
       <button type="button" data-testid="shrink" onClick={() => setCount(count - 1)} />
       <button
         type="button"
@@ -146,7 +160,13 @@ function Harness({
       <output data-testid="state">{navigation.index}</output>
       <output data-testid="count">{count}</output>
       <output data-testid="offsets">{offsets.join(',')}</output>
-      <ImageDetailCarousel images={images} {...navigation} loop={loop} />
+      <output data-testid="settles">{settles.join(',')}</output>
+      <ImageDetailCarousel
+        images={images}
+        {...navigation}
+        loop={loop}
+        onSettle={(i) => setSettles((all) => [...all, i])}
+      />
     </div>
   );
 }
@@ -204,6 +224,27 @@ describe.each([false, true])('ImageDetailCarousel, loop %s', (loop) => {
     const moves = await movesAfter(() => page.getByTestId('append').click());
     await expect.element(page.getByTestId('count')).toHaveTextContent('5');
     expect(moves).toEqual({ reInitWithOptions: [], scrollTo: [] });
+    expect(slideInView()).toBe(1);
+    await expect.element(page.getByTestId('state')).toHaveTextContent('1');
+  });
+
+  test('a reInit before the carousel follows a new index keeps that index', async () => {
+    await page.viewport(1200, 800);
+    renderWithProviders(<Harness loop={loop} initialCount={4} initialIndex={0} />);
+    await vi.waitFor(() => expect(slideInView()).toBe(0));
+    await page.getByTestId('jump-then-reinit').click();
+    await vi.waitFor(() => expect(slideInView()).toBe(2));
+    await expect.element(page.getByTestId('state')).toHaveTextContent('2');
+    await expect.element(page.getByTestId('settles')).toHaveTextContent(/^2$/);
+  });
+
+  test('a reInit that leaves the slide where it was announces no settle', async () => {
+    await page.viewport(1200, 800);
+    renderWithProviders(<Harness loop={loop} initialCount={4} initialIndex={1} />);
+    await vi.waitFor(() => expect(slideInView()).toBe(1));
+    await page.getByTestId('reinit').click();
+    await wait(QUIET_MS);
+    expect(page.getByTestId('settles').element().textContent).toBe('');
     expect(slideInView()).toBe(1);
     await expect.element(page.getByTestId('state')).toHaveTextContent('1');
   });
