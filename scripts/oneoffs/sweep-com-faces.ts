@@ -72,6 +72,24 @@ export function notLockedReason(face: Face, textHash: string): NotLockedReason |
   return null;
 }
 
+/**
+ * A held-back model's verdict. A stored detection is reused by the owner's next face save, which
+ * looks for a moderator ruling only since that verdict, so it would lock the model after all. The
+ * re-lock suppression a moderator's unlock writes goes first, so the stored detection never locks
+ * this text.
+ */
+export async function recordHeldBack(
+  ...[modelId, record]: Parameters<ComFaceIntentWrites['record']>
+) {
+  const { recordComFaceIntent, suppressComFaceIntentRelockSql } = await import(
+    '~/server/services/model-com-face-intent.service'
+  );
+  const { dbWrite } = await import('~/server/db/client');
+  if (record.detected)
+    await dbWrite.$executeRaw(suppressComFaceIntentRelockSql(modelId, record.textHash));
+  await recordComFaceIntent(modelId, record);
+}
+
 /** One face through the face-save path. A dry run swaps in writes that touch nothing. */
 export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   const { getOwnTriggerWords, recordComFaceIntent, lockForComFaceIntent, comFaceIntentTextHash } =
@@ -89,16 +107,23 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   // has one: a ruling made before `comFaceIntentRelockSuppressed` existed would go unseen, and a
   // bulk lock would override it. So any logged moderator nsfw ruling keeps the sweep's lock off.
   // An unlogged ruling may sit behind an early moderator action: those go to a moderator list.
-  let ruled: 'moderator-ruled' | 'moderator-list' | null = null;
+  const heldBack: 'moderator-ruled' | 'moderator-list' | null = (await moderatorRuledNsfwSince(
+    face.id,
+    new Date(0)
+  ))
+    ? 'moderator-ruled'
+    : face.touchedBeforeLogging
+    ? 'moderator-list'
+    : null;
+  let lockReached = false;
   // The resolver swallows a lock error into "not locked", after the verdict is stored. Kept apart
   // from a refusal: the lock may have committed (the replication-lag flag runs after it), and the
   // model is no longer a candidate, so it is found again by its stored detection without a lock.
   let lockError = false;
   const lock: ComFaceIntentWrites['lock'] = async (modelId, hash) => {
+    lockReached = true;
+    if (heldBack) return false;
     try {
-      if (await moderatorRuledNsfwSince(modelId, new Date(0))) ruled = 'moderator-ruled';
-      else if (face.touchedBeforeLogging) ruled = 'moderator-list';
-      if (ruled) return false;
       return apply
         ? await lockForComFaceIntent(modelId, hash)
         : notLockedReason(face, hash) === null;
@@ -108,7 +133,7 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
     }
   };
   const writes: ComFaceIntentWrites = {
-    record: apply ? recordComFaceIntent : async () => undefined,
+    record: !apply ? async () => undefined : heldBack ? recordHeldBack : recordComFaceIntent,
     lock,
   };
   const verdict = await resolveComFaceIntent(
@@ -118,7 +143,7 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   if (verdict.status !== 'detected') return verdict.status;
   if (verdict.disputable) return 'locked';
   if (lockError) return 'lock-error';
-  if (ruled) return ruled;
+  if (heldBack && lockReached) return heldBack;
   return notLockedReason(face, textHash) ?? 'lock-refused';
 }
 
@@ -219,6 +244,13 @@ export async function readCandidates(limit: number, apply: boolean) {
 
 class UsageError extends Error {}
 
+/** The private --list-out file: a new file only, owner-readable, one `<outcome>\t<model id>` line
+ *  per model, appended as it happens. */
+export function openIdOut(listOut: string) {
+  writeFileSync(listOut, '', { mode: 0o600, flag: 'wx' });
+  return (outcome: Outcome, id: number) => appendFileSync(listOut, `${outcome}\t${id}\n`);
+}
+
 /** The services' `logToAxiom` echoes each event, model id and error text included, to stdout outside
  *  production, which is how `tsscript` runs. Dropped here, counted: stdout stays counts only. */
 export function muteAxiomEcho() {
@@ -249,16 +281,14 @@ async function main() {
   // The apply's moderator list holds model ids: a private file, never an existing one.
   const listOut = arg('--list-out');
   if (apply && !listOut) throw new UsageError('--apply needs --list-out <new path>');
-  // The Mod Lead's ceiling on one apply's locks; a run that reaches it stops and goes back to her.
+  // A run that reaches the ceiling stops, so a person decides before more locks land.
   const maxLocks = Number(arg('--max-locks'));
   if (apply && (!Number.isInteger(maxLocks) || maxLocks < 1))
     throw new UsageError('--apply needs --max-locks <n>');
   if (listOut && existsSync(listOut)) throw new UsageError('--list-out exists; pass a new path');
   // Appended as each model is listed, since its verdict is already stored and a re-run skips it.
   // shortcut: a crash between that store and the append drops the id; re-read verdicts if one does.
-  if (apply && listOut) writeFileSync(listOut, '', { mode: 0o600, flag: 'wx' });
-  const onIdOut = (outcome: Outcome, id: number) =>
-    listOut && apply && appendFileSync(listOut, `${outcome}\t${id}\n`);
+  const onIdOut = apply && listOut ? openIdOut(listOut) : undefined;
 
   const { candidates, dangling, faces } = await readCandidates(limit, apply);
   const started = Date.now();
@@ -279,7 +309,6 @@ async function main() {
     ...outcomes,
     ownersLocked,
     failed,
-    // By event name and message only; the echo's model ids and error text are dropped.
     mutedLogLines: muted,
     elapsedSeconds: Math.round((Date.now() - started) / 1000),
   });

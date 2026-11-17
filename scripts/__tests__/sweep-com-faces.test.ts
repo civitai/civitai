@@ -38,9 +38,12 @@ vi.mock('~/server/services/model-sfw-face.service', async (importOriginal) => {
   return { ...actual, resolveComFaceIntent: mocks.resolve };
 });
 
-import '~/__tests__/mocks/db.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { comFaceIntentTextHash } from '~/server/services/model-com-face-intent.service';
-import { type Face, sweep, sweepOne } from '../oneoffs/sweep-com-faces';
+import { mkdtempSync, readFileSync, statSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
+import { type Face, openIdOut, sweep, sweepOne } from '../oneoffs/sweep-com-faces';
 
 const face = (over: Partial<Face> = {}): Face => ({
   id: 7,
@@ -67,6 +70,20 @@ const hash = comFaceIntentTextHash({
   triggerWords: ['tw'],
 });
 
+// A held-back detection is stored only behind the re-lock suppression, or the owner's next face
+// save would reuse it and lock. The pglite test shows the suppression stops that lock.
+function expectRelockSuppressedBeforeRecord() {
+  const execute = vi.mocked(dbMock.dbWrite.$executeRaw);
+  const call = execute.mock.calls.findIndex(([sql]) =>
+    String((sql as { sql?: string }).sql).includes('comFaceIntentRelockSuppressed')
+  );
+  expect(call).toBeGreaterThanOrEqual(0);
+  expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ detected: true }));
+  expect(execute.mock.invocationCallOrder[call]).toBeLessThan(
+    mocks.record.mock.invocationCallOrder[0]
+  );
+}
+
 describe('sweep-com-faces', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -86,6 +103,7 @@ describe('sweep-com-faces', () => {
       await expect(sweepOne(face(), apply)).resolves.toBe('moderator-ruled');
       expect(mocks.ruled).toHaveBeenCalledWith(7, new Date(0));
       expect(mocks.lock).not.toHaveBeenCalled();
+      if (apply) expectRelockSuppressedBeforeRecord();
     }
   );
 
@@ -107,7 +125,7 @@ describe('sweep-com-faces', () => {
     );
   });
 
-  // Decision (Mod Lead ruling): a model a moderator acted on before rulings were logged keeps its
+  // Decision: a model a moderator acted on before rulings were logged keeps its
   // stored verdict but is listed for moderators instead of locked. Don't fold it into `locked`.
   it.each([true, false])(
     'lists, never locks, a model touched before logging (apply %s)',
@@ -124,8 +142,7 @@ describe('sweep-com-faces', () => {
       });
       expect(listed).toEqual([['moderator-list', 7]]);
       expect(mocks.lock).not.toHaveBeenCalled();
-      if (apply)
-        expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ detected: true }));
+      if (apply) expectRelockSuppressedBeforeRecord();
     }
   );
 
@@ -212,8 +229,8 @@ describe('sweep-com-faces', () => {
     expect(mocks.record).not.toHaveBeenCalled();
   });
 
-  // Decision (Mod Lead ruling): an apply that would lock more than the ceiling stops and goes back
-  // to her. Faces in flight count against it, so concurrency never carries locks past it.
+  // Decision: an apply that would lock more than the ceiling stops, so a person decides. Faces in
+  // flight count against it, so concurrency never carries locks past it.
   // Run as a dry run: concurrent `await import()`s of a vi.mock'd module sometimes resolve to the
   // real one, so an apply here would hit the db mock. A would-lock counts against the cap the same.
   it('stops before a lock past --max-locks, at any concurrency', async () => {
@@ -226,5 +243,16 @@ describe('sweep-com-faces', () => {
       failed: {},
       unchecked: 3,
     });
+  });
+
+  // The list is the only way a lock is reversed or a listed model reviewed by id.
+  it('writes the id list to a new owner-only file, one outcome and id per line', () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), 'sweep-')), 'ids.tsv');
+    const write = openIdOut(file);
+    write('locked', 1);
+    write('moderator-list', 2);
+    expect(readFileSync(file, 'utf8')).toBe('locked\t1\nmoderator-list\t2\n');
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(() => openIdOut(file)).toThrow();
   });
 });

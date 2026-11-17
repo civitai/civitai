@@ -200,7 +200,7 @@ export type ComFaceIntentWrites = {
  * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
  * first made while the model was not mature, unless a moderator has ruled on its rating since.
  * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
- * owns the model. `writes` lets the one-off .com face sweep dry-run this exact path.
+ * owns the model. `writes` replaces how the verdict is stored and the lock added (e.g. no-ops).
  */
 export async function resolveComFaceIntent(
   { modelId, userId, ...listing }: ComFaceIntentListing & { modelId?: number; userId?: number },

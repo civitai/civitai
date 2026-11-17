@@ -4,12 +4,20 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 const db = new PGlite();
 const raw = pgliteRaw(db);
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: (...args: Parameters<typeof raw.queryRaw>) => raw.queryRaw(...args) },
-  dbWrite: {},
-}));
+vi.mock('~/server/db/client', () => {
+  const tx = {
+    $executeRaw: (...args: Parameters<typeof raw.executeRaw>) => raw.executeRaw(...args),
+    modActivity: { create: async () => undefined },
+  };
+  return {
+    dbRead: { $queryRaw: (...args: Parameters<typeof raw.queryRaw>) => raw.queryRaw(...args) },
+    dbWrite: { ...tx, $transaction: (fn: (t: typeof tx) => unknown) => fn(tx) },
+  };
+});
+vi.mock('~/server/db/db-lag-helpers', () => ({ preventReplicationLag: vi.fn() }));
 
-import { readCandidates } from '../oneoffs/sweep-com-faces';
+import { lockForComFaceIntent } from '~/server/services/model-com-face-intent.service';
+import { readCandidates, recordHeldBack } from '../oneoffs/sweep-com-faces';
 
 describe('sweep-com-faces candidates', () => {
   beforeAll(async () => {
@@ -62,7 +70,7 @@ describe('sweep-com-faces candidates', () => {
     expect(faces[0].lockedProperties).toEqual([]);
   });
 
-  // Decision (Mod Lead ruling): any actor but the system counts, moderator now or not, up to
+  // Decision: any actor but the system counts, moderator now or not, up to
   // 2026-10-21, the day after logging deployed. A list entry beats a lock: don't narrow either.
   it('flags any non-system action on the model or a version before 2026-10-21 only', async () => {
     const { faces } = await readCandidates(10, true);
@@ -73,6 +81,24 @@ describe('sweep-com-faces candidates', () => {
       9: true,
       10: false,
     });
+  });
+
+  // Decision: a held-back model's stored detection is reused by the owner's next face
+  // save, which would lock it over the ruling the sweep respected. Don't store it bare.
+  it("a held-back model's stored detection never locks on the next face save", async () => {
+    await db.exec(
+      `INSERT INTO "Model" (id, "userId", name, meta) VALUES (20, 1, 'held back', '{}')`
+    );
+    await recordHeldBack(20, { detected: true, textHash: 'h1' });
+    // What the owner's next face save runs for the reused detection of unchanged text.
+    await expect(lockForComFaceIntent(20, 'h1')).resolves.toBe(false);
+    const [row] = (
+      await db.query<{ locked: string[] | null; detected: string }>(
+        `SELECT "lockedProperties" AS locked, meta->'comFaceIntent'->>'detected' AS detected
+       FROM "Model" WHERE id = 20`
+      )
+    ).rows;
+    expect(row).toEqual({ locked: null, detected: 'true' });
   });
 
   it('caps the batch at --limit', async () => {
