@@ -62,11 +62,15 @@ function callersOf(fn: string): string[] {
 
 describe('block catalog maturity clamp ledger', () => {
   it('the viewer clamp callers are exactly the ledger', () => {
-    expect(callersOf('resolveCatalogViewerBrowsingLevel')).toEqual([...VIEWER_CLAMP_CALLERS].sort());
+    expect(callersOf('resolveCatalogViewerBrowsingLevel')).toEqual(
+      [...VIEWER_CLAMP_CALLERS].sort()
+    );
   });
 
   it('the domain-only clamp callers are exactly the ledger, each with a why', () => {
-    expect(callersOf('resolveCatalogBrowsingLevel')).toEqual(Object.keys(DOMAIN_CLAMP_CALLERS).sort());
+    expect(callersOf('resolveCatalogBrowsingLevel')).toEqual(
+      Object.keys(DOMAIN_CLAMP_CALLERS).sort()
+    );
     for (const why of Object.values(DOMAIN_CLAMP_CALLERS)) expect(why.length).toBeGreaterThan(20);
   });
 
