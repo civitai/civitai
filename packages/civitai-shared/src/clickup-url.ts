@@ -30,8 +30,9 @@ const HQ_HOST = 'hq.civitai.com';
 export const HQ_ORIGIN = `https://${HQ_HOST}`;
 /**
  * The one shape of an HQ task id, as HQ issues them: lower-case letters, digits, `_` and `-`
- * (`abc_def_9xyz`). Every reader of an HQ task id checks it against this, so an id one path
- * accepts is never one another refuses.
+ * (`abc_def_9xyz`). Shared by the intake reply check, `hqTaskFromUrl` and the feedback sync
+ * reader. Other readers (the stored-link matcher, the store gate, the HQ webhook) keep their
+ * own, looser or stricter, patterns.
  */
 export const HQ_TASK_ID_PATTERN = /^[a-z0-9_-]{1,100}$/;
 

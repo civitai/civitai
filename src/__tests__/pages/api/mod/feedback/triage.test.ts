@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock, resetSharedMocks } from '~/__tests__/mocks';
-import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
  * `/api/mod/feedback/triage`: a moderator's API key setting one feedback report's triage status.
@@ -32,11 +31,6 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-// The REAL error mapping: each status below is the shared TRPCError -> HTTP mapping answering, not a
-// copy of it. Nothing in the module needs stubbing.
-vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof EndpointHelpers>()),
-}));
 // The grant store: one `AppPageAccess` row, keyed by the path the check asks for.
 vi.mock('~/server/db/kyselyDb', () => {
   let path: unknown;

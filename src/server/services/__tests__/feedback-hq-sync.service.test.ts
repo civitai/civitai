@@ -630,31 +630,33 @@ describe('createHqFeedbackReader', () => {
 
   it('works the links it read when HQ holds more pages than one run reads, and counts the cut', async () => {
     const pages: number[] = [];
-    // Every page names one more link and offers a next page: the list never ends.
+    // Every page names one more link and offers a next page, for twice as many pages as one run
+    // reads: a broken cap then fails on the page count instead of looping forever.
+    const offered = MAX_PAGES * 2;
     const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
       const page = Number(new URL(String(input)).searchParams.get('cursor') ?? 0);
       pages.push(page);
       return ok({
         rows: [{ feedback_id: 990000400 + page, task: 't_open', area: AREA }],
-        next: String(page + 1),
+        ...(page + 1 < offered ? { next: String(page + 1) } : {}),
       });
     });
+    const lastRead = 990000400 + MAX_PAGES - 1;
     const reader = createHqFeedbackReader({ token: 'hq_secret', fetch: fetchFn as typeof fetch });
     const { d, calls, counted } = deps({
       rows: [
         { id: 990000400, status: 'new', handledById: null, hqTaskId: null },
-        { id: 990000424, status: 'new', handledById: null, hqTaskId: null },
+        { id: lastRead, status: 'new', handledById: null, hqTaskId: null },
         // Named only on a page past the cut: not visited.
-        { id: 990000425, status: 'new', handledById: null, hqTaskId: null },
+        { id: lastRead + 1, status: 'new', handledById: null, hqTaskId: null },
       ],
       tasks: { t_open: open },
     });
     d.listLinks = reader.listLinks;
     const summary = await runFeedbackHqSync(d);
-    expect(MAX_PAGES).toBe(25);
-    expect(pages).toHaveLength(25);
-    expect(calls.map((c) => c.id)).toEqual([990000400, 990000424]);
-    expect(summary).toMatchObject({ links: 25, linksTruncated: true, hqReadFailures: 0 });
+    expect(pages).toHaveLength(MAX_PAGES);
+    expect(calls.map((c) => c.id)).toEqual([990000400, lastRead]);
+    expect(summary).toMatchObject({ links: MAX_PAGES, linksTruncated: true, hqReadFailures: 0 });
     expect(counted).toMatchObject({ links_truncated: 1, moved_reviewed: 2 });
     expect(counted.hq_read_failed ?? 0).toBe(0);
   });
