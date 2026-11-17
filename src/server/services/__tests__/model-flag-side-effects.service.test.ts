@@ -34,7 +34,8 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 }));
 vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
 // Showcase busts query on their own; they are covered by version-showcase tests.
-vi.mock('~/server/services/version-showcase.service', () => ({
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustVersionShowcasesForModels: vi.fn(),
   bustVersionShowcasesForPosts: vi.fn(),
 }));

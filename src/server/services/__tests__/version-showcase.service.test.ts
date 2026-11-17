@@ -475,10 +475,14 @@ describe('setVersionShowcase: a valid save', () => {
   });
 
   it('still succeeds and notifies when the cover check after the save fails', async () => {
+    let injected = 0;
     const answer = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
     dbMock.dbWrite.$queryRaw.mockImplementation((async (query: { strings?: string[] }) => {
       const sql = (Array.isArray(query) ? query : query.strings ?? []).join('');
-      if (sql.includes('LEFT JOIN "Image" ci')) throw new Error('primary unavailable');
+      if (sql.includes('LEFT JOIN "Image" ci')) {
+        injected += 1;
+        throw new Error('primary unavailable');
+      }
       return answer(query as never);
     }) as never);
     await expect(
@@ -491,6 +495,7 @@ describe('setVersionShowcase: a valid save', () => {
       })
     ).resolves.toEqual({ modelVersionId: VERSION, site: 'red' });
     expect(notify).toHaveBeenCalledTimes(1);
+    expect(injected).toBe(1);
   });
 });
 

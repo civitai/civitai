@@ -93,6 +93,11 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
     return refreshShowcases;
   },
 }));
+const showcaseBust = vi.hoisted(() => vi.fn(async (_userId: number) => undefined));
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustVersionShowcasesForUser: showcaseBust,
+}));
 
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
@@ -536,5 +541,29 @@ describe('toggleBan -> reviews written from the posts its model unpublish takes 
         expect.objectContaining({ change: 'unpublish', postIds: [9] })
       )
     );
+  });
+});
+
+describe('toggleBan -> version showcases', () => {
+  it("takes a banned author's featured images out of every showcase, and back on an unban", async () => {
+    userFindUnique.mockResolvedValue({
+      bannedAt: null,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    await call();
+    expect(showcaseBust).toHaveBeenCalledTimes(1);
+    expect(showcaseBust).toHaveBeenCalledWith(USER_ID);
+
+    showcaseBust.mockClear();
+    userFindUnique.mockResolvedValue({
+      bannedAt: ALREADY_BANNED_AT,
+      meta: {},
+      username: 'someone',
+      email: null,
+    });
+    await call();
+    expect(showcaseBust).toHaveBeenCalledWith(USER_ID);
   });
 });

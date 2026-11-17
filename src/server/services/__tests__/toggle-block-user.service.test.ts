@@ -15,6 +15,13 @@ const { declinePlacementsOnBlock } = vi.hoisted(() => ({
 // module would pull the escrow -> Buzz -> prom chain into the test graph, which
 // survives today only because setup.ts happens to mock every link — the trap
 // documented at the top of src/__tests__/setup.ts.
+const showcaseBust = vi.hoisted(() =>
+  vi.fn(async (_userId: number, _ownerId?: number) => undefined)
+);
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustVersionShowcasesForUser: showcaseBust,
+}));
 vi.mock('~/server/services/placement-moderation.service', () => ({
   declinePlacementsOnBlock,
 }));
@@ -541,5 +548,22 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
 
     expect(queryWithTimeout).not.toHaveBeenCalled();
     expect(result.commentsHidden).toBeUndefined();
+  });
+});
+
+describe('toggleHidden kind=blockedUser — version showcases', () => {
+  it("takes each one's images out of the other's model showcases, and back on an unblock", async () => {
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    await block(true);
+    expect(showcaseBust).toHaveBeenCalledTimes(2);
+    expect(showcaseBust).toHaveBeenCalledWith(targetUserId, userId);
+    expect(showcaseBust).toHaveBeenCalledWith(userId, targetUserId);
+
+    showcaseBust.mockClear();
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+    await block(false);
+    expect(showcaseBust).toHaveBeenCalledTimes(2);
   });
 });

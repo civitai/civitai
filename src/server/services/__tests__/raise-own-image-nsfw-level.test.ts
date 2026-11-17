@@ -9,7 +9,8 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   updatePostNsfwLevel: updatePostNsfwLevelMock,
 }));
 const bustVersionShowcasesForPosts = vi.hoisted(() => vi.fn());
-vi.mock('~/server/services/version-showcase.service', () => ({
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   bustVersionShowcasesForPosts,
   getCarouselShowcaseIds: vi.fn(),
 }));

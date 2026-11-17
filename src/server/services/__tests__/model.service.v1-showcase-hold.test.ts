@@ -24,7 +24,8 @@ const { mockGetFilesForModelVersionCache, mockCancellableQuery, mockImagesCache,
     mockImagesCache: vi.fn(),
     mockCurated: vi.fn(),
   }));
-vi.mock('~/server/services/version-showcase.service', () => ({
+vi.mock('~/server/services/version-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   withCuratedShowcases: mockCurated,
 }));
 

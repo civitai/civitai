@@ -85,7 +85,6 @@ function communityImageConditions(): Prisma.Sql[] {
 }
 
 let versionShowcaseCacheInstance: ReturnType<typeof buildVersionShowcaseCache> | undefined;
-/** The version showcase cache, built on first use. */
 export const getVersionShowcaseCache = () =>
   (versionShowcaseCacheInstance ??= buildVersionShowcaseCache());
 

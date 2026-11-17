@@ -236,7 +236,6 @@ function ModelCardContent({ data, linkVersionId }: Props) {
       : undefined) ??
     data.images[0];
 
-  // A cover the creator featured from someone else's post is credited to its author.
   const coverCredit =
     image && 'authorUsername' in image && typeof image.authorUsername === 'string'
       ? image.authorUsername
