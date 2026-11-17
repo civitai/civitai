@@ -9,6 +9,8 @@ import {
   withArticle,
   heartsLeft,
   heartBackLine,
+  heartBackShort,
+  noticeTone,
   nextRankLine,
   rankPill,
   restartLosses,
@@ -40,6 +42,22 @@ describe('heartBackLine', () => {
 
   it('says nothing with no heart to win back', () => {
     expect(heartBackLine(null)).toBeNull();
+  });
+});
+
+describe('heartBackShort', () => {
+  it('is the compact count for the rail and the mobile meta row', () => {
+    expect(heartBackShort({ done: 1, needed: 25 })).toBe('1/25');
+    expect(heartBackShort(null)).toBeNull();
+  });
+});
+
+describe('noticeTone', () => {
+  it('is calm only when every notice is a close call', () => {
+    expect(noticeTone([{ consequence: 'close' }, { consequence: 'close' }])).toBe('calm');
+    expect(noticeTone([{ consequence: 'close' }, { consequence: 'warning' }])).toBe('alarm');
+    expect(noticeTone([{ consequence: 'smite' }])).toBe('alarm');
+    expect(noticeTone([])).toBe('alarm');
   });
 });
 

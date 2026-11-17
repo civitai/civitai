@@ -114,13 +114,13 @@
         type="text"
         inputmode="decimal"
         autocomplete="off"
-        placeholder="Knights default"
+        placeholder="Knights environment default"
         disabled={yesNoDefault}
         bind:value={() => yesNoPercent, (value) => ((yesNoPercent = value), (confirming = false))}
       />
       <p class="text-xs text-dark-2">
         0 stops serving yes/no questions; any other value serves them on the usual cadence. Takes
-        effect in Knights within a minute. Leave blank to keep the current value.
+        effect in Knights within about 30 seconds. Leave blank to keep the current value.
       </p>
       {#if settings.config.yesNoShare !== undefined}
         <div class="flex items-center gap-2" data-touch-target>

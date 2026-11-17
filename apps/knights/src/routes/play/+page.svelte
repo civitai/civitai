@@ -17,7 +17,7 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, noticeTone, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
@@ -94,6 +94,7 @@
     inFlight.landedOn = null;
   });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
+  let toastTone = $derived(noticeTone(data.notices));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
   // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
   // given right after "Onward" still records the card it appeared with.
@@ -677,8 +678,8 @@
   <div class="body">
   <div class="main">
   {#if data.notices.length > 0}
-    <section class="toast" role="status" aria-label="Skill check">
-      <Icon name="triangle-alert" size={18} />
+    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="Skill check">
+      <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
       <div class="toast-body">
         {#each data.notices as notice (notice.key)}
           <div class="check-notice" class:close={notice.consequence === 'close'}>
@@ -940,6 +941,11 @@
     color: var(--io-crimson-text);
     font: 400 13px/1.4 var(--io-font-ui);
   }
+  /* Close calls only: information, not an alarm. */
+  .toast.calm {
+    border-color: var(--io-gold);
+    color: var(--io-gold);
+  }
   .toast-body {
     flex: 1;
   }
@@ -1014,8 +1020,13 @@
     text-align: left;
   }
   .nudge-close {
-    min-height: 0;
-    padding: 0 6px;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
     border: 0;
     background: none;
     color: var(--io-parchment);

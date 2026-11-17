@@ -24,7 +24,7 @@
       <span class:lost={heart >= hearts}><Icon name="heart" size={32} /></span>
     {/each}
   </div>
-  <p class="count">{hearts} of {maxSmites} hearts left{#if back} · {back}{/if}</p>
+  <p class="count">{hearts} of {maxSmites} hearts left{#if back}{' · '}{back}{/if}</p>
   <p class="explain">
     Judging in bad faith earns smites. Each smite costs a heart, and right judgments win hearts
     back. Lose all {maxSmites} hearts and your career resets.

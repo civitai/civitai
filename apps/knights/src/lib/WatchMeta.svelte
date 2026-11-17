@@ -1,5 +1,6 @@
 <script lang="ts">
   import HeartsRow from './HeartsRow.svelte';
+  import { heartBackShort } from './chrome';
   import Icon from './Icon.svelte';
   import { untrack } from 'svelte';
   import { bump } from './motion';
@@ -49,7 +50,7 @@
       {/if}
     </span>
     <span class="cell"><span class="streak"><Icon name="flame" size={14} /><b>{streak}</b> {streak === 1 ? 'day' : 'days'}</span></span>
-    <span class="cell"><HeartsRow {hearts} {maxHearts} {heartBack} /></span>
+    <span class="cell"><HeartsRow {hearts} {maxHearts} {heartBack} />{#if heartBack}<span class="back">{heartBackShort(heartBack)}</span>{/if}</span>
     {#if onmore}
       <button type="button" class="cell more" aria-label="More stats" aria-haspopup="dialog" onclick={onmore}>
         <Icon name="chevron-down" size={16} />
@@ -59,6 +60,12 @@
 </div>
 
 <style>
+  /* Touch has no tooltip, so the count toward the next heart sits beside the hearts. */
+  .back {
+    margin-left: 6px;
+    color: var(--io-parchment-muted);
+    font-size: 12px;
+  }
   .meta {
     flex: none;
     box-sizing: border-box;
