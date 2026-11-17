@@ -1158,6 +1158,7 @@ export async function actOnStickerPlacement({
     placementId,
     action: action === 'approve' ? 'approve' : keptOff ? 'declineUnshowableHost' : 'decline',
     actorId: userId,
+    payout: 'background',
   });
 
   return { settled };
@@ -1504,6 +1505,7 @@ export async function actOnStickerPlacements({
 }) {
   const failed: number[] = [];
   let settled = 0;
+  const startedAt = Date.now();
 
   for (const placementId of placementIds) {
     try {
@@ -1527,6 +1529,17 @@ export async function actOnStickerPlacements({
       });
     }
   }
+
+  logToAxiom({
+    name: 'sticker-placement',
+    type: 'info',
+    message: 'owner action on placements',
+    action,
+    count: placementIds.length,
+    failed: failed.length,
+    payload: { settled },
+    durationMs: Date.now() - startedAt,
+  });
 
   return { considered: placementIds.length, settled, failed };
 }

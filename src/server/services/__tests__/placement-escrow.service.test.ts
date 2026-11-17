@@ -3153,3 +3153,133 @@ describe('a write inside the settlement transaction', () => {
     });
   });
 });
+
+describe('an owner approval that does not wait for the payout', () => {
+  const settledWithin = (promise: Promise<unknown>, ms = 50) =>
+    Promise.race([
+      promise.then(() => 'resolved' as const),
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), ms)),
+    ]);
+
+  const hangBuzz = () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    createBuzzTransaction.mockImplementationOnce(async () => {
+      await gate;
+      return { transactionId: 'buzz-tx' };
+    });
+    return release;
+  };
+
+  const holdFor = (placementId: number) =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId,
+      placerId: PLACER,
+      surface: 'sticker',
+      amount: 1000,
+    });
+
+  it('resolves while the Buzz call hangs, then pays the owner once and rewards them', async () => {
+    givenPlacement();
+    await holdFor(1);
+    const release = hangBuzz();
+
+    const settle = settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+      payout: 'background',
+    });
+
+    expect(await settledWithin(settle)).toBe('resolved');
+    expect(await settle).toMatchObject({ settled: true, placement: { status: 'approved' } });
+    expect(db.legs.get('1:toOwner')?.transactionId ?? null).toBeNull();
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+
+    // The sweep runs while the call is in flight: the attempt it just stamped
+    // keeps the leg out, so the owner is not paid a second time.
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+    expect(createBuzzTransaction).toHaveBeenCalledTimes(1);
+
+    release();
+    await vi.waitFor(() => expect(db.legs.get('1:toOwner')?.transactionId).toBe('buzz-tx'));
+    await vi.waitFor(() => expect(applyAcceptReward).toHaveBeenCalledTimes(1));
+
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+    expect(createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(createBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ toAccountId: OWNER, amount: 700 }),
+      expect.anything()
+    );
+  });
+
+  it('leaves a payout that never started for the sweep, which pays it once', async () => {
+    givenPlacement();
+    await holdFor(1);
+    lockState.available = false;
+
+    await settlePlacement({
+      placementId: 1,
+      action: 'approve',
+      actorId: OWNER,
+      payout: 'background',
+    });
+    await vi.waitFor(() => expect(db.legs.get('1:toOwner')).toBeDefined());
+    expect(createBuzzTransaction).not.toHaveBeenCalled();
+    expect(db.legs.get('1:toOwner')?.lastAttemptAt ?? null).toBeNull();
+
+    lockState.available = true;
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+    await sweepUnpaidLegs({ olderThanMinutes: 0 });
+
+    expect(createBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(db.legs.get('1:toOwner')?.transactionId).toBe('buzz-tx');
+  });
+
+  it('logs a failed background payout instead of rejecting the approval', async () => {
+    givenPlacement();
+    await holdFor(1);
+    createBuzzTransaction.mockRejectedValueOnce(new Error('buzz service down'));
+
+    await expect(
+      settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER, payout: 'background' })
+    ).resolves.toMatchObject({ settled: true });
+
+    await vi.waitFor(() =>
+      expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          message: 'background payout failed',
+          placementId: 1,
+        })
+      )
+    );
+    expect(db.legs.get('1:toOwner')?.transactionId ?? null).toBeNull();
+    expect(applyAcceptReward).not.toHaveBeenCalled();
+  });
+
+  // Every other caller keeps the default, and the default still waits.
+  it('still waits for the payout on the expiry sweep', async () => {
+    givenPlacement({ expiresAt: new Date(Date.now() - 60_000) });
+    await holdFor(1);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    refundMultiAccountTransaction.mockImplementationOnce(async () => {
+      await gate;
+      return {
+        externalTransactionIdPrefix: 'refund-tx',
+        refundedTransactions: [
+          { originalTransactionId: 'o', refundTransactionId: 'r', accountType: 'User', amount: 1 },
+        ],
+        totalRefunded: 1,
+      };
+    });
+
+    const expiry = expirePlacements();
+
+    expect(await settledWithin(expiry)).toBe('pending');
+    release();
+    expect(await expiry).toMatchObject({ expired: 1 });
+  });
+});

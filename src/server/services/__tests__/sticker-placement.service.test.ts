@@ -921,6 +921,17 @@ describe("a placement counts toward the image's Buzz counter", () => {
 
     expect(updateEntityMetricDetached).not.toHaveBeenCalled();
   });
+
+  // The owner is waiting on the button; a slow Buzz call must not hold it.
+  it.each(['approve', 'decline'] as const)('does not wait for the payout to %s', async (action) => {
+    givenApprovable();
+
+    await actOnStickerPlacement({ placementId: PLACEMENT, action, userId: OWNER });
+
+    expect(settlePlacement).toHaveBeenCalledWith(
+      expect.objectContaining({ placementId: PLACEMENT, payout: 'background' })
+    );
+  });
 });
 
 /**
