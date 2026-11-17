@@ -125,6 +125,23 @@ describe('update-timings', () => {
       { files: [{ ...f, collect: 130 }] },
       { files: [{ ...f, collect: 230 }] },
     ];
-    expect(buildTimings(perfs)).toEqual({ a: 187, b: 10 });
+    expect(buildTimings(perfs, { rounds: 0 }).files).toEqual({ a: 187, b: 10 });
+  });
+
+  it('divides out a uniformly slow runner, including for files only it measured', () => {
+    const run = (speed: number, files: Record<string, number>) => ({
+      files: Object.entries(files).map(([file, collect]) => ({ file, collect: collect * speed })),
+    });
+    const perfs = [
+      run(1, { a: 1000, b: 2000, c: 4000 }),
+      run(1, { a: 1000, b: 2000, d: 3000 }),
+      // 2x slower runner: shares a and b with the others; e is measured only here.
+      run(2, { a: 1000, b: 2000, e: 5000 }),
+    ];
+    const { files, factors } = buildTimings(perfs);
+    expect(factors.map((f) => Number(f.toFixed(6)))).toEqual([1, 1, 2]);
+    expect(files).toEqual({ a: 1000, b: 2000, c: 4000, d: 3000, e: 5000 });
+    // Raw, e would be recorded at twice its cost.
+    expect(buildTimings(perfs, { rounds: 0 }).files.e).toBe(10000);
   });
 });
