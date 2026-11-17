@@ -125,6 +125,27 @@ describe('queueModelsForImageChildTagChanges', () => {
     expect(modelsSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
 
+  // The minor rule reads no tags, so a minor-flag write cannot wait on the child-tag check.
+  it('queues the models of an image whose minor flag was written, without a child tag', async () => {
+    arm({ models: [700], childTagged: [] });
+
+    await queueModelsForImageChildTagChanges({ minorImageIds: [9] });
+
+    expect(query('"ModelVersion"')?.values[0]).toEqual([9]);
+    expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([7000]);
+    expect(queued()).toEqual([700]);
+  });
+
+  it('queues a model once for an image passed as both re-rated and minor-flagged', async () => {
+    arm({ models: [700], childTagged: [] });
+
+    await queueModelsForImageChildTagChanges({ levelImageIds: [9], minorImageIds: [9] });
+
+    expect(query('"TagsOnImageNew"')).toBeUndefined();
+    expect(modelsSearchIndex.queueUpdate).toHaveBeenCalledTimes(1);
+    expect(queued()).toEqual([700]);
+  });
+
   it('queues each model once, as an update, when several of its versions hold the images', async () => {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
       sqlText(sql).includes('"TagsOnImageNew"')

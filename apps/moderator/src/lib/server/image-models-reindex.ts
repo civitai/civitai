@@ -13,10 +13,12 @@ type ImageChildTagChanges = {
   tagWrites?: { imageId: number; tagId: number }[];
   /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
   levelImageIds?: number[];
+  /** Images whose minor flag was written; always queued, since the minor rule reads no tags. */
+  minorImageIds?: number[];
 };
 
 /**
- * For this app's tag and level writes: drops the cached tags and showcase images of the models whose
+ * For this app's tag, level and minor-flag writes: drops the cached tags and showcase images of the models whose
  * posts hold these images, then queues those models for a models-index rewrite. Never throws: it runs
  * after the tag or level write has committed. A failed attempt, the queue call included, is retried
  * once; a second failure is logged, with the image and model ids, and the requeue is dropped.
@@ -49,15 +51,22 @@ const logError = (error: unknown) => void logAxiomError(error, { name: 'image-mo
 /** What an attempt resolved before it failed, for the error log. */
 type Found = { imageIds?: number[]; modelIds?: number[] };
 
-const changedImageIds = ({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) => [
-  ...new Set([...tagWrites.map((x) => x.imageId), ...levelImageIds]),
+const changedImageIds = ({
+  tagWrites = [],
+  levelImageIds = [],
+  minorImageIds = [],
+}: ImageChildTagChanges) => [
+  ...new Set([...tagWrites.map((x) => x.imageId), ...levelImageIds, ...minorImageIds]),
 ];
 
 async function queueModels(
-  { tagWrites = [], levelImageIds = [] }: ImageChildTagChanges,
+  { tagWrites = [], levelImageIds = [], minorImageIds = [] }: ImageChildTagChanges,
   found: Found
 ) {
-  const imageIds = new Set(tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId));
+  const imageIds = new Set([
+    ...tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId),
+    ...minorImageIds,
+  ]);
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
   if (levelOnly.length) {

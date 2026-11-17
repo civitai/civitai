@@ -59,6 +59,7 @@ vi.mock('../article-cover-reindex', () => ({
 
 const { acceptImage } = await import('../image-moderation.service');
 const { queueArticlesForCoverImages } = await import('../article-cover-reindex');
+const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -157,5 +158,23 @@ describe('minor queue Accept', () => {
     vi.mocked(queueArticlesForCoverImages).mockClear();
     await acceptImage({ imageId: 1, userId: 2 });
     expect(queueArticlesForCoverImages).toHaveBeenCalledWith([1]);
+  });
+
+  it('queues the models whose showcase can hold each accepted image', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor' WHERE "id" = 1`);
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    await acceptImage({ imageId: 1, userId: 2 });
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [1] });
+  });
+
+  it('queues neither for an accept out of another queue (control)', async () => {
+    await db.query(`UPDATE "Image" SET "needsReview" = 'newUser' WHERE "id" = 1`);
+    vi.mocked(queueArticlesForCoverImages).mockClear();
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    await acceptImage({ imageId: 1, userId: 2 });
+    expect(queueArticlesForCoverImages).not.toHaveBeenCalled();
+    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalledWith(
+      expect.objectContaining({ minorImageIds: expect.anything() })
+    );
   });
 });

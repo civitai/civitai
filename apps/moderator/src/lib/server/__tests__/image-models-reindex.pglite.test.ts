@@ -109,6 +109,16 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
     expect(busted(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION)).toEqual([[10]]);
   });
 
+  // The minor rule reads no tags, so a minor-flag write cannot wait on the child-tag check.
+  it('queues the model of an image whose minor flag was written, without a child tag', async () => {
+    await tag(2, OTHER_TAG);
+
+    await queueModelsForImageChildTagChanges({ minorImageIds: [2] });
+
+    expect(queuedModels()).toEqual([{ entityType: 'model', entityIds: [100], action: 'update' }]);
+    expect(busted(REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION)).toEqual([[11]]);
+  });
+
   it('queues nothing for an image on no post', async () => {
     await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 3, tagId: CHILD_TAG }] });
 

@@ -1211,7 +1211,10 @@ export async function applyIngestionSideEffects({
     });
     // The scan writes "minor", which no trigger watches.
     await queueArticlesAndComicsForImages([image.id]);
-    await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
+    await queueModelsForImageChildTagChanges({
+      levelImageIds: [image.id],
+      ...(outcome.audit?.minor && { minorImageIds: [image.id] }),
+    });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
     try {

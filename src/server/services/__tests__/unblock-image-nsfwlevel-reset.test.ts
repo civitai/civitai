@@ -168,7 +168,7 @@ vi.mock('~/server/services/image-models-reindex.service', () => ({
 }));
 
 const { handleUnblockImages } = await import('../image.service');
-const { queueArticlesAndComicsForImages } = await import(
+const { queueModelsForImageChildTagChanges } = await import(
   '~/server/services/image-models-reindex.service'
 );
 const { resolveEntityAppeal } = await import('../report.service');
@@ -262,18 +262,9 @@ describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868
   });
 
   // An accept out of the minor queue rewrites "minor", which no trigger watches.
-  it('queues the articles the unblocked images cover', async () => {
+  it('queues the models and articles of the unblocked images', async () => {
     await handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any);
-    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([128489949]);
-  });
-
-  it('completes the unblock when the article requeue fails', async () => {
-    vi.mocked(queueArticlesAndComicsForImages).mockRejectedValueOnce(
-      new Error('chunk load failed')
-    );
-    await expect(
-      handleUnblockImages({ ids: [128489949], moderatorId: undefined } as any)
-    ).resolves.not.toThrow();
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [128489949] });
   });
 });
 

@@ -207,7 +207,10 @@ export async function acceptImage({
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
   // A minor-queue accept rewrites "minor", which no trigger watches.
-  if (nr === 'minor') await queueArticlesForCoverImages([imageId]);
+  if (nr === 'minor') {
+    await queueArticlesForCoverImages([imageId]);
+    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+  }
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.

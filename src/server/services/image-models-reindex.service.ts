@@ -13,6 +13,8 @@ type ImageChildTagChanges = {
   tagWrites?: { imageId: number; tagId: number }[];
   /** Images whose nsfwLevel may have changed; queued while they carry a child tag. */
   levelImageIds?: number[];
+  /** Images whose minor flag was written; always queued, since the minor rule reads no tags. */
+  minorImageIds?: number[];
 };
 
 /**
@@ -62,8 +64,15 @@ function logError(e: unknown) {
   });
 }
 
-async function queueChanged({ tagWrites = [], levelImageIds = [] }: ImageChildTagChanges) {
-  const imageIds = new Set(tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId));
+async function queueChanged({
+  tagWrites = [],
+  levelImageIds = [],
+  minorImageIds = [],
+}: ImageChildTagChanges) {
+  const imageIds = new Set([
+    ...tagWrites.filter((x) => childTagIds.has(x.tagId)).map((x) => x.imageId),
+    ...minorImageIds,
+  ]);
 
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
   if (levelOnly.length) {

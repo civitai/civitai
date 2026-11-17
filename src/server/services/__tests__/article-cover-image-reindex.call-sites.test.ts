@@ -4,8 +4,9 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * The writes to an image's minor flag, which no trigger watches, each queue the articles whose
- * cover or banner the image is. Rating writes reach the same queue through the image trigger and
- * the update-nsfw-levels job (job-queue-article-cover-reindex.test.ts).
+ * cover or banner the image is, and the models whose showcase can hold it. Rating writes reach the
+ * article queue through the image trigger and the update-nsfw-levels job
+ * (job-queue-article-cover-reindex.test.ts).
  */
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -26,7 +27,10 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
 import { toggleImageFlag, updateImagesFlag } from '~/server/services/image.service';
-import { queueArticlesAndComicsForImages } from '~/server/services/image-models-reindex.service';
+import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const IMAGE_ID = 88;
@@ -46,33 +50,58 @@ describe('a scan result, which writes the minor flag', () => {
     ingestion: ImageIngestionStatus.Scanned,
   } as unknown as ScanImage;
 
+  type Outcome = Parameters<typeof applyIngestionSideEffects>[0]['outcome'];
+  const audit = (minor: boolean) => ({ minor, poiTags: [], minorTags: [], reviewTags: [] });
+
   it('queues the articles the image covers', async () => {
     await applyIngestionSideEffects({
       image,
-      outcome: { ingestion: ImageIngestionStatus.Scanned } as Parameters<
-        typeof applyIngestionSideEffects
-      >[0]['outcome'],
+      outcome: { ingestion: ImageIngestionStatus.Scanned } as Outcome,
     });
     expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID]);
+  });
+
+  it('queues the models of an image the scan flagged minor', async () => {
+    await applyIngestionSideEffects({
+      image,
+      outcome: { ingestion: ImageIngestionStatus.Scanned, audit: audit(true) } as Outcome,
+    });
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      levelImageIds: [IMAGE_ID],
+      minorImageIds: [IMAGE_ID],
+    });
+  });
+
+  it('leaves an image the scan did not flag minor to the child-tag check (control)', async () => {
+    await applyIngestionSideEffects({
+      image,
+      outcome: { ingestion: ImageIngestionStatus.Scanned, audit: audit(false) } as Outcome,
+    });
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
   });
 });
 
 describe("a moderator's minor flag write", () => {
-  it('queues the articles the images cover', async () => {
+  it('queues the models and articles of the images', async () => {
     await updateImagesFlag({ ids: [IMAGE_ID, 89], flag: 'minor', value: true });
-    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID, 89]);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledTimes(1);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      minorImageIds: [IMAGE_ID, 89],
+    });
   });
 
-  it('queues the articles a toggled image covers', async () => {
+  it('queues the models and articles of a toggled image', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue({ minor: false } as never);
     await toggleImageFlag({ id: IMAGE_ID, flag: 'minor' });
-    expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID]);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledTimes(1);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ minorImageIds: [IMAGE_ID] });
   });
 
   it('queues nothing for a poi flag write (control)', async () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue({ poi: false } as never);
     await updateImagesFlag({ ids: [IMAGE_ID], flag: 'poi', value: true });
     await toggleImageFlag({ id: IMAGE_ID, flag: 'poi' });
+    expect(queueModelsForImageChildTagChanges).not.toHaveBeenCalled();
     expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
   });
 });

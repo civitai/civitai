@@ -1363,7 +1363,7 @@ export async function handleUnblockImages({
       dropBlockedImageDeleteQueue(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       // A minor-queue accept rewrites "minor", which no trigger watches.
-      queueArticlesAndComicsForImagesLazy(ids),
+      queueModelsForImageChildTagChanges({ minorImageIds: ids }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
       // Comic projects are gated on `Image.needsReview`/`ingestion`/
@@ -7664,13 +7664,6 @@ export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
 
-// Imported at the call, keeping the search-index side out of image.service's import graph.
-// Never throws: callers run it after their writes have committed.
-const queueArticlesAndComicsForImagesLazy = (imageIds: number[]) =>
-  import('~/server/services/image-models-reindex.service')
-    .then(({ queueArticlesAndComicsForImages }) => queueArticlesAndComicsForImages(imageIds))
-    .catch(handleLogError);
-
 export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -7684,7 +7677,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     data: { [flag]: !image[flag] },
   });
   await imageMetadataCache.refresh(id);
-  if (flag === 'minor') await queueArticlesAndComicsForImagesLazy([id]);
+  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: [id] });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7704,7 +7697,7 @@ export const updateImagesFlag = async ({
     data: { [flag]: value },
   });
   await imageMetadataCache.refresh(ids);
-  if (flag === 'minor') await queueArticlesAndComicsForImagesLazy(ids);
+  if (flag === 'minor') await queueModelsForImageChildTagChanges({ minorImageIds: ids });
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
