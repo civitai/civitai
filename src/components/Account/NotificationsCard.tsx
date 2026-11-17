@@ -6,6 +6,7 @@ import { NotificationTypeControl } from '~/components/Notifications/Notification
 import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
 import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
 import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { SystemEmailSettings } from '~/components/Notifications/SystemEmailSettings';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
@@ -116,6 +117,10 @@ export default function NotificationsCard() {
         </Card>
         <Divider label="Email Notifications" />
         <NewsletterToggle />
+        <Text size="sm" fw={500}>
+          App review emails
+        </Text>
+        <SystemEmailSettings />
       </Stack>
     </Card>
   );
