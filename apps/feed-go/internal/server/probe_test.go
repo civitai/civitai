@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +70,7 @@ var goldenProbeCases = []goldenProbeCase{
 	{"infinite", ProcedureInfinite, goldenMinInfinite, goldenSetup, (*Server).computeInfinite, SyntheticInfiniteRequest,
 		[]string{hydrate.CacheMetrics}, []string{hydrate.CacheTagIDs}, true},
 	{"model-getall", ProcedureModelGetAll, goldenMinModels, goldenSetupModels, (*Server).computeModelGetAll, SyntheticModelGetAllRequest,
-		[]string{hydrate.CacheUserCosmetics, CacheModelData}, []string{CacheModelFrames, hydrate.CacheTagIDs}, false},
+		[]string{hydrate.CacheUserCosmetics, CacheModelData}, []string{CacheModelFrames, CacheModelDecorations, hydrate.CacheTagIDs}, false},
 }
 
 // The registry holds exactly the procedures the golden cases cover (a new registration needs its
@@ -360,7 +362,7 @@ func TestClassifyProbe(t *testing.T) {
 	}
 }
 
-// With the misses computed (MissCompute), user-cosmetics, tag-ids and model-frame misses are served
+// With the misses computed (MissCompute), user-cosmetics, tag-ids, model-frame and model-decoration misses are served
 // Go-first and a metric-hash miss still is not: the classification follows the deployment's Sources,
 // not the static table.
 func TestClassifyProbeWithComputedMisses(t *testing.T) {
@@ -373,11 +375,17 @@ func TestClassifyProbeWithComputedMisses(t *testing.T) {
 	if result, missed := classifyProbe(nil, map[string]int{CacheModelFrames: 1}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelFrames}) {
 		t.Fatalf("a model-frames miss with computed misses: %s %v, want would_serve reporting it", result, missed)
 	}
+	if result, missed := classifyProbe(nil, map[string]int{CacheVersionImages: 3}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheVersionImages}) {
+		t.Fatalf("a version-images miss with computed misses: %s %v, want would_serve reporting it", result, missed)
+	}
+	if result, missed := classifyProbe(nil, map[string]int{CacheModelDecorations: 2}, false, computed); result != ProbeWouldServe || !reflect.DeepEqual(missed, []string{CacheModelDecorations}) {
+		t.Fatalf("a model-decorations miss with computed misses: %s %v, want would_serve reporting it", result, missed)
+	}
 	if result, _ := classifyProbe(nil, map[string]int{hydrate.CacheTagIDs: 1, hydrate.CacheMetrics: 1}, false, computed); result != ProbeWouldMiss {
 		t.Fatalf("a metrics miss with computed misses: %s, want would_miss", result)
 	}
 	// The same misses without a computation are would_miss (the arm can differ).
-	for _, c := range []string{hydrate.CacheUserCosmetics, hydrate.CacheTagIDs, CacheModelFrames} {
+	for _, c := range []string{hydrate.CacheUserCosmetics, hydrate.CacheTagIDs, CacheModelFrames, CacheModelDecorations, CacheVersionImages} {
 		if result, _ := classifyProbe(nil, map[string]int{c: 1}, false, plain); result != ProbeWouldMiss {
 			t.Fatalf("a %s miss without a computation: %s, want would_miss", c, result)
 		}
@@ -680,6 +688,184 @@ func TestProbeModelGetAllComputedFrameMiss(t *testing.T) {
 		for _, q := range env.server.Models.DB.(*goldenModelPG).Calls {
 			if strings.Contains(q, `IS DISTINCT FROM 'string'`) {
 				t.Fatal("the probe queried for a frame miss")
+			}
+		}
+		if after := cacheState(env.cache); !reflect.DeepEqual(after, before) {
+			t.Fatal("the probe wrote to the cache")
+		}
+	}
+}
+
+// goldenShowcaseColumns are the showcase lookup's columns, in its SELECT order.
+var goldenShowcaseColumns = []string{"id", "userId", "name", "url", "nsfwLevel", "width", "height", "hash", "type",
+	"metadata", "minor", "poi", "modelVersionId", "availability", "hasMeta", "hasPositivePrompt", "onSite", "remixOfId"}
+
+// goldenShowcaseRows is a cached showcase entry as the lookup's rows would return it: each image's
+// columns, the json ones as text, integers as int64.
+func goldenShowcaseRows(t *testing.T, e goldenRedisEntry) [][]any {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(e.Packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := hydrate.Unpack(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, _ := v.(map[string]any)
+	images, _ := entry["images"].([]any)
+	rows := make([][]any, 0, len(images))
+	for _, raw := range images {
+		img, _ := raw.(map[string]any)
+		row := make([]any, len(goldenShowcaseColumns))
+		for i, col := range goldenShowcaseColumns {
+			val := img[col]
+			switch col {
+			case "metadata", "remixOfId":
+				if val != nil {
+					j, err := json.Marshal(val)
+					if err != nil {
+						t.Fatal(err)
+					}
+					val = string(j)
+				}
+			case "id", "userId", "nsfwLevel", "width", "height", "modelVersionId":
+				if n, ok := hydrate.Int(val); ok {
+					val = int64(n)
+				}
+			}
+			row[i] = val
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// model.getAll's probe with the version showcases cold (highest-rated-signed-out: the shown versions
+// 6001 and 6003, then 6004, the version a cover lives on). Go computes them, and the probe looks them
+// up (on the replica, here the fixture's own cached rows) instead of answering "no entry", since a
+// model without images would be dropped and the probe would page on: would_serve with the 3 versions
+// reported, one read per lookup (2) over the 1 page, and nothing written. Without the computation the
+// same probe is would_miss on version-images (model-images-miss).
+func TestProbeModelGetAllComputedShowcaseMiss(t *testing.T) {
+	fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "highest-rated-signed-out.json"))
+	cold := *fx
+	cold.Expect.Fallback = "test-cache-emptied"
+	cold.Redis = map[string]goldenRedisEntry{}
+	showcases := map[int][][]any{}
+	for k, v := range fx.Redis {
+		if id, ok := strings.CutPrefix(k, hydrate.KeyVersionImages+":"); ok {
+			n, err := strconv.Atoi(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			showcases[n] = goldenShowcaseRows(t, v)
+			continue
+		}
+		cold.Redis[k] = v
+	}
+	if len(showcases) != 3 {
+		t.Fatalf("emptied %d showcase keys, want the fixture's 3", len(showcases))
+	}
+	for _, withCompute := range []bool{true, false} {
+		env := goldenSetupModels(t, &cold)
+		if !withCompute {
+			env.server.Models.Sources.(*hydrate.Sources).Compute = nil
+			env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+		}
+		pg := env.server.Models.DB.(*goldenModelPG)
+		lookups := 0
+		pg.Routes = append([]testkit.Route{{Match: `AS full_mv(id)`, Rows: func(args []any) (*testkit.Rows, error) {
+			lookups++
+			out := testkit.NewRows(goldenShowcaseColumns)
+			for _, id := range args[0].([]int) {
+				out.Data = append(out.Data, showcases[id]...)
+			}
+			return out, nil
+		}}}, pg.Routes...)
+		before := cacheState(env.cache)
+		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
+		rec := &hydrate.PresenceProbe{Checker: checker}
+		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		result, missed := classifyProbe(err, rec.Misses(), false, checker.MissReason)
+		if !slices.Contains(missed, "version-images") {
+			t.Fatalf("compute %v: missed %v (err %v), want version-images reported", withCompute, missed, err)
+		}
+		if !withCompute {
+			if result != ProbeWouldMiss || fallback.Reason(err) != "model-images-miss" || lookups != 0 {
+				t.Fatalf("no computation: %s (%v), %d lookups, want would_miss on model-images-miss and none", result, err, lookups)
+			}
+			continue
+		}
+		if result != ProbeWouldServe || err != nil {
+			t.Fatalf("computed: %s missed %v (err %v), want would_serve", result, missed, err)
+		}
+		_, pages := rec.FirstCheck()
+		if got := rec.Misses()["version-images"]; got != 3 {
+			t.Fatalf("version-images misses %d, want 3 (misses %v)", got, rec.Misses())
+		}
+		if reads := rec.DBReads()["version-images"]; pages != 1 || reads != 2 || lookups != 2 {
+			t.Fatalf("version-images reads %d (%d lookups) over %d pages, want 2 (2) over 1", reads, lookups, pages)
+		}
+		if after := cacheState(env.cache); !reflect.DeepEqual(after, before) {
+			t.Fatal("the probe wrote to the cache")
+		}
+	}
+}
+
+// model.getAll's probe with the model decorations cold (decoration-visible: one page of one model,
+// its hat cached): Go computes them, so would_serve with the one missed id reported, one read on the
+// one page, no decoration query sent and nothing written. Without the computation the same probe is
+// would_miss on model-decorations (model-decoration-miss).
+func TestProbeModelGetAllComputedDecorationMiss(t *testing.T) {
+	fx := goldenLoad(t, filepath.Join(goldenDir, "model-getall", "decoration-visible.json"))
+	cold := *fx
+	cold.Expect.Fallback = "test-cache-emptied"
+	cold.Redis = map[string]goldenRedisEntry{}
+	emptied := 0
+	for k, v := range fx.Redis {
+		if strings.HasPrefix(k, hydrate.KeyModelEvents+":") {
+			emptied++
+			continue
+		}
+		cold.Redis[k] = v
+	}
+	if emptied != 1 {
+		t.Fatalf("emptied %d model decoration keys, want the fixture's one", emptied)
+	}
+	for _, withCompute := range []bool{true, false} {
+		env := goldenSetupModels(t, &cold)
+		if !withCompute {
+			env.server.Models.Sources.(*hydrate.Sources).Compute = nil
+			env.server.Deps.Hydrator.(*hydrate.Sources).Compute = nil
+		}
+		before := cacheState(env.cache)
+		checker := env.server.Deps.Hydrator.(hydrate.PresenceChecker)
+		rec := &hydrate.PresenceProbe{Checker: checker}
+		err := probes[ProcedureModelGetAll].run(env.server, context.Background(), ProbeRequest{Input: cold.Request.Input, Headers: env.headers}, rec)
+		result, missed := classifyProbe(err, rec.Misses(), false, checker.MissReason)
+		if !slices.Contains(missed, "model-decorations") {
+			t.Fatalf("compute %v: missed %v, want model-decorations reported", withCompute, missed)
+		}
+		if !withCompute {
+			if result != ProbeWouldMiss || fallback.Reason(err) != "model-decoration-miss" {
+				t.Fatalf("no computation: %s (%v), want would_miss on model-decoration-miss", result, err)
+			}
+			continue
+		}
+		if result != ProbeWouldServe || err != nil {
+			t.Fatalf("computed: %s missed %v (err %v), want would_serve", result, missed, err)
+		}
+		_, pages := rec.FirstCheck()
+		if got := rec.Misses()["model-decorations"]; got != 1 {
+			t.Fatalf("model-decorations misses %d, want 1 (misses %v)", got, rec.Misses())
+		}
+		if reads := rec.DBReads()["model-decorations"]; pages != 1 || reads != 1 {
+			t.Fatalf("model-decorations reads %d over %d pages, want 1 over 1", reads, pages)
+		}
+		for _, q := range env.server.Models.DB.(*goldenModelPG).Calls {
+			if strings.Contains(q, `jsonb_typeof(c.data->'event') = 'string'`) {
+				t.Fatal("the probe queried for a decoration miss")
 			}
 		}
 		if after := cacheState(env.cache); !reflect.DeepEqual(after, before) {

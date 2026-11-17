@@ -144,7 +144,7 @@ export function RichTextEditor({
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
-  toolbarEnd,
+  compactToolbar = false,
   headingLevels = [1, 2, 3],
   ...props
 }: Props) {
@@ -485,10 +485,14 @@ export function RichTextEditor({
                 <RTE.ControlsGroup>
                   <RTE.Bold />
                   <RTE.Italic />
-                  <RTE.Underline />
-                  <RTE.Strikethrough />
-                  <RTE.ClearFormatting />
-                  {!withoutBlockContainers && <RTE.CodeBlock />}
+                  {!compactToolbar && (
+                    <>
+                      <RTE.Underline />
+                      <RTE.Strikethrough />
+                      <RTE.ClearFormatting />
+                      {!withoutBlockContainers && <RTE.CodeBlock />}
+                    </>
+                  )}
                   {addColors && (
                     <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
                   )}
@@ -511,7 +515,7 @@ export function RichTextEditor({
               {addLink && (
                 <RTE.ControlsGroup>
                   <RTE.Link />
-                  <RTE.Unlink />
+                  {!compactToolbar && <RTE.Unlink />}
                 </RTE.ControlsGroup>
               )}
 
@@ -553,12 +557,6 @@ export function RichTextEditor({
                 <RTE.ControlsGroup>
                   <InsertBlurbControl />
                 </RTE.ControlsGroup>
-              )}
-              {toolbarEnd && (
-                // Phone: its own row above the controls. Wider: the toolbar's right end.
-                <div className="order-first flex w-full items-center justify-end gap-2 sm:order-none sm:ml-auto sm:w-auto">
-                  {toolbarEnd}
-                </div>
               )}
             </RTE.Toolbar>
           )}
@@ -662,8 +660,11 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;
-    /** The surface's own actions (save state, delete), at the toolbar's right end. */
-    toolbarEnd?: React.ReactNode;
+    /**
+     * A short toolbar at every width, to fit one row on a phone: bold, italic and the link control only (an empty address in the link
+     * popover removes the link), for a surface that offers little markup.
+     */
+    compactToolbar?: boolean;
     /** The heading levels `heading` offers, for a surface whose stored allowlist omits some. */
     headingLevels?: Array<1 | 2 | 3>;
   };

@@ -130,3 +130,22 @@ export const isClickupTaskUrl = (url?: string | null): boolean => {
    */
   return /^[a-z0-9]+$/i.test(taskId);
 };
+
+/**
+ * The only HQ task link shape stored as a feedback row's `context.hq` or accepted by the triage API:
+ * `https://hq.civitai.com/t/<id>`, matched on the EXACT TEXT. A parsed URL normalises dot segments,
+ * percent-escapes, host case and a default port, so a link that parses to the task could still
+ * render, or be matched by id, as something else; refusing everything but the canonical text leaves
+ * nothing for the two readings to disagree on.
+ *
+ * Ids are what HQ issues today: lower-case letters, digits, `_` and `-` (`abc_def_9xyz`). That is
+ * WIDER than `isClickupTaskUrl`'s HQ branch, which refuses `_` and so refuses most current HQ ids;
+ * this function does not change that gate.
+ */
+export const HQ_TASK_URL_PREFIX = `https://${HQ_HOST}/t/`;
+const HQ_TASK_URL = /^https:\/\/hq\.civitai\.com\/t\/([a-z0-9_-]{1,100})$/;
+
+export const hqTaskFromUrl = (url?: string | null): { id: string; url: string } | null => {
+  const match = url ? HQ_TASK_URL.exec(url) : null;
+  return match ? { id: match[1], url: `${HQ_TASK_URL_PREFIX}${match[1]}` } : null;
+};
