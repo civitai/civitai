@@ -1214,9 +1214,9 @@ export async function moderateTrainingWorkflow(
   return { ok: true, moderationStatus: after };
 }
 
-/** How far back a pending gate can have been submitted: the longest default gate window plus slack for
- *  ledger ingestion. A run older than this has expired and been refunded. */
-const PENDING_WINDOW_MS = 49 * 3_600_000;
+/** How far back a pending gate can have been CHARGED. Must exceed the longest `DEFAULT_GATE_WINDOW_MS`:
+ *  the gate window runs from the step's start, not from the charge, so queue wait extends it. */
+const PENDING_WINDOW_MS = 72 * 3_600_000;
 /** Workflows read from the orchestrator per page load. Exported for tests. */
 export const MAX_PENDING_CANDIDATES = 300;
 const PENDING_READ_CONCURRENCY = 8;

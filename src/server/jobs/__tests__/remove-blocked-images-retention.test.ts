@@ -456,7 +456,7 @@ describe('remove-blocked-images retention clock', () => {
     await runJob();
 
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
-    expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true });
+    expect(deleteOptions()).toMatchObject({ retractPublicBlobs: true, moderatorDelete: true });
     // And persists exactly the rows it deleted, after deleting them.
     expect(mockPersistDeletedTakedowns).toHaveBeenLastCalledWith(
       await mockDeleteImages.mock.results.at(-1)?.value,
