@@ -527,10 +527,16 @@ describe('image-scan-result webhook - pipeline tests', () => {
 
       // blockImageFromRating already persisted Blocked. markImageScanError is
       // unconditional, so running it here would un-block the image.
-      const blocked = mockDbWrite.image.updateMany.mock.calls.find(
-        (call: any) => call[0].where.id === 13
-      );
-      expect(blocked?.[0].data.ingestion).toBe(ImageIngestionStatus.Blocked);
+      const blocked = mockDbWrite.$executeRaw.mock.calls
+        .map((call: any) =>
+          renderSql(Array.isArray(call[0]) ? call[0] : call[0].strings, call.slice(1))
+        )
+        .find(
+          (sql: any) =>
+            /"blockedFor" = CASE WHEN "blockedFor" = \$\d+ OR/.test(sql.text) &&
+            sql.params.at(-1) === 13
+        );
+      expect(blocked?.params).toContain(ImageIngestionStatus.Blocked);
 
       const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
         const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
@@ -682,9 +688,13 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return match ? update.params[Number(match[1]) - 1] : undefined;
       };
       return {
-        // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql).
-        ingestion: param('ingestion', `\\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
-        nsfwLevel: param('nsfwLevel'),
+        // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql), itself the
+        // ELSE arm of the stored-CSAM guard.
+        ingestion: param('ingestion', `CASE[\\s\\S]*?ELSE \\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
+        nsfwLevel: param(
+          'nsfwLevel',
+          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+\\s+ELSE \\$(\\d+)`
+        ),
         // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
         needsReview: param(
           'needsReview',

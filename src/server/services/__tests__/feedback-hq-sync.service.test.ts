@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createHqFeedbackReader,
+  MAX_PAGES,
   resolveTaskTarget,
   runFeedbackHqSync,
   runFeedbackHqSyncGuarded,
@@ -41,7 +42,10 @@ function deps(over: {
   const counted: Record<string, number> = {};
   const reads: string[] = [];
   const d: SyncDeps = {
-    listLinks: vi.fn(async () => (over.links ?? []).map((l) => ({ area: AREA, ...l }))),
+    listLinks: vi.fn(async () => ({
+      links: (over.links ?? []).map((l) => ({ area: AREA, ...l })),
+      truncated: false,
+    })),
     readRows: vi.fn(async (ids: number[]) =>
       (over.rows ?? []).filter((r) => ids.includes(r.id)).map((r) => ({ area: AREA, ...r }))
     ),
@@ -366,7 +370,10 @@ describe('runFeedbackHqSync: the area cross-check', () => {
       rows: [{ id: 990000313, status: 'new', handledById: null, hqTaskId: null }],
       tasks: { t_open: open },
     });
-    d.listLinks = vi.fn(async () => [{ feedbackId: 990000313, taskId: 't_open' }]);
+    d.listLinks = vi.fn(async () => ({
+      links: [{ feedbackId: 990000313, taskId: 't_open' }],
+      truncated: false,
+    }));
     await runFeedbackHqSync(d);
     expect(calls).toEqual([]);
     expect(counted).toMatchObject({ area_mismatch: 1 });
@@ -496,6 +503,22 @@ describe('runFeedbackHqSync: HQ failures', () => {
     ]);
     expect(counted).toMatchObject({ unresolved: 1 });
   });
+
+  it.each([
+    ['a path-shaped id', '../people'],
+    ['an upper-case id', 'T_UPPER'],
+  ])('neither reads nor writes for a link whose task id is %s', async (_label, taskId) => {
+    const { d, calls, reads, counted } = deps({
+      links: [{ feedbackId: 990000291, taskId }],
+      rows: [{ id: 990000291, status: 'new', handledById: null, hqTaskId: null }],
+      tasks: { [taskId]: open },
+    });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls).toEqual([]);
+    expect(reads).toEqual([]);
+    expect(summary.unresolved).toBe(1);
+    expect(counted).toMatchObject({ unresolved: 1 });
+  });
 });
 
 describe('runFeedbackHqSyncGuarded: preconditions', () => {
@@ -544,12 +567,13 @@ describe('createHqFeedbackReader', () => {
   const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 
   it('pages through the linked feedback items with the token, and drops rows without a task', async () => {
-    const seen: { url: string; auth: string | null }[] = [];
+    const seen: { url: string; auth: string | null; redirect: RequestRedirect | undefined }[] = [];
     const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const u = new URL(String(input));
       seen.push({
         url: u.pathname + u.search,
         auth: new Headers(init?.headers).get('authorization'),
+        redirect: init?.redirect,
       });
       return u.searchParams.get('cursor')
         ? ok({ rows: [{ id: 'fb-3', feedback_id: 3, task: 't_c', area: 'app-block' }] })
@@ -562,19 +586,26 @@ describe('createHqFeedbackReader', () => {
           });
     });
     const reader = createHqFeedbackReader({ token: 'hq_secret', fetch: fetchFn as typeof fetch });
-    expect(await reader.listLinks()).toEqual([
-      { feedbackId: 1, taskId: 't_a', area: 'apps-platform' },
-      { feedbackId: 3, taskId: 't_c', area: 'app-block' },
-    ]);
+    expect(await reader.listLinks()).toEqual({
+      links: [
+        { feedbackId: 1, taskId: 't_a', area: 'apps-platform' },
+        { feedbackId: 3, taskId: 't_c', area: 'app-block' },
+      ],
+      truncated: false,
+    });
     expect(seen).toHaveLength(2);
     expect(seen.every((s) => s.auth === 'Bearer hq_secret')).toBe(true);
+    // A redirect would replay the token to wherever it points.
+    expect(seen.every((s) => s.redirect === 'error')).toBe(true);
     expect(seen[0].url.startsWith('/api/v1/data/feedback_items?')).toBe(true);
     expect(seen[1].url).toContain('cursor=CUR');
     expect(seen[0].url).toContain('fields=feedback_id,task,area');
   });
 
   it('reads a task row, answers null for one HQ does not show, and throws on a server error', async () => {
-    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+    const redirects: (RequestRedirect | undefined)[] = [];
+    const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      redirects.push(init?.redirect);
       const path = new URL(String(input)).pathname;
       if (path === '/api/v1/data/tasks/t_a')
         return ok({
@@ -594,6 +625,40 @@ describe('createHqFeedbackReader', () => {
     });
     expect(await reader.readTask('t_missing')).toBeNull();
     await expect(reader.readTask('t_down')).rejects.toThrow('502');
+    expect(redirects).toEqual(['error', 'error', 'error']);
+  });
+
+  it('works the links it read when HQ holds more pages than one run reads, and counts the cut', async () => {
+    const pages: number[] = [];
+    // Every page names one more link and offers a next page, for twice as many pages as one run
+    // reads: a broken cap then fails on the page count instead of looping forever.
+    const offered = MAX_PAGES * 2;
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const page = Number(new URL(String(input)).searchParams.get('cursor') ?? 0);
+      pages.push(page);
+      return ok({
+        rows: [{ feedback_id: 990000400 + page, task: 't_open', area: AREA }],
+        ...(page + 1 < offered ? { next: String(page + 1) } : {}),
+      });
+    });
+    const lastRead = 990000400 + MAX_PAGES - 1;
+    const reader = createHqFeedbackReader({ token: 'hq_secret', fetch: fetchFn as typeof fetch });
+    const { d, calls, counted } = deps({
+      rows: [
+        { id: 990000400, status: 'new', handledById: null, hqTaskId: null },
+        { id: lastRead, status: 'new', handledById: null, hqTaskId: null },
+        // Named only on a page past the cut: not visited.
+        { id: lastRead + 1, status: 'new', handledById: null, hqTaskId: null },
+      ],
+      tasks: { t_open: open },
+    });
+    d.listLinks = reader.listLinks;
+    const summary = await runFeedbackHqSync(d);
+    expect(pages).toHaveLength(MAX_PAGES);
+    expect(calls.map((c) => c.id)).toEqual([990000400, lastRead]);
+    expect(summary).toMatchObject({ links: MAX_PAGES, linksTruncated: true, hqReadFailures: 0 });
+    expect(counted).toMatchObject({ links_truncated: 1, moved_reviewed: 2 });
+    expect(counted.hq_read_failed ?? 0).toBe(0);
   });
 
   it('refuses to request a task id that is not id-shaped', async () => {

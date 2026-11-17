@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as ImageService from '~/server/services/image.service';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
@@ -62,11 +61,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
   queryWithTimeout: h.queryWithTimeout,
-}));
-vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof MeilisearchClient>()),
-  metricsSearchClient: {},
-  getMetricsSearchClient: () => ({}),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {

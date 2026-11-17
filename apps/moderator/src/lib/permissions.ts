@@ -205,6 +205,14 @@ export const PERMISSIONS = [
   // Sends account registration emails to the model provider, a separate call from running turns. Also
   // needs User Lookup, where a moderator reads emails today.
   { id: 'assistant.emails', label: 'Let the mod assistant read account registration emails' },
+  // The `/cases` PAGE grant opens the takedown case list. These are the rights inside it. Three ids
+  // because the harms differ:
+  // - acting sends legal notices;
+  // - reading claimants' names and addresses is personal data, and every read is recorded;
+  // - resuming sends overrides a pause someone else (or the hourly ceiling) set.
+  { id: 'cases.act', label: 'Import, send, pause and act on takedown cases' },
+  { id: 'cases.pii', label: 'Read claimant and recipient details on takedown cases' },
+  { id: 'cases.unpause', label: 'Resume paused takedown notice sends' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];
