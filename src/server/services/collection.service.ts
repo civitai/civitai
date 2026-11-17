@@ -1247,12 +1247,17 @@ export const saveItemInCollections = async ({
           );
         }
 
+        // An existing entry's tag is changed only by its author or a manager; anyone else's re-save
+        // keeps it as it is.
+        const existing = existingItemsByCollection.get(collectionId);
+        const keepsTag = !!existing && existing.addedById !== userId && !permission.manage;
+
         return {
           addedById: userId,
           collectionId,
           status,
           [itemKey]: input[itemKey],
-          tagId,
+          tagId: keepsTag ? existing.tagId : tagId,
         };
       })
     )
