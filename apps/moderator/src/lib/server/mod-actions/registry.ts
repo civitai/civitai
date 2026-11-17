@@ -8,7 +8,12 @@ import {
   relabelBuildBatchInput,
 } from '@civitai/moderation';
 import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
-import { acceptImage, blockImage, ImageNotRestoredError } from '../image-moderation.service';
+import {
+  acceptImage,
+  blockImage,
+  ImageNotFoundError,
+  ImageNotRestoredError,
+} from '../image-moderation.service';
 import { recordAbuseRun } from '../abuse-detection.service';
 import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
@@ -34,10 +39,28 @@ type ModAction<T = any> = {
   handler: (input: T) => Promise<unknown>;
 };
 
-const notRestoredMessage = (ids: number[]) =>
-  ids.length > 1
-    ? `${ids.length} images were not restored: each can only be restored through its own review.`
-    : `Image ${ids[0]} was not restored: it can only be restored through its own review.`;
+const listIds = (ids: number[]) => ids.join(', ');
+
+const notRestoredMessage = (notRestored: number[], notFound: number[], restored: number[]) =>
+  [
+    notRestored.length > 1
+      ? `${notRestored.length} images were not restored: each can only be restored through its own review.`
+      : notRestored.length
+      ? `Image ${notRestored[0]} was not restored: it can only be restored through its own review.`
+      : '',
+    notFound.length > 1
+      ? `Images ${listIds(notFound)} were not found.`
+      : notFound.length
+      ? `Image ${notFound[0]} was not found.`
+      : '',
+    restored.length > 1
+      ? `Images ${listIds(restored)} were restored.`
+      : restored.length
+      ? `Image ${restored[0]} was restored.`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
 // Backs the main app's `image.moderate` (block/unblock over one or more ids). Single-image verdicts loop
 // the spoke services; the moderator UI always sends one id, but the batch shape is preserved.
@@ -46,13 +69,19 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   handler: async ({ ids, reviewAction, userId, ip, userAgent, canConfirmReRemoval }) => {
     const held: HeldRemoval[] = [];
     const notRestored: number[] = [];
+    const notFound: number[] = [];
+    const restored: number[] = [];
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
       if (reviewAction === 'unblock')
-        await acceptImage({ imageId, userId, restoreRemoved: true }).catch((e) => {
-          if (!(e instanceof ImageNotRestoredError)) throw e;
-          notRestored.push(imageId);
-        });
+        await acceptImage({ imageId, userId, restoreRemoved: true }).then(
+          () => restored.push(imageId),
+          (e) => {
+            if (e instanceof ImageNotRestoredError) notRestored.push(imageId);
+            else if (e instanceof ImageNotFoundError) notFound.push(imageId);
+            else throw e;
+          }
+        );
       else {
         const result = await blockImage({
           imageId,
@@ -67,8 +96,10 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
     }
     // A 409 so the main app shows the moderator why the image is still up.
     if (held.length) throw Object.assign(new Error(heldRemovalMessage(held)), { status: 409 });
-    if (notRestored.length)
-      throw Object.assign(new Error(notRestoredMessage(notRestored)), { status: 409 });
+    if (notRestored.length || notFound.length)
+      throw Object.assign(new Error(notRestoredMessage(notRestored, notFound, restored)), {
+        status: 409,
+      });
     return { count: ids.length };
   },
 };

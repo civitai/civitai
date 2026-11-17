@@ -13,13 +13,17 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+const { dbHandle, replicaHandle } = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  // Set to stand in for a replica that has not caught up; null reads the primary.
+  replicaHandle: { current: null as unknown },
+}));
 
 vi.mock('$env/dynamic/private', () => ({ env: {} }));
 vi.mock('../db', () => ({
   get dbRead() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
-    return dbHandle.current;
+    return replicaHandle.current ?? dbHandle.current;
   },
   get dbWrite() {
     if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
@@ -88,11 +92,14 @@ const CSAM = 1;
 const MODERATED = 2;
 
 let db: PGlite;
+let laggingReplica: PGlite;
 
 beforeAll(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+  laggingReplica = await freshPglite();
+  await laggingReplica.exec(SCHEMA);
 });
 
 beforeEach(async () => {
@@ -102,11 +109,14 @@ beforeEach(async () => {
       (${CSAM}, 7, 'Blocked', 'CSAM', 32, 'csam'),
       (${MODERATED}, 8, 'Blocked', 'moderated', 32, NULL);
   `);
+  replicaHandle.current = null;
 });
 
 afterAll(async () => {
   dbHandle.current = null;
+  replicaHandle.current = null;
   await db.close();
+  await laggingReplica.close();
 });
 
 const row = async (id: number) =>
@@ -138,11 +148,34 @@ describe('imageModerate unblock of a CSAM-blocked image', () => {
     // A 409 is what makes the main app show the moderator the image is still down.
     expect(answer).toMatchObject({
       status: 409,
-      message: `Image ${CSAM} was not restored: it can only be restored through its own review.`,
+      message: `Image ${CSAM} was not restored: it can only be restored through its own review. Image ${MODERATED} was restored.`,
     });
   });
 
   it('answers as before when nothing in the batch is CSAM-blocked', async () => {
     await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
+  });
+});
+
+describe('imageModerate unblock when the replica has not caught up', () => {
+  it('reads the primary and restores the image', async () => {
+    replicaHandle.current = new Kysely({ dialect: pgliteDialect(laggingReplica) });
+
+    await expect(unblock([MODERATED])).resolves.toEqual({ count: 1 });
+    expect(await row(MODERATED)).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      needsReview: null,
+    });
+  });
+
+  it('answers 409 for an id on neither, naming what it did restore', async () => {
+    const MISSING = 999;
+    const answer = await unblock([MISSING, MODERATED]).catch((e: unknown) => e);
+
+    expect(answer).toMatchObject({
+      status: 409,
+      message: `Image ${MISSING} was not found. Image ${MODERATED} was restored.`,
+    });
   });
 });

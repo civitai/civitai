@@ -95,6 +95,13 @@ export class ImageNotRestoredError extends Error {
   }
 }
 
+/** An explicit restore of an image that does not exist. */
+export class ImageNotFoundError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not found`);
+  }
+}
+
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
@@ -111,12 +118,18 @@ export async function acceptImage({
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
-  const img = await dbRead
-    .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
-    .where('id', '=', imageId)
-    .executeTakeFirst();
-  if (!img) return;
+  const readImage = (db: Kysely<DB>) =>
+    db
+      .selectFrom('Image')
+      .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
+      .where('id', '=', imageId)
+      .executeTakeFirst();
+  // A replica miss is usually lag, not a deleted image.
+  const img = (await readImage(dbRead)) ?? (await readImage(dbWrite));
+  if (!img) {
+    if (restoreRemoved) throw new ImageNotFoundError(imageId);
+    return;
+  }
   const nr = img.needsReview;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
