@@ -17,6 +17,7 @@ const {
   importBatch,
   resolveSending,
   retireNotice,
+  withdrawNotice,
   importSentJsonl,
   undoImport,
   ImportRefusedError,
@@ -333,6 +334,48 @@ describe('the batch', () => {
       .where('type', '=', 'notice_retired')
       .execute();
     expect(event).toMatchObject({ actor_id: 4, data: { previousError: 'Error:550' } });
+  });
+
+  it('withdraws a pending notice: never sent or exported, and no longer owed', async () => {
+    const rows = await notices();
+    const t4 = rows.filter((r) => r.notice_id === 'T4');
+    await withdrawNotice('backlog-test', t4[0].id, 'target restored', { actorId: 5, db });
+    expect(await sendNotice(t4[0].id, deps())).toBe('not-claimable');
+    expect(
+      (await exportUnsent('backlog-test', { actorId: 1, db })).map((r) => r.rowId)
+    ).not.toContain(t4[0].id);
+    await importSentJsonl('backlog-test', '', { actorId: 1, db });
+    await sendBatch('backlog-test', deps());
+    const counts = await batchCounts('backlog-test', { db });
+    expect(counts.find((c) => c.noticeId === 'T4')).toMatchObject({
+      expected: 2,
+      sent: 1,
+      dropped: 1,
+      failed: 0,
+      done: true,
+    });
+    const [event] = await db
+      .selectFrom('case_event')
+      .select(['actor_id', 'data'])
+      .where('type', '=', 'notice_withdrawn')
+      .execute();
+    expect(event).toMatchObject({ actor_id: 5, data: { reason: 'target restored' } });
+  });
+
+  it('refuses to withdraw a notice a send has already claimed or sent', async () => {
+    const [first, second] = await notices();
+    await db
+      .updateTable('case_notice')
+      .set({ status: 'sending' })
+      .where('id', '=', first.id)
+      .execute();
+    await expect(withdrawNotice('backlog-test', first.id, 'x', { actorId: 1, db })).rejects.toThrow(
+      /not a pending notice/
+    );
+    await sendNotice(second.id, deps());
+    await expect(
+      withdrawNotice('backlog-test', second.id, 'x', { actorId: 1, db })
+    ).rejects.toThrow(/not a pending notice/);
   });
 
   it('never retries an erased row, and does not count it as a relay refusal', async () => {
