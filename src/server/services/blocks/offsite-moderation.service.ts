@@ -567,14 +567,14 @@ async function flipBackingBlockStatus(
   return flip.count > 0;
 }
 
+const OWNER_RESTORE_UNAVAILABLE =
+  "This app can't be republished right now. Contact support if this persists.";
+
 /**
  * A block suspended over an open review hold (the late-hold re-suspend) stays suspended until a
  * moderator clears the hold, whichever path would restore it. Fails closed when the holds cannot
  * be read, as approve does.
  */
-const OWNER_RESTORE_UNAVAILABLE =
-  "This app can't be republished right now. Contact support if this persists.";
-
 async function assertNoOpenReviewHold(
   tx: Prisma.TransactionClient,
   appBlockId: string,

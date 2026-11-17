@@ -3931,7 +3931,8 @@ async function approveRequestUnderClaim(
       writeOnsiteListingIssueTrackerUrlByAppBlock,
     } = await import('./app-listing-issue-tracker.service');
     const issueTrackerAvailable = await isIssueTrackerColumnAvailable(dbWrite);
-    // Before any listing write below. If it fails, a late hold falls back to hiding the listing.
+    // Before any listing write below. A throw is caught by this block's catch (the approve goes
+    // on) and leaves no snapshot, so a late hold drafts the listing rather than restoring it.
     const { snapshotOnsiteListing } = await import('./publish-request-finalise.service');
     priorListing = await snapshotOnsiteListing(dbWrite, request.slug, {
       sourceRepoAvailable,
@@ -4955,7 +4956,10 @@ export type RetriggerBuildResult = {
   forgejoCommitSha: string;
 };
 
-/** A held version is approved but never built; re-triggering its build must not ship it. */
+/**
+ * No rebuild while the app has an open review hold: after a late hold the app is suspended and
+ * taken down, and rebuilding its last approved version would put it back live.
+ */
 async function assertNoOpenHoldForRetrigger(slug: string): Promise<void> {
   const { dbWrite } = await import('~/server/db/client');
   const { getOpenHoldsBySlug } = await import('./publish-request-holds.service');
@@ -5172,9 +5176,9 @@ export async function retriggerBuild(params: RetriggerBuildParams): Promise<Retr
     );
   }
 
-  // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
   await assertNoOpenHoldForRetrigger(request.slug);
 
+  // (6) Deploy-state gate (see assertRetriggerableDeployState for the definition).
   assertRetriggerableDeployState(
     request.deployState,
     request.deployUpdatedAt,
