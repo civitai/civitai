@@ -390,3 +390,36 @@ describe('the face check after a moderator unlocked from the model form', () => 
     expect((await row()).meta.comFaceIntent.overturnedAt).toBeTruthy();
   });
 });
+
+// A new prompt version never lifts a lock by itself: only a ruling or the existing lift paths do.
+describe('an intent lock when a new prompt version allows the listing', () => {
+  const OWNER = 1;
+  const stored = { name: 'Model', description: 'stored listing', triggerWords: [] };
+  const storedHash = comFaceIntentTextHash(stored);
+
+  it('passes the face check but keeps the lock', async () => {
+    await db.query(
+      `INSERT INTO "Model" (id, "lockedProperties", nsfw, meta, description) VALUES ($1, NULL, true, '{}', $2)`,
+      [MODEL, stored.description]
+    );
+    // Detected and locked under an earlier version (41); 42 is the active one.
+    await recordComFaceIntent(MODEL, { detected: true, textHash: storedHash, promptId: 41 });
+    expect(await lockForComFaceIntent(MODEL, storedHash)).toBe(true);
+    mockPreviewComFaceIntent.mockReset();
+    mockPreviewComFaceIntent.mockResolvedValue({
+      status: 'ok',
+      output: { detected: false, reason: 'r' },
+      promptId: 42,
+    });
+
+    await expect(
+      assertComFaceAllowed({ ...stored, modelId: MODEL, userId: OWNER })
+    ).resolves.toBeUndefined();
+
+    expect(mockPreviewComFaceIntent).toHaveBeenCalledTimes(1);
+    const after = await row();
+    expect(after.lockedProperties).toEqual(['nsfw']);
+    expect(after.meta.systemNsfwLock).toMatchObject({ source: 'com-face-intent' });
+    expect(after.meta.comFaceIntent).toMatchObject({ detected: false, promptId: 42 });
+  });
+});
