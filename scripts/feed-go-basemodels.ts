@@ -9,8 +9,8 @@
  *
  *   pnpm exec tsx scripts/feed-go-basemodels.ts
  *
- * `scripts/__tests__/feed-go-basemodels.test.ts` fails when the committed file differs from this
- * output, so the Go side cannot drift from the constants it mirrors.
+ * `scripts/__tests__/feed-go-basemodels.schema-drift.test.ts` fails when the committed file differs
+ * from this output, so the Go side cannot drift from the constants it mirrors.
  */
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';

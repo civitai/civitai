@@ -96,7 +96,7 @@ func (s *Sources) Page(ctx context.Context, req PageRequest) (*Page, error) {
 		out.Thumbs, err = s.thumbnailsFrom(gctx, videos, thumbs.Entries())
 		return
 	}))
-	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(); return }))
+	g.Go(safe.Go(func() (err error) { out.Metrics, err = metrics.result(gctx, s); return }))
 	g.Go(safe.Go(func() (err error) {
 		got, writable := tags.read()
 		if err := s.fillTagIDs(gctx, images, got, writable); err != nil {
