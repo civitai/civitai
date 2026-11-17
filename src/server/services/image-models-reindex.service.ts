@@ -17,8 +17,8 @@ type ImageChildTagChanges = {
 
 /**
  * Queue a search-index rewrite for the models whose posts hold these images (after re-reading their
- * cached tags and showcase images from the primary), and for the articles and comics using them as a
- * cover or banner. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
+ * cached tags and showcase images from the primary), for the articles and comics using them as a
+ * cover or banner, and for the collections and bounties whose documents show them. The models sync re-picks a model only when `Model.updatedAt` moves, so a change to
  * an image's child browsing tags or nsfwLevel reaches its model documents only through here.
  * Never throws: it runs after the tag or level write has committed. A failed attempt is retried once;
  * a second failure is logged and the requeue is dropped. The queue call does not throw when Redis
@@ -79,7 +79,11 @@ async function queueChanged({ tagWrites = [], levelImageIds = [] }: ImageChildTa
 
   if (!imageIds.size) return;
   const ids = [...imageIds];
-  await Promise.all([queueModels(ids), queueArticlesAndComics(ids)]);
+  await Promise.all([
+    queueModels(ids),
+    queueArticlesAndComics(ids),
+    queueCollectionsAndBounties(ids),
+  ]);
 }
 
 async function queueModels(imageIds: number[]) {
@@ -129,6 +133,29 @@ async function queueArticlesAndComics(imageIds: number[]) {
   await Promise.all([
     articleIds.length && articlesSearchIndex.queueUpdate(toUpdates(articleIds), { reason: REASON }),
     comicIds.length && comicsSearchIndex.queueUpdate(toUpdates(comicIds), { reason: REASON }),
+  ]);
+}
+
+async function queueCollectionsAndBounties(imageIds: number[]) {
+  // Call-site imports, as above: both modules reach image.service.
+  const [{ getCollectionIdsForImages, enqueueCollectionRebuild }, { bountiesSearchIndex }] =
+    await Promise.all([
+      import('~/server/services/collection-media-index'),
+      import('~/server/search-index/bounties.search-index'),
+    ]);
+  const [collections, bountyRows] = await Promise.all([
+    getCollectionIdsForImages({ imageIds, source: REASON, throwOnError: true }),
+    dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT DISTINCT "entityId" AS id FROM "ImageConnection"
+      WHERE "entityType" = 'Bounty' AND "imageId" = ANY(${imageIds}::int[])
+    `,
+    // The collections index reads these tags from the cache: refill it from the primary first.
+    tagIdsForImagesCache.refresh(imageIds).catch(logError),
+  ]);
+  await Promise.all([
+    enqueueCollectionRebuild({ ...collections, source: REASON }),
+    bountyRows.length &&
+      bountiesSearchIndex.queueUpdate(toUpdates(bountyRows.map((r) => r.id)), { reason: REASON }),
   ]);
 }
 

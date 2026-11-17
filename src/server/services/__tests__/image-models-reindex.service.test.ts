@@ -5,6 +5,11 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
 import { comicsSearchIndex } from '~/server/search-index/comics.search-index';
+import { bountiesSearchIndex } from '~/server/search-index/bounties.search-index';
+import {
+  enqueueCollectionRebuild,
+  getCollectionIdsForImages,
+} from '~/server/services/collection-media-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import {
@@ -21,6 +26,14 @@ vi.mock('~/server/search-index/articles.search-index', () => ({
 }));
 vi.mock('~/server/search-index/comics.search-index', () => ({
   comicsSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
+}));
+vi.mock('~/server/search-index/bounties.search-index', () => ({
+  bountiesSearchIndex: { queueUpdate: vi.fn(async () => undefined) },
+}));
+// Its own suites cover the image -> collection resolve; here only what is handed on is under test.
+vi.mock('~/server/services/collection-media-index', () => ({
+  getCollectionIdsForImages: vi.fn(async () => ({ collectionIds: [], truncated: false })),
+  enqueueCollectionRebuild: vi.fn(async () => ({ queued: 0, truncated: false })),
 }));
 // Hand-listed: the real image.service pulls in most of the server; only this cache is touched.
 vi.mock('~/server/services/image.service', () => ({
@@ -44,9 +57,11 @@ function arm({
   childTagged = [] as number[],
   articles = [] as number[],
   comics = [] as number[],
+  bounties = [] as number[],
 } = {}) {
   dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) => {
     const text = sqlText(sql);
+    if (text.includes('"ImageConnection"')) return bounties.map((id) => ({ id }));
     if (text.includes('"TagsOnImageNew"')) return childTagged.map((imageId) => ({ imageId }));
     if (text.includes('"Article"'))
       return [
@@ -237,5 +252,36 @@ describe('queueArticlesAndComicsForImages', () => {
 
     await expect(run).resolves.toBeUndefined();
     expect(queries().filter((q) => q.text.includes('"Article"'))).toHaveLength(2);
+  });
+});
+
+describe('queueModelsForImageChildTagChanges: collections and bounties', () => {
+  it('queues the collections and bounties showing an image whose child tag was written', async () => {
+    arm({ bounties: [70, 71] });
+    vi.mocked(getCollectionIdsForImages).mockResolvedValueOnce({
+      collectionIds: [30, 31],
+      truncated: false,
+    });
+
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: CHILD_TAG }] });
+
+    expect(getCollectionIdsForImages).toHaveBeenCalledWith(
+      expect.objectContaining({ imageIds: [7], throwOnError: true })
+    );
+    expect(enqueueCollectionRebuild).toHaveBeenCalledWith(
+      expect.objectContaining({ collectionIds: [30, 31] })
+    );
+    expect(idsQueuedOn(bountiesSearchIndex)).toEqual([70, 71]);
+    expect(query('"ImageConnection"')?.values[0]).toEqual([7]);
+    expect(tagRefresh).toHaveBeenCalledWith([7]);
+  });
+
+  it('queues neither for a write of other tags only', async () => {
+    arm({ bounties: [70] });
+
+    await queueModelsForImageChildTagChanges({ tagWrites: [{ imageId: 7, tagId: OTHER_TAG }] });
+
+    expect(getCollectionIdsForImages).not.toHaveBeenCalled();
+    expect(bountiesSearchIndex.queueUpdate).not.toHaveBeenCalled();
   });
 });
