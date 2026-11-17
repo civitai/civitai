@@ -40,6 +40,7 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import { canReadCollectionItems } from '~/server/services/collection-item-access';
 import { getComCoverState } from '~/server/services/model-cover.service';
 import { readModelAssociationTargetsViaKysely } from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
@@ -2593,6 +2594,8 @@ export async function getModelCollectionShowcaseHandler({
     if (!canSeeCollectionDetails(permissions)) return null;
 
     const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    // A viewer who may see the collection but not its items gets no count of them.
+    if (!canReadCollectionItems(permissions)) return { ...collection, itemCount: null };
     const [itemCount] = await getCollectionItemCount({
       collectionIds: [collection.id],
       status: CollectionItemStatus.ACCEPTED,

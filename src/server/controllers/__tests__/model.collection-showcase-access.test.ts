@@ -56,9 +56,9 @@ describe('the showcase collection shown on a model page', () => {
     expect(getCollectionById).not.toHaveBeenCalled();
   });
 
-  it('is shown to a contributor who can only write to it, as collection.getById shows them', async () => {
+  it('is shown to a contributor who can only write to it, without a count of its items', async () => {
     permissions.mockResolvedValue({ ...noAccess, write: true });
-    await expect(show({ id: 77 })).resolves.toMatchObject({ id: SHOWCASE, itemCount: 3 });
+    await expect(show({ id: 77 })).resolves.toMatchObject({ id: SHOWCASE, itemCount: null });
   });
 
   it('is shown to a signed-out viewer when the collection is public (control)', async () => {
