@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as IntentService from '~/server/services/model-com-face-intent.service';
 import type * as SfwFaceService from '~/server/services/model-sfw-face.service';
 import type * as TextScanPreview from '~/server/services/text-scan/preview';
+import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 
 const mocks = vi.hoisted(() => ({
   preview: vi.fn(),
@@ -19,6 +20,12 @@ vi.mock('@civitai/orchestration-client', () => ({
 vi.mock('~/server/services/text-scan/preview', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanPreview>()),
   previewComFaceIntent: mocks.preview,
+}));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanPrompt>()),
+  getActiveTextScanPrompts: vi.fn(async () => ({
+    'label:model-com-face-intent': { id: 111, key: 'label:model-com-face-intent', content: 'x' },
+  })),
 }));
 // Row reads and writes are faked; the hash, reuse and lock decisions are the real ones.
 vi.mock('~/server/services/model-com-face-intent.service', async (importOriginal) => ({
@@ -121,7 +128,7 @@ describe('sweep-com-faces', () => {
         modelId: 7,
         userId: 1,
       },
-      { record: mocks.record, lock: expect.any(Function) }
+      { record: mocks.record, lock: expect.any(Function), suppress: expect.any(Function) }
     );
   });
 

@@ -119,7 +119,10 @@ import {
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
 import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
-import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
+import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
 import { syncStoreItem } from '~/server/services/blocks/app-sub-listing-sync';
 import { resolveClientIp } from '~/server/utils/client-ip';
 import { rateLimitMetaFor } from '~/server/utils/rate-limit-error';
@@ -906,8 +909,7 @@ function privateMediaField(input: {
   if (input.data !== undefined) {
     const collected = collectSharedDataLeaves(input.data);
     if ('overflow' in collected) {
-      if (containsPrivateMediaUrl(JSON.stringify(input.data)))
-        return { field: 'data', fieldKind: 'value' };
+      if (valueContainsPrivateMediaUrl(input.data)) return { field: 'data', fieldKind: 'value' };
     } else {
       const leaf = collected.leaves.find((l) => containsPrivateMediaUrl(l.raw));
       if (leaf) {

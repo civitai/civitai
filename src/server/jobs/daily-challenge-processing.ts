@@ -1931,8 +1931,10 @@ export async function pickWinnersForChallenge(
             name: 'challenge-winner-duplicate-pick',
             message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${currentChallenge.challengeId}`,
             challengeId: currentChallenge.challengeId,
-            droppedUserIds: droppedWinners.map((entry) => entry.userId),
-            droppedPlaces: droppedWinners.map((entry) => entry.position),
+            payload: {
+              droppedUserIds: droppedWinners.map((entry) => entry.userId),
+              droppedPlaces: droppedWinners.map((entry) => entry.position),
+            },
           });
           recordChallengeWinnerDuplicatePick({
             // Defaulted the same way the judging call at ~:1365 defaults it: the judge row is typed
@@ -2218,11 +2220,15 @@ const duplicateImageColumns = [
   // copying the source's sortAt would be inert. Do not re-add it.
   'pHash',
 ];
-async function duplicateImage(imageId: number, userId: number) {
+// A lock on no rating (level 0) is not a rating: the copy is left unlocked, so its scan rates it.
+const duplicateImageColumnSql = (col: string) =>
+  col === 'nsfwLevelLocked' ? `(i."nsfwLevelLocked" AND i."nsfwLevel" <> 0)` : `i."${col}"`;
+
+export async function duplicateImage(imageId: number, userId: number) {
   const newImage = await dbWrite.$queryRawUnsafe<{ id: number }[]>(`
     INSERT INTO "Image" (${duplicateImageColumns.map((col) => `"${col}"`).join(', ')}, "userId")
     SELECT
-      ${duplicateImageColumns.map((col) => `i."${col}"`).join(', ')},
+      ${duplicateImageColumns.map(duplicateImageColumnSql).join(', ')},
       ${userId}
     FROM "Image" i
     WHERE i.id = ${imageId}
