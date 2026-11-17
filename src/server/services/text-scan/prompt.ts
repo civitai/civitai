@@ -280,9 +280,18 @@ export async function insertTextScanPrompt({
   return row;
 }
 
+/** A note's `revokes:<id>` as saved: stamped `holder-revokes:<id>` when its writer holds the key's
+ *  publish permission, and never stamped otherwise (a stamp the writer typed is undone). The stamp is
+ *  what counts, so a revocation outlives its writer's grant. */
+export function stampPromptRevocations(note: string | undefined, writerIsHolder: boolean) {
+  if (!note) return note;
+  const unstamped = note.replace(/holder-revokes:/gi, 'revokes:');
+  return writerIsHolder ? unstamped.replace(/\brevokes:(\d+)\b/g, 'holder-revokes:$1') : unstamped;
+}
+
 /** True when `content` is exactly an earlier version of `key`, written by one of `authorIds`, that no
- *  later version by one of `authorIds` revokes in its note (`revokes:<id>`). Saving it again restores
- *  that version. */
+ *  later version's stamped note revokes (`holder-revokes:<id>`, see `stampPromptRevocations`). Saving
+ *  it again restores that version. */
 export async function isRestorableTextScanPrompt({
   key,
   content,
@@ -297,13 +306,17 @@ export async function isRestorableTextScanPrompt({
     where: { key },
     select: { id: true, content: true, note: true, createdById: true },
   });
-  const byAuthor = (row: { createdById: number | null }) =>
-    row.createdById !== null && authorIds.includes(row.createdById);
   const revokedIds = new Set<number>();
-  for (const row of rows.filter(byAuthor))
-    for (const [, id] of row.note?.matchAll(/\brevokes:(\d+)\b/g) ?? [])
+  for (const row of rows)
+    for (const [, id] of row.note?.matchAll(/\bholder-revokes:(\d+)\b/g) ?? [])
       if (Number(id) < row.id) revokedIds.add(Number(id));
-  return rows.some((row) => row.content === content && byAuthor(row) && !revokedIds.has(row.id));
+  return rows.some(
+    (row) =>
+      row.content === content &&
+      row.createdById !== null &&
+      authorIds.includes(row.createdById) &&
+      !revokedIds.has(row.id)
+  );
 }
 
 export class MissingTextScanPromptError extends Error {

@@ -282,9 +282,9 @@ describe('mod/text-scan', () => {
     const rows = [
       { id: 77, content: 'V77', note: null, createdById: 1 },
       { id: 90, content: 'BY A MODERATOR', note: null, createdById: MOD },
-      { id: 100, content: 'BAD', note: 'revokes:111', createdById: 1 },
+      { id: 100, content: 'BAD', note: 'holder-revokes:111', createdById: 1 },
       { id: 111, content: 'V111', note: null, createdById: 1 },
-      { id: 112, content: 'V112', note: 'restore 111 revokes:100', createdById: 1 },
+      { id: 112, content: 'V112', note: 'restore 111 holder-revokes:100', createdById: 1 },
     ];
     const as = (permissions: string[]) => {
       session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions } };
@@ -343,6 +343,43 @@ describe('mod/text-scan', () => {
       ]);
       as(['textScanPromptPublish']);
       expect((await put('V111')).status).toBe(200);
+    });
+
+    it('keeps a version revoked after the revoking holder loses the grant', async () => {
+      // 115 was written by a holder (stamped at write) who no longer holds the grant.
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        { id: 77, content: 'V77', note: null, createdById: 1 },
+        { id: 115, content: 'V77', note: 'restore 77 holder-revokes:111', createdById: 2 },
+        { id: 111, content: 'V111', note: null, createdById: 1 },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('V111')).status).toBe(403);
+    });
+
+    it("lifts a revocation with a current holder's explicit restore", async () => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        ...rows,
+        { id: 116, content: 'BAD', note: 'reinstate 100', createdById: 1 },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('BAD')).status).toBe(200);
+    });
+
+    const putNote = (note: string) =>
+      call({ action: 'putPrompt', key: INTENT, content: 'V111', note });
+    const savedNote = () =>
+      (vi.mocked(runTextScanHarnessAction).mock.calls[0][0] as { note?: string }).note;
+
+    it("stamps a holder's revokes note at write time", async () => {
+      as(['textScanPromptPublish', 'textScanPromptPublishIntent']);
+      await putNote('restore 111 revokes:100');
+      expect(savedNote()).toBe('restore 111 holder-revokes:100');
+    });
+
+    it("never stamps a non-holder's note, and strips a stamp it supplies", async () => {
+      as(['textScanPromptPublish']);
+      await putNote('restore 111 revokes:100 Holder-Revokes:77');
+      expect(savedNote()).toBe('restore 111 revokes:100 revokes:77');
     });
 
     it('refuses a restore once its author no longer holds the per-key grant', async () => {
