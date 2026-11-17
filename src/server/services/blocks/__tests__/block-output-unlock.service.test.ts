@@ -243,6 +243,15 @@ describe("the 'pool' restriction: pay and unlock in place", () => {
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
+  it('an output opened between the plan and the charge is not charged for', async () => {
+    const f = fakes([LOCKED, UNLOCKED]);
+    const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
+    expect(result.outcome).toBe('not-restricted');
+    expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a total above the one the viewer confirmed, before the orchestrator write', async () => {
     const f = fakes([LOCKED]);
     const error = await rejection(unlockBlockOutput({ ...request(), expectedTotal: TOTAL - 1 }, f));
@@ -309,7 +318,7 @@ describe('failure paths: the lock is released, nothing else is touched', () => {
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
-  it('the re-read after the unlock failing', async () => {
+  it('the re-read before the charge failing: an error, nothing charged', async () => {
     let reads = 0;
     const f = fakes([LOCKED], {
       readWorkflow: vi.fn<D['readWorkflow']>(async () => {
@@ -321,6 +330,38 @@ describe('failure paths: the lock is released, nothing else is touched', () => {
     await expect(unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f)).rejects.toThrow(
       'orchestrator read timed out'
     );
+    expect(f.liftRestriction).not.toHaveBeenCalled();
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('the read-back after the charge failing still reports the charge and warns', async () => {
+    let reads = 0;
+    const f = fakes([LOCKED], {
+      readWorkflow: vi.fn<D['readWorkflow']>(async () => {
+        reads += 1;
+        if (reads <= 2) return LOCKED();
+        throw new Error('orchestrator read timed out');
+      }),
+    });
+    const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
+    expect(f.liftRestriction).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe('not-released');
+    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
+    expect(result.message).toBe(
+      "The unlock went through, but we couldn't load the output. Check again in a few minutes."
+    );
+    // The pre-lift snapshot: the output stays restricted, no url leaks.
+    expect(result.snapshot.outputs?.[1]).toMatchObject({ restricted: true });
+    expect(JSON.stringify(result)).not.toContain('r1.png');
+    expect(f.warnChargedNotReleased).toHaveBeenCalledWith({
+      userId: VIEWER,
+      workflowId: WF,
+      position: 1,
+      unlockBuzz: UNLOCK_PRICE,
+      plannedLevel: NsfwLevel.R,
+      servedLevel: null,
+      readBackFailed: true,
+    });
     expect(f.release).toHaveBeenCalledTimes(1);
   });
 
@@ -350,6 +391,7 @@ describe('failure paths: the lock is released, nothing else is touched', () => {
       unlockBuzz: UNLOCK_PRICE,
       plannedLevel: NsfwLevel.R,
       servedLevel: NsfwLevel.X,
+      readBackFailed: false,
     });
   });
 });

@@ -86,6 +86,10 @@ export const OUTPUT_UNLOCK_IN_PROGRESS_MESSAGE = 'This output is already being u
 export const OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE =
   'The unlock went through, but this output is rated above your browsing level, so it stays hidden.';
 
+/** The unlock was charged, but reading the result back failed. */
+export const OUTPUT_UNLOCK_READ_BACK_FAILED_MESSAGE =
+  "The unlock went through, but we couldn't load the output. Check again in a few minutes.";
+
 /**
  * The write got no response (our timeout): it may still land. Not retryable from here: the
  * workflow's lock is KEPT until its TTL, so a retry is refused as in progress until then.
@@ -259,8 +263,8 @@ export type OutputUnlockDeps = {
   /** The per-workflow lock; `null` when another unlock holds it. */
   acquireLock: () => Promise<(() => Promise<void>) | null>;
   /**
-   * A WARN for support and the moderation count: the lift charged, and the output was not
-   * released. Never an error path; the reply already reports the charge.
+   * A WARN for support: the lift charged, and the output was not released. Never an error
+   * path; the reply already reports the charge.
    */
   warnChargedNotReleased: (entry: ChargedNotReleased) => void;
 };
@@ -274,6 +278,8 @@ export type ChargedNotReleased = {
   /** The output's browsing level when the unlock was planned, and after the lift. */
   plannedLevel: number | null;
   servedLevel: number | null;
+  /** The read-back after the lift failed, so whether the output was released is unknown. */
+  readBackFailed: boolean;
 };
 
 export type OutputUnlockRequest = {
@@ -366,9 +372,8 @@ export async function unlockBlockOutput(
     deps.assertUnlockAllowed();
     await deps.assertUnlockReleasesOutput();
 
-    // Re-plan on a fresh read, still inside the lock, immediately before the charge: a rescan
-    // since the first read must not be charged for. What is left is the lift's own round trip,
-    // which the reply below reports honestly.
+    // Re-plan on a fresh read immediately before the charge: a rescan since the first read must
+    // not be charged for.
     const fresh = await deps.readWorkflow();
     const replan = planBlockOutputUnlock(fresh, request.claims, request.position, request.view);
     if (replan.kind === 'not-restricted') {
@@ -399,30 +404,39 @@ export async function unlockBlockOutput(
         message: OUTPUT_UNLOCK_INSUFFICIENT_FUNDS_MESSAGE,
       };
     }
-    // The lift was taken: every outcome from here reports the charge.
     const charged = { unlockBuzz: total };
-    const afterWorkflow = await deps.readWorkflow();
-    const after = outputAt(
-      afterWorkflow,
-      blockOutputCeilingFromClaims(request.claims),
-      request.position,
-      request.view
-    );
+    // A failed read-back must not turn a taken charge into an error with no charge reported.
+    let afterWorkflow: Workflow | null = null;
+    let after: ReturnType<typeof outputAt> | null = null;
+    try {
+      afterWorkflow = await deps.readWorkflow();
+      after = outputAt(
+        afterWorkflow,
+        blockOutputCeilingFromClaims(request.claims),
+        request.position,
+        request.view
+      );
+    } catch {
+      after = null;
+    }
 
-    if (!after.output || !isUnrestrictedOutput(after.output)) {
+    if (!after?.output || !isUnrestrictedOutput(after.output)) {
       deps.warnChargedNotReleased({
         userId: request.viewerUserId,
         workflowId: request.workflowId,
         position: request.position,
         unlockBuzz: total,
         plannedLevel: levelAt(fresh, request.position),
-        servedLevel: levelAt(afterWorkflow, request.position),
+        servedLevel: afterWorkflow ? levelAt(afterWorkflow, request.position) : null,
+        readBackFailed: after === null,
       });
       return {
         outcome: 'not-released',
-        snapshot: after.snapshot,
+        snapshot: after?.snapshot ?? replan.snapshot,
         charged,
-        message: OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE,
+        message: after
+          ? OUTPUT_UNLOCK_NOT_RELEASED_MESSAGE
+          : OUTPUT_UNLOCK_READ_BACK_FAILED_MESSAGE,
       };
     }
 
@@ -434,10 +448,15 @@ export async function unlockBlockOutput(
 
 /** The browsing level the orchestrator reports for the output at `position`; never sent to the app. */
 function levelAt(workflow: Workflow, position: number): number | null {
-  const { positions } = projectAppWorkflowWithPositions(workflow, {
-    maxBrowsingLevel: allBrowsingLevelsFlag,
-    serving: false,
-    mint: null,
-  });
-  return positions[position]?.image.nsfwLevel ?? null;
+  try {
+    const { positions } = projectAppWorkflowWithPositions(workflow, {
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      serving: false,
+      mint: null,
+    });
+    return positions[position]?.image.nsfwLevel ?? null;
+  } catch {
+    // Feeds a WARN only; a projection failure must not cost the viewer the charge report.
+    return null;
+  }
 }
