@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type { BlobState } from '~/server/services/orchestrator/blobRatings';
+import type { BlockOutputWorkflowFacts } from '~/server/services/blocks/block-output-restriction';
 
 // The media route reads the brake per viewer and the blob's current state; both are faked so
 // the route side of each parity row runs the real `judgeTicket`.
@@ -391,7 +392,7 @@ describe('parity: classifyBlockOutput and deriveOutputGate over one fixture tabl
     const polled = mintBlockOutput(
       classifyBlockOutput(
         { url, nsfwLevel: row.rating, type: 'image', blockedReason: row.blocked ?? null },
-        row.workflow ?? {},
+        (row.workflow ?? {}) as BlockOutputWorkflowFacts,
         { maxBrowsingLevel: row.level }
       ),
       { url, type: 'image', nsfwLevel: row.rating },
@@ -401,9 +402,7 @@ describe('parity: classifyBlockOutput and deriveOutputGate over one fixture tabl
     const poll: Verdict = 'url' in polled ? 'visible' : 'pending' in polled ? 'pending' : 'hidden';
 
     blobState.mockResolvedValue(
-      row.rating === null
-        ? { verdict: 'pending', nsfwLevel: null, blockedReason: null, location: null }
-        : rated(row.rating, row.blocked ?? null)
+      row.rating === null ? { verdict: 'pending' } : rated(row.rating, row.blocked ?? null)
     );
     const fetched = await resolveBlockMediaFetch(
       sealBlockMediaTicket({
