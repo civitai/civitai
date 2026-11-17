@@ -27,6 +27,8 @@ const REVIEW_TAGS_ONLY = 3; // its only tags are review tags the unblock disable
 const STILL_BLOCKED = 4; // a CSAM block the unblock did not lift
 const REASON_KEPT = 5; // Scanned, but a block reason is still on the row
 const OUT_OF_RETRIES = 6; // untagged, and its scans already ran out of retries
+const PRIOR_REVIEW = 7; // untagged, and a moderator already reviewed it
+const OTHER_ACTIVITY = 8; // untagged; its only mod activity rows are not image reviews
 
 let db: PGlite;
 
@@ -41,6 +43,7 @@ beforeAll(async () => {
       "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "blockedFor" text, "scanJobs" jsonb
     );
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "nsfwLevel" int, disabled boolean);
+    CREATE TABLE "ModActivity" ("entityType" text, "entityId" int, activity text);
     CREATE TABLE "JobQueue" (
       type "JobQueueType", "entityType" "EntityType", "entityId" int,
       PRIMARY KEY (type, "entityType", "entityId")
@@ -74,14 +77,19 @@ beforeEach(async () => {
   // and locked. The CSAM row keeps its block.
   await db.exec(`
     DELETE FROM "Image"; DELETE FROM "TagsOnImageDetails"; DELETE FROM "JobQueue";
+    DELETE FROM "ModActivity";
     INSERT INTO "Image" (id, ingestion, "nsfwLevel", "nsfwLevelLocked", "blockedFor", "scanJobs") VALUES
       (${UNTAGGED}, 'Scanned', 32, true, NULL, NULL),
       (${TAGGED}, 'Scanned', 32, true, NULL, NULL),
       (${REVIEW_TAGS_ONLY}, 'Scanned', 32, true, NULL, NULL),
       (${STILL_BLOCKED}, 'Blocked', 32, true, 'CSAM', NULL),
       (${REASON_KEPT}, 'Scanned', 32, true, 'Moderated', NULL),
-      (${OUT_OF_RETRIES}, 'Scanned', 32, true, NULL, '{"retryCount": 9}');
+      (${OUT_OF_RETRIES}, 'Scanned', 32, true, NULL, '{"retryCount": 9}'),
+      (${PRIOR_REVIEW}, 'Scanned', 32, true, NULL, NULL),
+      (${OTHER_ACTIVITY}, 'Scanned', 32, true, NULL, NULL);
     INSERT INTO "TagsOnImageDetails" VALUES (${TAGGED}, 4, false), (${REVIEW_TAGS_ONLY}, 4, true);
+    INSERT INTO "ModActivity" VALUES ('image', ${PRIOR_REVIEW}, 'review'),
+      ('image', ${OTHER_ACTIVITY}, 'block'), ('report', ${OTHER_ACTIVITY}, 'review');
   `);
 });
 
@@ -107,6 +115,24 @@ describe('resetBlockedNsfwLevel', () => {
       ingestion: 'Scanned',
       nsfwLevel: 0,
       queued: false,
+    });
+  });
+
+  it('does not re-audit an image a moderator reviewed before: no rescan, nothing queued', async () => {
+    await resetBlockedNsfwLevel([PRIOR_REVIEW]);
+    expect(await state(PRIOR_REVIEW)).toEqual({
+      ingestion: 'Scanned',
+      nsfwLevel: 0,
+      queued: false,
+    });
+  });
+
+  it('still rescans an image whose only mod activity is not an image review (control)', async () => {
+    await resetBlockedNsfwLevel([OTHER_ACTIVITY]);
+    expect(await state(OTHER_ACTIVITY)).toEqual({
+      ingestion: 'Rescan',
+      nsfwLevel: 0,
+      queued: true,
     });
   });
 

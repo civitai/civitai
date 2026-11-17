@@ -4,6 +4,7 @@ import {
   DEFERRED_BLOCK_EFFECT_TABLE_SQL,
   SET_ASIDE_TABLE_SQL,
 } from '../../../test/held-image-tables';
+import type { DB } from '@civitai/db-schema/kysely';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
@@ -32,7 +33,21 @@ vi.mock('../image-moderation-effects', async (importOriginal) => ({
   emailAppealResolution: vi.fn(async () => undefined),
   applyVisibilitySideEffects: vi.fn(async () => undefined),
 }));
-vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
+// Writes the row for real: whether an image was reviewed before decides whether it is rescanned.
+vi.mock('../mod-activity', () => ({
+  recordModActivity: vi.fn(
+    async (input: { entityType: string | null; entityId: number | null; activity: string }) => {
+      await (dbHandle.current as Kysely<DB>)
+        .insertInto('ModActivity')
+        .values({
+          entityType: input.entityType,
+          entityId: input.entityId,
+          activity: input.activity,
+        })
+        .execute();
+    }
+  ),
+}));
 // Disabling review tags writes TagsOnImageNew and recomputes; the recompute here is the stand-in's.
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
@@ -64,6 +79,7 @@ ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
@@ -245,6 +261,34 @@ describe('a restore that leaves the image with no rating', () => {
 
     expect(await imageRow()).toEqual({ ingestion: 'Rescan', nsfwLevel: 0, nsfwLevelLocked: false });
     expect(await queued()).toBe(1);
+  });
+
+  const reviews = async () =>
+    (
+      await db.query(
+        `SELECT 1 FROM "ModActivity" WHERE "entityType" = 'image' AND "entityId" = $1 AND "activity" = 'review'`,
+        [IMAGE_ID]
+      )
+    ).rows.length;
+
+  it('an accept still rescans: its own review row is written after the rescan', async () => {
+    await acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    expect(await reviews()).toBe(1);
+    expect(await imageRow()).toMatchObject({ ingestion: 'Rescan', nsfwLevel: 0 });
+    expect(await queued()).toBe(1);
+  });
+
+  it.each([
+    ['an approved appeal', approve],
+    ['an accept', () => acceptImage({ imageId: IMAGE_ID, userId: 2 })],
+  ])('%s does not re-audit an image a moderator reviewed before', async (_, restore) => {
+    await db.query(`INSERT INTO "ModActivity" VALUES ('image', $1, 'review')`, [IMAGE_ID]);
+
+    await restore();
+
+    expect(await imageRow()).toMatchObject({ ingestion: 'Scanned', nsfwLevel: 0 });
+    expect(await queued()).toBe(0);
   });
 
   it('keeps the ruling on an accept from the review queue: no rescan, nothing queued', async () => {

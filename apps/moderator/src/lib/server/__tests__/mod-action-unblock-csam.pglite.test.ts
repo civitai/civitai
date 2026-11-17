@@ -67,9 +67,12 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
-  "scannedAt" TIMESTAMP(3)
+  "scannedAt" TIMESTAMP(3),
+  "scanJobs" JSONB
 );
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
+CREATE TABLE "ModActivity" ("entityType" TEXT, "entityId" INTEGER, "activity" TEXT);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
   PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
@@ -166,6 +169,8 @@ describe('imageModerate unblock of a CSAM-blocked image', () => {
 describe('imageModerate unblock when the replica has not caught up', () => {
   it('reads the primary for the image, its review tags and the restore event', async () => {
     await db.exec(`INSERT INTO "ImageTagForReview" ("imageId", "tagId") VALUES (${MODERATED}, 5);`);
+    // What the (mocked) tag upsert leaves: the review tag, disabled. A tagged image is not rescanned.
+    await db.exec(`INSERT INTO "TagsOnImageDetails" VALUES (${MODERATED}, 5, TRUE);`);
     replicaHandle.current = new Kysely({ dialect: pgliteDialect(laggingReplica) });
     vi.mocked(trackImageRestore).mockClear();
 

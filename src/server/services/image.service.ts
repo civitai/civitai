@@ -1629,8 +1629,10 @@ export async function resetBlockedNsfwLevel(ids: number | number[]) {
 /**
  * The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
  * its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to
- * the scanner. An image with tags, live or disabled by a moderator, is left as it is: a rescan would
- * re-audit it over the moderator's ruling. One out of rescan retries goes to `Error` instead, where
+ * the scanner. An image with tags, live or disabled by a moderator, or with an earlier moderator
+ * review, is left as it is: a rescan would re-audit it over the moderator's ruling. The caller's own
+ * review row is written after this runs, so it does not count. One out of rescan retries goes to
+ * `Error` instead, where
  * the scan would leave it anyway, as `queueNeverScannedRescan` does.
  */
 export async function rescanUnratedImages(ids: number[]) {
@@ -1647,6 +1649,10 @@ export async function rescanUnratedImages(ids: number[]) {
       AND i."nsfwLevel" = 0
       AND i."blockedFor" IS NULL
       AND NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" t WHERE t."imageId" = i.id)
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModActivity" m
+        WHERE m."entityType" = 'image' AND m."entityId" = i.id AND m.activity = 'review'
+      )
     RETURNING i.id, i.ingestion
   `;
   const queued = rows.filter((r) => r.ingestion === ImageIngestionStatus.Rescan).map((r) => r.id);

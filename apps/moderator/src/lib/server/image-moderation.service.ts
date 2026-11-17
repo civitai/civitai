@@ -76,8 +76,9 @@ const recompute = async (imageId: number) => {
 // The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
 // its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to the
 // scanner, as the main app's rescanUnratedImages does. An image with tags, live or disabled by this
-// ruling, is left as it is: a rescan would re-audit it over the moderator's decision. One out of
-// rescan retries goes to Error instead.
+// ruling, or with an earlier moderator review, is left as it is: a rescan would re-audit it over the
+// moderator's decision. This accept's own review row is written after this runs, so it does not
+// count. One out of rescan retries goes to Error instead.
 const IMAGE_RESCAN_RETRY_LIMIT = 9; // the main app's IMAGE_RESCAN_RETRY_LIMIT (image-scan-failure.ts)
 const rescanIfUnrated = async (imageId: number) => {
   // Read first: most restores are rated, and need neither the tag check nor the write.
@@ -104,6 +105,17 @@ const rescanIfUnrated = async (imageId: number) => {
     .where('ingestion', '=', 'Scanned')
     .where('nsfwLevel', '=', 0)
     .where('blockedFor', 'is', null)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('ModActivity')
+            .select(sql<number>`1`.as('one'))
+            .where('entityType', '=', 'image')
+            .where('entityId', '=', imageId)
+            .where('activity', '=', 'review')
+        )
+      )
+    )
     .executeTakeFirst();
   if (outOfRetries || !updated.numUpdatedRows) return;
   await dbWrite
