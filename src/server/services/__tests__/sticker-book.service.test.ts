@@ -532,6 +532,24 @@ describe('getStickerBookSection — the drill-in page', () => {
     expect(placementGroupBy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['a scoped key', false],
+    ['a session (control)', true],
+  ])("serves the owner's own hidden book on %s: %s", async (_, owner) => {
+    creatorWithSettings({ hideStickerBook: true });
+
+    const section = await getStickerBookSection({
+      username: 'creator',
+      side: 'owner',
+      user: { id: CREATOR } as never,
+      asOwner: owner,
+      ...levels,
+    });
+
+    expect(section.isOwner).toBe(owner);
+    expect(section.access.canViewBook).toBe(owner);
+  });
+
   it('serves the hidden book to a moderator', async () => {
     creatorWithSettings({ hideStickerBook: true });
 

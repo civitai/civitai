@@ -71,7 +71,7 @@ describe.each([
   ['a full-access key (control)', key(TokenScope.Full), true],
   ['a session (control)', undefined, true],
 ])("a moderator's REST image search on %s", (_, context, elevated) => {
-  it('hydrates from the database with moderator and owner views: %s', async () => {
+  it('hydrates from the database with the same views', async () => {
     await search(context, { ids: [1] });
     expect(legacySearch).toHaveBeenCalledWith(
       expect.objectContaining({ asModerator: elevated, asOwner: elevated })
