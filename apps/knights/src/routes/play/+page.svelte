@@ -398,7 +398,7 @@
     }
   });
 
-  // A right skill-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
+  // A right hidden-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
   let cue = $state<string | null>(null);
   let cueTimer: ReturnType<typeof setTimeout> | undefined;
   const CUE_MS = 2500;
@@ -678,20 +678,22 @@
   <div class="body">
   <div class="main">
   {#if data.notices.length > 0}
-    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="Skill check">
+    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
       <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
       <div class="toast-body">
         {#each data.notices as notice (notice.key)}
           <div class="check-notice" class:close={notice.consequence === 'close'}>
             {#if notice.imageSrc}
-              <img class="check-thumb" src={notice.imageSrc} alt="The skill check image" loading="lazy" />
+              <img class="check-thumb" src={notice.imageSrc} alt="The judged image" loading="lazy" />
             {/if}
             <p>
               <strong>{notice.title}</strong>
               {notice.message}
-              <span class="check-answers">
-                You answered {notice.answerLabel}{#if notice.correctLabel}; the answer was {notice.correctLabel}{/if}.
-              </span>
+              {#if notice.consequence === 'smite'}
+                <span class="check-answers">
+                  You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
+                </span>
+              {/if}
             </p>
           </div>
         {/each}

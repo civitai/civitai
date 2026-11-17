@@ -21,7 +21,7 @@ import { servableReferences } from '../reference';
 import { resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
 import { gradeHiddenVotes, type CheckOutcome } from './settle';
-import { CLOSE_NOTICE, SMITE_NOTICE, WARNING_NOTICE, type Notice } from './notices';
+import { closeNotice, SMITE_NOTICE, warningNotice, type Notice } from './notices';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -351,17 +351,19 @@ export async function readHiddenNotices(db: Executor, playerId: number): Promise
     const labelOf = (value: string) => options.find((o) => o.value === value)?.label ?? value;
     const consequence =
       row.consequence === 'smite' ? 'smite' : row.consequence === 'close' ? 'close' : 'warning';
+    const answerLabel = labelOf(row.answer);
+    const correctLabel = row.correct ? labelOf(row.correct) : null;
     return {
       ...(consequence === 'smite'
         ? SMITE_NOTICE
         : consequence === 'close'
-        ? CLOSE_NOTICE
-        : WARNING_NOTICE),
+        ? closeNotice(correctLabel)
+        : warningNotice(correctLabel, answerLabel)),
       key: `${row.itemId}:${new Date(row.createdAt).getTime()}`,
       consequence,
       imageKey: row.servable && row.imageKey ? row.imageKey : null,
-      answerLabel: labelOf(row.answer),
-      correctLabel: row.correct ? labelOf(row.correct) : null,
+      answerLabel,
+      correctLabel,
     };
   });
 }

@@ -12,7 +12,9 @@ import { SMITES } from '../smites/config';
 import { activeSmiteCount } from '../smites/smites.service';
 import { DEFAULT_HIDDEN_CHECKS } from './config';
 import { answerHiddenCheck, readHiddenNotices } from './hidden.service';
-import { CLOSE_NOTICE, SMITE_NOTICE, SMITE_REASON, WARNING_NOTICE } from './notices';
+import { closeNotice, SMITE_NOTICE, SMITE_REASON, warningNotice } from './notices';
+
+const WARNING = { title: warningNotice(null, '').title };
 import { settleHiddenChecks } from './settle';
 
 const Q = 'knights.image.nsfwLevel';
@@ -168,14 +170,14 @@ describe('grading hidden checks', () => {
     expect(after.exp).toBe(before.exp);
     expect((await vote(1))[0]).toMatchObject({ verdict: 'failed', consequence: 'warning' });
     expect(await smites(1)).toHaveLength(0);
-    expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING_NOTICE]);
+    expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING]);
   });
 
   it('does not show a notice from before a career reset to the new career', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10, '4'), '16');
     await settle(minutes(31));
-    expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING_NOTICE]);
+    expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING]);
     await pg.query(
       `UPDATE "NewOrderPlayer" SET "startAt" = '2026-12-16T00:00:00Z' WHERE "userId" = 1`
     );
@@ -191,7 +193,7 @@ describe('grading hidden checks', () => {
       { size: SMITES.size, givenById: SMITES.systemGiverId, reason: SMITE_REASON },
     ]);
     // One notice per check, newest first.
-    expect(await readHiddenNotices(db, 1)).toMatchObject([SMITE_NOTICE, WARNING_NOTICE]);
+    expect(await readHiddenNotices(db, 1)).toMatchObject([SMITE_NOTICE, WARNING]);
     expect(SMITE_REASON).not.toMatch(/repeat|severe|another|24/i);
   });
 
@@ -343,6 +345,8 @@ describe('naming the check behind a notice', () => {
     await settle(minutes(31));
     const [notice] = await readHiddenNotices(db, 1);
     expect(notice).toMatchObject({ consequence: 'warning', imageKey: expect.any(String) });
+    // The warning names both judgments in its own words.
+    expect(notice).toMatchObject(warningNotice(notice.correctLabel, notice.answerLabel));
     expect(notice.answerLabel).not.toBe(notice.correctLabel);
     expect(notice.correctLabel).toBeTruthy();
   });
@@ -463,7 +467,8 @@ describe('an answer one level off the reference', () => {
     await seedPlayer(pg, 1);
     await answerNow(1, await reference(10, '4'), '8');
     const [notice] = await readHiddenNotices(db, 1);
-    expect(notice).toMatchObject({ ...CLOSE_NOTICE, consequence: 'close' });
+    expect(notice).toMatchObject({ ...closeNotice(notice.correctLabel), consequence: 'close' });
+    expect(notice.message).toContain(`The Order judged this image ${notice.correctLabel}`);
     expect(notice.correctLabel).toBeTruthy();
     expect(notice.correctLabel).not.toBe(notice.answerLabel);
   });

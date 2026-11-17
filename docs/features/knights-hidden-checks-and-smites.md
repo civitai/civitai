@@ -6,7 +6,11 @@ game and the new one agree. Values are in `src/lib/server/hidden/config.ts` (set
 
 ## Hidden checks (`src/lib/server/hidden`)
 
-Players see these as "skill checks"; the code, tables and config keep the name "hidden check".
+Players never see the mechanism: a graded check reads as the Order's ruling ("⚠️ The Order disagrees", "⚡ You have been
+smote", "≈ A near judgment", naming the Order's answer and the player's), and player-facing copy never says "skill check"
+(`src/lib/player-copy.test.ts`). The code, tables and config keep the name "hidden check". A smite's stored reason is
+`SMITE_REASON` ("The Order found a judgment false."); smites issued before 2026-11-17 carry "You failed a skill check. A smite
+penalty has been applied and cost you a heart.", so anything matching these smites by reason must match both.
 
 Known-answer images (`KnightsReferenceImage`, pool `hiddenCheck`) served in a Knight's feed beside queue items. A check is an
 ordinary vote in every way a player can see.
@@ -33,7 +37,7 @@ ordinary vote in every way a player can see.
 - An exact match is correct. A rating one level from the known answer, on either side (`isCloseAnswer`, `levelDistance` = 1;
   Blocked is not a level, so Blocked against the top level is a miss) is **close**: graded `inconclusive` for the player (no
   payout, no warning, no smite, not in accuracy, not an earlier failure for the warning rule) and marked `consequence = 'close'`,
-  so the notice ("Close call") and `/judgments` say it was close and name the known answer. Two or more levels off is failed as
+  so the notice ("≈ A near judgment") and `/judgments` say it was close and name the known answer. Two or more levels off is failed as
   before. Tick and inline grading share this through `gradeHiddenVotes`.
 - Grading counts the answer on its reference image (`answers`, `failures`); a close answer counts as a miss there, so a
   borderline reference still retires. A harvested check failed by more than
