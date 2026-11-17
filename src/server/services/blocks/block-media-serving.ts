@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { sessionClient } from '~/server/auth/session-client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
@@ -10,7 +10,10 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { recordBlockMediaVerdict } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordBlockMediaServingDegraded,
+  recordBlockMediaVerdict,
+} from '~/server/metrics/app-block-runtime.metrics';
 import {
   blockMediaUrl,
   openBlockMediaRef,
@@ -35,10 +38,10 @@ import {
  * either the entity id or the session context, so both are passed. A signed-out viewer is
  * `off` without asking Flipt. A viewer whose session does not resolve (the auth hub answers
  * "no such user" and every failure alike) is judged by entity id alone and treated as
- * anonymous downstream: the anonymous level, never the owner. An evaluation that throws is
- * `unknown`: never served, and an app-facing read restricts every media output rather than
- * handing out raw urls. Flipt unreachable pauses only a pod whose client never started; a
- * running pod keeps its last-known state.
+ * anonymous downstream: the anonymous level, never the owner, nothing offered for pay. No
+ * evaluation (an error, or a client that never started) is `unknown`: never served, and an
+ * app-facing read restricts every media output rather than handing out raw urls. A running
+ * pod that loses Flipt keeps its last-known state.
  */
 export type BlockMediaServing = 'on' | 'off' | 'unknown';
 export type BlockMediaServingDecision = { serving: BlockMediaServing; anonymous: boolean };
@@ -50,15 +53,17 @@ export async function decideBlockMediaServing(
   try {
     const flag = FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE;
     const user = (await sessionClient.getSessionUserById(viewerId)) as SessionUser | null;
-    if (!user) {
-      logServingDecision('no-session');
-      const on = await isFlipt(flag, String(viewerId));
-      return { serving: on ? 'on' : 'off', anonymous: true };
-    }
-    const on = await isFlipt(flag, String(viewerId), buildFliptContext(user));
-    return { serving: on ? 'on' : 'off', anonymous: false };
+    // The sync read, not `isFlipt`: that answers false for an evaluation error or a client
+    // that never started, where this needs to tell them apart from off.
+    await ensureFliptInitialized();
+    const on = user
+      ? isFliptSync(flag, String(viewerId), buildFliptContext(user))
+      : isFliptSync(flag, String(viewerId));
+    if (on === null) throw new Error('no flag evaluation');
+    if (!user) logServingDecision('no-session');
+    return { serving: on ? 'on' : 'off', anonymous: !user };
   } catch {
-    logServingDecision('eval-threw');
+    logServingDecision('eval-failed');
     return { serving: 'unknown', anonymous: false };
   }
 }
@@ -70,8 +75,9 @@ export async function resolveBlockMediaServing(
 }
 
 /** Counted after launch: decisions made without a session, or not made at all. */
-function logServingDecision(reason: 'no-session' | 'eval-threw') {
+function logServingDecision(reason: 'no-session' | 'eval-failed') {
   logToAxiom({ type: 'warning', name: 'app-block-media-serving-degraded', reason });
+  recordBlockMediaServingDegraded(reason === 'eval-failed' ? 'eval_failed' : 'no_session');
 }
 
 /** The level a signed-out viewer browses at, within the token's own ceiling. */
@@ -270,6 +276,7 @@ export async function resolveBlockOutputView(
     return {
       maxBrowsingLevel: anonymousBrowsingLevel(ceiling.maxBrowsingLevel),
       serving: true,
+      anonymous: true,
       mint: { userId, appBlockId: claims.appBlockId, anonymous: true },
     };
   }

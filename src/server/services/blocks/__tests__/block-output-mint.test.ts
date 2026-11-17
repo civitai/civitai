@@ -8,7 +8,8 @@ import type { BlockOutputWorkflowFacts } from '~/server/services/blocks/block-ou
 // the route side of each parity row runs the real `judgeTicket`.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (flag: string) => flag === 'app-blocks-workflow-media-serve',
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string) => flag === 'app-blocks-workflow-media-serve',
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: async (id: number) => ({ id, tier: 'free' }) },

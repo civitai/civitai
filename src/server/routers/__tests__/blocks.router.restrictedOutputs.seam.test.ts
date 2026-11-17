@@ -92,7 +92,8 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 const servingFlag = vi.hoisted(() => ({ on: false }));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (flag: string) =>
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string) =>
     flag === 'app-blocks-workflow-media-serve' ? servingFlag.on : false,
 }));
 vi.mock('~/server/auth/session-client', () => ({

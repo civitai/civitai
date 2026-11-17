@@ -8,9 +8,10 @@ import type * as UserPreferences from '~/server/services/user-preferences.servic
 /**
  * The media brake. `on` alone: on for everyone. `onlyFor`: on only for that user, matched on
  * the evaluation CONTEXT's `userId` as a Flipt segment constraint reads it, so a global
- * evaluation, or one without the session context, reads off. `throws`: evaluation fails.
+ * evaluation, or one without the session context, reads off. `unevaluated`: no evaluation, which
+ * the client's sync read reports as null (an evaluation error, or a client that never started).
  */
-const serving = { on: true, onlyFor: null as number | null, throws: false };
+const serving = { on: true, onlyFor: null as number | null, unevaluated: false };
 /** The entity id of every evaluation of the media brake. */
 const brakeEvaluations: Array<string | undefined> = [];
 const blobState = vi.fn<(blobId: string) => Promise<BlobState>>();
@@ -18,10 +19,11 @@ const blobState = vi.fn<(blobId: string) => Promise<BlobState>>();
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   // Only the media brake answers `serving`, so reading any other flag reads as off.
-  isFlipt: async (flag: string, entityId?: string, context?: Record<string, string>) => {
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string, entityId?: string, context?: Record<string, string>) => {
     if (flag !== 'app-blocks-workflow-media-serve') return false;
     brakeEvaluations.push(entityId);
-    if (serving.throws) throw new Error('flipt eval failed');
+    if (serving.unevaluated) return null;
     if (serving.onlyFor !== null) return context?.userId === String(serving.onlyFor);
     return serving.on;
   },
@@ -58,6 +60,7 @@ const {
   resolveWorkflowMediaRefs,
   resolveWorkflowMediaForBlockClaims,
   resolveBlockOutputView,
+  resolveBlockOutputRules,
   resolveBlockMediaServing,
 } = await import('~/server/services/blocks/block-media-serving');
 const { sealBlockMediaRef, sealBlockMediaTicket } = await import(
@@ -90,7 +93,7 @@ const rated = (nsfwLevel: string, blockedReason: string | null = null): BlobStat
 beforeEach(() => {
   serving.on = true;
   serving.onlyFor = null;
-  serving.throws = false;
+  serving.unevaluated = false;
   unresolvable.clear();
   blobState.mockReset();
   appAccess.mockReset().mockResolvedValue(undefined);
@@ -469,8 +472,8 @@ describe('🔴 the media brake is judged per viewer, at the route, on replay and
     expect(await pointsFor(5)).toEqual(PAUSED);
   });
 
-  it('an evaluation that throws reads off at every point', async () => {
-    serving.throws = true;
+  it('no evaluation reads off at every point', async () => {
+    serving.unevaluated = true;
     expect(await pointsFor(99)).toEqual(PAUSED);
   });
 
@@ -521,13 +524,32 @@ describe('🔴 the serve decision: off, on, or unknown', () => {
     expect(brakeEvaluations).toStrictEqual(['99']);
   });
 
-  it('an evaluation that throws is unknown: the poll restricts every media output, and it is logged', async () => {
-    serving.throws = true;
+  it('no evaluation is unknown: the poll restricts every media output, and it is logged', async () => {
+    serving.unevaluated = true;
     const view = await viewAs('user:99');
     expect(view).toMatchObject({ serving: false, servingUnknown: true, mint: null });
     expect(unknownLogs()).toStrictEqual([
-      { type: 'warning', name: 'app-block-media-serving-degraded', reason: 'eval-threw' },
+      { type: 'warning', name: 'app-block-media-serving-degraded', reason: 'eval-failed' },
     ]);
+  });
+
+  it('no evaluation counts one eval_failed decision; CONTROL: an answered decision counts none', async () => {
+    const degraded = async (reason: string) => {
+      const { default: promClient } = await import('prom-client');
+      const metric = promClient.register.getSingleMetric(
+        'civitai_app_block_media_serving_degraded_total'
+      ) as
+        | { get(): Promise<{ values: Array<{ labels: { reason?: string }; value: number }> }> }
+        | undefined;
+      return (await metric?.get())?.values.find((v) => v.labels.reason === reason)?.value ?? 0;
+    };
+    const before = await degraded('eval_failed');
+    serving.on = true;
+    await viewAs('user:99');
+    expect(await degraded('eval_failed')).toBe(before);
+    serving.unevaluated = true;
+    await viewAs('user:99');
+    expect(await degraded('eval_failed')).toBe(before + 1);
   });
 
   it('a viewer whose session does not resolve is judged by entity id alone, and it is logged', async () => {
@@ -611,6 +633,17 @@ describe('🔴 a viewer whose session does not resolve is anonymous downstream',
     const view = await viewOf(99);
     expect(view.maxBrowsingLevel).toBe(NsfwLevel.PG);
     expect(view.mint).toStrictEqual({ userId: 99, appBlockId: 'apb_1', anonymous: true });
+    // Carried on the rules too, so the unlock preview (minting nothing) offers nothing for pay.
+    expect(
+      (
+        await resolveBlockOutputRules({
+          sub: 'user:99',
+          appBlockId: 'apb_1',
+          maxBrowsingLevel: allBrowsingLevelsFlag,
+          viewerBrowsingLevel: NsfwLevel.R,
+        })
+      ).anonymous
+    ).toBe(true);
   });
 
   it('CONTROL: a signed-in R+ viewer mints at their own level, as themselves', async () => {

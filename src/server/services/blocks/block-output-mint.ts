@@ -28,11 +28,10 @@ export type BlockMediaMint = {
  */
 export type BlockOutputRules = BlockOutputCeiling & {
   serving: boolean;
-  /**
-   * The serve decision could not be made for this viewer (the evaluation threw, or the
-   * session did not resolve): every media output is restricted, never a raw url.
-   */
+  /** No serve decision could be made: every media output is restricted, never a raw url. */
   servingUnknown?: true;
+  /** The viewer's session did not resolve, so they are judged as signed out. */
+  anonymous?: true;
 };
 
 /**

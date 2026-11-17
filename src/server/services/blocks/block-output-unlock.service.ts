@@ -145,7 +145,10 @@ function snapshotAt(workflow: Workflow, view: BlockOutputView): BlockWorkflowSna
 }
 
 /** `resolveBlockOutputView(claims)` without its ceiling: the serving rules and mint. */
-export type OutputUnlockView = Pick<BlockOutputView, 'serving' | 'servingUnknown' | 'mint'>;
+export type OutputUnlockView = Pick<
+  BlockOutputView,
+  'serving' | 'servingUnknown' | 'anonymous' | 'mint'
+>;
 const NO_SERVING: OutputUnlockView = { serving: false, mint: null };
 
 /** Shown, or unlockable by paying: either way the viewer could see it under that ceiling. */
@@ -190,8 +193,8 @@ export function planBlockOutputUnlock(
   if (!output) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `output ${position} does not exist` });
   }
-  // No serve decision: nothing the lift released could be shown, so nothing is offered for pay.
-  if (view.servingUnknown) {
+  // No serve decision, or a viewer judged as signed out: nothing is offered for pay.
+  if (view.servingUnknown || view.anonymous) {
     return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
   }
   if (isUnrestrictedOutput(output)) return { kind: 'not-restricted', position, snapshot };

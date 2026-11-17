@@ -733,6 +733,30 @@ describe('🔴 no serve decision: nothing is offered or charged', () => {
   });
 });
 
+describe('🔴 a viewer judged as signed out: nothing is offered or charged', () => {
+  const SIGNED_OUT = { serving: true, anonymous: true as const, mint: null };
+
+  it('a pool-locked output is not offered for pay', () => {
+    expect(planBlockOutputUnlock(LOCKED(), RED_MATURE, 1, SIGNED_OUT)).toMatchObject({
+      kind: 'unavailable',
+    });
+  });
+
+  it('CONTROL: the same output for a signed-in viewer with serving on is offered for pay', () => {
+    expect(
+      planBlockOutputUnlock(LOCKED(), RED_MATURE, 1, { serving: true, mint: null })
+    ).toMatchObject({ kind: 'pay' });
+  });
+
+  it('the confirmed unlock is refused before the lift, nothing charged', async () => {
+    const f = fakes([LOCKED]);
+    await expect(
+      unlockBlockOutput({ ...request(), view: SIGNED_OUT, expectedTotal: TOTAL }, f)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
+  });
+});
+
 describe('the WARN level read failing', () => {
   afterEach(() => {
     projection.throws = false;
