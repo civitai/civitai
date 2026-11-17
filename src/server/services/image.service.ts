@@ -171,6 +171,7 @@ import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema
 import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -1546,6 +1547,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
   await Promise.all([refreshThumbnailCache(ids), refreshProfilePicturesForImages(ids)]);
+  await queueModelsForImageChildTagChanges({ levelImageIds: ids });
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -5862,6 +5864,8 @@ export const updateEntityImages = async ({
   images,
   userId,
   keysCheckedFor,
+  shownImageIds,
+  maxLinked,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
@@ -5870,6 +5874,15 @@ export const updateEntityImages = async ({
   userId: number;
   /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
   keysCheckedFor?: string[];
+  /**
+   * The linked images the edit form was shown. Only these can be removed by leaving them out of
+   * `images`: a capped read hides some links, and ratings can change between the read and the
+   * save. Without it, an edit that leaves out any linked image (hidden ones included) is refused
+   * and nothing is removed; `'all'` replaces the set, for a caller that read none.
+   */
+  shownImageIds?: number[] | 'all';
+  /** The most images the entity may have linked after the save, hidden ones included. */
+  maxLinked?: number;
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
@@ -5880,14 +5893,17 @@ export const updateEntityImages = async ({
     },
   });
 
-  // Delete any images that are no longer in the list.
-  await dbClient.imageConnection.deleteMany({
-    where: {
-      entityId,
-      entityType,
-      imageId: { notIn: images.map((i) => i.id).filter(isDefined) },
-    },
-  });
+  const keptIds = new Set(images.map((i) => i.id).filter(isDefined));
+  if (shownImageIds === undefined && connections.some((c) => !keptIds.has(c.imageId)))
+    throw throwBadRequestError(
+      'Reload the page and save again: this editor did not say which images it showed'
+    );
+  const shown = new Set(
+    shownImageIds === 'all' ? connections.map((c) => c.imageId) : shownImageIds
+  );
+  const removedIds = connections
+    .map((c) => c.imageId)
+    .filter((id) => shown.has(id) && !keptIds.has(id));
 
   const newImages = images.filter((x) => !x.id);
   const newLinkedImages = images.filter(
@@ -5899,6 +5915,19 @@ export const updateEntityImages = async ({
     const owned = await dbClient.image.count({ where: { id: { in: linkIds }, userId } });
     if (owned !== new Set(linkIds).size) throw throwAuthorizationError();
   }
+
+  // Counted before any write: links the form was not shown count too.
+  const linkedAfter =
+    connections.length - removedIds.length + new Set(linkIds).size + newImages.length;
+  if (linkedAfter === 0) throw throwBadRequestError('At least one example image must be uploaded');
+  // Only a save that grows the set is held to it: an entry already past it can still be edited.
+  if (maxLinked !== undefined && linkedAfter > maxLinked && linkedAfter > connections.length)
+    throw throwBadRequestError(`At most ${maxLinked} images can be linked`);
+
+  if (removedIds.length > 0)
+    await dbClient.imageConnection.deleteMany({
+      where: { entityId, entityType, imageId: { in: removedIds } },
+    });
 
   const links = [...linkIds];
   let imageRecords: {
@@ -6126,6 +6155,7 @@ async function afterImageNsfwLevelSet({
     // The version showcase is cached for a day and filtered by level when it is built.
     postId ? bustCachesForPosts(postId) : undefined,
   ]);
+  if (postId) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
   if (status) {
     await dbWrite.imageRatingRequest.updateMany({
       where: { imageId: id, status: 'Pending' },
@@ -6321,7 +6351,10 @@ export async function raiseOwnImageNsfwLevel({
   if (!raised) return false;
 
   await Promise.all([refreshThumbnailCache(id), refreshProfilePicturesForImages([id])]);
-  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  if (raised.postId) {
+    await updatePostNsfwLevel(raised.postId);
+    await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
+  }
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
   return true;
@@ -6519,6 +6552,7 @@ export async function resolveIngestionError({
     ids: [id],
     action: SearchIndexUpdateQueueAction.Update,
   });
+  if (image.postId) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
 
   await trackModActivity(userId, {
     entityType: 'image',
