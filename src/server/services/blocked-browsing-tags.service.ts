@@ -8,6 +8,7 @@ import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/servi
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { isViewerUsername } from '~/utils/is-viewer';
 import type { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 
 type AddonTarget = {
@@ -198,4 +199,19 @@ export async function getRequestImageFilter(
       ...image,
       tags: image.tags?.map((tag) => (typeof tag === 'number' ? tag : tag.id)),
     });
+}
+
+/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
+export async function isCoverShownByBrowsingRules(
+  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
+) {
+  if (!image) return true;
+  const [showsImage, flags] = await Promise.all([
+    getRequestImageFilter(ctx),
+    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+  ]);
+  // No row means its flags are unread: hidden, as unread tags are.
+  if (!flags) return false;
+  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
 }
