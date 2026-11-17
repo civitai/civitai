@@ -52,6 +52,7 @@ import {
 } from '~/components/HatTurf/detail/HatTurfDetailControls';
 import { HatTurfDetailProvider } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { renderWithProviders } from '../../../../test/component-setup';
+import { page } from 'vitest/browser';
 
 const FLAG = 7;
 const TURF = 9;
@@ -169,6 +170,26 @@ describe('image detail on a flag', () => {
     await vi.waitFor(() => expect(inPic(FLAG, 'flag-badge')).not.toBeNull());
     expect(inPic(FLAG, 'flag-badge')?.getAttribute('data-closed')).toBe('true');
     expect(flagFace()).toBeNull();
+  });
+});
+
+describe('the hat menu on a phone', () => {
+  // The phone bottom bar puts the button near the left edge, so the menu is pushed back on screen;
+  // its arrow must still point at the button.
+  test('points its arrow at the hat button', async () => {
+    await page.viewport(375, 700);
+    render({ large: true });
+    await vi.waitFor(() => expect(flagFace()).not.toBeNull());
+    flagFace()!.click();
+    const arrow = () =>
+      document.querySelector<HTMLElement>('.mantine-Popover-dropdown .mantine-Popover-arrow');
+    await vi.waitFor(() => expect(arrow()).not.toBeNull());
+    await new Promise((r) => setTimeout(r, 300));
+    const face = flagFace()!.getBoundingClientRect();
+    const a = arrow()!.getBoundingClientRect();
+    const middle = a.left + a.width / 2;
+    expect(middle).toBeGreaterThanOrEqual(face.left);
+    expect(middle).toBeLessThanOrEqual(face.right);
   });
 });
 

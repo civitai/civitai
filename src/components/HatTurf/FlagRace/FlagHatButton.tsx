@@ -79,6 +79,8 @@ export function FlagHatButton({
         withinPortal
         position="top-end"
         withArrow
+        // Measured from the button, not the menu's edge: a menu pushed back on screen still points at it.
+        arrowPosition="center"
         shadow="md"
       >
         <Popover.Target>
