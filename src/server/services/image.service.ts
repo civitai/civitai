@@ -2102,6 +2102,12 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   holdExempt?: boolean;
   // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
   galleryOwnerId?: number;
+  // Server-only: whether the request may act as a moderator (a session or full-scope key);
+  // defaults to the user's.
+  asModerator?: boolean;
+  // Server-only: whether the request may see the user's own unpublished, private and held images;
+  // default true. False for a narrow-scope key.
+  asOwner?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -2246,6 +2252,24 @@ function applyHideChallengesExclusion(input: {
   ];
 }
 
+/**
+ * The viewer an image feed's tag exclusions and moderator exemptions are resolved for. A
+ * narrow-scope key (`asModerator`/`asOwner` false) is neither a moderator nor the owner, so its
+ * own feed keeps the exclusions too.
+ */
+function feedViewer(input: {
+  user?: { id?: number; username?: string | null; isModerator?: boolean };
+  asModerator?: boolean;
+  asOwner?: boolean;
+}) {
+  const owner = input.asOwner !== false;
+  return {
+    id: owner ? input.user?.id : undefined,
+    username: owner ? input.user?.username ?? undefined : undefined,
+    isModerator: input.asModerator ?? input.user?.isModerator ?? false,
+  };
+}
+
 const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -2276,11 +2300,7 @@ const getAllImagesUncaptured = async (
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
 
-  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
-    id: input.user?.id,
-    username: input.user?.username,
-    isModerator: input.user?.isModerator,
-  });
+  const blockedEnforcement = await enforceBlockedBrowsingTags(input, feedViewer(input));
   if (blockedEnforcement.emptyResult) {
     noteEmptyIdsPage(input, 'blocked-tags');
     return { nextCursor: undefined, items: [] };
@@ -2367,7 +2387,8 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  const isModerator = user?.isModerator ?? false;
+  const isModerator = input.asModerator ?? user?.isModerator ?? false;
+  const ownerId = input.asOwner === false ? undefined : userId;
   // Moderators opting into the "pending review" collection filter get the same
   // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
@@ -2492,7 +2513,10 @@ const getAllImagesUncaptured = async (
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
   // [x]
-  if (notPublished && canRequestUnpublished({ isModerator, currentUserId: userId, targetUserId })) {
+  if (
+    notPublished &&
+    canRequestUnpublished({ isModerator, currentUserId: ownerId, targetUserId })
+  ) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!effectivePending) {
     // Strict published-only, with the owner carve-out gated on the `scheduled`
@@ -2526,9 +2550,9 @@ const getAllImagesUncaptured = async (
     // always was. A moderator's key does widen — they skip the availability
     // clause too — which shares one key across moderators rather than one each,
     // and cannot collide with a non-moderator's differently-shaped SQL.
-    if (userId && !publishedOnly && scheduled) {
+    if (ownerId && !publishedOnly && scheduled) {
       AND.push(
-        Prisma.sql`(p."publishedAt" < now() OR (p."userId" = ${userId} AND p."publishedAt" > now()))`
+        Prisma.sql`(p."publishedAt" < now() OR (p."userId" = ${ownerId} AND p."publishedAt" > now()))`
       );
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
@@ -2537,19 +2561,19 @@ const getAllImagesUncaptured = async (
 
   if (!isModerator) {
     AND.push(
-      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${ownerId})`
     );
     // Same rule as the Meilisearch feeds: any block reason hides the image from everyone but its owner.
-    AND.push(...imageBlockedForConditions({ userId }));
+    AND.push(...imageBlockedForConditions({ userId: ownerId }));
   }
 
   if (disablePoi) {
-    AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
+    AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${ownerId})`);
   }
   if (disableMinor) {
     AND.push(
-      userId
-        ? Prisma.sql`(i."minor" != TRUE OR i."userId" = ${userId})`
+      ownerId
+        ? Prisma.sql`(i."minor" != TRUE OR i."userId" = ${ownerId})`
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
@@ -2562,7 +2586,7 @@ const getAllImagesUncaptured = async (
         AND toi."tagId" IN (${Prisma.join([...new Set(excludedTagIds)])})
         AND toi."disabled" = FALSE
     )`;
-    AND.push(userId ? Prisma.sql`(${notExcluded} OR i."userId" = ${userId})` : notExcluded);
+    AND.push(ownerId ? Prisma.sql`(${notExcluded} OR i."userId" = ${ownerId})` : notExcluded);
   }
 
   if (isModerator) {
@@ -2700,8 +2724,8 @@ const getAllImagesUncaptured = async (
       return { nextCursor: undefined, items: [] };
     }
 
-    const displayOwnedItems = userId
-      ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
+    const displayOwnedItems = ownerId
+      ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${ownerId})`
       : '';
 
     // Moderators can opt into viewing ALL entries still under review for a collection
@@ -2940,12 +2964,12 @@ const getAllImagesUncaptured = async (
     )`);
   }
 
-  if (effectivePending && (isModerator || userId)) {
+  if (effectivePending && (isModerator || ownerId)) {
     isPersonalized = true; // pending view is moderator/owner-scoped
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
-    } else if (userId) {
-      AND.push(pendingViewerImageSql({ userId, browsingLevel, reviewCollectionId }));
+    } else if (ownerId) {
+      AND.push(pendingViewerImageSql({ userId: ownerId, browsingLevel, reviewCollectionId }));
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
@@ -2953,8 +2977,8 @@ const getAllImagesUncaptured = async (
     // In a collection the image's owner and moderators still see it; a collection manager does not.
     else if (!isModerator) {
       // Not isPersonalized: the bound userId already keys the cached query per viewer.
-      if (userId) {
-        AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${userId})`);
+      if (ownerId) {
+        AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${ownerId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
     if (browsingLevel)
@@ -3175,7 +3199,7 @@ const getAllImagesUncaptured = async (
   const visibleModel3DIds = rawModel3dIds.length
     ? await (
         await model3dService()
-      ).getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId, isModerator })
+      ).getVisibleModel3DIds({ model3dIds: rawModel3dIds, userId: ownerId, isModerator })
     : undefined;
 
   const images = withSpan('image:getAllImages:transform', () => {
@@ -3202,7 +3226,7 @@ const getAllImagesUncaptured = async (
     const filtered = rawImages.filter((x) => {
       if (isModerator) return true;
       // if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
+      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== ownerId)
         return false;
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
@@ -3646,12 +3670,9 @@ export const getAllImagesIndex = async (
   // const { sort, browsingLevel } = input;
 
   const { user } = input;
+  const viewer = feedViewer(input);
 
-  const prepared = await prepareImageFeedRequest(input, {
-    id: user?.id,
-    username: user?.username,
-    isModerator: user?.isModerator,
-  });
+  const prepared = await prepareImageFeedRequest(input, viewer);
   if (prepared.blocked) return { nextCursor: undefined, items: [] };
   const { userId } = prepared;
   if (input.username && userId === undefined) throw throwNotFoundError('User not found');
@@ -3667,7 +3688,7 @@ export const getAllImagesIndex = async (
     ...input,
     userId,
     currentUserId,
-    isModerator: user?.isModerator,
+    isModerator: viewer.isModerator,
     offset,
     entry,
   };
