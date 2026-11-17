@@ -66,6 +66,7 @@ const UPLOADED_PENDING_OTHER = 111; // ANOTHER viewer's, uploaded by APP, scan n
 const UPLOADED_FLAGGED = 112; // ANOTHER viewer's, uploaded by APP, scanned but flagged for review
 const PUBLISHED_PENDING_OWN = 113; // viewer's, published by APP, scan not finished
 const UPLOADED_OTHER_APP_OTHER_USER = 114; // ANOTHER viewer's, uploaded by OTHER_APP
+const PRIVATE_UPLOAD_OTHER_USER = 115; // ANOTHER viewer's picked upload, NOT shared: no stamp
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -142,6 +143,8 @@ beforeEach(async () => {
           { nsfwLevel: 0, ingestion: 'Pending' }
         ),
         row(UPLOADED_OTHER_APP_OTHER_USER, OTHER_USER, { blockUploadedAppId: OTHER_APP }),
+        // Scanned, rated PG, bare: everything a shared upload has except the opt-in stamp.
+        row(PRIVATE_UPLOAD_OTHER_USER, OTHER_USER, {}),
       ].join(',\n')};
   `);
 });
@@ -244,6 +247,12 @@ describe('gated cross-user read: published rows, plus this app’s own SCANNED u
         height: null,
       },
     ]);
+  });
+
+  it('🔴 an upload the app did NOT opt in to share (unstamped) is never returned, even scanned', async () => {
+    // The shared upload asked for in the same call is the positive control that the read ran.
+    const { images } = await gatedRead([PRIVATE_UPLOAD_OTHER_USER, UPLOADED_OTHER_USER]);
+    expect(images.map((i) => i.imageId)).toEqual([UPLOADED_OTHER_USER]);
   });
 
   it('🔴 an upload whose scan has not finished is hidden — to everyone, its uploader included', async () => {

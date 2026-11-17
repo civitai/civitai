@@ -74,7 +74,7 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
 export default function BlockImageUploadModal({
   onResolved,
   onAccepted,
-  blockToken,
+  share,
 }: {
   /** Called ONCE with the moderated result when a clean+SFW+unflagged image lands.
    *  BLOCKING mode only (ignored when `onAccepted` is provided). */
@@ -85,10 +85,12 @@ export default function BlockImageUploadModal({
    *  by a host-mounted poller. The `url` is the author's OWN just-uploaded edge
    *  URL (unguessable UUID key), for author preview only. */
   onAccepted?: (handle: { imageId: number; url: string }) => void;
-  /** The requesting block's token. Sent with the persist so the server stamps the row with that
-   *  app's verified id (`blockUploadedAppId`), which lets the app show it to its other viewers
-   *  once scanned. Omitted ⇒ an unstamped row, as before. */
-  blockToken?: string;
+  /** Present ONLY when the app asked to share this upload (`OPEN_IMAGE_UPLOAD { share: true }`).
+   *  The modal tells the viewer, before they pick, that the image will be visible to the app's
+   *  other viewers, and sends `share` + the block token with the persist so the server stamps
+   *  the row with that app's verified id (`blockUploadedAppId`). Absent ⇒ a private, unstamped
+   *  upload and an unchanged dialog. */
+  share?: { blockToken: string; appName: string };
 }) {
   const dialog = useDialogContext();
   const { uploadToCF } = useCFImageUpload();
@@ -201,7 +203,7 @@ export default function BlockImageUploadModal({
         height,
         mimeType: file.type || undefined,
         sizeBytes: file.size,
-        ...(blockToken ? { blockToken } : {}),
+        ...(share ? { share: true, blockToken: share.blockToken } : {}),
       });
       if (epoch !== epochRef.current) return;
       // ASYNC (non-blocking) mode: the caller wants the modal to resolve the
@@ -235,6 +237,12 @@ export default function BlockImageUploadModal({
             Upload a PNG, JPEG or WebP.
           </Text>
         </Alert>
+
+        {share && (
+          <Text size="sm" data-testid="block-image-upload-share-notice">
+            {shareNoticeCopy(share.appName)}
+          </Text>
+        )}
 
         {previewUrl && (
           <Image
@@ -285,6 +293,11 @@ export default function BlockImageUploadModal({
       </Stack>
     </Modal>
   );
+}
+
+/** What the viewer is told before picking a file the app will share. Exported for the host test. */
+export function shareNoticeCopy(appName: string) {
+  return `This image will be visible to other viewers of ${appName} once Civitai has scanned it.`;
 }
 
 function StatusBadge({ status }: { status: UploadStatus }) {

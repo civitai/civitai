@@ -55,9 +55,11 @@ export async function persistBlockUploadImage(opts: {
   uploadedByAppId?: string;
   /**
    * The verified token appId of the app a VIEWER-PICKED upload (`blockImageUpload.persist`) was
-   * made for, when the host sent its block token and the token's subject is the uploader. Stamped
-   * as {@link BLOCK_UPLOADED_APP_ID_META_KEY} too, but no embedded-meta read: a picked upload
-   * stores no meta, as before. Absent (no token) keeps the row unstamped. Never both options.
+   * SHARED with, when the app asked to share that upload (`share: true`), the host showed the
+   * viewer that it will be visible to the app's other viewers, and the verified token's subject is
+   * the uploader. Stamped as {@link BLOCK_UPLOADED_APP_ID_META_KEY} too, but no embedded-meta read:
+   * a picked upload stores no meta, as before. Absent (not shared) keeps the row unstamped and
+   * private. Never both options.
    */
   pickedForAppId?: string;
 }): Promise<{ imageId: number }> {
@@ -132,8 +134,10 @@ export const BLOCK_PUBLISHED_APP_ID_META_KEY =
  * Provenance marker for an image uploaded THROUGH an app, stamped by {@link persistBlockUploadImage}
  * with the verified token appId on two paths:
  *   - the app's own bytes (`OPEN_IMAGE_UPLOAD { bytes }`, `blocks.persistAppUploadImage`);
- *   - a viewer-picked upload (`OPEN_IMAGE_UPLOAD`, `blockImageUpload.persist`) when the host sent
- *     its block token and the token's subject is the uploader.
+ *   - a viewer-picked upload (`OPEN_IMAGE_UPLOAD`, `blockImageUpload.persist`) ONLY when the app
+ *     opted in for that one upload (`share: true`), the host's dialog told the viewer before they
+ *     picked that it will be visible to the app's other viewers, and the verified token's subject
+ *     is the uploader. Without the opt-in a picked upload is unstamped and private, as before.
  *
  * Its readers:
  *   - the post-from-app `published` source ({@link BLOCK_POSTABLE_APP_ID_META_KEYS}), bound to the

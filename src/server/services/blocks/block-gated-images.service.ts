@@ -23,7 +23,9 @@ import {
  * SECURITY — the read is scoped to bare (`postId IS NULL`) images THIS app
  * published or had uploaded: `metadata.blockPublishedAppId` or
  * `metadata.blockUploadedAppId` = <caller appId>, markers only ever stamped
- * server-side from a verified block token. So a block can only read its OWN
+ * server-side from a verified block token (a viewer-picked upload only when the
+ * app opted in to share that upload, `share: true`, and the host's dialog told the
+ * viewer it will be visible to the app's other viewers). So a block can only read its OWN
  * app's images — never another app's (the value must EQUAL the verified appId),
  * nor a post-deletion-orphaned row. On top of that, the per-viewer clamp
  * (mirroring canonical `getAllImages`' non-owner path) applies:

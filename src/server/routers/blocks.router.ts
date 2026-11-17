@@ -7526,7 +7526,9 @@ export const blocksRouter = router({
    * reads only its OWN images — never another app's or a post-deletion-orphaned
    * row. An uploaded row is shown only once terminally scanned, rated, unflagged
    * and within the viewer's AND the SFW ceiling, with no owner `ratingPending`
-   * branch (`getBlockGatedImagesByIds`). Like the block catalog reads (public, maturity-
+   * branch (`getBlockGatedImagesByIds`). A viewer-picked upload carries the uploaded
+   * marker only when the app opted in to share it (`share: true`) and the host told
+   * the viewer so; otherwise it is private and never read here. Like the block catalog reads (public, maturity-
    * clamped data), it authorizes ANY valid block token for the app — NOT the
    * author capability (`assertViewerIsAppDeveloper`), so the grid renders for the
    * app's real audience, not just developers. Auth is still required so the clamp

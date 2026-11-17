@@ -16,14 +16,15 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
  * let the user upload an image; the bytes flow through civitai's OWN authenticated
  * upload path (the block iframe never sees them), so these are `protectedProcedure`
  * (the logged-in user), NOT block-JWT routes and NOT a new block scope — a generic
- * peer of `OPEN_RESOURCE_PICKER`. The optional block token on `persist` only decides
- * the provenance stamp; the session user is still what authorises the call.
+ * peer of `OPEN_RESOURCE_PICKER`. The optional `share` + block token on `persist` only
+ * decide the provenance stamp; the session user is still what authorises the call.
  *
  *   - persist — materialise the CF upload into a scannable `Image` (real
- *     `createImage` + `ingestImage`, NO trust-stamp). When the host also sends its
- *     block token, the row is stamped `blockUploadedAppId` = that token's verified
- *     appId, so the app can show it to its other viewers once scanned (see
- *     `persistPickedUploadAppId`).
+ *     `createImage` + `ingestImage`, NO trust-stamp). PRIVATE by default: the row is
+ *     stamped `blockUploadedAppId` = the block token's verified appId ONLY when the
+ *     app asked to share this one upload (`share: true`) and the host showed the
+ *     viewer that it will be visible to the app's other viewers; the app can then
+ *     show it to them once scanned (see `persistPickedUploadAppId`).
  *   - gate    — poll the scan; return the moderated id ONLY once scanned-clean,
  *     within the SFW ceiling, and unflagged (else throw). See the service + pure
  *     classifier.
@@ -38,13 +39,28 @@ export const blockImageUploadRouter = router({
         errorMessage: 'Too many image uploads — slow down.',
       })
     )
-    .input(persistBlockUploadImageSchema.extend({ blockToken: z.string().min(1).optional() }))
+    .input(
+      persistBlockUploadImageSchema.extend({
+        share: z.boolean().optional(),
+        blockToken: z.string().min(1).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
-      const { blockToken, ...upload } = input;
-      const pickedForAppId = blockToken
-        ? await persistPickedUploadAppId(blockToken, ctx.user.id)
-        : undefined;
+      const { blockToken, share, ...upload } = input;
+      // Not shared unless asked: without `share: true` the token is ignored and the row stays
+      // private. A share request with no token is REFUSED, not stored private, so the app's
+      // "visible to other viewers" copy is never shown for an image nobody else will see.
+      let pickedForAppId: string | undefined;
+      if (share === true) {
+        if (!blockToken) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'sharing an upload requires a block token',
+          });
+        }
+        pickedForAppId = await persistPickedUploadAppId(blockToken, ctx.user.id);
+      }
       const { persistBlockUploadImage } = await import(
         '~/server/services/blocks/block-image-upload.service'
       );
@@ -82,12 +98,12 @@ export const blockImageUploadRouter = router({
 });
 
 /**
- * The app a viewer-picked upload is stamped for: the appId of the host's block token, verified as
+ * The app a SHARED viewer-picked upload is stamped for: the appId of the host's block token, verified as
  * every bridge call verifies it (`authorizeBlockBridgeToken`: signature, expiry, revocation, the
  * backing app still approved), and only when the token's subject (`sub`, `user:<id>`) is the
  * session user doing the upload. A token for anyone else, or an anonymous one, is REFUSED rather
- * than ignored: a host that sends a token expects a stamped row, and silently writing an unstamped
- * one would leave the app believing its viewers can see an image nobody else ever will.
+ * than ignored: a share request expects a stamped row, and silently writing an unstamped one would
+ * leave the app believing its viewers can see an image nobody else ever will.
  *
  * The appId never comes from the request: it is the verified claim or nothing.
  */

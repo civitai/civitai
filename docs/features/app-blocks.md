@@ -118,8 +118,10 @@ A third such site has to make its own argument — see the note at the foot of
 | `social:react:self`                  | non-anon `sub`                          | **SENSITIVE + CONSENT-GATED.** Set or clear the viewer's reaction on an IMAGE a block endpoint served this app (`SET_ENTITY_REACTION` → `blocks.setReactionFromApp`; read: `GET_ENTITY_REACTIONS` → `blocks.getReactionsForApp`). Both require the viewer's signed-in session to be the token's `sub`. Calls the site's own reaction handler, so rewards, metrics and notifications match a click on the site, and shares the site's per-user reaction quota (`sharedKey: 'reaction:toggle'`). Requires a provenance `reactTicket` the serving endpoint (`/api/v1/blocks/images`, `/api/v1/blocks/gated-images`, `/api/v1/blocks/collections/[id]`) signed for that image, app and viewer (24h). `Like`/`Heart`/`Laugh`/`Cry` only. Set semantics: a request that matches the current state writes nothing. No per-reaction confirm — the grant is the consent. `SKIP_OAUTH_CHECK` (not `SocialWrite`). Behind its own fail-closed flag (`app-blocks-app-reactions`). Revoking the scope does not remove reactions already made                                                                                                                                                                                               |
 
 **Uploads on the shared grid.** An image uploaded through an app (`OPEN_IMAGE_UPLOAD { bytes }`,
-or a viewer-picked `OPEN_IMAGE_UPLOAD` when the host sends its block token) carries
-`blockUploadedAppId` = that app. `blocks.getImagesByIds` returns it to any viewer of THAT app only,
+or a viewer-picked `OPEN_IMAGE_UPLOAD` the app opted in to share for that one upload with
+`share: true`, after the host's dialog told the viewer it will be visible to the app's other
+viewers) carries `blockUploadedAppId` = that app. A viewer-picked upload without the opt-in stays
+private and unstamped. `blocks.getImagesByIds` returns it to any viewer of THAT app only,
 once it is terminally scanned, unflagged and within the viewer's and the SFW ceiling; until then it
 is `hidden`, to its uploader too. Another app never reads it.
 

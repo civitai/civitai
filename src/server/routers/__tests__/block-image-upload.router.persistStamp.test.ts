@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * `blockImageUpload.persist` — the VIEWER-PICKED upload behind `OPEN_IMAGE_UPLOAD`. When the host
- * sends its block token, the row is stamped `blockUploadedAppId` with that token's VERIFIED appId,
- * and only when the token's subject is the session user doing the upload. Without a token the
- * persist is unchanged (unstamped). The appId never comes from the request.
+ * `blockImageUpload.persist` — the VIEWER-PICKED upload behind `OPEN_IMAGE_UPLOAD`. PRIVATE by
+ * default: the row is stamped `blockUploadedAppId` with the block token's VERIFIED appId only when
+ * the request carries `share: true`, and only when the token's subject is the session user doing
+ * the upload. Without `share: true` the token is ignored and the row is unstamped, as before. The
+ * appId never comes from the request.
  *
  * The fakes sit at the token verifier and the persist service, so the assertions read exactly
  * which app (if any) the router asked the service to stamp.
@@ -65,8 +66,8 @@ beforeEach(() => {
   }));
 });
 
-describe('blockImageUpload.persist — the provenance stamp', () => {
-  it('without a block token: unstamped, and no token is verified (unchanged behaviour)', async () => {
+describe('blockImageUpload.persist — the provenance stamp is opt-in per upload', () => {
+  it('without share or a token: unstamped, and no token is verified (unchanged behaviour)', async () => {
     await expect(caller({ id: VIEWER }).persist(upload())).resolves.toEqual({ imageId: 9_301 });
     expect(h.authorize).not.toHaveBeenCalled();
     expect(h.persist.mock.calls).toEqual([
@@ -74,9 +75,35 @@ describe('blockImageUpload.persist — the provenance stamp', () => {
     ]);
   });
 
-  it('🔴 with the viewer’s own verified token: stamped with the TOKEN’s appId, never a body field', async () => {
+  it.each([
+    ['absent', undefined],
+    ['false', false],
+  ])(
+    '🔴 share %s: a valid token is IGNORED and the row stays private (unstamped)',
+    async (_label, share) => {
+      await caller({ id: VIEWER }).persist({ ...upload(), blockToken: 'tok_viewer', share });
+      expect(h.authorize).not.toHaveBeenCalled();
+      expect(h.persist.mock.calls).toEqual([
+        [{ input: PERSISTED, userId: VIEWER, pickedForAppId: undefined }],
+      ]);
+    }
+  );
+
+  it('rejects a share value that is not a boolean at the schema', async () => {
+    await expect(
+      caller({ id: VIEWER }).persist({
+        ...upload(),
+        blockToken: 'tok_viewer',
+        share: 'true',
+      } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(h.persist).not.toHaveBeenCalled();
+  });
+
+  it('🔴 share with the viewer’s own verified token: stamped with the TOKEN’s appId, never a body field', async () => {
     await caller({ id: VIEWER }).persist({
       ...upload(),
+      share: true,
       blockToken: 'tok_viewer',
       // Not in the schema: a request cannot name the app to stamp.
       appId: 'appblk-forged',
@@ -87,32 +114,40 @@ describe('blockImageUpload.persist — the provenance stamp', () => {
     ]);
   });
 
-  it.each([
-    ['another user’s token', 'tok_other'],
-    ['an anonymous token', 'tok_anon'],
-  ])('🔴 refuses %s and writes nothing', async (_label, blockToken) => {
-    await expect(caller({ id: VIEWER }).persist({ ...upload(), blockToken })).rejects.toMatchObject(
-      {
-        code: 'FORBIDDEN',
-        message: 'block token is not for this viewer',
-      }
-    );
+  it('🔴 share with NO token is refused, not stored private, and writes nothing', async () => {
+    await expect(
+      caller({ id: VIEWER }).persist({ ...upload(), share: true })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'sharing an upload requires a block token',
+    });
+    expect(h.authorize).not.toHaveBeenCalled();
     expect(h.persist).not.toHaveBeenCalled();
   });
 
-  it('a token the bridge verifier refuses is that refusal, and writes nothing', async () => {
+  it.each([
+    ['another user’s token', 'tok_other'],
+    ['an anonymous token', 'tok_anon'],
+  ])('🔴 share with %s is refused and writes nothing', async (_label, blockToken) => {
+    await expect(
+      caller({ id: VIEWER }).persist({ ...upload(), share: true, blockToken })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: 'block token is not for this viewer' });
+    expect(h.persist).not.toHaveBeenCalled();
+  });
+
+  it('share with a token the bridge verifier refuses is that refusal, and writes nothing', async () => {
     h.authorize.mockRejectedValue(
       Object.assign(new Error('block instance revoked'), { code: 'FORBIDDEN' })
     );
     await expect(
-      caller({ id: VIEWER }).persist({ ...upload(), blockToken: 'tok_viewer' })
+      caller({ id: VIEWER }).persist({ ...upload(), share: true, blockToken: 'tok_viewer' })
     ).rejects.toMatchObject({ message: 'block instance revoked' });
     expect(h.persist).not.toHaveBeenCalled();
   });
 
   it('rejects an empty block token at the schema', async () => {
     await expect(
-      caller({ id: VIEWER }).persist({ ...upload(), blockToken: '' })
+      caller({ id: VIEWER }).persist({ ...upload(), share: true, blockToken: '' })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(h.authorize).not.toHaveBeenCalled();
     expect(h.persist).not.toHaveBeenCalled();

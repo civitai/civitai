@@ -68,7 +68,8 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *     `metadata.blockUploadedAppId` = THIS TOKEN'S OWN `appId`, with
  *     `postId IS NULL` — images the CALLING APP ITSELF published through its own
  *     workflow, or that were uploaded through it, on behalf of its own users
- *     (uploads only once scanned and SFW; see `block-gated-images.service.ts`).
+ *     (uploads only once scanned and SFW, and a viewer-picked one only when the app
+ *     opted in to share it and the viewer was told; see `block-gated-images.service.ts`).
  *     The app already holds those ids; it is the party that stored them. "This id exists"
  *     is the caller's own record being read back, not a fact about the catalog,
  *     so there is no id space to enumerate and no oracle to build.
