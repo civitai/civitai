@@ -16,6 +16,9 @@ vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => '[]' }) }));
 vi.mock('../search-index', () => ({ syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustImageTagCaches: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
+vi.mock('../image-models-reindex', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
 vi.mock('../thumbnail-cache', () => ({
   invalidateThumbnails: vi.fn(async () => {
     h.invalidatedAfter.push(h.sql.length);
@@ -30,6 +33,7 @@ vi.mock('../profile-picture-cache', () => ({
 const { upsertTagsOnImageNew } = await import('../tags-on-image.service');
 const { bustImageTagCaches } = await import('../cache');
 const { logAxiomError } = await import('../axiom');
+const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
 
 const flat = (i: number) => h.sql[i].replace(/\s+/g, ' ').trim();
 
@@ -89,5 +93,22 @@ describe('upsertTagsOnImageNew', () => {
     expect(h.invalidatedAfter).toEqual([2]);
     expect(h.bustedPictures).toEqual([{ imageIds: [31], after: 2 }]);
     expect(logAxiomError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('upsertTagsOnImageNew: models index', () => {
+  it('hands the written tags and the re-rated images over', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 1, tagId: 2 },
+      { imageId: 3, tagId: 4 },
+    ]);
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      tagWrites: [
+        expect.objectContaining({ imageId: 1, tagId: 2 }),
+        expect.objectContaining({ imageId: 3, tagId: 4 }),
+      ],
+      levelImageIds: [1, 3],
+    });
   });
 });
