@@ -70,7 +70,8 @@ describe('applyPostTextTextScan', () => {
     expect(recompute).toHaveBeenCalledWith('Post', POST);
   });
 
-  it('refuses a real person, and a later clean verdict of the current text lets it back', async () => {
+  // The lift is filtered to a scan's own refusal: a moderator's (`refusedByModerator`) outlives any verdict.
+  it('refuses a real person, and a later clean verdict of the current text lets it back, unless a moderator refused it', async () => {
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: true, minor: false }) as never);
     expect(dataWith('refused')).toEqual([
       { where: { id: ID, refused: false }, data: { refused: true } },
@@ -79,7 +80,10 @@ describe('applyPostTextTextScan', () => {
     vi.clearAllMocks();
     await applyPostTextTextScan(args({ nsfw: NsfwLevel.PG, poi: false, minor: false }) as never);
     expect(dataWith('refused')).toEqual([
-      { where: { id: ID, content: TEXT.content, refused: true }, data: { refused: false } },
+      {
+        where: { id: ID, content: TEXT.content, refused: true, refusedByModerator: false },
+        data: { refused: false },
+      },
     ]);
   });
 

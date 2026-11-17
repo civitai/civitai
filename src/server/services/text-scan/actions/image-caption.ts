@@ -13,7 +13,13 @@ type Row = { userId: number; content: string; nsfwLevel: number };
  * `content` pins a write to the text the verdict was about; `nsfwLevelBelow` only ever raises;
  * `rated` skips a row still at 0.
  */
-type RowWhere = { content?: string; nsfwLevelBelow?: number; rated?: true; refused?: boolean };
+type RowWhere = {
+  content?: string;
+  nsfwLevelBelow?: number;
+  rated?: true;
+  refused?: boolean;
+  refusedByModerator?: false;
+};
 type RowData = { nsfwLevel?: number; refused?: boolean; csamHeld?: boolean };
 
 /** A short authored text with its own rating and refusal, rated by the scan. */
@@ -33,11 +39,13 @@ type ScannedTextTable = {
    * longer has must not rate it: that would show the new text at the old text's rating.
    */
   unratedHides?: boolean;
+  /** The row also carries a moderator's refusal (`refusedByModerator`), which no verdict lifts. */
+  moderatorRefusal?: true;
   /** Recomputes whatever the row's level and refusal feed, after every verdict. */
   afterVerdict?: (id: number) => Promise<unknown>;
 };
 
-const whereOf = ({ content, nsfwLevelBelow, rated, refused }: RowWhere) => ({
+const whereOf = ({ content, nsfwLevelBelow, rated, refused, refusedByModerator }: RowWhere) => ({
   ...(content !== undefined ? { content } : {}),
   ...(nsfwLevelBelow !== undefined || rated
     ? {
@@ -48,6 +56,7 @@ const whereOf = ({ content, nsfwLevelBelow, rated, refused }: RowWhere) => ({
       }
     : {}),
   ...(refused !== undefined ? { refused } : {}),
+  ...(refusedByModerator !== undefined ? { refusedByModerator } : {}),
 });
 
 async function applyScannedTextScan(
@@ -83,7 +92,15 @@ async function applyScannedTextScan(
     isMinorContentRestricted({ minor: !!outcome.minor?.detected, nsfwLevel: level });
   if (refuse) await table.update(entityId, { refused: false }, { refused: true });
   else if (current && outcome.poi && outcome.minor)
-    await table.update(entityId, { ...pinned, refused: true }, { refused: false });
+    await table.update(
+      entityId,
+      {
+        ...pinned,
+        refused: true,
+        ...(table.moderatorRefusal ? { refusedByModerator: false } : {}),
+      },
+      { refused: false }
+    );
 
   await table.afterVerdict?.(entityId);
 }
@@ -115,6 +132,7 @@ const postTextTable: ScannedTextTable = {
       select: { id: true },
     })),
   unratedHides: true,
+  moderatorRefusal: true,
   afterVerdict: async (id) => {
     const row = await dbWrite.postText.findUnique({ where: { id }, select: { postId: true } });
     if (row) await recomputeRatedEntityNsfwLevel('Post', row.postId);

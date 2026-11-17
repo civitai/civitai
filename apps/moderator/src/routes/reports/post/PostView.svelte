@@ -9,6 +9,7 @@
   import OwnerActions from '$lib/components/report-queue/OwnerActions.svelte';
   import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
+  import PostTextReportPanel from './PostTextReportPanel.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
@@ -44,7 +45,12 @@
   // Ruling and notes need only the queue; the images and the owner need their action grants.
   const can = $derived(reportActionGrants(data.grants));
   const lookup = $derived(item?.lookup ?? null);
-  const reports = $derived(item ? reportsForItem(item.reports, data.items, item.postId) : []);
+  const reports = $derived(
+    (item ? reportsForItem(item.reports, data.items, item.postId) : []).map((r) => ({
+      ...r,
+      subject: r.postText ? 'Text' : null,
+    }))
+  );
 
   // Which report is in flight, so one ruling does not disable every report's buttons.
   let pendingId = $state<number | null>(null);
@@ -257,6 +263,19 @@
         busyId={pendingId}
         error={reportForm.error}
       >
+        {#snippet details(r)}
+          {#if r.postText}
+            {#key r.id}
+              <PostTextReportPanel
+                reportId={r.id}
+                reason={r.reason}
+                details={r.details}
+                text={r.postText}
+                canAct
+              />
+            {/key}
+          {/if}
+        {/snippet}
         {#snippet empty()}
           <p class="m-0 text-sm text-muted-foreground">No open reports on this post.</p>
         {/snippet}

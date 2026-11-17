@@ -80,6 +80,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/poi-flag/dismiss': () => import('~/pages/api/mod/poi-flag/dismiss'),
   '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
+  '/api/mod/post-text/moderate': () => import('~/pages/api/mod/post-text/moderate'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
   '/api/mod/review-batches': () => import('~/pages/api/mod/review-batches'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),

@@ -1454,6 +1454,7 @@ export interface Report {
   crucible?: CrucibleReport | null;
   gameFrameGame?: GameFrameGameReport | null;
   serviceOffering?: ServiceOfferingReport | null;
+  postText?: PostTextReport | null;
   gameFrameReceipts?: GameFrameReportReceipt[];
 }
 
@@ -1687,6 +1688,7 @@ export interface Post {
   tagsComposite?: PostTag[];
   tagVotes?: TagsOnPostVote[];
   reports?: PostReport[];
+  textReports?: PostTextReport[];
   collectionItems?: CollectionItem[];
   storylineChapter?: StorylineChapter | null;
   storylinePendingChapter?: StorylinePendingChapter | null;
@@ -7034,8 +7036,19 @@ export interface PostText {
   nsfwLevel: number;
   refused: boolean;
   csamHeld: boolean;
+  refusedByModerator: boolean;
   createdAt: Date;
   updatedAt: Date;
+  reports?: PostTextReport[];
+}
+
+export interface PostTextReport {
+  reportId: number;
+  report?: Report;
+  postTextId: number | null;
+  postText?: PostText | null;
+  postId: number;
+  post?: Post;
 }
 
 export interface StorylineCollaborator {
