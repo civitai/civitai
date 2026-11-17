@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -416,10 +417,22 @@ func TestPageWithoutCosmetics(t *testing.T) {
 	if got.UserCosmetics == nil || len(got.UserCosmetics) != 0 || got.Frames == nil || len(got.Frames) != 0 {
 		t.Fatalf("UserCosmetics %#v, Frames %#v; want two empty maps", got.UserCosmetics, got.Frames)
 	}
-	read := strings.Join(keys(), " ")
-	for _, k := range []string{KeyUserCosmetics, KeyImageFrames, KeyCosmetics + ":"} {
-		if strings.Contains(read, pageNS+k) {
-			t.Errorf("a %s key was read: %s", k, read)
+	// Exact key shapes: KeyCosmetics is also a prefix of the event-decoration key
+	// (`cosmetics2:event:v2:Image:<id>`), which this page still reads.
+	cosmeticRecord := regexp.MustCompile(`^` + regexp.QuoteMeta(pageNS+KeyCosmetics) + `:\d+$`)
+	for _, k := range keys() {
+		if strings.HasPrefix(k, pageNS+KeyUserCosmetics+":") || strings.HasPrefix(k, pageNS+KeyImageFrames+":") || cosmeticRecord.MatchString(k) {
+			t.Errorf("a cosmetic key was read: %s", k)
+		}
+	}
+	// Control: the matcher sees each of the three shapes, and not the decoration key.
+	for k, want := range map[string]bool{
+		pageNS + KeyUserCosmetics + ":1001": true, pageNS + KeyImageFrames + ":11": true, pageNS + KeyCosmetics + ":501": true,
+		pageNS + KeyImageEvents + ":11": false,
+	} {
+		got := strings.HasPrefix(k, pageNS+KeyUserCosmetics+":") || strings.HasPrefix(k, pageNS+KeyImageFrames+":") || cosmeticRecord.MatchString(k)
+		if got != want {
+			t.Fatalf("matcher control: %s matched %v, want %v", k, got, want)
 		}
 	}
 	for _, c := range db.Calls {

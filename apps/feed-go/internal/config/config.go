@@ -40,16 +40,16 @@ type Config struct {
 	Hosts            browsing.HostColors
 	RegionRules      []browsing.RegionRule
 	RegionBlockRules []browsing.RegionRule
-	CreatorPromotion string // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
-	LazyPostImages   bool   // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
-	ImageIndexFeed   bool   // FEED_GO_IMAGE_INDEX_FEED: mirrors `image-index-feed`
+	CreatorPromotion string          // FEED_GO_CREATOR_PROMOTIONS: the `creator-promotions` flag's audience (feed.ParsePromotionAudience)
+	LazyPostImages   bool            // FEED_GO_LAZY_POST_IMAGES: mirrors `gallery-lazy-post-images`
+	ImageIndexFeed   bool            // FEED_GO_IMAGE_INDEX_FEED: mirrors `image-index-feed`
+	FeedServiceURL   string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
+	DecorationEvents map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
+	ShadowWorkers    int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
 	// PrioritizedVersionCache is FEED_GO_PRIORITIZED_VERSION_CACHE (default off, as in production):
 	// mirrors `use-model-version-cache-for-images`. On, image.getInfinite's prioritizedUserIds requests
 	// on the Postgres path fall back (the cache-ordered branch is not ported).
 	PrioritizedVersionCache bool
-	FeedServiceURL          string          // FEED_SERVICE_URL: the image feed service (same var as the Node app)
-	DecorationEvents        map[string]bool // FEED_GO_DECORATION_EVENTS: events whose hats every viewer sees (started, flag base on; DESIGN.md §8)
-	ShadowWorkers           int             // FEED_GO_SHADOW_WORKERS: concurrent shadow comparisons
 	// The flags model.getAll reads (DESIGN.md §15.3), each defaulting to its production value. Only
 	// that state is ported: any of them off makes every model.getAll sample the flag-off-state fallback.
 	BaseModelFeedMetrics bool // FEED_GO_BASE_MODEL_FEED_METRICS: mirrors `base-model-feed-metrics`
@@ -157,11 +157,11 @@ func Load() (*Config, error) {
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
 		LazyPostImages:   boolEnv("FEED_GO_LAZY_POST_IMAGES", true),
 		ImageIndexFeed:   boolEnv("FEED_GO_IMAGE_INDEX_FEED", true),
+		FeedServiceURL:   os.Getenv("FEED_SERVICE_URL"),
+		DecorationEvents: setEnv("FEED_GO_DECORATION_EVENTS"),
+		ShadowWorkers:    intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
 		PrioritizedVersionCache: boolEnv("FEED_GO_PRIORITIZED_VERSION_CACHE", false),
-		FeedServiceURL:          os.Getenv("FEED_SERVICE_URL"),
-		DecorationEvents:        setEnv("FEED_GO_DECORATION_EVENTS"),
-		ShadowWorkers:           intEnv("FEED_GO_SHADOW_WORKERS", 8),
 
 		BaseModelFeedMetrics: boolEnv("FEED_GO_BASE_MODEL_FEED_METRICS", true),
 		ModelImagesSlim:      boolEnv("FEED_GO_MODEL_IMAGES_SLIM", true),
