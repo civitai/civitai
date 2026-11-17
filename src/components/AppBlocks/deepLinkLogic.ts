@@ -176,12 +176,13 @@ export function performShareLink(url: string, env: ShareLinkEnv): Promise<ShareL
   if (env.userActivation === false || !env.frameHasFocus) return Promise.resolve(none);
 
   const data = { url };
-  const useShare =
-    env.coarsePointer &&
-    typeof env.share === 'function' &&
-    (typeof env.canShare !== 'function' || env.canShare(data));
-
+  // Inside the try: a throwing canShare must resolve to `none`, never throw synchronously,
+  // or the host's `.then` never settles the per-block limiter.
   try {
+    const useShare =
+      env.coarsePointer &&
+      typeof env.share === 'function' &&
+      (typeof env.canShare !== 'function' || env.canShare(data));
     if (useShare && env.share) {
       return env.share(data).then(
         (): ShareLinkResult => ({ url, copied: false, method: 'share' }),

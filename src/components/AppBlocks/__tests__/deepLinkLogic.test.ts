@@ -440,6 +440,27 @@ describe('performShareLink — the copy or share, and an honest result', () => {
     expect(share).not.toHaveBeenCalled();
   });
 
+  it('a throwing canShare resolves to method none instead of throwing', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const share = vi.fn().mockResolvedValue(undefined);
+    let result: Promise<unknown> | undefined;
+    expect(() => {
+      result = performShareLink(URL_, {
+        userActivation: true,
+        frameHasFocus: true,
+        coarsePointer: true,
+        clipboardWriteText: writeText,
+        share,
+        canShare: () => {
+          throw new TypeError('bad share data');
+        },
+      });
+    }).not.toThrow();
+    await expect(result).resolves.toEqual({ url: URL_, copied: false, method: 'none' });
+    expect(share).not.toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it('desktop (fine pointer) uses the clipboard even when share exists', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const share = vi.fn().mockResolvedValue(undefined);
