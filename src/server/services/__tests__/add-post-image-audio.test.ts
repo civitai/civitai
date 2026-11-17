@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   createImage: vi.fn(),
   submitTrackLyricsScan: vi.fn(async () => undefined),
   throwOnBlockedUserContent: vi.fn(),
+  stageGenerationOutputImage: vi.fn(),
+  deleteImageById: vi.fn(async () => undefined),
   music: false,
 }));
 
@@ -33,6 +35,9 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
 }));
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: vi.fn(async () => 'token'),
+}));
+vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
+  stageGenerationOutputImage: mocks.stageGenerationOutputImage,
 }));
 
 vi.mock('~/server/events/points/hooks', () => ({
@@ -100,6 +105,7 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/image.service', () => ({
   createImage: mocks.createImage,
   createImageResources: vi.fn(async () => undefined),
+  deleteImageById: mocks.deleteImageById,
   deleteImageFromS3: vi.fn(),
   deleteImagesForModelVersionCache: vi.fn(),
   getImagesForPosts: vi.fn(),
@@ -136,6 +142,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 const { addPostImage } = await import('~/server/services/post.service');
 const { thumbnailCache } = await import('~/server/redis/caches');
 const { getVotableImageTags } = await import('~/server/services/tag.service');
+const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
 
 const user = { id: 5 } as never;
 const song = { duration: 200, size: 3, title: 'Night Drive' };
@@ -430,5 +437,163 @@ describe('addPostImage — audio', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('addPostImage — generated song cover', () => {
+  const COVER_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/cover.png';
+  const coverStep = (blob: Record<string, unknown> = {}) => ({
+    $type: 'imageGen',
+    metadata: { suppressOutput: true },
+    output: {
+      images: [{ url: COVER_URL, available: true, width: 1024, height: 1024, nsfwLevel: 'pg', ...blob }],
+    },
+  });
+  const songStep = { $type: 'aceStepAudio', input: {}, output: {} };
+  const staged = {
+    url: '0b5e9d1c-7a2f-4e3b-9c8d-1f2a3b4c5d6e',
+    mimeType: 'image/png',
+    hash: 'blur',
+    width: 1024,
+    height: 1024,
+    metadata: { size: 2048 },
+  };
+
+  beforeEach(() => {
+    mocks.music = true;
+    mocks.createImage.mockReset();
+    mocks.createImage.mockResolvedValueOnce({ id: 11 }).mockResolvedValueOnce({ id: 12 });
+    mocks.stageGenerationOutputImage.mockResolvedValue(staged);
+    mocks.getWorkflow.mockResolvedValue({ steps: [songStep, coverStep()] });
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
+    // Stop at the read after the create: everything before it is under test.
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(null);
+  });
+
+  const postFromGenerator = (extra: Record<string, unknown> = {}) =>
+    expect(addSong({ generationWorkflowId: 'wf-1', ...extra })).rejects.toThrow(
+      'An unexpected error'
+    );
+  /** The link statement's bound values: the cover id, then the song id. */
+  const linkValues = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.map(([, ...values]) => values);
+
+  it("links the workflow's cover as the song's cover: a scanned row outside the post, named by the song", async () => {
+    await postFromGenerator();
+
+    expect(mocks.stageGenerationOutputImage).toHaveBeenCalledWith(
+      expect.objectContaining({ imageUrl: COVER_URL, width: 1024, height: 1024 })
+    );
+    expect(mocks.createImage).toHaveBeenCalledTimes(2);
+    const coverArgs = mocks.createImage.mock.calls[1][0];
+    expect(coverArgs).toEqual({
+      url: staged.url,
+      type: 'image',
+      mimeType: 'image/png',
+      hash: 'blur',
+      width: 1024,
+      height: 1024,
+      metadata: { size: 2048, parentId: 11 },
+      userId: 5,
+    });
+    // No postId and no skipped ingestion: createImage's default path requests the scan.
+    expect(coverArgs).not.toHaveProperty('postId');
+    expect(coverArgs).not.toHaveProperty('skipIngestion');
+    expect(linkValues()).toEqual([[12, 11]]);
+    expect(mocks.deleteImageById).not.toHaveBeenCalled();
+  });
+
+  it("reads the workflow with the caller's own orchestrator token", async () => {
+    await postFromGenerator();
+    expect(getOrchestratorToken).toHaveBeenCalledWith(5, expect.anything());
+    expect(mocks.getWorkflow).toHaveBeenCalledWith({ token: 'token', path: { workflowId: 'wf-1' } });
+  });
+
+  it('returns the linked cover on the add result', async () => {
+    const cover = { id: 12, url: staged.url, ingestion: 'Pending', nsfwLevel: 0, blockedFor: null };
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({
+      id: 11,
+      index: 0,
+      type: 'audio',
+      metadata: { ...song, coverImageId: 12 },
+      tools: [],
+      techniques: [],
+      resourceHelper: [],
+    } as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([
+      { id: 11, userId: 5, postId: 1, metadata: { coverImageId: 12 } },
+      { ...cover, userId: 5, postId: null, metadata: { parentId: 11 } },
+    ] as never);
+    vi.mocked(getVotableImageTags).mockResolvedValue([]);
+    vi.mocked(thumbnailCache.fetch).mockResolvedValue({} as never);
+    dbMock.dbWrite.trackLyrics.findMany.mockResolvedValue([] as never);
+
+    const image = await addSong({ generationWorkflowId: 'wf-1' });
+
+    expect(image.cover).toEqual(cover);
+  });
+
+  it.each([
+    ['the workflow has no cover step', { steps: [songStep] }],
+    ['the cover is not available', { steps: [songStep, coverStep({ available: false })] }],
+    ['the cover was blocked', { steps: [songStep, coverStep({ blockedReason: 'NSFWLevel' })] }],
+    ['the cover is unrated', { steps: [songStep, coverStep({ nsfwLevel: 'na' })] }],
+    ['the cover has no rating', { steps: [songStep, coverStep({ nsfwLevel: null })] }],
+  ])('posts the song without a cover when %s', async (_, workflow) => {
+    mocks.getWorkflow.mockResolvedValue(workflow);
+    await postFromGenerator();
+    expect(mocks.stageGenerationOutputImage).not.toHaveBeenCalled();
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('posts the song without a cover when the copy fails', async () => {
+    mocks.stageGenerationOutputImage.mockRejectedValue(new Error('not an allowed host'));
+    await postFromGenerator();
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
+  });
+
+  it('does not let a slow copy hold the post: the song posts without a cover', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.stageGenerationOutputImage.mockReturnValue(new Promise(() => undefined));
+      const pending = postFromGenerator();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await pending;
+      expect(mocks.createImage).toHaveBeenCalledTimes(1);
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('copies nothing when the song already names a cover', async () => {
+    await postFromGenerator({ metadata: { ...song, coverImageId: 3 } });
+    expect(mocks.stageGenerationOutputImage).not.toHaveBeenCalled();
+    expect(mocks.createImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the cover row it made when the song gained a cover first, leaving one cover', async () => {
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
+    await postFromGenerator();
+    expect(mocks.deleteImageById).toHaveBeenCalledWith({ id: 12, deletedById: 5 });
+  });
+
+  it('posts the song without a cover when the cover row cannot be created', async () => {
+    mocks.createImage.mockReset();
+    mocks.createImage
+      .mockResolvedValueOnce({ id: 11 })
+      .mockRejectedValueOnce(new Error('media missing'));
+    await postFromGenerator();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
+  });
+
+  it('copies no cover for a song posted without its workflow', async () => {
+    await expect(addSong()).rejects.toThrow('An unexpected error');
+    expect(mocks.getWorkflow).not.toHaveBeenCalled();
+    expect(mocks.stageGenerationOutputImage).not.toHaveBeenCalled();
   });
 });
