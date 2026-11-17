@@ -2202,49 +2202,19 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
-/** Whether the post has images not in `imageIds`: ones the editor hid (held, or above the cap). */
-const hasUnlistedImages = async (postId: number, imageIds: number[]) =>
-  (await dbWrite.image.count({ where: { postId, id: { notIn: imageIds } }, take: 1 })) > 0;
-
-/** The indexes `rows` already hold, lowest first. */
-const heldIndexes = (rows: { index: number | null }[]) =>
-  rows.map((row) => row.index ?? 0).sort((a, b) => a - b);
-
 /**
  * Without `items` (an editor from before text items, or with them off), a post that has text keeps
- * every text row where it is: the listed images take, in order, the indexes those images already
- * hold. So do images the editor did not list, which keep theirs.
+ * every text row where it is: the listed images take, in order, the indexes those images already hold.
  */
 async function imageOnlyReorder(postId: number, imageIds: number[]) {
-  const [hasText, unlisted] = await Promise.all([
-    dbWrite.postText.count({ where: { postId }, take: 1 }),
-    hasUnlistedImages(postId, imageIds),
-  ]);
-  if (!hasText && !unlisted) return imageIds.map((id, index) => ({ id, index }));
+  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
+  if (!hasText) return imageIds.map((id, index) => ({ id, index }));
   const held = await dbWrite.image.findMany({
     where: { postId, id: { in: imageIds } },
     select: { index: true },
   });
-  const indexes = heldIndexes(held);
+  const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
   return imageIds.slice(0, indexes.length).map((id, i) => ({ id, index: indexes[i] }));
-}
-
-/**
- * The whole reading order, `items`, takes positions 0..n-1. When the editor did not list every
- * image, the listed rows take, in order, the indexes they already hold, so an unlisted image keeps
- * its place instead of sharing one.
- */
-async function itemsReorder(postId: number, items: NonNullable<ReorderPostImagesInput['items']>) {
-  const ids = (type: 'image' | 'text') => items.filter((i) => i.type === type).map((i) => i.id);
-  if (!(await hasUnlistedImages(postId, ids('image'))))
-    return items.map((item, index) => ({ ...item, index }));
-  const select = { index: true } as const;
-  const [images, texts] = await Promise.all([
-    dbWrite.image.findMany({ where: { postId, id: { in: ids('image') } }, select }),
-    dbWrite.postText.findMany({ where: { postId, id: { in: ids('text') } }, select }),
-  ]);
-  const indexes = heldIndexes([...images, ...texts]);
-  return items.slice(0, indexes.length).map((item, i) => ({ ...item, index: indexes[i] }));
 }
 
 export const reorderPostImages = async ({
@@ -2253,7 +2223,7 @@ export const reorderPostImages = async ({
   items,
 }: ReorderPostImagesInput) => {
   const writes = items
-    ? (await itemsReorder(postId, items)).map(({ type, id, index }) =>
+    ? items.map(({ type, id }, index) =>
         type === 'image'
           ? dbWrite.image.update({ where: { id, postId }, data: { index } })
           : dbWrite.postText.update({ where: { id, postId }, data: { index } })
