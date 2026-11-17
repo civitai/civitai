@@ -171,7 +171,11 @@ describe('🔴 the Build tab predicate and the /apps/build page gate cannot disa
     it.each(combos)(`${label}: store=$store author=$author getStarted=$getStarted`, (c) => {
       const f = flags(c);
       const tabVisible = canAccessAppsBuild(user, f);
-      const pageAdmits = 'props' in resolveBuildPageAccess({ features: f, user });
+      // The BUILD surface only. A signed-in viewer the gate refuses gets the `request` view
+      // (the pitch + Request access), which is deliberately not a Build tab destination:
+      // it exists for viewers with no `/apps` surface to put a tab in.
+      const result = resolveBuildPageAccess({ features: f, user });
+      const pageAdmits = 'props' in result && result.props.mode === 'build';
       expect(
         pageAdmits,
         tabVisible

@@ -21,3 +21,9 @@ export const APP_ACCESS_WHAT_TO_BUILD_MAX = 2000;
  * the link lands on Pending.
  */
 export const APP_ACCESS_REQUESTS_REVIEW_HREF = '/apps/review?tab=access-requests';
+
+/**
+ * `/apps/build?request-access=1` opens the Request access form (signing the viewer in first when
+ * needed). Linked from outside the site (the CLI README), so the name is a public contract: keep it.
+ */
+export const REQUEST_ACCESS_PARAM = 'request-access';

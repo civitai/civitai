@@ -41,7 +41,14 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('closed beta, for a request the embed forwarded', () => {
-  it.each(['/api/train', '/api/continue-training', '/api/dataset-rating'])(
+  it.each([
+    '/api/train',
+    '/api/continue-training',
+    '/api/dataset-rating',
+    '/api/edit-image',
+    '/api/suggest-instruction',
+    '/api/epoch-archive',
+  ])(
     '%s is served when the main app allows the embed, asked with the same session',
     async (path) => {
       const { response, resolve } = await run(path);
@@ -64,12 +71,16 @@ describe('closed beta, for a request the embed forwarded', () => {
     expect(response.status).toBe(403);
   });
 
-  it('keeps every other route closed, without asking the main app', async () => {
-    const { response, resolve } = await run('/api/rename');
-    expect(resolve).not.toHaveBeenCalled();
-    expect(response.status).toBe(403);
-    expect(mainApp).not.toHaveBeenCalled();
-  });
+  // The edit and suggestion polls ([id]) stay browser calls: only the exact submit paths open.
+  it.each(['/api/rename', '/api/edit-image/wf-1', '/api/suggest-instruction/wf-1'])(
+    'keeps %s closed, without asking the main app',
+    async (path) => {
+      const { response, resolve } = await run(path);
+      expect(resolve).not.toHaveBeenCalled();
+      expect(response.status).toBe(403);
+      expect(mainApp).not.toHaveBeenCalled();
+    }
+  );
 
   it('serves a beta user without asking the main app', async () => {
     betaAllows.mockResolvedValueOnce(true);

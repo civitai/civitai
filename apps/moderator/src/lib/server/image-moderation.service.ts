@@ -33,6 +33,7 @@ import {
   setAsideState,
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
+import { queueModelsForImageChildTagChanges } from './image-models-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -69,6 +70,7 @@ const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
+  await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
@@ -95,6 +97,13 @@ export class ImageNotRestoredError extends Error {
   }
 }
 
+/** An explicit restore of an image that does not exist. */
+export class ImageNotFoundError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} was not found`);
+  }
+}
+
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
@@ -111,12 +120,20 @@ export async function acceptImage({
    *  this lifts a CSAM block: it throws `ImageNotRestoredError`. */
   restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
-  const img = await dbRead
-    .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
-    .where('id', '=', imageId)
-    .executeTakeFirst();
-  if (!img) return;
+  const readImage = (db: Kysely<DB>) =>
+    db
+      .selectFrom('Image')
+      .select(['needsReview', 'pHash', 'postId', 'ingestion', 'blockedFor'])
+      .where('id', '=', imageId)
+      .executeTakeFirst();
+  // A replica miss is usually lag, not a deleted image: then every read here goes to the primary.
+  const fromReplica = await readImage(dbRead);
+  const reader = fromReplica ? dbRead : dbWrite;
+  const img = fromReplica ?? (await readImage(dbWrite));
+  if (!img) {
+    if (restoreRemoved) throw new ImageNotFoundError(imageId);
+    return;
+  }
   const nr = img.needsReview;
 
   // remixSource: stamp remixSourceReviewed so the audit job doesn't re-flag it. COALESCE guards the usual
@@ -168,7 +185,7 @@ export async function acceptImage({
   await dropBlockedImageDeleteQueue(imageId);
   await resetBlockedNsfwLevel(imageId);
 
-  const reviewTags = await dbRead
+  const reviewTags = await reader
     .selectFrom('ImageTagForReview')
     .select('tagId')
     .where('imageId', '=', imageId)
@@ -192,7 +209,7 @@ export async function acceptImage({
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
   if (img.ingestion === 'Blocked' && img.blockedFor === BLOCKED_REASON_MODERATED)
-    await trackImageRestore({ imageId, actorUserId: userId });
+    await trackImageRestore({ imageId, actorUserId: userId, db: reader });
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   // Every accept out of the minor queue logs exactly one of these beside `review`, so the log shows
