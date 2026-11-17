@@ -16,9 +16,9 @@ import type { Authenticator, RunGrant } from './core/interfaces';
  *   the runner trades it, with its own secret, for short-lived tokens at civitai. Those tokens are
  *   the user's, user-wide, as the browser's are; the conversation and idempotency key it names are
  *   checked by the runner at start (and the conversation at a patch), not by civitai's mint.
- *   A preview grant is a run grant with `use: 'preview'`, valid about 2 minutes, for one Restart
- *   preview (`preview: true` below); the runner takes it for nothing else, and takes no other grant
- *   for that.
+ *   A preview grant is a run grant with `use: 'preview'`, valid for civitai's
+ *   `PREVIEW_GRANT_TTL_SECONDS`, for one Restart preview (`preview: true` below); the runner takes
+ *   it for nothing else, and takes no other grant for that.
  */
 export const TOKEN_ISSUER = 'civitai';
 export const TOKEN_ALGORITHM = 'ES256';

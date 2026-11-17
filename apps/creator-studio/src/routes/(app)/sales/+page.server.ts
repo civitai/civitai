@@ -19,6 +19,7 @@ import { minCreatorScoreForSale } from '@civitai/buzz';
 import { salePreviewPayload } from '$lib/monetization/sales';
 import type { SessionUser } from '@civitai/auth';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
+import { firstError } from '$lib/server/form-errors';
 
 // Managing scheduled sales. Starting one lives on the models page, where the selection is — this page is
 // where they are listed and changed, and clicking one opens a side panel (the same interaction the models
@@ -61,7 +62,6 @@ const versionIdsSchema = z
   )
   .refine((ids) => ids.length > 0, 'Select at least one version.');
 
-const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 
 // Gates every action, not just the reads: with the flag off as a kill switch, editing an existing sale has
 // to stop too, or the switch only stops new ones.

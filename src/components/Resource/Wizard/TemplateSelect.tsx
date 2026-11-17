@@ -1,6 +1,7 @@
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { Button, Checkbox, Popover, Stack, Text } from '@mantine/core';
+import { Button, Checkbox, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import type { TemplateOmittableField } from '~/server/schema/model.schema';

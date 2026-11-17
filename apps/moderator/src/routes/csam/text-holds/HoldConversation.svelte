@@ -4,7 +4,7 @@
   import MessageMeta from '$lib/components/chat-audit/MessageMeta.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { fetchHoldChat } from '$lib/csam-holds/hold-chat';
-  import { chatAuditChatUrl } from '$lib/entity-url';
+  import { chatAuditChatUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, plural } from '$lib/format';
 
   let { holdId, chatId }: { holdId: number; chatId: number } = $props();
@@ -23,6 +23,17 @@
     <p class="m-0 text-dark-2" role="status">Loading the conversation…</p>
   {:then loaded}
     {@const judged = new Set(loaded.judgedIds)}
+    <!-- Who the sender is writing to. In a one-way DM no reply names them, so this is the only place. -->
+    {#if loaded.participants.length}
+      <p class="m-0 mb-2 flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
+        <span>With</span>
+        {#each loaded.participants as person (person.userId)}
+          <a href={userLookupUrl(person.userId)} class={LINK_CLASS}>
+            {person.username ?? `#${person.userId}`}
+          </a>
+        {/each}
+      </p>
+    {/if}
     <p class="m-0 mb-2 text-[11px] text-dark-2">
       {#if loaded.fullConversation}
         {plural(judged.size, 'judged message')} highlighted, with the messages around

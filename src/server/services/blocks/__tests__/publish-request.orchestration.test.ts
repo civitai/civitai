@@ -1,8 +1,29 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ManifestSubmitValidation from '~/server/services/blocks/manifest-submit-validation';
+// Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
+// this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
+// validator is untouched).
+vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ManifestSubmitValidation>()),
+  assertManifestValidAtSubmit: vi.fn(async () => undefined),
+}));
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as ForgejoService from '~/server/services/blocks/forgejo.service';
+import type * as ReviewAutodeployService from '~/server/services/blocks/review-autodeploy.service';
 import JSZip from 'jszip';
 
 import { NsfwLevel } from '~/server/common/enums';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * Orchestration coverage for the W1 publish-request service. The existing
@@ -117,6 +138,8 @@ const {
         updateMany: vi.fn(),
         findUnique: vi.fn(),
         findFirst: vi.fn(),
+        // The storage-migration history (`loadStorageMigrationBaseline`, on the PRIMARY).
+        findMany: vi.fn<DelegateMock>(async () => []),
       },
       // `findUnique` added (W13 auto-create-on-approve): approveRequest re-reads
       // the freshly-approved AppBlock's own columns off the PRIMARY to map it into
@@ -130,6 +153,8 @@ const {
         update: vi.fn(),
         updateMany: vi.fn(),
         findUnique: vi.fn(),
+        // The enforced manifest (`loadStorageMigrationBaseline`, on the PRIMARY): none.
+        findFirst: vi.fn<DelegateMock>(async () => null),
       },
       // `update` added 2026-06-02 (audit A1 fix): approveRequest now re-caps
       // the app-block OauthClient's allowedScopes to the manifest-derived
@@ -184,6 +209,9 @@ const {
       // setCommitStatus added (no-trust-on-push fix): approveRequest now drives
       // the build trigger itself + pends/marks the commit status.
       setCommitStatus: vi.fn(),
+      // ensureApprovalTag: approveRequest tags the approved commit (best-effort).
+      // The provenance describe at the end of this file swaps in the REAL one.
+      ensureApprovalTag: vi.fn(),
       reviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/civitai-apps-review/${slug}`),
       // repoCommitUrl — used by the list payloads' pushCommitUrl (links a
       // push-originated review to the canonical repo at the pushed sha).
@@ -224,6 +252,22 @@ const {
   async (cb: (tx: unknown) => Promise<unknown>) => cb(mockDbWrite)
 );
 
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
+// What follows a NEW pending request (moderator alert + automatic preview) is its own module,
+// pinned in review-autodeploy.service.test.ts; here only WHEN it is called, and that a throw from
+// it cannot fail the push.
+const { mockOnNewPendingSubmission, mockDeleteReviewResources } = vi.hoisted(() => ({
+  mockOnNewPendingSubmission: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+  mockDeleteReviewResources: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/review-autodeploy.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReviewAutodeployService>()),
+  onNewPendingSubmission: (...a: unknown[]) => mockOnNewPendingSubmission(...a),
+}));
+
 vi.mock('~/server/db/client', () => ({
   dbRead: mockDbRead,
   dbWrite: mockDbWrite,
@@ -255,6 +299,8 @@ vi.mock('~/server/services/blocks/forgejo.service', () => mockForgejo);
 // triggers builds). Mock the resolved absolute id the service sees.
 vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
   triggerBuild: mockTriggerBuild,
+  // A superseded request's review preview is torn down by label (teardownReviewForRequest).
+  deleteReviewResources: (...a: unknown[]) => mockDeleteReviewResources(...a),
 }));
 
 // approveRequest does `await import('~/server/services/apps/storage-provision.service')`
@@ -281,6 +327,9 @@ const _publishEnvOverrides: Record<string, unknown> = {
   FORGEJO_ADMIN_TOKEN: 'tok-test',
   FORGEJO_WEBHOOK_SECRET: 'sec-test',
   APPS_DOMAIN: 'civit.ai',
+  // Read by the REAL forgejo.service the provenance describe at the end of this file runs.
+  FORGEJO_API_TIMEOUT_MS: 15000,
+  FORGEJO_COMMIT_TIMEOUT_MS: 120000,
   BUNDLE_S3_ENDPOINT: 'http://minio.test',
   BUNDLE_S3_BUCKET: 'app-block-bundles',
   BUNDLE_S3_ACCESS_KEY_ID: 'key',
@@ -311,7 +360,8 @@ async function makeBundle(files: Record<string, string | Buffer>): Promise<Buffe
 function manifest(over: Record<string, unknown> = {}) {
   // Default shape covers the minimum fields BlockManifestValidator requires
   // (so approveRequest's H-4 pre-validation accepts the manifest by default
-  // and individual tests opt into invalid shapes via `over`).
+  // and individual tests opt into invalid shapes via `over`). That includes a
+  // surface (`page`), which the submission validator requires.
   return {
     blockId: 'hello',
     version: '0.1.0',
@@ -325,6 +375,7 @@ function manifest(over: Record<string, unknown> = {}) {
       resizable: true,
       sandbox: 'allow-scripts',
     },
+    page: { path: '/', title: 'Hello World' },
     ...over,
   };
 }
@@ -335,6 +386,23 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
     'index.html': '<!doctype html><html><body>hi</body></html>',
     Dockerfile: 'FROM node:20',
   });
+}
+
+// Trimmed-store fixtures: a tagline of exactly MANIFEST_TAGLINE_MAX_LENGTH (140) chars and a valid
+// repository URL, each wrapped in heavy whitespace. The validator measures both trimmed, so the
+// padded manifest validates; every store path must then write the trimmed values.
+const TRIM_TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
+const TRIM_REPO = 'https://github.com/example-org/hello';
+const PAD = ` \t\n${' '.repeat(600)}\n\t `;
+const paddedStrings = () => ({
+  tagline: `${PAD}${TRIM_TAGLINE}${PAD}`,
+  repository: `${PAD}${TRIM_REPO}${PAD}`,
+});
+function expectTrimmedStrings(stored: unknown) {
+  expect(TRIM_TAGLINE).toHaveLength(140);
+  const m = stored as { tagline?: unknown; repository?: unknown };
+  expect(m.tagline).toBe(TRIM_TAGLINE);
+  expect(m.repository).toBe(TRIM_REPO);
 }
 
 beforeEach(() => {
@@ -367,6 +435,7 @@ beforeEach(() => {
   // (The reset loop above strips implementations, so these would otherwise
   // return undefined and break `await`/`.catch()` chains in the service.)
   mockForgejo.setCommitStatus.mockResolvedValue(undefined);
+  mockForgejo.ensureApprovalTag.mockResolvedValue({ status: 'created', tag: 'v0.1.0' });
   mockTriggerBuild.mockClear();
   mockTriggerBuild.mockResolvedValue({ name: 'pipelinerun-mock' });
   // W4 storage-provision-on-approve default: provision() resolves cleanly. Tests
@@ -477,7 +546,11 @@ describe('submitVersion', () => {
     ownerUserId: number,
     seats: { userId: number; status: string }[] = []
   ) => {
-    mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      app: { userId: ownerUserId },
+    });
     mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: 'apb_existing',
       app: { userId: ownerUserId },
@@ -503,6 +576,49 @@ describe('submitVersion', () => {
     expect(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.appBlockId).toBe(
       'apb_existing'
     );
+  });
+
+  it('🔴 refuses an accepted editor while the OWNER has not accepted the App Developer Terms, inserting nothing', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    // An off-site listing backed by a block: its owner is the listing column (8), which a
+    // transfer moves while the block's OauthClient (7) stays put.
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
   });
 
   it.each(['pending', 'declined'])(
@@ -667,6 +783,20 @@ describe('submitVersion', () => {
       expect(persistedManifest().iframe.src).toBe('https://hello.civit.ai/');
       expect(persistedManifest().iframe.sandbox).toBe('allow-scripts');
     }
+  });
+
+  // Red at origin/main: submit stored the padded strings verbatim.
+  it('stores a padded tagline/repository trimmed in the publish_request row', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle(paddedStrings());
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 42,
+      submitterIsModerator: false,
+    });
+    expect(result.publishRequestId).toBeDefined();
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(persistedManifest());
   });
 
   it('leaves an already-canonical iframe.src unchanged', async () => {
@@ -1872,6 +2002,46 @@ describe('approveRequest', () => {
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledOnce();
   });
 
+  // approveRequest resets the request's deploy state (clearing its detail) before it tears the
+  // preview down, so the teardown must use the detail read before that write: the preview's sha
+  // and serving mode. The DB fake below clears the detail once the 'building' write lands, as the
+  // real row does.
+  it('approving a request with a shared-server preview unpublishes THAT preview', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    const PREVIEW_SHA = 'b'.repeat(40);
+    let reset = false;
+    mockDbWrite.appBlockPublishRequest.updateMany.mockImplementation((async (a: {
+      data?: { deployState?: string };
+    }) => {
+      if (a?.data?.deployState === 'building') reset = true;
+      return { count: 1 };
+    }) as never);
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation((async () =>
+      pendingRequest(
+        reset
+          ? { deployState: 'building', deployDetail: null }
+          : {
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: PREVIEW_SHA, sharedServer: true }),
+            }
+      )) as never);
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+    mockDeleteReviewResources.mockClear();
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    expect(reset).toBe(true);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: PREVIEW_SHA,
+      publishRequestId: 'pubreq_1',
+      sharedServer: true,
+    });
+  });
+
   it('approves a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
@@ -2009,6 +2179,78 @@ describe('approveRequest', () => {
     // ...and the app_blocks row stores the same canonical value.
     const abArg = mockDbWrite.appBlock.create.mock.calls[0][0].data;
     expect((abArg.manifest as any).iframe.src).toBe('https://hello.civit.ai/');
+  });
+
+  it('🔴 refuses to approve while the app owner has not accepted the App Developer Terms; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 7
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+      expect(mockDbWrite.oauthClient.update).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it("approve checks the listing's canonical owner, not the block's, when the two differ", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(
+      async (userId) => userId !== 8
+    );
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: { where: unknown }) =>
+      JSON.stringify(args.where) === JSON.stringify({ appBlockId: 'apb_existing' })
+        ? { kind: 'offsite', userId: 8 }
+        : null
+    );
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      mockDbRead.appBlock.findFirst.mockResolvedValue({
+        id: 'apb_existing',
+        appId: 'oc_existing',
+        repoUrl: 'https://forgejo.example/civitai-apps/hello',
+        app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'], userId: 7 },
+      });
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
+  });
+
+  it('a first version, with no app yet, checks the submitter; nothing ships', async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    vi.mocked(terms.hasAcceptedAppDeveloperTerms)
+      .mockClear()
+      .mockImplementation(async (userId) => userId !== 42);
+    try {
+      const { approveRequest } = await import('../publish-request.service');
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+      await expect(
+        approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+      ).rejects.toThrow("The app's owner has not accepted the current App Developer Terms yet.");
+      expect(terms.hasAcceptedAppDeveloperTerms).toHaveBeenCalledWith(42);
+      expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+      expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(terms.hasAcceptedAppDeveloperTerms).mockImplementation(async () => true);
+    }
   });
 
   it('🔴 W13 onsite reset re-approve (SUBSEQUENT-version): restores the listing AND UN-SUSPENDS the block', async () => {
@@ -2611,6 +2853,22 @@ describe('approveRequest', () => {
     expect(ocUpdateArg.where).toEqual({ id: 'oc_existing' });
     expect(ocUpdateArg.data.grants).toEqual([]);
     expect(ocUpdateArg.data.allowedScopes).toBe(0);
+  });
+
+  // Red at origin/main: approve wrote the request's padded strings into app_blocks.manifest. The
+  // validator here is the real one, so this also shows the padded manifest is accepted, not refused.
+  it('writes a padded tagline/repository trimmed into app_blocks.manifest', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ manifest: manifest(paddedStrings()) })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle(paddedStrings());
+
+    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlock.create.mock.calls[0][0].data.manifest);
   });
 
   // ---- C1: trust-tier self-escalation (the most security-critical contract) ----
@@ -3773,6 +4031,35 @@ describe('backfillPublishRequest', () => {
     expect(createArg.forgejoCommitSha).toBe('sha_in_repo');
   });
 
+  // Red at origin/main: backfill stored the repo manifest's padded strings verbatim.
+  it('stores a padded tagline/repository from the repo manifest trimmed', async () => {
+    const { backfillPublishRequest } = await import('../publish-request.service');
+    mockDbRead.appBlock.findFirst.mockResolvedValue({
+      id: 'apb_existing',
+      appId: 'oc_existing',
+      manifest: manifest(),
+      version: '0.1.0',
+      currentVersionSha: 'sha_in_repo',
+      app: { userId: 42 },
+    });
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blob1'],
+        ['index.html', 'blob2'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) => {
+      if (sha === 'blob1') return Buffer.from(JSON.stringify(manifest(paddedStrings())));
+      return Buffer.from('<!doctype html>');
+    });
+
+    await backfillPublishRequest({ slug: 'hello', reviewerUserId: 999 });
+
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.manifest);
+  });
+
   it('idempotent: re-running with the same Forgejo HEAD returns the existing row', async () => {
     const { backfillPublishRequest } = await import('../publish-request.service');
     mockDbRead.appBlock.findFirst.mockResolvedValue({
@@ -3916,10 +4203,141 @@ describe('recordPendingFromPush', () => {
     mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map());
     mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(''));
     mockDbWrite.appBlockPublishRequest.updateMany.mockResolvedValue({ count: 0 });
+    // The supersede read: no other pending request for the slug.
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    mockOnNewPendingSubmission.mockReset();
+    mockOnNewPendingSubmission.mockResolvedValue(undefined);
+    mockDeleteReviewResources.mockClear();
   }
+
+  /** Let the fire-and-forget follow-ups (dynamic import → call) settle. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('a NEW pending request announces itself once (moderator alert + automatic preview), attributed to the owner', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    const res = await recordPendingFromPush(pushArgs);
+    await flush();
+
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledTimes(1);
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledWith({
+      publishRequestId: res.publishRequestId,
+      slug: 'hello',
+      version: '0.1.0',
+      appName: 'Hello World',
+      submittedByUserId: 777,
+      origin: 'push',
+    });
+  });
+
+  // Red at origin/main: the push recorder (git-push webhook and web manifest editor) stored the
+  // padded strings verbatim, on both the create and the same-sha refresh.
+  it('stores a padded tagline/repository trimmed on a new pending request', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await recordPendingFromPush({ ...pushArgs, manifest: manifest(paddedStrings()) });
+    await flush();
+
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.manifest);
+  });
+
+  it('stores a padded tagline/repository trimmed on a same-sha refresh', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    await recordPendingFromPush({ ...pushArgs, manifest: manifest(paddedStrings()) });
+    await flush();
+
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
+    expectTrimmedStrings(mockDbWrite.appBlockPublishRequest.update.mock.calls[0][0].data.manifest);
+  });
+
+  it('a refresh of an already-pending sha announces nothing (one alert per new request)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
+      id: 'pubreq_existing_sha',
+    });
+    mockDbWrite.appBlockPublishRequest.update.mockResolvedValue(undefined);
+
+    await recordPendingFromPush(pushArgs);
+    await flush();
+
+    expect(mockOnNewPendingSubmission).not.toHaveBeenCalled();
+  });
+
+  it('a throw from the follow-ups cannot fail the push', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    mockOnNewPendingSubmission.mockImplementation(() => {
+      throw new Error('discord down');
+    });
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await expect(recordPendingFromPush(pushArgs)).resolves.toMatchObject({
+      publishRequestId: expect.stringMatching(/^pubreq_/),
+    });
+    await flush();
+    expect(mockOnNewPendingSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it('superseding a pending request tears down ITS review preview (and only a request that had one)', async () => {
+    const { recordPendingFromPush } = await import('../publish-request.service');
+    stubEnrichForgejoNoop();
+    const OLD_SHA = 'f'.repeat(40);
+    mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce(null);
+    mockDbWrite.appBlockPublishRequest.findMany.mockResolvedValue([
+      { id: 'pubreq_old_preview', deployState: 'preview-live' },
+      { id: 'pubreq_old_none', deployState: null },
+    ]);
+    // teardownReviewForRequest re-reads each request it tears down.
+    mockDbRead.appBlockPublishRequest.findUnique.mockImplementation(
+      async (args: { where: { id: string } }) =>
+        args.where.id === 'pubreq_old_preview'
+          ? {
+              slug: 'hello',
+              deployState: 'preview-live',
+              deployDetail: JSON.stringify({ sha: OLD_SHA }),
+            }
+          : { slug: 'hello', deployState: null, deployDetail: null }
+    );
+    mockDbRead.appBlock.findUnique.mockResolvedValue({ app: { userId: 777 } });
+    mockDbWrite.appBlockPublishRequest.create.mockResolvedValue(undefined);
+
+    await recordPendingFromPush(pushArgs);
+    await vi.waitFor(() => expect(mockDeleteReviewResources).toHaveBeenCalled(), {
+      timeout: 15_000,
+    });
+    await flush();
+
+    expect(mockDeleteReviewResources).toHaveBeenCalledTimes(1);
+    expect(mockDeleteReviewResources).toHaveBeenCalledWith({
+      slug: 'hello',
+      sha: OLD_SHA,
+      publishRequestId: 'pubreq_old_preview',
+    });
+  });
 
   it('(a) existingForSha refresh path — updates the existing (slug,sha) pending row, no create', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ app: { userId: 7 } });
     // A pending row for THIS exact (slug, sha) already exists → refresh + done.
     mockDbWrite.appBlockPublishRequest.findFirst.mockResolvedValueOnce({
       id: 'pubreq_existing_sha',
@@ -3941,9 +4359,9 @@ describe('recordPendingFromPush', () => {
       })
     );
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
-    // No supersede, no owner lookup — the early-return short-circuits them.
+    // No supersede: the early-return short-circuits it. The owner IS looked up first, because the
+    // App Developer Terms gate (keyed on the owner) must cover a refresh too.
     expect(mockDbWrite.appBlockPublishRequest.updateMany).not.toHaveBeenCalled();
-    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
   });
 
   it('(b) supersede-then-create happy path — no existing row → supersedes other pending, then creates', async () => {
@@ -4076,5 +4494,244 @@ describe('recordPendingFromPush', () => {
     // Did NOT fall through to the P2002 winner re-read (only the existingForSha
     // findFirst ran).
     expect(mockDbWrite.appBlockPublishRequest.findFirst).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1-A provenance: the approve commit's trailers and its version tag, with
+// Forgejo mocked at the HTTP BOUNDARY. `commitFiles` and `ensureApprovalTag`
+// are the real implementations here (the rest of the harness above is
+// unchanged), so the assertions read the exact request bodies Forgejo receives.
+// ---------------------------------------------------------------------------
+describe('approveRequest — provenance trailers and version tag (Forgejo over HTTP)', () => {
+  const SOURCE = 'c'.repeat(40);
+  const PUSHED = 'd'.repeat(40);
+  const NEW_SHA = 'e'.repeat(40);
+  const OTHER_SHA = 'f'.repeat(40);
+
+  type Call = { method: string; path: string; body: any };
+  let calls: Call[];
+  let tags: Map<string, string>;
+  let failContents: boolean;
+  let failTags: boolean;
+
+  /** A Forgejo that models one empty-tree repo, the contents API and tags (409 on an existing name). */
+  function forgejoFetch() {
+    return vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const path = url.pathname;
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, path, body });
+      const json = (status: number, payload: unknown) =>
+        new Response(JSON.stringify(payload), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      const repo = '/api/v1/repos/civitai-apps/hello';
+      if (method === 'GET' && path === `${repo}/branches/main`)
+        return json(200, { commit: { id: 'head_sha' } });
+      if (method === 'GET' && path.startsWith(`${repo}/git/trees/`))
+        return json(200, { tree: [], truncated: false, total_count: 0 });
+      if (method === 'POST' && path === `${repo}/contents`) {
+        if (failContents) return json(500, { message: 'boom' });
+        return json(201, { commit: { sha: NEW_SHA } });
+      }
+      if (path.startsWith(`${repo}/tags`)) {
+        if (failTags) return json(503, { message: 'tags down' });
+        if (method === 'GET') {
+          const name = decodeURIComponent(path.slice(`${repo}/tags/`.length));
+          const sha = tags.get(name);
+          return sha
+            ? json(200, { name, id: 'tagobj', commit: { sha } })
+            : json(404, { message: 'not found' });
+        }
+        if (method === 'POST') {
+          if (tags.has(body.tag_name)) return json(409, { message: 'exists' });
+          tags.set(body.tag_name, body.target);
+          return json(201, { name: body.tag_name, commit: { sha: body.target } });
+        }
+      }
+      throw new Error(`unmodelled Forgejo call ${method} ${path}`);
+    });
+  }
+
+  const posts = (suffix: string) =>
+    calls.filter((c) => c.method === 'POST' && c.path.endsWith(suffix));
+
+  function pending(over: Record<string, unknown> = {}) {
+    return {
+      id: 'pubreq_1',
+      status: 'pending',
+      slug: 'hello',
+      version: '0.1.0',
+      manifest: manifest({ repository: 'https://github.com/someone/hello' }),
+      bundleKey: 'bundles/sha.zip',
+      forgejoCommitSha: null,
+      sourceCommit: SOURCE,
+      sourceDirty: false,
+      submittedByUserId: 42,
+      appBlockId: null,
+      ...over,
+    };
+  }
+
+  beforeEach(async () => {
+    calls = [];
+    tags = new Map();
+    failContents = false;
+    failTags = false;
+    vi.stubGlobal('fetch', forgejoFetch());
+    const real = await vi.importActual<typeof ForgejoService>('../forgejo.service');
+    mockForgejo.commitFiles.mockImplementation(real.commitFiles);
+    mockForgejo.ensureApprovalTag.mockImplementation(real.ensureApprovalTag);
+    mockForgejo.createRepoFromTemplate.mockResolvedValue({
+      id: 1,
+      name: 'hello',
+      full_name: 'civitai-apps/hello',
+      html_url: 'https://forgejo.example/civitai-apps/hello',
+      clone_url: 'https://forgejo.example/civitai-apps/hello.git',
+      ssh_url: 'git@forgejo.example:civitai-apps/hello.git',
+      default_branch: 'main',
+    });
+    mockForgejo.ensurePushWebhook.mockResolvedValue(undefined);
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle({
+      repository: 'https://github.com/someone/hello',
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const approve = async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    return approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+  };
+
+  it('🔴 zip approve: the commit carries the trailers, then v<version> is tagged on the returned sha', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pending());
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+
+    const message =
+      'Approved publish request pubreq_1 — hello v0.1.0\n\n' +
+      'Publish-Request: pubreq_1\n' +
+      'App-Version: 0.1.0\n' +
+      `Source-Commit: ${SOURCE}\n` +
+      'Source-Dirty: false\n' +
+      'Source-Repo: https://github.com/someone/hello\n';
+    const [commit] = posts('/contents');
+    expect(commit.body.message).toBe(message);
+
+    const tagPosts = posts('/tags');
+    expect(tagPosts.map((c) => c.body)).toEqual([{ tag_name: 'v0.1.0', target: NEW_SHA, message }]);
+    // Commit first, then the tag (the tag targets the sha the commit returned).
+    expect(calls.indexOf(commit)).toBeLessThan(calls.indexOf(tagPosts[0]));
+    expect(tags.get('v0.1.0')).toBe(NEW_SHA);
+  });
+
+  it('🔴 push-path approve: Pushed-Commit (never Source-Commit) and the tag targets the NEW snapshot', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pending({ bundleKey: '', forgejoCommitSha: PUSHED, sourceCommit: null, sourceDirty: null })
+    );
+    mockBundleBuffer.current = null;
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(
+      new Map([
+        ['block.manifest.json', 'blobM'],
+        ['index.html', 'blobH'],
+      ])
+    );
+    mockForgejo.getBlobContent.mockImplementation(async (_slug: string, sha: string) =>
+      sha === 'blobM'
+        ? Buffer.from(JSON.stringify(manifest({ repository: 'https://github.com/someone/hello' })))
+        : Buffer.from('<!doctype html><html><body>pushed</body></html>')
+    );
+
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+    const [commit] = posts('/contents');
+    expect(commit.body.message).toBe(
+      'Approved publish request pubreq_1 — hello v0.1.0\n\n' +
+        'Publish-Request: pubreq_1\n' +
+        'App-Version: 0.1.0\n' +
+        `Pushed-Commit: ${PUSHED}\n` +
+        'Source-Repo: https://github.com/someone/hello\n'
+    );
+    expect(posts('/tags').map((c) => [c.body.tag_name, c.body.target])).toEqual([
+      ['v0.1.0', NEW_SHA],
+    ]);
+  });
+
+  it("🔴 a reset-to-pending clone of a push-approved request does NOT call the platform's own commit Pushed-Commit", async () => {
+    // reset-to-pending copies the approved row (bundleKey '', forgejoCommitSha = the previous
+    // APPROVE snapshot) into a new pending request; another approved request holds that sha.
+    const PREV_SNAPSHOT = PUSHED;
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pending({
+        id: 'pubreq_1',
+        bundleKey: '',
+        forgejoCommitSha: PREV_SNAPSHOT,
+        sourceCommit: null,
+        sourceDirty: null,
+      })
+    );
+    mockDbRead.appBlockPublishRequest.findFirst.mockImplementation((async (a: {
+      where?: Record<string, unknown>;
+    }) =>
+      a?.where?.status === 'approved' && a?.where?.forgejoCommitSha === PREV_SNAPSHOT
+        ? { id: 'pubreq_prev' }
+        : null) as never);
+    mockBundleBuffer.current = null;
+    mockForgejo.listRepoTreeAtRef.mockResolvedValue(new Map([['block.manifest.json', 'blobM']]));
+    mockForgejo.getBlobContent.mockResolvedValue(Buffer.from(JSON.stringify(manifest())));
+
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+    const [commit] = posts('/contents');
+    expect(commit.body.message).toBe(
+      'Approved publish request pubreq_1 — hello v0.1.0\n\n' +
+        'Publish-Request: pubreq_1\n' +
+        'App-Version: 0.1.0\n' +
+        'Source-Repo: https://github.com/someone/hello\n'
+    );
+  });
+
+  it('invariant guard: a tag already on the approved sha is left alone (re-delivery), approve succeeds', async () => {
+    tags.set('v0.1.0', NEW_SHA);
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pending());
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+    expect(posts('/tags')).toEqual([]);
+  });
+
+  it('invariant guard: v<version> on ANOTHER sha (same-version re-submit) is not moved; the approval gets approved-<id>', async () => {
+    tags.set('v0.1.0', OTHER_SHA);
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pending());
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+    expect(posts('/tags').map((c) => [c.body.tag_name, c.body.target])).toEqual([
+      ['approved-pubreq_1', NEW_SHA],
+    ]);
+    expect(tags.get('v0.1.0')).toBe(OTHER_SHA);
+  });
+
+  it('invariant guard: a tag API outage never fails the approve or keeps the build from starting', async () => {
+    failTags = true;
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pending());
+    await expect(approve()).resolves.toMatchObject({ forgejoCommitSha: NEW_SHA });
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currentVersionSha: NEW_SHA }) })
+    );
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'approved' }) })
+    );
+    expect(mockTriggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ slug: 'hello', sha: NEW_SHA })
+    );
+  });
+
+  it('invariant guard: when the commit fails no tag is attempted', async () => {
+    failContents = true;
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pending());
+    await expect(approve()).rejects.toThrow(/Forgejo 500/);
+    expect(calls.filter((c) => c.path.includes('/tags'))).toEqual([]);
+    expect(mockTriggerBuild).not.toHaveBeenCalled();
   });
 });

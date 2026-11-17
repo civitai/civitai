@@ -1,4 +1,5 @@
-import { Text, Tooltip } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconShieldCancel, IconTrash } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

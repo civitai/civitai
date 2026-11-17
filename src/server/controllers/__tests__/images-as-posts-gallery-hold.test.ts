@@ -21,6 +21,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', () => ({
   getGallerySettingsByModelId: async () => ({ pinnedPosts: { 10: [100] }, hiddenImages: {} }),
   getHeldGalleryLevel: heldLevel,
+  isModelGalleryWithheld: async () => false,
 }));
 vi.mock('~/server/services/promotion.service', () => ({
   getSponsoredGalleryPost: async () => ({

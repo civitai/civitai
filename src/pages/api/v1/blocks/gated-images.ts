@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -39,9 +40,7 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  * 🔴 THE DECISIVE FACT IS THAT THE TWO CORPORA ARE DISJOINT — not that the two
  * routes DISCLOSE differently. `blocks/images` serves `runImageSearch`
  * (`src/pages/api/v1/blocks/images.ts:218`) over the Meilisearch images index,
- * whose source query hard-filters `i."postId" IS NOT NULL`
- * (`src/server/search-index/images.search-index.ts:134`, and again at `:282` for
- * the incremental update pass). THIS route's corpus is exactly the complement —
+ * whose source query hard-filters `i."postId" IS NOT NULL`. THIS route's corpus is exactly the complement —
  * `AND i."postId" IS NULL` (`block-gated-images.service.ts:184`), further scoped
  * to `blockPublishedAppId = claims.appId`. Complementary predicates: an image
  * cannot satisfy both. So `blocks/images?ids=` returns an EMPTY ARRAY for every
@@ -197,6 +196,13 @@ export const baseHandler = withAxiom(async function handler(
   // `block-gated-images-read.service.ts`.
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'gated_images',
+      retryAfterSeconds: rate.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rate.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;

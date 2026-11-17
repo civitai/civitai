@@ -6,6 +6,7 @@ import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { resolvePendingDeviceCode, normalizeUserCode } from '$lib/server/oauth/device-codes';
 import { hSetWithTTL, type EvalCapableClient } from '$lib/server/oauth/redis-atomic';
 import { parseBody } from '$lib/server/oauth/http';
+import { IMPERSONATION_REFUSED } from '$lib/server/auth/impersonation-refusal';
 
 // POST /api/auth/oauth/device-approve — session-gated approval of a device user_code. Marks the device
 // code approved + stamps the approving user.
@@ -13,6 +14,12 @@ const DEVICE_CODE_KEY = REDIS_KEYS.OAUTH.DEVICE_CODES;
 
 export const POST: RequestHandler = async ({ request, getClientAddress, locals }) => {
   if (!locals.user) return json({ error: 'unauthorized' }, { status: 401 });
+  // The device token carries no impersonation marker and would outlive the impersonation.
+  if (locals.impersonatedBy != null)
+    return json(
+      { error: 'access_denied', error_description: IMPERSONATION_REFUSED },
+      { status: 403 }
+    );
 
   const { user_code } = await parseBody(request);
   if (!user_code) {

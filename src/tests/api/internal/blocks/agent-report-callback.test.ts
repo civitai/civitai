@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
+import type * as ImpersonationCheckService from '~/server/services/blocks/app-impersonation-check.service';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — POST
@@ -12,7 +13,8 @@ import { Readable } from 'node:stream';
  *   - UPDATE guarded to status='running' — a torn-down/decided review is a no-op
  */
 
-const { mockFlag, mockVerify, mockUpdateMany, mockTs } = vi.hoisted(() => ({
+const { mockFlag, mockVerify, mockUpdateMany, mockTs, mockImpersonation } = vi.hoisted(() => ({
+  mockImpersonation: vi.fn(async (_id: string) => 'checked'),
   mockFlag: { enabled: true },
   mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
     ok: true,
@@ -38,6 +40,10 @@ vi.mock('~/server/services/blocks/review-session', () => ({
 }));
 vi.mock('~/pages/api/internal/blocks/review-build-callback', () => ({
   checkCallbackTimestamp: mockTs,
+}));
+vi.mock('~/server/services/blocks/app-impersonation-check.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImpersonationCheckService>()),
+  runImpersonationCheckForRequest: mockImpersonation,
 }));
 vi.mock('~/server/db/client', () => ({
   dbWrite: { appReviewAgentReport: { updateMany: mockUpdateMany } },
@@ -345,5 +351,36 @@ describe('POST /api/internal/blocks/agent-report-callback', () => {
     await handler(req, res);
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ ok: true, applied: false });
+  });
+
+  it('🔴 runs the impersonation check for THIS request once the report has landed', async () => {
+    const { req, res } = makeReqRes(goodBody({ status: 'failed' }));
+    await handler(req, res);
+    expect(res.body).toMatchObject({ ok: true, applied: true });
+    expect(mockImpersonation).toHaveBeenCalledTimes(1);
+    expect(mockImpersonation).toHaveBeenCalledWith(PUBREQ);
+  });
+
+  it('does not run the impersonation check when nothing was applied', async () => {
+    mockUpdateMany.mockResolvedValue({ count: 0 });
+    const { req, res } = makeReqRes(goodBody());
+    await handler(req, res);
+    expect(mockImpersonation).not.toHaveBeenCalled();
+  });
+});
+
+describe('the impersonation record is civitai-written only', () => {
+  it('🔴 a runner-supplied securityAudit.impersonationCheck is dropped before the write', () => {
+    const data = buildReportUpdate(
+      JSON.parse(
+        goodBody({
+          securityAudit: {
+            findings: [{ severity: 'low', title: 'x' }],
+            impersonationCheck: { status: 'complete' },
+          },
+        })
+      )
+    );
+    expect(data.securityAudit).toEqual({ findings: [{ severity: 'low', title: 'x' }] });
   });
 });

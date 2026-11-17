@@ -429,17 +429,24 @@ describe('nowpayments webhook: a paid IPN NOWPayments cannot confirm yet', () =>
     expect(deposits.size).toBe(0);
   });
 
-  it.each(['confirming', 'failed'])(
-    'hands a %s deposit NOWPayments already confirmed to the sweep without changing its owner',
-    async (status) => {
-      seed({ paymentId: ROW, userId: 42, status, payCurrency: 'btc', retryCount: 5 });
-      caller.getPaymentStatus.mockResolvedValue(null);
+  it('hands a confirming deposit NOWPayments already confirmed to the sweep without changing its owner', async () => {
+    seed({ paymentId: ROW, userId: 42, status: 'confirming', payCurrency: 'btc', retryCount: 5 });
+    caller.getPaymentStatus.mockResolvedValue(null);
 
-      await deliver(ipn({ order_id: 'user:99' }));
+    await deliver(ipn({ order_id: 'user:99' }));
 
-      expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42, retryCount: 0 });
-    }
-  );
+    expect(deposits.get(ROW)).toMatchObject({ status: 'buzz_failed', userId: 42, retryCount: 0 });
+  });
+
+  // The late sweep re-polls it and fails closed; the retry sweep would not.
+  it('leaves a failed deposit for the late sweep without changing its owner', async () => {
+    seed({ paymentId: ROW, userId: 42, status: 'failed', payCurrency: 'btc', retryCount: 5 });
+    caller.getPaymentStatus.mockResolvedValue(null);
+
+    await deliver(ipn({ order_id: 'user:99' }));
+
+    expect(deposits.get(ROW)).toMatchObject({ status: 'failed', userId: 42 });
+  });
 
   it('keeps a redelivered unconfirmed IPN unverified', async () => {
     caller.getPaymentStatus.mockResolvedValue(null);

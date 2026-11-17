@@ -1,4 +1,5 @@
-import { Button, Group, Menu, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCaretDown, IconPointFilled } from '@tabler/icons-react';
 import clsx from 'clsx';

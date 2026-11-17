@@ -957,3 +957,50 @@ describe('Forgejo client-side timeout routing', () => {
     vi.resetModules();
   });
 });
+
+describe('getPlatformAccountLogin', () => {
+  beforeEach(() => {
+    // The login is memoised per module instance; every case starts from a fresh one. The env
+    // mock is re-registered because the describe above ends with `vi.doUnmock('~/env/server')`.
+    vi.resetModules();
+    vi.doMock('~/env/server', () => ({
+      env: {
+        FORGEJO_BASE_URL: 'https://forgejo.example',
+        FORGEJO_ADMIN_TOKEN: 'tok-test',
+        FORGEJO_API_TIMEOUT_MS: 15000,
+        FORGEJO_COMMIT_TIMEOUT_MS: 120000,
+      },
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock('~/env/server');
+    vi.resetModules();
+  });
+
+  it('asks Forgejo who the admin token is once, and answers later calls from that', async () => {
+    const { getPlatformAccountLogin } = await import('../forgejo.service');
+    fm.enqueue({ login: 'platform-bot-7q', id: 3 });
+    expect(await getPlatformAccountLogin()).toBe('platform-bot-7q');
+    expect(await getPlatformAccountLogin()).toBe('platform-bot-7q');
+    expect(fm.calls.map((c) => c.url)).toEqual(['https://forgejo.example/api/v1/user']);
+    expect((fm.calls[0].init?.headers as Record<string, string>)['Authorization']).toBe(
+      'token tok-test'
+    );
+  });
+
+  it('does not keep a failed read: the next call asks again', async () => {
+    const { getPlatformAccountLogin } = await import('../forgejo.service');
+    fm.enqueue({ message: 'unavailable' }, 503);
+    await expect(getPlatformAccountLogin()).rejects.toThrow(/Forgejo 503/);
+    fm.enqueue({ login: 'platform-bot-7q' });
+    expect(await getPlatformAccountLogin()).toBe('platform-bot-7q');
+    expect(fm.calls).toHaveLength(2);
+  });
+
+  it('refuses an answer with no login', async () => {
+    const { getPlatformAccountLogin } = await import('../forgejo.service');
+    fm.enqueue({ id: 3 });
+    await expect(getPlatformAccountLogin()).rejects.toThrow(/no login/);
+  });
+});

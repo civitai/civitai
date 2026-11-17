@@ -39,6 +39,7 @@ export const PRIVATE_HOSTNAME_PATTERNS = [
   // Reserved internal infrastructure names commonly used internally.
   /\.internal$/i,
   /\.local$/i,
+  /\.(localhost|intranet|lan|corp|home\.arpa|svc)$/i,
   /^metadata\.google\.internal$/i,
   // Note: punycode/IDN homograph attacks (e.g. `xn--...` registered as a
   // look-alike) and DNS-rebinding (public name flipped to 127.0.0.1 at
@@ -175,14 +176,7 @@ function isPrivateIpv6(addr: string): boolean {
   if (g[0] >= 0xfe80 && g[0] <= 0xfebf) return true; // fe80::/10 link-local
   if (firstByte === 0xff) return true; // ff00::/8 multicast
   // ::ffff:a.b.c.d IPv4-mapped → check the embedded IPv4.
-  if (
-    g[0] === 0 &&
-    g[1] === 0 &&
-    g[2] === 0 &&
-    g[3] === 0 &&
-    g[4] === 0 &&
-    g[5] === 0xffff
-  ) {
+  if (g[0] === 0 && g[1] === 0 && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0xffff) {
     return isPrivateIpv4(`${g[6] >> 8}.${g[6] & 0xff}.${g[7] >> 8}.${g[7] & 0xff}`);
   }
   // ::a.b.c.d IPv4-compatible (deprecated) → check the embedded IPv4.
@@ -192,14 +186,7 @@ function isPrivateIpv6(addr: string): boolean {
   // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052) — the low 32 bits embed an
   // IPv4 dest a NAT64 translator will reach. `64:ff9b::a9fe:a9fe` embeds
   // 169.254.169.254, so the embedded v4 MUST be run through the v4 guard.
-  if (
-    g[0] === 0x0064 &&
-    g[1] === 0xff9b &&
-    g[2] === 0 &&
-    g[3] === 0 &&
-    g[4] === 0 &&
-    g[5] === 0
-  ) {
+  if (g[0] === 0x0064 && g[1] === 0xff9b && g[2] === 0 && g[3] === 0 && g[4] === 0 && g[5] === 0) {
     return isPrivateIpv4(`${g[6] >> 8}.${g[6] & 0xff}.${g[7] >> 8}.${g[7] & 0xff}`);
   }
   // 6to4 2002::/16 (RFC 3056) — the next 32 bits after the 2002 prefix embed the

@@ -21,8 +21,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'BountyEntry',
   'Challenge',
   'ChatMessage',
-  'Comment',
-  'CommentV2',
+  'CommentV3',
   'ResourceReview',
   'User',
   'UserProfile',
@@ -30,6 +29,8 @@ export const TEXT_SCAN_ENTITY_TYPES = [
   'Collection',
   'Storyline',
   'ImageCaption',
+  'ServiceOffering',
+  'PostText',
   'ModelRules',
 ] as const satisfies readonly TextScanEntityType[];
 
@@ -218,7 +219,7 @@ function logLabelModeReadFailure(
       message,
       label,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => null);
+    });
   } catch {
     // Logging must not undo the fallback.
   }

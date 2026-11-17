@@ -167,3 +167,72 @@ describe('runEnforceTokenScope — non-OAuth auth emits nothing and takes the ba
     expect(mockEmit).not.toHaveBeenCalled();
   });
 });
+
+describe('runEnforceTokenScope — anyOfScopes admits a token with any one listed scope', () => {
+  const ANY_OF = [TokenScope.UserRead, TokenScope.MediaWrite];
+  const run = (ctx: Parameters<typeof runEnforceTokenScope>[0]['ctx'], meta: object) => {
+    const next = vi.fn(async () => ({ ok: true }));
+    const call = () =>
+      runEnforceTokenScope({ ctx, meta: meta as never, path: 'user.getUsageLimits', next });
+    return { next, call };
+  };
+
+  it.each([
+    ['UserRead only', TokenScope.UserRead, TokenScope.UserRead],
+    ['MediaWrite only', TokenScope.MediaWrite, TokenScope.MediaWrite],
+    [
+      'both (the first listed is recorded)',
+      TokenScope.UserRead | TokenScope.MediaWrite,
+      TokenScope.UserRead,
+    ],
+  ])('passes a token with %s and audits the matched bit', async (_label, tokenScope, audited) => {
+    const { next, call } = run({ ...OAUTH_CTX, tokenScope }, { anyOfScopes: ANY_OF });
+    await call();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(mockEmit.mock.calls[0][0]).toMatchObject({ scopeBit: audited, statusCode: 200 });
+  });
+
+  it('refuses a token with neither, with no emit', () => {
+    const { next, call } = run(
+      { ...OAUTH_CTX, tokenScope: TokenScope.ModelsRead },
+      { anyOfScopes: ANY_OF }
+    );
+    expect(call).toThrow(/required scope/i);
+    expect(next).not.toHaveBeenCalled();
+    expect(mockEmit).not.toHaveBeenCalled();
+  });
+
+  it('an empty list refuses every scoped token', () => {
+    const { next, call } = run(
+      { ...OAUTH_CTX, tokenScope: TokenScope.Full & ~TokenScope.ModelsRead },
+      { anyOfScopes: [] }
+    );
+    expect(call).toThrow(/required scope/i);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('records Full for a Full OAuth token when no listed scope matched', async () => {
+    const { next, call } = run(OAUTH_CTX, { anyOfScopes: [] });
+    await call();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(mockEmit.mock.calls[0][0]).toMatchObject({ scopeBit: TokenScope.Full, statusCode: 200 });
+  });
+
+  it('passes a Full token and a session request', async () => {
+    const full = run(OAUTH_CTX, { anyOfScopes: ANY_OF });
+    await full.call();
+    expect(full.next).toHaveBeenCalledTimes(1);
+    const session = run({ tokenScope: TokenScope.Full, user: { id: 42 } }, { anyOfScopes: ANY_OF });
+    await session.call();
+    expect(session.next).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a meta that carries both requiredScope and anyOfScopes, even for a session', () => {
+    const { next, call } = run(
+      { tokenScope: TokenScope.Full, user: { id: 42 } },
+      { requiredScope: TokenScope.UserRead, anyOfScopes: ANY_OF }
+    );
+    expect(call).toThrow(/both requiredScope and anyOfScopes/);
+    expect(next).not.toHaveBeenCalled();
+  });
+});

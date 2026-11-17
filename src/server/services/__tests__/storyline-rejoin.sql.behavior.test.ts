@@ -81,6 +81,9 @@ beforeAll(async () => {
     CREATE TABLE "User" ("id" integer PRIMARY KEY);
     CREATE TABLE "Post" ("id" integer PRIMARY KEY);
     CREATE TABLE "Report" ("id" integer PRIMARY KEY);
+    -- What marks a chapter paid for, read for its owner.
+    CREATE TABLE "Placement" ("id" integer PRIMARY KEY, "free" boolean NOT NULL DEFAULT false,
+      "amount" integer NOT NULL DEFAULT 0);
   `);
   for (const name of [
     '20261023120000_storylines',
@@ -160,7 +163,19 @@ beforeAll(async () => {
     moderatorNsfwLevel: null,
     createdAt: new Date('2026-10-01'),
     user: { id: 1, username: 'owner', bannedAt: null, deletedAt: null },
-    chapters: [{ id: 1, postId: null, post: null }],
+    chapters: [
+      {
+        id: 1,
+        postId: null,
+        removedAt: null,
+        post: {
+          nsfwLevel: NsfwLevel.PG,
+          publishedAt: new Date(0),
+          tosViolation: false,
+          user: { bannedAt: null, deletedAt: null },
+        },
+      },
+    ],
   } as never);
 });
 

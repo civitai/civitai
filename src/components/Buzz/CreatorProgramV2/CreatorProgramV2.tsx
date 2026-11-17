@@ -9,11 +9,11 @@ import {
   Table,
   Text,
   ThemeIcon,
-  Tooltip,
   NumberInput,
   useCombobox,
   Combobox,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconBuildingBank,
   IconCalendar,

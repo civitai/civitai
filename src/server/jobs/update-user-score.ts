@@ -1,5 +1,10 @@
 import type { PrismaClient } from '@prisma/client';
-import { chunk, partition } from 'lodash-es';
+import { chunk } from 'lodash-es';
+import {
+  moderatorActedBeforeDeleteSql,
+  statusAtDeleteKnownSql,
+  unpublishedByOtherSql,
+} from '~/server/common/model-moderator-action';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -12,7 +17,8 @@ import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { CREATOR_SCORE_CATEGORIES } from '~/shared/utils/creator-score';
 import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
 import {
-  countRemovalsByOwner,
+  removalPenaltyWeightsByOwner,
+  getOwnersWithRemovalsAgedOutSince,
   getOwnersWithReversalsSince,
   reportsAgainstScore,
 } from '~/server/services/creator-removals.service';
@@ -27,10 +33,12 @@ import type {
 } from '~/server/services/creator-milestone-grant.service';
 import {
   grantScoreTierMilestones,
-  markMilestonesSeen,
   notifyScoreTierCrossings,
 } from '~/server/services/creator-milestone-grant.service';
-import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import {
+  creatorMilestoneRegistry,
+  isMilestoneAnnounced,
+} from '~/server/services/creator-milestone-registry';
 import { alertNewLegends } from '~/server/services/creator-legend-alert.service';
 import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
@@ -182,17 +190,17 @@ export const userScoreCheckpointKeys = [...Object.keys(scoreFetchers), TIER_GRAN
 
 // A model taken down by anyone but its owner stops counting; one the owner unpublished or deleted
 // keeps its points. A missing actor counts as the owner: nothing shows a moderator acted.
-const unpublishedByOther = `COALESCE(m.meta->>'unpublishedBy' <> m."userId"::text, false)`;
+const unpublishedByOther = unpublishedByOtherSql('m');
 const LIVE_MODEL_COUNTS = `(m.status IN ('Published', 'Scheduled')
   OR (m.status = 'Unpublished' AND NOT ${unpublishedByOther}))`;
 // An owner can delete a model a moderator already took down, so a delete keeps only what the model
 // held when it was deleted: `statusAtDelete` where the delete recorded it, else the takedown marks.
 const DELETED_MODEL_COUNTS = `(m.status = 'Deleted'
   AND COALESCE(m."deletedBy" = m."userId", true)
-  AND CASE WHEN m.meta ? 'statusAtDelete'
-    THEN m.meta->>'statusAtDelete' IN ('Published', 'Scheduled')
-      OR (m.meta->>'statusAtDelete' = 'Unpublished' AND NOT ${unpublishedByOther})
-    ELSE NOT (m.meta ? 'unpublishedReason') AND NOT ${unpublishedByOther}
+  AND CASE WHEN ${statusAtDeleteKnownSql('m')}
+    THEN m.meta->>'statusAtDelete' IN ('Published', 'Scheduled', 'Unpublished')
+      AND NOT ${moderatorActedBeforeDeleteSql('m')}
+    ELSE NOT ${moderatorActedBeforeDeleteSql('m')}
   END)`;
 export const MODEL_COUNTS_TOWARD_SCORE = `(${LIVE_MODEL_COUNTS} OR ${DELETED_MODEL_COUNTS})`;
 
@@ -555,7 +563,7 @@ async function getReportedActionedScore(ctx: Context) {
 
 // Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
 export async function getReportAgainstScore(
-  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'>
+  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'> & { now?: Date }
 ) {
   const removed = await ctx.ch.$query<{ ownerId: number }>`
     SELECT DISTINCT ownerId
@@ -563,16 +571,18 @@ export async function getReportAgainstScore(
     WHERE type = '${REPORTS_AGAINST_EVENT}'
     AND time > ${ctx.lastUpdate}
   `;
+  const now = ctx.now ?? new Date();
   const owners = [
     ...new Set([
       ...removed.map((r) => Number(r.ownerId)),
       ...(await getOwnersWithReversalsSince(ctx.ch, ctx.lastUpdate)),
+      ...(await getOwnersWithRemovalsAgedOutSince(ctx.ch, ctx.lastUpdate, now)),
     ]),
   ];
 
-  const violations = await countRemovalsByOwner(ctx.ch, owners);
+  const penaltyWeights = await removalPenaltyWeightsByOwner(ctx.ch, owners, now);
   for (const id of owners) {
-    const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
+    const score = reportsAgainstScore(penaltyWeights.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);
   }
 }
@@ -632,22 +642,21 @@ export async function grantScoreTierCrossings(
     const grantable = grantsRequireFlag
       ? transitions.filter((t) => audience.has(t.userId))
       : transitions;
-    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);
+    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel, {
+      userIds: [...audience],
+      announcedKeys: Object.keys(creatorMilestoneRegistry).filter((key) =>
+        isMilestoneAnnounced(key, now)
+      ),
+    });
   } catch (e) {
     log('tier grant failed for batch', e);
     ctx.tierGrantErrors.push(e);
     return;
   }
   const audienceCrossings = crossings.filter((crossing) => audience.has(crossing.userId));
-  const [announced, silenced] = partition(audienceCrossings, (crossing) =>
+  const announced = audienceCrossings.filter((crossing) =>
     isMilestoneAnnounced(crossing.milestoneKey, now)
   );
-  try {
-    await markMilestonesSeen(ctx.pg, silenced, onCancel);
-  } catch (e) {
-    log('marking silent tier grants seen failed for batch', e);
-    ctx.tierGrantErrors.push(e);
-  }
   // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
   await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
   // Staff hear about every alerted crossing, including one whose user-facing announcement is silenced.

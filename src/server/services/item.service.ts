@@ -2,7 +2,8 @@ import type { Prisma } from '@prisma/client';
 
 export { ITEM_DEFINITION_STATUS, ITEM_TYPE, type ItemType } from '@civitai/shared/mystery-box';
 
-const USER_HOLDER = 'user';
+/** `Item.holderType` for an item a user holds. */
+export const USER_HOLDER = 'user';
 
 /**
  * Grants one held item to a user. `sourceKey` names what granted it (a purchase claim's transaction
@@ -79,6 +80,37 @@ export function findHeldItemById(
   return client.item.findFirst({
     where: { id, holderType: USER_HOLDER, holderId: userId },
     select: { id: true, itemDefinitionId: true, itemDefinition: { select: { params: true } } },
+  });
+}
+
+/** The items this user holds whose `sourceKey` starts with `sourcePrefix`, in key order. */
+export function listHeldItemsBySourcePrefix(
+  client: Prisma.TransactionClient,
+  { sourcePrefix, userId }: { sourcePrefix: string; userId: number }
+) {
+  return client.item.findMany({
+    where: { sourceKey: { startsWith: sourcePrefix }, holderType: USER_HOLDER, holderId: userId },
+    select: { id: true, itemDefinitionId: true },
+    orderBy: { sourceKey: 'asc' },
+  });
+}
+
+/** How many of one definition this user holds whose `sourceKey` ends with `sourceSuffix`. */
+export function countHeldItemsBySourceSuffix(
+  client: Prisma.TransactionClient,
+  {
+    itemDefinitionId,
+    userId,
+    sourceSuffix,
+  }: { itemDefinitionId: number; userId: number; sourceSuffix: string }
+) {
+  return client.item.count({
+    where: {
+      itemDefinitionId,
+      holderType: USER_HOLDER,
+      holderId: userId,
+      sourceKey: { endsWith: sourceSuffix },
+    },
   });
 }
 

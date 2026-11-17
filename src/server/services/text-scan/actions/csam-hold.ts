@@ -38,13 +38,18 @@ export class CsamHoldBusyError extends Error {
   }
 }
 
+/** The first key of `lockCsamHold`, for a writer on another client to take the same lock. */
+export const csamHoldLockKey = (entityType: string) => `csam-hold:${entityType}`;
+
 /** Advisory lock shared with a decision's final update, so a decision cannot land between the ruled-text check and the write. */
 export const lockCsamHold = (
   tx: Pick<typeof dbWrite, '$executeRaw'>,
   entityType: string,
   entityId: number
 ) =>
-  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`csam-hold:${entityType}`}), ${entityId}::int)`;
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${csamHoldLockKey(
+    entityType
+  )}), ${entityId}::int)`;
 
 const PREVIOUS_TEXTS_KEPT = 5;
 
@@ -270,7 +275,7 @@ export async function applyCsamHold({
     created: write === 'created',
     ...(coveredBy !== null ? { coveredBy } : {}),
     ...(priorHoldId !== null ? { priorHoldId } : {}),
-  }).catch(() => null);
+  });
 }
 
 /** Hold first: a failed write throws before the entity action, so the retry cron's rescan redoes both. */
@@ -292,7 +297,7 @@ export function withCsamHold(
         workflowId: args.workflowId,
         errorName: error instanceof Error ? error.name : typeof error,
         errorCode: (error as { code?: unknown } | null | undefined)?.code,
-      }).catch(() => null);
+      });
       throw error;
     }
     await apply(args);

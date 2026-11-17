@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { IconArrowsLeftRight, IconBookmark, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
+import { choiceSelectedButtonClass } from '~/libs/form/components/choice-styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import { useSizePresets } from '~/components/generation_v2/inputs/useSizePresets';
@@ -290,7 +291,8 @@ function CustomDimensionsModal({
                     <Button.Group key={preset.id}>
                       <Button
                         size="compact-sm"
-                        variant={active ? 'filled' : 'default'}
+                        variant={active ? 'light' : 'default'}
+                        className={active ? choiceSelectedButtonClass : undefined}
                         aria-pressed={active}
                         disabled={!preset.fits}
                         title={
@@ -341,7 +343,8 @@ function CustomDimensionsModal({
               <Button
                 key={`${a}:${b}`}
                 size="compact-sm"
-                variant={active ? 'filled' : 'default'}
+                variant={active ? 'light' : 'default'}
+                className={active ? choiceSelectedButtonClass : undefined}
                 aria-pressed={active}
                 onClick={() => {
                   const next = atRatio(size, ratio, limits);

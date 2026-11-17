@@ -1,5 +1,6 @@
 import { createCivitaiClient } from '@civitai/orchestration-client';
 import { env } from '$env/dynamic/private';
+import { logAxiomError } from './axiom';
 
 // The orchestrator is an external service (NOT the main app), so calling it directly isn't a main-app
 // callback. Lazy so an unconfigured dev env doesn't crash at import.
@@ -178,4 +179,28 @@ export async function fetchOrchestratorBlobContent(url: string): Promise<Respons
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Makes the orchestrator re-validate every token of the account it has cached for auth, as the main
+ * app's `revokeCivitaiUserTokens` does. Never throws: the account change has already committed.
+ */
+export async function revokeOrchestratorUserTokens(userId: number): Promise<boolean> {
+  const config = orchestratorConfig();
+  if (!config) return false;
+  try {
+    const res = await fetch(`${config.base}/v2/consumer/civitai/${userId}/tokens`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${config.token}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (res.ok) return true;
+    void logAxiomError(new Error(`token revocation answered ${res.status}`), {
+      name: 'orchestrator.invalidate-user.failed',
+      userId,
+    });
+  } catch (error) {
+    void logAxiomError(error, { name: 'orchestrator.invalidate-user.failed', userId });
+  }
+  return false;
 }

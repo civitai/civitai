@@ -6,11 +6,11 @@ import {
   Drawer,
   Group,
   Indicator,
-  Popover,
   ScrollArea,
   Stack,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';

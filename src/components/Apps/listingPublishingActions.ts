@@ -4,7 +4,7 @@ import {
   canOwnerUnpublish,
   ownerListingState,
 } from '~/components/Apps/offsiteOwnerControls';
-import type { AppRole } from '~/shared/constants/app-capabilities.constants';
+import type { ListingEditorRole } from '~/shared/constants/app-capabilities.constants';
 import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
 
 /**
@@ -166,7 +166,7 @@ export type PublishingActionRow = {
   status: string;
   /** The listing's most-recent moderation-event action; only meaningful when `removed`. */
   lastModerationAction?: string | null;
-  role: AppRole;
+  role: ListingEditorRole;
 };
 
 /** The owner-control state for a listing — the state the ledger is keyed on. */

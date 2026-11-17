@@ -2,11 +2,10 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { jsonArrayFrom } from './infra/helpers';
 
-// Kysely ports of high-volume Prisma reads, served behind the default-off server Flipt flag
-// `kysely-hot-reads-6`; off, the Prisma reads run unchanged. The app-side wrappers
+// Kysely ports of high-volume Prisma reads. The app-side wrappers
 // (<civitai>/src/server/services/hot-reads-6.reads.ts) map these rows to the exact Prisma payload,
-// and <civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts compares the two
-// against a real database.
+// and <civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts pins them, against
+// a real database, to the values the Prisma reads returned.
 //
 // Every statement reads base TABLES only, never a view: the parity suite fails if one of them names
 // a relation declared `/// @view`.
@@ -37,6 +36,7 @@ function userWithCosmeticsQuery(db: Kysely<DB>) {
       'ProfilePicture.hash as profilePictureHash',
       'ProfilePicture.userId as profilePictureUserId',
       'ProfilePicture.ingestion as profilePictureIngestion',
+      'ProfilePicture.needsReview as profilePictureNeedsReview',
       'ProfilePicture.type as profilePictureType',
       'ProfilePicture.width as profilePictureWidth',
       'ProfilePicture.height as profilePictureHeight',
@@ -320,6 +320,8 @@ export function listDownloadFiles(db: Kysely<DB>, where: DownloadFilesWhere) {
       'ModelFile.type',
       'ModelFile.metadata',
       'ModelFile.sizeKB',
+      'ModelFile.pickleScanResult',
+      'ModelFile.virusScanResult',
       jsonArrayFrom(
         eb
           .selectFrom('ModelFileHash')

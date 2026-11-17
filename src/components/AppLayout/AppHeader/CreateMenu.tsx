@@ -1,4 +1,5 @@
-import { Badge, Button, Menu, Text, Popover } from '@mantine/core';
+import { Badge, Button, Text } from '@mantine/core';
+import { Menu, Popover } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBrush, IconChevronDown } from '@tabler/icons-react';
 import type { MouseEventHandler } from 'react';

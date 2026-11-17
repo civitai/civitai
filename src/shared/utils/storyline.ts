@@ -1,3 +1,4 @@
+import { MINOR_CONTENT_MAX_LEVEL } from '@civitai/shared/minor-content-gate';
 import { NsfwLevel } from '~/server/common/enums';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 
@@ -15,9 +16,9 @@ export const isStorylineCeilingLevel = (value: number) =>
 
 /**
  * The highest a chapter may be rated in a storyline whose title the scan found to be about a
- * minor: safe for work, as for a minor-flagged model (`modelBrowsingLevelLimit`).
+ * minor: the minor content rule's ceiling, as for a minor-flagged model (`modelBrowsingLevelLimit`).
  */
-export const STORYLINE_MINOR_CEILING = NsfwLevel.PG13;
+export const STORYLINE_MINOR_CEILING = MINOR_CONTENT_MAX_LEVEL;
 
 /**
  * The ceiling every chapter is held to: the owner's, lowered to safe for work while the title
@@ -38,6 +39,10 @@ export const STORYLINE_GRAPH_LIMIT = 300;
 export const STORYLINE_MAX_COLLABORATORS = 50;
 /** Longest caption on one chapter image; `ImageCaption.content` is VARCHAR(500) to match. */
 export const STORYLINE_CAPTION_MAX_LENGTH = 500;
+/** Most text items on one chapter post: as many as its images (`POST_IMAGE_LIMIT`). */
+export const STORYLINE_TEXT_MAX_PER_POST = 20;
+/** Longest text item, counted without its HTML tags. */
+export const STORYLINE_TEXT_MAX_LENGTH = 5_000;
 /** Most chapter authors a storyline header lists besides its owner and collaborators. */
 export const STORYLINE_MAX_CONTRIBUTORS = 50;
 
@@ -184,6 +189,31 @@ export function getStorylineChapterTombstone({
     return post.nsfwLevel ? 'aboveStoryRating' : 'unavailable';
   }
   if ((post.nsfwLevel & browsingLevel) === 0) return 'browsingLevel';
+  return null;
+}
+
+/** Why chapter 1 keeps its storyline from the public; its owner, participants and moderators are told. */
+export type StorylineRootHiddenReason = 'removed' | 'unpublished' | 'pendingRating';
+
+/**
+ * Whether chapter 1 keeps the storyline out of public view, and why. `post` is null once the post
+ * is deleted. Mirrored in SQL by `storylineRootVisibleSql` (the feed) and `storylineRootWaitingSql`
+ * (the readiness pass); change all three.
+ */
+export function getStorylineRootHiddenReason(
+  {
+    post,
+    removed,
+  }: {
+    post: Pick<StorylineChapterPost, 'nsfwLevel' | 'publishedAt' | 'tosViolation' | 'user'> | null;
+    removed: boolean;
+  },
+  now = new Date()
+): StorylineRootHiddenReason | null {
+  if (!post || isStorylineChapterRemoved({ post, removed }) || post.nsfwLevel === NsfwLevel.Blocked)
+    return 'removed';
+  if (!post.publishedAt || !(post.publishedAt < now)) return 'unpublished';
+  if (!post.nsfwLevel) return 'pendingRating';
   return null;
 }
 

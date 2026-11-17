@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import type { RequestHandler } from './$types';
-import { clearSession, SESSION_COOKIE } from '$lib/server/auth/session';
+import { clearSession, readHubSession } from '$lib/server/auth/session';
 import { clearDeviceCookie } from '$lib/server/auth/device';
 import { clearLegacyCookies } from '$lib/server/auth/legacy-cookies';
 import { sessions } from '$lib/server/auth/registry';
@@ -63,12 +63,11 @@ export const POST: RequestHandler = async ({ cookies, locals, url }) => {
   }
   // Every site and account signed in from this browser signs out with it, including when the caller's session was
   // already signed out by an earlier leg of the same logout.
-  const caller = locals.session ?? (await signedOutCaller(cookies.get(SESSION_COOKIE)));
+  const caller = locals.session ?? (await signedOutCaller(readHubSession(cookies)?.value));
   await endDeviceSessions(caller, locals.deviceId);
   // Clear the hub's session AND device cookies under every name, `.civitai.com` and host-only (the
   // seamless-switch account set must not survive logout on a shared machine). Also clear any leftover LEGACY
-  // next-auth cookies on `.civitai.com` — the main app's hybrid fallback still honors the legacy session cookie,
-  // so leaving it would silently re-authenticate the user after a cross-domain logout.
+  // next-auth cookies on `.civitai.com`; a PR preview still signs in with that session cookie.
   clearSession(cookies);
   clearDeviceCookie(cookies);
   clearLegacyCookies(cookies);

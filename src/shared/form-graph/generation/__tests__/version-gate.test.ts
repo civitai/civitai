@@ -22,8 +22,6 @@ const v2Hidden: GenerationCtx = {
   ...EXT,
   gateRules: [
     {
-      id: 'hide-grok-v2',
-      name: '',
       availableTo: 'moderators',
       presentation: 'hidden',
       ecosystems: [],

@@ -233,12 +233,12 @@ export async function checkAutoFeatureHealth() {
     // shape of an outage in the control plane, and this line is the only trace of it.
     const lastRun = await readLastRun().catch(() => null);
     log('Auto-feature flag off, skipping health check');
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'auto-feature-health-check',
       message: 'Skipped: AUTO_FEATURE_IMAGES reads off (deliberately, or because Flipt is down)',
       details: { lastRun: lastRun?.toISOString() ?? null },
-    }).catch(() => null);
+    });
     return { skipped: true as const, lastRun: lastRun?.toISOString() ?? null };
   }
 
@@ -258,12 +258,12 @@ export async function checkAutoFeatureHealth() {
     return { healthy: true as const, ...details };
   }
 
-  await logToAxiom({
+  logToAxiom({
     type: alerts.some((a) => a.severity === 'page') ? 'warning' : 'info',
     name: 'auto-feature-health-check',
     details,
     message: alerts.map((a) => a.message).join(' | '),
-  }).catch(() => null);
+  });
 
   const paging = alerts.filter((a) => a.severity === 'page');
   // `paged` reports what LANDED, not what was attempted. A revoked or rotated webhook otherwise
@@ -280,17 +280,17 @@ export async function checkAutoFeatureHealth() {
   // with no webhook is not a broken alarm, and collapsing the two would fire this warning on every
   // unhealthy run in dev and preview — training whoever eventually sees the real one to ignore it.
   if (outcome === 'rejected')
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'auto-feature-health-check',
       message: 'Discord rejected the page — the finding above reached nobody',
-    }).catch(() => null);
+    });
   else if (outcome === 'unconfigured')
-    await logToAxiom({
+    logToAxiom({
       type: 'info',
       name: 'auto-feature-health-check',
       message: 'No DISCORD_WEBHOOK_MOD_ALERTS configured — the finding above was recorded only',
-    }).catch(() => null);
+    });
 
   return {
     healthy: false as const,

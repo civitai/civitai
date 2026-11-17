@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import type { EventTurfConfig } from '~/server/events/turf/config';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
@@ -252,7 +253,18 @@ export type EventScoring = EventPointsConfig & {
   newAccountDays: number;
   // Scoring keeps running this long past endDate for late data; the winner is decided after it.
   finalizeAfterMs: number;
+  // Most stories one person can start from hatted images per UTC day that score, as a remix of the
+  // image. Without it, a story never scores.
+  storySparksPerActorPerDay?: number;
+  // Points a team is given outright: they count toward its total, rank and winner from `at`, but
+  // never toward any hat's or person's points.
+  teamAwards?: readonly TeamAward[];
+  // While the event is playable, a remix submitted to a teammate's hatted image is waived the
+  // owner's remix gallery price, up to this many waived submissions per placer per UTC day. See
+  // team-remix-waiver.ts for who qualifies. Omit it and nobody's price is waived.
+  teamRemixWaiver?: { perPlacerPerDay: number };
 };
+export type TeamAward = { team: string; points: number; at: Date; reason: string };
 
 // The words a scored event's page shows. The numbers on it (reaction weight, caps, cooldown, what can
 // wear a decoration) are read from `scoring` and the event's decoration definition, never restated
@@ -289,6 +301,8 @@ export type EventBannerCopy = {
   accent?: string;
   text?: string;
   cta?: string;
+  /** The cta for a viewer already on a team, in place of `cta` (which may ask them to join). */
+  joinedCta?: string;
   image?: string;
   background?: string;
   dismissible?: boolean;
@@ -333,6 +347,8 @@ type HolidayEventDefinition = {
   // Buzz-bank events score each team by its bank balance. Omit it and set `scoring` instead.
   bankIndex?: number;
   scoring?: EventScoring;
+  // Hat Turf: team stickers on other people's images (events/turf). Needs `scoring` and `teams`.
+  turf?: EventTurfConfig;
   // Joining grants the team's cosmetic of this design (Cosmetic.data.design) under this claimKey,
   // once per user, only inside the event window. Without it, activateCosmetic keeps the bank-event
   // behaviour. `balance` places users on the event's team-balance list by predicted points instead of

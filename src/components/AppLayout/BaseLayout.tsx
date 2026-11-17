@@ -8,13 +8,27 @@ import {
   useGenerationSidebarState,
 } from '~/components/ImageGeneration/GenerationSidebar';
 import { MetaPWA } from '~/components/Meta/MetaPWA';
+import { OfflineFallbackRegistration } from '~/components/Notifications/OfflineFallbackRegistration';
+import { PushOptInPrompt } from '~/components/Notifications/PushOptInPrompt';
 import { PushRegistrationManager } from '~/components/Notifications/PushRegistrationManager';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDev } from '~/env/other';
+import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 const OnboardingWizard = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
+const RemixTrayMount = dynamic(
+  () => import('~/components/Image/Remix/RemixTray').then((mod) => mod.RemixTrayMount),
+  { ssr: false }
+);
+const MediaOverlapDetectorMount = dynamic(
+  () =>
+    import('~/components/EdgeMedia/MediaOverlapDetectorMount').then(
+      (mod) => mod.MediaOverlapDetectorMount
+    ),
+  { ssr: false }
+);
 
 export function BaseLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -29,11 +43,16 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
 
   const showSidebar = !isBanned && !shouldOnboard;
   const sidebarCoversPage = useGenerationSidebarState().coversPage && showSidebar;
+  const features = useOptionalFeatureFlags();
 
   return (
     <>
       <MetaPWA />
       <PushRegistrationManager />
+      <OfflineFallbackRegistration />
+      <PushOptInPrompt blocked={!!isBanned || shouldOnboard} />
+      {showSidebar && !!currentUser && features?.remixApps && <RemixTrayMount />}
+      {currentUser?.isModerator && <MediaOverlapDetectorMount />}
       <div className="flex flex-1 overflow-hidden">
         {showSidebar && <GenerationSidebar />}
         <ContainerProvider

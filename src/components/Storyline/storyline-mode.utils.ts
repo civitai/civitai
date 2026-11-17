@@ -1,3 +1,4 @@
+import { anchorImageIndex } from '~/components/Image/Detail/detail-items';
 import { PG_INT4_MAX } from '~/server/common/constants';
 import type { StorylinePathChapter } from '~/server/services/storyline.service';
 import { STORYLINE_PATH_LIMIT } from '~/shared/utils/storyline';
@@ -88,9 +89,32 @@ export function orderPathImages<
     );
 }
 
+/**
+ * The text slides a path shows, and its posts in reading order. Only chapters this reader sees
+ * keep a post, so a tombstoned or hidden user's chapter brings no text.
+ */
+export function getPathTexts<T extends { postId: number }>(
+  chapters: { post: { id: number } | null }[],
+  texts: T[]
+) {
+  const postOrder = chapters.flatMap((chapter) => (chapter.post ? [chapter.post.id] : []));
+  const onPath = new Set(postOrder);
+  return { texts: texts.filter((text) => onPath.has(text.postId)), postOrder };
+}
+
+export type ChapterStart = { imageId: number; textId?: number };
+
+/**
+ * `slides` are the reader's slides when text items sit among the images (`mergeDetailItems`): a
+ * chapter then starts on its first slide, which may be a text, anchored on the image its URL names.
+ */
 export function getStorylineWalk(
   chapters: StorylinePathChapter[],
-  images: { id: number; postId: number | null }[]
+  images: { id: number; postId: number | null }[],
+  slides?: (
+    | { type: 'image'; image: { id: number; postId: number | null } }
+    | { type: 'text'; text: { id: number; postId: number } }
+  )[]
 ) {
   const chapterIdByPostId = new Map<number, number>();
   for (const chapter of chapters)
@@ -104,7 +128,23 @@ export function getStorylineWalk(
     chapterIdByImageId.set(image.id, chapterId);
     if (!firstImageIdByChapterId.has(chapterId)) firstImageIdByChapterId.set(chapterId, image.id);
   }
-  return { chapterIdByImageId, firstImageIdByChapterId };
+  const startByChapterId = new Map<number, ChapterStart>();
+  if (slides) {
+    slides.forEach((slide, i) => {
+      const postId = slide.type === 'image' ? slide.image.postId : slide.text.postId;
+      const chapterId = postId != null ? chapterIdByPostId.get(postId) : undefined;
+      if (chapterId == null || startByChapterId.has(chapterId)) return;
+      if (slide.type === 'image')
+        return void startByChapterId.set(chapterId, { imageId: slide.image.id });
+      const anchor = slides[anchorImageIndex(slides, i)];
+      if (anchor?.type === 'image')
+        startByChapterId.set(chapterId, { imageId: anchor.image.id, textId: slide.text.id });
+    });
+  } else {
+    for (const [chapterId, imageId] of firstImageIdByChapterId)
+      startByChapterId.set(chapterId, { imageId });
+  }
+  return { chapterIdByImageId, firstImageIdByChapterId, chapterIdByPostId, startByChapterId };
 }
 
 const tombstoneLabels: Record<NonNullable<StorylinePathChapter['tombstone']>, string> = {
@@ -136,7 +176,7 @@ export function hideHiddenUsersChapters<
 
 export type PendingContinue =
   | { kind: 'wait' }
-  | { kind: 'open'; imageId: number }
+  | ({ kind: 'open' } & ChapterStart)
   | { kind: 'end' };
 
 /**
@@ -148,16 +188,16 @@ export function resolvePendingContinue({
   pendingChapterId,
   pathEndId,
   imagesFetching,
-  firstImageIdByChapterId,
+  startByChapterId,
 }: {
   pendingChapterId: number;
   pathEndId: number | undefined;
   imagesFetching: boolean;
-  firstImageIdByChapterId: ReadonlyMap<number, number>;
+  startByChapterId: ReadonlyMap<number, ChapterStart>;
 }): PendingContinue {
   if (pathEndId !== pendingChapterId || imagesFetching) return { kind: 'wait' };
-  const imageId = firstImageIdByChapterId.get(pendingChapterId);
-  return imageId ? { kind: 'open', imageId } : { kind: 'end' };
+  const start = startByChapterId.get(pendingChapterId);
+  return start ? { kind: 'open', ...start } : { kind: 'end' };
 }
 
 /** A storyline is walked, not looped: past its last image is the end-of-chapter view. */
@@ -221,13 +261,16 @@ export function getPathImagesPaging({
 
 /**
  * A chapter's name: its post's title, else its number (and author, where nothing else shows it); a
- * tombstone reads as its reason.
+ * tombstone reads as its reason, or `inSentence` as its number, since the reason is a sentence.
  */
 export function getStorylineChapterName(
   chapter: Pick<StorylinePathChapter, 'depth' | 'post' | 'tombstone'>,
-  { withAuthor = false }: { withAuthor?: boolean } = {}
+  { withAuthor = false, inSentence = false }: { withAuthor?: boolean; inSentence?: boolean } = {}
 ) {
-  if (!chapter.post) return getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
+  if (!chapter.post)
+    return inSentence
+      ? `Chapter ${chapter.depth + 1}`
+      : getStorylineTombstoneLabel(chapter.tombstone ?? 'deleted');
   const number = `Chapter ${chapter.depth + 1}`;
   const author = withAuthor && chapter.post.username ? ` by ${chapter.post.username}` : '';
   return chapter.post.title || `${number}${author}`;

@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { isHttpUrl } from '~/utils/url-helpers';
 import { snippetReferenceSchema } from '~/shared/generation/schemas/snippet-schema';
 
 export const promptEnhancementSchema = z.object({
@@ -34,9 +35,9 @@ export const promptEnhancementSchema = z.object({
    * Optional reference images. Forwarded to the orchestrator's prompt-enhancement
    * step where a vision-capable LLM (configured per-ecosystem) uses them as visual
    * context when rewriting the prompt. Non-VLM ecosystems silently ignore them.
-   * Accepts URLs, data URIs, raw base64, or AIR strings.
+   * http(s) URLs only; each must also pass the generation input gate.
    */
-  images: z.string().array().nullish(),
+  images: z.string().refine(isHttpUrl, 'image must be an http(s) URL').array().nullish(),
 });
 
 export type PromptEnhancementSchema = z.infer<typeof promptEnhancementSchema>;

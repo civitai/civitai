@@ -260,6 +260,40 @@ describe('removeStorylineChapter', () => {
     );
   });
 
+  // Nothing can continue a tombstone, so the main route must not end at one: "Add to a
+  // storyline" would have no end to add to.
+  describe('the main route afterwards', () => {
+    const canonOf = async (chapterId: number) =>
+      (
+        await rows<{ canon: boolean }>(
+          `SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1`,
+          [chapterId]
+        )
+      )[0]?.canon;
+
+    it('ends at the parent of a canon tip a moderator removed', async () => {
+      await remove(MODERATOR, true);
+      expect(await canonOf(CHAPTER_2)).toBe(false);
+    });
+
+    it('walks up past a tombstone when its owner deletes the leaf under it', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES
+          (503, ${OWNER}, 1, '2026-10-03');
+        INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "postId")
+          VALUES (12, 1, ${OWNER}, 2, 503);
+        INSERT INTO "StorylineChapterEdge" ("chapterId", "storylineId", "parentChapterId", canon)
+          VALUES (12, 1, 11, true);
+        UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 11;
+      `);
+
+      await removeStorylineChapter({ chapterId: 12, userId: OWNER, isModerator: false });
+
+      expect(await chapterIds()).toEqual([10, 11]);
+      expect(await canonOf(CHAPTER_2)).toBe(false);
+    });
+  });
+
   it('leaves a placement that is no longer approved as it is', async () => {
     await db.pg.exec(
       `UPDATE "Placement" SET status = 'removed', "removedBy" = 'moderator', "takenDownById" = ${MODERATOR} WHERE id = 900`

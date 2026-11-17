@@ -25,7 +25,8 @@ import type {
 } from '~/server/schema/chat.schema';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import { truncateAuditValue } from '~/server/common/chat-audit.constants';
-import { deriveMuteColumns, inboxStatuses, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { deriveMuteColumns, groupRenamedNote, scopeMemberPrivacy } from '~/shared/utils/chat';
+import { markAllReadSql, unreadCountSql } from '~/server/utils/chat';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
@@ -70,6 +71,7 @@ import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type ChatAuditEventRow = {
   createdAt: string;
@@ -211,8 +213,6 @@ export const getChatsForUserHandler = async ({ ctx }: { ctx: ProtectedContext })
   }
 };
 
-const inboxStatusLiterals = inboxStatuses.map((status) => `'${status}'`).join(', ');
-
 /**
  * Get number of unread messages for user
  */
@@ -224,32 +224,13 @@ export const getUnreadMessagesForUserHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const parts = await Promise.all(
+      unreadCountSql(ctx.user.id).map((sql) =>
+        dbRead.$queryRaw<{ chatId: number; cnt: number }[]>(sql)
+      )
+    );
 
-    // The badge counts what the Inbox tab holds, so the membership filter is
-    // `chatBucketFor`'s inbox case spelled in SQL. Requests (filteredAt set) are
-    // deliberately absent: a filtered request that still lights the header badge
-    // is not filtered.
-    const unread = await dbRead.$queryRaw<{ chatId: number; cnt: number }[]>`
-      select memb."chatId"          as "chatId",
-             count(msg.id)::integer as "cnt"
-      from "ChatMember" memb
-             left join "ChatMessage" msg
-                       on msg."chatId" = memb."chatId" and
-                          (msg.id > memb."lastViewedMessageId" or
-                           memb."lastViewedMessageId" is null
-                            ) and
-                          (memb."clearedAt" is null or msg."createdAt" > memb."clearedAt") and
-                          msg."deletedAt" is null
-      where memb."userId" = ${userId}
-        and memb.status in (${Prisma.raw(inboxStatusLiterals)})
-        and memb."notifyLevel" <> 'None'
-        and memb."filteredAt" is null
-        and msg."userId" != ${userId}
-      group by memb."chatId"
-    `;
-
-    return unread;
+    return parts.flat();
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -364,7 +345,7 @@ export const updateChatHandler = async ({
     await createMessage({
       chatId: existing.id,
       contentType: ChatMessageType.Markdown,
-      content: name ? `Group renamed to "${name}"` : 'Group name removed',
+      content: groupRenamedNote(name),
       userId: -1,
     });
 
@@ -686,7 +667,8 @@ export const modifyUserHandler = async ({
       // written, and letting an unreachable signals service throw reported the
       // action as failed after it had actually succeeded.
       await withSignals(() =>
-        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+        outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          timeoutMs: 10_000,
           method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
@@ -799,27 +781,13 @@ export const clearChatHandler = async ({
   }
 };
 
-/**
- * Mark all messages as read for active chats
- */
 export const markAllAsReadHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     const { id: userId } = ctx.user;
 
-    return await dbWrite.$queryRaw<{ chatId: number; lastViewedMessageId: number }[]>`
-      update "ChatMember"
-      set "lastViewedMessageId" = data.last_msg
-      from (select *
-            from (select cm.id, cm."lastViewedMessageId" as last_viewed, max(msg.id) as last_msg
-                  from "ChatMember" cm
-                         join "ChatMessage" msg on cm."chatId" = msg."chatId"
-                  where cm."userId" = ${userId}
-                    and cm.status = 'Joined'
-                  group by 1, 2) d
-            where d.last_viewed is distinct from d.last_msg) as data
-      where "ChatMember".id = data.id
-      returning "chatId", "lastViewedMessageId"
-    `;
+    return await dbWrite.$queryRaw<{ chatId: number; lastViewedMessageId: number }[]>(
+      markAllReadSql(userId)
+    );
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

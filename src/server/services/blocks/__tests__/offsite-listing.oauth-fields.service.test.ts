@@ -9,6 +9,17 @@ import {
 } from '~/server/services/blocks/offsite-listing.service';
 import type { SubmitExternalListingInput } from '~/server/schema/blocks/offsite-listing.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * App Store Listings (W13) — external-app submission SERVICE tests: the OAuth-client (connect) aspects of the MERGED submitExternalListing (re-homed from the standalone connect path).
@@ -42,6 +53,10 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
     oauthClient: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The no-type `issue_tracker_url` column is probed, read and written by raw SQL (opening a
+    // revision clones the parent's link onto the shadow). Column present, no link.
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<number> => 1),
   });
   const mockRead = makeClient();
   const mockWrite = makeClient() as ReturnType<typeof makeClient> & {

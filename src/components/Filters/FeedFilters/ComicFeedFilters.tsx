@@ -72,6 +72,9 @@ export function ComicFeedFilters({ ...groupProps }: GroupProps) {
           }
           value={audience}
           size="compact-sm"
+          // The sub nav keeps only the icon on the narrowest phones; see `FollowedFilter`.
+          title={audienceOptions.find((o) => o.value === audience)?.label ?? 'Everyone'}
+          data-collapse-label
         />
       )}
       <SelectMenuV2

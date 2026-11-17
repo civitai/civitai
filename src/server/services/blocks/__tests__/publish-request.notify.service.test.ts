@@ -1,5 +1,16 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * On-site App Block submitter-notification SERVICE emission tests.
@@ -22,8 +33,20 @@ const { mockNotify, db, s3, holder } = vi.hoisted(() => {
   const makeDb = () => ({
     // `approveRequest`'s pre-flight probes the media-split table; no row reads as absent.
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    // The storage-migration approve gate (`reserveStorageMigrationRuns`): no open run.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        $queryRaw: async () => [],
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+    ),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The previous approved version (`getPreviousApprovedState`): none.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The storage-migration history (`loadStorageMigrationBaseline`): none.
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
@@ -84,12 +107,15 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newUlid: () => 'ULID000' }));
+const { mockValidateSubmission } = vi.hoisted(() => ({
+  mockValidateSubmission: vi.fn(async (..._a: unknown[]) => ({ valid: true, errors: [] })),
+}));
 vi.mock('~/server/services/block-manifest-validator.service', () => ({
   BlockManifestValidator: {
     validate: () => ({ valid: true, errors: [] }),
     // approveRequest now calls the async submission gate (validate + settings-
     // pattern ReDoS check); this suite exercises the always-valid path.
-    validateSubmission: async () => ({ valid: true, errors: [] }),
+    validateSubmission: mockValidateSubmission,
   },
 }));
 vi.mock('~/server/services/blocks/forgejo.service', () => ({
@@ -105,6 +131,8 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/services/blocks/app-listing-mapper', () => ({
   mapAppBlockToListing: () => ({ id: 'apl_mapped' }),
+  // The approve path resolves the manifest `bugs` link beside the two builders; inert here.
+  buildListingIssueTrackerSync: () => ({ write: false }),
   // The approve path also imports the manifest-governed copy re-sync builder
   // (subsequent-version approve). Stubbed so this suite stays focused on the
   // notification emission; the re-sync itself has its own suite
@@ -198,6 +226,16 @@ describe('approveRequest — submitter notification (post-commit, best-effort)',
     expect(arg.userId).toBe(SUBMITTER);
     expect(arg.key).toBe('app-block-approved:req_appr_1');
     expect(arg.details).toMatchObject({ slug: 'cool-app', name: 'Cool App', version: '1.2.0' });
+  });
+
+  it('🔴 approve re-validates with the issue-tracker link LENIENT (a stored legacy `bugs` warns, never refuses)', async () => {
+    db.read.appBlockPublishRequest.findUnique.mockResolvedValueOnce(pendingApproveRow());
+    db.read.appBlock.findFirst.mockResolvedValueOnce(existingAppBlock());
+    await approveRequest({ publishRequestId: 'req_appr_1', reviewerUserId: 9 });
+    expect(mockValidateSubmission).toHaveBeenCalled();
+    expect(mockValidateSubmission.mock.calls[0][2]).toMatchObject({
+      strictIssueTrackerLink: false,
+    });
   });
 
   it('is BEST-EFFORT: a notify failure is swallowed and the approve still resolves', async () => {

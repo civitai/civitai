@@ -5,14 +5,13 @@ import {
   Button,
   Container,
   CopyButton,
-  Menu,
   SegmentedControl,
   Select,
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useMediaQuery } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -46,7 +45,8 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useHideOnScroll } from '~/hooks/useHideOnScroll';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -56,7 +56,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { ChapterComments } from '~/components/Comics/ChapterComments';
+import { CommentSection } from '~/components/CommentsV3/CommentSection';
 import {
   ChapterExportButton,
   ChapterDownloadButton,
@@ -824,7 +824,6 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const safeIdx = chapterIdx >= 0 ? chapterIdx : 0;
   const activeChapter = chapters[safeIdx];
   const panels = activeChapter?.panels ?? [];
-  const headerRef = useRef<HTMLDivElement>(null);
   const projectMeta = project.meta as ComicProjectMeta | null;
   const isRtl = projectMeta?.readingDirection === 'rtl';
   const { canRead, canDownload } = useChapterPermission({
@@ -832,7 +831,6 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     projectUserId: project.user.id,
     earlyAccessEndsAt: activeChapter?.earlyAccessEndsAt,
   });
-  const lastScrollTop = useRef(0);
 
   // Reader mode: pages (default — bifold 2-panel spread filling the
   // viewport, edge-anchored nav) or scroll (long-form vertical scroll).
@@ -996,32 +994,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [hasPrev, hasNext, safeIdx, effectiveReaderMode, pageIndex, totalPages, isRtl]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide reader header on scroll down, show on scroll up (scroll mode only).
-  // Mobile bails out — the header is non-sticky there (`position: static`)
-  // so it scrolls away naturally; running translate-Y on top of that just
-  // wastes work.
-  const handleScroll = useCallback(() => {
-    if (!headerRef.current || effectiveReaderMode === 'pages' || isMobile) return;
-    const scrollTop = window.scrollY;
-    if (scrollTop > lastScrollTop.current && scrollTop > 80) {
-      headerRef.current.style.transform = 'translateY(-100%)';
-    } else {
-      headerRef.current.style.transform = 'translateY(0)';
-    }
-    lastScrollTop.current = scrollTop;
-  }, [effectiveReaderMode, isMobile]);
-
-  useEffect(() => {
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, [handleScroll]);
-
-  // Ensure header is visible in pages mode
-  useEffect(() => {
-    if (effectiveReaderMode === 'pages' && headerRef.current) {
-      headerRef.current.style.transform = 'translateY(0)';
-    }
-  }, [effectiveReaderMode]);
+  // Hide the reader header on scroll down, show it on scroll up (scroll mode only). Mobile is
+  // left out: the header is non-sticky there (`position: static`) and scrolls away by itself.
+  const headerHidden = useHideOnScroll('window', {
+    enabled: effectiveReaderMode !== 'pages' && !isMobile,
+  });
 
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
@@ -1120,9 +1097,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       <div className={styles.readerRoot}>
         {/* Sticky header — hides on scroll down */}
         <div
-          ref={headerRef}
           className={styles.readerHeader}
-          style={{ transition: 'transform 0.2s ease' }}
+          style={{
+            transition: 'transform 0.2s ease',
+            transform: headerHidden ? 'translateY(-100%)' : undefined,
+          }}
         >
           <Container size="sm">
             <div className={styles.readerHeaderInner}>
@@ -1627,10 +1606,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             {/* user's choice across navigation via localStorage. */}
             {activeChapter && (commentsVisible || hasCommentHighlight) && (
               <Container size="sm" py="xl">
-                <ChapterComments
-                  projectId={project.id}
-                  chapterPosition={activeChapter.position}
-                  userId={project.user.id}
+                <CommentSection
+                  entityType="comicChapter"
+                  entityId={activeChapter.id}
+                  ownerId={project.user.id}
                 />
               </Container>
             )}

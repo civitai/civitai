@@ -224,6 +224,12 @@ export class DockerRedisCluster {
     await this.waitHealthy();
   }
 
+  /** Start every node again after they were all stopped; resolves once the cluster is healthy. */
+  async restartAll(): Promise<void> {
+    for (const c of this.containers) docker(['start', c]);
+    await this.waitHealthy();
+  }
+
   private async waitHealthy(): Promise<void> {
     await this.waitFor(
       () =>

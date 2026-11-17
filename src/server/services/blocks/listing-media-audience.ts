@@ -9,6 +9,7 @@ import {
   LISTING_SCREENSHOT_WIDTH,
   listingCoverUrl,
   listingIconUrl,
+  listingMediaEdgeUrl,
 } from '~/server/services/blocks/listing-media-url';
 import {
   allBrowsingLevelsFlag,
@@ -65,7 +66,7 @@ import {
  * then to `null`. A hidden screenshot is dropped from the gallery and order is preserved. Nothing
  * is ever replaced by an asset the viewer may not see.
  *
- * NOT FOR AUTHORS OR MODERATORS. An owner's own "My apps" row and the moderator review surfaces
+ * NOT FOR AUTHORS OR MODERATORS. An owner's own "My builds" row and the moderator review surfaces
  * must show what is actually attached, so they keep using the raw builders in
  * `listing-media-url.ts`. The moderator preview reaches this module only through
  * {@link MODERATOR_REVIEW_MEDIA}, which says so at the call site.
@@ -169,6 +170,18 @@ export function listingMediaCeiling(
   return redHostMediaCeiling(audience, sfwBrowsingLevelsFlag & ratingLevels);
 }
 
+/**
+ * A listing's own `content_rating` as a media ceiling: every level up to it, with nothing added
+ * for a host or a viewer. For a surface that publishes media under the listing's rating tag (the
+ * registry adapter, which publishes each app tagged with its rating, to the tokens that may read
+ * it), so no image it carries can be rated above that tag. Unlike {@link listingMediaCeiling} it
+ * is not held to SFW: an `x` listing's X icon is within its own tag.
+ */
+export function listingRatingMediaCeiling(contentRating: string | null | undefined): number {
+  const ratingMax = nsfwLevelFromContentRating(contentRating);
+  return flagifyBrowsingLevel(browsingLevels.filter((l) => l <= ratingMax));
+}
+
 /** The gate's level comparison, for labels that describe where an image shows. */
 export { isLevelWithinCeiling };
 
@@ -219,7 +232,7 @@ export function gatedListingScreenshots(
     const url = visibleUrl(s.image, ceiling);
     if (!url) continue;
     out.push({
-      url: getEdgeUrl(url, { width: LISTING_SCREENSHOT_WIDTH }),
+      url: listingMediaEdgeUrl(url, LISTING_SCREENSHOT_WIDTH),
       caption: s.caption ?? null,
     });
   }
@@ -242,7 +255,7 @@ export function gatedListingCoverUrl(
   if (coverUrl) return listingCoverUrl({ url: coverUrl }, null);
   for (const s of screenshots) {
     const url = visibleUrl(s.image, ceiling);
-    if (url) return getEdgeUrl(url, { width: LISTING_COVER_WIDTH });
+    if (url) return listingMediaEdgeUrl(url, LISTING_COVER_WIDTH);
   }
   return null;
 }
@@ -311,7 +324,7 @@ export function projectListingMedia(
       for (const s of row.screenshots) {
         if (!s.image?.url) continue;
         screenshots.push({
-          url: getEdgeUrl(s.image.url, { width: LISTING_SCREENSHOT_WIDTH }),
+          url: listingMediaEdgeUrl(s.image.url, LISTING_SCREENSHOT_WIDTH),
           caption: s.caption ?? null,
         });
       }
@@ -320,7 +333,7 @@ export function projectListingMedia(
       iconUrl: listingIconUrl(row.icon),
       coverUrl: listingCoverUrl(
         row.cover,
-        firstShot ? getEdgeUrl(firstShot, { width: LISTING_COVER_WIDTH }) : null
+        firstShot ? listingMediaEdgeUrl(firstShot, LISTING_COVER_WIDTH) : null
       ),
       screenshots,
     };
@@ -362,6 +375,10 @@ export type ListingSocialImage = { url: string; nsfwLevel: number };
  *
  * The level travels with the url so the page's `Meta` can apply its own, host-independent
  * safe-level check as a second belt (`Meta`'s `imageNsfwLevel`).
+ *
+ * 🔴 JPEG ON PURPOSE: these urls are built WITHOUT `optimized`, unlike every on-page listing
+ * image (`listingMediaEdgeUrl`). Link-preview scrapers are not all WebP-capable, and a social
+ * card has no card background for a lost alpha channel to show through.
  */
 export function listingSocialImage(
   row: ListingMediaRow,

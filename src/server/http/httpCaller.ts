@@ -54,29 +54,42 @@ export abstract class HttpCaller {
 
   public async postRaw(
     endpoint: string,
-    opts: { body: BodyInit | null | undefined; headers?: MixedObject; queryParams?: MixedObject }
+    opts: {
+      body: BodyInit | null | undefined;
+      headers?: MixedObject;
+      queryParams?: MixedObject;
+      /** Overrides the caller's timeout for this request, in ms. */
+      timeout?: number;
+    }
   ) {
-    const { body, headers, queryParams } = opts;
+    const { body, headers, queryParams, timeout } = opts;
     const url = QS.stringifyUrl({ url: `${this.baseUrl}${endpoint}`, query: queryParams });
     return await fetch(url, {
       method: 'POST',
       body,
       headers: { ...this.baseHeaders, ...headers },
-      signal: fetchTimeoutSignal(this.timeout),
+      signal: fetchTimeoutSignal(timeout ?? this.timeout),
     });
   }
 
   public async post<TResponse = unknown, TPayload = unknown>(
     endpoint: string,
-    opts: { payload: TPayload; headers?: MixedObject; queryParams?: MixedObject }
+    opts: {
+      payload: TPayload;
+      headers?: MixedObject;
+      queryParams?: MixedObject;
+      /** Overrides the caller's timeout for this request, in ms. */
+      timeout?: number;
+    }
   ) {
-    const { payload, headers, queryParams } = opts;
+    const { payload, headers, queryParams, timeout } = opts;
 
     try {
       const response = await this.postRaw(endpoint, {
         body: JSON.stringify(payload),
         headers: { 'Content-Type': 'application/json', ...headers },
         queryParams,
+        timeout,
       });
 
       return this.prepareResponse<TResponse>(response);

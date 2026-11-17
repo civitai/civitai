@@ -40,7 +40,7 @@ Status: fixed this session via verify-first TDD (B1/B2 by main session, B3/B4/B5
   gates the legacy branch behind an explicit `legacyEnabled` kill-switch (was: implicit on secret presence).
   The review's "enforce issuer/audience on the legacy decrypt" was **NOT-SAFELY-ACTIONABLE** — legacy next-auth
   JWEs carry no `iss`/`aud`, so enforcing would reject every legacy cookie and break cutover login; `legacy-cookie.ts`
-  left unchanged. *Follow-up:* wire `legacyEnabled` to an env var.
+  left unchanged. *Superseded:* the verifier no longer reads the legacy format at all, so `legacyEnabled` is gone.
 - [x] **B4 — swap token: FIXED (Option 2, decided 2026-06-17).** `consumeSwapToken` fails **closed** when
   sysRedis absent (`swap.ts`); `/exchange` is rate-limited (429). **Origin-binding deferred to the OIDC
   migration** — a self-asserted `X-Swap-Origin` is cosmetic (the swap value is observable in the callback URL;

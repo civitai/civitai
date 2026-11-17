@@ -1,4 +1,5 @@
-import { Text, TextProps, Tooltip } from '@mantine/core';
+import { Text, TextProps } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { IconProps } from '@tabler/icons-react';
 import { IconInfoSquareRounded } from '@tabler/icons-react';

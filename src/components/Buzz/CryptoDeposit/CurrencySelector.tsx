@@ -1,4 +1,6 @@
-import { Badge, Group, Menu, Skeleton, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Group, Skeleton, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import React, { useCallback, useMemo, useState } from 'react';
 import { getFiatDisplay } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useSupportedCurrencies } from '~/components/Buzz/CryptoDeposit/crypto-deposit.hooks';
@@ -205,6 +207,23 @@ export function MinDepositInfo({ state }: { state: CurrencySelectionState }) {
           </Text>
         )}{' '}
         <FiatMenu selectedFiat={selectedFiat} onFiatChange={onFiatChange} />
+      </Text>
+    </Group>
+  );
+}
+
+export function MinDepositWarning() {
+  return (
+    <Group gap="xs" wrap="nowrap" align="flex-start">
+      <IconAlertTriangle
+        size={14}
+        className="text-yellow-500"
+        style={{ flexShrink: 0, marginTop: 2 }}
+      />
+      <Text size="xs" c="yellow">
+        Send at least the minimum after your exchange&apos;s withdrawal fee. Payments below it
+        can&apos;t be credited or refunded: the network fee to return them is larger than the
+        payment.
       </Text>
     </Group>
   );

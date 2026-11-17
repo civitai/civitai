@@ -136,6 +136,7 @@ vi.mock('~/env/server', () => ({
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockAppBlockFindUnique = dbMock.dbWrite.appBlock.findUnique;
 const mockPublishRequestFindFirst = dbMock.dbWrite.appBlockPublishRequest.findFirst;
@@ -230,6 +231,13 @@ function pendingRequest(over: Partial<Record<string, unknown>> = {}) {
 }
 
 beforeEach(() => {
+  // Only the spend-entitlement read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {}).join() === 'muted,bannedAt'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   mockMultiIncr.value = 1;
   mockMultiIncr.malformedExec = false;
@@ -310,6 +318,38 @@ describe('POST /api/v1/blocks/dev-token', () => {
     expect(arg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
   });
 
+  it('200: a restricted account still mints, with its read scopes but no spend scope or budget', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ muted: true } as never);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    const arg = mockSign.mock.calls[0][0];
+    expect(arg.scopes).toEqual(['apps:storage:read', 'models:read:self', 'user:read:self']);
+    expect(arg.buzzBudget).toBeUndefined();
+  });
+
+  it('200: a banned account mints without spend', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      muted: false,
+      bannedAt: new Date(),
+    } as never);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).not.toContain('ai:write:budgeted');
+  });
+
+  it('200: an account with no row mints without spend', async () => {
+    mockGetSession.mockResolvedValueOnce(OAUTH_SUBMIT_SPEND_SESSION);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    const { req, res } = authPost({ appBlockId: 'apb_abc' });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockSign.mock.calls[0][0].scopes).not.toContain('ai:write:budgeted');
+  });
+
   it('200: OAuth token WITH AppBlocksSubmit but WITHOUT AIServicesWrite mints, but the uniform spend ceiling STRIPS ai:write:budgeted', async () => {
     // Proves AppBlocksSubmit is the MINT gate, NOT a spend grant — spend stays
     // uniformly gated by AIServicesWrite for OAuth exactly as for personal keys.
@@ -359,6 +399,32 @@ describe('POST /api/v1/blocks/dev-token', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
     expect(mockSign).not.toHaveBeenCalled();
+  });
+
+  describe('a system account', () => {
+    const owned = (meta: Record<string, unknown>) => ({
+      ...MOD_SESSION,
+      user: { ...MOD_SESSION.user, meta },
+    });
+
+    it('403 and nothing signed, even when an app author with an AI-services key', async () => {
+      mockGetSession.mockResolvedValueOnce(owned({ systemAccount: true }));
+      mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(403);
+      expect(res._getJSONData()).toEqual({ message: APPS_RESTRICTED_MESSAGE });
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('the same session without the system-account mark mints with spend', async () => {
+      mockGetSession.mockResolvedValueOnce(owned({}));
+      mockIsAppBlocksAuthorEnabled.mockResolvedValueOnce(true);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toContain('ai:write:budgeted');
+    });
   });
 
   it('503 (dark) when the App Blocks flag is OFF for the user', async () => {

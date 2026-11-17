@@ -46,6 +46,9 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: mockBustOrchestrator,
+  getOrchestratorVersionAirs: vi.fn(() => Promise.resolve([])),
+  bustOrchestratorAirs: vi.fn(() => Promise.resolve()),
+  bustOrchestratorScannedFileCache: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventModelVersionLag: vi.fn(() => Promise.resolve()),

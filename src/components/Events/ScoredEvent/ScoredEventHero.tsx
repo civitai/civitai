@@ -35,6 +35,7 @@ export function ScoredEventHero({
   finalizing,
   winner,
   teamHats,
+  myHat,
   onJoin,
   joining,
   rosterOnJoin,
@@ -46,6 +47,8 @@ export function ScoredEventHero({
   /** The rank-1 team on the settled standings. */
   winner?: string;
   teamHats?: { team: string; url: string | null }[];
+  /** The hat in the viewer's team panel: their showcase hat, else their team's cap. */
+  myHat?: string;
   /** The viewer's team once they have joined. */
   team?: string;
   rank?: number;
@@ -66,7 +69,6 @@ export function ScoredEventHero({
   const page = data.page;
   const colors = data.teams.map((t) => teamColor(t)).filter((c): c is string => !!c);
   const winnerColor = winner ? teamColor(winner) : undefined;
-  const myHat = team ? teamHats?.find((h) => h.team === team)?.url : undefined;
   const eyebrowColor = (team && teamColor(team)) ?? colors[2] ?? 'var(--mantine-color-dimmed)';
   const video = page?.heroVideo;
   const openVideo = () =>

@@ -1,5 +1,6 @@
 import type { ComboboxItem, MantineColor } from '@mantine/core';
-import { ActionIcon, Badge, Container, Group, Stack, Title, Tooltip, Text } from '@mantine/core';
+import { ActionIcon, Badge, Container, Group, Stack, Title, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
 import { TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import {

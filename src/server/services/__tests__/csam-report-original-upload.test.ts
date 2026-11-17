@@ -77,15 +77,20 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 }));
 
 import type { CsamReportProps } from '~/server/services/csam.service-new';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import {
   CSAM_SEND_BLOCKED_AFTER_HOURS,
   CSAM_SEND_DECISION_AFTER_HOURS,
   CSAM_SEND_SHORT_AFTER_HOURS,
+  FEEDBACK_CAPTURE_FILE_NOTE,
   logBlockedCsamReports,
   processCsamReport as processClaimedReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
-import { UPLOAD_REQUEST_IP_NOTE } from '~/server/services/image-upload-action.service';
+import {
+  FEEDBACK_CAPTURE_UPLOAD_IP_NOTE,
+  UPLOAD_REQUEST_IP_NOTE,
+} from '~/server/services/image-upload-action.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
@@ -212,6 +217,63 @@ describe('NCMEC image upload', () => {
       expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
     ]);
     expect(reported.additionalInfo).toBe(`Email: user@example.invalid\n${UPLOAD_REQUEST_IP_NOTE}`);
+  });
+
+  describe('of a feedback page capture', () => {
+    // A capture is owned by the capture account; its upload key was requested by its reporter.
+    const capture = (reporterId: number) => ({
+      ...imageRow(501),
+      userId: FEEDBACK_CAPTURE_OWNER_ID,
+      metadata: { feedbackCapture: { feedbackId: 9, reporterId } },
+      meta: { prompt: 'a page' },
+    });
+    // The stand-in ignores the WHERE: the reporter's upload row comes back whoever is asked about.
+    const uploadRowsForAnyone = () => {
+      ch.client = {
+        $query: async (sql: string) =>
+          sql.includes('FROM imageUploadRequests') ? [uploadRow] : [],
+      };
+    };
+    const fileInfo = () =>
+      submitFileDetails.mock.calls[0][0].additionalInfo as string[] | undefined;
+
+    it('files its upload IP as a capture upload when the subject is its reporter', async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([capture(20)]);
+      uploadRowsForAnyone();
+
+      await processCsamReport(report);
+
+      const reported = submitReport.mock.calls[0][0].personOrUserReported;
+      expect(reported.ipCaptureEvent).toEqual([
+        expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+      ]);
+      expect(reported.additionalInfo).toBe(
+        `Email: user@example.invalid\n${FEEDBACK_CAPTURE_UPLOAD_IP_NOTE}`
+      );
+      expect(fileInfo()?.[0]).toBe(FEEDBACK_CAPTURE_FILE_NOTE);
+      expect(fileInfo()).toHaveLength(2);
+    });
+
+    it("never files its reporter's upload IP as another subject's", async () => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([capture(30)]);
+      uploadRowsForAnyone();
+
+      await processCsamReport(report);
+
+      const reported = submitReport.mock.calls[0][0].personOrUserReported;
+      expect(reported.ipCaptureEvent).toEqual([]);
+      expect(reported.additionalInfo).toBe('Email: user@example.invalid');
+      expect(fileInfo()?.[0]).toBe(FEEDBACK_CAPTURE_FILE_NOTE);
+      expect(fileInfo()).toHaveLength(2);
+    });
+
+    it('marks no ordinary file as a capture (control)', async () => {
+      uploadRowsForAnyone();
+
+      await processCsamReport(report);
+
+      expect(fileInfo() ?? []).not.toContain(FEEDBACK_CAPTURE_FILE_NOTE);
+    });
   });
 
   // The upload-request rows expire; the report's own copy is the evidence that outlives them.

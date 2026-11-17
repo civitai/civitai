@@ -9,10 +9,14 @@ export const UserFlag = {
 
   /** User opts out of receiving creator payouts (tips + creator compensation) on their content. */
   DisablePayout: 1 << 0, // 1
+
+  /** Moderator-set: the user's actions earn no event points and count toward no event standings. */
+  ExcludeFromEventPoints: 1 << 1, // 2
 } as const;
 
 export type UserFlagValue = (typeof UserFlag)[keyof typeof UserFlag];
 
 export const userFlagLabels: Record<number, string> = {
   [UserFlag.DisablePayout]: 'Disable creator payouts',
+  [UserFlag.ExcludeFromEventPoints]: 'Exclude from event points',
 };

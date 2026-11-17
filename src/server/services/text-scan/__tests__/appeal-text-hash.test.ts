@@ -240,6 +240,8 @@ describe('settleFlagAppealsAfterModeratorLift', () => {
       entityType: EntityType.Model,
       status: AppealStatus.Approved,
       userId: 3,
+      // A lifted flag says nothing about a locked setting the owner asked about.
+      modelAppealKind: 'flag',
     });
   });
 

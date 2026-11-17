@@ -200,9 +200,22 @@ vi.mock('~/server/services/games/new-order.service', () => ({
   addImageToQueue: vi.fn().mockResolvedValue(undefined),
 }));
 
+// The old-game gate reads a Flipt flag over the network.
+vi.mock('~/server/games/new-order/v1-gate', () => ({
+  isV1KnightsLive: vi.fn().mockResolvedValue(false),
+}));
+
 // Mock system-cache
 vi.mock('~/server/services/system-cache', () => ({
   getTagRules: vi.fn().mockResolvedValue([]),
+}));
+
+const { mockRefreshPicturesForImages } = vi.hoisted(() => ({
+  mockRefreshPicturesForImages: vi.fn(async (_imageIds: number[]) => undefined),
+}));
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForImagesLazy: mockRefreshPicturesForImages,
+  refreshProfilePicturesForUsersLazy: vi.fn(async () => undefined),
 }));
 
 // Auto-stubbing `~/server/redis/caches` mock.
@@ -475,6 +488,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
       ).resolves.toBeUndefined();
 
       expect(markedError?.text).toContain(`'{retryCount}'`);
+      // A hidden (NotFound) image keeps NotFound: Error + a locked rating would republish it.
+      expect(markedError?.text).toContain(`WHEN "ingestion" = 'NotFound'`);
       expect(markedError?.params).toContain(ImageIngestionStatus.Error);
       expect(markedError?.params).toContain(10);
       const stamped = markedError?.params.find(
@@ -512,16 +527,23 @@ describe('image-scan-result webhook - pipeline tests', () => {
 
       // blockImageFromRating already persisted Blocked. markImageScanError is
       // unconditional, so running it here would un-block the image.
-      const blocked = mockDbWrite.image.updateMany.mock.calls.find(
-        (call: any) => call[0].where.id === 13
-      );
-      expect(blocked?.[0].data.ingestion).toBe(ImageIngestionStatus.Blocked);
+      const blocked = mockDbWrite.$executeRaw.mock.calls
+        .map((call: any) =>
+          renderSql(Array.isArray(call[0]) ? call[0] : call[0].strings, call.slice(1))
+        )
+        .find(
+          (sql: any) =>
+            /"blockedFor" = CASE WHEN "blockedFor" = \$\d+ OR/.test(sql.text) &&
+            sql.params.at(-1) === 13
+        );
+      expect(blocked?.params).toContain(ImageIngestionStatus.Blocked);
 
       const errorFlips = mockDbWrite.$queryRaw.mock.calls.filter((call: any) => {
         const strings = Array.isArray(call[0]) ? call[0] : call[0]?.strings ?? [];
         return strings.join('').includes("'{retryCount}'");
       });
       expect(errorFlips).toHaveLength(0);
+      expect(mockRefreshPicturesForImages).toHaveBeenCalledWith([13]);
     });
 
     it('signals the Error state so the editor stops showing "Analyzing image"', async () => {
@@ -666,8 +688,13 @@ describe('image-scan-result webhook - pipeline tests', () => {
         return match ? update.params[Number(match[1]) - 1] : undefined;
       };
       return {
-        ingestion: param('ingestion'),
-        nsfwLevel: param('nsfwLevel'),
+        // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql), itself the
+        // ELSE arm of the stored-CSAM guard.
+        ingestion: param('ingestion', `CASE[\\s\\S]*?ELSE \\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
+        nsfwLevel: param(
+          'nsfwLevel',
+          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+\\s+ELSE \\$(\\d+)`
+        ),
         // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
         needsReview: param(
           'needsReview',
@@ -723,6 +750,22 @@ describe('image-scan-result webhook - pipeline tests', () => {
             ingestion: ImageIngestionStatus.Scanned,
             nsfwLevel: 8,
           }),
+        })
+      );
+    });
+
+    it('a clean verdict for a NotFound image is not reported as Scanned', async () => {
+      getImageState(43).ingestion = ImageIngestionStatus.NotFound;
+      await deliver(43, [scanStep(scanOutput()), hashStep]);
+
+      expect(vi.mocked(signalClient.send)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 43, ingestion: ImageIngestionStatus.NotFound }),
+        })
+      );
+      expect(vi.mocked(signalClient.send)).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ imageId: 43, ingestion: ImageIngestionStatus.Scanned }),
         })
       );
     });

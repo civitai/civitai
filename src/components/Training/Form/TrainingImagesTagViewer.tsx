@@ -5,15 +5,14 @@ import {
   Button,
   Chip,
   Group,
-  Menu,
   Paper,
   SegmentedControl,
   Stack,
   Text,
   Textarea,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconChevronDown,

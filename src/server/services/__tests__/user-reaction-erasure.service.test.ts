@@ -8,8 +8,6 @@ const { queues, onReactionRemoved, chInsert } = vi.hoisted(() => ({
     article: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
     post: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
     bountyEntry: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
-    question: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
-    answer: vi.fn<(ids: number[]) => Promise<undefined>>(async () => undefined),
   },
   onReactionRemoved: vi.fn<(input: unknown) => Promise<undefined>>(async () => undefined),
   chInsert: vi.fn<(input: { table: string; values: unknown[] }) => Promise<undefined>>(
@@ -21,8 +19,6 @@ vi.mock('~/server/metrics', () => ({
   articleMetrics: { queueUpdate: queues.article },
   postMetrics: { queueUpdate: queues.post },
   bountyEntryMetrics: { queueUpdate: queues.bountyEntry },
-  questionMetrics: { queueUpdate: queues.question },
-  answerMetrics: { queueUpdate: queues.answer },
 }));
 vi.mock('~/server/events/points/hooks', () => ({ onReactionRemoved }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: { insert: chInsert } }));
@@ -129,13 +125,9 @@ function world(): World {
       ],
       PostReaction: rows(USER, 'postId', [30]),
       BountyEntryReaction: rows(USER, 'bountyEntryId', [40, 41]),
-      CommentV2Reaction: [...rows(USER, 'commentId', [50]), ...rows(OTHER, 'commentId', [50], 100)],
       CommentV3Reaction: [...rows(USER, 'commentId', [55]), ...rows(OTHER, 'commentId', [55], 100)],
-      CommentReaction: rows(USER, 'commentId', [60]),
       ResourceReviewReaction: rows(USER, 'reviewId', [70]),
       ClubPostReaction: rows(USER, 'clubPostId', [75]),
-      QuestionReaction: rows(USER, 'questionId', [80]),
-      AnswerReaction: rows(USER, 'answerId', [90]),
     },
   };
 }
@@ -156,13 +148,9 @@ describe('removeUserReactions', () => {
         ArticleReaction: 3,
         PostReaction: 1,
         BountyEntryReaction: 2,
-        CommentV2Reaction: 1,
         CommentV3Reaction: 1,
-        CommentReaction: 1,
         ResourceReviewReaction: 1,
         ClubPostReaction: 1,
-        QuestionReaction: 1,
-        AnswerReaction: 1,
       },
       remaining: 0,
     });
@@ -173,7 +161,6 @@ describe('removeUserReactions', () => {
       ).toBe(true);
     expect(tables.ImageReaction).toHaveLength(1);
     expect(tables.ArticleReaction).toHaveLength(1);
-    expect(tables.CommentV2Reaction).toHaveLength(1);
     expect(tables.CommentV3Reaction).toHaveLength(1);
   });
 
@@ -185,8 +172,6 @@ describe('removeUserReactions', () => {
       [queues.article, [20, 21]],
       [queues.post, [30]],
       [queues.bountyEntry, [40, 41]],
-      [queues.question, [80]],
-      [queues.answer, [90]],
     ] as const) {
       expect(queue).toHaveBeenCalledTimes(1);
       expect(queue).toHaveBeenCalledWith(ids);
@@ -242,9 +227,9 @@ describe('removeUserReactions', () => {
       entityId: 20,
       userId: USER,
     });
-    expect(queues.answer).toHaveBeenCalledWith([90]);
-    expect(result.removed.AnswerReaction).toBe(1);
-    expect(tables.AnswerReaction).toHaveLength(0);
+    expect(queues.bountyEntry).toHaveBeenCalledWith([40, 41]);
+    expect(result.removed.ClubPostReaction).toBe(1);
+    expect(tables.ClubPostReaction).toHaveLength(0);
   });
 
   it(`stops after ${IMAGE_ROWS_PER_RUN} image reactions and reports the rest`, async () => {
@@ -261,11 +246,11 @@ describe('removeUserReactions', () => {
     expect(first.removed.ImageReaction).toBe(IMAGE_ROWS_PER_RUN);
     expect(first.remaining).toBe(extra);
     // Everything else is cleared on the first run.
-    expect(first.removed.CommentV2Reaction).toBe(1);
+    expect(first.removed.CommentV3Reaction).toBe(1);
 
     const second = await removeUserReactions(USER);
     expect(second.removed.ImageReaction).toBe(extra);
-    expect(second.removed.CommentV2Reaction).toBe(0);
+    expect(second.removed.CommentV3Reaction).toBe(0);
     expect(second.remaining).toBe(0);
     expect(tables.ImageReaction).toHaveLength(0);
   });
@@ -281,13 +266,9 @@ describe('countUserReactions', () => {
       ArticleReaction: 3,
       PostReaction: 1,
       BountyEntryReaction: 2,
-      CommentV2Reaction: 1,
       CommentV3Reaction: 1,
-      CommentReaction: 1,
       ResourceReviewReaction: 1,
       ClubPostReaction: 0,
-      QuestionReaction: 1,
-      AnswerReaction: 1,
     });
   });
 
@@ -302,6 +283,8 @@ describe('countUserReactions', () => {
 describe('the table list', () => {
   // An erasure that misses a table leaves the person's data behind with nothing to say so.
   it('names every *Reaction model in the schema that has a userId', () => {
+    // Q&A reactions stay as data: no code writes them, so nothing erases them.
+    const exempt = ['AnswerReaction', 'QuestionReaction'];
     const schema = readFileSync(
       path.resolve(__dirname, '../../../../packages/civitai-db-schema/prisma/schema.full.prisma'),
       'utf8'
@@ -309,6 +292,7 @@ describe('the table list', () => {
     const models = [...schema.matchAll(/^model (\w*Reaction) \{([\s\S]*?)^\}/gm)]
       .filter(([, , body]) => /^\s+userId\s/m.test(body))
       .map(([, name]) => name)
+      .filter((name) => !exempt.includes(name))
       .sort();
 
     expect(models.length).toBeGreaterThan(5);

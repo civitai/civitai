@@ -11,6 +11,8 @@ import { reviveAnnouncementsSeed } from '~/providers/announcements-seed';
 import type { DismissedByType } from '~/components/Announcements/announcements-dismissed-cookie';
 import type { NavBanner } from '~/shared/constants/nav-banner.constants';
 import type { SiteAlertsPayload } from '~/shared/constants/site-alert.constants';
+import type { EventSeed } from '~/server/services/event-seeds.service';
+import { EventQuerySeeds } from '~/components/Events/EventQuerySeeds';
 
 type AppProviderProps = {
   children: React.ReactNode;
@@ -35,6 +37,9 @@ type AppProviderProps = {
   navBannersDismissed?: string[];
   // SSR-computed `siteAlerts.getActive`, read by the alert strip as the data for its own version.
   siteAlerts?: SiteAlertsPayload;
+  // SSR-computed `event.getAccess` / `event.getCosmetic` answers for the released event
+  // decorations (`event-seeds.service.ts`), so the hooks asking them never fetch on a page load.
+  eventSeeds?: EventSeed[];
   // SSR-computed `user.getFollowingUsers` result (logged-in only) — the list of
   // followed userIds. Seeds the query directly (fixed `undefined` key) so the
   // ambient follow/notify buttons never fire it on bootstrap.
@@ -134,6 +139,7 @@ export function AppProvider({
   navBanners,
   navBannersDismissed,
   siteAlerts,
+  eventSeeds,
   following,
   liveNow,
   chatSettings,
@@ -233,5 +239,11 @@ export function AppProvider({
     [state, shell, shellPending]
   );
 
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={value}>
+      {/* Before `children`: the seeds must be in the cache when the first consumer mounts. */}
+      <EventQuerySeeds seeds={eventSeeds} />
+      {children}
+    </Context.Provider>
+  );
 }

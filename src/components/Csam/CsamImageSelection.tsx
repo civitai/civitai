@@ -29,7 +29,7 @@ import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { useInView } from '~/hooks/useInView';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
 import { splitLinkedImages } from '~/components/Csam/csam-linked-image-ids';
-import { useCsamContext } from '~/components/Csam/CsamProvider';
+import { useCsamContext, useCsamSubjectId } from '~/components/Csam/CsamProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 
@@ -52,7 +52,7 @@ export function CsamImageSelection({
     isLoading,
     isError,
     refetch,
-  } = trpc.image.getImagesByUserIdForModeration.useQuery({ userId });
+  } = trpc.image.getImagesByUserIdForModeration.useQuery({ userId, captureImageIds: imageIds });
 
   const { linkedImages, missingImageIds, gridImages } = useMemo(
     () => splitLinkedImages(images ?? [], imageIds),
@@ -232,7 +232,8 @@ export function CsamImageCard({
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const userId = image.userId;
+  // Under the report's subject: a feedback page capture on it is owned by the capture account.
+  const userId = useCsamSubjectId() ?? image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
   const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);

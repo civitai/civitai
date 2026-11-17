@@ -2,18 +2,23 @@ import { applyCollectionTextScan } from '~/server/services/text-scan/actions/col
 import { withCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { applyStorylineTextScan } from '~/server/services/text-scan/actions/storyline';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
-import { applyImageCaptionTextScan } from '~/server/services/text-scan/actions/image-caption';
+import {
+  applyImageCaptionTextScan,
+  applyPostTextTextScan,
+} from '~/server/services/text-scan/actions/image-caption';
 import { createTextScanAdapter } from '~/server/services/text-scan/adapter';
-import { applyRatingFloor } from '~/server/services/text-scan/rated-entities';
+import { applyRatingFloor, readRatedEntity } from '~/server/services/text-scan/rated-entities';
 
 export const postTextScanAdapter = createTextScanAdapter('Post', {
   applyTextScan: withCsamHold('Post', (args) => applyRatingFloor('Post', args)),
+  readRating: (entityId) => readRatedEntity('Post', entityId),
 });
 
 export const bountyEntryTextScanAdapter = createTextScanAdapter('BountyEntry', {
   applyTextScan: async (args) => {
     await applyRatingFloor('BountyEntry', args);
   },
+  readRating: (entityId) => readRatedEntity('BountyEntry', entityId),
 });
 
 export const collectionTextScanAdapter = createTextScanAdapter('Collection', {
@@ -37,4 +42,8 @@ export const retiredModelRulesAdapter: ModerationAdapter = {
 
 export const imageCaptionTextScanAdapter = createTextScanAdapter('ImageCaption', {
   applyTextScan: applyImageCaptionTextScan,
+});
+
+export const postTextTextScanAdapter = createTextScanAdapter('PostText', {
+  applyTextScan: withCsamHold('PostText', applyPostTextTextScan),
 });

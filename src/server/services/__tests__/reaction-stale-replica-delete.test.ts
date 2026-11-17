@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 
 type Row = Record<string, unknown>;
 
@@ -25,21 +26,17 @@ function makeTable(rows: Row[]) {
 }
 
 const REACTION_MODELS = [
-  ['question', 'questionReaction', 'questionId'],
-  ['answer', 'answerReaction', 'answerId'],
-  ['commentOld', 'commentReaction', 'commentId'],
-  ['comment', 'commentV2Reaction', 'commentId'],
   ['image', 'imageReaction', 'imageId'],
   ['post', 'postReaction', 'postId'],
   ['resourceReview', 'resourceReviewReaction', 'reviewId'],
   ['article', 'articleReaction', 'articleId'],
   ['bountyEntry', 'bountyEntryReaction', 'bountyEntryId'],
-] as const satisfies readonly (readonly [ReactionEntityType, string, string])[];
+] as const satisfies readonly (readonly [Exclude<ReactionEntityType, 'comment'>, string, string])[];
 
 // The subset whose deletes queue a metric update, i.e. the ones with an
 // `if (count > 0)` guard to regress.
 const METRIC_MODELS = REACTION_MODELS.filter(([entityType]) =>
-  ['question', 'answer', 'post', 'article', 'bountyEntry'].includes(entityType)
+  ['post', 'article', 'bountyEntry'].includes(entityType)
 );
 
 const { mockQueueUpdate } = vi.hoisted(() => ({
@@ -56,15 +53,28 @@ const mockDbReplica = dbMock.dbRead as unknown as Record<string, ReturnType<type
 // Replaces the helper outright rather than spreading the original: the point of this file is
 // that the read and the write disagree, and the real helper decides which client to hand back
 // from replication-lag state at call time.
-vi.mock('~/server/db/db-lag-helpers', () => ({ getDbWithoutLag: async () => dbMock.dbRead }));
+// The image existence check is a Kysely read on the client the same helper picks: answered from
+// the replica's table, so it sees the replica's stale id as the Prisma reads do.
+const { REPLICA_KYSELY } = vi.hoisted(() => ({ REPLICA_KYSELY: { replica: true } }));
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  getDbWithoutLag: async () => dbMock.dbRead,
+  getKyselyWithoutLag: async () => REPLICA_KYSELY,
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getImageReactionId: async (db: unknown, key: Row) => {
+    if (db !== REPLICA_KYSELY) throw new Error('the existence check read the wrong client');
+    const table = (dbMock.dbRead as unknown as Record<string, { rows: Row[] }>).imageReaction;
+    const row = table.rows.find(matches(key));
+    return row ? { id: row.id as number } : undefined;
+  },
+}));
 vi.mock('~/server/metrics', () => {
   const metrics = { queueUpdate: mockQueueUpdate };
   return {
-    answerMetrics: metrics,
     articleMetrics: metrics,
     bountyEntryMetrics: metrics,
     postMetrics: metrics,
-    questionMetrics: metrics,
   };
 });
 vi.mock('~/server/services/block-check.service', () => ({

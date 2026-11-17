@@ -33,9 +33,9 @@ change.
 | Function | For | On bad input |
 |---|---|---|
 | `record_label(...)` | site code recording a human judgement | logs to `record_failure` and returns NULL; does not raise on bad input |
-| `record_prediction(...)` | site code recording a model output | same |
+| `record_prediction(...)` | database-side producers (the scan-flag trigger); app code uses `submit_predictions` | same |
 | `submit_prediction(...)` | the authenticated prediction endpoint, on behalf of pipelines | raises |
-| `submit_predictions(p_items)` | the endpoint's batch: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
+| `submit_predictions(p_items)` | the endpoint's batch, and what app code calls to record predictions: a JSON array of `submit_prediction` arguments | refuses per item, never the batch |
 | `attach_bytes(p_subject_type, p_subject_id, p_content_hash, p_bytes_ref, p_expire_at)` | pointing a subject at bytes the site keeps (no expiry when `p_expire_at` is NULL) | sets the pointer once, only on the subject with that exact `p_content_hash`; returns false (nothing changed) for an excluded subject, one that already has a pointer, or no such subject; raises on store errors |
 | `exclude(p_subject_type, p_subject_id, p_reason)` | taking an item out of training | `erasure` deletes it; `safety`, `removed` and `retention` keep the judgements and drop snapshot, pHash and bytes pointer |
 | `erase_owner(p_user_id)` | a user's erasure request | deletes every subject the user owns and tombstones the owner; not called on account deletion |
@@ -46,8 +46,8 @@ excluded when it, or another image sharing its stored file, matches. Deleting an
 image out too. The same job excludes a `model_text` subject as `removed` once its model is deleted (soft or hard),
 so the owner's text goes and the judgements stay; in batches.
 
-The functions belong to the owner of the site tables; site code that calls them directly connects as
-that owner.
+The functions belong to the owner of the site tables. App code may call only the routines in the
+allowlist of the `no-ungranted-label-store-routine` guard.
 
 Pass people as user ids (`p_labeller_user_id`, `p_owner_user_id`); the store hashes them. Give every
 call a `p_source_ref` that is unique to the source row: a retry with the same ref records nothing.
@@ -84,6 +84,15 @@ their status, ref `CreatorShopReviewInferred:…`, `contentAt: 'backfill'` and `
 snapshot; filter them out by ref prefix. Mystery packs were not backfilled: their labels start with
 the live path. A deleted listing is excluded as `removed`; a takedown is
 not excluded. No `rule` rows yet.
+
+Also wired from site code: Knights of New Order rating votes (`apps/knights/src/lib/server/conversion/labels.ts`), written
+by the tick once graded, never for a held player. One `knight` label per vote: subject `image`
+(`contentHash` = hash of the image url), family `knights`, the Knights question key and version (`knights.image.nsfwLevel`),
+the chosen option as the value, ref `KnightsVote:<itemId>:<labeller hash>`. Each choice question gets a `rule` row
+(`minHuman` = its `votesToResolve`, not unanimous). Yes/no answers are written by the same pass, as given rather than when
+graded, one `knight` label per answer: subject `image`, question `knights.yesno.<producer question id>`, value `yes` or `no`, ref
+`KnightsYesNoVote:<producer question id>:<labeller hash>`. Each answered question gets its own `rule` row (`minHuman` = the axis
+question's `votesToResolve`, not unanimous), so the store's `consensus` computes its majority.
 
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back

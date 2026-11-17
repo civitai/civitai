@@ -47,6 +47,8 @@ export const WORKFLOW_TAGS = {
   FAVORITE: 'favorite',
   FOLDER: 'folder',
   WILDCARDS: 'wildcards',
+  /** Stamped on every App Block workflow at submit; the generator Queue leaves these out. */
+  APP_BLOCK: 'app-block',
   FEEDBACK: {
     LIKED: 'feedback:liked',
     DISLIKED: 'feedback:disliked',

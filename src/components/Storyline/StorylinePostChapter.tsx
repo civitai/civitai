@@ -1,8 +1,8 @@
-import { Anchor, Menu, Text } from '@mantine/core';
+import { Anchor, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconArrowLeft, IconBook2, IconPhoto } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useMemo } from 'react';
-import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
@@ -11,7 +11,7 @@ import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
   useHiddenUserIds,
   useStorylinePath,
-  useStorylinesEnabled,
+  useStorylineForPost,
   useStorylineTracking,
 } from '~/components/Storyline/storyline.queries';
 import {
@@ -23,17 +23,9 @@ import { getStorylinePostParents } from '~/components/Storyline/storyline-post.u
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
 
 function useStorylinePostChapter(postId: number) {
-  const enabled = useStorylinesEnabled();
-  const browsingLevel = useViewerBrowsingLevelDebounced();
-  // The same read as image detail's entry chip, so the two share a cache entry.
-  const { data } = trpc.storyline.getForPosts.useQuery(
-    { postIds: [postId], browsingLevel },
-    { enabled, staleTime: 60_000 }
-  );
-  const entry = data?.[postId];
+  const entry = useStorylineForPost(postId);
   const pathQuery = useStorylinePath(entry?.chapterId);
   const hiddenUserIds = useHiddenUserIds();
   const path = useMemo(() => {
@@ -132,6 +124,7 @@ export function StorylinePostNext({ postId }: { postId: number }) {
         chapterTombstone={end.tombstone}
         parentPostId={end.post?.id}
         isOwner={!!currentUser && currentUser.id === path.storyline.userId}
+        onMain={end.onMain}
         onContinue={onContinue}
       />
       <Text
@@ -153,10 +146,15 @@ export function StorylinePostNext({ postId }: { postId: number }) {
                   </Anchor>
                 ) : (
                   parent.name
-                )}{' '}
-                <Text span c="dimmed" inherit>
-                  ({parent.where})
-                </Text>
+                )}
+                {parent.where && (
+                  <>
+                    {' '}
+                    <Text span c="dimmed" inherit>
+                      ({parent.where})
+                    </Text>
+                  </>
+                )}
               </span>
             ))}
           </span>

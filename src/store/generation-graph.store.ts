@@ -13,6 +13,7 @@ import type { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import type { GenerationData } from '~/server/services/generation/generation.service';
 import type { GenerationResourceValue } from '~/shared/types/generation.types';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 import { remixStore } from '~/store/remix.store';
 import { trpcVanilla } from '~/utils/trpc';
 
@@ -450,7 +451,11 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
       },
 
       setData: ({ params, resources, runType = 'replay', remixOfId }) => {
-        if (typeof window !== 'undefined' && !location.pathname.startsWith('/generate'))
+        // The desktop /generate page always shows the form; the mobile generator there opens it.
+        if (
+          typeof window !== 'undefined' &&
+          (!location.pathname.startsWith('/generate') || useMobileGeneratorStore.getState().showing)
+        )
           useGenerationPanelStore.setState({ view: 'generate' });
 
         // See `open` — patch/append are sub-flows inside an already-open

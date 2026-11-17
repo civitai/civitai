@@ -1,5 +1,6 @@
 import type { MantineColor } from '@mantine/core';
-import { ActionIcon, Badge, CopyButton, Group, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, CopyButton, Group } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';

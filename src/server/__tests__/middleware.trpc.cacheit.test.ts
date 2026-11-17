@@ -41,6 +41,8 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen }));
 
 import { cacheIt } from '~/server/middleware.trpc';
+import { cacheItKeyHash } from '~/server/utils/query-cache-key';
+import { hashifyObject } from '~/utils/string-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const redisFake = redisMock.redis;
@@ -246,5 +248,97 @@ describe('cacheIt cache-key composition', () => {
     await keyFor({ excludedTagIds });
 
     expect(excludedTagIds).toEqual([9, 3, 9]);
+  });
+});
+
+/**
+ * The key's hash segment. `model.getAllPagedSimple` varies its key on `isModerator`, so two
+ * callers whose values hash alike would read each other's cached response.
+ */
+type QueryInput = { query?: string; limit?: number; allowDerivatives?: boolean };
+
+function invokeAs(isModerator: boolean, input: QueryInput, next: ReturnType<typeof vi.fn>) {
+  const mw = cacheIt<QueryInput>({
+    ttl: 60,
+    varyBy: (ctx) => ({ isModerator: ctx.user?.isModerator ?? false }),
+  }) as unknown as (opts: {
+    input: QueryInput;
+    ctx: unknown;
+    next: typeof next;
+    path: string;
+  }) => Promise<{ data: unknown }>;
+  return mw({
+    input,
+    ctx: { cache: { canCache: true }, user: isModerator ? { id: 1, isModerator } : undefined },
+    next,
+    path: 'model.getAllPagedSimple',
+  });
+}
+
+describe('cacheIt key hash', () => {
+  // A real 32-bit `hashifyObject` collision, found by brute force over search-like strings.
+  const MOD_QUERY = 'night robot 4yi';
+  const PUBLIC_QUERY = 'ocean dragon 5ud';
+
+  beforeEach(() => {
+    const store = new Map<string, unknown>();
+    redisFake.packed.get.mockImplementation(async (k: string) => store.get(k) ?? null);
+    redisFake.packed.set.mockImplementation(async (k: string, v: unknown) => {
+      store.set(k, v);
+    });
+  });
+
+  it('a non-moderator never reads a moderator response whose key collided under the old hash', async () => {
+    expect(hashifyObject({ query: MOD_QUERY, isModerator: true })).toBe(
+      hashifyObject({ query: PUBLIC_QUERY, isModerator: false })
+    );
+    const modNext = vi.fn().mockResolvedValue({ ok: true, data: 'moderator rows', ctx: {} });
+    await invokeAs(true, { query: MOD_QUERY }, modNext);
+
+    const publicNext = vi.fn().mockResolvedValue({ ok: true, data: 'public rows', ctx: {} });
+    const result = await invokeAs(false, { query: PUBLIC_QUERY }, publicNext);
+
+    expect(publicNext).toHaveBeenCalledTimes(1);
+    expect(result.data).toBe('public rows');
+  });
+
+  it('moderator and non-moderator never share a key for the same input', async () => {
+    for (const input of [{}, { query: MOD_QUERY }, { query: 'x', limit: 20 }]) {
+      redisFake.packed.get.mockClear();
+      await invokeAs(true, input, vi.fn().mockResolvedValue(COMPUTED));
+      await invokeAs(false, input, vi.fn().mockResolvedValue(COMPUTED));
+      const [modKey, publicKey] = redisFake.packed.get.mock.calls.map(([k]) => k);
+      expect(modKey).not.toBe(publicKey);
+    }
+  });
+
+  it('the same values in another key order share a key', async () => {
+    const next = vi.fn().mockResolvedValue(COMPUTED);
+    await invokeAs(false, { query: 'cat', limit: 20 }, next);
+    await invokeAs(false, { limit: 20, query: 'cat' }, next);
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['false', { allowDerivatives: false }],
+    ['zero', { limit: 0 }],
+    ['an empty string', { query: '' }],
+  ])('an input value of %s does not share the key of an omitted one', async (_, input) => {
+    const next = vi.fn().mockResolvedValue(COMPUTED);
+    await invokeAs(false, {}, next);
+    await invokeAs(false, input, next);
+    expect(next).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses to key on a Set or Map, which would hash alike whatever they hold', () => {
+    expect(() => cacheItKeyHash({ ids: new Set([1]) })).toThrow(/Set/);
+    expect(() => cacheItKeyHash({ ids: new Map([[1, 1]]) })).toThrow(/Map/);
+  });
+
+  it('values JSON writes alike get different hashes', () => {
+    expect(cacheItKeyHash({ id: BigInt(1) })).not.toBe(cacheItKeyHash({ id: '1' }));
+    expect(cacheItKeyHash({ id: BigInt(1) })).not.toBe(cacheItKeyHash({ id: 1 }));
+    const at = new Date('2026-01-01T00:00:00.000Z');
+    expect(cacheItKeyHash({ at })).not.toBe(cacheItKeyHash({ at: at.toISOString() }));
   });
 });

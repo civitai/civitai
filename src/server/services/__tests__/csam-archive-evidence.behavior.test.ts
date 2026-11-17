@@ -31,7 +31,12 @@ const MIGRATION = path.resolve(
   '../../../../packages/civitai-db-schema/prisma/migrations/20261113120000_csam_report_archive_object/migration.sql'
 );
 
-const db = { pg: null as unknown as PGlite };
+const db = vi.hoisted(() => ({ pg: null as unknown as PGlite }));
+// The pending counts are Kysely; they run against the same PGlite.
+vi.mock('~/server/db/kyselyDb', async () => {
+  const { pgliteKysely } = await import('~/__tests__/pglite-kysely');
+  return { kyselyWrite: pgliteKysely(() => db.pg) };
+});
 const BUCKET = 'evidence-bucket';
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
@@ -84,14 +89,28 @@ let nextReportId = 1;
 
 async function addReport(
   type: string,
-  { sentAt = NOW, archivedAt = NOW as Date | null, details = {} as object } = {}
+  {
+    sentAt = NOW,
+    archivedAt = NOW as Date | null,
+    details = {} as object,
+    userId = 900 as number | null,
+  } = {}
 ) {
   const id = nextReportId++;
   await db.pg.query(
-    `INSERT INTO "CsamReport" (id, type, "reportSentAt", "archivedAt", details) VALUES ($1, $2, $3, $4, $5)`,
-    [id, type, sentAt, archivedAt, JSON.stringify(details)]
+    `INSERT INTO "CsamReport" (id, type, "reportSentAt", "archivedAt", details, "userId") VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, type, sentAt, archivedAt, JSON.stringify(details), userId]
   );
   return id;
+}
+
+/** A row in the separate archiver's queue for the report's user. */
+async function queue(reportId: number, userId: number, data: object = {}, age = '0 minutes') {
+  await db.pg.query(
+    `INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt", data)
+     VALUES ('CsamArchive', 'User', $1, now() - $2::interval, $3::jsonb)`,
+    [userId, age, JSON.stringify({ reportIds: [reportId], ...data })]
+  );
 }
 
 async function addObject(
@@ -169,7 +188,13 @@ beforeAll(async () => {
       type text NOT NULL,
       "reportSentAt" timestamp(3),
       "archivedAt" timestamp(3),
-      details jsonb NOT NULL DEFAULT '{}'
+      details jsonb NOT NULL DEFAULT '{}',
+      "userId" int
+    );
+    CREATE TABLE "JobQueue" (
+      type text NOT NULL, "entityType" text NOT NULL, "entityId" int NOT NULL,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(), data jsonb,
+      PRIMARY KEY ("entityType", "entityId", type)
     );
   `);
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
@@ -184,6 +209,7 @@ beforeEach(async () => {
   await db.pg.exec(`
     DROP TABLE "CsamReportArchiveObject";
     DELETE FROM "CsamReport";
+    DELETE FROM "JobQueue";
   `);
   await db.pg.exec(readFileSync(MIGRATION, 'utf8'));
   const raw = (async (first: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
@@ -440,6 +466,8 @@ describe('the check', () => {
     expect(values).toEqual({
       skipped: 0,
       stale: 0,
+      unsupported: 0,
+      queue_failing: 0,
       images_missing: 1,
       object_missing: 0,
       entries_mismatch: 0,
@@ -515,6 +543,59 @@ describe('the check', () => {
     expect(counts.stale).toBe(1);
   });
 
+  it('counts an unarchived generator-evidence report as unsupported, not stale', async () => {
+    const generatorEvidence = await addReport('GeneratedImage', {
+      archivedAt: null,
+      details: { generatorEvidence: { version: 1 }, generatedImages: [] },
+    });
+    const late = await addReport('Image', { archivedAt: null });
+    for (const id of [generatorEvidence, late])
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '12 hours' WHERE id = $1`,
+        [id]
+      );
+
+    const { counts } = await run();
+
+    expect(counts.unsupported).toBe(1);
+    expect(counts.stale).toBe(1);
+  });
+
+  it('counts an unarchived generated-image report naming no URL as unsupported, not stale', async () => {
+    const ids = [
+      await addReport('GeneratedImage', { archivedAt: null }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: {
+          generatedImages: [
+            { blobs: [{ id: 'b1' }, { id: 'b2', url: '' }, { id: 'b5', url: null }] },
+          ],
+        },
+      }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: {
+          generatorEvidence: { version: 1 },
+          generatedImages: [{ blobs: [{ id: 'b4', url: 'https://example.com/b4' }] }],
+        },
+      }),
+      await addReport('GeneratedImage', {
+        archivedAt: null,
+        details: { generatedImages: [{ blobs: [{ id: 'b3', url: 'https://example.com/b3' }] }] },
+      }),
+    ];
+    for (const id of ids)
+      await db.pg.query(
+        `UPDATE "CsamReport" SET "reportSentAt" = now() - interval '12 hours' WHERE id = $1`,
+        [id]
+      );
+
+    const { counts } = await run();
+
+    expect(counts.unsupported).toBe(3);
+    expect(counts.stale).toBe(1);
+  });
+
   it('never writes a storage key to the lines it logs', async () => {
     const ok = await addReport('TrainingData');
     const keys = [await addObject(ok, 'base'), await addObject(ok, 'trainingData')];
@@ -563,5 +644,59 @@ describe('readZipEntryCount', () => {
   it('returns null for an object that is not a zip', async () => {
     storage.objects.set('plain', { etag: 'e', bytes: Buffer.from('not a zip') });
     expect(await readZipEntryCount(storage, BUCKET, 'plain')).toBeNull();
+  });
+});
+
+describe('stale reports and the separate archiver queue', () => {
+  // Sent long enough ago to be stale. The check's `now()` is the database's, so "old" is real time.
+  const OLD = new Date(Date.now() - 24 * 3_600_000);
+  const unarchived = (userId: number) =>
+    addReport('Image', { sentAt: OLD, archivedAt: null, userId });
+
+  it('does not count a report waiting in the queue as stale; control: an unqueued one is', async () => {
+    const waiting = await unarchived(901);
+    await queue(waiting, 901);
+    await unarchived(902);
+
+    const { counts } = await run();
+
+    expect(counts.stale).toBe(1);
+    expect(counts.queue_failing).toBe(0);
+  });
+
+  it('counts a queued report as stale again once its row records an error, a repeated claim, or is overdue', async () => {
+    const errored = await unarchived(911);
+    await queue(errored, 911, { lastError: 'Error' });
+    const reclaimed = await unarchived(912);
+    await queue(reclaimed, 912, { attempts: 2 });
+    const overdue = await unarchived(913);
+    await queue(overdue, 913, {}, '2 days');
+
+    const { counts } = await run();
+
+    expect(counts.stale).toBe(3);
+    expect(counts.queue_failing).toBe(2);
+  });
+
+  it('counts a queued report as stale once its row is older than the stale window: an archiver that never claims it', async () => {
+    const neverClaimed = await unarchived(931);
+    await queue(neverClaimed, 931, {}, '7 hours');
+    const young = await unarchived(932);
+    await queue(young, 932, {}, '5 hours');
+
+    const { counts } = await run();
+
+    expect(counts.stale).toBe(1);
+    expect(counts.queue_failing).toBe(0);
+  });
+
+  it('counts a failing row even when the report is already stamped archived', async () => {
+    const stamped = await addReport('Image', { sentAt: OLD, archivedAt: OLD, userId: 921 });
+    await queue(stamped, 921, { lastError: 'Error' });
+
+    const { counts } = await run();
+
+    expect(counts.queue_failing).toBe(1);
+    expect(counts.stale).toBe(0);
   });
 });

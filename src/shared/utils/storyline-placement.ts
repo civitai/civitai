@@ -88,6 +88,8 @@ export type StorylineContinuationQueueItem = {
    * (`isAnswerableParentChapter`).
    */
   storyline: { id: number; title: string; maxNsfwLevel: number; takenDown: boolean };
+  /** Its parent already has a main-path chapter, so approving it now starts a branch. */
+  startsBranch: boolean;
 };
 
 export type MyStorylineContinuation = {

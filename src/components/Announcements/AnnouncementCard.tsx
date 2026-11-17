@@ -13,6 +13,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
+import { useCurrentDomainHref } from '~/hooks/useCurrentDomainHref';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
 import { isExternalHref } from '~/utils/external-link';
 
@@ -106,6 +107,7 @@ export function AnnouncementCard({
   const impressionRef = useTrackImpression<HTMLElement>(impressions);
   const theme = useMantineTheme();
   const internalHosts = useInternalHosts();
+  const toCurrentDomain = useCurrentDomainHref();
   const borderColor = theme.colors[color]?.[4] ?? theme.colors.blue[4];
 
   const body = (
@@ -192,7 +194,7 @@ export function AnnouncementCard({
                   <Button
                     key={index}
                     component={Link}
-                    href={action.link}
+                    href={toCurrentDomain(action.link)}
                     onClick={() => onActionClick?.(action, index)}
                     {...shared}
                   />

@@ -9,10 +9,12 @@ import type {
 } from '@civitai/orchestration-client';
 import { submitWorkflow } from '@civitai/orchestration-client';
 import { randomUUID } from 'crypto';
+import { withoutCallbacks } from '~/server/services/orchestrator/workflow-redaction';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
+import type { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-scan-ops';
 import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -45,10 +47,12 @@ import {
 // duration/errors when the run settles, the killed run records nothing and re-loads
 // the same stuck oldest-1000 rows every 5 min, so the backlog never drains. 15s sits
 // well above the ~4.7s submit P99, so it fires only on the genuine hang tail; a fired
-// AbortSignal.timeout throws a TimeoutError that submitWorkflowWithRetry treats as a
-// transient failure → backoff + retry (3 attempts) → surface. Mirrors the whatIf
-// per-attempt backstop. Only applied when NOT `wait`ing (a caller that passes `wait`
-// explicitly wants to block for the workflow, so we must not abort it early).
+// timeout ends that attempt, and submitWorkflowWithRetry does NOT retry a real submit
+// that timed out (it may have been accepted and still be in flight): the request
+// returns no data and the image is recorded as a transient send failure for the next
+// cron run. Mirrors the whatIf per-attempt backstop. Only applied when NOT `wait`ing
+// (a caller that passes `wait` explicitly wants to block for the workflow, so we must
+// not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
 /**
@@ -275,6 +279,7 @@ export async function createImageIngestionRequest({
 
   return {
     data,
+    // The request as sent, callbacks included: it must never reach a client unredacted.
     body,
     error,
     status: response?.status,
@@ -431,6 +436,8 @@ type XGuardModerationArgs = {
    */
   entityType?: string;
   entityId?: number;
+  /** A shadow-evaluation marker carried on the workflow metadata; the webhook routes on it. */
+  shadow?: Record<string, unknown>;
   /** Optional. When present, the moderator-review UI can link the scanned
    * content to a user for follow-up investigation. Travels on workflow
    * metadata only — not stored in the ClickHouse audit table. */
@@ -503,6 +510,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       : callbackUrl;
 
   const metadata: Record<string, unknown> = {
+    ...(args.shadow && { shadow: args.shadow }),
     mode: args.mode,
     recordForReview,
     version: '1',
@@ -694,7 +702,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       );
   }
 
-  return data;
+  return withoutCallbacks(data);
 }
 
 /**
@@ -740,6 +748,7 @@ export async function createModelFileScanRequest({
   url,
   preflight = true,
   priority = 'normal',
+  op,
 }: {
   fileId: number;
   modelVersionId: number;
@@ -755,6 +764,8 @@ export async function createModelFileScanRequest({
    * is missing the 5-min `scanFilesFallbackJob` will catch and tombstone it. */
   preflight?: boolean;
   priority?: Priority;
+  /** Read back from the workflow, never from the callback, so only a submitter can set it. */
+  op?: typeof SCAN_ONLY_RESCAN_OP;
 }) {
   // Dev skip: only when BOTH (a) we're in non-prod AND (b) no token is
   // configured. In prod a missing token MUST surface as a real submitWorkflow
@@ -861,7 +872,7 @@ export async function createModelFileScanRequest({
 
   const air = modelFileScanAir({ fileId, modelVersionId, modelId, modelType, baseModel });
 
-  const metadata = { fileId, modelVersionId };
+  const metadata = { fileId, modelVersionId, ...(op && { op }) };
   const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
   const { data, error, response } = await submitWorkflow({
@@ -945,5 +956,5 @@ export async function createModelFileScanRequest({
     data: { scanRequestedAt: new Date() },
   });
 
-  return data;
+  return withoutCallbacks(data);
 }

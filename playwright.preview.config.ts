@@ -1,4 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
+import { installOutputRedaction } from './tests/preview-redact';
+
+// Before anything can print: Playwright's error "Call log" lists request headers, so
+// a failed request would otherwise put the minted session cookie in the CI log. This
+// wraps stdout/stderr of the runner process, which also covers reporters picked with
+// `--reporter` on the command line. Guarded by scripts/__tests__/preview-smoke-log-redaction.test.ts.
+installOutputRedaction();
 
 /**
  * Playwright config for smoke-testing a DEPLOYED PR preview environment.
@@ -47,6 +54,9 @@ export default defineConfig({
   // on retry, not hard-fail. 90s gives comfortable margin without masking a real hang.
   timeout: 90_000,
   reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
+  // NOTE: the HTML report, traces (`on-first-retry`) and the JSON report keep the
+  // UNREDACTED request headers on disk — only stdout/stderr are redacted. Do not
+  // publish those artifacts anywhere wider than the log.
   use: {
     baseURL: PREVIEW_URL,
     trace: 'on-first-retry',

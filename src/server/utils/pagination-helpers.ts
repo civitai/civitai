@@ -17,6 +17,24 @@ export const DEFAULT_PAGE_SIZE = 20;
  */
 const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 
+/**
+ * The seconds and fraction of a date-time cursor token. Captures `YYYY-MM-DD[T ]HH:MM:SS` and
+ * the digits after its decimal point, and nothing past them (a `Z` or offset stays as it was).
+ */
+const CURSOR_TIMESTAMP_FRACTION = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.(\d+)/;
+
+/**
+ * Pads the fraction to 3 digits. Postgres drops trailing zeros (`.25` for 250 ms) and dayjs reads
+ * a zoneless short fraction as whole milliseconds (25 ms). Digits past the third are truncated; a
+ * Date holds no finer value.
+ */
+function normalizeCursorTimestamp(value: string) {
+  return value.replace(
+    CURSOR_TIMESTAMP_FRACTION,
+    (_, head: string, fraction: string) => `${head}.${fraction.padEnd(3, '0').slice(0, 3)}`
+  );
+}
+
 export function getPagination(limit: number, page: number | undefined) {
   const take = limit > 0 ? limit : undefined;
   const skip = page && take ? (page - 1) * take : undefined;
@@ -200,10 +218,11 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // and `'--5'` as valid dates and still binds a Date to an `int` column. A
     // structural fix requires the date branch to demand a date SHAPE and route
     // everything else numeric; that needs the formats a real
-    // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
-    // against a database — guessing them would turn a 500 into broken pagination.
+    // `CONCAT(timestamp, '|', id)` actually emits (the fraction loses trailing zeros;
+    // see `normalizeCursorTimestamp`), which has not been fully observed against a
+    // database — guessing the rest would turn a 500 into broken pagination.
     if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
-      const parsed = dayjs.utc(value);
+      const parsed = dayjs.utc(normalizeCursorTimestamp(value));
       if (!parsed.isValid())
         throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
       result[fields[i].field] = parsed.toDate();
@@ -249,19 +268,30 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
   return result;
 }
 
+/**
+ * The cursor a caller hands out is the LOOKAHEAD row (`LIMIT n + 1`, then popped), so the
+ * next page must include that row: inclusive on the last sort field, strict on every head
+ * field. A strict last field skips the cursor row on every page (issue #1372, `sort=Newest`);
+ * an inclusive head field re-emits every row tied on it (`sort=Oldest`).
+ */
+function cursorOperator(order: SortOrder, isLastField: boolean) {
+  if (order === 'DESC') return isLastField ? '<=' : '<';
+  return isLastField ? '>=' : '>';
+}
+
 export function getCursor(sortString: string, cursor: string | number | bigint | Date | undefined) {
   const sortFields = parseSortString(sortString);
   let where: Prisma.Sql | undefined;
   if (cursor) {
     const cursors = parseCursor(sortFields, cursor);
     const conditions: Prisma.Sql[] = [];
+    const lastIdx = sortFields.length - 1;
 
     for (let i = 0; i < sortFields.length; i++) {
       const conditionParts: Prisma.Sql[] = [];
       for (let j = 0; j <= i; j++) {
         const { field, order } = sortFields[j];
-        let operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
-        if (j < i) operator = '=';
+        const operator = j < i ? '=' : cursorOperator(order, i === lastIdx);
 
         conditionParts.push(
           Prisma.sql`${Prisma.raw(field)} ${Prisma.raw(operator)} ${cursors[field]}`
@@ -287,7 +317,7 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
  * two separate clauses suitable for a UNION ALL rewrite.
  *
  * The standard `getCursor` produces an OR-chain like:
- *   (A < a) OR (A = a AND B < b) OR (A = a AND B = b AND C >= c)
+ *   (A < a) OR (A = a AND B < b) OR (A = a AND B = b AND C <= c)
  *
  * Postgres can't push that OR predicate into an index seek — it scans the entire
  * matching range and applies a Filter, which is fast for page 1 but slows
@@ -297,8 +327,8 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
  * DESC), `getCursorClauses` returns:
  *   - `strict`: (A, ..., second_to_last) < (cursorA, ..., cursorPenult)
  *               — pushes into an `Index Cond: ROW(...) < ROW(...)` seek
- *   - `equality`: A = a AND ... AND penultimate = penultimateCursor AND last </>= lastCursor
- *               — handles the tie at the exact tuple boundary; usually 0 rows
+ *   - `equality`: A = a AND ... AND penultimate = penultimateCursor AND last <=/>= lastCursor
+ *               — the cursor row and the rest of its head-field tie (rows sorting at or after it)
  * with `splittable=true`. Combining `(strict UNION ALL equality)` reproduces the
  * original result set with the same ordering and allows the index seek.
  *
@@ -306,13 +336,9 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
  * `getCursorClauses` returns the legacy single OR-predicate in `strict` with
  * `splittable=false`. The caller should AND that into its existing WHERE.
  *
- * Why DESC-only? The legacy `getCursor` uses `>=` on the last field of every
- * AND-chain, including all head positions for ASC sorts. The resulting predicate
- * `(A >= a) OR (A = a AND B >= b)` collapses to `A >= a`, which Postgres already
- * seeks fine — and the looser equality semantics mean a UNION ALL split would
- * change which rows match. Restricting the split to DESC head fields preserves
- * the legacy result set exactly while still catching the slow path (every
- * production "feed_*" sort has DESC head fields).
+ * Why DESC-only? The tuple compare is written for `<` only, and every multi-field sort
+ * except `Oldest` has DESC head fields, so ASC-headed sorts keep the OR-predicate. An
+ * all-ASC head could split the same way with `>`; nothing semantic prevents it.
  *
  * The `prop` (cursorId encoding) matches `getCursor` exactly so callers can
  * swap helpers without touching pagination state.
@@ -336,11 +362,12 @@ export function getCursorClauses(
   // Used as a single-branch fallback when split isn't applicable.
   const buildLegacyPredicate = (): Prisma.Sql => {
     const conditions: Prisma.Sql[] = [];
+    const lastIdx = sortFields.length - 1;
     for (let i = 0; i < sortFields.length; i++) {
       const conditionParts: Prisma.Sql[] = [];
       for (let j = 0; j <= i; j++) {
         const { field, order } = sortFields[j];
-        const operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
+        const operator = j < i ? '=' : cursorOperator(order, i === lastIdx);
         conditionParts.push(
           Prisma.sql`${Prisma.raw(field)} ${Prisma.raw(operator)} ${cursors[field]}`
         );
@@ -350,15 +377,12 @@ export function getCursorClauses(
     return Prisma.sql`(${Prisma.join(conditions, ' OR ')})`;
   };
 
-  // Single-field sort: legacy predicate is `A < a` or `A >= a`, both already
-  // index-seekable. No split needed.
+  // Single-field sort: one inequality, already index-seekable.
   if (sortFields.length === 1) {
     return { strict: buildLegacyPredicate(), equality: undefined, prop, splittable: false };
   }
 
-  // Multi-field but head fields aren't all DESC: legacy predicate either
-  // collapses to a single inequality (all-ASC case) or has mixed semantics that
-  // wouldn't be preserved exactly by a tuple compare. Fall back to legacy.
+  // No tuple compare is written for non-DESC heads; see "Why DESC-only?" above.
   const lastIdx = sortFields.length - 1;
   const headFields = sortFields.slice(0, lastIdx);
   const allHeadDesc = headFields.every((f) => f.order === 'DESC');
@@ -379,13 +403,11 @@ export function getCursorClauses(
   );
   const strict = Prisma.sql`((${fieldList}) < (${valueList}))`;
 
-  // Equality branch: every head field equals its cursor value, last field uses
-  // the same comparator as legacy (< for DESC, >= for ASC).
   const lastField = sortFields[lastIdx];
   const equalityParts: Prisma.Sql[] = headFields.map(
     ({ field }) => Prisma.sql`${Prisma.raw(field)} = ${cursors[field]}`
   );
-  const lastOperator = lastField.order === 'DESC' ? '<' : '>=';
+  const lastOperator = cursorOperator(lastField.order, true);
   equalityParts.push(
     Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${
       cursors[lastField.field]

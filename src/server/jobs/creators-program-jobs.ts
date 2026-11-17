@@ -164,7 +164,7 @@ export const creatorsProgramInviteTipalti = createJob(
       data: {},
     });
 
-    await logToAxiom({
+    logToAxiom({
       name: 'creator-program-invite-tipalti',
       type: 'creator-program-invite-tipalti',
       invited: usersWithoutTipalti,
@@ -204,7 +204,7 @@ export const creatorsProgramSettleCash = createJob(
 
     // Fail open: an unreviewed batch alerts but still pays.
     if (!reviewed)
-      await logToAxiom({
+      logToAxiom({
         name: 'creator-program-prepayout-review-missing',
         type: 'error',
         period,
@@ -214,11 +214,11 @@ export const creatorsProgramSettleCash = createJob(
 
     const { settle: positiveBalances, held } = splitHeldBalances(balances, heldUserIds);
     if (held.length)
-      await logToAxiom({ name: 'creator-program-settle-held', type: 'info', period, held });
+      logToAxiom({ name: 'creator-program-settle-held', type: 'info', period, held });
     const participantIds = new Set(participants.map((p) => p.userId));
     const lateCleared = positiveBalances.filter((b) => !participantIds.has(b.accountId));
     if (lateCleared.length)
-      await logToAxiom({
+      logToAxiom({
         name: 'creator-program-settle-cleared',
         type: 'info',
         period,
@@ -255,7 +255,7 @@ export const creatorsProgramSettleCash = createJob(
           ])
         );
 
-        await logToAxiom({
+        logToAxiom({
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
           positiveBalances,
@@ -263,7 +263,7 @@ export const creatorsProgramSettleCash = createJob(
           message: 'Settled cash transactions successfully',
         });
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
           error: e,

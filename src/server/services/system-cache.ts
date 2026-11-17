@@ -6,8 +6,10 @@ import {
   REDIS_KEYS,
   REDIS_SYS_KEYS,
   sysRedis,
+  withSysReadBreaker,
   withSysReadDeadline,
 } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
@@ -94,8 +96,12 @@ export type SystemModerationTag = {
 // in-proc TTL is purely additive to the already-eventual 4h staleness.
 const getModeratedTagsMemo = createTtlMemo<SystemModerationTag[]>(
   async () => {
-    const cachedTags = await redis.packed.get<SystemModerationTag[]>(
-      REDIS_KEYS.SYSTEM.MODERATED_TAGS
+    // Guarded (bounded, breaker-aware): an unreadable cache is a miss, so the list is rebuilt from
+    // the database — this feeds the hidden-content filter, which must not lose it to an outage.
+    const cachedTags = await clusterCacheGuard.readOr(
+      'system-cache.getModeratedTags',
+      () => redis.packed.get<SystemModerationTag[]>(REDIS_KEYS.SYSTEM.MODERATED_TAGS),
+      null
     );
     if (cachedTags) return cachedTags;
 
@@ -120,9 +126,9 @@ const getModeratedTagsMemo = createTtlMemo<SystemModerationTag[]>(
 
     const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
 
-    await redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, {
-      EX: SYSTEM_CACHE_EXPIRY,
-    });
+    await clusterCacheGuard.writeBestEffort('system-cache.getModeratedTags set', () =>
+      redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, { EX: SYSTEM_CACHE_EXPIRY })
+    );
 
     log('got moderation tags');
     return combined;
@@ -181,7 +187,11 @@ export async function getTagRules() {
 
 const getSystemTagsMemo = createTtlMemo<{ id: number; name: string }[]>(
   async () => {
-    const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.SYSTEM_TAGS);
+    const cachedTags = await clusterCacheGuard.readOr(
+      'system-cache.getSystemTags',
+      () => redis.get(REDIS_KEYS.SYSTEM.SYSTEM_TAGS),
+      null
+    );
     if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
 
     log('getting system tags');
@@ -189,9 +199,9 @@ const getSystemTagsMemo = createTtlMemo<{ id: number; name: string }[]>(
       where: { type: TagType.System },
       select: { id: true, name: true },
     });
-    await redis.set(REDIS_KEYS.SYSTEM.SYSTEM_TAGS, JSON.stringify(tags), {
-      EX: SYSTEM_CACHE_EXPIRY,
-    });
+    await clusterCacheGuard.writeBestEffort('system-cache.getSystemTags set', () =>
+      redis.set(REDIS_KEYS.SYSTEM.SYSTEM_TAGS, JSON.stringify(tags), { EX: SYSTEM_CACHE_EXPIRY })
+    );
 
     log('got system tags');
     return tags;
@@ -250,6 +260,11 @@ export async function removeSystemPermission(
     (x) => !(userIds as number[]).includes(x)
   );
   await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
+
+  if (permission === 'impersonation') {
+    const { invalidateImpersonationsBy } = await import('~/server/auth/session-invalidation');
+    for (const userId of userIds) await invalidateImpersonationsBy(userId);
+  }
 }
 
 const colorPriority = [
@@ -274,7 +289,12 @@ export type CategoryTagType = 'image' | 'model' | 'post' | 'article' | 'model3d'
 const getCategoryTagsMemo = createKeyedTtlMemo<TypeCategory[]>(
   async (type) => {
     let categories: TypeCategory[] | undefined;
-    const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
+    // An unreadable cache is a miss: rebuilt from the database below (getSystemTags degrades the same way).
+    const categoriesCache = await clusterCacheGuard.readOr(
+      'system-cache.getCategoryTags',
+      () => redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`),
+      null
+    );
     if (categoriesCache) categories = JSON.parse(categoriesCache);
 
     if (!categories) {
@@ -293,8 +313,12 @@ const getCategoryTagsMemo = createKeyedTtlMemo<TypeCategory[]>(
           priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
         }))
         .sort((a, b) => a.priority - b.priority);
-      if (categories.length)
-        await redis.set(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`, JSON.stringify(categories));
+      if (categories.length) {
+        const value = JSON.stringify(categories);
+        await clusterCacheGuard.writeBestEffort('system-cache.getCategoryTags set', () =>
+          redis.set(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`, value)
+        );
+      }
     }
 
     return categories;
@@ -493,7 +517,7 @@ export async function getLiveNow() {
 // SSR every-render read, so collapsing the per-render sysRedis GET into ~1/TTL/pod
 // is the win; parsing the small cached string per call is negligible.
 const getBrowsingSettingAddonsRawMemo = createTtlMemo<string | null>(
-  () => withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)),
+  () => withSysReadBreaker(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)),
   SYSTEM_CACHE_INPROC_TTL_MS
 );
 

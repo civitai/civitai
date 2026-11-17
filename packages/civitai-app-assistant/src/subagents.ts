@@ -1,3 +1,4 @@
+import { READ_DOCS } from './docs';
 import { SANDBOX_SERVER_ID } from './gate';
 import type { AssistantRunner } from './instructions';
 
@@ -9,10 +10,14 @@ import type { AssistantRunner } from './instructions';
  */
 export const APP_ASSISTANT_SUBAGENT_TOOLS = [
   `${SANDBOX_SERVER_ID}__read_file`,
+  // Only a sandbox that lists it; never run_checks, which counts as checked, nor edit_file.
+  `${SANDBOX_SERVER_ID}__read_files`,
   `${SANDBOX_SERVER_ID}__list_dir`,
   `${SANDBOX_SERVER_ID}__dev_server_status`,
   `${SANDBOX_SERVER_ID}__dev_server_logs`,
   'get_guide',
+  // The runner's: Civitai's developer docs only, free per call.
+  READ_DOCS,
 ] as const;
 
 /**
@@ -25,7 +30,7 @@ export function assistantSubagentInstructions(runner: AssistantRunner = 'browser
     SUBAGENT_LINES[1],
     runner === 'browser'
       ? '- You can only read files, list directories, read the dev server’s status and logs, and read the guide. You cannot change files, run commands or fetch web pages.'
-      : '- You can only read files, list directories, and read the dev server’s status and logs. You cannot change files, run commands or fetch web pages.',
+      : '- You can only read files, list directories, read the dev server’s status and logs, and read Civitai’s developer docs with read_docs. You cannot change files, run commands or fetch other web pages.',
     ...SUBAGENT_LINES.slice(2),
   ].join('\n');
 }

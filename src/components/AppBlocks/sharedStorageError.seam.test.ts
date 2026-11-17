@@ -5,10 +5,8 @@ import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import { errorFormatter } from '~/server/trpc/error-formatter';
 import { throwSharedRateLimited } from '~/server/utils/rate-limit-error';
 import { buildTransformer, clientTransformer } from '~/shared/utils/trpc-union-transformer';
-import {
-  sharedStorageErrorReply,
-  storageErrorRateLimit,
-} from '~/components/AppBlocks/sharedStorageError';
+import { sharedStorageErrorReply } from '~/components/AppBlocks/sharedStorageError';
+import { getRateLimit } from '~/utils/rate-limit';
 
 /**
  * The seam between the server refusal and the host's bridge reply: the real refusal helper,
@@ -89,19 +87,17 @@ describe('rate-limit refusal → host SHARED_APPEND_RESULT reply', () => {
   });
 });
 
-describe('storageErrorRateLimit validates the network-supplied data.rateLimit', () => {
+describe('getRateLimit validates the network-supplied data.rateLimit', () => {
   const VALID = { retryAfterSeconds: 17, retryAt: RETRY_AT };
   const withRateLimit = (rateLimit: unknown) => ({ data: { rateLimit } });
 
   it('accepts the 1-second minimum', () => {
     const minimum = { retryAfterSeconds: 1, retryAt: RETRY_AT };
-    expect(storageErrorRateLimit(withRateLimit(minimum))).toEqual(minimum);
+    expect(getRateLimit(withRateLimit(minimum))).toEqual(minimum);
   });
 
   it('copies only the known fields', () => {
-    expect(storageErrorRateLimit(withRateLimit({ ...VALID, internalKey: 'bucket:42' }))).toEqual(
-      VALID
-    );
+    expect(getRateLimit(withRateLimit({ ...VALID, internalKey: 'bucket:42' }))).toEqual(VALID);
   });
 
   it.each([
@@ -113,6 +109,6 @@ describe('storageErrorRateLimit validates the network-supplied data.rateLimit', 
     ['a string', 'retry later'],
     ['null', null],
   ])('drops a malformed rateLimit (%s)', (_label, rateLimit) => {
-    expect(storageErrorRateLimit(withRateLimit(rateLimit))).toBeUndefined();
+    expect(getRateLimit(withRateLimit(rateLimit))).toBeUndefined();
   });
 });

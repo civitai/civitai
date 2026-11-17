@@ -156,7 +156,7 @@ describe('invalidationsForInviteResponse', () => {
     }
   });
 
-  test('the inbox and My apps are invalidated too, and nothing else', () => {
+  test('the inbox and My builds are invalidated too, and nothing else', () => {
     expect(invalidationsForInviteResponse('accepted').sort()).toEqual(
       [
         'appCollaborators.listMyPendingInvites',

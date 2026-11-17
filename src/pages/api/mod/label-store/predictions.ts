@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
+import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { PG_INT4_MAX } from '~/server/common/constants';
 import { submitPredictions } from '~/server/services/label-store.service';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
@@ -35,7 +36,7 @@ const predictionSchema = z.strictObject({
     .describe(
       'Your id for the run or prediction. The same sourceRef again for the same image, question and questionVersion is a duplicate.'
     ),
-  predictedAt: z.iso.datetime({ offset: true }).optional(),
+  predictedAt: isoDatetimeCompat({ offset: true }).optional(),
   confidence: z.number().min(0).max(1).optional(),
   scores: z
     .record(z.string().max(64), z.number())

@@ -1,7 +1,11 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import {
+  blockScopePermissions,
+  groupListingPermissions,
+} from '~/components/Apps/listingPermissions';
 
 /**
  * BlockConsentModal — the lazy-consent surface a logged-in viewer sees when a
@@ -21,13 +25,33 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
 // half of this component is entirely about WHAT IS SENT, and a render-only assertion
 // cannot see the difference between "omit the key" and "send null", which is the one
 // distinction the server acts on.
-const { mutate } = vi.hoisted(() => ({ mutate: vi.fn() }));
+const { mutate, importsQuery } = vi.hoisted(() => ({
+  mutate: vi.fn(),
+  // What `getStorageImports.useQuery` returns; a test may set it (reset after each test).
+  importsQuery: { current: null as null | { data: unknown; isLoading: boolean } },
+}));
+const storageImports = {
+  imports: [
+    {
+      from: 'notes-app',
+      sourceAppBlockId: 'apb_notes_1',
+      sourceName: 'Notes App',
+      collections: ['notes', 'prefs'],
+      access: 'readwrite' as const,
+      granted: false,
+    },
+  ],
+};
 
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
       grantScopes: {
         useMutation: () => ({ mutate, isPending: false }),
+      },
+      // Read only when `apps:storage:import` is being consented to.
+      getStorageImports: {
+        useQuery: () => importsQuery.current ?? { data: storageImports, isLoading: false },
       },
     },
   },
@@ -36,6 +60,7 @@ vi.mock('~/utils/trpc', () => ({
 const { default: BlockConsentModal } = await import('./BlockConsentModal');
 
 const SPEND = 'ai:write:budgeted';
+const APP_STORAGE_IMPORT = 'apps:storage:import';
 
 describe('BlockConsentModal — sensitive scope emphasis for the end user', () => {
   test('a sensitive requested scope shows the "Sensitive" indicator; a normal one does not', async () => {
@@ -249,5 +274,221 @@ describe('BlockConsentModal — per-app spend limit', () => {
     await input.fill('999999');
     await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
     expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe('BlockConsentModal — cross-app storage imports', () => {
+  test('names the consumer, the source app and its collections for apps:storage:import', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={['apps:storage:import']}
+        onGranted={() => undefined}
+      />
+    );
+    const detail = page.getByTestId('block-consent-storage-imports');
+    await expect.element(detail).toBeVisible();
+    // The viewer must see who reaches what, where; the wording around it is free.
+    for (const part of ['Notes Fork', 'notes, prefs', 'Notes App']) {
+      await expect.element(detail).toHaveTextContent(part);
+    }
+  });
+
+  test('Allow sends the imports the viewer was shown, so the grant records exactly those', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={['apps:storage:import']}
+        onGranted={() => undefined}
+      />
+    );
+    await page.getByRole('button', { name: 'Allow' }).click();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'app-1',
+      scopes: ['apps:storage:import'],
+      storageImports: [{ from: 'notes-app', collections: ['notes', 'prefs'], access: 'readwrite' }],
+    });
+  });
+});
+
+/**
+ * `apps:storage:publish` IN A SOURCE APP: the consumer's block asked for it with
+ * `requestGrants({ scope, from })`. The grant is the viewer's own, for the SOURCE app, so the
+ * prompt names that app and what the consumer's writes do there; the source's name comes from the
+ * consumer's approved imports, never from the block.
+ */
+describe('BlockConsentModal — publish consent in a source app', () => {
+  const PUBLISH = 'apps:storage:publish';
+
+  test('names the source app and that what the consumer adds there is public, as the viewer', async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="notes-app"
+        onGranted={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByRole('dialog'))
+      .toHaveTextContent('Notes Fork needs permission in Notes App');
+    const detail = page.getByTestId('block-consent-source-publish');
+    await expect.element(detail).toBeVisible();
+    await expect
+      .element(detail)
+      .toHaveTextContent(
+        'Entries, votes and counts that Notes Fork adds in Notes App appear publicly there under your account. You are giving this permission to Notes App, so Notes App can do the same.'
+      );
+  });
+
+  test('Allow records the grant against the source: the request carries from', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="notes-app"
+        onGranted={() => undefined}
+      />
+    );
+    await page.getByRole('button', { name: 'Allow' }).click();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(mutate.mock.calls[0][0]).toEqual({
+      appBlockId: 'app-1',
+      scopes: [PUBLISH],
+      from: 'notes-app',
+    });
+  });
+
+  afterEach(() => {
+    importsQuery.current = null;
+  });
+
+  // `from` is block-supplied text. Until the server's imports name the source, the prompt says
+  // "another app" and never echoes it, so a block cannot put its own words in the host's dialog.
+  test('a source the app does not import with readwrite offers nothing to allow, and is not named', async () => {
+    mutate.mockClear();
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="claim-free-buzz"
+        onGranted={() => undefined}
+      />
+    );
+    await expect
+      .element(page.getByTestId('block-consent-source-unavailable'))
+      .toHaveTextContent(
+        'Notes Fork does not change your data in that app, so it cannot ask for this permission there.'
+      );
+    const dialog = page.getByRole('dialog');
+    await expect.element(dialog).toHaveTextContent('Notes Fork needs permission in another app');
+    await expect.element(dialog).not.toHaveTextContent('claim-free-buzz');
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
+    expect(page.getByTestId('block-consent-source-publish').elements()).toHaveLength(0);
+  });
+
+  test('while the imports load, the prompt does not name the block-supplied source', async () => {
+    importsQuery.current = { data: undefined, isLoading: true };
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-1"
+        blockName="Notes Fork"
+        missingScopes={[PUBLISH]}
+        from="notes-app"
+        onGranted={() => undefined}
+      />
+    );
+    const dialog = page.getByRole('dialog');
+    await expect.element(dialog).toHaveTextContent('Notes Fork needs permission in another app');
+    await expect.element(dialog).not.toHaveTextContent('notes-app');
+    await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
+  });
+});
+
+/**
+ * The launch prompt lists the requested scopes in the same groups and order as the store listing
+ * (`groupListingPermissions`) and every other permissions surface. Input order differs from the
+ * grouped order at every position, so a flat render in input order cannot pass.
+ */
+describe('BlockConsentModal — scopes grouped and ordered like the store listing', () => {
+  const UNKNOWN = 'zz:not-a-real:scope';
+  const INPUT = ['models:read:self', UNKNOWN, APP_STORAGE_IMPORT, 'user:read:self', SPEND];
+  const SENSITIVE = [SPEND, APP_STORAGE_IMPORT];
+  const OTHER = ['user:read:self', 'models:read:self', UNKNOWN];
+
+  /** The plain-language title each scope must show — never its id. */
+  const TITLE: Record<string, string> = {
+    'models:read:self': 'See the model it sits on',
+    [UNKNOWN]: 'Zz not a real scope',
+    [APP_STORAGE_IMPORT]: 'Use your data from another app',
+    'user:read:self': 'See your username and account status',
+    [SPEND]: 'Run AI work with your Buzz',
+  };
+
+  /** Where a scope's title first appears in the dialog. */
+  const positionIn = (text: string, scope: string) => text.indexOf(TITLE[scope]);
+
+  const renderPrompt = async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-groups"
+        blockName="Grouped"
+        missingScopes={INPUT}
+        onGranted={vi.fn()}
+      />
+    );
+    await expect.element(page.getByTestId('block-consent-storage-imports')).toBeInTheDocument();
+    return document.querySelector('[role="dialog"]')?.textContent ?? '';
+  };
+
+  test('lists sensitive scopes first, each group in OAuth-bit order, and drops none', async () => {
+    const text = await renderPrompt();
+    for (const scope of INPUT) {
+      expect(positionIn(text, scope), `${scope} is not shown`).toBeGreaterThanOrEqual(0);
+    }
+    const shown = [...INPUT].sort((a, b) => positionIn(text, a) - positionIn(text, b));
+    expect(shown).toEqual([...SENSITIVE, ...OTHER]);
+    const grouped = groupListingPermissions(blockScopePermissions(INPUT));
+    expect(shown).toEqual([...grouped.sensitive, ...grouped.other].map((p) => p.id));
+  });
+
+  test('shows each scope as a plain-language title, never its id', async () => {
+    const text = await renderPrompt();
+    for (const scope of INPUT) {
+      expect(text, `${scope}'s title`).toContain(TITLE[scope]);
+      expect(text, `the raw id ${scope} reached the end user`).not.toContain(scope);
+    }
+    // An undescribed scope gets the humanised fallback, not a placeholder.
+    expect(text).not.toContain('(no description)');
+  });
+
+  test('names the two groups', async () => {
+    const text = await renderPrompt();
+    expect(text).toContain('Sensitive permissions (2)');
+    expect(text).toContain('Other permissions (3)');
+  });
+
+  // INVARIANT GUARD (green before and after the grouping change): the per-scope extras stay
+  // under their own scope.
+  test('the import detail stays under its own scope, and the spend limit still renders', async () => {
+    const text = await renderPrompt();
+    const detail = document.querySelector('[data-testid="block-consent-storage-imports"]');
+    const at = text.indexOf(detail?.textContent ?? '\u0000');
+    expect(at).toBeGreaterThan(positionIn(text, APP_STORAGE_IMPORT));
+    // Before whichever scope follows it on screen.
+    const after = INPUT.map((s) => positionIn(text, s)).filter(
+      (p) => p > positionIn(text, APP_STORAGE_IMPORT)
+    );
+    expect(after.length, 'nothing follows the import scope').toBeGreaterThan(0);
+    expect(at).toBeLessThan(Math.min(...after));
+    await expect.element(page.getByTestId('block-consent-budget-toggle')).toBeInTheDocument();
   });
 });

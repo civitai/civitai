@@ -95,16 +95,13 @@ export async function resolveFlaggedModel({ ids, userId }: GetByIdsInput & { use
       trackModActivity(userId, { entityType: 'model', entityId: id, activity: 'moderateFlag' })
     )
   ).catch((error) =>
-    logToAxiom(
-      {
-        name: 'track-resolve-model-flag',
-        type: 'error',
-        message: 'Failed to track mod activity',
-        error,
-        details: { entityType: 'model', activity: 'moderateFlag', ids },
-      },
-      'moderation'
-    )
+    logToAxiom({
+      name: 'track-resolve-model-flag',
+      type: 'error',
+      message: 'Failed to track mod activity',
+      error,
+      details: { entityType: 'model', activity: 'moderateFlag', ids },
+    })
   );
 
   return updated;

@@ -21,8 +21,20 @@ describe('getRemixOptions', () => {
     expect(getRemixOptions(image())).toEqual(['edit', 'video', 'reuse']);
   });
 
-  it('offers only reuse on a video with a prompt', () => {
-    expect(getRemixOptions(image({ type: MediaType.video }))).toEqual(['reuse']);
+  it('offers animate and reuse on a video with a prompt', () => {
+    expect(getRemixOptions(image({ type: MediaType.video }))).toEqual(['video', 'reuse']);
+  });
+
+  it('still offers animate on a video with no prompt', () => {
+    expect(
+      getRemixOptions(image({ type: MediaType.video, hasPositivePrompt: false, hasMeta: false }))
+    ).toEqual(['video']);
+  });
+
+  it('offers a video nothing when its engine is refused', () => {
+    expect(
+      getRemixOptions(image({ type: MediaType.video, hasPositivePrompt: false, poi: true }))
+    ).toEqual([]);
   });
 
   it('drops reuse when there is no prompt', () => {
@@ -43,7 +55,9 @@ describe('getRemixOptions', () => {
 
 describe('getSoleRemixOption', () => {
   it('names the option when exactly one is offered', () => {
-    expect(getSoleRemixOption(image({ type: MediaType.video }))).toBe('reuse');
+    expect(
+      getSoleRemixOption(image({ hasPositivePrompt: false, poi: false, type: MediaType.video }))
+    ).toBe('video');
   });
 
   it('names nothing when several are offered', () => {
@@ -51,9 +65,7 @@ describe('getSoleRemixOption', () => {
   });
 
   it('names nothing when none is offered', () => {
-    expect(getSoleRemixOption(image({ type: MediaType.video, hasPositivePrompt: false }))).toBe(
-      undefined
-    );
+    expect(getSoleRemixOption(image({ ingestion: ImageIngestionStatus.Blocked }))).toBe(undefined);
   });
 
   // The menu is where a refused viewer is told why the other options are missing.

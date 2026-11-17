@@ -24,7 +24,6 @@ vi.mock('~/server/auth/bearer-token', () => ({
 vi.mock('~/server/auth/session-client', () => ({
   getHubSession: vi.fn(async () => null),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
@@ -32,6 +31,11 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlagsAsync: vi.fn(async ({ req }: { req?: { headers: { host?: string } } }) => ({
     canViewNsfw: req?.headers.host === 'civitai.red' ? true : undefined,
   })),
+}));
+// Off, as Flipt answers until the operator turns it on; its on state is pinned in
+// `src/tests/pages/ssr-client-only-sections-pages.test.ts`.
+vi.mock('~/server/utils/ssr-client-only-sections', () => ({
+  ssrClientOnlySectionsOn: () => false,
 }));
 vi.mock('~/server/routers', async () => {
   const { buildFixtureRouter } = await import('~/server/page-data/__tests__/image-detail.fixtures');
@@ -95,7 +99,13 @@ describe('/images/[imageId] getServerSideProps', () => {
   it('renders the owner of an R-rated image on .com with all four prefetches', async () => {
     const result = await renderPage({ user: USERS.owner, imageId: 101, host: 'civitai.com' });
 
-    expect(Object.keys(result.props ?? {}).sort()).toEqual(['adsGated', 'session', 'trpcState']);
+    expect(Object.keys(result.props ?? {}).sort()).toEqual([
+      'adsGated',
+      'session',
+      'ssrClientOnlySections',
+      'trpcState',
+    ]);
+    expect(result.props).toHaveProperty('ssrClientOnlySections', false);
     expect(result.props?.adsGated).toBe(true);
     expect(result.props?.session).toEqual({
       user: { ...USERS.owner, createdAt: '2024-01-02T03:04:05.000Z' },

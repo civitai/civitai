@@ -9,10 +9,12 @@ import {
   addEntityToShowcaseHandler,
   getUserContentOverviewHandler,
   getUserProfileHandler,
+  setShowcaseSectionsHandler,
   updateUserProfileHandler,
 } from '~/server/controllers/user-profile.controller';
 import {
   getUserProfileSchema,
+  setShowcaseSectionsSchema,
   showcaseItemSchema,
   userProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
@@ -35,4 +37,9 @@ export const userProfileRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(showcaseItemSchema)
     .mutation(addEntityToShowcaseHandler),
+  setShowcaseSections: protectedProcedure
+    .use(isFlagProtected('profileShowcases'))
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(setShowcaseSectionsSchema)
+    .mutation(setShowcaseSectionsHandler),
 });

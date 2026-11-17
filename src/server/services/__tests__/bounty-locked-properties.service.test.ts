@@ -57,6 +57,7 @@ import {
   upsertBounty,
 } from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
+import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
 import {
   checkEntityImageKeys,
   createEntityImages,
@@ -74,10 +75,18 @@ function mockStored({
   complete = false,
   poi = false,
   meta = null as unknown,
-}: { lockedProperties?: string[]; complete?: boolean; poi?: boolean; meta?: unknown } = {}) {
+  details = null as unknown,
+}: {
+  lockedProperties?: string[];
+  complete?: boolean;
+  poi?: boolean;
+  meta?: unknown;
+  details?: unknown;
+} = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
     id: BOUNTY_ID,
+    details,
     entryLimit: null,
     complete,
     poi,
@@ -266,6 +275,128 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     expect(data.details).toEqual(expect.objectContaining({ profanityMatches: ['bad'] }));
   });
 
+  describe("the text scan's record on an edit", () => {
+    const scan = { workflowId: 'w', level: 4, at: '2026-11-16' };
+    beforeEach(() => mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false }));
+
+    it('keeps the stored record over one the editor sends', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      for (const isModerator of [false, true]) {
+        await upsert({
+          isModerator,
+          details: { baseModel: 'SDXL 1.0', textScanNsfw: { level: 1 } },
+        });
+        expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0', textScanNsfw: scan });
+      }
+    });
+
+    it('keeps it when the edit drops it or sends no details', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({ details: { baseModel: 'SDXL 1.0' } });
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0', textScanNsfw: scan });
+      await upsert({ details: undefined });
+      expect(updateData().details).toEqual({ textScanNsfw: scan });
+    });
+
+    it("goes with a moderator's unflag, so a later manual flag is not read as the scan's", async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({
+        isModerator: true,
+        nsfw: false,
+        details: { baseModel: 'SD 1.5', textScanNsfw: scan },
+      });
+      const unflagged = updateData().details;
+      expect(unflagged).toEqual({ baseModel: 'SD 1.5' });
+
+      mockStored({ details: unflagged });
+      await upsert({ isModerator: true, nsfw: true, details: unflagged });
+      const reflagged = updateData().details;
+
+      dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+        userId: 3,
+        nsfw: true,
+        details: reflagged,
+        nsfwLevel: 60,
+        updatedAt: new Date(),
+        name: 'b',
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: null,
+      });
+      dbMock.dbRead.entityModeration.findUnique.mockResolvedValue({
+        status: 'Succeeded',
+        nsfwLevel: 4,
+        result: { version: 1, textHash: 'h', labels: { nsfw: { level: 'r', reason: 'x' } } },
+      });
+      expect(await loadRatingReviewSubject('Bounty', 1)).toMatchObject({ currentLevel: 16 });
+    });
+
+    it("is kept when an owner's edit unflags", async () => {
+      mockStored({ details: { baseModel: 'SD 1.5', textScanNsfw: scan } });
+      await upsert({ nsfw: false, details: { baseModel: 'SD 1.5' } });
+      expect(updateData().details).toEqual({ baseModel: 'SD 1.5', textScanNsfw: scan });
+    });
+
+    it('takes none from an editor when the scan wrote none', async () => {
+      mockStored({ details: { baseModel: 'SD 1.5' } });
+      await upsert({ details: { baseModel: 'SDXL 1.0', textScanNsfw: scan } });
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0' });
+    });
+  });
+
+  describe('the stored detection on an edit', () => {
+    const storedDetails = {
+      baseModel: 'SD 1.5',
+      profanityMatches: ['term'],
+      profanityEvaluation: { reason: 'test reason', correctedAt: '2026-01-01' },
+    };
+    beforeEach(() => {
+      mockStored({ details: storedDetails });
+      mockEvaluateContent.mockReturnValue({ shouldMarkNSFW: false });
+    });
+
+    it("keeps it over the owner's details, and ignores a pair the owner sends", async () => {
+      await upsert({ details: { baseModel: 'SDXL 1.0', profanityMatches: ['other'] } });
+
+      expect(updateData().details).toEqual({
+        baseModel: 'SDXL 1.0',
+        profanityMatches: ['term'],
+        profanityEvaluation: { reason: 'test reason', correctedAt: '2026-01-01' },
+      });
+    });
+
+    it('keeps it when the edit sends no details', async () => {
+      await upsert({ details: undefined });
+
+      expect(updateData().details).toEqual({
+        profanityMatches: ['term'],
+        profanityEvaluation: { reason: 'test reason', correctedAt: '2026-01-01' },
+      });
+    });
+
+    it('writes a moderator edit as sent, which can clear it', async () => {
+      await upsert({ isModerator: true, details: { baseModel: 'SDXL 1.0' } });
+
+      expect(updateData().details).toEqual({ baseModel: 'SDXL 1.0' });
+    });
+
+    it('replaces it with a fresh detection', async () => {
+      mockEvaluateContent.mockReturnValue({
+        shouldMarkNSFW: true,
+        matchedWords: ['new'],
+        reason: 'fresh',
+        metrics: {},
+      });
+
+      await upsert({ details: { baseModel: 'SD 1.5' } });
+
+      expect(updateData().details).toEqual({
+        baseModel: 'SD 1.5',
+        profanityMatches: ['new'],
+        profanityEvaluation: { reason: 'fresh', metrics: {} },
+      });
+    });
+  });
+
   it('does not run for a moderator', async () => {
     await upsert({ isModerator: true, nsfw: false });
 
@@ -395,6 +526,14 @@ describe('upsertBounty — create path', () => {
 
     expect(chargedAccountTypes()).toEqual(['yellow']);
     expect(createData().lockedProperties).toBeUndefined();
+  });
+
+  it("takes no text scan record from the creator's details", async () => {
+    await create({
+      buzzType: 'yellow',
+      details: { baseModel: 'SDXL 1.0', textScanNsfw: { level: 4 } },
+    });
+    expect(createData().details).toEqual({ baseModel: 'SDXL 1.0' });
   });
 
   it('carries the profanity filter nsfw lock into the new row', async () => {

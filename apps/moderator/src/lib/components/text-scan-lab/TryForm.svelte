@@ -32,7 +32,7 @@
 
   let raw = $state('');
   let lookupAs = $state<LabEntityType>('Model');
-  let judgeAs = $state<LabEntityType>('CommentV2');
+  let judgeAs = $state<LabEntityType>('CommentV3');
   let profileAs = $state<'UserProfile' | 'User'>('UserProfile');
 
   const parsed = $derived(parseCheckInput(raw));

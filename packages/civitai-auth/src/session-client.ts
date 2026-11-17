@@ -1,4 +1,4 @@
-import { createAuthVerifier, type AuthVerifier } from './verify';
+import { createAuthVerifier, type AuthVerifier, type AuthVerifierConfig } from './verify';
 import { loadAuthEnv } from './env';
 import { hubFetch } from './hub';
 import { getCacheRedis, sessionCacheKey } from './redis';
@@ -15,6 +15,15 @@ import type { SessionUser, SessionClaims } from './types';
 // both route through the hub. ZERO CONFIG: the verifier, cache, hub URL, and service secret all come from
 // env / the verified token's `iss`; nothing is injectable, so a consumer can't repoint anything.
 
+/**
+ * Why a token did not resolve to a user. `unavailable`: the hub identity fetch failed (timeout, network,
+ * non-ok other than 401/404, unparseable body) — the session may be fine. `invalid`: everything else,
+ * including a token the verifier rejects because the hub's signing keys could not be fetched.
+ */
+export type SessionResolution =
+  | { user: SessionUser }
+  | { user: null; reason: 'invalid' | 'unavailable' };
+
 export interface SessionClient {
   /**
    * Verify → shared-cache read → on miss fetch the hub identity endpoint. Null if no valid session.
@@ -23,9 +32,11 @@ export interface SessionClient {
    * cold-miss path returns date fields as ISO strings (HTTP JSON). Coerce dates rather than assume `Date`.
    */
   getSessionUser(token: string): Promise<SessionUser | null>;
+  /** getSessionUser, plus why a failure failed: `invalid` (no valid session) vs `unavailable` (hub fetch failed). */
+  resolveSessionUser(token: string): Promise<SessionResolution>;
   /**
    * Read-through resolve BY userId (no token) — for consumer paths that start from a userId rather than a
-   * verifiable session token: API-key/bearer auth and the legacy-cookie fallback. Same shared-cache read +
+   * verifiable session token: API-key/bearer auth. Same shared-cache read +
    * per-pod single-flight as getSessionUser(token), but the hub fetch is the INTERNAL-authed read-through
    * identity endpoint (`GET /api/auth/identity?userId=`, gated by AUTH_INTERNAL_TOKEN), since there's no token
    * to present. Null when there's no such user, the secret is unset, or the hub is unreachable. This is a READ
@@ -68,16 +79,21 @@ export interface SessionClientConfig {
   onJwksLeg?: (outcome: 'hit' | 'timeout', durationSeconds: number) => void;
   /**
    * Optional instrumentation for the BY-USERID read-through hub hop (getSessionUserById) — the hot read for
-   * API-key / OAuth / legacy-cookie auth. Same shape as onIdentityLeg. `miss` = the hub reported no user
+   * API-key / OAuth auth. Same shape as onIdentityLeg. `miss` = the hub reported no user
    * (401/404/5xx). Now routed in-cluster + bounded like the token identity leg.
    */
-  onIdentityByIdLeg?: (outcome: 'hit' | 'miss' | 'timeout' | 'error', durationSeconds: number) => void;
+  onIdentityByIdLeg?: (
+    outcome: 'hit' | 'miss' | 'timeout' | 'error',
+    durationSeconds: number
+  ) => void;
   /**
    * Optional instrumentation for the hub WRITE hops (invalidate / refresh / invalidateAll). `hit` = the write
    * completed (2xx); `timeout` = the bounded hub fetch aborted; `error` = a non-ok status or network error
    * (the write still throws, per its contract — the callback is fire-and-forget observability only).
    */
   onHubWriteLeg?: (outcome: 'hit' | 'timeout' | 'error', durationSeconds: number) => void;
+  /** See AuthVerifierConfig.verifiedTokenCache. */
+  verifiedTokenCache?: AuthVerifierConfig['verifiedTokenCache'];
 }
 
 export function createSessionClient(config: SessionClientConfig = {}): SessionClient {
@@ -88,40 +104,52 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     (_verifier ??= createAuthVerifier({
       isRevoked: config.isRevoked,
       onJwksLeg: config.onJwksLeg,
+      verifiedTokenCache: config.verifiedTokenCache,
     })).verifyToken(token);
 
   // Per-pod single-flight: collapse concurrent read-misses for the same user into ONE hub fetch, so a cache
   // bust / cold cache doesn't fan out into N identical HTTP hops to the hub (stampede protection). One map per
   // read path (token vs userId) — they hit the same shared cache key but are keyed/fetched differently.
-  const inflight = new Map<number, Promise<SessionUser | null>>();
+  const inflight = new Map<number, Promise<SessionResolution>>();
   const inflightById = new Map<number, Promise<SessionUser | null>>();
 
   // Shared-cache read for `session:data2:{userId}`, fail-open (a blip falls through to the hub fetch). The
-  // `clearedAt` tombstone + non-object guard mirror the token path. Returns undefined on miss/blip.
+  // `clearedAt` tombstone + non-object guard mirror the token path. Returns undefined on miss/blip/timeout.
+  // Bounded because a disconnected redis client queues the command instead of rejecting, so a dead cache would
+  // otherwise hang every authenticated request.
   async function readCachedUser(userId: number): Promise<SessionUser | null | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const cached = await getCacheRedis().packed.get<SessionUser>(sessionCacheKey(userId));
+      const read = getCacheRedis().packed.get<SessionUser>(sessionCacheKey(userId));
+      const deadline = new Promise<undefined>((resolve) => {
+        timer = setTimeout(resolve, CACHE_READ_TIMEOUT_MS, undefined);
+      });
+      const cached = await Promise.race([read, deadline]);
       return cached && typeof cached === 'object' && !('clearedAt' in cached) ? cached : undefined;
     } catch {
       return undefined;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  async function getSessionUser(token: string): Promise<SessionUser | null> {
+  const INVALID: SessionResolution = Object.freeze({ user: null, reason: 'invalid' } as const);
+
+  async function resolveSessionUser(token: string): Promise<SessionResolution> {
     const claims = await verify(token);
-    if (!claims) return null;
+    if (!claims) return INVALID;
     const userId = Number(claims.sub);
-    if (!Number.isFinite(userId)) return null;
+    if (!Number.isFinite(userId)) return INVALID;
 
     // 1. Shared-cache read — fail-open: a cache blip falls through to the hub fetch rather than throwing.
     const cached = await readCachedUser(userId);
-    if (cached) return cached;
+    if (cached) return { user: cached };
 
     // 2. Single-flight the miss → hub identity fetch. The fetch target is the token's issuer, but ONLY after
     // it's validated against a CONFIGURED trusted hub origin (AUTH_JWT_ISSUER / the AUTH_JWKS_URI origin) — see
     // trustedHubBase. Without this the bearer token would be sent to whatever origin `iss` names, and a spoke
     // that doesn't pin `issuer` in its verifier (jose only checks `iss` when issuer is set) wouldn't catch a
-    // mismatched issuer. Mismatch / unconfigured → null (fail closed), no fetch.
+    // mismatched issuer. Mismatch / unconfigured → `invalid` (fail closed), no fetch.
     const existing = inflight.get(userId);
     if (existing) return existing;
     // VALIDATE the token's issuer against the configured trusted origin(s) — unchanged. This is the anti-spoof
@@ -134,26 +162,30 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
     // when the override is unset (backward-compatible default). The bearer now travels over in-cluster http
     // (no public edge) — acceptable, and the trustedHubBase(iss) check still gates whether we fetch at all.
     const fetchBase = baseUrl ? loadAuthEnv().AUTH_HUB_INTERNAL_URL ?? baseUrl : null;
-    const p = (async () => {
-      if (!fetchBase) return null; // no trusted issuer to resolve against
+    const p = (async (): Promise<SessionResolution> => {
+      if (!fetchBase) return INVALID; // no trusted issuer to resolve against
       const start = now();
       try {
         const user = await fetchIdentity(fetchBase, token);
         // safeInvoke: a throwing metric callback here must NOT flip a valid session to null via the catch.
         safeInvoke(config.onIdentityLeg, user ? 'hit' : 'miss', elapsed(start));
-        return user;
+        return user ? { user } : INVALID;
       } catch (err) {
-        // hub unreachable / aborted — appear unauthenticated (the warm cache covers the normal path). A
-        // fetch aborted by the AbortSignal.timeout throws a TimeoutError (name === 'TimeoutError').
+        // hub unreachable / aborted — no user, but the session itself may be valid. A fetch aborted by the
+        // AbortSignal.timeout throws a TimeoutError (name === 'TimeoutError').
         safeInvoke(config.onIdentityLeg, isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
-        return null;
+        return { user: null, reason: 'unavailable' };
       }
     })().finally(() => inflight.delete(userId));
     inflight.set(userId, p);
     return p;
   }
 
-  // READ-THROUGH by userId — for consumer paths with no session token (API-key/bearer auth, legacy cookie).
+  async function getSessionUser(token: string): Promise<SessionUser | null> {
+    return (await resolveSessionUser(token)).user;
+  }
+
+  // READ-THROUGH by userId — for consumer paths with no session token (API-key/bearer auth).
   // Shared-cache read → single-flight the miss to the INTERNAL-authed GET identity?userId= (read-through, NOT
   // a bust — refresh() is the bust path). Routed in-cluster + bounded by hubFetch (AUTH_HUB_INTERNAL_URL) —
   // this is the hot read for EVERY API-key / OAuth request, so it's the same hairpin SPOF as the token path.
@@ -182,7 +214,11 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
         return user;
       } catch (err) {
         // hub unreachable / aborted (bounded by hubFetch's AbortSignal.timeout) / not configured
-        safeInvoke(config.onIdentityByIdLeg, isTimeoutError(err) ? 'timeout' : 'error', elapsed(start));
+        safeInvoke(
+          config.onIdentityByIdLeg,
+          isTimeoutError(err) ? 'timeout' : 'error',
+          elapsed(start)
+        );
         return null;
       }
     })().finally(() => inflightById.delete(userId));
@@ -245,6 +281,7 @@ export function createSessionClient(config: SessionClientConfig = {}): SessionCl
 
   return {
     getSessionUser,
+    resolveSessionUser,
     getSessionUserById,
     invalidate: (userId) => postInvalidate(userId, false).then(() => undefined),
     refresh: (userId) => postInvalidate(userId, true),
@@ -281,18 +318,20 @@ function trustedHubBase(iss: string | undefined): string | null {
   return iss.replace(/\/+$/, '');
 }
 
-// Bound the identity read so even an in-cluster hiccup fails fast (→ null, the existing miss behavior) rather
+// Bound the identity read so even an in-cluster hiccup fails fast (→ `unavailable`) rather
 // than stalling the authed request. Defense-in-depth on top of the internal routing: the fetch never had a
 // timeout before, so a half-open connection could park the whole request until OS TCP keepalive (~min).
 const IDENTITY_FETCH_TIMEOUT_MS = 1500;
+// Session-cache read deadline: a hit is sub-millisecond, so this only trips when the cache is unreachable.
+const CACHE_READ_TIMEOUT_MS = 400;
 
 /** Read source: GET `{base}/api/auth/identity` with the session token as a Bearer, bounded by a timeout. */
 async function fetchIdentity(baseUrl: string, token: string): Promise<SessionUser | null> {
   const url = `${baseUrl.replace(/\/+$/, '')}/api/auth/identity`;
   // AbortSignal.timeout throws a DOMException `TimeoutError` on expiry — surfaced to the caller's catch, which
-  // records the 'timeout' outcome and returns null (unchanged miss semantics — we never throw a new error
-  // shape upward). No Host header is needed: the hub's identity handler authenticates by the bearer token /
-  // AUTH_INTERNAL_TOKEN and does NOT gate on the Host header (apps/auth .../identity/+server.ts).
+  // records the 'timeout' outcome and resolves `unavailable` (we never throw a new error shape upward). No
+  // Host header is needed: the hub's identity handler authenticates by the bearer token / AUTH_INTERNAL_TOKEN
+  // and does NOT gate on the Host header (apps/auth .../identity/+server.ts).
   const res = await fetch(url, {
     headers: { authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(IDENTITY_FETCH_TIMEOUT_MS),
@@ -301,4 +340,3 @@ async function fetchIdentity(baseUrl: string, token: string): Promise<SessionUse
   if (!res.ok) throw new Error(`[@civitai/auth] identity fetch failed: ${res.status}`);
   return (await res.json()) as SessionUser;
 }
-

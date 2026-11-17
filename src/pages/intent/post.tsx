@@ -196,7 +196,7 @@ function OpenIntent({ query }: { query: OpenIntentQuery }) {
           );
         },
         onError(error) {
-          showCreatePostError(error.message);
+          showCreatePostError(error);
           setBusy(undefined);
         },
       }

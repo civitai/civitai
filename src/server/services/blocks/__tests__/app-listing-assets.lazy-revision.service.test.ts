@@ -257,6 +257,7 @@ const { store, db, readDb, ids } = vi.hoisted(() => {
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
     $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing,
+    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     appListingScreenshot,
     image,
     $transaction: vi.fn(async (arg: unknown) => {
@@ -355,6 +356,13 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingPublishRequestId: () => `alpr_gen_${++ids.n}`,
   newAppListingScreenshotId: () => `apls_gen_${++ids.n}`,
   newUlid: () => `ULID${++ids.n}`,
+}));
+const { recordModeratorEdit } = vi.hoisted(() => ({
+  recordModeratorEdit: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-moderator-edit', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  recordModeratorListingEdit: (...a: unknown[]) => recordModeratorEdit(...a),
 }));
 
 import {

@@ -6,6 +6,8 @@ import type {
   Token,
   User,
 } from '@node-oauth/oauth2-server';
+import { isHttpError } from '@sveltejs/kit';
+import { AccessDeniedError } from '@node-oauth/oauth2-server';
 import { createHash, timingSafeEqual } from 'crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { pack } from 'msgpackr';
@@ -184,6 +186,8 @@ export const oauthModel = {
     const data = {
       clientId: client.id,
       userId: user.id,
+      // On the code itself, so the hand-off knows an impersonation even when its context is lost.
+      ...((user as { impersonation?: boolean }).impersonation && { impersonation: true }),
       scope: scopeValue,
       redirectUri: code.redirectUri,
       codeChallenge: code.codeChallenge,
@@ -219,6 +223,7 @@ export const oauthModel = {
       codeChallenge?: string;
       codeChallengeMethod?: string;
       expiresAt: string;
+      impersonation?: boolean;
     }>(REDIS_KEYS.OAUTH.AUTHORIZATION_CODES, hashedCode);
 
     if (!data) return false;
@@ -235,7 +240,7 @@ export const oauthModel = {
       codeChallenge: data.codeChallenge,
       codeChallengeMethod: data.codeChallengeMethod,
       client: client as Client,
-      user: { id: data.userId },
+      user: { id: data.userId, ...(data.impersonation && { impersonation: true }) },
     } as unknown as AuthorizationCode;
   },
 
@@ -254,30 +259,13 @@ export const oauthModel = {
   // ─── Tokens ─────────────────────────────────────────────────
 
   async saveToken(token: Token, client: Client, user: User): Promise<Token> {
-    const scope = stringToScope(token.scope as unknown as string);
-
-    if (isClientCredentialsUser(user)) {
-      const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL);
-      return {
-        accessToken: access.accessToken,
-        accessTokenExpiresAt: access.expiresAt,
-        scope: scopeToString(scope | TokenScope.UserRead),
-        client,
-        user,
-      } as Token;
+    try {
+      return await issueToken(token, client, user);
+    } catch (err) {
+      // The library turns any non-OAuth error into a 503, which a client retries; a refusal is final.
+      if (isHttpError(err, 403)) throw new AccessDeniedError(err.body.message);
+      throw err;
     }
-
-    const pair = await createOAuthTokenPair(user.id, client.id, scope);
-
-    return {
-      accessToken: pair.accessToken,
-      accessTokenExpiresAt: pair.accessTokenExpiresAt,
-      refreshToken: pair.refreshToken,
-      refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
-      scope: scopeToString(scope),
-      client,
-      user,
-    } as Token;
   },
 
   async getAccessToken(accessToken: string): Promise<Token | false> {
@@ -402,6 +390,35 @@ type ClientCredentialsUser = { id: number; viaClientCredentials: true };
 
 function isClientCredentialsUser(user: User): user is User & ClientCredentialsUser {
   return (user as Partial<ClientCredentialsUser>).viaClientCredentials === true;
+}
+
+async function issueToken(token: Token, client: Client, user: User): Promise<Token> {
+  const scope = stringToScope(token.scope as unknown as string);
+
+  if (isClientCredentialsUser(user)) {
+    const access = await createAppAccessToken(user.id, client.id, scope, ACCESS_TOKEN_TTL, {
+      clientCredentials: true,
+    });
+    return {
+      accessToken: access.accessToken,
+      accessTokenExpiresAt: access.expiresAt,
+      scope: scopeToString(scope | TokenScope.UserRead),
+      client,
+      user,
+    } as Token;
+  }
+
+  const pair = await createOAuthTokenPair(user.id, client.id, scope);
+
+  return {
+    accessToken: pair.accessToken,
+    accessTokenExpiresAt: pair.accessTokenExpiresAt,
+    refreshToken: pair.refreshToken,
+    refreshTokenExpiresAt: pair.refreshTokenExpiresAt,
+    scope: scopeToString(scope),
+    client,
+    user,
+  } as Token;
 }
 
 /**

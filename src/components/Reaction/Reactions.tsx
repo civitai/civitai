@@ -1,5 +1,6 @@
 import type { ButtonProps, GroupProps } from '@mantine/core';
-import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Badge, Button, Group, Text, useMantineTheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useSessionStorage } from '@mantine/hooks';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import {
@@ -22,7 +23,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { AnimatedCount } from '~/components/Metrics';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
 import React from 'react';
@@ -54,7 +54,6 @@ const availableReactions: Partial<Record<ToggleReactionInput['entityType'], Revi
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
   post: ['Like', 'Heart', 'Laugh', 'Cry'],
   bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
-  commentOld: ['Like', 'Heart', 'Laugh', 'Cry'],
   comment: ['Like', 'Heart', 'Laugh', 'Cry'],
   article: ['Like', 'Heart', 'Laugh', 'Cry'],
 };
@@ -211,6 +210,56 @@ export function Reactions({
             readonly={readonly}
           />
         )}
+      </div>
+    </LoginPopover>
+  );
+}
+
+/**
+ * The Buzz tip badge on its own, for a layout that places it outside the reaction bar.
+ * Pair it with `disableBuzzTip` on `<Reactions>` so the tip is not drawn twice.
+ */
+export function ImageBuzzTip({
+  entityId,
+  targetUserId,
+  tippedAmountCount,
+  metricsUnknown: metricsUnknownFromServer,
+  readonly,
+  className,
+}: {
+  entityId: number;
+  targetUserId: number;
+  tippedAmountCount?: number;
+  metricsUnknown?: boolean;
+  readonly?: boolean;
+  className?: string;
+}) {
+  const { hideReactions } = useReactionSettingsContext();
+  const features = useFeatureFlags();
+  const metricsUnknown = !!metricsUnknownFromServer && !!features.reactionCountsUnknown;
+
+  if (hideReactions) return null;
+
+  return (
+    <LoginPopover message="You must be logged in to react to this">
+      <div
+        className={className}
+        onClick={(e) => {
+          if (!readonly) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+      >
+        <BuzzTippingBadge
+          toUserId={targetUserId}
+          tippedAmountCount={tippedAmountCount ?? 0}
+          countUnknown={metricsUnknown}
+          entityType="image"
+          entityId={entityId}
+          hideLoginPopover
+          readonly={readonly}
+        />
       </div>
     </LoginPopover>
   );

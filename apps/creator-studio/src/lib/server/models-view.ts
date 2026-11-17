@@ -9,6 +9,7 @@ import {
 } from '$lib/server/models';
 import { getSalesByVersion } from '$lib/server/monetization/sales';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
+import { parseSiteFilter } from '$lib/site-listing';
 
 // Lives here rather than beside the page because SvelteKit only permits its own named exports from a
 // `+page.server.ts` — `getModelsView` there 500s the route on load.
@@ -20,6 +21,7 @@ const modelsQuerySchema = z.object({
   status: z.enum(['all', 'published', 'draft']).optional().catch(undefined),
   access: z.enum(['1']).optional().catch(undefined),
   usage: z.enum(['download', 'generation']).optional().catch(undefined),
+  site: z.string().optional().transform(parseSiteFilter),
   // Set by "New sale", which sends the creator here to pick what the sale covers.
   for: z.enum(['sale']).optional().catch(undefined),
   sort: z.enum(['recent', 'name']).catch('recent'),
@@ -50,6 +52,7 @@ export type ModelsView = CreatorModelsResult & {
     status: string;
     access: boolean;
     usage: string;
+    site: string;
     sort: 'recent' | 'name';
     /** Picking versions for a sale: the list is narrowed to what a sale could discount. */
     saleOnly: boolean;
@@ -60,7 +63,7 @@ export type ModelsView = CreatorModelsResult & {
  * The slice of /models a search, filter, sort or page change replaces — and nothing else.
  *
  * Shared by the page load and `models/search/+server.ts` so filter-as-you-type re-runs exactly this.
- * The caps, scores and `canSetGenerationOnlyFresh` call beside it in the load are per-creator, not
+ * The caps, scores and `canSetGenerationOnly` check beside it in the load are per-creator, not
  * per-query: no term the creator types can change them, so a debounced keystroke must not pay for
  * them (CU 868kv6ejd).
  */
@@ -104,6 +107,7 @@ export async function getModelsView(
     status: parsed.status,
     access,
     usage: parsed.usage,
+    site: parsed.site,
     saleEligible: saleOnly,
     sort: parsed.sort,
     page: parsed.page,
@@ -135,6 +139,7 @@ export async function getModelsView(
       status: parsed.status ?? '',
       access,
       usage: parsed.usage ?? '',
+      site: parsed.site ?? '',
       sort: parsed.sort,
       saleOnly,
     },

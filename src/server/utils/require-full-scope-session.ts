@@ -2,17 +2,20 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 
-type CredentialContext = BearerCredential & { apiKeyId?: number | null };
+export type CredentialContext = BearerCredential & { apiKeyId?: number | null };
 
 /**
- * True when the request was authenticated by a browser session, or by a bearer credential
- * `isFullScopeUserKey` accepts. Any non-empty `?token=` is refused.
+ * True when the request was authenticated by a browser session, or by a bearer credential `accept`
+ * passes. Any non-empty `?token=` is refused.
  *
  * Reads `req.context`, so it must run after `getServerAuthSession`. Any sign of a bearer
  * credential — the header or a context field — counts as one, so a request whose context was not
  * populated is refused rather than treated as a session.
  */
-export function isFullScopeSession(req: NextApiRequest): boolean {
+export function isSessionOrAcceptedBearer(
+  req: NextApiRequest,
+  accept: (context: CredentialContext | undefined) => boolean
+): boolean {
   if (requestCarriesQueryToken(req)) return false;
 
   const context = (req as NextApiRequest & { context?: CredentialContext }).context;
@@ -24,8 +27,12 @@ export function isFullScopeSession(req: NextApiRequest): boolean {
     context?.tokenScope != null;
   if (!presentedBearer) return true;
 
-  return isFullScopeUserKey(context);
+  return accept(context);
 }
+
+/** A browser session, or a bearer credential `isFullScopeUserKey` accepts. */
+export const isFullScopeSession = (req: NextApiRequest) =>
+  isSessionOrAcceptedBearer(req, isFullScopeUserKey);
 
 export const FULL_SCOPE_SESSION_REQUIRED =
   'This action requires a signed-in session or a full-access personal API key';

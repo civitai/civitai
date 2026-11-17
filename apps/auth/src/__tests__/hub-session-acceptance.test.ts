@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeSysRedis, type SysRedisFake } from '../test/sys-redis.fake';
 
 // The hub honours its own session cookie while the family was used within 30 days, or the token was signed
@@ -29,7 +29,10 @@ vi.mock('$lib/server/redis', () => ({
   evalSys: (script: string, keys: string[], args: string[]) =>
     h.sys.eval(script, { keys, arguments: args }),
 }));
-vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn(), logToAxiom: vi.fn() }));
+vi.mock('$lib/server/axiom', () => ({
+  logAxiomError: vi.fn(),
+  logToAxiom: vi.fn(async () => undefined),
+}));
 vi.mock('$lib/server/db/db', () => ({ db: {} }));
 vi.mock('$lib/server/auth/session-producer', () => ({
   getOrProduceSessionUser: async (id: number) => h.users.get(id) ?? { id },
@@ -133,6 +136,9 @@ beforeEach(() => {
   h.users.clear();
   h.minted = [];
 });
+afterEach(() => {
+  delete process.env.CIVITAI_MODERATION_USER_ID;
+});
 
 describe("the hub's own session cookie", () => {
   it('is honoured within 30 days of signing with no liveness record, and records liveness', async () => {
@@ -159,6 +165,27 @@ describe("the hub's own session cookie", () => {
     expect(locals.session).toBeUndefined();
     expect(locals.user).toBeUndefined();
     expect(h.sys.hashes.get(LIVE)?.has('fam-a')).toBeFalsy();
+  });
+});
+
+describe('a session sent by a service', () => {
+  it('is accepted however long its family has been idle', async () => {
+    hubToken(40 * DAY_MS);
+    const event = {
+      url: new URL('https://auth.civitai.com/api/auth/accounts'),
+      route: { id: '/api/auth/accounts' },
+      request: new Request('https://auth.civitai.com/api/auth/accounts', {
+        method: 'POST',
+        headers: { authorization: 'Bearer internal-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ token: 'hub-token' }),
+      }),
+      cookies: { get: () => undefined, set: vi.fn(), delete: vi.fn() },
+      locals: {} as Record<string, unknown>,
+    };
+
+    await handle({ event, resolve: async () => new Response('ok') } as never);
+
+    expect(event.locals.session).toBeDefined();
   });
 });
 
@@ -258,6 +285,15 @@ describe("re-signing the hub's own session cookie", () => {
     await visit({ navigate: true });
     hubToken(2 * DAY_MS);
     await visit();
+
+    expect(h.minted).toHaveLength(0);
+  });
+
+  it("leaves the shared moderation account's cookie alone", async () => {
+    process.env.CIVITAI_MODERATION_USER_ID = '100';
+    hubToken(2 * DAY_MS);
+
+    await visit({ navigate: true });
 
     expect(h.minted).toHaveLength(0);
   });

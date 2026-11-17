@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { createContext, useContext, useMemo } from 'react';
 import { useRegisterOrder } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
+  GENERATOR_QUEUE_INPUT,
   matchesMarkerTags,
   useGetTextToImageRequests,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -18,7 +19,7 @@ const GeneratedRequestsContext = createContext<GeneratedRequests | null>(null);
  * consistent whether you're looking at the Queue or the Feed.
  */
 export function GeneratedRequestsProvider({ children }: { children: ReactNode }) {
-  const result = useGetTextToImageRequests();
+  const result = useGetTextToImageRequests(GENERATOR_QUEUE_INPUT);
   const { data, markerTags } = result;
 
   useRegisterOrder(

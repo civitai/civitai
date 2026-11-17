@@ -1,12 +1,13 @@
 import * as searchIndex from '~/server/search-index';
 import type { JobContext } from './job';
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
+import { dbRead } from '~/server/db/client';
+import { queueAllComicsForRefresh } from '~/server/search-index/comics.search-index';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
   users: searchIndex.usersSearchIndex,
   articles: searchIndex.articlesSearchIndex,
-  images: searchIndex.imagesSearchIndex,
   collections: searchIndex.collectionsSearchIndex,
   bounties: searchIndex.bountiesSearchIndex,
   imageMetrics: searchIndex.imagesMetricsSearchIndex,
@@ -25,20 +26,17 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   // minute and contending for the Meilisearch write lock.
   users: '7 * * * *',
   articles: '*/5 * * * *',
-  // Retired — the `images_v6` search index is no longer served (see 868m4c2dn). The processor
-  // is `retired`, so this job would no-op anyway; keeping it unrunnable stops the scheduler
-  // from firing it at all.
-  images: UNRUNNABLE_JOB_CRON,
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
-  // Retired with the feeds Meilisearch (`metrics_images_v1`), as `images` above.
+  // Retired with the feeds Meilisearch (`metrics_images_v1`): unrunnable, so the scheduler never
+  // fires them.
   imageMetrics: UNRUNNABLE_JOB_CRON,
   imageMetricsUpdateMetrics: UNRUNNABLE_JOB_CRON,
   tools: UNRUNNABLE_JOB_CRON,
   comics: '*/5 * * * *',
 };
 
-export const searchIndexJobs = Object.entries(searchIndexSets)
+const processorJobs = Object.entries(searchIndexSets)
   .map(([name, searchIndexProcessor]) => [
     createJob(
       `search-index-sync-${name}`,
@@ -70,6 +68,19 @@ export const searchIndexJobs = Object.entries(searchIndexSets)
     ),
   ])
   .flat();
+
+/**
+ * Every 15 minutes, off the comics sync's 5-minute marks: re-queues every comic, so a ban, hold or
+ * image flag that changes no comic row still reaches the comics index within the next sync.
+ */
+const comicsSearchIndexRefreshJob = createJob(
+  'search-index-comics-refresh',
+  '3-59/15 * * * *',
+  async () => ({ queued: await queueAllComicsForRefresh(dbRead) }),
+  { lockExpiration: 10 * 60 }
+);
+
+export const searchIndexJobs = [...processorJobs, comicsSearchIndexRefreshJob];
 
 async function timedExecution<T>(fn: (jobContext: JobContext) => Promise<T>, e: JobContext) {
   const start = Date.now();

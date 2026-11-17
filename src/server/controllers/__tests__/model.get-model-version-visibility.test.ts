@@ -1,13 +1,20 @@
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as HotReads3 from '@civitai/db-queries/hot-reads-3';
 import type * as ModelService from '~/server/services/model.service';
 import type * as UserService from '~/server/services/user.service';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 
-const { getModel, amIBlockedByUser } = vi.hoisted(() => ({
+const { getModel, amIBlockedByUser, ownerPosts } = vi.hoisted(() => ({
   getModel: vi.fn(),
   amIBlockedByUser: vi.fn(),
+  ownerPosts: vi.fn(),
+}));
+
+// The owner's posts on the visible versions (one Kysely read).
+vi.mock('@civitai/db-queries/hot-reads-3', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads3>()),
+  listModelPagePosts: ownerPosts,
 }));
 
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
@@ -64,7 +71,7 @@ function arrange(modelStatus: ModelStatus) {
     modelVersions: ALL.map((key) => ({ id: idOf(key), ...VERSIONS[key] })),
   });
   amIBlockedByUser.mockResolvedValue(false);
-  dbMock.dbRead.post.findMany.mockRejectedValue(STOP);
+  ownerPosts.mockRejectedValue(STOP);
 }
 
 async function visibleVersions(viewer: ViewerKey): Promise<VersionKey[] | 'not-found'> {
@@ -79,8 +86,8 @@ async function visibleVersions(viewer: ViewerKey): Promise<VersionKey[] | 'not-f
   );
   if (result instanceof TRPCError && result.code === 'NOT_FOUND') return 'not-found';
   if (!(result instanceof Error) || result.message !== STOP.message) throw result;
-  expect(dbMock.dbRead.post.findMany).toHaveBeenCalledTimes(1);
-  const ids: number[] = dbMock.dbRead.post.findMany.mock.calls[0][0].where.modelVersionId.in;
+  expect(ownerPosts).toHaveBeenCalledTimes(1);
+  const ids: number[] = ownerPosts.mock.calls[0][1].modelVersionIds;
   return ids.map((id) => ALL[id - 1]);
 }
 

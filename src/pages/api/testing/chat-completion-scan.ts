@@ -47,18 +47,8 @@
  *     Active prompt row per key plus the runtime config, rollout modes, poi/minor `labelModes` and
  *     `csamMode`; with `history`, every version of that key (author, note, createdAt) newest first.
  *
- *   { "action": "putPrompt", "key": "base" | "label:<label>", "content": "...",
- *     "note": "...", "createdById": <moderator id> }
- *     Appends a new prompt version. `createdById` must be an active moderator.
- *
- *   { "action": "putConfig", "moderatorId": <id>, "config": { "model"?, "maxInputChars"?, "maxSegments"?, "thinking"? } }
- *     Merges the patch over the stored config and returns the result. The
- *     moderator id must be an active moderator; the write is logged with it.
- *
- *   { "action": "putModes", "moderatorId": <id>, "entityType": "Model",
- *     "rollout": { "shadow": 0-100, "active"?: 0-100 } | null, "allowActive"?: false }
- *     Sets one entity type's rollout in sysRedis (null = off). An active share is
- *     refused unless `allowActive` is true. Returns every entity type's rollout.
+ *   putPrompt, putConfig, putModes, putWebSearchModes and putLabelModes are refused here (403):
+ *     /api/mod/text-scan serves them, attributed to the signed-in moderator.
  *
  *   { "action": "scanEntity", "entityType": "...", "entityId": 1,
  *     "promptOverrides"?: { "<key>": "..." }, "model"?, "thinking"?, "wait"? }
@@ -85,7 +75,7 @@
  *     and needs a signed-in moderator, so only /api/mod/text-scan serves it. poi/minor take
  *     `auto | review`; csam takes `off | review` only.
  *
- *   { "action": "scanTexts", "entityType": "Comment",
+ *   { "action": "scanTexts", "entityType": "CommentV3",
  *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
  *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
  *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
@@ -93,7 +83,7 @@
  *     declares nothing. A missing prompt key comes back as that item's error.
  *     `"labels"?` replaces the profile's labels, as for batchEntities.
  *
- *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
+ *   { "action": "quoteTexts", "entityType": "CommentV3", "texts": [...], "promptOverrides"?,
  *     "model"?, "thinking"? }
  *     `whatif`-prices the `scanTexts` composition. Submits nothing.
  *
@@ -399,9 +389,15 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     return res.status(403).json({
       error: `${action} is only served by /api/mod/text-scan, which records who read what.`,
     });
-  if (action === 'putLabelModes')
+  if (
+    action === 'putPrompt' ||
+    action === 'putConfig' ||
+    action === 'putModes' ||
+    action === 'putWebSearchModes' ||
+    action === 'putLabelModes'
+  )
     return res.status(403).json({
-      error: 'putLabelModes is only served by /api/mod/text-scan, which attributes the change.',
+      error: `${action} is only served by /api/mod/text-scan, which attributes the change.`,
     });
   if (isTextScanHarnessAction(action)) {
     try {

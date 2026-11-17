@@ -3,10 +3,17 @@ import {
   APPEAL_ALREADY_DECIDED,
   APPEAL_ALREADY_PENDING,
   getAppealRefusal,
+  IMAGE_NOT_APPEALABLE,
   isAppealableImage,
   isAppealableModel3D,
 } from '~/shared/utils/appeal';
 import { AppealStatus, EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
+
+describe('IMAGE_NOT_APPEALABLE', () => {
+  it('names no cause, so every refused image gets the same answer', () => {
+    expect(IMAGE_NOT_APPEALABLE).not.toMatch(/moderat|block|review|report|scan/i);
+  });
+});
 
 describe('getAppealRefusal', () => {
   it.each([

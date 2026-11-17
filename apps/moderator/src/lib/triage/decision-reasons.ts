@@ -6,7 +6,7 @@ import {
   type ResolutionReason,
   type ResolutionSubject,
   type ResolutionVerdict,
-  type TextScanLabel,
+  type ReasonScope,
 } from '@civitai/shared/resolution-reasons';
 
 export type ReasonGroup = { label: string; reasons: readonly ResolutionReason[] };
@@ -45,7 +45,7 @@ export function decisionReasonProblem<S extends ResolutionSubject>(
   decision: string,
   reason: string,
   note: string,
-  labels?: readonly TextScanLabel[]
+  labels?: readonly ReasonScope[]
 ): string | null {
   if (reason && !resolutionReasonsFor(subject, verdict).some((r) => r.value === reason))
     return `"${resolutionReasonLabel(

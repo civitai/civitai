@@ -2,19 +2,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserWorkflows from '$lib/server/user-workflows.service';
 
 const getUserGeneratedWorkflows = vi.fn();
+const getUserWorkflowsByIds = vi.fn();
 vi.mock('$lib/server/user-workflows.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserWorkflows>()),
   getUserGeneratedWorkflows,
+  getUserWorkflowsByIds,
 }));
 vi.mock('$lib/server/access', () => ({ canAccess: () => true }));
 
 const { GET } = await import('../+server');
 
-const call = (search = '') =>
+const call = (search = '', grants: Record<string, boolean> = { 'user.generations.view': true }) =>
   GET({
     params: { userId: '5' },
     url: new URL(`http://x/api/user-workflows/5${search}`),
-    locals: { user: { id: 1 }, grants: { 'user.generations.view': true } },
+    locals: { user: { id: 1 }, grants },
   } as never) as Promise<Response>;
 
 beforeEach(() => {
@@ -62,5 +64,40 @@ describe('/api/user-workflows source', () => {
       5,
       expect.objectContaining({ source: undefined })
     );
+  });
+});
+
+describe('/api/user-workflows ids', () => {
+  it.each([['?ids=5-20260101000000000'], ['?ids='], ['?ids=junk,,%3Cx%3E']])(
+    'answers %s from the by-id lookup, never the full history',
+    async (search) => {
+      getUserWorkflowsByIds.mockResolvedValue({
+        items: [],
+        notFound: [],
+        unchecked: [],
+        invalid: 0,
+        overCap: 0,
+        cap: 200,
+      });
+      const res = await call(search);
+      expect(res.status).toBe(200);
+      expect(getUserGeneratedWorkflows).not.toHaveBeenCalled();
+      expect(getUserWorkflowsByIds).toHaveBeenCalledWith(
+        5,
+        new URL(`http://x${search}`).searchParams.get('ids')
+      );
+    }
+  );
+
+  it('fails as a 503 with no list when the by-id lookup throws', async () => {
+    getUserWorkflowsByIds.mockRejectedValue(new Error('Orchestrator is not configured.'));
+    const res = await call('?ids=5-20260101000000000');
+    expect(res.status).toBe(503);
+    expect(getUserGeneratedWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('refuses the by-id read without user.generations.view', async () => {
+    await expect(call('?ids=5-20260101000000000', {})).rejects.toMatchObject({ status: 403 });
+    expect(getUserWorkflowsByIds).not.toHaveBeenCalled();
   });
 });

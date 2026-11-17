@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import { page, userEvent } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
@@ -68,12 +70,20 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
 // which reads useCurrentUser — boundary-stub it (null user is fine).
+// The embedded listing card's creator is the shared `UserAvatar` (hover card), which reads user data
+// this suite's `trpc` stand-in does not serve. Stubbed to a profile link carrying the username.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: (props: { user?: { username?: string | null } }) => (
+    <a href={`/user/${props.user?.username}`}>{props.user?.username}</a>
+  ),
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
 // Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
 // because it actually fired. #5082 added `showWarningNotification` to
 // `HideUserButton/BlockUserButton`, reached from here through
-// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV3/CommentItem, and
 // the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
 // requested module '/src/utils/notifications.tsx' does not provide an export named
 // 'showWarningNotification'`. #5102
@@ -93,23 +103,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      useUtils: () => ({
-        appListings: {
-          listPendingRequests: { invalidate: mocks.invalidate },
-          listApprovedRequests: { invalidate: mocks.invalidate },
-          listRejectedRequests: { invalidate: mocks.invalidate },
-        },
-      }),
-      appListings: {
-        listPendingRequests: {
+    trpc: makeTrpcProxy(
+      {
+        'appListings.listPendingRequests': {
           useQuery: () => ({
             data: { items: [OFFSITE_ROW], nextCursor: null },
             isLoading: false,
             error: null,
           }),
         },
-        getAssets: {
+        'appListings.getAssets': {
           useQuery: () => ({
             // Icon/cover PG (1); a screenshot at R (4) → derived rating 'r', which is
             // HIGHER than the declared 'g' (mismatch case). Scan state is configurable
@@ -120,14 +123,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             error: null,
           }),
         },
-        approveExternalRequest: {
+        'appListings.approveExternalRequest': {
           useMutation: () => ({
             mutate: mocks.approveMutate,
             mutateAsync: vi.fn(),
             isPending: false,
           }),
         },
-        rejectExternalRequest: {
+        'appListings.rejectExternalRequest': {
           useMutation: () => ({
             mutate: mocks.rejectMutate,
             mutateAsync: vi.fn(),
@@ -136,11 +139,21 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         // Listing-preview projection — undefined data → the section falls back to the
         // placeholder-art layout preview (these tests assert checklist/scan behaviour).
-        getListingPreviewForReview: {
+        'appListings.getListingPreviewForReview': {
           useQuery: () => ({ data: mocks.previewData.current, isLoading: false, error: null }),
         },
       },
-    },
+      // Stable, so assertions on `mocks.invalidate` read the spy the component called.
+      {
+        useUtils: () => ({
+          appListings: {
+            listPendingRequests: { invalidate: mocks.invalidate },
+            listApprovedRequests: { invalidate: mocks.invalidate },
+            listRejectedRequests: { invalidate: mocks.invalidate },
+          },
+        }),
+      }
+    ),
   };
 });
 

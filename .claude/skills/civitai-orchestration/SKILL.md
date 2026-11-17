@@ -77,6 +77,14 @@ node civitai-client.js workflows --tag=user:12345
 node civitai-client.js workflows --tag=project:myproject --tag=type:image
 ```
 
+### Training Runs
+
+`user <id> --tag=...` queries the manager endpoint, where tag filters can run past 60s and time out. To find
+a training run, read its ID from the version's Training Data `ModelFile` instead:
+
+- v2 results (`trainingResults.version = 2`): `metadata->'trainingResults'->>'workflowId'`, then `workflow <id>`
+- older v1 results have no `workflowId`: `metadata->'trainingResults'->>'jobId'`, then `job <id>`
+
 ### By Metadata Search
 The `--query` option searches workflow metadata:
 ```bash
@@ -256,6 +264,8 @@ Stored in `.claude/skills/civitai-orchestration/.env`:
 CIVITAI_API_TOKEN=your_bearer_token
 CIVITAI_API_URL=https://orchestration.civitai.com
 ```
+
+A trailing slash on `CIVITAI_API_URL` is stripped, so the app's `ORCHESTRATOR_ENDPOINT` value can be reused as-is.
 
 ## API Reference
 

@@ -28,6 +28,10 @@ vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
   openrouter: { getJsonCompletionWithUsage, getJsonCompletion },
 }));
 
+// The hosted model is the default and OpenRouter its fallback; both get the same prompt. With the
+// hosted client unconnected every stage runs on OpenRouter, the client mocked above.
+vi.mock('~/server/services/ai/civitai-llm', () => ({ civitaiLLM: undefined }));
+
 vi.mock('~/server/services/challenge-category.service', () => ({
   resolveRubricBlock: vi.fn().mockResolvedValue(''),
 }));

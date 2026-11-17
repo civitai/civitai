@@ -60,7 +60,9 @@ beforeAll(async () => {
   // exactly one match so that adding a second skip-setting middleware fails here
   // rather than quietly testing whichever came first.
   const matches: Middleware[] = [];
-  for (const candidate of middlewares) {
+  // tRPC appends the resolver to this list as `resolveMiddleware`. Running it would run the real
+  // query, so it is left out.
+  for (const candidate of middlewares.filter((m) => m.name !== 'resolveMiddleware')) {
     const skip = await skipFor(candidate, { limit: 10, favorites: true }).catch(() => undefined);
     if (skip !== undefined) matches.push(candidate);
   }

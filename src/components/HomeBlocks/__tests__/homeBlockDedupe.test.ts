@@ -3,6 +3,7 @@ import {
   claimedBelow,
   claimKey,
   dedupeOrder,
+  modelClaimKeys,
   selectDedupedItems,
 } from '~/components/HomeBlocks/homeBlockDedupe';
 
@@ -117,5 +118,71 @@ describe('claimedBelow', () => {
 
   it('accumulates every earlier order, not just the previous one', () => {
     expect(claimedBelow(claims, dedupeOrder(2)).sort()).toEqual(['image:1', 'image:2']);
+  });
+});
+
+const model = (id: number, coverId: number, extra: Record<string, unknown> = {}) => ({
+  id,
+  user: { id },
+  images: [{ id: coverId }],
+  ...extra,
+});
+
+describe('modelClaimKeys', () => {
+  it('claims the model and the cover image the card shows', () => {
+    expect(modelClaimKeys(model(7, 700), false)).toEqual(['model:7', 'image:700']);
+  });
+
+  it('claims the cover the viewer is shown, not the other face', () => {
+    const m = model(7, 700, {
+      images: [{ id: 700 }, { id: 701 }],
+      hasSfwFace: true,
+      coverImageId: 700,
+      sfwCoverImageId: 701,
+    });
+    expect(modelClaimKeys(m, true)).toEqual(['model:7', 'image:701']);
+    expect(modelClaimKeys(m, false)).toEqual(['model:7', 'image:700']);
+  });
+
+  it('claims only the model when it has no images', () => {
+    expect(modelClaimKeys({ id: 7, images: [] }, false)).toEqual(['model:7']);
+  });
+});
+
+describe('selectDedupedItems with per-item keys', () => {
+  const keysFor = (m: ReturnType<typeof model>) => modelClaimKeys(m, false);
+
+  it('demotes a model whose cover an earlier image row already shows', () => {
+    const out = selectDedupedItems([model(1, 100), model(2, 200), model(3, 300)], {
+      taken: takenSet('image', [100]),
+      entity: 'model',
+      itemsToShow: 2,
+      keysFor,
+    });
+    expect(out.map((x) => x.id)).toEqual([2, 3]);
+  });
+
+  it('never shows a claimed item while enough unclaimed ones exist, and the cap still binds', () => {
+    // Creator 1 owns ids 1-4, so the cap of 1 skips 2-4; creators 2-5 own one item each. Claimed
+    // ids 5 and 6 must stay behind the unclaimed 1, 7, 8, 9 even though 5 and 6 come earlier in
+    // line than 8 and 9 once creator 1 is capped out.
+    const items = [
+      item(1, 1),
+      item(2, 1),
+      item(3, 1),
+      item(4, 1),
+      item(5, 2),
+      item(6, 3),
+      item(7, 4),
+      item(8, 5),
+      item(9, 6),
+    ];
+    const out = selectDedupedItems(items, {
+      taken: takenSet('image', [5, 6]),
+      entity: 'image',
+      itemsToShow: 4,
+      maxPerUser: 1,
+    });
+    expect(out.map((x) => x.id)).toEqual([1, 7, 8, 9]);
   });
 });

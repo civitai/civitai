@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -167,6 +168,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // endpoint already returns for the paging guard / bulkhead shed.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'images',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
@@ -210,10 +218,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   try {
-    // A minor or SFW-only model's images are served only at its gallery's held level.
+    // A minor or SFW-only model's images are served only at its gallery's held level, and a
+    // taken-down model's not at all.
     if (data.modelId || data.modelVersionId || data.postId) {
       // Loaded on demand: the model service's import graph is large and only this branch needs it.
-      const { getHeldGalleryLevel } = await import('~/server/services/model.service');
+      const { getHeldGalleryLevel, isModelGalleryWithheld } = await import(
+        '~/server/services/model.service'
+      );
+      // A taken-down model's images are withheld here from everyone, its owner included.
+      if (await isModelGalleryWithheld(data)) {
+        res.status(200).json({ items: [], metadata: {} });
+        return;
+      }
       const heldLevel = await getHeldGalleryLevel(data);
       if (heldLevel !== undefined) {
         browsingLevel = Flags.intersection(browsingLevel, heldLevel);
@@ -239,8 +255,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         req,
       }
     );
-    // Images picked by id name no model, so each is held by its own post's model.
-    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
+    // Each image is held by its own post's model: a model or version search selects by resource, so
+    // it can return images posted to another model's gallery.
+    const items = await withoutHeldImages(found);
 
     const metadata: Metadata = { nextCursor };
     if (usingPaging) {

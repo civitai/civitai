@@ -7,5 +7,8 @@ export {
   isGenerationDisabled,
   isEvictable,
   isAdditionalResourceFeeWaived,
+  getPartnerDisclosure,
+  toPublicApiVersionFlags,
+  type PartnerDisclosure,
   type ModelVersionFlagValue,
 } from '@civitai/shared';

@@ -2,7 +2,7 @@
 
 Tracking the Cumulative Layout Shift (CLS) work surfaced by Google Search
 Console's Core Web Vitals report (desktop; first report 2026-06-29, latest
-2026-10-05). CLS measures how much
+2026-10-20; mobile first exported 2026-11-06). CLS measures how much
 visible content jumps around as a page loads — it's both a real UX problem and a
 Google page-experience ranking signal, sourced from **field data** (real Chrome
 users via CrUX), not lab tests.
@@ -32,6 +32,30 @@ window, so a deploy takes about four weeks to show fully.
 CrUX is real Chrome users, logged in or not — not Googlebot — so a shift that only
 logged-in viewers get counts in full.
 
+### Desktop, eleven days after the 2026-10-06 deploy (report of 2026-10-20, data to 2026-10-17)
+
+Poor-CLS URLs 12,204 → 9,069; the model group's CLS 0.20 → 0.15 with only 11 of the
+28 window days post-deploy; the post group left the poor band (0.35 → 0.21) and the
+LCP list; LCP-failing URLs 10,348 → 4,061. The homepage stayed at 0.64 / 3.0s in every
+report — the announcements fix measured 0.088 in the lab and never could have
+explained it — and the profile and tag groups did not move.
+
+## Current state, mobile (Search Console mobile report, data to 2026-11-02)
+
+The mobile report was first exported on 2026-11-06. Its model-page group is most
+of the mobile property, and it sits on the poor line:
+
+| Group (example URL) | URLs     | Group CLS | Status                                                                                                      |
+| ------------------- | -------- | --------- | ----------------------------------------------------------------------------------------------------------- |
+| `/models/:id/:slug` | 41,291   | 0.26      | Fix in lab (0.335 → 0.000), field pending deploy — [carousel swap](#mobile-the-carousel-moves-at-hydration) |
+| `/user/:name/*`     | 18–1,345 | 0.41–0.82 | Open — lab shows a ~48px push of the profile card, well under the field                                     |
+| `/` (homepage)      | 3,668    | 0.16      | Open — lab 0.05 (a 25px push of the hero text + the adhesive ad slot)                                       |
+
+On 2026-10-29 about 32k model URLs stepped from needs-improvement into poor at once:
+the group's p75 crossed 0.25, not a regression on that day. The same report lists
+INP over 200ms on 55k mobile URLs (model page 269ms, homepage 377ms), which is
+main-thread cost at interaction time and a separate piece of work.
+
 ## Field-only shifts: streamed HTML
 
 The model page scored 0.20 in the field but ~0.001 on a fast lab load. Throttled
@@ -53,6 +77,43 @@ HTML paints wrong first:
 A fast local load cannot show this class of shift. To test for it, cut the SSR HTML
 off mid-document (scripts stripped, same-origin so the CSS loads) and compare element
 rects against the full document — they must match at every width.
+
+## Mobile: the carousel moves at hydration
+
+Throttled headless Chromium (Pixel 5 emulation, 150ms / 1.6 Mbps, 4× CPU) against
+the production MOSS Image page scored **0.335 on every run**, all from one shift at
+~10.7s: the version-details sidebar, a 297px block right under the title, was
+removed and everything below it jumped.
+
+Cause: `ModelVersionDetails` places the image carousel in the sidebar column on
+phones and in the main column otherwise, decided by `useIsMobile()`, a container
+query. The server has no container to measure, so it answers "not mobile" for every
+request and sends the desktop placement. The sidebar precedes the main column in
+source order, so on a phone the HTML paints the Like/Download card at the top; after
+hydration the container measures, the carousel moves above that card and the whole
+page below it moves down by the carousel's height. A desktop browser at normal widths
+never swaps, which is why the desktop work on this page did not touch it, and why
+desktop and mobile diverged.
+
+Fix: the page's `getServerSideProps` reads the request's user agent
+([mobile-user-agent.ts](../src/shared/utils/mobile-user-agent.ts), the same user-agent
+pattern as the client's `isMobileDevice`, without its touch-screen check) and passes `initialMobile` down; `useContainerQuery`
+takes an `unmeasured` answer and returns it while the container has no measurement
+(server render and the hydrating render alike), so the HTML a portrait phone receives
+is the HTML the measured client keeps. The carousel's own `md` query (one slide or two,
+loader height) takes the same hint. Verified on a dev build: the phone user agent's
+HTML carries the carousel's remix control before the Like/Download card and the
+desktop user agent's after it; the mobile probe scores 0.000 against 0.335 on
+production, and the same dev build probed with a desktop user agent on the phone
+viewport (the pre-fix path) scores 0.326 with the identical shift, so the zero is the
+fix and not the environment. A device whose user agent and container width disagree
+still swaps: a desktop-mode tablet as before, and now an Android tablet or a landscape
+phone whose container is 768px or wider, in the opposite direction.
+
+The model page's HTML is `private, no-store` for people and never shell-rendered; the
+one cache that holds it, the verified-crawler HTML cache, keys on the request's device
+class for this reason (`botCacheKey`). Do not apply the hint to a route that is
+cached or statically shelled without varying that cache on it.
 
 ## Reported groups, 2026-06-29 (worst first)
 
@@ -280,8 +341,9 @@ cover` styling in [Cards.module.css](../src/components/Cards/Cards.module.css).
   of `image.getInfinite` should too.
 - **`/reviews/:id`, `/user/:name/collections`** — not re-measured since 2026-06-29;
   absent from the 2026-10-03 report's top groups. Re-check before dedicated work.
-- **`/models/:id`** — ✅ fixed, see
-  [streamed HTML](#field-only-shifts-streamed-html).
+- **`/models/:id`** — ✅ fixed on desktop, see
+  [streamed HTML](#field-only-shifts-streamed-html); fixed on mobile in the lab, field not yet
+  measured, see [the carousel swap](#mobile-the-carousel-moves-at-hydration).
 - **`/user/:name/*`, `/tag/:tag`** — open. Logged in and logged out, throttled,
   scrolled deep, and across in-app navigation and back, these stay ≤ 0.02 in the
   lab against 0.35–0.63 in the field. Next step is field attribution: Faro's

@@ -1,4 +1,5 @@
 import {
+  SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FINAL_EXTENSIONS,
   SERVICE_FINAL_MAX_BYTES,
   SERVICE_FINAL_MAX_FILES,
@@ -48,11 +49,33 @@ export function uploadRefusal(
     if (file.size > cap) return `Preview is too large (max ${megabytes(cap)}).`;
     return null;
   }
+  const verb = kind === 'Attachment' ? 'attached' : 'delivered';
   const extension = file.name.includes('.') ? file.name.split('.').pop()!.toLowerCase() : '';
   if (!(SERVICE_FINAL_EXTENSIONS as readonly string[]).includes(extension))
-    return `.${extension || '(none)'} files can't be delivered. Use a .zip for anything else.`;
-  if (file.size > SERVICE_FINAL_MAX_BYTES) return 'That file is too large to deliver (max 2 GB).';
+    return `.${extension || '(none)'} files can't be ${verb}. Use a .zip for anything else.`;
+  if (file.size > SERVICE_FINAL_MAX_BYTES)
+    return `That file is too large to be ${verb} (max 2 GB).`;
   return null;
+}
+
+/** A buyer may attach files from the request until the seller delivers; the server enforces it. */
+export const canAttachInStatus = (status: ServiceDealStatus) =>
+  status === 'Requested' || status === 'Accepted' || status === 'InRevision';
+
+/** How many more files the buyer may attach to the deal, across all rounds. */
+export const attachmentSlotsLeft = (files: DealFileFacts[]) =>
+  Math.max(
+    0,
+    SERVICE_ATTACHMENT_MAX_FILES - files.filter((file) => file.kind === 'Attachment').length
+  );
+
+/** One attached file as its viewer sees it. The seller only ever receives files that passed. */
+export function attachmentStatus(file: DealFileFacts): { label: string; color: string } {
+  if (file.status === 'Uploading') return { label: 'Uploading', color: 'gray' };
+  if (file.status === 'Failed' || file.scanStatus === 'Failed')
+    return { label: 'Not accepted', color: 'red' };
+  if (file.scanStatus === 'Passed') return { label: 'Shared', color: 'green' };
+  return { label: 'Being checked', color: 'blue' };
 }
 
 /** How many more files of a kind the seller may add to the round in progress. */
@@ -94,8 +117,9 @@ const PREVIEW_POLL_MS = 10_000;
 const SCAN_POLL_MS = 30_000;
 
 /**
- * How often to re-read the list, or false. While a preview is being prepared, and while a final
- * of a delivered round waits for its check, which decides whether the buyer may accept. Only
+ * How often to re-read the list, or false. While a preview is being prepared, while an attachment
+ * is being checked (only its uploader sees it then), and while a final of a delivered round waits
+ * for its check, which decides whether the buyer may accept. Only
  * then: a pending check anywhere else changes nothing on this page, and each read hits the
  * primary. Not for an Uploading file: an upload the seller abandoned stays Uploading, and the
  * uploader refreshes the list itself when one finishes.
@@ -106,6 +130,13 @@ export function filesPollMs(
 ) {
   if (files.some((file) => file.kind === 'Preview' && file.status === 'Processing'))
     return PREVIEW_POLL_MS;
+  if (
+    files.some(
+      (file) =>
+        file.kind === 'Attachment' && file.status === 'Ready' && file.scanStatus === 'Pending'
+    )
+  )
+    return SCAN_POLL_MS;
   if (
     deal.status === 'Delivered' &&
     files.some(
@@ -226,6 +257,34 @@ export function deliverWait(files: DealFileFacts[], round: number) {
     return 'Checking files…';
   if (current.some((file) => file.kind === 'Preview' && file.status === 'Processing'))
     return 'Building preview…';
+  return null;
+}
+
+/**
+ * What the seller still has to add before Deliver can work, or null. Mirrors the server's
+ * `dealReadyToDeliver`: a Ready preview (unless the offering takes none) and a Ready, scan-passed
+ * final in the round in progress, and no failed file in it (the server refuses a round holding one).
+ * The server stays the authority; this only keeps the button from
+ * inviting a click that is certain to be refused.
+ */
+export function deliverNeeds(
+  files: DealFileFacts[],
+  round: number,
+  previewKind: ServicePreviewKind
+) {
+  const current = files.filter((file) => file.round === round);
+  const hasPreview = current.some((file) => file.kind === 'Preview' && file.status === 'Ready');
+  const hasFinal = current.some(
+    (file) => file.kind === 'Final' && file.status === 'Ready' && file.scanStatus === 'Passed'
+  );
+  const hasFailed = current.some(
+    (file) => file.status === 'Failed' || (file.kind === 'Final' && file.scanStatus === 'Failed')
+  );
+  if (hasFailed) return 'Remove or replace the file that failed.';
+  const needsPreview = previewKind !== 'None' && !hasPreview;
+  if (needsPreview && !hasFinal) return 'Add a preview and your final files to deliver.';
+  if (needsPreview) return 'Add a preview to deliver.';
+  if (!hasFinal) return 'Add your final files to deliver.';
   return null;
 }
 

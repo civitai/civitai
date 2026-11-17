@@ -8,8 +8,13 @@ export const excludedPaths = ['/api', '/_next', '/fonts', '/sounds'];
 export const excludedFiles = ['favicon.ico', 'robots.txt', 'site.webmanifest'];
 
 // Static asset file extensions — paths ending in these are skipped by the
-// region middlewares. Compiled once at module init.
-const STATIC_FILE_EXT_RE = /\.(ico|png|jpg|jpeg|gif|svg|webp|css|js|woff2?|ttf|eot|xml|json)$/i;
+// region middlewares. Case-insensitive on purpose: the proxy matcher's exclusions
+// are case-sensitive, so a case variant of a static path (`/IMAGES/X.PNG`,
+// `/Site.Webmanifest`) still reaches these middlewares, and its `next.config.mjs`
+// static-asset Cache-Control rule (which matches without case) would ride on a
+// region redirect. Compiled once at module init.
+const STATIC_FILE_EXT_RE =
+  /\.(ico|png|jpg|jpeg|gif|svg|webp|webmanifest|css|js|woff2?|ttf|eot|xml|json)$/i;
 
 // Common matcher pattern for region middlewares
 export const regionMiddlewareMatcher = [

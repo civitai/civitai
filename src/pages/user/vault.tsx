@@ -23,11 +23,10 @@ import {
   Anchor,
   Image,
   Alert,
-  Tooltip,
   Grid,
   AspectRatio,
-  Menu,
 } from '@mantine/core';
+import { Tooltip, Menu } from '~/components/MantineOverlays';
 import {
   IconCloudCheck,
   IconCloudOff,

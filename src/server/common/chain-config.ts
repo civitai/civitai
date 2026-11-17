@@ -83,6 +83,11 @@ export function getChainDisplayName(chain: string): string {
   return getChainConfig(chain)?.displayName ?? chain.toUpperCase();
 }
 
+/** Display name for a NowPayments network, or undefined when we have no mapping for it. */
+export function getKnownNetworkDisplayName(network: string): string | undefined {
+  return NETWORK_DISPLAY_NAMES[network.toLowerCase()];
+}
+
 /** Get a human-friendly display name for a NowPayments network (e.g., 'bsc' -> 'BSC'). */
 export function getNetworkDisplayName(network: string): string {
   return NETWORK_DISPLAY_NAMES[network.toLowerCase()] ?? network.toUpperCase();

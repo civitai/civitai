@@ -31,6 +31,7 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: heldLevel,
   getHeldLevelsByPost: heldByPost,
+  isModelGalleryWithheld: async () => false,
 }));
 
 const { getInfiniteImagesHandler } = await import('~/server/controllers/image.controller');
@@ -190,6 +191,50 @@ describe('image.getInfinite on a held model', () => {
 
       expect(getAllImagesIndex).toHaveBeenCalledWith(
         expect.objectContaining({ holdExempt: exempt })
+      );
+    }
+  );
+
+  it.each([
+    ['a session', {}, 7],
+    [
+      'a full-access key',
+      {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: TokenScope.Full,
+      },
+      7,
+    ],
+    [
+      'a scoped key',
+      {
+        apiKeyId: 1,
+        apiKeyType: 'User',
+        subject: { type: 'apiKey', id: 1 },
+        tokenScope: TokenScope.ModelsRead,
+      },
+      undefined,
+    ],
+    ['an app', { subject: { type: 'oauth', id: 'app' } }, undefined],
+  ])(
+    'shows a hub viewer their own taken-down models on %s only if it is a full credential',
+    async (_name, credential, ownerId) => {
+      heldLevel.mockResolvedValue(undefined);
+      const input = { limit: 10, include: [], browsingLevel: allBrowsingLevelsFlag, hubId: 3 };
+
+      await getInfiniteImagesHandler({
+        input: input as never,
+        ctx: {
+          ...ctx(true),
+          features: { imageIndexFeed: true, userHubs: true },
+          ...credential,
+        } as unknown as Context,
+      });
+
+      expect(getAllImagesIndex).toHaveBeenCalledWith(
+        expect.objectContaining({ galleryOwnerId: ownerId })
       );
     }
   );

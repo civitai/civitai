@@ -14,7 +14,7 @@
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getUserContentSettings } from '~/server/services/user.service';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
@@ -109,7 +109,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
   // quietly changing what every later step measured.
   let userId = -1;
   const authStep = await time('getServerAuthSession', budgetMs, async () => {
-    const session = await getServerAuthSession({ req, res });
+    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
     userId = session?.user?.id ?? -1;
   });
   steps.push(authStep);

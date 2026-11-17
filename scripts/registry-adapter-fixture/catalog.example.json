@@ -1,0 +1,289 @@
+{
+  "scope": "full",
+  "listings": [
+    {
+      "id": "apl_fixture_orbit",
+      "slug": "orbit-notes",
+      "kind": "onsite",
+      "name": "Orbit Notes",
+      "tagline": "Notes in orbit",
+      "category": "productivity",
+      "contentRating": "pg",
+      "iconUrl": null,
+      "creatorUsername": "fixture-maker",
+      "appBlockId": "ab_fixture_orbit",
+      "externalUrl": null
+    },
+    {
+      "id": "apl_fixture_ember",
+      "slug": "ember-cards",
+      "kind": "onsite",
+      "name": "Ember Cards",
+      "tagline": null,
+      "category": null,
+      "contentRating": "x",
+      "iconUrl": null,
+      "creatorUsername": "fixture-maker",
+      "appBlockId": "ab_fixture_ember",
+      "externalUrl": null
+    },
+    {
+      "id": "apl_fixture_tide",
+      "slug": "tide-log",
+      "kind": "offsite",
+      "name": "Tide Log",
+      "tagline": "Log the tides",
+      "category": null,
+      "contentRating": null,
+      "iconUrl": null,
+      "creatorUsername": "fixture-maker",
+      "appBlockId": null,
+      "externalUrl": "https://tide.example"
+    }
+  ],
+  "blocks": [
+    {
+      "id": "ab_fixture_orbit",
+      "blockId": "orbit-notes",
+      "version": "1.1.0",
+      "status": "approved",
+      "contentRating": "pg",
+      "manifest": {
+        "blockId": "orbit-notes",
+        "version": "1.1.0",
+        "storage": {
+          "collections": {
+            "notes": {
+              "visibility": "shared",
+              "write": "own",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              },
+              "registry": "public"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "ab_fixture_ember",
+      "blockId": "ember-cards",
+      "version": "0.3.0",
+      "status": "approved",
+      "contentRating": "x",
+      "manifest": {
+        "blockId": "ember-cards",
+        "version": "0.3.0",
+        "storage": {
+          "collections": {
+            "decks": {
+              "visibility": "private"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "approved": [
+    {
+      "id": "pubreq_fixture_orbit_1",
+      "appBlockId": "ab_fixture_orbit",
+      "version": "1.0.0",
+      "manifest": {
+        "blockId": "orbit-notes",
+        "version": "1.0.0",
+        "name": "Orbit Notes",
+        "contentRating": "pg",
+        "scopes": [
+          "apps:storage"
+        ],
+        "iframe": {
+          "src": "https://fixture.example/bundle"
+        },
+        "storage": {
+          "collections": {
+            "notes": {
+              "visibility": "shared",
+              "write": "own",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "bundleSha256": "1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c5b6a7988",
+      "commitSha": "4b3a2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b",
+      "sourceCommit": null,
+      "reviewedAt": "2026-09-01T10:00:00.000Z"
+    },
+    {
+      "id": "pubreq_fixture_orbit_2",
+      "appBlockId": "ab_fixture_orbit",
+      "version": "1.1.0",
+      "manifest": {
+        "blockId": "orbit-notes",
+        "version": "1.1.0",
+        "name": "Orbit Notes",
+        "contentRating": "pg",
+        "scopes": [
+          "apps:storage"
+        ],
+        "storage": {
+          "collections": {
+            "notes": {
+              "visibility": "shared",
+              "write": "own",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "bundleSha256": "9a8b7c6d5e4f30219a8b7c6d5e4f30219a8b7c6d5e4f30219a8b7c6d5e4f3021",
+      "commitSha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+      "sourceCommit": null,
+      "reviewedAt": "2026-10-01T10:00:00.000Z"
+    },
+    {
+      "id": "pubreq_fixture_ember_1",
+      "appBlockId": "ab_fixture_ember",
+      "version": "0.3.0",
+      "manifest": {
+        "blockId": "ember-cards",
+        "version": "0.3.0",
+        "name": "Ember Cards",
+        "contentRating": "x",
+        "scopes": [
+          "apps:storage"
+        ],
+        "storage": {
+          "collections": {
+            "decks": {
+              "visibility": "private"
+            }
+          }
+        }
+      },
+      "bundleSha256": "0011223344556677889900112233445566778899001122334455667788990011",
+      "commitSha": null,
+      "sourceCommit": null,
+      "reviewedAt": "2026-09-15T10:00:00.000Z"
+    }
+  ],
+  "sourceRepoUrls": {
+    "apl_fixture_orbit": "https://git.example/orbit-notes"
+  },
+  "documents": [
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n1",
+      "data": {
+        "title": "Short note"
+      },
+      "version": 1,
+      "seq": 3
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n2",
+      "data": {
+        "title": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+      },
+      "version": 2,
+      "seq": 7
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n3",
+      "data": {
+        "title": "Hidden by a moderator"
+      },
+      "version": 1,
+      "seq": 5,
+      "hidden": true
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 101,
+      "key": "p1",
+      "data": {
+        "title": "PRIVATE-FIXTURE-CANARY"
+      },
+      "version": 1,
+      "seq": 8
+    },
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "dev:101",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "d1",
+      "data": {
+        "title": "DEV-FIXTURE-CANARY"
+      },
+      "version": 1,
+      "seq": 2
+    },
+    {
+      "appId": "ab_fixture_ember",
+      "ns": "prod",
+      "coll": "decks",
+      "scopeUid": 101,
+      "key": "k1",
+      "data": {
+        "name": "NOT-OPTED-IN-CANARY"
+      },
+      "version": 1,
+      "seq": 1
+    }
+  ],
+  "tombstones": [
+    {
+      "appId": "ab_fixture_orbit",
+      "ns": "prod",
+      "coll": "notes",
+      "scopeUid": 0,
+      "key": "n3",
+      "seq": 6
+    }
+  ],
+  "lastSeq": {
+    "ab_fixture_orbit": 8,
+    "ab_fixture_ember": 1
+  },
+  "forkOf": {
+    "apl_fixture_ember": "apl_fixture_orbit",
+    "apl_fixture_tide": "apl_fixture_private_parent"
+  }
+}

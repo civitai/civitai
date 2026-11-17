@@ -1,5 +1,11 @@
 export type SpendCurrency = 'yellow' | 'green';
 
+/** The accounts a submit charges, in order: Blue ahead of the paid account unless the user turned
+ *  Blue-first off, then the paid account only. */
+export function spendOrder(mode: SpendCurrency, blueFirst: boolean): string[] {
+  return blueFirst ? ['blue', mode] : [mode];
+}
+
 export type Spend = {
   amount: number;
   currency: SpendCurrency;
@@ -36,12 +42,32 @@ export function matureSpend(args: {
   };
 }
 
-/** The tick belongs to one amount and one dataset; changing either un-ticks it. */
-export function matureAckKey(spend: Spend | null, matureCount: number): string | null {
-  return spend?.matureYellow ? `${spend.amount}:${matureCount}` : null;
+/** A mature dataset always needs the tick, even when Blue covers the quote: the balance can move before
+ *  submit, and the server refuses a mature run without it. The tick belongs to one price, one Yellow part
+ *  (`yellow`, null = Blue covers it) and one dataset; changing any un-ticks it, so "Blue pays" consent never
+ *  carries over to "all of it in Yellow" at the same price. */
+export function matureAckKey(
+  price: number | null | undefined,
+  yellow: number | null | undefined,
+  matureCount: number
+): string | null {
+  return matureCount > 0 && price != null ? `${price}:${yellow ?? '-'}:${matureCount}` : null;
 }
 
 /** Start is blocked while a mature-Yellow charge is unacknowledged. */
 export function matureAckMissing(ackedFor: string | null, key: string | null): boolean {
   return key !== null && ackedFor !== key;
+}
+
+/** A mature dataset submitted without the user's confirm: nothing was charged. */
+export class MatureAckRequiredError extends Error {
+  readonly matureCount: number;
+  constructor(matureCount: number) {
+    super(
+      `This dataset has ${matureCount} mature image${
+        matureCount === 1 ? '' : 's'
+      }, so training on it is charged in Yellow. Confirm the charge to continue.`
+    );
+    this.matureCount = matureCount;
+  }
 }

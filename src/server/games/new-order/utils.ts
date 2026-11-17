@@ -607,7 +607,7 @@ export const expCounter = createCounter({
   ttl: CacheTTL.week,
 });
 
-export const poolKeys = {
+const queuePoolKeys = {
   [NewOrderRankType.Acolyte]: {
     a: [
       `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1:a`,
@@ -646,7 +646,16 @@ export const poolKeys = {
   },
 };
 
-export const poolCounters = {
+// Paladin only exists in the Knights app; the original game keeps those players in the Templar queues.
+export const legacyRank = (rank: NewOrderRankType): Exclude<NewOrderRankType, 'Paladin'> =>
+  rank === 'Paladin' ? 'Templar' : rank;
+
+export const poolKeys = {
+  ...queuePoolKeys,
+  [NewOrderRankType.Paladin]: queuePoolKeys[legacyRank('Paladin')],
+};
+
+const queuePoolCounters = {
   [NewOrderRankType.Acolyte]: {
     a: poolKeys[NewOrderRankType.Acolyte].a.map((key) =>
       createCounter({
@@ -721,6 +730,11 @@ export const poolCounters = {
   },
 };
 
+export const poolCounters = {
+  ...queuePoolCounters,
+  [NewOrderRankType.Paladin]: queuePoolCounters[legacyRank('Paladin')],
+};
+
 type NewOrderSlot = 'a' | 'b';
 export type NewOrderHighRankType = NewOrderRankType | 'Inquisitor';
 
@@ -778,19 +792,27 @@ export const getImageRatingsCounter = (imageId: number) => {
       if (validIds.length === 0) return result;
 
       // Fetch all ratings for this image in one query
-      const data = await clickhouse.$query<{ rank: string; rating: number; count: number }>`
+      const data = await clickhouse.$query<{
+        rank: string;
+        rating: number;
+        status: string;
+        count: number;
+      }>`
         SELECT
           argMax(rank, createdAt) as rank,
           argMax(rating, createdAt) as rating,
+          argMax(status, createdAt) as status,
           count() as count
         FROM knights_new_order_image_rating
         WHERE imageId = ${imageId}
         GROUP BY imageId, userId
       `;
 
-      // Group counts by rank-rating combination
+      // Group counts by rank-rating combination. Only the open round counts: votes already
+      // settled (or voided) belong to an earlier round.
       const countsByKey = new Map<string, number>();
       for (const row of data) {
+        if (row.status !== NewOrderImageRatingStatus.Pending) continue;
         const key = `${row.rank}-${row.rating}`;
         countsByKey.set(key, (countsByKey.get(key) ?? 0) + row.count);
       }
@@ -808,6 +830,16 @@ export const getImageRatingsCounter = (imageId: number) => {
 
   return counter;
 };
+
+/** Drops the vote tallies of images leaving the queues, so a later round starts from zero. */
+export async function clearImageRatings(imageIds: number[]) {
+  const BATCH = 100;
+  for (let i = 0; i < imageIds.length; i += BATCH) {
+    await Promise.all(
+      imageIds.slice(i, i + BATCH).map((id) => getImageRatingsCounter(id).reset({ all: true }))
+    );
+  }
+}
 
 export type VotingRateLimitConfig = {
   perMinute: number;
@@ -853,6 +885,8 @@ export type VotingRateLimitConfig = {
    * falls back to the legacy sequential drain.
    */
   poolQuotas?: Partial<Record<NewOrderRankType, number[]>>;
+  /** Validated by `parseLinkDetectionConfig`; the linking job stays off while it is absent. */
+  linkDetection?: unknown;
 };
 
 // Re-export the pure quota math from a side-effect-free module so unit tests
@@ -931,7 +965,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-unavailable',
       details: { userId, reason: 'redis-client-unavailable' },
       message: `Rate limiter denied vote for user ${userId}: Redis client unavailable`,
-    }).catch(() => null);
+    });
     return DENIED_RESPONSE;
   }
 
@@ -949,7 +983,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-config-missing',
       details: { userId, reason: 'config-not-set-using-defaults' },
       message: `new-order:config missing — rate limiter using built-in defaults for user ${userId}; re-seed the Redis config`,
-    }).catch(() => null);
+    });
   }
 
   const now = Date.now();
@@ -1043,7 +1077,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       name: 'new-order-rate-limit-unavailable',
       details: { userId, reason: 'redis-operation-failed', error: (error as Error).message },
       message: `Rate limiter denied vote for user ${userId}: Redis operation failed`,
-    }).catch(() => null);
+    });
     return DENIED_RESPONSE;
   }
 }

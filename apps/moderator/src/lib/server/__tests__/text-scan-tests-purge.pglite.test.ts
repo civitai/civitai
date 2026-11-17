@@ -31,8 +31,9 @@ describe('purgeDeletedSources', () => {
       .insertInto('User')
       .values([{ id: 10 }, { id: 11, deletedAt: new Date() }] as never)
       .execute();
+    // A comment first written as CommentV2 is read on CommentV3: its v2 id is its id there.
     await main
-      .insertInto('CommentV2')
+      .insertInto('CommentV3')
       .values([
         { id: 1, userId: 10 },
         { id: 3, userId: 11 },
@@ -143,5 +144,36 @@ describe('expireDraftResults', () => {
       .where('id', '=', String(expired))
       .executeTakeFirstOrThrow();
     expect(run.totals).toEqual([{ label: 'scam', scored: 1, passed: 1 }]);
+  });
+});
+
+describe('purgeDeletedSources and comment cases', () => {
+  it('reads a comment case on CommentV3 by its id, wiping it once the comment is deleted', async () => {
+    await main
+      .insertInto('User')
+      .values([{ id: 10 }] as never)
+      .execute();
+    await main
+      .insertInto('CommentV3')
+      .values([
+        { id: 501, userId: 10 },
+        { id: 502, userId: 10, deletedAt: new Date() },
+      ] as never)
+      .execute();
+    const live = await seedCase(db, setId, {
+      entityType: 'CommentV3',
+      entityId: 501,
+      authorId: 10,
+    });
+    const deleted = await seedCase(db, setId, {
+      entityType: 'CommentV3',
+      entityId: 502,
+      authorId: 10,
+    });
+
+    await purgeDeletedSources(db, main, { write: true });
+    const cases = await db.selectFrom('text_scan_test_case').select(['id', 'fields']).execute();
+    const wiped = new Set(cases.filter((c) => c.fields === null).map((c) => Number(c.id)));
+    expect([live, deleted].map((id) => wiped.has(id))).toEqual([false, true]);
   });
 });

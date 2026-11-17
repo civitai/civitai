@@ -2,7 +2,6 @@ import type { Prisma } from '@prisma/client';
 import { isEqual } from 'lodash-es';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type {
   CosmeticShopItemHistoryChange,
@@ -24,8 +23,11 @@ import {
   packPriceFloor,
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { assertQuotedFee, getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import {
+  assertQuotedFee,
+  withSubmissionFee,
+  getCreatorShopFees,
+} from '~/server/services/creator-shop-fees.service';
 import { getCosmeticArtworkUrl } from '~/server/services/cosmetic-phash.service';
 import { lockShopItem } from '~/server/services/creator-shop-lock';
 import {
@@ -149,15 +151,13 @@ const assertStickerMembersAllowed = (members: ResolvedMember[], stickersEnabled?
 
 /**
  * Who may bundle a member. A creator bundles their own work freely; another
- * creator's only when its listing opted into resale (`sellableByOthers`) — the
- * same consent the official shop enforces in `upsertCosmeticShopSection`. A pack
- * is somebody else selling the item, so an opt-out has to block it here too.
+ * creator's only when its listing opted into resale (`sellableByOthers`). A pack
+ * is somebody else selling the item, so an opt-out has to block it here. An
+ * official shop section is not a resale, so it does not ask.
  *
  * A member with no creator is a platform cosmetic, which the resale-consent rule
- * doesn't govern — the official shop scopes its check to `createdById != null`
- * for the same reason, so this stays in step with it. `resolvePackMembers`
- * already restricts to Published, non-archived listings, so those guards aren't
- * repeated here.
+ * doesn't govern. `resolvePackMembers` already restricts to Published, non-archived
+ * listings, so those guards aren't repeated here.
  */
 export const isBundlableBy = (
   member: { createdById: number | null; sellableByOthers: boolean },
@@ -210,6 +210,7 @@ export const submitCreatorShopPack = async ({
   imageUrl,
   rightsAffirmed,
   quotedFee,
+  idempotencyKey,
   stickersEnabled,
 }: SubmitCreatorShopPackInput & { userId: number; stickersEnabled?: boolean }) => {
   // The same CosmeticShopItem.title/description columns the moderator-only upsert guards; these
@@ -249,20 +250,18 @@ export const submitCreatorShopPack = async ({
 
   const submissionFee = (await getCreatorShopFees()).pack;
   assertQuotedFee(quotedFee, submissionFee);
-  const feeTx = await createBuzzTransaction({
-    fromAccountId: userId,
-    fromAccountType: buzzType as BuzzSpendType,
-    toAccountId: 0,
-    amount: submissionFee,
-    type: TransactionType.Purchase,
-    description: `Creator Shop pack submission fee - ${name}`,
-    externalTransactionId: `creator-shop-pack-submit-${userId}-${Date.now()}`,
-  });
-  const feeTxId = feeTx.transactionId;
-  if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
-
-  try {
-    return await dbWrite.$transaction(async (tx) => {
+  // The fee is charged and the pack written together; refunded only if the write fails.
+  return withSubmissionFee(
+    {
+      kind: 'pack',
+      userId,
+      buzzType: buzzType as BuzzSpendType,
+      amount: submissionFee,
+      description: `Creator Shop pack submission fee - ${name}`,
+      refundDescription: 'Creator Shop pack submission failed',
+      idempotencyKey,
+    },
+    async (tx, feeTxId) => {
       const item = await tx.cosmeticShopItem.create({
         data: {
           cosmeticId: null,
@@ -303,11 +302,8 @@ export const submitCreatorShopPack = async ({
       });
 
       return item;
-    });
-  } catch (error) {
-    await refundTransaction(feeTxId, 'Creator Shop pack submission failed');
-    throw error;
-  }
+    }
+  );
 };
 
 export const updateCreatorShopPack = async ({

@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL } from '@civitai/shared/held-media';
 import {
   PLACEHOLDER_OWNER_ID,
   reportHolds,
@@ -73,16 +75,21 @@ export type AccountHoldLeg =
 const markerView = Prisma.raw(`"${HOLD_MARKER_VIEW}"`);
 const abortCode = Prisma.raw(`'${HOLD_ABORT_CODE}'`);
 
+const captureOwner = Prisma.raw(String(FEEDBACK_CAPTURE_OWNER_ID));
+
+/** The image legs read feedback page captures one by one (`captureImageKeptSql`), not as an account. */
+const notCaptureOwner = (id: Prisma.Sql) => Prisma.sql`(${id}) IS DISTINCT FROM ${captureOwner}`;
+
 /** Every hold except the marker, as SQL over `id`, an int expression. */
 function holdLegsSql(id: Prisma.Sql) {
   return {
     report: userNamedOnHoldingReportSql(id),
     // Aliased, so `id` may be a column of an outer unaliased "Image" without being captured here.
-    'image-review': Prisma.sql`EXISTS (
+    'image-review': Prisma.sql`${notCaptureOwner(id)} AND EXISTS (
       SELECT 1 FROM "Image" hr WHERE hr."userId" = ${id} AND hr."needsReview" = 'csam'
     )`,
     // A blocked image counts as reported only when a sent report naming them lists it.
-    'image-blocked': Prisma.sql`EXISTS (
+    'image-blocked': Prisma.sql`${notCaptureOwner(id)} AND EXISTS (
       SELECT 1 FROM "Image" bi
       WHERE bi."userId" = ${id} AND bi."blockedFor" = 'CSAM'
         AND NOT EXISTS (
@@ -96,7 +103,7 @@ function holdLegsSql(id: Prisma.Sql) {
     // reports' image lists rather than the user's images: the lists are short, an account's images
     // are not. Compared as bigint so an id past int range still matches rather than being skipped.
     // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
-    'reported-image': Prisma.sql`((${id}) IN (
+    'reported-image': Prisma.sql`${notCaptureOwner(id)} AND ((${id}) IN (
       SELECT ri."userId"
       FROM "CsamReport" rr
       CROSS JOIN LATERAL jsonb_array_elements(
@@ -107,6 +114,43 @@ function holdLegsSql(id: Prisma.Sql) {
       WHERE ${reportHolds('rr')}
     ))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
+}
+
+export const csamReportListedImageIdsSql = Prisma.raw(CSAM_REPORT_LISTED_IMAGE_IDS_SQL);
+
+/**
+ * Each state that keeps the capture row aliased `image`. `evidenceHold` is the record a kept delete
+ * leaves; the others are the capture's own state, which alone decides how long that record lasts
+ * (evidence_hold_capture_state_held).
+ */
+export function captureHoldLegsSql(image: string) {
+  const i = Prisma.raw(image);
+  return {
+    review: Prisma.sql`${i}."needsReview" IS NOT DISTINCT FROM 'csam'`,
+    blocked: Prisma.sql`${i}."blockedFor" IS NOT DISTINCT FROM 'CSAM'`,
+    minor: Prisma.sql`${i}.minor IS TRUE`,
+    reported: Prisma.sql`(${i}.id)::text IN (${csamReportListedImageIdsSql})`,
+    evidenceHold: Prisma.sql`EXISTS (SELECT 1 FROM "EvidenceHoldImage" ehi WHERE ehi."imageId" = ${i}.id)`,
+  };
+}
+
+export type CaptureHoldLeg = keyof ReturnType<typeof captureHoldLegsSql>;
+
+/** Whether the image row aliased `image` is kept by its own review, block, minor or report state. */
+export function captureImageStateHeldSql(image: string): Prisma.Sql {
+  const l = captureHoldLegsSql(image);
+  return Prisma.sql`(${Prisma.join([l.review, l.blocked, l.minor, l.reported], ' OR ')})`;
+}
+
+/** Whether the image row aliased `image` is kept by its own state or by an evidence-hold record. */
+export function captureImageHeldSql(image: string): Prisma.Sql {
+  return Prisma.sql`(${Prisma.join(Object.values(captureHoldLegsSql(image)), ' OR ')})`;
+}
+
+/** Whether the image row aliased `image` is a feedback page capture kept by its own state. */
+export function captureImageKeptSql(image: string): Prisma.Sql {
+  const i = Prisma.raw(image);
+  return Prisma.sql`(${i}."userId" = ${captureOwner} AND ${captureImageHeldSql(image)})`;
 }
 
 const markerSql = (id: Prisma.Sql) =>
@@ -173,7 +217,7 @@ export async function ownerHeld(
         type: 'error',
         name: 'content-legal-hold-check-failed',
         message: (e as Error).message,
-      }).catch(() => undefined);
+      });
       return null;
     }
   );
@@ -218,7 +262,7 @@ export async function deleteUnlessHeld(
       type: 'error',
       name: 'content-legal-hold-check-failed',
       message: (e as Error).message,
-    }).catch(() => undefined);
+    });
     throw contentKeptError(isModerator);
   });
   if (removed >= expected) return 'deleted';
@@ -351,43 +395,6 @@ export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Pris
   `;
 }
 
-/** Authors one call logs at most; a bulk delete can retain rows from every author it touched. */
-const HOLD_LOG_AUTHORS = 200;
-
-/**
- * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
- * goes no further than here. An author with no hold of their own had a row kept for a held reply
- * below it.
- */
-export async function logHoldRetained(action: string, userIds: number[]) {
-  const authors = [...new Set(userIds)];
-  const logged = authors.slice(0, HOLD_LOG_AUTHORS);
-  const holds = await getAccountLegalHolds(logged).catch((e: unknown) => {
-    logToAxiom({
-      type: 'error',
-      name: 'account-legal-hold-check-failed',
-      message: (e as Error).message,
-      details: { userIds: logged },
-    }).catch(() => undefined);
-    return null;
-  });
-  for (const userId of logged) {
-    const legs = holds?.get(userId) ?? null;
-    logToAxiom({
-      type: 'info',
-      name: 'account-legal-hold',
-      message: legs?.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
-      details: { userId, legs },
-    }).catch(() => undefined);
-  }
-  if (authors.length > logged.length)
-    logToAxiom({
-      type: 'info',
-      name: 'account-legal-hold',
-      message: `${action}: rows retained for ${authors.length - logged.length} more authors`,
-    }).catch(() => undefined);
-}
-
 export type AccountLegalHold = {
   legs: AccountHoldLeg[];
   /** The marker view exists, so a statement may name it. */
@@ -401,12 +408,6 @@ export type AccountLegalHold = {
 export async function getAccountLegalHold(userId: number): Promise<AccountLegalHold> {
   const { legs, markerView } = (await readAccountHolds([userId]))[0];
   return { legs, markerView };
-}
-
-/** `getAccountLegalHold` for many accounts, in one statement (two when the marker view exists). */
-async function getAccountLegalHolds(userIds: number[]): Promise<Map<number, AccountHoldLeg[]>> {
-  if (!userIds.length) return new Map();
-  return new Map((await readAccountHolds(userIds)).map((h) => [h.userId, h.legs]));
 }
 
 async function readAccountHolds(
@@ -450,6 +451,28 @@ async function readAccountHolds(
   return [...held].map(([userId, legsHeld]) => ({ userId, legs: legsHeld, markerView }));
 }
 
+/**
+ * Whether each of `userIds` is under a legal hold, in ONE batched lookup (`readAccountHolds`).
+ * Never throws: a lookup that fails, or that leaves a user out, answers `true` (held) for every user
+ * it could not clear, so a caller deleting on `false` deletes nothing it cannot prove is clear.
+ */
+export async function areAccountsUnderLegalHold(userIds: number[]): Promise<Map<number, boolean>> {
+  const answer = new Map(userIds.map((id) => [id, true]));
+  if (userIds.length === 0) return answer;
+  try {
+    for (const hold of await readAccountHolds(userIds))
+      if (answer.has(hold.userId)) answer.set(hold.userId, hold.legs.length > 0);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds },
+    });
+  }
+  return answer;
+}
+
 export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHoldLeg[]> {
   return (await getAccountLegalHold(userId)).legs;
 }
@@ -459,7 +482,8 @@ export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHo
  * is held cannot be determined. The reason is logged here and goes no further.
  */
 export async function assertAccountNotUnderLegalHold(
-  userId: number
+  userId: number,
+  refused = 'Account deletion refused'
 ): Promise<Pick<AccountLegalHold, 'markerView'>> {
   const hold = await holdOrNull(userId);
   if (!hold) throw new LegalHoldUnconfirmedError();
@@ -467,7 +491,7 @@ export async function assertAccountNotUnderLegalHold(
   logToAxiom({
     type: 'info',
     name: 'account-legal-hold',
-    message: 'Account deletion refused',
+    message: refused,
     details: { userId, legs: hold.legs },
   });
   throw new LegalHoldError();

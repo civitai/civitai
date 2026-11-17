@@ -69,12 +69,24 @@ function RestartPreview({ restart, reason }: { restart: PreviewRestart; reason: 
   );
 }
 
+/** Sets `flag` while it is mounted: where the frame's host shows a fallback the pane hands it. */
+function WhileShown({ flag }: { flag: { current: boolean } }) {
+  useEffect(() => {
+    flag.current = true;
+    return () => {
+      flag.current = false;
+    };
+  }, [flag]);
+  return null;
+}
+
 export function AppAssistantPreview({
   canPreview,
   session,
   restart,
   liveCheckMs = PREVIEW_LIVE_CHECK_MS,
   tunnelStatus,
+  devServerUp = 0,
 }: {
   canPreview: boolean;
   session: PreviewSession | null;
@@ -87,6 +99,8 @@ export function AppAssistantPreview({
    * would not say. Given, a check made when the tab comes back into view asks it too.
    */
   tunnelStatus?: () => Promise<SandboxTunnelStatus | null>;
+  /** Counts the times the open app's dev server came back up (`devServerUpOf`). */
+  devServerUp?: number;
 }) {
   const frame = useQuery({
     // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
@@ -101,6 +115,17 @@ export function AppAssistantPreview({
   // The frame reached its host's terminal fallback (never ready, its token failed, a fatal error).
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [frame.data]);
+  // The host shows its own sign-in failure (`tokenErrorFallback`) without reporting it.
+  const tokenFailed = useRef(false);
+  // A new `devServerUp` reloads a failed frame, as Reload does. A frame that loads is left alone: a
+  // reload resets the data the app saved in it. Only a count above the last one seen is new, so one
+  // counted before the frame failed reloads nothing.
+  const seenUp = useRef(devServerUp);
+  useEffect(() => {
+    const up = devServerUp > seenUp.current;
+    seenUp.current = devServerUp;
+    if (up && (failed || tokenFailed.current)) void frame.refetch();
+  }, [devServerUp, failed, frame]);
   // Whether the next check asks the sandbox too (see `live`): on the first check of a page, after
   // the tab comes back into view, and after the user works in the pane (whose keep-awake already
   // sends the sandbox a request then, so asking adds nothing to its idle clock).
@@ -239,6 +264,7 @@ export function AppAssistantPreview({
             refreshEntryUrl={() => fetchPreviewEntryUrl(session.blockId)}
             tokenErrorFallback={
               <Stack p="md">
+                <WhileShown flag={tokenFailed} />
                 <Alert color="red" variant="light">
                   The preview couldn’t sign in to your app. Reload, or ask the assistant to restart
                   the preview.

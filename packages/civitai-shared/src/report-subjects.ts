@@ -9,9 +9,11 @@ export const OWNED_REPORT_TABLES = [
   { reportTable: 'ImageReport', fk: 'imageId', table: 'Image', ownerColumn: 'userId' },
   { reportTable: 'ModelReport', fk: 'modelId', table: 'Model', ownerColumn: 'userId' },
   { reportTable: 'PostReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
+  // A storyline text's report, owned through its post: the text row may be gone, the post is not.
+  { reportTable: 'PostTextReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
   { reportTable: 'ArticleReport', fk: 'articleId', table: 'Article', ownerColumn: 'userId' },
-  { reportTable: 'CommentReport', fk: 'commentId', table: 'Comment', ownerColumn: 'userId' },
-  { reportTable: 'CommentV2Report', fk: 'commentV2Id', table: 'CommentV2', ownerColumn: 'userId' },
+  // Every comment report, old ones included: the old link tables' rows were copied here.
+  { reportTable: 'CommentV3Report', fk: 'commentId', table: 'CommentV3', ownerColumn: 'userId' },
   { reportTable: 'BountyReport', fk: 'bountyId', table: 'Bounty', ownerColumn: 'userId' },
   {
     reportTable: 'BountyEntryReport',

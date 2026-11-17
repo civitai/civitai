@@ -126,6 +126,10 @@ export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereI
  */
 export const CRUCIBLE_ENTRY_DRAFT_METADATA_KEY = 'crucibleEntryDraft';
 
+/** Unpublished media in a post the crucible entry modal created. */
+export const entryDraftImageWhere = (): Prisma.ImageWhereInput =>
+  draftImageWhere({ metadata: { path: [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY], equals: true } });
+
 /** One relation filter rather than an OR of two, so the planner can still semi-join on Post. */
 export const publishedOrEntryDraftImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,

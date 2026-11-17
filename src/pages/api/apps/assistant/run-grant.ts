@@ -30,8 +30,9 @@ const query = z.object({
  * says whether the viewer may start subagents (`appAssistantSubagents`), so the runner takes that from
  * civitai rather than from the page.
  *
- * With `purpose=preview` it signs a preview grant instead (about 2 minutes, no subagents), which the
- * runner takes only for the page's Restart preview (`POST /api/assistant-runner/apps/<app>/preview`);
+ * With `purpose=preview` it signs a preview grant instead (`PREVIEW_GRANT_TTL_SECONDS`, no
+ * subagents), which the runner takes only for the page's Restart preview
+ * (`POST /api/assistant-runner/apps/<app>/preview`);
  * the page names `conversationId=preview:<app>`, which the runner checks against the app.
  *
  *   GET ?conversationId=&idempotencyKey=[&purpose=preview] → `{ grant, expiresAt }`, or 403
@@ -72,7 +73,7 @@ export default AuthedEndpoint(async (req, res, user) => {
       type: 'app-assistant.run-grant.failed',
       message: `App Assistant run grant failed for user ${user.id}`,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: 'Could not start an App Assistant reply right now' });
   }
 });

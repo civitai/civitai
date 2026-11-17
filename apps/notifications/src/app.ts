@@ -6,6 +6,7 @@ import {
   createNotificationPendingRow,
   createNotificationsBulkInput,
   getSystemNoticeSendInput,
+  markReadByKeysInput,
   markReadInput,
   notificationExistsInput,
   queryNotificationsInput,
@@ -21,6 +22,7 @@ import {
   countNotifications,
   createNotificationsBulk,
   markNotificationsRead,
+  markNotificationsReadByKeys,
   notificationExists,
   queryNotifications,
 } from './lib/server/operations';
@@ -41,6 +43,7 @@ import { logLevel } from './env';
  *   - POST /notifications/query   — base rows for a user (unenriched).
  *   - POST /notifications/count   — per-category counts.
  *   - POST /notifications/mark-read — mark one/all/category read (fire-and-forget).
+ *   - POST /notifications/mark-read-by-key — mark the caller's rows for these keys read; returns counts cleared.
  *   - POST /notifications/exists  — producer-side key dedup.
  *   - POST /notifications/cleanup — delete old UserNotification rows.
  * System notices, gated by their own token (NOTIFICATIONS_NOTICES_TOKEN), never the producer one:
@@ -137,9 +140,11 @@ export async function buildServer(): Promise<FastifyInstance> {
       producerRequestsTotal.inc({ outcome: 'created' });
       return reply.code(202).send({ status: 'queued', queued: result.queued });
     } catch (err) {
+      // 503, not 500: the write failed on a dependency, and the client retries 5xx. Safe because the
+      // create is an upsert by key.
       producerRequestsTotal.inc({ outcome: 'error' });
       req.log.error({ err }, 'producer create failed');
-      return reply.code(500).send({ error: 'Internal error' });
+      return reply.code(503).send({ error: 'Unavailable' });
     }
   });
 
@@ -180,6 +185,12 @@ export async function buildServer(): Promise<FastifyInstance> {
     // write does NOT surface here. This metric is request-acceptance RED, not delivery confirmation.
     markNotificationsRead(body);
     return reply.code(202).send({ status: 'accepted' });
+  });
+
+  app.post('/notifications/mark-read-by-key', async (req, reply) => {
+    const body = authedBody(markReadByKeysInput, req, reply);
+    if (!body) return reply;
+    return reply.send(await markNotificationsReadByKeys(body));
   });
 
   app.post('/notifications/exists', async (req, reply) => {
@@ -229,7 +240,7 @@ export async function buildServer(): Promise<FastifyInstance> {
         status: 200,
         requested: result.requested,
         ...result.counts,
-      }).catch(() => undefined);
+      });
       return reply.send(result);
     } catch (err) {
       const known = err instanceof NoticeError;
@@ -245,7 +256,7 @@ export async function buildServer(): Promise<FastifyInstance> {
         message,
         ...(cause ? { cause: (cause as Error).message } : {}),
         ...extra,
-      }).catch(() => undefined);
+      });
       if (status >= 500) req.log.error({ err }, 'system notices failed');
       return reply.code(status).send({ error: message, ...extra });
     }

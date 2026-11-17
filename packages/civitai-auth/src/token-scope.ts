@@ -97,6 +97,11 @@ export const TokenScope = {
   // `WORKER_ONLY_SCOPES`); every other grant refuses it.
   WorkerRegister: 1 << 29, // 536870912
 
+  // Download links — mint short, single-file download links on behalf of a named user
+  // (`POST /api/v1/download-links`). Opt-in and EXCLUDED from `Full`, and only ever minted through
+  // the `client_credentials` grant (see `CLIENT_CREDENTIALS_ONLY_SCOPES`).
+  DownloadLink: 1 << 30, // 1073741824
+
   // All scopes
   //
   // NOTE: `Full` is INTENTIONALLY frozen at (1 << 25) - 1 = 33554431 — it is the
@@ -114,7 +119,7 @@ export type TokenScopeValue = (typeof TokenScope)[keyof typeof TokenScope];
 /**
  * Mask of EVERY defined scope bit, including opt-in scopes that are NOT part of
  * `Full` (currently `AppBlocksSubmit`, `AppBlocksDevTunnel`, `LinkConnect`,
- * `AppStoreCatalogWrite` and `WorkerRegister`). Use this as the
+ * `AppStoreCatalogWrite`, `WorkerRegister` and `DownloadLink`). Use this as the
  * upper bound when validating a requested/stored scope value in the OAuth flow —
  * bounding against `Full` would reject any value carrying an opt-in bit. Computed
  * from the enum so it can never drift behind a newly-added bit.
@@ -156,17 +161,19 @@ export const tokenScopeLabels: Record<number, string> = {
   [TokenScope.LinkConnect]: 'Connect the Civitai Link app to your account',
   [TokenScope.AppStoreCatalogWrite]: "Publish items to the app's App Store listing",
   [TokenScope.WorkerRegister]: 'Register a worker machine with the orchestrator',
+  [TokenScope.DownloadLink]: 'Create download links for generation jobs',
 };
 
 /**
  * Scopes a token can carry only when minted through the `client_credentials` grant: the client
  * acting as itself, never on a user's behalf. Every other grant refuses them.
  */
-export const CLIENT_CREDENTIALS_ONLY_SCOPES: number = TokenScope.AppStoreCatalogWrite;
+export const CLIENT_CREDENTIALS_ONLY_SCOPES: number =
+  TokenScope.AppStoreCatalogWrite | TokenScope.DownloadLink;
 
 /** The most a `client_credentials` token may carry (`UserRead` is forced onto every token). */
 export const CLIENT_CREDENTIALS_MAX_SCOPE: number =
-  TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+  TokenScope.UserRead | TokenScope.AppStoreCatalogWrite | TokenScope.DownloadLink;
 
 /** Scopes a token can carry only when minted through the hub's worker token-exchange grant. */
 export const WORKER_ONLY_SCOPES: number = TokenScope.WorkerRegister;

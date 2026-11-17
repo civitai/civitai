@@ -1,5 +1,5 @@
 import { Input, Text, useComputedColorScheme, useMantineTheme } from '@mantine/core';
-import type { DropzoneProps } from '@mantine/dropzone';
+import type { DropzoneProps, FileRejection } from '@mantine/dropzone';
 import { Dropzone } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
@@ -10,6 +10,8 @@ import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/
 import { constants, isOrchestratorUrl } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
+import { describeMediaRejection } from '~/components/Image/ImageDropzone/media-rejection';
+import { showErrorNotification } from '~/utils/notifications';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -20,15 +22,18 @@ export function MediaDropzone({
   description,
   accept = IMAGE_MIME_TYPE,
   onDrop,
+  onReject,
   error,
   unreadablePicks = 0,
   pickLimit,
   ...dropzoneProps
-}: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop'> & {
+}: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop' | 'onReject'> & {
   label?: string;
   description?: React.ReactNode;
   accept?: string[];
   error?: Error;
+  /** Called after the rejection message is shown. */
+  onReject?: DropzoneProps['onReject'];
   onDrop: (args: { file: File; meta?: Record<string, unknown> }[]) => void;
   /** Dropped files the consumer could not read later on; offered the same fallback. */
   unreadablePicks?: number;
@@ -76,6 +81,24 @@ export function MediaDropzone({
       ? dayjs.duration(seconds, 'seconds').format(`mm [minutes (${seconds} seconds)]`)
       : `${seconds} seconds`;
 
+  function handleReject(rejections: FileRejection[]) {
+    const message = describeMediaRejection(rejections, {
+      extensions: fileExtensions,
+      video: allowsVideo
+        ? {
+            maxSize: maxVideoSize,
+            seconds,
+            maxDimension: settings?.maxVideoDimensions ?? constants.mediaUpload.maxVideoDimension,
+          }
+        : undefined,
+      maxSize: dropzoneProps.maxSize,
+      maxFiles: dropzoneProps.maxFiles,
+    });
+    if (message)
+      showErrorNotification({ title: "That file wasn't added", error: new Error(message) });
+    onReject?.(rejections);
+  }
+
   async function handleDrop(picked: File[]) {
     const files = pickLimit === undefined ? picked : picked.slice(0, Math.max(0, pickLimit));
     const { readable, unreadable } = await splitUnreadablePicks(files, {
@@ -99,6 +122,7 @@ export function MediaDropzone({
       <Dropzone
         {...dropzoneProps}
         onDrop={handleDrop}
+        onReject={handleReject}
         onDropCapture={handleDropCapture}
         accept={accept}
         useFsAccessApi={!isAndroidDevice()}

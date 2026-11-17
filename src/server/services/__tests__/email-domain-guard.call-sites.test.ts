@@ -41,6 +41,8 @@ const USER_ID = 4242;
 const NEW_EMAIL = 'fresh@example.test';
 const OLD_EMAIL = 'existing@example.test';
 
+const NO_EMAIL_ROW = { email: null, emailVerified: null, username: 'ada' };
+
 function onboardingCtx(email?: string) {
   return {
     user: { id: USER_ID, onboarding: 0, email },
@@ -67,6 +69,8 @@ beforeEach(() => {
 
 describe('onboarding Profile step', () => {
   it('runs the guard on a NEW address', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(NO_EMAIL_ROW);
+
     await completeOnboardingHandler({
       input: { step: OnboardingSteps.Profile, email: NEW_EMAIL },
       ctx: onboardingCtx(undefined),
@@ -87,15 +91,32 @@ describe('onboarding Profile step', () => {
     expect(mockAssertEmailAllowed).not.toHaveBeenCalled();
   });
 
+  it('does NOT run the guard on an unchanged address that is not a plain address', async () => {
+    const stored = '"ada"@example.test';
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({
+      email: stored,
+      emailVerified: null,
+      username: 'ada',
+    });
+
+    await completeOnboardingHandler({
+      input: { step: OnboardingSteps.Profile, email: stored },
+      ctx: onboardingCtx(stored),
+    } as Parameters<typeof completeOnboardingHandler>[0]);
+
+    expect(mockAssertEmailAllowed).not.toHaveBeenCalled();
+  });
+
   it('propagates the guard rejection instead of writing the address', async () => {
     mockAssertEmailAllowed.mockRejectedValue(new Error('blocked'));
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(NO_EMAIL_ROW);
 
     await expect(
       completeOnboardingHandler({
         input: { step: OnboardingSteps.Profile, email: NEW_EMAIL },
         ctx: onboardingCtx(undefined),
       } as Parameters<typeof completeOnboardingHandler>[0])
-    ).rejects.toThrow();
+    ).rejects.toThrow('blocked');
 
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
   });
@@ -120,6 +141,17 @@ describe('updateUserById', () => {
     // The existing "don't overwrite an existing email" rule still holds: the field is stripped, so
     // the guard has nothing to judge and the user cannot be locked out by a later list change.
     const [call] = dbMock.dbWrite.user.update.mock.calls;
+    expect(call[0].data).not.toHaveProperty('email');
+  });
+
+  it('does NOT run the guard for a user whose stored address is not plain', async () => {
+    dbMock.dbWrite.user.findFirst.mockResolvedValue({ email: '"ada"@example.test' });
+
+    await updateUserById({ id: USER_ID, data: { email: '"ada"@example.test', username: 'ada2' } });
+
+    expect(mockAssertEmailAllowed).not.toHaveBeenCalled();
+    const [call] = dbMock.dbWrite.user.update.mock.calls;
+    expect(call[0].data).toMatchObject({ username: 'ada2' });
     expect(call[0].data).not.toHaveProperty('email');
   });
 

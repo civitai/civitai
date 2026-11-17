@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, HoverCard, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
+import { Badge, Text, ThemeIcon, useMantineTheme } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,

@@ -95,6 +95,10 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/orchestrator/training/training-trigger-word-check', () => ({
   assertTrainingTriggerWordAllowed: (input: { triggerWord: string }) => h.checkTriggerWord(input),
 }));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
+}));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
 }));
@@ -364,6 +368,15 @@ async function submit(b: Record<string, unknown>) {
 }
 
 beforeEach(() => {
+  // Only the submit's account-restriction read gets a row; other user reads keep the default.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   store.clear();
   for (const fn of Object.values(h)) fn.mockClear();
   loggingMock.logToAxiom.mockClear();

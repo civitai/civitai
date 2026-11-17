@@ -2,7 +2,7 @@ import { RedisWithHelpers, SimpleClickhouse, withRedisHelpers } from '../utils/q
 import { EntityType, EntityMetricMap, ENTITY_METRIC_TYPES } from '../types/metric-types';
 import { IClickhouseClient, IRedisClient } from '../types/package-stubs';
 import { chunk, sleep } from '../utils/basic';
-import { cacheKeys } from '../utils/cache-keys';
+import { cacheKeys, METRIC_RECENT_EVENT_TTL } from '../utils/cache-keys';
 import { logger } from '../utils/logger';
 
 const FETCH_BATCH_SIZE = 1000;
@@ -12,6 +12,11 @@ const CACHE_SLIDE_CHANCE = 0.1; // 10% chance of sliding the TTL on each access
 const LOCK_DURATION = 2; // 2 seconds lock
 const LOCK_RETRY_DELAY = 200; // 100ms delay between retries
 const LOCK_MAX_RETRIES = 10; // Maximum number of retry attempts
+// The main app's MetricService (event-engine-common) reads these same hashes and
+// refreshes one whose POPULATED_AT_FIELD is this old; an unstamped hash refreshes
+// only on a small share of its reads. Keep both in step with event-engine-common.
+const REFRESH_AFTER = 60 * 60;
+const POPULATED_AT_FIELD = '_populatedAt';
 
 export class MetricService {
   private ch: SimpleClickhouse;
@@ -34,7 +39,6 @@ export class MetricService {
     return cacheKeys.metricLock(entityType, id);
   }
 
-
   /**
    * Fetch metrics for entities of a specific type.
    * The return type is automatically inferred based on the entityType parameter.
@@ -46,7 +50,10 @@ export class MetricService {
    * const imageMetrics = await service.fetch('Image', [4, 5, 6])
    * // Return type is Record<number, ImageMetrics>
    */
-  public async fetch<T extends EntityType>(entityType: T, ids: number[]): Promise<Record<number, EntityMetricMap[T]>> {
+  public async fetch<T extends EntityType>(
+    entityType: T,
+    ids: number[]
+  ): Promise<Record<number, EntityMetricMap[T]>> {
     const startTime = Date.now();
     logger.metric(`fetch() called for entityType: ${entityType}, ids: [${ids.join(', ')}]`);
     if (!ids.length) {
@@ -81,7 +88,7 @@ export class MetricService {
       logger.logObject('MetricService', 'Redis client state:', {
         redisType: typeof this.redis,
         runType: typeof this.redis.run,
-        hasRun: 'run' in this.redis
+        hasRun: 'run' in this.redis,
       });
       throw error;
     }
@@ -95,14 +102,17 @@ export class MetricService {
       if (cacheResult && Object.keys(cacheResult).length > 0) {
         const entries = Object.entries(cacheResult);
         // Check if this is a "not found" entry
-        if (cacheResult.notFound === '1' && entries.length === 1) {
+        if (
+          cacheResult.notFound === '1' &&
+          entries.every(([key]) => key === 'notFound' || key === POPULATED_AT_FIELD)
+        ) {
           continue; // Skip not found entries
         }
 
         // Convert string values back to numbers for metric fields
         const metrics: any = {};
         for (const [key, value] of entries) {
-          if (key === 'notFound') continue;
+          if (key === 'notFound' || key === POPULATED_AT_FIELD) continue;
           metrics[key] = parseInt(value, 10);
         }
         results[id] = metrics as EntityMetricMap[T];
@@ -137,9 +147,11 @@ export class MetricService {
       logger.metric(`Attempting to acquire locks for ${cacheMisses.length} cache misses`);
       let gotLock;
       try {
-        gotLock = await this.redis.run(cacheMisses.map(
-          (id) => this.redis.setNxKeepTtlWithEx(this.getLockKey(entityType, id), '1', LOCK_DURATION)
-        ));
+        gotLock = await this.redis.run(
+          cacheMisses.map((id) =>
+            this.redis.setNxKeepTtlWithEx(this.getLockKey(entityType, id), '1', LOCK_DURATION)
+          )
+        );
         logger.metric('Lock acquisition completed');
       } catch (error) {
         logger.error('MetricService', 'Lock acquisition failed:', error);
@@ -154,12 +166,25 @@ export class MetricService {
 
       // Fetch data for IDs we successfully locked
       if (lockedIds.length > 0) {
-        logger.metric(`Fetching fresh data from ClickHouse for ${lockedIds.length} locked IDs: [${lockedIds.join(', ')}]`);
+        logger.metric(
+          `Fetching fresh data from ClickHouse for ${
+            lockedIds.length
+          } locked IDs: [${lockedIds.join(', ')}]`
+        );
         const freshData = await this.fetchFromClickhouse(entityType, lockedIds);
-        logger.metric(`ClickHouse fetch completed, got data for ${Object.keys(freshData).length} entities`);
+        logger.metric(
+          `ClickHouse fetch completed, got data for ${Object.keys(freshData).length} entities`
+        );
 
-        // Cache the results and release locks
+        // Cache the results and release locks. Stamped like event-engine-common's
+        // populate, including the early refresh when a recent event may be missing.
         const cacheAndLockOps: Promise<any>[] = [];
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const stamp = {
+          field: POPULATED_AT_FIELD,
+          value: String(nowSeconds),
+          ifMarker: String(nowSeconds - REFRESH_AFTER + METRIC_RECENT_EVENT_TTL),
+        };
 
         for (const id of lockedIds) {
           if (freshData[id]) {
@@ -170,14 +195,26 @@ export class MetricService {
             }
 
             cacheAndLockOps.push(
-              this.redis.hSetEx(this.getCacheKey(entityType, id), metricsToCache, CACHE_TTL)
+              this.redis.hReplaceStampedEx(
+                this.getCacheKey(entityType, id),
+                cacheKeys.metricRecentEvent(entityType, id),
+                stamp,
+                metricsToCache,
+                CACHE_TTL
+              )
             );
 
             results[id] = freshData[id];
           } else {
             // Cache not found with MISS_CACHE_TTL
             cacheAndLockOps.push(
-              this.redis.hSetEx(this.getCacheKey(entityType, id), { notFound: '1' }, MISS_CACHE_TTL)
+              this.redis.hReplaceStampedEx(
+                this.getCacheKey(entityType, id),
+                cacheKeys.metricRecentEvent(entityType, id),
+                stamp,
+                { notFound: '1' },
+                MISS_CACHE_TTL
+              )
             );
           }
 
@@ -198,11 +235,19 @@ export class MetricService {
       // For IDs where someone else has the lock, wait and retry fetching from cache
       let retry = 0;
       if (othersLocked.length > 0) {
-        logger.metric(`Waiting for ${othersLocked.length} IDs locked by other processes: [${othersLocked.join(', ')}]`);
+        logger.metric(
+          `Waiting for ${othersLocked.length} IDs locked by other processes: [${othersLocked.join(
+            ', '
+          )}]`
+        );
       }
-      while (othersLocked.length > 0 && retry < LOCK_MAX_RETRIES){
+      while (othersLocked.length > 0 && retry < LOCK_MAX_RETRIES) {
         // Wait for other processes to populate cache
-        logger.metric(`Retry ${retry + 1}/${LOCK_MAX_RETRIES}: waiting ${LOCK_RETRY_DELAY}ms for other processes`);
+        logger.metric(
+          `Retry ${
+            retry + 1
+          }/${LOCK_MAX_RETRIES}: waiting ${LOCK_RETRY_DELAY}ms for other processes`
+        );
         await sleep(LOCK_RETRY_DELAY);
         retry++;
 
@@ -228,14 +273,17 @@ export class MetricService {
             found.push(id);
             const entries = Object.entries(cacheResult);
             // Check if this is a "not found" entry
-            if (cacheResult.notFound === '1' && entries.length === 1) {
+            if (
+              cacheResult.notFound === '1' &&
+              entries.every(([key]) => key === 'notFound' || key === POPULATED_AT_FIELD)
+            ) {
               continue; // Skip not found entries
             }
 
             // Convert string values back to numbers for metric fields
             const metrics: any = {};
             for (const [key, value] of entries) {
-              if (key === 'notFound') continue;
+              if (key === 'notFound' || key === POPULATED_AT_FIELD) continue;
               metrics[key] = parseInt(value, 10);
             }
             results[id] = metrics as EntityMetricMap[T];
@@ -257,20 +305,31 @@ export class MetricService {
     for (const metricType of ENTITY_METRIC_TYPES[entityType]) baseMetrics[metricType] = 0;
     for (const id of uniqueIds) {
       if (results[id]) {
-        completeResults[id] = {...baseMetrics, ...results[id]};
+        completeResults[id] = { ...baseMetrics, ...results[id] };
       } else {
-        completeResults[id] = {...baseMetrics};
+        completeResults[id] = { ...baseMetrics };
       }
     }
 
     const totalTime = Date.now() - startTime;
-    logger.metric(`fetch() completed in ${totalTime}ms for entityType: ${entityType}, returned ${Object.keys(completeResults).length} results`);
+    logger.metric(
+      `fetch() completed in ${totalTime}ms for entityType: ${entityType}, returned ${
+        Object.keys(completeResults).length
+      } results`
+    );
     return completeResults;
   }
 
-  private async fetchFromClickhouse<T extends EntityType>(entityType: T, ids: number[]): Promise<Record<number, EntityMetricMap[T]>> {
+  private async fetchFromClickhouse<T extends EntityType>(
+    entityType: T,
+    ids: number[]
+  ): Promise<Record<number, EntityMetricMap[T]>> {
     const startTime = Date.now();
-    logger.clickhouse(`fetchFromClickhouse() called for entityType: ${entityType}, ${ids.length} IDs: [${ids.join(', ')}]`);
+    logger.clickhouse(
+      `fetchFromClickhouse() called for entityType: ${entityType}, ${ids.length} IDs: [${ids.join(
+        ', '
+      )}]`
+    );
     const metrics: Record<number, EntityMetricMap[T]> = {} as Record<number, EntityMetricMap[T]>;
 
     const batches = chunk(ids, FETCH_BATCH_SIZE);
@@ -279,7 +338,11 @@ export class MetricService {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
       const batchStartTime = Date.now();
-      logger.clickhouse(`Processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} IDs: [${batch.join(', ')}]`);
+      logger.clickhouse(
+        `Processing batch ${batchIndex + 1}/${batches.length} with ${
+          batch.length
+        } IDs: [${batch.join(', ')}]`
+      );
 
       let rawMetrics;
       try {
@@ -297,7 +360,11 @@ export class MetricService {
           HAVING value > 0;
         `;
         const batchTime = Date.now() - batchStartTime;
-        logger.clickhouse(`ClickHouse query completed for batch ${batchIndex + 1} in ${batchTime}ms, got ${rawMetrics.length} rows`);
+        logger.clickhouse(
+          `ClickHouse query completed for batch ${batchIndex + 1} in ${batchTime}ms, got ${
+            rawMetrics.length
+          } rows`
+        );
       } catch (error) {
         logger.error('ClickHouse', `Query failed for batch ${batchIndex + 1}:`, error);
         throw error;
@@ -308,11 +375,19 @@ export class MetricService {
         metrics[entityId] ??= {} as EntityMetricMap[T];
         (metrics[entityId] as any)[metricType] = value;
       }
-      logger.clickhouse(`Completed processing batch ${batchIndex + 1}, current total entities: ${Object.keys(metrics).length}`);
+      logger.clickhouse(
+        `Completed processing batch ${batchIndex + 1}, current total entities: ${
+          Object.keys(metrics).length
+        }`
+      );
     }
 
     const totalTime = Date.now() - startTime;
-    logger.clickhouse(`fetchFromClickhouse() completed in ${totalTime}ms, returning metrics for ${Object.keys(metrics).length} entities`);
+    logger.clickhouse(
+      `fetchFromClickhouse() completed in ${totalTime}ms, returning metrics for ${
+        Object.keys(metrics).length
+      } entities`
+    );
     return metrics;
   }
 
@@ -321,7 +396,11 @@ export class MetricService {
     ids: number[]
   ): Promise<Record<number, Record<Timeframes, EntityMetricMap[T]>>> {
     const startTime = Date.now();
-    logger.metric(`fetchTimeframes() called for entityType: ${entityType}, ${ids.length} IDs: [${ids.join(', ')}]`);
+    logger.metric(
+      `fetchTimeframes() called for entityType: ${entityType}, ${ids.length} IDs: [${ids.join(
+        ', '
+      )}]`
+    );
     if (!ids.length) {
       logger.metric('No IDs provided for fetchTimeframes, returning empty result');
       return {};
@@ -331,8 +410,7 @@ export class MetricService {
     const uniqueIds = [...new Set(ids)];
 
     const baseMetrics: any = {};
-    for (const metricType of ENTITY_METRIC_TYPES[entityType])
-      baseMetrics[metricType] = 0;
+    for (const metricType of ENTITY_METRIC_TYPES[entityType]) baseMetrics[metricType] = 0;
 
     const batches = chunk(uniqueIds, FETCH_BATCH_SIZE);
     logger.clickhouse(`fetchTimeframes processing ${batches.length} batches`);
@@ -340,7 +418,11 @@ export class MetricService {
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
       const batch = batches[batchIndex];
       const batchStartTime = Date.now();
-      logger.clickhouse(`fetchTimeframes processing batch ${batchIndex + 1}/${batches.length} with ${batch.length} IDs`);
+      logger.clickhouse(
+        `fetchTimeframes processing batch ${batchIndex + 1}/${batches.length} with ${
+          batch.length
+        } IDs`
+      );
 
       let rawMetrics;
       try {
@@ -361,13 +443,19 @@ export class MetricService {
           GROUP BY entityId, metricType
         `;
         const batchTime = Date.now() - batchStartTime;
-        logger.clickhouse(`ClickHouse timeframes query completed for batch ${batchIndex + 1} in ${batchTime}ms, got ${rawMetrics.length} rows`);
+        logger.clickhouse(
+          `ClickHouse timeframes query completed for batch ${
+            batchIndex + 1
+          } in ${batchTime}ms, got ${rawMetrics.length} rows`
+        );
       } catch (error) {
         logger.error('ClickHouse', `Timeframes query failed for batch ${batchIndex + 1}:`, error);
         throw error;
       }
 
-      logger.clickhouse(`Processing ${rawMetrics.length} timeframe rows from batch ${batchIndex + 1}`);
+      logger.clickhouse(
+        `Processing ${rawMetrics.length} timeframe rows from batch ${batchIndex + 1}`
+      );
       for (const row of rawMetrics) {
         const { entityId, metricType, ...timeframeValues } = row;
 
@@ -376,7 +464,7 @@ export class MetricService {
 
         // Assign values for each timeframe using the matching property names
         for (const timeframe of TIMEFRAMES) {
-          results[entityId][timeframe] ??= {...baseMetrics} as EntityMetricMap[T];
+          results[entityId][timeframe] ??= { ...baseMetrics } as EntityMetricMap[T];
           (results[entityId][timeframe] as any)[metricType] = timeframeValues[timeframe];
         }
       }
@@ -388,18 +476,27 @@ export class MetricService {
       if (results[id]) continue;
       results[id] = {} as Record<Timeframes, EntityMetricMap[T]>;
       for (const timeframe of TIMEFRAMES) {
-        results[id][timeframe] = {...baseMetrics} as EntityMetricMap[T];
+        results[id][timeframe] = { ...baseMetrics } as EntityMetricMap[T];
       }
     }
 
     const totalTime = Date.now() - startTime;
-    logger.metric(`fetchTimeframes() completed in ${totalTime}ms, returning data for ${Object.keys(results).length} entities`);
+    logger.metric(
+      `fetchTimeframes() completed in ${totalTime}ms, returning data for ${
+        Object.keys(results).length
+      } entities`
+    );
     return results;
   }
 
-  public async bustCache<T extends EntityType>(entityType: T, ids: number | number[]): Promise<void> {
+  public async bustCache<T extends EntityType>(
+    entityType: T,
+    ids: number | number[]
+  ): Promise<void> {
     ids = Array.isArray(ids) ? ids : [ids];
-    logger.metric(`bustCache() called for entityType: ${entityType}, ${Array.isArray(ids) ? ids.length : 1} IDs`);
+    logger.metric(
+      `bustCache() called for entityType: ${entityType}, ${Array.isArray(ids) ? ids.length : 1} IDs`
+    );
     if (!ids.length) {
       logger.metric('No IDs provided for bustCache, returning');
       return;
@@ -417,7 +514,7 @@ export class MetricService {
 }
 
 const TIMEFRAMES = ['Day', 'Week', 'Month', 'Year', 'AllTime'] as const;
-type Timeframes = typeof TIMEFRAMES[number];
+type Timeframes = (typeof TIMEFRAMES)[number];
 type TimeframeMetricRow = {
   entityId: number;
   metricType: string;

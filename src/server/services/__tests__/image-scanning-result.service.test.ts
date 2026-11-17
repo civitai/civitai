@@ -339,6 +339,48 @@ describe('processImageScanningWorkflow', () => {
       expect.objectContaining({ ingestion: 'Scanned' })
     );
   });
+
+  const withRating = (rating: unknown) => [
+    { ...scanStep, output: { ...scanStep.output, ratingV2: rating } },
+    hashStep,
+  ];
+
+  // The verdict UPDATE writes them; its SQL runs for real in image-nsfw-axes.sql.behavior.test.ts.
+  it('hands the axes of a rated scan to the verdict write', async () => {
+    await deliver('succeeded', withRating(ratingV2()));
+
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: 'wf',
+        axes: { sexual: 3, violence: 1, rater: 'radio-alpha', raterVersion: 'c0ffee' },
+      })
+    );
+  });
+
+  it('hands no axes to the verdict write for a scan without them', async () => {
+    await deliver('succeeded', withRating(undefined));
+    expect(pipeline.resolveScanOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ axes: undefined })
+    );
+  });
+
+  it('leaves every other stage the same whether or not the scan has axes', async () => {
+    const stages = [
+      pipeline.buildAndInsertScanTags,
+      pipeline.applyIngestionSideEffects,
+      pipeline.sendIngestionSignal,
+      pipeline.markImageScanError,
+    ];
+    const run = async (rating: unknown) => {
+      for (const stage of stages) stage.mockClear();
+      await deliver('succeeded', withRating(rating));
+      return stages.map((stage) => stage.mock.calls);
+    };
+
+    const unrated = await run(undefined);
+    const rated = await run(ratingV2());
+    expect(rated).toEqual(unrated);
+  });
 });
 
 const detection = (ageBand: string, isMinor: boolean) => ({
@@ -518,6 +560,68 @@ describe('parseImageScanningSteps', () => {
       ).not.toBe(ImageScanFailureClass.Permanent);
     }
   );
+});
+
+// The fields of the orchestrator's ImageScanningRatingV2 that are stored; the client predates them.
+const ratingV2 = (overrides: Record<string, unknown> = {}) => ({
+  status: 'ok',
+  modelRef: 'radio-alpha',
+  checkpointSha256: 'c0ffee',
+  sexual: { label: 'S3', score: 0.7, scores: { S3: 0.7 } },
+  violence: { label: 'V1', score: 0.6, scores: { V1: 0.6 } },
+  ...overrides,
+});
+const ratedFrame = (rating: unknown) => scanOutput({ ratingV2: rating });
+const axesOf = (steps: unknown[]) => parseImageScanningSteps(steps, 'wf').axes;
+
+describe('parseImageScanningSteps rating axes', () => {
+  it('reads the axes and the rater checkpoint from ratingV2', () => {
+    expect(axesOf([parserScanStep(ratedFrame(ratingV2()))])).toEqual({
+      sexual: 3,
+      violence: 1,
+      rater: 'radio-alpha',
+      raterVersion: 'c0ffee',
+    });
+  });
+
+  // An image the rater did not rate must stay unrated, not read as the lowest level.
+  it.each([
+    ['absent', undefined],
+    ['not ok', ratingV2({ status: 'error' })],
+    ['an out-of-range label', ratingV2({ sexual: { label: 'S5', score: 1 } })],
+    ['a label of the other axis', ratingV2({ violence: { label: 'S1', score: 1 } })],
+    ['a missing axis', ratingV2({ sexual: undefined })],
+    ['no checkpoint', ratingV2({ checkpointSha256: '' })],
+  ])('has no axes when ratingV2 is %s, and the scan still parses', (_, rating) => {
+    const scan = parseImageScanningSteps([parserScanStep(ratedFrame(rating))], 'wf');
+    expect(scan.axes).toBeUndefined();
+    expect(scan.nsfwLevel).toBe('r');
+  });
+
+  it('gives a video the highest level per axis across frames', () => {
+    const steps = [
+      frames(
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S1', score: 1 }, violence: { label: 'V0', score: 1 } })
+        ),
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S4', score: 1 }, violence: { label: 'V0', score: 1 } })
+        ),
+        ratedFrame(
+          ratingV2({ sexual: { label: 'S2', score: 1 }, violence: { label: 'V3', score: 1 } })
+        )
+      ),
+    ];
+    expect(axesOf(steps)).toMatchObject({ sexual: 4, violence: 3 });
+  });
+
+  it.each([
+    ['a frame is unrated', ratedFrame(undefined)],
+    ['frames come from different checkpoints', ratedFrame(ratingV2({ checkpointSha256: 'beef' }))],
+    ['frames come from different raters', ratedFrame(ratingV2({ modelRef: 'other-rater' }))],
+  ])('gives a video no axes when %s', (_, other) => {
+    expect(axesOf([frames(ratedFrame(ratingV2()), other)])).toBeUndefined();
+  });
 });
 
 describe('isImageScanningWorkflow', () => {

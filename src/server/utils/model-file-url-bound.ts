@@ -9,7 +9,7 @@ import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandli
  * is what downloads, scans and training all read, so a client may only name an object it uploaded
  * or one already on a model it owns:
  *
- *   1. its own upload prefix, `<uploadType>/<callerId>/...`, in an upload bucket;
+ *   1. its own upload prefix, `<uploadType>/<callerId>/...`, in an upload bucket (not the temp one);
  *   2. `modelVersion/<id>/...` in an upload bucket, where `<id>` is a version of the same model
  *      (where a training checkpoint is copied to);
  *   3. exactly the url of a live file on a model the caller owns now (re-using a file, e.g. a
@@ -137,7 +137,10 @@ function locateBucket(
   return null;
 }
 
-const uploadTypes: string[] = Object.values(UploadType);
+// A temp upload is deleted a week after upload, so it can never back a durable model file.
+const uploadTypes: string[] = Object.values(UploadType).filter(
+  (type) => type !== UploadType.TrainingImagesTemp
+);
 const isCanonicalId = (segment: string | undefined) =>
   !!segment && /^[1-9][0-9]*$/.test(segment) && Number.isSafeInteger(Number(segment));
 

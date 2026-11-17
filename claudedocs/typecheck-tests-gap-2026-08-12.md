@@ -1,6 +1,14 @@
 # `pnpm typecheck` is structurally blind to every file under `src/**/__tests__/`
 
-**Status (corrected 2026-08-21): merged, but NOT WIRED — the gate runs nowhere.** PR #3868
+**Status (2026-10-30): superseded.** The root `tsconfig.json` now excludes EVERY test file, not
+just `src/**/__tests__/`, to cut `pnpm typecheck` and editor memory. The gate covers that whole set
+(`TEST_EXCLUDES` in `scripts/ci/typecheck-tests-compare.mjs`), runs as `pnpm run typecheck:tests`,
+and is wired as the `typecheck-tests` job in `.github/workflows/lint.yml`. The rest of this doc is
+the August record: §1 (which test files were already checked) and §5 (how to wire it) describe the
+August state and no longer hold.
+
+**Status as of 2026-08-21 (historical, superseded above): merged, but NOT WIRED — the gate runs
+nowhere.** PR #3868
 merged 2026-08-13 (its title reads `PROPOSAL (do not merge)`, which is misleading); PR #4189
 extended it to `scripts/` 2026-08-20. `tsconfig.tests.json`, `scripts/ci/typecheck-tests-gate.mjs`
 and its baseline are all on `main`, and the gate has its own unit tests — but **nothing invokes

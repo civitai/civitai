@@ -8,9 +8,8 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
 
-const { gameFrameReportSchema, fileGameFrameReport, applyGameFrameState } = await import(
-  '~/server/services/game-frame-report.service'
-);
+const { gameFrameReportSchema, gameFrameStateSchema, fileGameFrameReport, applyGameFrameState } =
+  await import('~/server/services/game-frame-report.service');
 const { gameFrameReportHandler, gameFrameStateHandler } = await import(
   '~/server/game-frame/report-endpoints'
 );
@@ -80,6 +79,16 @@ beforeEach(() => {
       ...data,
     })
   );
+});
+
+describe('Game Frame timestamps', () => {
+  // Game Frame is a separate service; a minute-precision `at` must keep parsing across zod upgrades.
+  it('reads a minute-precision report and state `at` as :00', () => {
+    expect(parse({ at: '2026-10-06T21:30Z' }).at).toBe('2026-10-06T21:30:00Z');
+    expect(gameFrameStateSchema.parse({ ...body().game, at: '2026-10-06T21:30Z' }).at).toBe(
+      '2026-10-06T21:30:00Z'
+    );
+  });
 });
 
 describe('B.2 reason mapping', () => {
@@ -676,15 +685,18 @@ describe('filing edge cases', () => {
   it.each([
     ['adult', 'NSFW'],
     ['spam', 'Spam'],
-  ])('folds %s reports on reason and subject, with no violation predicate', async (gfReason, reason) => {
-    await file({ gfReason, reason, violation: undefined });
+  ])(
+    'folds %s reports on reason and subject, with no violation predicate',
+    async (gfReason, reason) => {
+      await file({ gfReason, reason, violation: undefined });
 
-    expect(db.report.findFirst).toHaveBeenCalled();
-    for (const [{ where }] of db.report.findFirst.mock.calls) {
-      expect(where).not.toHaveProperty('details');
-      expect(where.AND).toEqual([{ details: { path: ['subject'], equals: 'game' } }]);
+      expect(db.report.findFirst).toHaveBeenCalled();
+      for (const [{ where }] of db.report.findFirst.mock.calls) {
+        expect(where).not.toHaveProperty('details');
+        expect(where.AND).toEqual([{ details: { path: ['subject'], equals: 'game' } }]);
+      }
     }
-  });
+  );
 
   it('puts the subject and violation predicates on both dedupe reads', async () => {
     await file();

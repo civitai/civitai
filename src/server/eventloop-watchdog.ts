@@ -460,7 +460,8 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 
-const { sab, thresholdMs, port, token, heartbeatIntervalMs, pollMs, cap, starvedRatio } = workerData;
+const { sab, thresholdMs, port, token, previousToken, heartbeatIntervalMs, pollMs, cap, starvedRatio } =
+  workerData;
 const beat = new BigInt64Array(sab);
 
 const BUCKETS = [1, 2, 5, 10, 30, 60, 120, 300, 600];
@@ -642,6 +643,10 @@ function render() {
     out.push('# TYPE ' + name + ' gauge');
     out.push(name + ' ' + value);
   }
+  out.push('# HELP civitai_app_watchdog_token_match_total Scrapes of this port authenticated by the webhook token, by which configured value matched. Counts the scrape being served.');
+  out.push('# TYPE civitai_app_watchdog_token_match_total counter');
+  out.push('civitai_app_watchdog_token_match_total{slot="current"} ' + tokenMatches.current);
+  out.push('civitai_app_watchdog_token_match_total{slot="previous"} ' + tokenMatches.previous);
   gauge('civitai_app_watchdog_up', 'Event-loop watchdog worker is running and serving. Absence of this series is the signal that the watchdog is not running.', 1);
   gauge('civitai_app_watchdog_heartbeat_age_ms', 'Milliseconds since the main thread last wrote the shared-memory heartbeat. Grows without bound while the loop is wedged.', age);
   gauge('civitai_app_watchdog_wedged', 'Whether the main-thread event loop is currently considered wedged (1) or not (0).', wedged);
@@ -711,16 +716,36 @@ if (!token) {
   process.exit(78);
 }
 
-function tokenAccepted(url) {
+function sameToken(given, expected) {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// WEBHOOK_TOKEN_PREVIOUS is accepted too, as the main app's WebhookEndpoint does. Matches are
+// counted by slot here because this port is outside the registry that counts the app's matches.
+const tokenMatches = { current: 0, previous: 0 };
+
+function slotOf(given) {
+  if (sameToken(given, token)) return 'current';
+  const previous = typeof previousToken === 'string' ? previousToken : '';
+  if (previous.trim() !== '' && sameToken(given, previous)) return 'previous';
+  return undefined;
+}
+
+// Authorization: Bearer or ?token=, either one, as /api/metrics accepts.
+function tokenSlot(req) {
+  const auth = typeof req.headers.authorization === 'string' ? req.headers.authorization : '';
+  const bearer = /^Bearer (.+)$/.exec(auth);
+  const fromBearer = bearer ? slotOf(bearer[1]) : undefined;
+  if (fromBearer) return fromBearer;
   let given = '';
   try {
-    given = new URL(url, 'http://localhost').searchParams.get('token') || '';
+    given = new URL(req.url || '', 'http://localhost').searchParams.get('token') || '';
   } catch (err) {
-    return false;
+    return undefined;
   }
-  const a = Buffer.from(given);
-  const b = Buffer.from(token);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  return slotOf(given);
 }
 
 const server = http.createServer(function (req, res) {
@@ -731,11 +756,13 @@ const server = http.createServer(function (req, res) {
     res.end();
     return;
   }
-  if (!tokenAccepted(url)) {
+  const slot = tokenSlot(req);
+  if (!slot) {
     res.writeHead(401);
     res.end();
     return;
   }
+  tokenMatches[slot] += 1;
   res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8' });
   res.end(render());
 });
@@ -892,9 +919,9 @@ export function registerEventLoopWatchdog(): void {
         sab: heartbeatBuffer,
         thresholdMs,
         port,
-        // Same ?token= posture as /api/metrics. Absent token => unauthenticated,
-        // which is only acceptable because the port is never added to a Service.
+        // Bearer or ?token=, as /api/metrics. The worker refuses to serve with an empty token.
         token: process.env.WEBHOOK_TOKEN ?? '',
+        previousToken: process.env.WEBHOOK_TOKEN_PREVIOUS ?? '',
         heartbeatIntervalMs,
         pollMs: Math.min(DEFAULT_POLL_MS, heartbeatIntervalMs),
         // Resolved on the MAIN thread at spawn, so a bad config is a boot-time fact

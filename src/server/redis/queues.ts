@@ -61,7 +61,7 @@ import { logToAxiom } from '~/server/logging/client';
 // The queue CONSUMERS (base.search-index.ts processQueues/update + base.metrics.ts)
 // run on background crons — NOT the latency-critical inline mutation path — and a
 // large sMembers on a healthy-but-BUSY sysRedis can legitimately exceed the tight
-// inline read deadline (default REDIS_SYS_READ_TIMEOUT_MS ≈ 2s), producing a false
+// inline read deadline (default REDIS_SYS_READ_TIMEOUT_MS = 1s), producing a false
 // timeout that (now, non-destructively) just skips-and-retries the run. Give the
 // consumer bucket-content reads a larger deadline so we don't needlessly defer a
 // run on transient busyness; a true half-open still fails open, just after a
@@ -186,7 +186,7 @@ async function persistDroppedEnqueue(key: string, ids: number[]) {
         type: 'error',
         name: 'search-index-queue-fallback',
         message: `parking lot for ${key} is at the ${FALLBACK_MAX_IDS_PER_KEY} id cap; ${ids.length} id(s) discarded`,
-      }).catch(() => undefined);
+      });
     }
   } catch (err) {
     // Both stores are now failing. Nothing left to try — log and let the caller
@@ -195,7 +195,7 @@ async function persistDroppedEnqueue(key: string, ids: number[]) {
       type: 'error',
       name: 'search-index-queue-fallback',
       message: `could not park ${ids.length} dropped id(s) for ${key}: ${(err as Error).message}`,
-    }).catch(() => undefined);
+    });
   }
 }
 

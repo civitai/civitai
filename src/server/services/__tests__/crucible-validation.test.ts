@@ -32,7 +32,8 @@ import {
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
-  CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
+  CRUCIBLE_MIN_VIEW_SECONDS_MAX,
+  CRUCIBLE_MIN_VIEW_SECONDS_MIN,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
@@ -698,6 +699,18 @@ describe('submitEntry — content type', () => {
     dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
   };
 
+  it('refuses an entry-draft upload whose scan failed, and says to upload it again', async () => {
+    draftOf();
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      ingestion: 'Error',
+    });
+
+    await expect(submit()).rejects.toThrow(/Processing this upload failed/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+  });
+
   it("enters the caller's own draft image and schedules its post for the crucible's end", async () => {
     const endAt = new Date(Date.now() + 3 * 24 * 60 * 60_000);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue({
@@ -842,7 +855,7 @@ describe('createCrucibleInputSchema — video settings', () => {
   it('accepts a video crucible carrying both settings', () => {
     const result = createCrucibleInputSchema.safeParse({
       ...videoInput,
-      minViewSeconds: 6,
+      minViewSeconds: 7,
       maxClipSeconds: 120,
     });
 
@@ -890,17 +903,32 @@ describe('createCrucibleInputSchema — video settings', () => {
     ['a zero minimum — absent is how "no rule" is spelled', { minViewSeconds: 0 }],
     ['a zero maximum, which would forbid every entry', { maxClipSeconds: 0 }],
     ['a fractional minimum', { minViewSeconds: 6.5 }],
-    ['an unlisted minimum', { minViewSeconds: 7 }],
+    ['a minimum below the bound', { minViewSeconds: 2 }],
+    ['a minimum above the bound', { minViewSeconds: 31 }],
     ['an unlisted maximum', { maxClipSeconds: 1 }],
     ['a maximum longer than any uploadable video', { maxClipSeconds: 600 }],
   ])('rejects %s', (_label, settings) => {
     expect(createCrucibleInputSchema.safeParse({ ...videoInput, ...settings }).success).toBe(false);
   });
 
-  it.each(CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS)('accepts the listed %ss minimum', (minViewSeconds) => {
-    expect(createCrucibleInputSchema.safeParse({ ...videoInput, minViewSeconds }).success).toBe(
-      true
-    );
+  it.each([CRUCIBLE_MIN_VIEW_SECONDS_MIN, 20, CRUCIBLE_MIN_VIEW_SECONDS_MAX])(
+    'accepts a %ss minimum',
+    (minViewSeconds) => {
+      expect(createCrucibleInputSchema.safeParse({ ...videoInput, minViewSeconds }).success).toBe(
+        true
+      );
+    }
+  );
+
+  it.each([
+    [20, true],
+    [3, true],
+    [30, true],
+    [2, false],
+    [31, false],
+    [6.5, false],
+  ])('update schema: a %s second minimum is accepted=%s', (minViewSeconds, valid) => {
+    expect(updateCrucibleSchema.safeParse({ id: 1, minViewSeconds }).success).toBe(valid);
   });
 
   it.each(CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS)('accepts the listed %ss maximum', (maxClipSeconds) => {
@@ -1123,7 +1151,7 @@ describe('submitEntry — one submit at a time per user', () => {
     expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
       'lock:crucible-entry:1:42',
       expect.stringMatching(/^[0-9a-f-]{36}$/),
-      { PX: 30_000, NX: true }
+      { PX: 180_000, NX: true }
     );
   });
 
@@ -1190,6 +1218,45 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.crucibleEntry.create.mock.invocationCallOrder[0]
     );
+  });
+
+  // The checks before the write read the crucible as it was; a moderator can lower a cap to the
+  // live count between them and this entry's write.
+  const capsAtWrite = (full: { total: boolean; user: boolean; entryLimit?: number }) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"maxTotalEntries"') ? [full] : []
+    );
+
+  it.each([
+    ['total cap', { total: true, user: false }, 'reached its maximum number of entries'],
+    [
+      'per-user limit',
+      { total: false, user: true, entryLimit: 2 },
+      'reached the maximum of 2 entries',
+    ],
+  ])(
+    'refuses an entry over a %s lowered since its checks, read after the row lock, and refunds it',
+    async (_, full, message) => {
+      capsAtWrite(full);
+
+      await expect(submit()).rejects.toThrow(message);
+
+      const capRead = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+        (strings as TemplateStringsArray).join('?').includes('"maxTotalEntries"')
+      );
+      expect(capRead).toBeGreaterThanOrEqual(0);
+      expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[capRead]
+      );
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+      expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('saves an entry while it is under both caps', async () => {
+    capsAtWrite({ total: false, user: false });
+    await submit();
+    expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalled();
   });
 
   it("raises the stored prize pool by a paid entry's fee", async () => {

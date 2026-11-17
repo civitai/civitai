@@ -31,13 +31,19 @@ code is usually *correct* — just redundant, and destined to diverge.
 
 ## Search before you conclude anything is novel
 
-Do not reason about whether something probably exists. Grep. For each new function, component or hook
-in the diff, run the search **before** deciding:
+Do not reason about whether something probably exists. Grep. 🔴 **This is mandatory, not advice** — as
+advice it has missed real duplicates. For **each new function, component or hook** in the diff, run
+the search **before** deciding, and include at least one **same-shape** search: one that targets what
+it does (same inputs, same output, same behaviour), not what it is called. For a **server-side
+function, or anything that fetches data** (a data-loading hook included), that search must cover
+`src/server/services/`; a purely client-side UI helper does not need one there. Record every command
+in `checks.searches` (see Report). **An existing function of the same shape is a finding**, or a
+one-line `reason` it differs; a grep hit is only a lead, and needs no reason of its own.
 
 ```bash
 git diff --stat main...HEAD -- src/
 grep -rn "getMyImages\|getAllImages" src/server/services/image.service.ts   # exact name
-grep -rniE "function (get|fetch|load)[A-Za-z]*Images" src/server/services/  # shape
+grep -rnE 'image\.findMany|FROM "Image"' src/server/services/               # shape: same table, same read
 ls src/components/ | grep -i carousel                                       # component by concept
 ```
 
@@ -82,32 +88,39 @@ perf reviewer owns the cost. Generic machinery lives in `src/server/utils/cache-
 instead of picking the right rung is a reuse finding. `src/server/middleware.trpc.ts` supplies
 `cacheIt`, `edgeCacheIt`, `noEdgeCache`, `purgeOnSuccess`, `rateLimit`, `applyUserPreferences`.
 
-**Server utilities.** `withDistributedLock` (`src/server/utils/distributed-lock.ts`),
-`limitConcurrency`/`Limiter` (`concurrency-helpers.ts`), `dbRead`/`dbWrite`
-(`src/server/db/client.ts`), `pgDbRead`/`pgDbReadLong`/`pgDbWrite` (`db/pgDb.ts`), `kyselyDb`
-(`db/kyselyDb.ts`). A new pool, a new lock, or a hand-rolled `Promise.all` batcher is a finding.
+**Server utilities.** The "Use X for Y" table in `.claude/rules/server.md` names the one helper for
+each recurring need (outbound HTTP, rate limit, lock, cache, DB client, REST error, retry, logging, env,
+feature flag, pagination, moderator route, client IP); a diff that does one of those another way is a
+reuse finding, even when the nearest existing code does it that way too. Also `limitConcurrency`/`Limiter`
+(`concurrency-helpers.ts`). The DB clients are not equally valid: follow the table's DB read and New query
+rows (`dbRead`/`kyselyRead`, `getDbWithoutLag`/`getKyselyWithoutLag`, `kyselyWrite`, `@civitai/db-queries`).
+A new pool, a new lock, or a hand-rolled `Promise.all` batcher is a finding.
 
 **Components** (`src/components/`). The ones most often reimplemented:
 
 - `EdgeMedia/` — **CLAUDE.md requires it over `next/image`.** A raw `<img>` or `next/image` in the diff
   is a finding every time.
 - `MasonryGrid/`, `MasonryColumns/`, `InView/`, `IntersectionObserver/`, `EndOfFeed/` — infinite feeds.
-- `Dialog/` — the dialog registry (`dialog-registry2.ts`, and `routed-dialog/registry.ts` for
-  URL-routed ones). A bare `<Modal>` with local `opened` state bypasses it.
+- `Dialog/` — `dialogStore.trigger({ component, props })` (`dialogStore.ts`), with the dialog calling
+  `useDialogContext()`; confirms use `Dialog/Common/ConfirmDialog`; URL-routed dialogs go in
+  `routed-dialog/registry.ts`. A bare `<Modal>` with local `opened` state, or a new `@mantine/modals`
+  call, bypasses it.
 - `ImageGuard/`, `BrowsingLevel/`, `HiddenPreferences/` — NSFW/blur gating. Never re-derive this.
 - `UserAvatar/`, `CreatorCard/`, `Cards/`, `CardTemplates/`, `IconBadge/`, `UserStatBadges/`.
 - `LoginRedirect/`, `LoginPopover/`, `JoinPopover/`, `RequireMembership/`, `Gated/` — gating an action
   behind sign-in or membership.
-- `NoContent/`, `PageLoader/`, `TwLoader/`, `SkeletonSwitch/` — empty and loading states.
+- `NoContent/`, `PageLoader/`, `SkeletonSwitch/` — empty and loading states.
 - `ContentClamp/`, `LineClamp/`, `RenderHtml/`, `Markdown/`, `TypographyStylesWrapper/` — user text.
-- `ConfirmButton/`, `PopConfirm/`, `CopyButton/`, `ShareButton/`, `MultiActionButton/`,
-  `LegacyActionIcon/`.
+- `PopConfirm/`, `CopyButton/`, `ShareButton/`, `LegacyActionIcon/`.
 - `Dates/`, `LocalTimestamp/`, `Countdown/`, `Currency/`, `DurationBadge/` — formatting.
 
 **Hooks** (`src/hooks/`). `useCurrentUser`, `useIsClient`, `useIsMounted`, `useIsMobile`, `useInView`,
 `useResizeObserver`, `useStorage`, `useZodRouteParams`, `useCatchNavigation`, `useIsOverflown`,
 `useDebouncer`-shaped helpers in `src/utils/debouncer.ts`, and the upload trio
-`useS3Upload`/`useCFImageUpload`/`useMediaUpload`. Uploads in particular get rewritten constantly.
+`useS3Upload`/`useCFImageUpload`/`useMediaUpload`. Uploads in particular get rewritten constantly: any
+browser multipart upload through `/api/upload` goes through `startMultipartUpload`
+(`src/utils/multipart-upload.ts`). A hand-written `min(base * 2 ** attempt, max)` is `backoffDelay`
+(`src/utils/backoff.ts`).
 
 **Constants and enums.** `src/shared/constants/` (`browsingLevel.constants.ts`, `buzz.constants.ts`,
 `generation.constants.ts`, `basemodel.constants.ts`, …) and `~/shared/utils/prisma/enums`. A magic
@@ -170,6 +183,69 @@ need different work from the fixer.
 that is the bulk of a long report and none of it is actionable. Say plainly if the segment is clean —
 "nothing rebuilt" is a real and common outcome. Two exceptions, one line each: a duplicate you decided
 was *deliberate* and why, and an existing helper the segment should watch for on its next consumer.
+
+### The `checks` block — required, findings or not
+
+The one structured exception to "findings only": it records the method, so a reader can tell a lane that
+searched from one that skipped. **One entry per search command run**: `symbol` is the new function,
+component or hook it was for, `command` is the command as run, and `hits` is the integer count of
+matching lines it returned. **Every new symbol has at least one entry, and at least one of its entries
+is a same-shape search**; a symbol without one was not checked. When the search found an existing
+function of the same shape that you judged different, put why in an optional `reason` on that entry;
+it is then not a finding. An empty list means the diff adds no functions, components or hooks; never
+omit the key. When your invoker gives you a JSON result contract, put its `checks` object in that
+result; otherwise end your report with this block as a fenced `json` block:
+
+```json
+{
+  "checks": {
+    "searches": [
+      { "symbol": "getThingsForUser", "command": "grep -rn 'thing.findMany' src/server/services/", "hits": 3 },
+      {
+        "symbol": "getThingsForUser",
+        "command": "grep -rn 'getThings' src/server/services/",
+        "hits": 1,
+        "reason": "getThings filters by collection, not owner"
+      }
+    ]
+  }
+}
+```
+
+### Facts on every finding — required
+
+<!-- pr-review-gate:facts -->
+Still give your own best severity; the gate may recompute it from these facts. Report all three on
+every finding. When your invoker gives you a JSON result contract, they are fields of each finding;
+otherwise end each finding with them as `impact / reach / evidence`, e.g.
+`money / unusual-state / traced src/server/services/x.service.ts:42`.
+
+- `impact`, what goes wrong if it ships: `money` (Buzz, a charge, a payout moved wrongly), `access` (a
+  user gets or keeps what they should not, or loses what they should have: auth, ownership, bans,
+  moderation, NSFW gating), `data-loss` (rows or files destroyed or corrupted), `privacy` (PII or private
+  content shown to the wrong person), `wrong-for-user` (a visible wrong result, nothing lost: a wrong
+  count, a dead button), `internal` (cost only we see: an extra query, log noise), `maintainability`
+  (nothing wrong yet: a duplicate, a misleading comment).
+- `reach`, when it happens: `normal-use` (an ordinary request on the main path), `unusual-state` (a rare
+  but real state: a retry, a webhook delivered twice, a race), `theoretical` (you found no path to it).
+- `evidence`, `{kind, ref}`: `traced` (you followed the path; `ref` is the `file:line` that does it),
+  `reproduced` (you ran it; `ref` is the short repro), `inferred` (you reasoned it without tracing;
+  `ref` is the `file:line` you reasoned from).
+
+Report the reach you can show, not the worst you can imagine. The allowed values, for tools:
+
+```json
+{
+  "impact": ["money", "access", "data-loss", "privacy", "wrong-for-user", "internal", "maintainability"],
+  "reach": ["normal-use", "unusual-state", "theoretical"],
+  "evidence.kind": ["traced", "reproduced", "inferred"]
+}
+```
+<!-- /pr-review-gate:facts -->
+
+Example: a hand-rolled price formatter beside the existing helper is `maintainability / normal-use /
+traced`; if the copy already diverges (it misses a filter the helper applies), report the divergence's
+impact instead.
 
 ## Delivering your report
 

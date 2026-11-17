@@ -1,4 +1,5 @@
-import { Badge, Divider, Group, Loader, Popover, Progress, Stack, Text } from '@mantine/core';
+import { Badge, Divider, Group, Loader, Progress, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconStarFilled } from '@tabler/icons-react';
 import type { MouseEvent } from 'react';
 import { useState } from 'react';

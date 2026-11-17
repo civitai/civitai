@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning service.
@@ -266,6 +267,34 @@ describe('startAgentReview — ZIP path', () => {
   });
 });
 
+describe('startAgentReview — audit trail', () => {
+  it.each([
+    [7, 'moderator'],
+    [null, 'system'],
+  ] as const)('a start by modUserId=%s is recorded as actor %s', async (modUserId, actor) => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'app-blocks.review.agent-start',
+        publishRequestId: PUBREQ,
+        reportId: 'arar_TEST',
+        actor,
+        modUserId,
+      }),
+      'webhooks'
+    );
+  });
+
+  it('a start whose provisioning fails records no start', async () => {
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    stubFetch(false);
+    await expect(startAgentReview({ publishRequestId: PUBREQ, modUserId: null })).rejects.toThrow();
+    const names = loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { name?: string }).name);
+    expect(names).not.toContain('app-blocks.review.agent-start');
+  });
+});
+
 describe('startAgentReview — PUSH (Forgejo) path', () => {
   it('reconstructs from Forgejo, stages it, and presigns the staged key', async () => {
     mockFindUnique.mockResolvedValue(
@@ -519,6 +548,23 @@ describe('startAgentReview — targeted re-run', () => {
       expect(created.id).toBe('arar_TEST');
       expect(created.status).toBe('running');
     });
+  });
+
+  it("🔴 a carried security audit does NOT carry the old run's impersonation record", async () => {
+    // The impersonation check runs again when this run reports; until then the new row must
+    // have no record, so the submission cannot sit in the fast lane on the old run's check.
+    mockFindUnique.mockResolvedValue(pendingRequest());
+    mockGetLatest.mockResolvedValue({
+      ...latestPartial,
+      securityAudit: {
+        findings: [{ severity: 'low' }],
+        impersonationCheck: { status: 'complete' },
+      },
+    });
+
+    await startAgentReview({ publishRequestId: PUBREQ, modUserId: 7, sections: ['codeReview'] });
+
+    expect(createdRow().securityAudit).toEqual({ findings: [{ severity: 'low' }] });
   });
 
   it('a section that previously failed is not carried even when it is NOT the one being retried', async () => {

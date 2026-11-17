@@ -279,9 +279,13 @@ export async function getActiveChallengesFromDb(
   return getChallengesByIds(rows.map((row) => row.id));
 }
 
+export const OWED_REVIEW_GRACE_HOURS = 2;
+
 /**
  * Gets active challenges that have ENDED (endsAt <= now).
- * These challenges need winner picking and status transition.
+ * These challenges need winner picking and status transition. One still owed reviews waits, up to
+ * OWED_REVIEW_GRACE_HOURS past its end, so an entry a re-judge or an outage left unscored can place;
+ * it stays Active meanwhile, so the review job keeps working through the list.
  * Returns challenges ordered by endsAt ASC (oldest first, id tiebreak), bounded to
  * CHALLENGE_JOB_BATCH_SIZE per run.
  */
@@ -291,6 +295,10 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
     FROM "Challenge"
     WHERE status = ${ChallengeStatus.Active}::"ChallengeStatus"
     AND "endsAt" <= now()
+    AND (
+      COALESCE(metadata->'pendingReview', '{}'::jsonb) = '{}'::jsonb
+      OR "endsAt" <= now() - make_interval(hours => ${Prisma.raw(String(OWED_REVIEW_GRACE_HOURS))})
+    )
     ORDER BY "endsAt" ASC, id ASC
     LIMIT ${CHALLENGE_JOB_BATCH_SIZE}
   `;
@@ -1116,4 +1124,40 @@ export async function resolveChallengeReviewInputs(challenge: {
     categories: userCategories?.map((c) => ({ key: c.key, name: c.label, criteria: c.criteria })),
     nsfw: !getIsSafeBrowsingLevel(challenge.allowedNsfwLevel),
   };
+}
+
+/**
+ * SQL over `CommentV3 cm`: a live top-level comment by the judge. On an entry's image it is the
+ * durable "already reviewed" mark: unlike the judged tag, it survives the entry leaving and
+ * rejoining the collection, so a re-judge must delete exactly these comments.
+ */
+export const judgeReviewCommentSql = (judgeUserId: number) => Prisma.sql`
+  cm."entityType" = 'image' AND cm."parentId" IS NULL AND cm."deletedAt" IS NULL
+  AND cm."userId" = ${judgeUserId}`;
+
+/**
+ * Stamps a review tick and settles its owed reviews. Removes only the keys the tick read, so an
+ * entry queued after the tick read the list is kept.
+ */
+export async function saveReviewState({
+  challengeId,
+  reviewedAt,
+  resolved,
+  retry,
+}: {
+  challengeId: number;
+  reviewedAt: number;
+  resolved: string[];
+  retry: Record<string, number>;
+}) {
+  await dbWrite.$executeRaw`
+    UPDATE "Challenge"
+    SET metadata = jsonb_set(
+      COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reviewedAt', ${reviewedAt}::bigint),
+      '{pendingReview}',
+      (COALESCE(metadata->'pendingReview', '{}'::jsonb) - ${resolved}::text[])
+        || ${JSON.stringify(retry)}::jsonb
+    )
+    WHERE id = ${challengeId}
+  `;
 }

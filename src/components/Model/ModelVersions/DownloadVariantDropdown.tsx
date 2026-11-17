@@ -6,10 +6,10 @@ import {
   Group,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconCategory, IconCheck, IconChevronDown, IconDownload } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
@@ -25,6 +25,7 @@ import type { ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
+import { NOT_COMMERCIALLY_AVAILABLE_LABEL } from '~/server/common/constants';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -41,6 +42,8 @@ interface DownloadVariantDropdownProps {
   acceptsBlueBuzz?: boolean;
   isLoadingAccess?: boolean;
   archived?: boolean;
+  /** Base model is non-commercial and the viewer has no access: keep the lock, no purchase path. */
+  notCommerciallyLocked?: boolean;
   onPurchase?: () => void;
   /**
    * Optional controlled selection. When `onSelectFileId` is provided the parent
@@ -62,6 +65,7 @@ export function DownloadVariantDropdown({
   acceptsBlueBuzz,
   isLoadingAccess,
   archived,
+  notCommerciallyLocked,
   onPurchase,
   selectedFileId: controlledFileId,
   onSelectFileId,
@@ -115,7 +119,7 @@ export function DownloadVariantDropdown({
   };
 
   const handleDownloadClick = () => {
-    if (!canDownload && onPurchase) {
+    if (!canDownload && onPurchase && !notCommerciallyLocked) {
       onPurchase();
     }
   };
@@ -124,7 +128,7 @@ export function DownloadVariantDropdown({
     e.stopPropagation();
     if (!canDownload) {
       e.preventDefault();
-      if (onPurchase) onPurchase();
+      if (onPurchase && !notCommerciallyLocked) onPurchase();
     }
   };
 
@@ -162,7 +166,7 @@ export function DownloadVariantDropdown({
             downloadPrice={downloadPrice}
             listedPrice={listedPrice}
             acceptsBlueBuzz={acceptsBlueBuzz}
-            disabled={archived || isLoadingAccess}
+            disabled={archived || isLoadingAccess || notCommerciallyLocked}
             fullWidth
             variant="light"
             color="blue"
@@ -290,7 +294,15 @@ export function DownloadVariantDropdown({
                   <Text size="xs" c="dimmed">
                     {formatKBytes(file.sizeKB)}
                   </Text>
-                  <Tooltip label={canDownload ? 'Download' : 'Purchase to download'}>
+                  <Tooltip
+                    label={
+                      canDownload
+                        ? 'Download'
+                        : notCommerciallyLocked
+                        ? NOT_COMMERCIALLY_AVAILABLE_LABEL
+                        : 'Purchase to download'
+                    }
+                  >
                     <ActionIcon
                       component="a"
                       href={
@@ -301,7 +313,7 @@ export function DownloadVariantDropdown({
                       color="gray"
                       size={32}
                       radius="md"
-                      disabled={archived || isLoadingAccess}
+                      disabled={archived || isLoadingAccess || notCommerciallyLocked}
                     >
                       <IconDownload size={16} />
                     </ActionIcon>
@@ -399,7 +411,7 @@ export function DownloadVariantDropdown({
           downloadPrice={downloadPrice}
           listedPrice={listedPrice}
           acceptsBlueBuzz={acceptsBlueBuzz}
-          disabled={!activeFile || archived || isLoadingAccess}
+          disabled={!activeFile || archived || isLoadingAccess || notCommerciallyLocked}
           fullWidth
           style={{
             backgroundColor: 'rgba(34, 139, 230, 0.15)',

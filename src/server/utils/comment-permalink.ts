@@ -1,12 +1,13 @@
+import { sql } from 'kysely';
 import { kyselyRead } from '~/server/db/kyselyDb';
-import { threadUrlMap } from '~/server/notifications/comment.notifications';
+import { postTextAnchorImage, threadUrlMap } from '~/server/notifications/comment.notifications';
 
 /**
- * What `/comments/<id>` reads: the comment's entity, plus the two addresses that are not the
- * entity id. A comic chapter is addressed by its project, and an app listing by its slug
- * (`entityId` is `app_listings.serial_id`, an integer that appears nowhere in the URL). A deleted
- * comment has no permalink: a placeholder in a section is reached through its replies. Nor, but for
- * a moderator, does one hidden for ToS.
+ * What `/comments/<id>` reads: the comment's entity, plus the addresses that are not the entity id.
+ * A comic chapter is addressed by its project and position, an app listing by its slug (`entityId`
+ * is `app_listings.serial_id`, an integer that appears nowhere in the URL), and a storyline text by
+ * its anchor image. A deleted comment has no permalink: a placeholder in a section is reached
+ * through its replies. Nor, but for a moderator, does one hidden for ToS.
  */
 export const getCommentPermalinkRow = (commentId: number, { includeHidden = false } = {}) =>
   kyselyRead
@@ -17,11 +18,16 @@ export const getCommentPermalinkRow = (commentId: number, { includeHidden = fals
     .leftJoin('app_listings as al', (join) =>
       join.onRef('al.serial_id', '=', 'c.entityId').on('c.entityType', '=', 'appListing')
     )
+    .leftJoin('PostText as ptx', (join) =>
+      join.onRef('ptx.id', '=', 'c.entityId').on('c.entityType', '=', 'postText')
+    )
     .select([
+      sql<number | null>`${sql.raw(postTextAnchorImage('ptx'))}`.as('postTextAnchorImageId'),
       'c.id',
       'c.entityType',
       'c.entityId',
       'cch.projectId as comicProjectId',
+      'cch.position as comicChapterPosition',
       'al.slug as appListingSlug',
     ])
     .where('c.id', '=', commentId)
@@ -52,7 +58,10 @@ export const UNADDRESSABLE_ENTITY_TYPES = ['model3dReview'] as const;
  * `/apps/store-preview/undefined`. Both are 404s dressed as working links, so neither may pass.
  */
 export const resolveCommentTarget = (
-  row: Pick<CommentPermalinkRow, 'entityType' | 'entityId' | 'comicProjectId' | 'appListingSlug'>
+  row: Pick<
+    CommentPermalinkRow,
+    'entityType' | 'entityId' | 'comicProjectId' | 'appListingSlug' | 'postTextAnchorImageId'
+  >
 ): CommentThreadTarget | null => {
   if ((UNADDRESSABLE_ENTITY_TYPES as readonly string[]).includes(row.entityType)) return null;
   if (row.entityType === 'appListing')
@@ -62,6 +71,11 @@ export const resolveCommentTarget = (
   if (row.entityType === 'comicChapter')
     return row.comicProjectId
       ? { threadType: 'comicChapter', threadParentId: row.comicProjectId }
+      : null;
+  // A text in a post with no image has no slide URL.
+  if (row.entityType === 'postText')
+    return row.postTextAnchorImageId
+      ? { threadType: 'postText', threadParentId: row.postTextAnchorImageId }
       : null;
   return row.entityId ? { threadType: row.entityType, threadParentId: row.entityId } : null;
 };
@@ -81,10 +95,11 @@ export const buildCommentPermalink = (
     threadType: target.threadType,
     threadParentId: target.threadParentId,
     appListingSlug: target.appListingSlug,
+    comicChapterPosition: row.comicChapterPosition,
+    postTextId: row.entityId,
     commentId: row.id,
-    // Always pin the target comment as the thread root so it renders standalone via
-    // RootThreadProvider's activeComment path. Sidesteps cursor-paginated thread fetches
-    // (target may be on page N) and works uniformly for root and reply comments.
+    // Always pin the target comment as the thread root, so it renders standalone: no cursor-paginated
+    // thread fetch (the target may be on page N), and root and reply comments behave alike.
     commentParentType: 'comment',
     commentParentId: row.id,
   });

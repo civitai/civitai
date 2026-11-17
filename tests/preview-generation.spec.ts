@@ -10,7 +10,9 @@ import { retryFlaky } from './preview-retry';
  * client actually fires the tRPC QUERY `orchestrator.whatIfFromGraph` and gets a
  * numeric Buzz cost back. whatIf is a pure price quote (no Buzz balance needed),
  * so it fires on-load once a model+workflow is selected — the default form
- * preselects a model, so we PREFER the on-load path (no interaction).
+ * preselects a model, so we PREFER the on-load path (no interaction). The default
+ * ecosystem is gate-aware once the gate config has loaded; see the test's comment on
+ * why the FIRST whatIf can still be a refusal.
  *
  * Runs only under playwright.preview.config.ts (needs PREVIEW_URL + minted
  * storage states). Cost source of truth: the whatIf payload
@@ -114,15 +116,66 @@ test.describe('generation cost quote (gold)', () => {
     return null;
   }
 
+  /**
+   * The whatIf's tRPC error messages carried in a raw response body. A batched
+   * response is HTTP 200 even when one procedure in it failed, so a whatIf that the
+   * server refused still arrives as a 200; this says why it had no cost. Collects every
+   * `message` string that sits beside a `code` (the tRPC error shape, at whatever depth
+   * the wire format puts it), and nothing else, so the sibling procedures' data never
+   * reaches the log. An error whose `data.path` names a DIFFERENT procedure (a sibling
+   * sharing the batch) is skipped; one without a `data.path` is kept, so a wire shape
+   * that drops the path can still explain the whatIf.
+   */
+  function errorMessages(raw: string): string[] {
+    const messages: string[] = [];
+    const walk = (value: unknown) => {
+      if (value === null || typeof value !== 'object') return;
+      const node = value as Record<string, unknown>;
+      if (typeof node.message === 'string' && 'code' in node) {
+        const path = (node.data as { path?: unknown } | undefined)?.path;
+        if (typeof path !== 'string' || path === WHATIF_PROCEDURE) messages.push(node.message);
+      }
+      for (const child of Object.values(node)) walk(child);
+    };
+    for (const line of raw.split('\n')) {
+      try {
+        walk(JSON.parse(line));
+      } catch {
+        // Not a JSON line: nothing to report from it.
+      }
+    }
+    return messages;
+  }
+
+  /** One whatIf the route handler saw, with its buffered body. */
+  type Quote = { status: number; body: string };
+
+  /**
+   * The server's refusal of a gated ecosystem — the ONLY reason a quote before the
+   * costed one may fail.
+   */
+  const GATE_REFUSAL = 'Ecosystem is currently unavailable';
+
+  /** Whether a quote was a whatIf refused only because its ecosystem is gated. */
+  const isGateRefusal = (q: Quote) => {
+    const errors = errorMessages(q.body);
+    return q.status === 200 && errors.length > 0 && errors.every((m) => m.includes(GATE_REFUSAL));
+  };
+
+  /** What the captured whatIfs were, for a failure message. */
+  const describeQuotes = (quotes: Quote[]) =>
+    JSON.stringify(quotes.map((q) => ({ status: q.status, errors: errorMessages(q.body) })));
+
   // 1. Primary, network-based: whatIf fires on /generate load and quotes a cost.
   test('whatIfFromGraph fires on /generate and returns a numeric cost', async ({ page }) => {
     // /generate is the heaviest SSR page; on a cold/contended single-replica preview
     // pod the load+hydrate can exceed the whatIf wait, and Playwright's test-level
     // retries fire within seconds — too fast to outlast a load spike. Retry the whole
     // navigate+wait with backoff so a transient spike is ridden out (the assertion
-    // must still pass; a sustained failure surfaces after the attempts). Extend the
-    // per-test timeout to fit ~2 attempts of the 45s wait + navigation + backoff.
-    test.setTimeout(200_000);
+    // must still pass; a sustained failure surfaces after the attempts). The per-test
+    // timeout must fit both attempts in full, so attempt 2 gets its whole wait and its
+    // diagnostic: 2 x (navigationTimeout + whatIf wait) + retry backoff.
+    test.setTimeout(330_000);
 
     // 🔴 Buffer the whatIf body OURSELVES instead of reading `response.text()` later.
     // Under `httpBatchStreamLink` the app reads the whole jsonl stream (cost included)
@@ -132,31 +185,38 @@ test.describe('generation cost quote (gold)', () => {
     // given identifier" — measured on 4 of 8 /generate loads, i.e. a coin-flip flake
     // that has nothing to do with the product. Routing the request lets Playwright do
     // the fetch and hold the complete body, removing the race entirely.
-    let capturedBody: string | null = null;
+    //
+    // 🔴 Keep EVERY whatIf and accept the first one that carries a numeric cost — never
+    // just the first HTTP 200. Moderators can gate ecosystems off (generation gate
+    // rules). The form's default skips gated ecosystems, but only once the gate config
+    // has loaded: the quote it sends for its initial selection before then can name a
+    // gated ecosystem, and the server refuses it ("Ecosystem is currently unavailable")
+    // INSIDE a batched response that is still HTTP 200. The form then settles on an
+    // open default and quotes again. (A STORED gated selection, by contrast, stays
+    // selected on purpose — the product never switches it behind the user's back.)
+    // The server refuses gated ecosystems, so a quote with a cost proves it was open.
+    // Only that gate refusal is tolerated before the costed quote; any other failure
+    // ahead of it (non-200, a different error, no cost and no error) fails the attempt.
+    // It runs inside retryFlaky, so it fails the TEST only if it recurs on the retry.
+    const quotes: Quote[] = [];
     await page.route(
       (url) => isWhatIfResponse(url.toString()),
       async (route) => {
         const routed = await route.fetch();
         const text = await routed.text();
-        if (routed.status() === 200 && capturedBody === null) capturedBody = text;
+        quotes.push({ status: routed.status(), body: text });
         await route.fulfill({ response: routed, body: text });
       }
     );
 
-    const { body } = await retryFlaky(
+    // 🔴 Unroute before the test ends. /generate fires whatIf more than once, so a later
+    // whatIf can still be inside the handler's `route.fetch()` when the wait below
+    // resolves, and teardown closing the page under it fails the test. `ignoreErrors`
+    // stops waiting for in-flight handlers and swallows what they throw once unrouted.
+    const body = await retryFlaky(
       'whatIf on /generate',
       async () => {
-        capturedBody = null;
-        // Arm the response listener BEFORE navigating so an on-load fire isn't missed.
-        // 45s: whatIf is the heaviest client-side flow — page load + hydrate + form
-        // init + resource resolve + orchestrator round-trip must complete before it
-        // fires. The orchestrator itself is fast (~57ms), so when healthy this never
-        // approaches 45s — the budget is for a cold-pod slow window.
-        const whatIfResponse = page.waitForResponse(
-          (r) => isWhatIfResponse(r.url()) && r.status() === 200,
-          { timeout: 45_000 }
-        );
-
+        quotes.length = 0;
         const resp = await page.goto('/generate', { waitUntil: 'domcontentloaded' });
         expect(resp?.status(), 'HTTP status for /generate').toBeLessThan(400);
 
@@ -167,31 +227,51 @@ test.describe('generation cost quote (gold)', () => {
         );
 
         // NOTE: relies on the default /generate form preselecting a valid model+workflow
-        // so whatIf fires without interaction. If a future default ships with no model
-        // preselected this will time out — see the UI-fallback note below.
-        await whatIfResponse;
-        // Read the body the route handler buffered, NOT `response.text()` (see above).
-        // Raw text, not `.json()`: under batching the body is newline-delimited JSON
-        // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
-        // A plain null-check rather than `expect(...).not.toBeNull()` plus a cast.
-        // `capturedBody` is assigned from inside the `page.route` closure, which
-        // TS control-flow analysis cannot see, so after the reset above it narrows
-        // to `null` here and `as string` is an illegal null->string conversion.
-        // Checking explicitly narrows it honestly, needs no cast, and fails with a
-        // message that says which half broke: the response was seen, the body wasn't.
-        if (capturedBody === null) {
-          throw new Error(
-            'whatIf response was observed but its body was not captured by the route handler'
+        // so whatIf fires without interaction.
+        // 65s: whatIf is the heaviest client-side flow — page load + hydrate + form
+        // init + gate config + resource resolve + orchestrator round-trip must complete
+        // before it fires. The orchestrator itself is fast (~57ms), so when healthy this
+        // never approaches 65s — the budget is for a cold-pod slow window.
+        const deadline = Date.now() + 65_000;
+        for (;;) {
+          // Read the body the route handler buffered, NOT `response.text()` (see above).
+          // Raw text, not `.json()`: under batching the body is newline-delimited JSON
+          // (`trpc-accept: application/jsonl`) and `.json()` throws on it.
+          const hitIndex = quotes.findIndex(
+            (q) => q.status === 200 && extractCostTotal(q.body) !== null
           );
+          if (hitIndex >= 0) {
+            const before = quotes.slice(0, hitIndex);
+            const unexpected = before.filter((q) => !isGateRefusal(q));
+            if (unexpected.length) {
+              throw new Error(
+                `whatIfFromGraph failed for a reason other than "${GATE_REFUSAL}" before ` +
+                  `the costed quote: ${describeQuotes(unexpected)}`
+              );
+            }
+            if (before.length) {
+              console.log(
+                `[cost-quote] skipped ${before.length} gate-refused whatIf(s) ` +
+                  `("${GATE_REFUSAL}") before the costed quote`
+              );
+            }
+            return quotes[hitIndex].body;
+          }
+          if (Date.now() > deadline) {
+            throw new Error(
+              `No whatIfFromGraph response with a numeric cost.total within 65s; ` +
+                `whatIfs seen: ${describeQuotes(quotes)}`
+            );
+          }
+          await page.waitForTimeout(250);
         }
-        return { body: capturedBody };
       },
       { attempts: 2 }
-    );
+    ).finally(() => page.unrouteAll({ behavior: 'ignoreErrors' }));
 
+    // The wait above only returns a body with a numeric cost.total (a timeout throws
+    // with every quote's errors), so this asserts the quote's value, not its presence.
     const total = extractCostTotal(body);
-    expect(total, 'cost.total parsed from whatIfFromGraph response').not.toBeNull();
-    expect(typeof total, 'cost.total is numeric').toBe('number');
     expect(total as number, 'cost.total is a non-negative quote').toBeGreaterThanOrEqual(0);
   });
 

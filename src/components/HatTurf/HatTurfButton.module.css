@@ -1,0 +1,203 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  pointer-events: auto;
+}
+
+.button {
+  /* What the unfilled part of the stock gauge mixes the team colour with. Here, not inline:
+     light-dark() is compiled for older browsers only in a stylesheet. */
+  --hat-gauge-base: light-dark(#dee2e6, #1a1b1e);
+  position: relative;
+  display: grid;
+  place-items: center;
+  /* The reaction chips' height: any taller and the card's tip row grows. */
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background-color: var(--mantine-color-gray-6);
+  color: var(--mantine-color-white);
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+
+  & svg {
+    filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.4));
+  }
+}
+
+/* The feed card's button sits beside the reaction bar and tip pill, so it takes their corner radius, not the detail view's circle. */
+.feed {
+  width: 26px;
+  border-radius: var(--mantine-radius-sm);
+
+  & svg {
+    width: 14px;
+    height: 14px;
+  }
+}
+
+.invite {
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--mantine-color-gray-6);
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-3));
+}
+
+.empty {
+  background-color: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  color: light-dark(var(--mantine-color-gray-6), var(--mantine-color-gray-5));
+  box-shadow: none;
+}
+
+.active {
+  outline: 2px solid var(--mantine-color-white);
+  outline-offset: 1px;
+}
+
+/*
+ * The refill timer, a cooldown in a light tint of the team colour: an inset bar along the feed
+ * button's bottom edge, a ring inside the image page's circle. Driven by --period and a negative
+ * --elapsed delay, so it starts part way through and runs with no renders.
+ */
+@keyframes turf-timer-bar {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes turf-timer-ring {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.timer {
+  --timer-color: color-mix(in srgb, var(--team, var(--mantine-color-gray-5)) 45%, white);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.timerBar {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 2px;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+/*
+ * A full-width pill slid in from the left: a transform runs on the compositor, so a feed of cards
+ * timing at once costs the main thread nothing, and the leading end stays rounded at any length.
+ */
+.timerBarFill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--timer-color);
+  animation: turf-timer-bar var(--period) linear var(--elapsed) forwards;
+}
+
+.timerRing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* From 12 o'clock, clockwise. */
+  transform: rotate(-90deg);
+}
+
+.timerTrack,
+.timerArc {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.timerTrack {
+  stroke: rgba(0, 0, 0, 0.45);
+}
+
+.timerArc {
+  stroke: var(--timer-color);
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  animation: turf-timer-ring var(--period) steps(120, end) var(--elapsed) forwards;
+}
+
+/* One timer per shape: the bar on the feed's rounded square, the ring on the round button. */
+.feed .timerRing,
+.button:not(.feed) .timerBar {
+  display: none;
+}
+
+.tick {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--mantine-color-white);
+  border-radius: 50%;
+  background-color: var(--mantine-color-green-8);
+  color: var(--mantine-color-white);
+}
+
+/* Over the button's top-right corner, nudged in so a card's edge never clips it. */
+.gear {
+  position: absolute;
+  top: -6px;
+  right: -5px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background-color: #000;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.18);
+  /*
+   * Its own layer, so the disc and the glyph rasterise together: at a 1.275 devicePixelRatio the
+   * gear was seen a pixel low and right of the disc.
+   */
+  transform: translateZ(0);
+
+  /* Even icon in an even chip: the 2px inset lands on whole CSS pixels. */
+  & svg {
+    display: block;
+  }
+}
+
+/*
+ * A bigger tap target than the 16px it draws. Kept to a 22px circle: any wider and it reaches the
+ * button's centre, which must stay the button's.
+ */
+.gear::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+}
+
+.anchor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

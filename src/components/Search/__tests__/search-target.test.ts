@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { resolveSearchTarget } from '~/components/Search/search-target';
+import {
+  legacyImageSearchDestination,
+  offersImageSearch,
+  resolveSearchTarget,
+  feedSearchPathname,
+  searchesFeedInPlace,
+} from '~/components/Search/search-target';
 
 describe('resolveSearchTarget', () => {
   it('moves an Images default to Models while image search is off', () => {
@@ -24,5 +30,50 @@ describe('resolveSearchTarget', () => {
     // A caller limited to Images keeps its own target (and so its maintenance notice) rather
     // than being moved onto an index it never declared.
     expect(resolveSearchTarget('images', { imageSearch: false }, ['images'])).toBe('images');
+  });
+});
+
+describe('the feed search flag on its own', () => {
+  const feedOnly = { imageSearch: false, feedSearch: true };
+  const neither = { imageSearch: false, feedSearch: false };
+
+  it('offers image search with either flag, and not without both', () => {
+    expect(offersImageSearch(feedOnly)).toBe(true);
+    expect(offersImageSearch({ imageSearch: true, feedSearch: false })).toBe(true);
+    expect(offersImageSearch(neither)).toBe(false);
+  });
+
+  it('searches the images feed in place with feedSearch alone, and only on /images', () => {
+    expect(searchesFeedInPlace(feedOnly, 'images', '/images')).toBe(true);
+    const searchPagesOnly = { imageSearch: true, feedSearch: false };
+    expect(searchesFeedInPlace(searchPagesOnly, 'images', '/images')).toBe(false);
+    expect(searchesFeedInPlace(feedOnly, 'images', '/models')).toBe(false);
+    expect(searchesFeedInPlace(feedOnly, 'models', '/images')).toBe(false);
+  });
+
+  it('searches the models feed in place under its own flag, and only on /models', () => {
+    const modelsOnly = { modelFeedSearch: true };
+    expect(searchesFeedInPlace(modelsOnly, 'models', '/models')).toBe(true);
+    expect(searchesFeedInPlace(feedOnly, 'models', '/models')).toBe(false);
+    expect(searchesFeedInPlace(modelsOnly, 'images', '/images')).toBe(false);
+    expect(feedSearchPathname(modelsOnly, 'models')).toBe('/models');
+    expect(feedSearchPathname(modelsOnly, 'articles')).toBeUndefined();
+  });
+
+  it('searches the articles feed in place under its own flag, and only on /articles', () => {
+    const articlesOnly = { articleFeedSearch: true };
+    expect(searchesFeedInPlace(articlesOnly, 'articles', '/articles')).toBe(true);
+    expect(searchesFeedInPlace({ modelFeedSearch: true }, 'articles', '/articles')).toBe(false);
+    expect(searchesFeedInPlace(articlesOnly, 'articles', '/models')).toBe(false);
+    expect(feedSearchPathname(articlesOnly, 'articles')).toBe('/articles');
+  });
+
+  it('sends /search/images to the feed under feedSearch, even without imageSearch', () => {
+    expect(legacyImageSearchDestination(feedOnly)).toBe('images-feed');
+    expect(legacyImageSearchDestination({ imageSearch: true, feedSearch: true })).toBe(
+      'images-feed'
+    );
+    expect(legacyImageSearchDestination({ imageSearch: true, feedSearch: false })).toBeUndefined();
+    expect(legacyImageSearchDestination(neither)).toBe('models-search');
   });
 });

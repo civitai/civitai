@@ -8,8 +8,8 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';

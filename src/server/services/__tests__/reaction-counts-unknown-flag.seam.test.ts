@@ -4,10 +4,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // see how the flag EVALUATES. That lives here: only the Flipt edge is stubbed, and the
 // real registry + static fallback decide the answer.
 //
-// The case that matters is a key Flipt has never heard of. The client's `isEnabledSync`
-// swallows "flag not found" and returns null, which falls through to the flag's static
-// `availability`. Any non-empty list there switches the badge on for some audience the
-// moment it deploys, before anyone has created the flag.
+// The flag has no Flipt key (the flag was never created), so its static `availability` is
+// the whole answer. Any non-empty list there switches the badge on for some audience the
+// moment it deploys. The same holds once a key is added back before the flag exists: the
+// client's `isEnabledSync` returns null for an unknown key, which falls through to this list.
 
 const { mockIsFliptSync } = vi.hoisted(() => ({ mockIsFliptSync: vi.fn() }));
 
@@ -42,9 +42,8 @@ const FLAG = 'reactionCountsUnknown';
 
 beforeAll(async () => {
   // The service imports its Flipt module lazily and skips the Flipt branch entirely until
-  // it has loaded. Without this, the OFF cases would exercise "Flipt not loaded" rather
-  // than "Flipt says the key does not exist" -- the same static fallback, but not the
-  // scenario this file is about.
+  // it has loaded. Without this, "Flipt is not asked about this flag" would hold only
+  // because Flipt was not loaded, not because the flag has no key.
   mockIsFliptSync.mockReturnValue(null);
   await getFeatureFlagsAsync({});
 });
@@ -53,13 +52,15 @@ beforeEach(() => {
   mockIsFliptSync.mockReset();
 });
 
-describe('reactionCountsUnknown while Flipt has never heard of the key', () => {
+describe('reactionCountsUnknown, which has no Flipt key', () => {
   it('stays OFF for a moderator', () => {
     mockIsFliptSync.mockReturnValue(null);
 
     expect(getFeatureFlags({ user: user({ isModerator: true }) })[FLAG]).not.toBe(true);
-    // Pins the path: Flipt WAS asked for this key and answered not-found.
-    expect(mockIsFliptSync.mock.calls.some(([flag]) => flag === KEY)).toBe(true);
+    // Pins the path: with no key, Flipt is not asked about this flag at all.
+    expect(mockIsFliptSync.mock.calls.some(([flag]) => flag === KEY)).toBe(false);
+    // ...while it was asked about others, so the stub is wired in.
+    expect(mockIsFliptSync).toHaveBeenCalled();
   });
 
   it('stays OFF for an ordinary signed-in user', () => {
@@ -86,14 +87,4 @@ describe('reactionCountsUnknown while Flipt has never heard of the key', () => {
       expect(getFeatureFlags({ user: privileged })[FLAG]).not.toBe(true);
     });
   }
-});
-
-describe('reactionCountsUnknown once Flipt knows the key', () => {
-  it('CONTROL: Flipt IS consulted for this key, and its answer wins', () => {
-    // Without this, the cases above would also pass if the stub were never reached -- a
-    // fake that is not wired in answers "off" for every question.
-    mockIsFliptSync.mockImplementation((flag: string) => (flag === KEY ? true : null));
-
-    expect(getFeatureFlags({ user: user() })[FLAG]).toBe(true);
-  });
 });

@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
 import { EventEmitter } from 'events';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +15,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const getHeldMedia = vi.hoisted(() => vi.fn());
+const getRetractedMedia = vi.hoisted(() => vi.fn());
 const flags = vi.hoisted(() => ({ csamReports: true }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -24,6 +26,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 }));
 vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: () => flags }));
 vi.mock('~/server/services/held-media.service', () => ({ getHeldMedia }));
+vi.mock('~/server/services/retracted-media.service', () => ({ getRetractedMedia }));
 
 import handler from '~/pages/api/mod/held-media/shown';
 
@@ -107,15 +110,22 @@ beforeEach(async () => {
   await pg.exec(`DELETE FROM "ModActivity"`);
   flags.csamReports = true;
   getHeldMedia.mockReset().mockResolvedValue(null);
+  getRetractedMedia.mockReset().mockResolvedValue(null);
   dbMock.dbWrite.$executeRaw.mockReset().mockImplementation(executeRaw as never);
-  // Image 501 is user 20's, on whose report page it is; 502 is user 21's.
-  const owners: Record<number, number> = { 501: 20, 502: 21 };
-  dbMock.dbWrite.image.findFirst
-    .mockReset()
-    .mockImplementation((async ({ where }: { where: { id: number; userId?: number } }) =>
-      where.id in owners && (where.userId === undefined || owners[where.id] === where.userId)
-        ? { id: where.id }
-        : null) as never);
+  // Image 501 is user 20's, on whose report page it is; 502 is user 21's; 503 is a feedback capture.
+  const owners: Record<number, number> = { 501: 20, 502: 21, 503: FEEDBACK_CAPTURE_OWNER_ID };
+  dbMock.dbWrite.image.findFirst.mockReset().mockImplementation((async ({
+    where,
+  }: {
+    where: { id: number; userId?: number | { in: number[] } };
+  }) => {
+    const owner = owners[where.id];
+    const { userId } = where;
+    const matches =
+      userId === undefined ||
+      (typeof userId === 'number' ? owner === userId : userId.in.includes(owner));
+    return owner !== undefined && matches ? { id: where.id } : null;
+  }) as never);
 });
 
 describe('POST /api/mod/held-media/shown', () => {
@@ -147,6 +157,33 @@ describe('POST /api/mod/held-media/shown', () => {
     expect(getHeldMedia).toHaveBeenCalledWith(501, dbMock.dbWrite);
   });
 
+  it('records a blocked image served by the retracted-media route as the original', async () => {
+    getRetractedMedia.mockResolvedValue({
+      url: 'key',
+      type: 'image',
+      mimeType: 'image/png',
+      tier: 'suspect',
+    });
+    // A held-media serve is not this route's serve.
+    await served(501, { activity: 'heldMedia:view' });
+    expect(await post({ ...valid, action: 'open', rendition: 'original' })).toBe(403);
+    await served(501, { activity: 'retractedMedia:view' });
+    expect(await post({ ...valid, action: 'open', rendition: 'original' })).toBe(204);
+
+    expect((await rows()).map((row) => row.activity)).toEqual(['reportMedia:open:original']);
+    expect(getRetractedMedia).toHaveBeenCalledWith(501, { csamReview: true }, dbMock.dbWrite);
+  });
+
+  it('still records the CDN rendition of a blocked image that is not held', async () => {
+    getRetractedMedia.mockResolvedValue({
+      url: 'key',
+      type: 'image',
+      mimeType: null,
+      tier: 'plain',
+    });
+    expect(await post(valid)).toBe(204);
+  });
+
   it.each([
     ['moderatorId', { moderatorId: 7 }],
     ['actor', { actor: 7 }],
@@ -166,6 +203,12 @@ describe('POST /api/mod/held-media/shown', () => {
   ])('refuses %s, and writes nothing', async (_, change) => {
     expect(await post({ ...valid, ...change })).toBe(400);
     expect(await rows()).toEqual([]);
+  });
+
+  it("records a feedback page capture on any subject's report page, internal included", async () => {
+    expect(await post({ ...valid, imageId: 503, userId: 21 })).toBe(204);
+    expect(await post({ ...valid, imageId: 503, userId: -1 })).toBe(204);
+    expect((await rows()).map((r) => r.entityId)).toEqual([503, 503]);
   });
 
   it('refuses an image that is not the subject’s, and writes nothing', async () => {

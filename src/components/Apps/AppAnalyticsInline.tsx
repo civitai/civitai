@@ -1,4 +1,5 @@
-import { Anchor, Group, Loader, Modal, Text, Tooltip } from '@mantine/core';
+import { Anchor, Group, Loader, Modal, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconChartBar, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';

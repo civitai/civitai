@@ -34,33 +34,51 @@ const row = (over: Partial<Record<keyof CommentPermalinkRow, unknown>>): Comment
     entityType: 'post',
     entityId: PARENT_ID,
     comicProjectId: null,
+    comicChapterPosition: null,
     appListingSlug: null,
+    postTextAnchorImageId: null,
     ...over,
   } as CommentPermalinkRow);
 const link = (r: CommentPermalinkRow | null | undefined) => buildCommentPermalink(r);
 
 /**
  * Every ID-ADDRESSED entity type, with the URL it must keep producing. `comicChapter` is keyed on
- * the project rather than the chapter — a real asymmetry the resolver has to preserve, and one a
- * careless rewrite flattens to `entityId` (a chapter id in a `/comics/` URL).
+ * the project and the chapter's 1-indexed position rather than the chapter id — a real asymmetry
+ * the resolver has to preserve, and one a careless rewrite flattens to `entityId`.
  */
 const HANDLED: Array<[string, Partial<Record<keyof CommentPermalinkRow, unknown>>, string]> = [
   ['post', { entityType: 'post' }, `/posts/${PARENT_ID}?${QUERY}`],
   ['review', { entityType: 'review' }, `/reviews/${PARENT_ID}?${QUERY}`],
-  ['model', { entityType: 'model' }, `/models/${PARENT_ID}?dialog=commentThread&${QUERY}`],
+  [
+    'model',
+    { entityType: 'model' },
+    // The dialog opens the comment it names; the permalink pins the comment itself.
+    `/models/${PARENT_ID}?dialog=commentThread&commentId=${COMMENT_ID}&${QUERY}`,
+  ],
   ['article', { entityType: 'article' }, `/articles/${PARENT_ID}?${QUERY}`],
   ['bounty', { entityType: 'bounty' }, `/bounties/${PARENT_ID}?${QUERY}`],
   ['bountyEntry', { entityType: 'bountyEntry' }, `/bounties/entries/${PARENT_ID}?${QUERY}`],
   ['challenge', { entityType: 'challenge' }, `/challenges/${PARENT_ID}?${QUERY}`],
   [
     'comicChapter',
-    { entityType: 'comicChapter', entityId: 9901, comicProjectId: PARENT_ID },
-    `/comics/${PARENT_ID}?${QUERY}`,
+    {
+      entityType: 'comicChapter',
+      entityId: 9901,
+      comicProjectId: PARENT_ID,
+      comicChapterPosition: 2,
+    },
+    `/comics/${PARENT_ID}/comic/3?${QUERY}`,
   ],
   ['image', { entityType: 'image' }, `/images/${PARENT_ID}?${QUERY}`],
   ['model3d', { entityType: 'model3d' }, `/3d-models/${PARENT_ID}?${QUERY}`],
   ['crucible', { entityType: 'crucible' }, `/crucibles/${PARENT_ID}?${QUERY}`],
   ['storyline', { entityType: 'storyline' }, `/storylines/${PARENT_ID}?${QUERY}`],
+  [
+    'postText',
+    // A text slide is its anchor image's URL with the text param, never the text id as the path.
+    { entityType: 'postText', entityId: 9902, postTextAnchorImageId: PARENT_ID },
+    `/images/${PARENT_ID}?text=9902&${QUERY}`,
+  ],
 ];
 
 describe('buildCommentPermalink — the appListing branch', () => {
@@ -120,6 +138,10 @@ describe('buildCommentPermalink — negative controls', () => {
   it('a comic chapter with no project fails closed', () => {
     expect(link(row({ entityType: 'comicChapter', comicProjectId: null }))).toBeNull();
     expect(resolveCommentTarget(row({ entityType: 'comicChapter', comicProjectId: 0 }))).toBeNull();
+  });
+
+  it('a text in a post with no image has no slide to link to', () => {
+    expect(link(row({ entityType: 'postText', postTextAnchorImageId: null }))).toBeNull();
   });
 
   it('an entity id of 0 is not an address', () => {

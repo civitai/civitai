@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HiddenPreferenceTypes } from '~/server/services/user-preferences.service';
 import {
+  applyClearHidden,
   applyOptimisticHiddenToggle,
   applyToggleSuccess,
   expandHiddenPreferences,
@@ -329,5 +330,27 @@ describe('toggleHidden cache wiring', () => {
     const snapshot = structuredClone(legacy);
 
     expect(planToggleRollback(snapshot)).toEqual({ restore: snapshot });
+  });
+});
+
+describe('applyClearHidden — "Unhide all" empties one kind only', () => {
+  it.each([
+    ['legacy', () => legacy],
+    ['compact', () => toCompactHiddenPreferences(legacy)],
+  ] as const)('%s cache: models cleared, every other set intact', (_shape, build) => {
+    const cache = build();
+    const next = expandHiddenPreferences(applyClearHidden(cache as never, 'model'));
+    const before = expandHiddenPreferences(cache as never);
+
+    expect(next.hiddenModels).toEqual([]);
+    expect(next.hiddenUsers).toEqual(before.hiddenUsers);
+    expect(next.hiddenTags).toEqual(before.hiddenTags);
+    expect(next.hiddenImages).toEqual(before.hiddenImages);
+  });
+
+  it('user clear empties hiddenUsers and leaves blockedUsers', () => {
+    const next = expandHiddenPreferences(applyClearHidden(legacy as never, 'user'));
+    expect(next.hiddenUsers).toEqual([]);
+    expect(next.blockedUsers).toEqual(expandHiddenPreferences(legacy as never).blockedUsers);
   });
 });

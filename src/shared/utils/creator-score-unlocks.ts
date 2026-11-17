@@ -12,7 +12,8 @@ export type CreatorScoreUnlockSurface =
   | 'announcements'
   | 'placements'
   | 'creatorProgram'
-  | 'creatorServices';
+  | 'creatorServices'
+  | 'events';
 
 /**
  * Which number the gate compares. They are not interchangeable: `total` is `User.meta.scores.total`, the

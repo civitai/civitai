@@ -33,9 +33,11 @@ vi.mock('$lib/server/user-actions.service', () => ({ removePlacement: vi.fn() })
 vi.mock('$lib/server/game-frame', () => ({ delistGame: vi.fn(), delistReason: vi.fn() }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 const getStorylineReportHolds = vi.fn(async (_reportIds: number[]) => [] as unknown[]);
+const getDeletedReportStorylines = vi.fn(async (_reportIds: number[]) => [] as unknown[]);
 vi.mock('$lib/server/storyline-takedown.service', () => ({
   getReportedStorylines: vi.fn(async () => []),
   getStorylineReportHolds,
+  getDeletedReportStorylines,
   getReportStorylineId: vi.fn(),
   setStorylineTakedown: vi.fn(),
 }));
@@ -147,6 +149,26 @@ describe('the storyline queue', () => {
 
     expect(getStorylineReportHolds).toHaveBeenCalledWith([80, 81]);
     expect(data.storylineHolds).toBe(holds);
+  });
+
+  // A deleted storyline's report has no entity id; the page reads what the delete kept by report.
+  it('reads what each report kept of a deleted storyline, by report id', async () => {
+    const deleted = [{ reportId: 81, title: 'Gone', held: null }];
+    getReports.mockResolvedValueOnce({
+      items: [
+        { id: 80, entityId: 2 },
+        { id: 81, entityId: null },
+      ],
+      totalItems: 2,
+      page: 1,
+      limit: 20,
+    });
+    getDeletedReportStorylines.mockResolvedValueOnce(deleted);
+
+    const data = (await run('storyline')) as { deletedStorylines: unknown };
+
+    expect(getDeletedReportStorylines).toHaveBeenCalledWith([80, 81]);
+    expect(data.deletedStorylines).toBe(deleted);
   });
 
   for (const slug of ['game', 'service'])

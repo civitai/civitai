@@ -25,9 +25,12 @@ vi.mock('../session', () => ({
   toSessionUser: (row: { id: number }) => ({ id: row.id }),
 }));
 
-const { findOrCreateUser, findOrCreateUserByEmail, SystemAccountSignInError } = await import(
-  '../users'
-);
+const {
+  findOrCreateUser,
+  findOrCreateUserByEmail,
+  NoAccountForEmailError,
+  SystemAccountSignInError,
+} = await import('../users');
 
 const PRELUDE = `
   CREATE TABLE "User" (
@@ -135,5 +138,29 @@ describe('sign-in to a system account', () => {
         findOrCreateUser('github', { providerAccountId: 'gh-1' })
       ).rejects.toBeInstanceOf(SystemAccountSignInError);
     });
+  });
+});
+
+describe('magic-link sign-in that may not create an account', () => {
+  const userCount = async () => (await pg.query(`SELECT id FROM "User"`)).rows.length;
+
+  it('signs in the account that already has the address', async () => {
+    await seedAccount({});
+
+    await expect(findOrCreateUserByEmail(EMAIL, { allowCreate: false })).resolves.toEqual({
+      id: ACCOUNT_ID,
+    });
+  });
+
+  it('refuses, and creates nothing, when no account has the address', async () => {
+    await expect(
+      findOrCreateUserByEmail('"new"@example.test', { allowCreate: false })
+    ).rejects.toBeInstanceOf(NoAccountForEmailError);
+    expect(await userCount()).toBe(0);
+  });
+
+  it('creates the account by default (positive control)', async () => {
+    await findOrCreateUserByEmail('new@example.test');
+    expect(await userCount()).toBe(1);
   });
 });

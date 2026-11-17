@@ -8,6 +8,11 @@ import {
   getUserBuzzAccountByAccountTypes,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import {
+  EARLY_ACCESS_PURCHASES,
+  giftedPermissions,
+  revokeModelVersionAccess,
+} from '~/server/services/model-version-access.service';
 import { paidAccessPayoutAccount } from '~/server/utils/buzz-helpers';
 import { isWithinPaidAccessRefundWindow } from '~/server/utils/early-access-helpers';
 import { throwBadRequestError, throwInsufficientFundsError } from '~/server/utils/errorHandling';
@@ -40,6 +45,11 @@ export type ModelEarlyAccessRefundRequirement = {
     modelVersionId: number;
     buyerId: number;
     buzzTransactionIds: string[];
+    /**
+     * Set when the row also holds something not refunded (an older purchase or a gift): the grant
+     * is narrowed instead of deleted. Absent, the whole grant goes.
+     */
+    narrow?: { revokePermissions: number; removeKeys: string[] };
   }[];
   buyerCount: number;
   totalBuzz: number;
@@ -70,7 +80,9 @@ export type ModelEarlyAccessRefundRequirement = {
 // taken away — the lapsed window bought them days of access, not the removal.
 //
 // The window is measured per PURCHASE, not per version: a permanent gate never expires, so anything
-// keyed off the version would owe its buyers a refund forever. Grant rows are read fresh from the
+// keyed off the version would owe its buyers a refund forever. One grant row can hold two purchases
+// (generation, then download later), so each is dated by its own `<type>-purchasedAt`; rows written
+// before that key existed fall back to the row's addedAt. Grant rows are read fresh from the
 // primary (dbWrite), not the cache/replica — this guard protects buyers' money.
 const getEarlyAccessRefundRequirementForVersions = async (
   versions: { id: number; meta: Prisma.JsonValue }[]
@@ -97,31 +109,40 @@ const getEarlyAccessRefundRequirementForVersions = async (
     select: { accessToId: true, accessorId: true, meta: true, addedAt: true },
   });
 
-  // Only rows carrying a purchase transaction id count — owner-granted access has nothing to refund.
-  const allPurchases = accessRows
-    .map((row) => {
-      const rowMeta = (row.meta ?? {}) as Record<string, unknown>;
-      const buzzTransactionIds = ['download-buzzTransactionId', 'generation-buzzTransactionId']
-        .map((key) => rowMeta[key])
-        .filter((value): value is string => typeof value === 'string' && value.length > 0);
-      return {
-        modelVersionId: row.accessToId,
-        buyerId: row.accessorId,
-        buzzTransactionIds,
-        addedAt: row.addedAt,
-      };
-    })
-    .filter((purchase) => purchase.buzzTransactionIds.length > 0);
-
-  const refundable = allPurchases.filter((purchase) =>
-    isWithinPaidAccessRefundWindow(purchase.addedAt, now)
-  );
-  const exemptBuyerCount = new Set(
-    allPurchases
-      .filter((purchase) => !isWithinPaidAccessRefundWindow(purchase.addedAt, now))
-      .map((purchase) => purchase.buyerId)
-  ).size;
-  const purchases = refundable.map(({ addedAt: _addedAt, ...purchase }) => purchase);
+  // Only purchase transaction ids count — owner-granted access has nothing to refund.
+  const exemptBuyers = new Set<number>();
+  const purchases: ModelEarlyAccessRefundRequirement['purchases'] = [];
+  for (const row of accessRows) {
+    const rowMeta = (row.meta ?? {}) as Record<string, unknown>;
+    const held = EARLY_ACCESS_PURCHASES.flatMap((kind) => {
+      const transactionId = rowMeta[kind.transactionKey];
+      if (typeof transactionId !== 'string' || transactionId.length === 0) return [];
+      const recorded = rowMeta[kind.purchasedAtKey];
+      const purchasedAt = typeof recorded === 'string' ? new Date(recorded) : null;
+      const at = purchasedAt && !Number.isNaN(purchasedAt.getTime()) ? purchasedAt : row.addedAt;
+      return [{ kind, transactionId, refundable: isWithinPaidAccessRefundWindow(at, now) }];
+    });
+    const refunded = held.filter((purchase) => purchase.refundable);
+    const kept = held.filter((purchase) => !purchase.refundable);
+    if (kept.length > 0) exemptBuyers.add(row.accessorId);
+    if (refunded.length === 0) continue;
+    // A gift is not refunded, so its bits stay. The narrowing write reads them from the row as it is
+    // then, since a claim can be removed between this read and that write.
+    const keptBits = kept.reduce((bits, purchase) => bits | purchase.kind.permissions, 0);
+    purchases.push({
+      modelVersionId: row.accessToId,
+      buyerId: row.accessorId,
+      buzzTransactionIds: refunded.map((purchase) => purchase.transactionId),
+      ...((kept.length > 0 || giftedPermissions(rowMeta) > 0) && {
+        narrow: {
+          revokePermissions:
+            refunded.reduce((bits, purchase) => bits | purchase.kind.permissions, 0) & ~keptBits,
+          removeKeys: refunded.flatMap(({ kind }) => [kind.transactionKey, kind.purchasedAtKey]),
+        },
+      }),
+    });
+  }
+  const exemptBuyerCount = exemptBuyers.size;
   if (purchases.length === 0) return { ...empty, exemptBuyerCount };
 
   // Refund amounts come from the ledger, not current terms — prices can change after purchase.
@@ -215,16 +236,13 @@ export const refundModelEarlyAccessPurchases = async ({
           description: `Refund early access purchase: ${model.name} (${scope} unpublished)`,
         });
       }
-      // Revoke the now-refunded grant so a retry after a mid-loop failure skips this buyer
-      // instead of refunding them twice. deleteMany, not delete: the money already moved, so an
-      // already-gone row must not abort the loop.
-      await dbWrite.entityAccess.deleteMany({
-        where: {
-          accessToId: purchase.modelVersionId,
-          accessToType: 'ModelVersion',
-          accessorId: purchase.buyerId,
-          accessorType: 'User',
-        },
+      // Revoke the now-refunded purchase so a retry after a mid-loop failure skips it instead of
+      // refunding it twice. It doesn't throw on a row that is already gone: the money already moved, so
+      // that must not abort the loop.
+      await revokeModelVersionAccess({
+        userId: purchase.buyerId,
+        modelVersionId: purchase.modelVersionId,
+        narrow: purchase.narrow,
       });
       refundedCount++;
     } catch (error) {

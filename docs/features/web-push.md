@@ -35,7 +35,7 @@ producer → apps/notifications POST /notifications     (opt-out filter, queue r
 | tRPC               | `notification.router.ts`                                                       | `subscribePush` / `unsubscribePush` / `getPushSubscriptions` / `getPushSettings` / `updatePushSettings`                       |
 | SW re-subscribe    | `src/pages/api/push/resubscribe.ts`                                            | session-authed REST — a SW can't speak tRPC                                                                                   |
 | Cleanup            | `src/server/jobs/push-subscription-cleanup.ts`                                 | weekly; no successful delivery in 180 days                                                                                    |
-| Metrics            | `notifications_push_delivery_total{outcome}`                                   | `accepted` = push service took it — **not** that a user saw it                                                                |
+| Metrics            | `notifications_push_delivery_total{outcome,type}`                              | `accepted` = push service took it — **not** that a user saw it                                                                |
 
 Delivery response table (dispatcher, pinned by `worker/push.test.ts`): 404/410 → delete the row
 (normal churn, not an incident) · 429 → keep the row, drop the send · 413 → log + retry truncated ·
@@ -86,6 +86,10 @@ was inert until 2026-09-24, though push was never enabled in that window) · 201
 - **Add a default push type** → set `defaultPush: true` on its processor; the guard test validates it.
   Remember invariant 3: existing subscribers do not get it without a hand-run backfill (the deal
   types shipped one: `migrations/20261203120100_deal_push_default_backfill`).
+  `event-reminder` has `defaultPush` but shipped without a backfill, so existing subscribers don't have it on.
+- **Push a system notice** → send it as `event-reminder` through `sendSystemNotices`; pass `title` to
+  title the push (render-push falls back to the type's display name). `system-announcement` and
+  `system-message` cannot be turned off, so they are never pushed.
 - **Change the daily cap** → `PUSH_DAILY_CAP` env on the worker (default 20; anything that is not a
   non-negative integer falls back to that default rather than disabling push). Past the cap: exactly
   one summary push, then silence until the UTC day rolls. No redis → cap fails open (send).

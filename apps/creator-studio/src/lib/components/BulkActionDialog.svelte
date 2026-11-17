@@ -2,7 +2,6 @@
   import { browser } from '$app/environment';
   import { untrack } from 'svelte';
   import { enhance, deserialize } from '$app/forms';
-  import GenerationOnlyHint from '$lib/components/monetization/GenerationOnlyHint.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -527,9 +526,6 @@
               bind:value={usageControl}
               allowGenerationOnly={caps.canSetGenerationOnly}
             />
-            {#if !caps.canSetGenerationOnly}
-              <GenerationOnlyHint />
-            {/if}
             <p class="text-xs text-dark-2">
               A gated version's price moves to whichever tier survives — no version is left gated
               without a price.

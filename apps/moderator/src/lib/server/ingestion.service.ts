@@ -1,8 +1,9 @@
 import { sql } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { assertMediaPresentForPublish, MediaPresence, summarizeProbeError } from '@civitai/shared';
-import { STUCK_PENDING_MINUTES } from '@civitai/shared/image-ingestion';
+import { STUCK_PENDING_MINUTES, ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
 import { dbRead, dbWrite } from './db';
+import { dropBlockedImageDeleteQueue } from './blocked-image-queue';
 import { takePage } from './keyset-page';
 import { bustCachedObject } from './cache';
 import { bustAfterWrite } from './bust-after-write';
@@ -284,10 +285,35 @@ export async function resolveIngestionError({
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
-    .select(['postId', 'metadata', 'url', thumbnailParentId.as('parentId')])
+    .select((eb) => [
+      'postId',
+      'metadata',
+      'url',
+      'blockedFor',
+      'needsReview',
+      thumbnailParentId.as('parentId'),
+      eb
+        .selectFrom('User')
+        .select('bannedAt')
+        .whereRef('User.id', '=', 'Image.userId')
+        .as('ownerBannedAt'),
+      eb
+        .selectFrom('User')
+        .select('deletedAt')
+        .whereRef('User.id', '=', 'Image.userId')
+        .as('ownerDeletedAt'),
+    ])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
+
+  const refusal = ingestionResolveRefusal({
+    blockedFor: image.blockedFor,
+    needsReview: image.needsReview,
+    ownerBannedAt: image.ownerBannedAt ?? null,
+    ownerDeletedAt: image.ownerDeletedAt ?? null,
+  });
+  if (refusal) throw new Error(refusal);
 
   /**
    * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
@@ -334,7 +360,8 @@ export async function resolveIngestionError({
     nsfwLevelReason: 'Moderator ingestion error review',
   };
 
-  // Only an image still in Error: one re-scanned since the queue loaded may now be Blocked.
+  // Only an image still in Error: one re-scanned since the queue loaded may now be Blocked. Matched
+  // on the block and owner as read, so a block or ban landing in between is not lifted.
   const result = await dbWrite
     .updateTable('Image')
     .set({
@@ -347,9 +374,29 @@ export async function resolveIngestionError({
     })
     .where('id', '=', id)
     .where('ingestion', '=', 'Error')
+    .where((eb) =>
+      image.blockedFor === null
+        ? eb('blockedFor', 'is', null)
+        : eb('blockedFor', '=', image.blockedFor)
+    )
+    .where((eb) =>
+      image.needsReview === null
+        ? eb('needsReview', 'is', null)
+        : eb('needsReview', '=', image.needsReview)
+    )
+    .where(({ exists, selectFrom }) =>
+      exists(
+        selectFrom('User')
+          .select('User.id')
+          .whereRef('User.id', '=', 'Image.userId')
+          .where('User.bannedAt', 'is', null)
+          .where('User.deletedAt', 'is', null)
+      )
+    )
     .executeTakeFirst();
   if (Number(result?.numUpdatedRows ?? 0) === 0)
-    throw new Error('Image is no longer in an ingestion error state; reload the queue.');
+    throw new Error('This image changed since the queue loaded; reload the queue.');
+  if (image.blockedFor !== null) await dropBlockedImageDeleteQueue(id);
   await invalidateThumbnails(id, [image.parentId]);
   await bustProfilePictures({ imageIds: [id] });
 

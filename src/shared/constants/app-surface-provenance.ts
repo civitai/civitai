@@ -134,10 +134,10 @@ export function buildScopeGrantSurfaceLine(surfaces: {
 }
 
 /**
- * What `BlockScopeList` must say for a row whose `scopes` array is EMPTY, per row class.
+ * What `ScopeConsentList` must say for a row whose `scopes` array is EMPTY, per row class.
  *
  * 🔴 THE DEFAULT IS FALSE FOR AN ACTIVITY-ONLY ROW, AND THIS CHANGE MAKES THAT DEFAULT
- * REACHABLE. `BlockScopeList`'s own fallback is "This app doesn't request any permissions — it
+ * REACHABLE. The scope list's own default is "This app doesn't request any permissions — it
  * only consumes data from the host-bridge postMessage protocol." For an app that made
  * scope-gated API calls against this account, that is flatly wrong in the one direction a
  * permissions page must never be wrong in: it tells the viewer an app has no access, on the

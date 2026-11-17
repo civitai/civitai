@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconHeart } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

@@ -66,15 +66,15 @@ async function suggestRequest({ request }: RequestEvent): Promise<core.SuggestRe
 function helperRoutes<Req>(
   what: string,
   submitFailure: string,
-  quote: (client: OrchestratorClient) => Promise<number | null>,
+  quote: (client: OrchestratorClient, params: URLSearchParams) => Promise<number | null>,
   parse: (event: RequestEvent) => Promise<Req>,
   submit: (client: OrchestratorClient, req: Req) => Promise<string>
 ): { GET: RequestHandler; POST: RequestHandler } {
   return {
-    GET: async ({ locals }) => {
+    GET: async ({ locals, url }) => {
       const client = await helperClient(locals);
       try {
-        return json({ cost: await quote(client) });
+        return json({ cost: await quote(client, url.searchParams) });
       } catch (err) {
         console.warn(`[training-studio] ${what} quote failed`, err);
         return json({ cost: null });
@@ -113,7 +113,11 @@ function helperPollRoute(
 export const editImageRoutes = helperRoutes(
   'edit image',
   "Couldn't create the image. Try again.",
-  core.editImageQuote,
+  // Unpriced rather than refused: the dialog treats both the same and keeps Generate disabled.
+  async (client, params) => {
+    const imageUrl = params.get('imageUrl');
+    return isBlobUrl(imageUrl) ? core.editImageQuote(client, imageUrl) : null;
+  },
   editImageRequest,
   core.submitEditImage
 );

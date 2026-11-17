@@ -31,37 +31,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *     differ in text and still be asked to share an entry. So this file captures
  *     the `Prisma.Sql` the service hands `queryCache` for each viewer shape,
  *     derives the key the way `cache-helpers` derives it (with the REAL
- *     `hashifyObject`), and asserts the keys are distinct.
+ *     `queryCacheKeyHash`), and asserts the keys are distinct.
  *
- * (2) 🔴 THE BOUNDARY IS NOT HASH-DEPENDENT. Level (1) is necessary and NOT
- *     sufficient, and an earlier revision of this file stopped there. "Distinct
- *     statements ⇒ distinct keys" assumes `hashifyObject` is INJECTIVE. It is
- *     not: `hashify` (`~/utils/string-helpers`) is a **32-bit** rolling hash,
- *     `hash = (hash << 5) - hash + chr; hash |= 0`. It is linear, so a collision
- *     against a chosen target is CONSTRUCTED algebraically — not brute-forced —
- *     and the attacker has the bytes to do it with: `decodeListingCursor` slices
- *     `cursorSortKey` and `cursorId` out of a lenient base64url decode as
- *     arbitrary free strings (only `cursorMean` is range-validated) and the read
- *     schema bounds `cursor` only by `z.string().max(128)`. Both land in the
- *     hashed statement as bound params, which is what makes a collision between
- *     the two scope predicates (`TRUE` vs `al.kind = 'offsite'`) CONSTRUCTIBLE
- *     rather than something to brute-force.
+ * (2) 🔴 THE BOUNDARY IS NOT HASH-DEPENDENT. "Distinct statements ⇒ distinct
+ *     keys" holds only as far as the statement hash resists collisions, and the
+ *     caller supplies bytes of the hashed statement: `decodeListingCursor` slices
+ *     `cursorSortKey` and `cursorId` out of a lenient base64url decode as free
+ *     strings, bound into the statement. So the SECURITY-BOUNDARY axes sit
+ *     OUTSIDE the hashed payload, in the literal key string from
+ *     `catalogPageCache`. A collision, if one were ever found, could only mix two
+ *     pages WITHIN one viewer class.
  *
- *     ⚠️ Nothing here constructs one, and no test asserts a byte count for it. An
- *     earlier version of this comment quoted "six tuning characters"; that figure
- *     was never derived or pinned, so it is gone rather than replaced. It does not
- *     need replacing: the guards below put the boundary OUTSIDE the hash entirely,
- *     which makes the exact cost of a collision irrelevant rather than merely large.
- *
- *     The service's answer is NOT to widen the hash (global blast radius — it
- *     keys caches, DOM ids and de-dup across the codebase). It is to lift the two
- *     SECURITY-BOUNDARY axes OUT of the hashed payload and into the literal `key`
- *     string: `listAvailableAppListings:<scope>:<red|sfw>`. A hash collision can
- *     then only ever mix two pages WITHIN one viewer class.
- *
- *     So the tests below assert on the key with its hash segment REMOVED. That is
- *     the half of the key a collision cannot touch, and it is the only form of
- *     this guard that a 32-bit hash cannot walk past.
+ *     So the tests below assert on the key with its hash segment REMOVED: the
+ *     half of the key no hash property is needed for.
  *
  * ⚠️ `redCapable` is a SECOND viewer-varying axis, and the reason the derived-key
  * form matters at level (1): a hand-written key naming `scope` would look complete
@@ -102,7 +84,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   bustCacheTag: vi.fn(async () => undefined),
 }));
 
-import { hashifyObject } from '~/utils/string-helpers';
+import { queryCacheKeyHash } from '~/server/utils/query-cache-key';
 import { bustCacheTag } from '~/server/utils/cache-helpers';
 import { bustAppListingCatalogCache, listAvailableListings } from '../app-listing.service';
 import {
@@ -125,14 +107,14 @@ function lastCall() {
 }
 
 /**
- * Derive the redis key EXACTLY as `queryCache` does — same `hashifyObject`, same
+ * Derive the redis key EXACTLY as `queryCache` does — same `queryCacheKeyHash`, same
  * `[key, version, hash].join(':')`. Not a re-implementation of the hash: the real
- * `hashifyObject` is imported and called on the real `Prisma.Sql`.
+ * `queryCacheKeyHash` is imported and called on the real `Prisma.Sql`.
  */
 function deriveKey(sql: unknown): string {
   const binding = cacheBinding.at(-1);
   if (!binding) throw new Error('queryCache was never bound');
-  return [binding.key, binding.version, hashifyObject(sql).toString()]
+  return [binding.key, binding.version, queryCacheKeyHash(sql as never)]
     .filter((p) => p != null && p !== '')
     .join(':');
 }
@@ -143,20 +125,21 @@ async function keyFor(opts: {
   redCapable?: boolean;
   floor?: ListingAudienceFloor;
   includeSubListings?: boolean;
+  viewerBrowsingLevel?: number | null;
 }) {
   await listAvailableListings({ ...BASE_INPUT }, opts);
   return deriveKey(lastCall().sql);
 }
 
 /**
- * 🔴 The key WITHOUT its hash segment — i.e. everything a `hashifyObject` collision
+ * 🔴 The key WITHOUT its hash segment — i.e. everything a hash collision
  * cannot change.
  *
  * `queryCache` puts the hash LAST (`[key, version, hash].join(':')`), so dropping the
  * final `:`-segment leaves exactly the literal `key` + `version` the service chose.
  * Two viewer shapes whose PREFIXES differ cannot be made to share a redis entry by any
- * collision, however constructed; two whose prefixes are equal are separated only by a
- * 32-bit hash over attacker-influenced bytes.
+ * collision, however constructed; two whose prefixes are equal are separated only by the
+ * statement hash over attacker-influenced bytes.
  *
  * `keyPrefixIsolatesTheHash` below is the positive control that this really is dropping
  * the hash and nothing else.
@@ -172,6 +155,7 @@ async function prefixFor(opts: {
   redCapable?: boolean;
   floor?: ListingAudienceFloor;
   includeSubListings?: boolean;
+  viewerBrowsingLevel?: number | null;
 }) {
   return keyPrefix(await keyFor(opts));
 }
@@ -270,8 +254,8 @@ describe('/apps catalog cache — the key separates viewers', () => {
   });
 
   it('🔴 the floor is a LITERAL key segment, not hash input', async () => {
-    // Same reasoning as `scope` and `redCapable`: a 32-bit `hashifyObject` over
-    // attacker-influenced bytes is not a security boundary. Prefixes that differ cannot be
+    // Same reasoning as `scope` and `redCapable`: the boundary must not depend on the
+    // statement hash. Prefixes that differ cannot be
     // made to collide by any hash, however constructed.
     const prefixes: string[] = [];
     for (const floor of ['moderators', 'testers', 'public'] as const) {
@@ -320,7 +304,7 @@ describe('/apps catalog cache — the key separates viewers', () => {
   // 🔴 LEVEL (2): THE BOUNDARY IS NOT HASH-DEPENDENT.
   //
   // Every assertion above this line is satisfied by "the two statements differ",
-  // which a 32-bit hash can undo. These are satisfied only by the boundary axes
+  // which a hash collision can undo. These are satisfied only by the boundary axes
   // being LITERAL, UN-HASHED segments of the redis key.
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -357,14 +341,11 @@ describe('/apps catalog cache — the key separates viewers', () => {
 
   /**
    * 🔴 THE HEADLINE GUARD. `scope` — the public/onsite security boundary — must be a
-   * LITERAL segment of the cache key, so no `hashifyObject` collision can cross it.
+   * LITERAL segment of the cache key, so no hash collision can cross it.
    *
-   * WHY A HASH COLLISION IS REACHABLE HERE, not theoretical: `hashify` is a 32-bit
-   * linear rolling hash and `decodeListingCursor` admits `cursorSortKey` / `cursorId`
-   * as arbitrary free strings straight into the hashed statement as bound params —
-   * enough attacker-chosen bytes to solve for a collision between the `full` statement
-   * and the `public-external` one instead of searching for it. (No test constructs one
-   * and no byte count is claimed; see the file header.) If the scope lived only inside
+   * `decodeListingCursor` admits `cursorSortKey` / `cursorId` as free strings straight
+   * into the hashed statement, so the caller chooses hashed bytes (see the file header).
+   * If the scope lived only inside
    * the hash, that collision would serve on-site apps into the anonymous
    * `GET /api/v1/apps` response
    * (civitai#3983, re-opened through the cache) — and the reverse direction is cache
@@ -376,10 +357,9 @@ describe('/apps catalog cache — the key separates viewers', () => {
     expect(
       publicExternal,
       'the store SCOPE is not in the un-hashed part of the cache key, so `full` and ' +
-        '`public-external` are separated ONLY by a 32-bit hash over a statement whose ' +
-        'cursor bytes the caller supplies. That hash is constructible: a crafted cursor ' +
-        'serves the full catalog (on-site apps included) to an anonymous /api/v1/apps ' +
-        'caller. Put `scope` back into the `key` string passed to `queryCache`.'
+        '`public-external` are separated ONLY by the hash of a statement whose ' +
+        'cursor bytes the caller supplies. Put `scope` back into the `key` string ' +
+        'passed to `queryCache`.'
     ).not.toBe(full);
   });
 
@@ -393,8 +373,8 @@ describe('/apps catalog cache — the key separates viewers', () => {
     expect(
       sfw,
       'the maturity capability is not in the un-hashed part of the cache key, so a ' +
-        'red-capable and a SFW-only host are separated ONLY by a constructible 32-bit ' +
-        'hash. Put `redCapable` back into the `key` string passed to `queryCache`.'
+        'red-capable and a SFW-only host are separated ONLY by the statement hash. ' +
+        'Put `redCapable` back into the `key` string passed to `queryCache`.'
     ).not.toBe(red);
   });
 
@@ -438,8 +418,8 @@ describe('/apps catalog cache — the key separates viewers', () => {
     }
     expect(
       new Set(prefixes).size,
-      'two viewer classes share a hash-independent cache-key prefix, so only a 32-bit ' +
-        `hash separates them: ${JSON.stringify(prefixes)}`
+      'two viewer classes share a hash-independent cache-key prefix, so only the ' +
+        `statement hash separates them: ${JSON.stringify(prefixes)}`
     ).toBe(shapes.length);
   });
 
@@ -506,9 +486,53 @@ describe('/apps catalog cache — the key separates viewers', () => {
     const normalized = src.replace(/\s+/g, ' ');
     expect(
       normalized,
-      'queryCache no longer builds its key from `hashifyObject(query)` over the whole ' +
+      'queryCache no longer builds its key from `queryCacheKeyHash(query)` over the whole ' +
         'Prisma.Sql. This suite derives keys that way, so it is now measuring itself. ' +
         'Re-derive `deriveKey` against the new formula before trusting any result here.'
-    ).toContain("[key, version, hashifyObject(query).toString()].filter(isDefined).join(':')");
+    ).toContain("[key, version, queryCacheKeyHash(query)].filter(isDefined).join(':')");
+  });
+});
+
+describe("/apps catalog cache — the viewer's browsing level", () => {
+  // NsfwLevel bits: PG=1, PG13=2, R=4, X=8, XXX=16, Blocked=32.
+  const red = { scope: 'full', redCapable: true } as const;
+
+  /**
+   * 🔴 Whether R and X are allowed decides which ROWS the cached statement returns, so two
+   * viewers who differ there must never share an entry — and, like `scope` and `redCapable`,
+   * they must be separated in the LITERAL key, not only inside the statement hash.
+   */
+  it('🔴 R allowed vs not, and X allowed vs not, never share an entry (hash-independent prefix)', async () => {
+    const pgOnly = await prefixFor({ ...red, viewerBrowsingLevel: 1 });
+    const withR = await prefixFor({ ...red, viewerBrowsingLevel: 7 });
+    const withRX = await prefixFor({ ...red, viewerBrowsingLevel: 13 });
+    const withX = await prefixFor({ ...red, viewerBrowsingLevel: 10 });
+    expect(new Set([pgOnly, withR, withRX, withX]).size).toBe(4);
+  });
+
+  it('levels that differ only in PG / PG-13 / XXX / Blocked share one entry', async () => {
+    const pgOnly = await keyFor({ ...red, viewerBrowsingLevel: 1 });
+    for (const level of [undefined, null, 0, 2, 3, 16, 1 | 32]) {
+      expect(await keyFor({ ...red, viewerBrowsingLevel: level }), `level ${level}`).toBe(pgOnly);
+    }
+    const withR = await keyFor({ ...red, viewerBrowsingLevel: 7 });
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 4 })).toBe(withR);
+    expect(await keyFor({ ...red, viewerBrowsingLevel: 5 | 16 })).toBe(withR);
+  });
+
+  it('off a red-capable host the level changes nothing: every level shares one entry', async () => {
+    const sfw = { scope: 'full', redCapable: false } as const;
+    const base = await keyFor({ ...sfw, viewerBrowsingLevel: 1 });
+    for (const level of [undefined, 7, 13, 31]) {
+      expect(await keyFor({ ...sfw, viewerBrowsingLevel: level }), `level ${level}`).toBe(base);
+    }
+  });
+
+  it('the level adds at most four key prefixes (R allowed × X allowed), whatever is sent', async () => {
+    const prefixes = new Set<string>();
+    for (const viewerBrowsingLevel of [...Array(64).keys(), 1 << 20, 2 ** 31 - 1]) {
+      prefixes.add(await prefixFor({ ...red, viewerBrowsingLevel }));
+    }
+    expect(prefixes.size).toBe(4);
   });
 });

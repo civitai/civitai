@@ -110,6 +110,10 @@ const { mockDeleteImages, mockPersistDeletedTakedowns } = vi.hoisted(() => ({
 // loses an export it imports. The job short-circuits before deleting anything when it is false.
 // The re-removal hold reads through Kysely, which this file does not route to PGlite; no image here
 // has an approved appeal, so the hold lets everything through (covered by its own tests).
+vi.mock('~/server/notifications/client', () => ({
+  notifications: { createNotification: vi.fn(async () => undefined) },
+}));
+
 vi.mock('~/server/services/image-removal-hold.service', () => ({
   canConfirmReRemoval: async () => false,
   holdRemovals: async (requests: { imageId: number }[]) => ({
@@ -262,11 +266,39 @@ function presenceTest(sql: string, key: string) {
     doubleArrow ? metadata[key] !== null && metadata[key] !== undefined : key in metadata;
 }
 
+/** `writeModeratorBlock`, returning the rows it blocked. */
+function moderatorBlock(values: unknown[]) {
+  const [nsfwLevel, kept, reason, ids] = values as [number, string, string, number[]];
+  const blocked: { id: number; held: boolean }[] = [];
+  for (const row of store.images) {
+    if (!ids.includes(row.id)) continue;
+    row.ingestion = 'Blocked';
+    row.nsfwLevel = nsfwLevel;
+    row.blockedFor = row.blockedFor === kept ? kept : reason;
+    fireQueueTrigger(row);
+    blocked.push({ id: row.id, held: row.blockedFor === kept });
+  }
+  return blocked;
+}
+
 function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
   // The legal-hold lookup arrives as one `Prisma.sql` value rather than a template.
   const sql = Array.isArray(strings)
     ? strings.join('?')
     : (strings as unknown as { sql: string }).sql;
+
+  // `writeModeratorBlock`'s state read, after its UPDATE (which goes through `writeExec`).
+  if (sql.includes(' AS held')) {
+    const ids = (values.findLast(Array.isArray) as number[] | undefined) ?? [];
+    return store.images
+      .filter((i) => ids.includes(i.id))
+      .map((i) => ({
+        id: i.id,
+        held: i.blockedFor === BlockedReason.CSAM,
+        removedForCsam: i.blockedFor === BlockedReason.CSAM,
+        underReview: i.needsReview === 'csam',
+      }));
+  }
 
   if (sql.includes('FROM "CsamReport"')) return [];
 
@@ -350,6 +382,45 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
 
 function writeExec(strings: TemplateStringsArray, ...values: unknown[]) {
   const sql = strings.join('?');
+
+  // `blockImageFromRating`, the orchestrator content-rating block.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? OR ?')) {
+    const [, ingestion, nsfwLevel, kept, keepAny, reason, id] = values as [
+      unknown,
+      string,
+      number,
+      string,
+      boolean,
+      string | null,
+      number
+    ];
+    const row = store.images.find((i) => i.id === id);
+    if (!row) return 0;
+    row.ingestion = ingestion;
+    row.nsfwLevel = nsfwLevel;
+    if (!keepAny && row.blockedFor !== kept) row.blockedFor = reason;
+    fireQueueTrigger(row);
+    return 1;
+  }
+
+  // `blockBannedUserImages`, the ban's whole-library block.
+  if (sql.includes('UPDATE "Image"') && sql.includes('WHERE "userId" = ? AND ingestion <>')) {
+    const [nsfwLevel, kept, reason, userId] = values as [number, string, string, number];
+    let count = 0;
+    for (const row of store.images) {
+      if (row.userId !== userId || row.ingestion === 'Blocked') continue;
+      row.ingestion = 'Blocked';
+      row.nsfwLevel = nsfwLevel;
+      if (row.blockedFor !== kept) row.blockedFor = reason;
+      fireQueueTrigger(row);
+      count++;
+    }
+    return count;
+  }
+
+  // Not the scan verdict's `"blockedFor" = CASE WHEN <raw CSAM test>`, which this fixture does not model.
+  if (sql.includes('"blockedFor" = CASE WHEN "blockedFor" = ? THEN'))
+    return moderatorBlock(values).length;
 
   if (sql.includes('INSERT INTO "ModActivity"')) {
     const [userId, entityType, activity] = values as [number, string, string];
@@ -998,7 +1069,7 @@ describe('who can reach blob retraction, driven through the real block writers',
 
 /**
  * The orchestrator content-rating block, driven through the exported webhook entry point rather
- * than the module-private `blockImageFromRating`. The scan continues past the block into tag
+ * than `blockImageFromRating` itself. The scan continues past the block into tag
  * processing, which this fixture does not model; the throw is swallowed because the block write
  * has already happened by then and is what the assertions read.
  */

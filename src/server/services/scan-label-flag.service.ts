@@ -95,7 +95,7 @@ export async function recordScanLabelFlag({
       imageId,
       source,
       workflowId,
-    }).catch(() => null);
+    });
   }
 }
 

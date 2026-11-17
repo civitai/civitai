@@ -324,6 +324,14 @@ export function applyToggleSuccess(
   return reconcileHiddenToggle(cache ?? EMPTY_HIDDEN_CACHE, variables.kind, variables.data, result);
 }
 
+/** Empty one kind's set after a bulk clear. Both cache shapes hold every kind as an array. */
+export function applyClearHidden(
+  cache: HiddenCache | undefined,
+  kind: HiddenToggleKind
+): HiddenCache | undefined {
+  return cache ? ({ ...cache, [HIDDEN_KIND_TO_KEY[kind]]: [] } as HiddenCache) : cache;
+}
+
 /**
  * What `onError` must do with the cache. React Query treats an `undefined` updater
  * result as "no update", so handing back a missing snapshot silently leaves the

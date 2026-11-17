@@ -10,6 +10,7 @@ import {
 import {
   deleteScanCopies,
   publishPreviews,
+  purgeRemovedFiles,
   settlePreviewScans,
   startPreviewScans,
 } from '~/server/services/creator-service-deal-file.service';
@@ -62,7 +63,9 @@ export const creatorServiceUnpackJob = createJob(
     const finals = await settleFinals();
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
-    return { unpacked, repacked, ...entries, ...scans, ...finals, copiesDeleted };
+    jobContext.checkIfCanceled();
+    const removedPurged = await purgeRemovedFiles();
+    return { unpacked, repacked, ...entries, ...scans, ...finals, copiesDeleted, removedPurged };
   },
   { lockExpiration: 40 * 60 }
 );

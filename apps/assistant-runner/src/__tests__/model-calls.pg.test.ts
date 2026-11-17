@@ -1,7 +1,8 @@
-import pg from 'pg';
+import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PgModelCalls, type ModelCallScope } from '../model-calls';
+import { createPool } from '../core/pg-pool';
 import { freshDatabase, TEST_DATABASE_URL } from '../core/test-support/pg';
 
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
@@ -23,7 +24,9 @@ describePg('PgModelCalls', () => {
 
   beforeAll(async () => {
     db = await freshDatabase('model_calls');
-    pool = new pg.Pool({ connectionString: db.url, max: 2 });
+    // Guarded: pool.end() resolves before its sockets close, so the forced drop below can still
+    // reach a closing idle client with FATAL 57P01; unguarded, that is an uncaught exception.
+    pool = createPool({ connectionString: db.url, max: 2 }, 'model-calls-test');
     calls = new PgModelCalls(pool);
     await calls.init();
     // Every replica creates it at start: a second time is a no-op.

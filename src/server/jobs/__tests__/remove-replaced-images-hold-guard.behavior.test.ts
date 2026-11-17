@@ -38,7 +38,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 // The job deletes only on prod, and on prod the client env requires this.
@@ -136,12 +135,6 @@ const SCHEMA = `
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
-    -- The image's comment threads, which an image delete detaches when a held author is in one.
-    CREATE TABLE "Thread" (
-      id serial PRIMARY KEY, "imageId" int, "parentThreadId" int, "rootThreadId" int,
-      "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int UNIQUE);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (

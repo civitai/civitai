@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const chQueries = vi.hoisted(() => [] as string[]);
 const chRows = vi.hoisted(() => [] as unknown[][]);
+const chParamQueries = vi.hoisted(() => [] as { query: string; params: Record<string, number> }[]);
 
 // 🔴 The fake HONOURS `LIMIT`. Ignoring it makes every assertion about a row budget vacuous — the
 // caller gets all the canned rows however small the budget is, so shrinking `CLUSTER_SCAN` from 1000
@@ -28,6 +29,17 @@ vi.mock('$lib/server/clickhouse', () => ({
       const rows = chRows.shift() ?? [];
       const limit = Number(sql.match(/LIMIT\s+(\d+)\s*$/m)?.[1]);
       return Promise.resolve(Number.isInteger(limit) ? rows.slice(0, limit) : rows);
+    },
+    // The parameterized page read. Like `LIMIT` above, the fake honours the rank window the query
+    // asks for, row 1 included, so an offset that never reaches the query shows.
+    query: ({ query, query_params }: { query: string; query_params: Record<string, number> }) => {
+      chParamQueries.push({ query, params: query_params });
+      const { offset, limit } = query_params;
+      const rows = (chRows.shift() ?? []) as { rn: string }[];
+      const inWindow = rows.filter(
+        (r) => Number(r.rn) === 1 || (Number(r.rn) > offset && Number(r.rn) <= offset + limit)
+      );
+      return Promise.resolve({ json: () => Promise.resolve(inWindow) });
     },
   }),
 }));
@@ -56,19 +68,20 @@ vi.mock('$lib/server/moderation-memory.service', () => ({
   strikeCountsByUserIds: () => Promise.resolve(new Map()),
 }));
 
-const { getInflationActors, getSharedIps, getSharedIpCoverage } = await import(
+const { getInflationActors, getReactorsPage, getSharedIps, getSharedIpCoverage } = await import(
   '../reactor-lookup.service'
 );
 const { OWN_ACTIVITY_ONLY } = await import('../clickhouse-filters');
 
 beforeEach(() => {
   chQueries.length = 0;
+  chParamQueries.length = 0;
   chRows.length = 0;
   pgQueries.length = 0;
 });
 
 const runReactors = (days: number, minCount = 5) =>
-  getInflationActors(1000001, { category: 'reactions', days, minCount });
+  getInflationActors(990100027, { category: 'reactions', days, minCount });
 
 describe('getReactors', () => {
   it('counts reactions GIVEN, never reactions withdrawn', async () => {
@@ -98,12 +111,12 @@ describe('getReactors', () => {
     await runReactors(3);
 
     const q = chQueries[0];
-    expect(q).toContain('countIf(ownerId = 1000001) AS count');
+    expect(q).toContain('countIf(ownerId = 990100027) AS count');
     expect(q).toContain('count() AS total');
     expect(q).toContain('uniq(ownerId) AS owners');
     // Filtering the pass to the target makes `total` equal `count`, every row 100%, and the ranking
     // it feeds meaningless.
-    expect(q).not.toMatch(/WHERE[^]*ownerId = 1000001/);
+    expect(q).not.toMatch(/WHERE[^]*ownerId = 990100027/);
   });
 
   it('applies the volume floor, and reports how many accounts it removed', async () => {
@@ -195,7 +208,7 @@ describe('getReactors', () => {
         reactors: '1400',
       },
     ]);
-    const report = await getInflationActors(1000001, {
+    const report = await getInflationActors(990100027, {
       category: 'reactions',
       days: 3,
       minCount: 5,
@@ -206,9 +219,78 @@ describe('getReactors', () => {
   });
 });
 
+describe('getReactorsPage', () => {
+  const OWNER = 990100027;
+  // Ranked rows as the query returns them: every reactor over a floor of 5 first, then one under it.
+  const ranked = (overFloor: number, under = 1) =>
+    Array.from({ length: overFloor + under }, (_, i) => ({
+      userId: String(5000 + i),
+      count: String(i < overFloor ? 50 - (i % 40) : 1),
+      entities: '3',
+      total: '60',
+      owners: '2',
+      matched: String(overFloor),
+      reactors: String(overFloor + under),
+      rn: String(i + 1),
+    }));
+  const page = (offset: number, limit: number, minCount = 5) =>
+    getReactorsPage(OWNER, { days: 3, minCount, offset, limit });
+
+  it("ranks in reactors_of's order, then by user id, so equal ranks never straddle a page", async () => {
+    await runReactors(3, 5);
+    chRows.push(ranked(3));
+    await page(0, 10, 5);
+    const [{ query, params }] = chParamQueries;
+    const ofOrder = chQueries[0].match(/ORDER BY ([^\n]+)/)![1].trim();
+    const pageOrder = query
+      .match(/row_number\(\) OVER \(ORDER BY ([^)]+)\)/)![1]
+      .replace('{floor:UInt32}', String(params.floor));
+    expect(pageOrder).toBe(`${ofOrder}, userId ASC`);
+  });
+
+  it('binds every caller value as a parameter', async () => {
+    chRows.push(ranked(3));
+    await page(20, 40, 7);
+    const [{ query, params }] = chParamQueries;
+    expect(params).toEqual({ ownerId: OWNER, floor: 7, days: 3, offset: 20, limit: 40 });
+    expect(query).not.toContain(String(OWNER));
+    expect(query).toContain('rn > {offset:UInt32} AND rn <= {offset:UInt32} + {limit:UInt32}');
+  });
+
+  it('returns the page asked for, past the first 20', async () => {
+    chRows.push(ranked(60));
+    const out = await page(20, 20);
+    expect(out.actors.map((a) => a.userId)).toEqual(Array.from({ length: 20 }, (_, i) => 5020 + i));
+    expect(out.actors[0]).toMatchObject({ username: 'u5020', count: 30, concentration: 0.5 });
+  });
+
+  it('reports the true count on a page past the end, and on a counts-only read', async () => {
+    chRows.push(ranked(291, 174));
+    expect(await page(4000, 100)).toEqual({ actors: [], overFloor: 291, belowFloor: 174 });
+    chRows.push(ranked(291, 174));
+    expect(await page(0, 0)).toEqual({ actors: [], overFloor: 291, belowFloor: 174 });
+  });
+
+  it('drops a reactor under the floor that falls inside the page', async () => {
+    chRows.push(ranked(4, 3));
+    const out = await page(0, 10);
+    expect(out.actors.map((a) => a.userId)).toEqual([5000, 5001, 5002, 5003]);
+    expect(out).toMatchObject({ overFloor: 4, belowFloor: 3 });
+  });
+
+  it('reads nothing for an id outside int4', async () => {
+    expect(await getReactorsPage(2 ** 31, { days: 3, minCount: 5, offset: 0, limit: 10 })).toEqual({
+      actors: [],
+      overFloor: 0,
+      belowFloor: 0,
+    });
+    expect(chParamQueries).toHaveLength(0);
+  });
+});
+
 describe('getStickerPlacers', () => {
   it('reads every placer and applies the floor and the cap in JS', async () => {
-    const report = await getInflationActors(1000001, {
+    const report = await getInflationActors(990100027, {
       category: 'stickers',
       days: 3,
       minCount: 5,
@@ -230,7 +312,7 @@ describe('getStickerPlacers', () => {
 
 describe('getSharedIps', () => {
   const twoAccounts = [1, 2];
-  const TARGET = 1000001;
+  const TARGET = 990100027;
 
   it('groups and filters by the /64 cluster inside the query', async () => {
     chRows.push([], []);
@@ -311,20 +393,28 @@ describe('getSharedIps', () => {
     chRows.push(
       // The rotation case: one pair, six addresses. Address-keyed, this is six near-identical rows.
       [
-        { cluster: '198.51.100.83', userIds: ['1000002', String(TARGET)], ips: ['198.51.100.83'] },
+        {
+          cluster: '198.51.100.83',
+          userIds: ['990100028', String(TARGET)],
+          ips: ['198.51.100.83'],
+        },
         {
           cluster: '198.51.100.107',
-          userIds: ['1000002', String(TARGET)],
+          userIds: ['990100028', String(TARGET)],
           ips: ['198.51.100.107'],
         },
-        { cluster: '198.51.100.13', userIds: ['1000002', String(TARGET)], ips: ['198.51.100.13'] },
+        {
+          cluster: '198.51.100.13',
+          userIds: ['990100028', String(TARGET)],
+          ips: ['198.51.100.13'],
+        },
       ],
       [{ cluster: '198.51.100.83', total: '2' }]
     );
-    const accounts = await getSharedIps([1000002], { targetId: TARGET });
+    const accounts = await getSharedIps([990100028], { targetId: TARGET });
 
     expect(accounts).toHaveLength(1);
-    expect(accounts[0].userId).toBe(1000002);
+    expect(accounts[0].userId).toBe(990100028);
     expect(accounts[0].addresses).toHaveLength(3);
     // The creator gets no entry of its own — it is a member of every finding, so its entry would be
     // a copy of the whole panel.
@@ -392,7 +482,7 @@ describe('PUBLIC_IP_ONLY', () => {
 
 describe('getCollectionAdders', () => {
   it('passes the image set as a subquery, never as a materialised id list', async () => {
-    await getInflationActors(1000001, { category: 'collections', days: 3, minCount: 5 });
+    await getInflationActors(990100027, { category: 'collections', days: 3, minCount: 5 });
 
     const grouped = pgQueries.find((q) => q.includes('"CollectionItem"'));
     // The cap is 20k images. Fetched into JS and pasted back, that is 20k bind parameters and an
@@ -402,7 +492,7 @@ describe('getCollectionAdders', () => {
   });
 
   it('excludes the creator collecting their own work', async () => {
-    await getInflationActors(1000001, { category: 'collections', days: 3, minCount: 5 });
+    await getInflationActors(990100027, { category: 'collections', days: 3, minCount: 5 });
 
     // Left in, it takes the top row and pushes the rows worth reading off the end of the limit.
     expect(pgQueries.find((q) => q.includes('"CollectionItem"'))).toContain('"addedById" !=');
@@ -410,9 +500,9 @@ describe('getCollectionAdders', () => {
 });
 
 describe('getSharedIps per-account budget', () => {
-  const TARGET = 1000001;
-  const HOARDER = 1000002;
-  const QUIET = 1000003;
+  const TARGET = 990100027;
+  const HOARDER = 990100028;
+  const QUIET = 990100029;
 
   // One rotating connection produces far more clusters than everyone else combined: measured on
   // one confirmed case, 29 of 31 belonged to a single reactor.
@@ -460,35 +550,35 @@ describe('getSharedIps per-account budget', () => {
 });
 
 describe('getSharedIpCoverage', () => {
-  const TARGET = 1000001;
+  const TARGET = 990100027;
   const row = (i: number) => ({
     cluster: `198.18.${Math.floor(i / 256)}.${i % 256}`,
-    userIds: [String(1000002 + (i % 2)), String(TARGET)],
+    userIds: [String(990100028 + (i % 2)), String(TARGET)],
     ips: [`198.18.${Math.floor(i / 256)}.${i % 256}`],
   });
   const rows = (n: number) => Array.from({ length: n }, (_, i) => row(i));
 
   it('says when the address scan filled its row budget, and only then', async () => {
     chRows.push(rows(1500), []);
-    expect((await getSharedIpCoverage([1000002, 1000003], { targetId: TARGET })).scanCapped).toBe(
-      true
-    );
+    expect(
+      (await getSharedIpCoverage([990100028, 990100029], { targetId: TARGET })).scanCapped
+    ).toBe(true);
     chRows.push(rows(400), []);
-    expect((await getSharedIpCoverage([1000002, 1000003], { targetId: TARGET })).scanCapped).toBe(
-      false
-    );
+    expect(
+      (await getSharedIpCoverage([990100028, 990100029], { targetId: TARGET })).scanCapped
+    ).toBe(false);
   });
 
   it('puts a time limit on both queries when given one', async () => {
     chRows.push(rows(2), []);
-    await getSharedIpCoverage([1000002, 1000003], { targetId: TARGET, timeoutSeconds: 15 });
+    await getSharedIpCoverage([990100028, 990100029], { targetId: TARGET, timeoutSeconds: 15 });
     expect(chQueries).toHaveLength(2);
     for (const q of chQueries) expect(q).toMatch(/SETTINGS max_execution_time = 15\s*$/);
   });
 
   it('leaves the Reactor Lookup page queries unbounded', async () => {
     chRows.push(rows(2), []);
-    await getSharedIps([1000002, 1000003], { targetId: TARGET });
+    await getSharedIps([990100028, 990100029], { targetId: TARGET });
     for (const q of chQueries) expect(q).not.toContain('max_execution_time');
   });
 });

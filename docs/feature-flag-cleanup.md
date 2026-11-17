@@ -48,7 +48,6 @@ Each has exactly one real consumer; the question is whether the feature itself i
 
 | Flag                      | Line                                                        | Sole consumer                                                                                                                                                                      | Product question                                                                           |
 | ------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `questions`               | [90](../src/server/services/feature-flags.service.ts#L90)   | [pages-old/questions/...](../src/pages-old/questions/[questionId]/[[...questionDetailSlug]].tsx#L27)                                                                               | Lives in `pages-old/` — strong signal the section is archived. Delete page + flag together |
 | `kinguinIframe`           | [177](../src/server/services/feature-flags.service.ts#L177) | [KinguinCheckout.tsx:85](../src/components/KinguinCheckout/KinguinCheckout.tsx#L85)                                                                                                | Is Kinguin still being used at all?                                                        |
 | `annualMemberships`       | [168](../src/server/services/feature-flags.service.ts#L168) | [MembershipPlans.tsx:221](../src/components/Purchase/MembershipPlans.tsx#L221)                                                                                                     | `['dev']` — ship it or remove                                                              |
 | `civitaiLink`             | [190](../src/server/services/feature-flags.service.ts#L190)  | [CivitaiLinkProvider.tsx:355](../src/components/CivitaiLink/CivitaiLinkProvider.tsx#L355), [CivitaiLinkPopover.tsx:341](../src/components/CivitaiLink/CivitaiLinkPopover.tsx#L341) | **Keep.** Desktop `v1.21.0` and node pack `v0.6.0` both shipped Sep 2026; `['mod','member']` is the supporter gate, not a rollout leftover |
@@ -105,8 +104,8 @@ Derive it, don't trust the prose: the current split is 19 safe and 6 not.
 | `largerGenerationImages` | `toggleable` with `default: false`, so it is **off** unless a user opts in. The old "toggleable but defaulted" annotation reads the wrong way round. |
 
 Three more were removed from this list entirely rather than annotated: `imageSearch`
-(`availability: []` plus a live `image-search` key — image search is retired, so inlining re-ships
-it against a deleted index with no flag left to switch it off), `challengePlatform` (a live
+(`availability: []` — image search is retired, so inlining re-ships it against a deleted index;
+its `image-search` Flipt key, which never existed in flag state, was removed), `challengePlatform` (a live
 kill-switch key), and `vault` (`['user']`).
 
 Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six

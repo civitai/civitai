@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ImageService from '~/server/services/image.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as Metrics from '~/server/metrics';
@@ -132,6 +133,7 @@ beforeEach(() => {
   db.image.findMany.mockResolvedValue([imageRow(100), imageRow(101)]);
   db.image.count.mockResolvedValue(3);
   db.image.aggregate.mockResolvedValue({ _max: { index: 4 } });
+  db.postText.aggregate.mockResolvedValue({ _max: { index: null } });
   db.post.create.mockResolvedValue({ id: 9 });
   db.image.updateMany.mockResolvedValue({ count: 1 });
 });
@@ -187,6 +189,18 @@ describe('moveImagesToPost', () => {
     expect(mocks.createImageResources.mock.calls.map((c) => c[0])).toEqual([
       { imageId: 101 },
       { imageId: 100 },
+    ]);
+  });
+
+  it("appends after the target's storyline text items when one sits after its last image", async () => {
+    mockPosts(postRow(), postRow({ id: 2, publishedAt: new Date('2025-06-01') }));
+    db.postText.aggregate.mockResolvedValue({ _max: { index: 8 } });
+
+    await moveImagesToPost({ imageIds: [101, 100], fromPostId: 1, toPostId: 2, userId: USER });
+
+    expect(db.image.updateMany.mock.calls.map((c: unknown[]) => c[0])).toEqual([
+      { where: expect.objectContaining({ id: 101 }), data: { postId: 2, index: 9 } },
+      { where: expect.objectContaining({ id: 100 }), data: { postId: 2, index: 10 } },
     ]);
   });
 
@@ -343,6 +357,9 @@ describe('moveImagesToPost', () => {
     ).rejects.toThrow(new RegExp(`^${IMAGES_NOT_MOVABLE}$`));
     expect(db.$transaction).not.toHaveBeenCalled();
     expectNothingWritten();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'account-legal-hold', message: 'Image move refused' })
+    );
   });
 
   it('refuses when the account check cannot be read', async () => {

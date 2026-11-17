@@ -48,6 +48,7 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { willEdgeCache } from '~/server/trpc/edge-cache-headers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
 const decoration = (id: number) => ({
   id: 90,
@@ -69,7 +70,11 @@ const anonymousDefaults = () => ({
   skip: false,
 });
 
-function call(user: { id: number; isModerator?: boolean } | undefined, ids = [1, 2, 3]) {
+function call(
+  user: { id: number; isModerator?: boolean } | undefined,
+  ids = [1, 2, 3],
+  credential: Record<string, unknown> = {}
+) {
   const cache = anonymousDefaults();
   const result = cosmeticRouter
     .createCaller({
@@ -77,6 +82,7 @@ function call(user: { id: number; isModerator?: boolean } | undefined, ids = [1,
       acceptableOrigin: true,
       tokenScope: TokenScope.Full,
       apiKeyId: null,
+      ...credential,
       req: { headers: {}, query: {} },
       res: { setHeader: () => undefined },
       cache,
@@ -116,6 +122,25 @@ describe('cosmetic.getEventDecorationsForSearch after launch', () => {
     const { cache, result } = call({ id: 7 });
     expect(Object.keys(await result)).toEqual(['1']);
     expect(willEdgeCache(cache)).toBe(true);
+  });
+
+  // A moderator is in every flag audience, but only on a session or a full-access key (eventViewerOf).
+  it.each([
+    ['a session', {}, true],
+    [
+      'a scoped token',
+      {
+        apiKeyId: 9,
+        apiKeyType: ApiKeyType.User,
+        subject: { type: 'apiKey', id: 9 },
+        tokenScope: TokenScope.MediaRead,
+      },
+      false,
+    ],
+  ])('asks the hat gate about a moderator on %s', async (_label, credential, isModerator) => {
+    arrange([EVENT]);
+    await call({ id: 7, isModerator: true }, [1], credential).result;
+    expect(visibleEvents).toHaveBeenCalledWith('Model', { id: 7, isModerator });
   });
 
   it('does not cache a viewer who sees more than the signed out', async () => {

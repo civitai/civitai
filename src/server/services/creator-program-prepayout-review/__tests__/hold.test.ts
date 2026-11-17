@@ -1,7 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as NotificationService from '~/server/services/notification.service';
 import { OnboardingSteps } from '~/server/common/enums';
-import { decidePayoutReview, getSettlementHolds } from '../hold';
+import {
+  assertNoPayoutHold,
+  decidePayoutReview,
+  getSettlementHolds,
+  hasPayoutHold,
+  openPayoutHold,
+} from '../hold';
+import { installPayoutReviewTable } from './payout-review-fake';
+
+const { createNotification } = vi.hoisted(() => ({
+  createNotification: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 
 const reviews = dbMock.dbWrite.creatorProgramPayoutReview;
 
@@ -164,5 +182,164 @@ describe('decidePayoutReview', () => {
     reviews.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(decide('clear')).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+});
+
+describe('openPayoutHold', () => {
+  let table: ReturnType<typeof installPayoutReviewTable>;
+  const now = new Date('2026-11-20T10:00:00Z');
+  const open = () =>
+    openPayoutHold(
+      { userId: 9, ground: 'chargeback', reason: 'disputed sales', askRef: 'card-9' },
+      'user:5',
+      now
+    );
+
+  beforeEach(() => {
+    table = installPayoutReviewTable();
+    dbMock.dbWrite.user.findUnique.mockResolvedValue({ id: 9 });
+  });
+  afterEach(() => table.uninstall());
+
+  it('holds a creator the detector never flagged, recording ground, reason and who', async () => {
+    const hold = await open();
+
+    expect(hold).toMatchObject({ period: '2026-10', status: 'open' });
+    expect(await hasPayoutHold(9)).toBe(true);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 9,
+        type: 'creators-program-cash-out-on-hold',
+        key: `creators-program-cash-out-on-hold:${hold.id}:${hold.version}`,
+      })
+    );
+    expect(table.rows[0].decisions).toEqual([
+      expect.objectContaining({
+        action: 'opened',
+        ground: 'chargeback',
+        note: 'disputed sales',
+        by: 'user:5',
+        askRef: 'card-9',
+      }),
+    ]);
+  });
+
+  it('refuses a second hold while one stands', async () => {
+    await open();
+    await expect(open()).rejects.toThrow('already has a payout hold');
+  });
+
+  it('reopens a review cleared earlier in the same period', async () => {
+    table.rows.push(
+      review({ period: '2026-10', status: 'cleared', hold: false, signals: ['x'], version: 4 })
+    );
+
+    const hold = await open();
+
+    expect(hold).toMatchObject({ id: 41, version: 5 });
+    expect(table.rows[0]).toMatchObject({
+      status: 'open',
+      hold: true,
+      signals: ['x', 'manual:chargeback'],
+    });
+    expect(await hasPayoutHold(9)).toBe(true);
+  });
+
+  it('refuses when the cleared review changes between read and write', async () => {
+    table.rows.push(
+      review({ period: '2026-10', status: 'cleared', hold: false, signals: [], version: 4 })
+    );
+    const write = reviews.updateMany.getMockImplementation()!;
+    reviews.updateMany.mockImplementationOnce(async (args: unknown) => {
+      table.rows[0].status = 'escalated';
+      return write(args);
+    });
+
+    await expect(open()).rejects.toThrow('changed while opening a hold');
+    expect(table.rows[0].status).toBe('escalated');
+  });
+
+  it('sends a withhold superseded by a later clear back to review instead of retrying', async () => {
+    table.rows.push(
+      review({ period: '2026-10', status: 'withheld', hold: false, signals: [] }),
+      review({ id: 42, period: '2026-11', status: 'cleared', hold: false, signals: [] })
+    );
+    expect(await hasPayoutHold(9)).toBe(false);
+
+    await expect(open()).rejects.toThrow('is withheld; decide it in payout review');
+    expect(table.rows[0]).toMatchObject({ status: 'withheld', version: 3 });
+  });
+
+  it('files a period-scoped row once and reports a concurrent filing as a conflict', async () => {
+    reviews.findUnique.mockResolvedValueOnce(null);
+    table.rows.push(review({ period: '2026-10', status: 'cleared', hold: false, signals: [] }));
+
+    await expect(open()).rejects.toThrow('was filed meanwhile');
+  });
+
+  it('refuses an unknown user', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    await expect(open()).rejects.toThrow('No user 9');
+  });
+});
+
+describe('hasPayoutHold', () => {
+  let table: ReturnType<typeof installPayoutReviewTable>;
+  beforeEach(() => {
+    table = installPayoutReviewTable();
+  });
+  afterEach(() => table.uninstall());
+
+  it.each([
+    ['an escalated review', [{ period: '2026-10', status: 'escalated', hold: true }], true],
+    [
+      'a withhold that is the latest review',
+      [{ period: '2026-10', status: 'withheld', hold: true }],
+      true,
+    ],
+    [
+      'a withhold a later review cleared',
+      [
+        { period: '2026-09', status: 'withheld', hold: true },
+        { period: '2026-10', status: 'cleared', hold: false },
+      ],
+      false,
+    ],
+    ["another user's hold", [{ period: '2026-10', status: 'open', hold: true, userId: 10 }], false],
+  ])('%s → %s', async (_label, rows, held) => {
+    for (const [i, r] of rows.entries()) table.rows.push(review({ id: 100 + i, userId: 9, ...r }));
+    expect(await hasPayoutHold(9)).toBe(held);
+  });
+});
+
+describe('assertNoPayoutHold when the hold cannot be read', () => {
+  const unchecked = () =>
+    loggingMock.logToAxiom.mock.calls.filter(
+      ([e]) => (e as { name?: string }).name === 'creator-program-payout-hold-unchecked'
+    );
+  beforeEach(() => loggingMock.logToAxiom.mockClear());
+  afterEach(() => reviews.findMany.mockReset().mockResolvedValue([]));
+
+  it('refuses the cash-out and alerts when the review table is missing', async () => {
+    reviews.findMany.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('missing table', {
+        code: 'P2021',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(assertNoPayoutHold(9)).rejects.toThrow('temporarily unavailable');
+    expect(unchecked()).toHaveLength(1);
+  });
+
+  it('rethrows any other database error unchanged', async () => {
+    reviews.findMany.mockRejectedValue(new Error('connection reset'));
+
+    await expect(assertNoPayoutHold(9)).rejects.toThrow('connection reset');
+    expect(unchecked()).toHaveLength(0);
+  });
+
+  it('lets a creator with no review through', async () => {
+    await expect(assertNoPayoutHold(9)).resolves.toBeUndefined();
   });
 });

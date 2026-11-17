@@ -1,5 +1,6 @@
 import type { MenuProps } from '@mantine/core';
-import { ActionIcon, Loader, Menu, Text } from '@mantine/core';
+import { ActionIcon, Loader, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import {
   IconCalculator,
@@ -11,7 +12,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 
-import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

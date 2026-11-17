@@ -16,6 +16,7 @@ import {
   isTestFileLine,
   parseDiagnostics,
   stripJsonComments,
+  TEST_EXCLUDES,
   testFileFloor,
   toPosixPath,
   validateBaseline,
@@ -123,7 +124,7 @@ describe('classifyRun — a zero is only a measurement when the run succeeded', 
   });
 
   it.each([
-    ['a rejected TYPECHECK_HEAP_MB', 2],
+    ['a rejected argument', 2],
     ['a missing binary', 127],
     ['a V8 heap abort', 134],
     ['an unknown tooling failure', 1],
@@ -430,23 +431,37 @@ describe('testFileFloor', () => {
 
 // ------------------------------------------------------------- the predicate
 
-describe('isGatedTestFile — matches the ACTUAL exclusion, not a substring', () => {
-  it.each([
-    'src/__tests__/pages/api/download/attachment-blocklist.test.ts',
-    'src/components/Apps/__tests__/appListingCardView.test.ts',
+describe('isGatedTestFile — matches exactly the TEST_EXCLUDES population', () => {
+  // One path per TEST_EXCLUDES entry, so an entry added without a case fails the length check.
+  const claimed = [
     'src/server/services/deep/nested/__tests__/x.test.ts',
-  ])('claims %s', (f) => expect(isGatedTestFile(f)).toBe(true));
+    'src/components/Apps/appListingCardView.test.ts',
+    'src/components/Apps/AppsSubmitEditView.browser.test.tsx',
+    'src/tests/api/v1/blocks/helpers.ts',
+    'src/test-utils/pgDbMock.ts',
+    'packages/civitai-db-schema/src/__tests__/drift.test.ts',
+    'packages/civitai-redis/src/client.test.ts',
+    'packages/civitai-shared/src/Button.browser.test.tsx',
+    'tests/preview-model.spec.ts',
+    'test/component-setup.tsx',
+  ];
+
+  it('has one case per TEST_EXCLUDES entry', () => {
+    expect(claimed).toHaveLength(TEST_EXCLUDES.length);
+  });
+
+  it.each(claimed)('claims %s', (f) => expect(isGatedTestFile(f)).toBe(true));
 
   it.each([
-    // In BOTH programs — `pnpm typecheck` already blocks on these, so demanding a
-    // baseline entry here would double-count. The old `/__tests__/` substring
-    // predicate claimed all 68 of them.
-    'packages/civitai-db-schema/src/__tests__/drift.test.ts',
-    'packages/civitai-redis/src/client/__tests__/x.test.ts',
-    // Not under src/ at all.
-    'tests/preview-model.spec.ts',
+    // `scripts/` tests belong to typecheck-scripts-gate, not this one.
     'scripts/__tests__/typecheck.test.ts',
-    'src/components/Apps/appListingCardView.test.ts',
+    'scripts/ci/foo.test.ts',
+    // Production files the root check still sees.
+    'src/components/Apps/appListingCardView.tsx',
+    'src/server/test-utils.ts',
+    'src/testsuite/x.ts',
+    'packages/civitai-db/src/client.ts',
+    'packages/civitai-db/tests/x.test.ts',
   ])('does NOT claim %s', (f) => expect(isGatedTestFile(f)).toBe(false));
 });
 
@@ -622,7 +637,7 @@ describe('detectRenames', () => {
 
 // ---------------------------------------------------- tsconfig drift control
 
-describe('the two tsconfig exclude lists differ by exactly one entry', () => {
+describe('the two tsconfig exclude lists differ by exactly the test entries', () => {
   const read = (f: string) =>
     JSON.parse(stripJsonComments(readFileSync(path.join(REPO_ROOT, f), 'utf8')))
       .exclude as string[];
@@ -631,14 +646,15 @@ describe('the two tsconfig exclude lists differ by exactly one entry', () => {
     // The lists are written out verbatim in both files, so an addition to
     // tsconfig.json's exclude silently fails to reach the measurement program
     // and nothing else in the repo would notice. This is the thing that notices.
-    const d = diffExcludes(
-      read('tsconfig.json'),
-      read('tsconfig.tests.json'),
-      'src/**/__tests__/**'
-    );
+    const d = diffExcludes(read('tsconfig.json'), read('tsconfig.tests.json'), TEST_EXCLUDES);
     expect(d.added).toEqual([]);
-    expect(d.removed).toEqual(['src/**/__tests__/**']);
+    expect([...d.removed].sort()).toEqual([...TEST_EXCLUDES].sort());
     expect(d.ok).toBe(true);
+  });
+
+  it('fails when the tests config still excludes one of the test entries', () => {
+    const d = diffExcludes(['a', 'b', 'c'], ['a', 'c'], ['b', 'c']);
+    expect(d.ok).toBe(false);
   });
 
   it('fails when the base config gains an entry the tests config did not copy', () => {
@@ -736,7 +752,7 @@ const BASE_FILES = { 'src/a/__tests__/x.test.ts': 5, 'src/b/__tests__/y.test.ts'
 
 describe('the gate, end to end: a broken checker must never PASS', () => {
   it.each([
-    ['exit 2, silent (a rejected TYPECHECK_HEAP_MB)', 'process.exit(2);'],
+    ['exit 2, silent (a rejected argument)', 'process.exit(2);'],
     ['exit 127, silent (the binary is not there)', 'process.exit(127);'],
     ['exit 134, silent (a V8 heap abort)', 'process.exit(134);'],
     ['exit 1, silent (an unclassified tooling failure)', 'process.exit(1);'],
@@ -1024,16 +1040,13 @@ describe('the gate, end to end: a working checker produces the right verdict', (
     expect(res.all).toContain('7 error(s) across 2 file(s)');
   });
 
-  it('ignores diagnostics outside src/**/__tests__/ instead of demanding a baseline entry', () => {
+  it('ignores diagnostics outside the test files instead of demanding a baseline entry', () => {
     const res = runGate(
-      wrapperStub(
-        'pkgs',
-        emit([...unchanged, plain('packages/civitai-db/src/__tests__/q.test.ts')])
-      ),
+      wrapperStub('pkgs', emit([...unchanged, plain('packages/civitai-db/src/client.ts')])),
       fixtureBaseline('c7', BASE_FILES)
     );
     expect(res.status).toBe(0);
-    expect(res.all).toContain('1 file(s) with errors outside src/**/__tests__/');
+    expect(res.all).toContain('1 file(s) with errors outside the test files');
   });
 });
 
@@ -1124,7 +1137,7 @@ function configDir(name: string, base: string[], tests: string[]) {
   return d;
 }
 
-const OK_BASE = ['node_modules', 'src/**/__tests__/**'];
+const OK_BASE = ['node_modules', ...TEST_EXCLUDES];
 const OK_TESTS = ['node_modules'];
 
 function workingWrapper(name: string) {

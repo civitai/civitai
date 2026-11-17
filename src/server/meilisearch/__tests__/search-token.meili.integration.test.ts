@@ -1,12 +1,18 @@
 import { MeiliSearch } from 'meilisearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  COMICS_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+} from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import {
   BROWSER_SEARCH_INDEXES,
   SEARCH_TOKEN_TTL_MS,
   mintSearchToken,
 } from '~/server/meilisearch/search-token';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Search tokens against a REAL Meilisearch: the rules only mean anything if Meilisearch enforces
@@ -24,19 +30,42 @@ const MASTER_KEY = process.env.MEILI_IT_MASTER_KEY;
 const CONTROL = 1;
 const RESTRICTED = 2; // poi, owned by OWNER
 const PRIVATE = 3;
+const MATURE = 4; // above the SFW cap
 const OWNER = 7;
 const OTHER_USER = 99;
 const CONTROL_IMAGE = 10;
 const RESTRICTED_IMAGE = 11;
+const SFW_COMIC = 20;
+const MATURE_COMIC = 21;
 // An index the browser never searches: a token must not reach it.
 const UNLISTED_INDEX = 'models';
 // Retired, so no token grants it.
 const RETIRED_INDEX = IMAGES_SEARCH_INDEX;
 
+const pg = { nsfwLevel: NsfwLevel.PG };
 const modelDocs = [
-  { id: CONTROL, name: 'Control', poi: false, availability: 'Public', user: { id: 5 } },
-  { id: RESTRICTED, name: 'Restricted', poi: true, availability: 'Public', user: { id: OWNER } },
-  { id: PRIVATE, name: 'Private', poi: false, availability: 'Private', user: { id: 9 } },
+  { id: CONTROL, name: 'Control', poi: false, availability: 'Public', user: { id: 5 }, ...pg },
+  {
+    id: RESTRICTED,
+    name: 'Restricted',
+    poi: true,
+    availability: 'Public',
+    user: { id: OWNER },
+    ...pg,
+  },
+  { id: PRIVATE, name: 'Private', poi: false, availability: 'Private', user: { id: 9 }, ...pg },
+  {
+    id: MATURE,
+    name: 'Mature',
+    poi: false,
+    availability: 'Public',
+    user: { id: 5 },
+    nsfwLevel: NsfwLevel.R,
+  },
+];
+const comicDocs = [
+  { id: SFW_COMIC, nsfwLevel: [NsfwLevel.PG] },
+  { id: MATURE_COMIC, nsfwLevel: [NsfwLevel.R] },
 ];
 const imageDocs = [
   { id: CONTROL_IMAGE, poi: false, user: { id: 5 } },
@@ -75,10 +104,19 @@ describe.skipIf(!HOST || !MASTER_KEY)('search tokens on a real Meilisearch', () 
     const models = admin.index(MODELS_SEARCH_INDEX);
     await admin.waitForTask(
       (
-        await models.updateFilterableAttributes(['id', 'poi', 'availability', 'user.id'])
+        await models.updateFilterableAttributes([
+          'id',
+          'poi',
+          'availability',
+          'user.id',
+          'nsfwLevel',
+        ])
       ).taskUid
     );
     await admin.waitForTask((await models.addDocuments(modelDocs)).taskUid);
+    const comics = admin.index(COMICS_SEARCH_INDEX);
+    await admin.waitForTask((await comics.updateFilterableAttributes(['id', 'nsfwLevel'])).taskUid);
+    await admin.waitForTask((await comics.addDocuments(comicDocs)).taskUid);
     const images = admin.index(RETIRED_INDEX);
     await admin.waitForTask((await images.updateFilterableAttributes(['id', 'poi'])).taskUid);
     await admin.waitForTask((await images.addDocuments(imageDocs)).taskUid);
@@ -117,7 +155,13 @@ describe.skipIf(!HOST || !MASTER_KEY)('search tokens on a real Meilisearch', () 
 
   // Without this, every empty result below could mean the fixture never indexed anything.
   it('fixture control: a key with no rules sees every document', async () => {
-    expect(await searchIds(plainKey, MODELS_SEARCH_INDEX)).toEqual([CONTROL, RESTRICTED, PRIVATE]);
+    expect(await searchIds(plainKey, MODELS_SEARCH_INDEX)).toEqual([
+      CONTROL,
+      RESTRICTED,
+      PRIVATE,
+      MATURE,
+    ]);
+    expect(await searchIds(plainKey, COMICS_SEARCH_INDEX)).toEqual([SFW_COMIC, MATURE_COMIC]);
     expect(await searchIds(plainKey, RETIRED_INDEX)).toEqual([CONTROL_IMAGE, RESTRICTED_IMAGE]);
   });
 
@@ -171,10 +215,36 @@ describe.skipIf(!HOST || !MASTER_KEY)('search tokens on a real Meilisearch', () 
     expect(await searchIds(token, MODELS_SEARCH_INDEX)).toEqual([CONTROL, RESTRICTED]);
   });
 
-  it('a moderator token finds every model, but not a retired index', async () => {
-    const token = tokenFor({ id: 1, isModerator: true });
-    expect(await searchIds(token, MODELS_SEARCH_INDEX)).toEqual([CONTROL, RESTRICTED, PRIVATE]);
+  it('a moderator token on an uncapped site finds every model, but not a retired index', async () => {
+    const token = tokenFor({ id: 1, isModerator: true, browsingLevelCap: null });
+    expect(await searchIds(token, MODELS_SEARCH_INDEX)).toEqual([
+      CONTROL,
+      RESTRICTED,
+      PRIVATE,
+      MATURE,
+    ]);
     expect((await call(token, `/indexes/${RETIRED_INDEX}/search`, { q: '' })).status).toBe(403);
+  });
+
+  describe.each([
+    ['anonymous (no cap given)', null],
+    ['a capped signed-in user', { id: OTHER_USER, browsingLevelCap: sfwBrowsingLevelsFlag }],
+    ['a capped moderator', { id: 1, isModerator: true, browsingLevelCap: sfwBrowsingLevelsFlag }],
+  ])('on a capped site, a token for %s', (_label, viewer) => {
+    it('finds no model or comic above the cap, even when the filter asks for it', async () => {
+      const token = tokenFor(viewer);
+      expect(await searchIds(token, MODELS_SEARCH_INDEX)).not.toContain(MATURE);
+      expect(await searchIds(token, MODELS_SEARCH_INDEX)).toContain(CONTROL);
+      expect(await searchIds(token, MODELS_SEARCH_INDEX, `id = ${MATURE}`)).toEqual([]);
+      expect(await searchIds(token, COMICS_SEARCH_INDEX)).toEqual([SFW_COMIC]);
+      expect(await searchIds(token, COMICS_SEARCH_INDEX, `id = ${MATURE_COMIC}`)).toEqual([]);
+    });
+  });
+
+  it('an uncapped site still finds the mature model and comic', async () => {
+    const token = tokenFor({ id: OTHER_USER, browsingLevelCap: null });
+    expect(await searchIds(token, MODELS_SEARCH_INDEX)).toEqual([CONTROL, MATURE]);
+    expect(await searchIds(token, COMICS_SEARCH_INDEX)).toEqual([SFW_COMIC, MATURE_COMIC]);
   });
 
   it('an expired token is refused', async () => {

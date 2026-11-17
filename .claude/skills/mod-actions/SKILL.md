@@ -158,7 +158,7 @@ node .claude/skills/mod-actions/reports.mjs <command> [options]
 | `appeal-details <id>` | READ | Appeal details |
 | `resolve-appeal` | WRITE | Resolve appeal (requires `--ids`, `--entity-type`, `--status`) |
 
-**Report Entity Types:** model, comment, commentV2, image, resourceReview, article, post, reportedUser, collection, bounty, bountyEntry, chat, comicProject
+**Report Entity Types:** model, comment, commentV2, commentV3, image, resourceReview, article, post, reportedUser, collection, bounty, bountyEntry, chat, comicProject
 
 **Report Statuses:** Pending, Processing, Actioned, Unactioned
 

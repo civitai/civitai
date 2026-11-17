@@ -57,6 +57,8 @@ export type ReusableCoverImageCandidate = {
   postId: number | null;
   /** `Article.coverId` is `@unique` — a row already covering an article cannot cover another. */
   article: { id: number } | null;
+  /** Same for `Article.bannerId`. */
+  articleBanner: { id: number } | null;
   _count: {
     connections: number;
     challengesCover: number;
@@ -76,13 +78,13 @@ export type ReusableCoverImageCandidate = {
  *     trading the bug being fixed here for a different broken image.
  *
  * So a row is reusable only when it is either (a) the entity's CURRENT cover — trivially safe,
- * it is already exactly this pointer — or (b) unattached as far as the FIVE relations checked
- * below are concerned: `postId`, `article`, `connections`, `challengesCover`,
+ * it is already exactly this pointer — or (b) unattached as far as the SIX relations checked
+ * below are concerned: `postId`, `article`, `articleBanner`, `connections`, `challengesCover`,
  * `challengeEventCovers`.
  *
  * 🔴 That list is PARTIAL, not exhaustive. `Image` carries many more relations than these —
  * profile pictures, club covers, collection items, comic panels, app-listing assets, challenge
- * wins, … — and a row attached only through one of those will still be accepted here. The five
+ * wins, … — and a row attached only through one of those will still be accepted here. The six
  * are the ones a cover-image reuse can actually collide with today; treat the predicate as
  * "not attached to anything a cover can conflict with", NOT as "attached to nothing at all".
  * Anyone extending cover reuse to a new surface must widen this list deliberately.
@@ -96,6 +98,7 @@ export function isReusableCoverImage(
   return (
     candidate.postId == null &&
     candidate.article == null &&
+    candidate.articleBanner == null &&
     candidate._count.connections === 0 &&
     candidate._count.challengesCover === 0 &&
     candidate._count.challengeEventCovers === 0
@@ -151,6 +154,7 @@ async function findReusableImageId({
       id: true,
       postId: true,
       article: { select: { id: true } },
+      articleBanner: { select: { id: true } },
       _count: { select: { connections: true, challengesCover: true, challengeEventCovers: true } },
     },
     orderBy: { id: 'desc' },
@@ -200,8 +204,6 @@ async function objectExistsInUploads(url: string): Promise<boolean | null> {
       message: 'cover image existence check could not consult the uploads bucket',
       reason: 'client-unavailable',
       error: safeError(e),
-    }).catch(() => {
-      // swallow — best-effort logging must never break the save it is observing
     });
     return null;
   }
@@ -214,8 +216,6 @@ function logExistenceUnknown({ userId }: { userId: number }) {
     message: 'cover image created without a verified object — existence check was indeterminate',
     reason: 'proceeded-unverified',
     userId,
-  }).catch(() => {
-    // swallow — best-effort logging must never break the save it is observing
   });
 }
 

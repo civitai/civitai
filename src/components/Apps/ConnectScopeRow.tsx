@@ -4,21 +4,17 @@ import type { ReactNode } from 'react';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 
 /**
- * ConnectScopeRow — how ONE OAuth-connect scope looks, wherever it is shown.
- *
- * Lifted out of `ConnectScopesPanel` (the moderator review surface) so the PUBLIC
- * store-page disclosure (`ConnectScopesDisclosure`) renders a scope IDENTICALLY
- * rather than through a second hand-rolled renderer — in particular the
- * `SensitiveScopeBadge` emphasis, which is the part a viewer is meant to notice
- * and the part most likely to drift if it were spelled twice.
+ * ConnectScopeRow — how ONE OAuth-connect scope looks on the moderator review
+ * surface (`ConnectScopesPanel`): the TokenScope key, its label, and the
+ * `SensitiveScopeBadge`.
  *
  * 🔴 THE JUSTIFICATION IS A `children` SLOT, NOT A PROP, AND THAT IS THE POINT.
  * `connectScopeJustifications` is free text authored by the app owner; disclosing
  * it publicly is a SEPARATE exposure decision that has not been made (clawgate
  * #555 lists it as a non-goal). Because this row cannot render justification text
- * on its own, the public surface is structurally unable to leak it — it simply
- * passes no children. A `justifications` prop here would have made that a
- * convention the next caller could forget. The moderator panel supplies its own
+ * on its own, a caller that passes no children is structurally unable to leak it.
+ * A `justifications` prop here would have made that a convention the next caller
+ * could forget. The moderator panel supplies its own
  * justification block as children, so its DOM is unchanged by the extraction.
  *
  * Its own module rather than an export of `ConnectScopesPanel`, because component

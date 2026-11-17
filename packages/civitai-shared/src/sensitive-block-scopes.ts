@@ -13,6 +13,7 @@
  *   - read the viewer's PRIVATE data   (`collections:read:private`)
  *   - write data OTHER users see       (`apps:storage:shared:write`,
  *                                       `apps:storage:publish`,
+ *   - read or write the viewer's data in ANOTHER app (`apps:storage:import`)
  *                                       `posts:write:self`,
  *                                       `apps:store:items:write`,
  *                                       `social:react:self`)
@@ -41,6 +42,9 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   // The document store's successor to `apps:storage:shared:write`: documents in a shared
   // collection, authored under the viewer's identity, read by every viewer of the app.
   'apps:storage:publish',
+  // Reads (and, with `access: "readwrite"`, writes) the viewer's documents in ANOTHER app,
+  // as the viewer — including that app's private collections.
+  'apps:storage:import',
   // Writes PUBLIC, feed-visible, reward-earning content under the VIEWER'S name.
   // The most consequential entry in this set: `apps:storage:shared:write` is
   // visible to other viewers OF THAT APP, this one is visible to the whole site

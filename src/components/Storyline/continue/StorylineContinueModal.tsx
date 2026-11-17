@@ -35,6 +35,13 @@ export type StorylineContinueModalProps = {
   insertBeforeChapterId?: number;
   /** Which way the owner's picker opens; they can switch. */
   mode?: 'post' | 'join';
+  /** The parent already has a main-path chapter: this starts a branch, and says so. */
+  branch?: boolean;
+  /**
+   * `parentChapterId` was read as the main path's end. The owner's post goes at the end found when
+   * it is added; a join is refused if the end has moved. Either would otherwise make a branch.
+   */
+  atEnd?: boolean;
 };
 
 export default function StorylineContinueModal({
@@ -43,6 +50,8 @@ export default function StorylineContinueModal({
   parentChapterId,
   insertBeforeChapterId,
   mode: initialMode = 'post',
+  branch = false,
+  atEnd = false,
 }: StorylineContinueModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -104,7 +113,13 @@ export default function StorylineContinueModal({
     <Modal
       {...dialog}
       title={
-        inserting ? 'Insert a chapter' : ownerAdd ? 'Add the next chapter' : 'Continue the story'
+        inserting
+          ? 'Insert a chapter'
+          : branch
+          ? 'Start a branch'
+          : ownerAdd
+          ? 'Add the next chapter'
+          : 'Continue the story'
       }
       size="md"
     >
@@ -141,6 +156,7 @@ export default function StorylineContinueModal({
             <StorylineJoinChapterForm
               parentChapterId={parentChapterId}
               parentName={parentName}
+              atEnd={atEnd}
               onClose={dialog.onClose}
             />
           ) : (
@@ -153,6 +169,7 @@ export default function StorylineContinueModal({
               price={terms.data?.price ?? 0}
               ownerAdd={ownerAdd}
               inserting={inserting}
+              branch={branch}
               isCollaborator={storyline.collaborators.some((user) => user.id === currentUser.id)}
               posts={posts}
               postsLoading={postsLoading}
@@ -176,6 +193,8 @@ export default function StorylineContinueModal({
                       childChapterId: insertBeforeChapterId,
                       postId: post.id,
                     });
+                  else if (atEnd)
+                    addOwn.mutateAtEnd({ storylineId: storyline.id, postId: post.id });
                   else addOwn.mutate({ parentChapterId, postId: post.id });
                   return;
                 }

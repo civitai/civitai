@@ -14,8 +14,8 @@ import {
   Stack,
   Text,
   Title,
-  HoverCard,
 } from '@mantine/core';
+import { HoverCard } from '~/components/MantineOverlays';
 import { IconAlertCircle, IconBrandSpeedtest, IconCircleCheck } from '@tabler/icons-react';
 import { IconArrowUpRight } from '@tabler/icons-react';
 import { useState } from 'react';

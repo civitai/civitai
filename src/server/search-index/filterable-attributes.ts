@@ -3,7 +3,6 @@ import {
   BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   COMICS_SEARCH_INDEX,
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
@@ -30,22 +29,6 @@ export const collectionsFilterableAttributes = ['user.username', 'type', 'nsfwLe
 
 export const comicsFilterableAttributes = ['id', 'user.username', 'genre', 'nsfwLevel'];
 
-export const imagesFilterableAttributes = [
-  'id',
-  'createdAtUnix',
-  'tagNames',
-  'user.username',
-  'baseModel',
-  'aspectRatio',
-  'nsfwLevel',
-  'type',
-  'toolNames',
-  'techniqueNames',
-  'flags.promptNsfw',
-  'poi',
-  'minor',
-];
-
 export const modelsFilterableAttributes = [
   'availability',
   'canGenerate',
@@ -68,6 +51,7 @@ export const modelsFilterableAttributes = [
   'versions.generatorLoaded',
   'versions.hashes',
   'versions.turbo',
+  'versions.accelerator',
   'versions.id',
   'versions.pricing',
   'cannotPromote',
@@ -299,7 +283,6 @@ export const filterableAttributesByIndex = {
   [BOUNTIES_SEARCH_INDEX]: bountiesFilterableAttributes,
   [COLLECTIONS_SEARCH_INDEX]: collectionsFilterableAttributes,
   [COMICS_SEARCH_INDEX]: comicsFilterableAttributes,
-  [IMAGES_SEARCH_INDEX]: imagesFilterableAttributes,
   [MODELS_SEARCH_INDEX]: modelsFilterableAttributes,
   [TOOLS_SEARCH_INDEX]: toolsFilterableAttributes,
   [USERS_SEARCH_INDEX]: usersFilterableAttributes,

@@ -5,8 +5,7 @@ export { ReportReason, ReportStatus };
 
 export const ReportEntity = {
   Model: 'model',
-  Comment: 'comment',
-  CommentV2: 'commentV2',
+  CommentV3: 'commentV3',
   Image: 'image',
   ResourceReview: 'resourceReview',
   Article: 'article',
@@ -25,10 +24,15 @@ export const ReportEntity = {
   GameFrameGame: 'gameFrameGame',
   Storyline: 'storyline',
   ServiceOffering: 'serviceOffering',
+  PostText: 'postText',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
 export const reportEntities = Object.values(ReportEntity);
+
+export const isReportEntity = (v: string): v is ReportEntity =>
+  (reportEntities as readonly string[]).includes(v);
+
 export const reportStatuses = Object.values(ReportStatus);
 export const reportReasons = Object.values(ReportReason);
 
@@ -88,8 +92,7 @@ export const DEFAULT_REPORT_REASONS: ReportReason[] = reportReasons.filter(
 
 export const reportEntityLabels: Record<ReportEntity, string> = {
   model: 'Model',
-  comment: 'Model Comment',
-  commentV2: 'Comment',
+  commentV3: 'Comment',
   image: 'Image',
   resourceReview: 'Review',
   article: 'Article',
@@ -108,14 +111,15 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   gameFrameGame: 'Game',
   storyline: 'Storyline',
   serviceOffering: 'Service',
+  postText: 'Text',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
 // against — renaming one breaks saved links, so extend rather than reshuffle.
 export const reportEntitySlugs: Record<ReportEntity, string> = {
   model: 'model',
-  comment: 'model-comment',
-  commentV2: 'comment',
+  // Keeps the slug of the retired CommentV2 queue, so saved links still open it.
+  commentV3: 'comment',
   image: 'image',
   resourceReview: 'review',
   article: 'article',
@@ -134,16 +138,31 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   gameFrameGame: 'game',
   storyline: 'storyline',
   serviceOffering: 'service',
+  postText: 'text',
 };
 
+/**
+ * Report types worked in another type's queue rather than one of their own: a storyline text's
+ * report sits in the post queue, beside the post's own reports.
+ */
+export const REPORT_QUEUE_OF: Partial<Record<ReportEntity, ReportEntity>> = { postText: 'post' };
+
+/** The queue a report of this type is worked in. */
+export const reportQueueOf = (entity: ReportEntity): ReportEntity =>
+  REPORT_QUEUE_OF[entity] ?? entity;
+
+export const reportQueueEntities = reportEntities.filter((e) => !REPORT_QUEUE_OF[e]);
+
+// Only the types with a queue of their own have a page: a text's report opens in the post queue.
 const entityBySlug = new Map(
-  Object.entries(reportEntitySlugs).map(([entity, slug]) => [slug, entity as ReportEntity])
+  reportQueueEntities.map((entity) => [reportEntitySlugs[entity], entity] as const)
 );
 
 export const reportEntityForSlug = (slug: string): ReportEntity | undefined =>
   entityBySlug.get(slug);
 
-export const reportPath = (entity: ReportEntity) => `/reports/${reportEntitySlugs[entity]}`;
+export const reportPath = (entity: ReportEntity) =>
+  `/reports/${reportEntitySlugs[reportQueueOf(entity)]}`;
 
 export const reportActionPath = (entity: ReportEntity, reportId: number) =>
   `${reportPath(entity)}?report=${reportId}`;
@@ -227,6 +246,13 @@ export const getReportItemUrl = (
   entityId: number | null,
   /** Site-relative path resolved server-side for entities with no page of their own — comments hang
    *  off a parent, so their URL cannot be derived from the entity id alone. */
+  contextUrl?: string | null
+) => reportItemUrl(base, reportQueueOf(type), entityId, contextUrl);
+
+const reportItemUrl = (
+  base: string,
+  type: ReportEntity,
+  entityId: number | null,
   contextUrl?: string | null
 ) =>
   type === 'chat'

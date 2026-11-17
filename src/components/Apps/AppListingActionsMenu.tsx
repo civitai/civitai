@@ -1,4 +1,5 @@
-import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon, Box } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconDotsVertical,
@@ -23,6 +24,7 @@ import {
   type DetailTakedownAction,
 } from '~/components/Apps/appListingDetailModActions';
 import { canOwnerEditListing, getOwnerEditHref } from '~/components/Apps/appListingCardView';
+import { listingEditHref } from '~/components/Apps/appListingEditorTabs';
 import { ListingTakedownModal } from '~/components/Apps/ListingTakedownModal';
 import { ListingVisibilityMenuModal } from '~/components/Apps/ListingVisibilityMenuModal';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
@@ -151,6 +153,11 @@ export type AppListingActionsMenuProps = {
    * viewer did not ask for, fired by opening a menu.
    */
   stopPropagation?: boolean;
+  /**
+   * Opens the review modal the CALLER owns; the menu then mounts none. The caller must
+   * mount it behind the same `useCanReviewListing` gate.
+   */
+  onOpenReview?: () => void;
 };
 
 /** Everything the menu's visibility and item set depend on, resolved once. */
@@ -201,8 +208,12 @@ function useAppListingMenuGates(
   // returns null when there is no editable target (an on-site listing with no
   // backing appBlockId).
   const isOwner = !!currentUser?.id && currentUser.id === listing.creatorUserId;
-  const editHref = getOwnerEditHref(listing.kindData, listing.id);
-  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+  // A moderator edits someone else's listing on the listing-keyed editor directly.
+  const isModeratorEditor = !isOwner && isAppReviewer(currentUser);
+  const editHref = isModeratorEditor
+    ? listingEditHref(listing.id)
+    : getOwnerEditHref(listing.kindData, listing.id);
+  const showEdit = (canOwnerEditListing({ isOwner }) || isModeratorEditor) && !!editHref;
   // Owner "Visibility" item. 🔴 GATED ON `isOwner` ALONE BECAUSE THE REST OF THE
   // PREDICATE CANNOT BE EVALUATED HERE: `showVisibility` also needs the listing's status,
   // which neither DTO carries. `ListingVisibilityMenuModal` fetches the authoring context
@@ -291,6 +302,7 @@ export function AppListingActionsMenu({
   triggerLabel = 'App options',
   triggerTooltip = false,
   stopPropagation = false,
+  onOpenReview,
 }: AppListingActionsMenuProps) {
   const { showEdit, editHref, showOwnerVisibility, canReview, canReport, modActions, showMenu } =
     useAppListingMenuGates(listing, surface, preview);
@@ -370,9 +382,7 @@ export function AppListingActionsMenu({
             <Menu.Target>{trigger}</Menu.Target>
           )}
           <Menu.Dropdown onClick={stop}>
-            {/* Owner-only "Edit" deep-link, gated by owner + editable status
-                (mod-removed listings hide it). Routes by kind (manifest editor for
-                on-site, submit editor for off-site). */}
+            {/* "Edit" deep-link for the owner (editable status only) or a moderator. */}
             {showEdit && editHref && (
               <Menu.Item
                 component={Link}
@@ -402,7 +412,7 @@ export function AppListingActionsMenu({
             {canReview && (
               <Menu.Item
                 leftSection={<IconThumbUp size={14} stroke={1.5} />}
-                onClick={reviewModal.open}
+                onClick={onOpenReview ?? reviewModal.open}
                 data-testid="apps-listing-review-action"
               >
                 Leave a review
@@ -511,7 +521,7 @@ export function AppListingActionsMenu({
           `showMenu` carries `!preview`. */}
       {everOpened && (
         <>
-          {canReview && (
+          {canReview && !onOpenReview && (
             <ReviewListingModal
               appListingId={listing.id}
               opened={reviewOpened}

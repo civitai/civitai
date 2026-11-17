@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as StorylineService from '~/server/services/storyline.service';
+import type * as PostTextService from '~/server/services/post-text.service';
 import type * as StorylineCaptionService from '~/server/services/storyline-caption.service';
 import { OnboardingSteps } from '~/server/common/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -33,6 +34,9 @@ const writers = vi.hoisted(() => ({
   removeStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
   setStorylineTakedown: vi.fn(async () => ({ id: 1 })),
   setStorylineImageCaption: vi.fn(async () => null),
+  addPostText: vi.fn(async () => ({ id: 1 })),
+  setPostText: vi.fn(async () => ({ id: 1 })),
+  deletePostText: vi.fn(async () => ({ id: 1 })),
 }));
 
 // Spread the real module and override only the writers: a hand-listed mock would couple this test
@@ -44,6 +48,12 @@ vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
 vi.mock('~/server/services/storyline-caption.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StorylineCaptionService>()),
   setStorylineImageCaption: writers.setStorylineImageCaption,
+}));
+vi.mock('~/server/services/post-text.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostTextService>()),
+  addPostText: writers.addPostText,
+  setPostText: writers.setPostText,
+  deletePostText: writers.deletePostText,
 }));
 
 import { storylineRouter } from '~/server/routers/storyline.router';
@@ -105,6 +115,9 @@ const WRITE_CALLS = [
     writer: writers.setStorylineImageCaption,
     input: { imageId: 40, content: 'A note' },
   },
+  { name: 'addText', writer: writers.addPostText, input: { postId: 12, index: 3 } },
+  { name: 'setText', writer: writers.setPostText, input: { id: 5, content: '<p>A note</p>' } },
+  { name: 'deleteText', writer: writers.deletePostText, input: { id: 5 } },
 ] as const;
 
 type ProcedureDef = { _def: { type: string; middlewares: unknown[] } };
@@ -135,7 +148,7 @@ function callerFor(user: Record<string, unknown> = {}) {
   return storylineRouter.createCaller({
     user: {
       id: 1,
-      permissions: ['storylines'],
+      permissions: ['storylines', 'storylineText'],
       isModerator: false,
       muted: false,
       bannedAt: null,
@@ -189,6 +202,26 @@ describe('storyline router — account state refuses a storyline write', () => {
       expect(writer).toHaveBeenCalledTimes(1);
     });
   }
+
+  // `storylines` alone does not open the text writes: they ride their own rollout flag. The control
+  // is the "ordinary user" case above, which has both.
+  for (const { name, writer, input } of WRITE_CALLS.filter((c) => c.name.endsWith('Text'))) {
+    it(`refuses ${name} without the storylineText flag`, async () => {
+      await expect(callerFor({ permissions: ['storylines'] })[name](input)).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      });
+      expect(writer).not.toHaveBeenCalled();
+    });
+  }
+
+  // The end-of-chapter card's join check: zod drops a key the schema does not name, which would
+  // turn the server's end check off with every other test still green.
+  it('passes the at-end check of a join through to the service', async () => {
+    await callerFor().linkChapter({ parentChapterId: 3, chapterId: 7, atEnd: true });
+    expect(writers.linkStorylineChapter).toHaveBeenCalledWith(
+      expect.objectContaining({ parentChapterId: 3, chapterId: 7, atEnd: true })
+    );
+  });
 });
 
 describe('storyline router — stepping down and taking down', () => {

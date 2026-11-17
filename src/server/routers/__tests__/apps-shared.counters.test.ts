@@ -426,7 +426,7 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     setFlags({ enforce: true });
     await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: 'Content flagged for review',
+      message: 'Content flagged for review (field: key)',
     });
     expectNoCounterWrite();
     expect(reportReasons()).toEqual(['auto:counterKey:minor']);

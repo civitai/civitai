@@ -117,14 +117,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 
@@ -165,6 +166,9 @@ let forceRerender: (() => void) | null = null;
  */
 let replaceCalls = 0;
 
+/** The pathname of the most recent `router.replace` — the page a filter write targets. */
+let lastReplacePathname: string | undefined;
+
 /**
  * A router that behaves like the real one: `replace` applies the new query AFTER
  * a delay and then re-renders the subscribers, and it returns a promise.
@@ -183,6 +187,7 @@ function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
     const original = router.replace;
     router.replace = ((url: unknown) => {
       replaceCalls += 1;
+      lastReplacePathname = (url as { pathname?: string })?.pathname;
       const nextQuery = { ...((url as { query?: Record<string, unknown> })?.query ?? {}) };
       return new Promise<boolean>((resolve) => {
         setTimeout(() => {
@@ -213,8 +218,13 @@ function navigateTo(next: Record<string, string>) {
 const currentQuery = () => router.query as Record<string, string>;
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
   mocks.lastArgs = null;
+  // The store lives at `/apps/store` (`/apps` became the viewer's "My apps" home), so every
+  // case here runs mounted where the page now is.
+  router.pathname = '/apps/store';
+  lastReplacePathname = undefined;
   router.query = {};
   forceRerender = null;
   replaceCalls = 0;
@@ -233,10 +243,14 @@ describe('the harness itself round-trips (guard on the guard)', () => {
     // router would make the racing test pass for the wrong reason.
     renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
-    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'offsite' }));
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'onsite' }));
     // …and the component re-renders FROM the URL.
-    await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'offsite' }));
+    await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'onsite' }));
+    // 🔴 …and the write targets the page the store is ON (`/apps/store`), never `/apps`,
+    // which is now the viewer's app home.
+    expect(lastReplacePathname).toBe('/apps/store');
   });
 });
 
@@ -350,31 +364,50 @@ describe('(b) two fast filter clicks must not drop one', () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
 
-    await userEvent.click(page.getByRole('button', { name: 'Embedded' }));
-    await userEvent.click(page.getByRole('button', { name: 'Generation' }));
+    // Staged: both edits are held in the panel and land in ONE write on Apply.
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    await userEvent.click(page.getByRole('checkbox', { name: 'Generation', exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
 
     await vi.waitFor(() => {
       expect(currentQuery()).toMatchObject({ kind: 'onsite', category: 'generation' });
     });
-    // …and the panel, which now renders FROM the url, shows both as pressed
-    // rather than visibly reverting the first one.
+    // …and the reopened panel, which renders FROM the url, shows both rather than reverting.
+    await openFilters();
     await expect
-      .element(page.getByRole('button', { name: 'Embedded' }))
-      .toHaveAttribute('aria-pressed', 'true');
+      .element(page.getByRole('checkbox', { name: 'Embedded', exact: true }))
+      .toBeChecked();
     await expect
-      .element(page.getByRole('button', { name: 'Generation' }))
-      .toHaveAttribute('aria-pressed', 'true');
+      .element(page.getByRole('checkbox', { name: 'Standalone', exact: true }))
+      .not.toBeChecked();
+    await expect
+      .element(page.getByRole('checkbox', { name: 'Generation', exact: true }))
+      .toBeChecked();
+  });
+
+  test('🔴 choosing Newest then Most popular through the menu leaves Most popular remembered and out of the URL', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ sort: 'newest' }));
+    expect(JSON.parse(localStorage.getItem('apps-store-filters') ?? '{}').sort).toBe('newest');
+
+    await userEvent.click(page.getByRole('button', { name: 'Newest' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Most popular' }));
+    await vi.waitFor(() => expect(currentQuery()).not.toHaveProperty('sort'));
+    expect(JSON.parse(localStorage.getItem('apps-store-filters') ?? '{}').sort).toBe('popular');
   });
 
   test('a sort change racing a kind change keeps both', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
-    // Close the panel and change sort immediately.
-    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('checkbox', { name: 'Embedded', exact: true }));
+    await userEvent.click(page.getByRole('button', { name: 'Apply filters' }));
+    // Change sort immediately after the kind change.
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     await vi.waitFor(() => {
-      expect(currentQuery()).toMatchObject({ kind: 'offsite', sort: 'newest' });
+      expect(currentQuery()).toMatchObject({ kind: 'onsite', sort: 'newest' });
     });
   });
 
@@ -386,7 +419,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     await vi.waitFor(() => expect(replaceCalls).toBeGreaterThanOrEqual(1));
     expect(currentQuery()).not.toHaveProperty('query');
 
-    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('button', { name: 'Most popular' }));
     await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
 
     await vi.waitFor(
@@ -405,7 +438,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     router.query = { kind: 'offsite', category: 'generation' };
     renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
     await openFilters();
-    await userEvent.click(page.getByTestId('apps-store-filters-clear'));
+    await userEvent.click(page.getByRole('button', { name: 'Clear all filters' }));
     await vi.waitFor(() => {
       expect(currentQuery()).not.toHaveProperty('kind');
       expect(currentQuery()).not.toHaveProperty('category');

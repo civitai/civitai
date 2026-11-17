@@ -69,7 +69,9 @@ beforeEach(() => {
     userId: 99,
     metadata: {},
     url: IMAGE_KEY,
+    user: { bannedAt: null, deletedAt: null },
   } as never);
+  dbMock.dbWrite.image.updateMany.mockResolvedValue({ count: 1 } as never);
 
   // The article-level recompute that runs AFTER a successful override. `$transaction` in the db
   // mock invokes its callback with the same client, so the in-transaction reads are armed here.
@@ -95,7 +97,7 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
     await expect(run()).rejects.toThrow(MISSING_MEDIA_PUBLISH_MESSAGE);
 
     // The image write is the harm this guard exists to prevent.
-    expect(dbMock.dbWrite.image.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.image.updateMany).not.toHaveBeenCalled();
   });
 
   it('surfaces it as a BAD_REQUEST, so the article UI shows the message not a 500', async () => {
@@ -134,8 +136,10 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
 
     await expect(run()).resolves.toBeUndefined();
 
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
-    expect(queueUpdate).toHaveBeenCalledWith([{ id: ARTICLE_ID, action: expect.anything() }]);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
+    expect(queueUpdate).toHaveBeenCalledWith([{ id: ARTICLE_ID, action: expect.anything() }], {
+      reason: 'image-scan',
+    });
   });
 
   it('never consults the bucket for a url that is not a key', async () => {
@@ -148,6 +152,7 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
       userId: 99,
       metadata: {},
       url: 'https://cdn.discordapp.com/avatars/123/abc.png',
+      user: { bannedAt: null, deletedAt: null },
     } as never);
     // Armed ABSENT: if the probe ran, the override would be refused.
     headObject.mockResolvedValue({ status: 'absent' });
@@ -155,6 +160,6 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
     await expect(run()).resolves.toBeUndefined();
 
     expect(headObject).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.image.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
   });
 });

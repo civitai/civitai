@@ -11,11 +11,15 @@
     IconInfoCircle,
     IconPhotoPlus,
   } from '@tabler/icons-svelte';
+  import { KOHYA_BOUNDS, KOHYA_OPTIMIZERS, KOHYA_SCHEDULERS, kohyaFieldSupported } from '$lib/data/kohya';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
+  import { holdsStart, readinessMessage, type ReadinessView } from './uploadReadiness';
+  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
@@ -24,6 +28,7 @@
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
@@ -33,24 +38,27 @@
     paramBounds,
     seenFor,
     TARGET_STEPS,
-    TE_TRAINING_UNSUPPORTED_REASON,
     typesForMedia,
     type ExtraParamField,
     type LabelType,
     type ParamBound,
   } from '$lib/data/trainingModels';
+  import { isFlux2 } from '$lib/orchestrator-core';
   import {
     addSamplePrompt,
     defaultRunParams,
     isCustom,
     MAX_SAMPLE_PROMPTS,
-    PARAM_HELP,
+    numberInputValue,
     PARAM_LABELS,
     optimizerLrParams,
     paramDeviations,
     paramDisplay,
+    paramHelpText,
     promptHasTrigger,
     runCard,
+    runEngine,
+    runTrainingParams,
     runExtraCapabilities,
     runParamsKey,
     runTakesSampleImages,
@@ -58,8 +66,9 @@
     runVersion,
     sampleImagesProblem,
     runVersionLabel,
+    blockedSelectionMessage,
     filledPrompts,
-    teLocked,
+    paramLockReason,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -69,7 +78,8 @@
     type Selection,
   } from './trainingFlow';
 
-  // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
+  // name / prompts / params / presetType and the Advanced panel state are owned by the flow so they
+  // survive Back.
   let {
     selection,
     trigger,
@@ -78,9 +88,16 @@
     prompts = $bindable(),
     params = $bindable(),
     presetType = $bindable(),
+    openAdvanced = $bindable(),
+    acknowledgedAdvanced = $bindable(),
     imageCount,
+    repeated,
     trainsPairs = false,
-    matureCount,
+    matureCount: scannedMature,
+    readiness = { kind: 'off' },
+    readinessUnusableCount,
+    onCheckReadinessAgain,
+    onRemoveFiles,
     onStart,
     onBack,
     onShowMature,
@@ -95,16 +112,32 @@
     /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
     params: Record<string, RunParams>;
     presetType: string;
+    /** `runParamsKey` of the run whose Advanced panel is open, or '' when none is. */
+    openAdvanced: string;
+    /** Refund-forfeit acknowledgements, keyed by `runParamsKey`. */
+    acknowledgedAdvanced: Record<string, boolean>;
+    /** Items the dataset sends, counting each per-image repeat copy. */
     imageCount: number;
+    /** Images set to repeat, the extra copies they add to `imageCount`, and the highest repeat. */
+    repeated?: { images: number; extra: number; max: number };
     /** An edit LoRA: `imageCount` counts before/after pairs, which the copy names as such. */
     trainsPairs?: boolean;
     /** Trainable images whose upload scan rated them mature (R and up). */
     matureCount: number;
+    /** Whether every dataset file is ready to train; `off` leaves Start to the other checks. */
+    readiness?: ReadinessView;
+    /** How many images or pairs Remove takes out when files can't be used. */
+    readinessUnusableCount?: number;
+    onCheckReadinessAgain: () => void;
+    onRemoveFiles: (blobIds: string[]) => void;
     onStart: (
       launched: LaunchedRun[],
       prompts: SamplePrompt[],
       name: string,
-      currencies: string[]
+      currencies: string[],
+      /** The user ticked the mature-dataset Yellow confirm. */
+      matureAck: boolean,
+      matureCount: number
     ) => Promise<void>;
     onBack: () => void;
     /** Back to the Data step, filtered to the mature images. */
@@ -114,14 +147,19 @@
   const datasetCount = $derived(
     trainsPairs
       ? `${imageCount.toLocaleString()} ${imageCount === 1 ? 'pair' : 'pairs'}`
+      : repeated
+      ? `${mediaCount(imageCount - repeated.extra, selection.media)} + ${repeated.extra.toLocaleString()} ${repeated.extra === 1 ? 'repeat' : 'repeats'}`
       : mediaCount(imageCount, selection.media)
   );
 
   let starting = $state(false);
   let startError = $state('');
+  let filesProcessing = $state(false);
 
   // Moderators can switch training off on the main app; the flow's banner carries their message.
   const trainingDisabled = $derived(serviceStatus.value?.available === false);
+  // A run on a model that went down after it was picked (a stale tab, a restored draft).
+  const blockedMessage = $derived(blockedSelectionMessage(selection.runs, serviceStatus.value));
 
   // Green (membership) Buzz can't pay for NSFW training, so spending it requires an explicit attestation.
   let attestSfw = $state(false);
@@ -134,6 +172,9 @@
   // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
   // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
+  // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
+  let refusedMature = $state(0);
+  const matureCount = $derived(Math.max(scannedMature, refusedMature));
   const mature = $derived(matureCount > 0);
 
 
@@ -145,11 +186,10 @@
   const typeName = $derived(loraTypeById(selection.loraType).name);
 
   const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
-  let openAdv = $state(-1);
+  const advancedOpen = (i: number) => openAdvanced === runParamsKey(selection.runs[i]!);
 
   // Support refuses refunds on a poor result once advanced params were edited, so editing them needs
   // the same acknowledgement as the in-app trainer — per run, and again when its model changes.
-  let acknowledgedAdvanced = $state<Record<string, boolean>>({});
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
@@ -166,16 +206,11 @@
   // them — so nothing is added on top. Debounce/blank/latest-wins live in `debouncedQuote`.
   const quoteInputAt = (i: number) => {
     const run = selection.runs[i]!;
-    const v = runVersion(run);
     const p = paramsAt(i);
+    const config = runTrainingParams(run, p, labelMode, trigger, selection.loraType);
     return {
-      ecosystem: v.ecosystem,
-      modelVariant: v.modelVariant,
-      version: v.version,
-      engine: v.engine,
-      model: isCustom(run) ? run.customAir?.trim() || undefined : v.air,
-      steps: p.steps,
-      epochs: p.epochs > 0 ? p.epochs : undefined,
+      ...config,
+      model: config.customModel ?? config.model,
       imageCount: imageCount > 0 ? imageCount : undefined,
       editTraining: runTrainsPairs(run) || undefined,
     };
@@ -223,7 +258,7 @@
   const spend = $derived(
     nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
   );
-  const ackKey = $derived(matureAckKey(spend, matureCount));
+  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
   let ackedFor = $state<string | null>(null);
   const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
   const runCostLabel = (i: number) => {
@@ -235,7 +270,9 @@
   );
 
   function seen(i: number) {
-    return imageCount > 0 ? Math.round(paramsAt(i).steps / imageCount) : 0;
+    const p = paramsAt(i);
+    const batch = runEngine(selection.runs[i]!) === 'kohya' ? Number(p.batchSize) || 1 : 1;
+    return imageCount > 0 ? Math.round((p.steps * batch) / imageCount) : 0;
   }
   function low(i: number) {
     return seen(i) < Math.round(presetSeen * 0.6);
@@ -259,13 +296,16 @@
   }
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
-  const boundsFor = (i: number) => paramBounds(runCard(selection.runs[i]!));
-  const noAdvancedParams = (run: Run) => runVersion(run).engine === 'flux2-dev';
+  const boundsFor = (i: number) =>
+    runEngine(selection.runs[i]!) === 'kohya'
+      ? KOHYA_BOUNDS
+      : paramBounds(runCard(selection.runs[i]!));
+  const noAdvancedParams = (run: Run) => isFlux2(runVersion(run).engine);
 
   type ParamField = keyof RunParams;
   interface FieldDef {
     field: ParamField;
-    kind: 'number' | 'select' | 'bool';
+    kind: 'number' | 'select' | 'bool' | 'text';
     options?: string[];
   }
   const CORE_FIELDS: FieldDef[] = [
@@ -279,6 +319,32 @@
     { field: 'lrScheduler', kind: 'select', options: LR_SCHEDULERS },
     { field: 'optimizer', kind: 'select', options: OPTIMIZERS },
   ];
+  const KOHYA_FIELDS: FieldDef[] = [
+    { field: 'negativePrompt', kind: 'text' },
+    { field: 'numRepeats', kind: 'number' },
+    { field: 'enableBucket', kind: 'bool' },
+    { field: 'clipSkip', kind: 'number' },
+    { field: 'lrSchedulerNumCycles', kind: 'number' },
+    { field: 'seed', kind: 'number' },
+    { field: 'fp8Base', kind: 'bool' },
+    { field: 'blocksToSwap', kind: 'number' },
+    { field: 'vParameterization', kind: 'select', options: ['auto', 'false', 'true'] },
+    { field: 'zeroTerminalSnr', kind: 'select', options: ['auto', 'false', 'true'] },
+  ];
+  const coreFields = (i: number): FieldDef[] => {
+    const run = selection.runs[i]!;
+    if (runEngine(run) !== 'kohya') return CORE_FIELDS;
+    return [
+      ...CORE_FIELDS.map((field) =>
+        field.field === 'optimizer' ? { ...field, options: KOHYA_OPTIMIZERS }
+          : field.field === 'lrScheduler' ? { ...field, options: KOHYA_SCHEDULERS }
+          : field
+      ),
+      ...KOHYA_FIELDS.filter((field) => kohyaFieldSupported(field.field, runVersion(run).ecosystem)),
+    ];
+  };
+  const optionLabel = (value: string) =>
+    ({ auto: 'Auto (checkpoint metadata)', true: 'On', false: 'Off' }[value] ?? value);
   const EXTRA_KIND: Record<ExtraParamField, FieldDef['kind']> = {
     shuffleTokens: 'bool',
     keepTokens: 'number',
@@ -293,10 +359,13 @@
   const isExtra = (field: ParamField): field is ExtraParamField =>
     EXTRA_PARAM_FIELDS.includes(field as ExtraParamField);
 
-  const defaultsAt = (i: number) => defaultRunParams(selection.runs[i]!, trigger);
+  const defaultsAt = (i: number) =>
+    defaultRunParams(selection.runs[i]!, trigger, selection.loraType);
   const capsAt = (i: number) => runExtraCapabilities(selection.runs[i]!, labelMode);
   const deviationsByRun = $derived(
-    selection.runs.map((run, i) => paramDeviations(run, paramsAt(i), labelMode, trigger))
+    selection.runs.map((run, i) =>
+      paramDeviations(run, paramsAt(i), labelMode, trigger, selection.loraType)
+    )
   );
   const deviationsAt = (i: number) => deviationsByRun[i] ?? [];
   // The Advanced panel's own count — Steps lives in the header, Checkpoints in the panel.
@@ -319,12 +388,13 @@
     return [...groups].map(([reason, labels]) => ({ reason, labels }));
   };
   const fieldBound = (i: number, field: ParamField): ParamBound | undefined =>
-    isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
+    runEngine(selection.runs[i]!) === 'kohya' ? KOHYA_BOUNDS[field]
+      : isExtra(field) ? capsAt(i)[field].bound : boundsFor(i)[field];
   const helpFor = (i: number, field: ParamField): string => {
     const run = selection.runs[i]!;
-    if (field === 'textEncoderLr' && teLocked(run))
-      return `Not available for ${runCard(run).name} — ${TE_TRAINING_UNSUPPORTED_REASON}`;
-    return PARAM_HELP[field].replace('{recommended}', paramDisplay(defaultsAt(i)[field]));
+    const lockReason = paramLockReason(run, field);
+    if (lockReason) return lockReason;
+    return paramHelpText(field, run.cardType, defaultsAt(i), paramsAt(i));
   };
 
   function setField(i: number, field: ParamField, value: NumericInput | boolean) {
@@ -352,9 +422,13 @@
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: ParamField, bound: ParamBound) {
     const p = paramsAt(i) as unknown as Record<string, NumericInput | boolean>;
+    // Leave a cleared field blank — Number('') is 0, which would clamp up to `min`; the Start payload
+    // fills a blank with the model's default instead.
+    if (typeof p[field] === 'string' && !p[field].trim()) return;
     const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
-    const clamped = Math.min(bound.max, Math.max(bound.min, n));
+    const rounded = runEngine(selection.runs[i]!) === 'kohya' && bound.step >= 1 ? Math.round(n / bound.step) * bound.step : n;
+    const clamped = Math.min(bound.max, Math.max(bound.min, rounded));
     if (clamped !== n) p[field] = clamped;
   }
   function addPrompt() {
@@ -412,8 +486,8 @@
   );
   // Blank rows generate no sample image, so they are not counted.
   const filledCount = $derived(filledPrompts(prompts.map((p) => p.text)).length);
-  // Blue always spends first (it isn't offered in the picker), so the moment the price exceeds the
-  // Blue balance the remainder comes out of yellow/green — real money. Testers were charged Yellow
+  // With Blue first on (the default), the moment the price exceeds the Blue balance the remainder
+  // comes out of yellow/green — real money. Testers were charged Yellow
   // without ever being told, and the same run cost Blue one day and Yellow the next as balances
   // drifted. Anything beyond Blue requires an explicit confirmation naming the amount — and when
   // the balance is UNKNOWN (a host without getBuzzBalances, a buzz-service blip), fail safe:
@@ -427,19 +501,28 @@
   } | null>(null);
   let spendDialogOpen = $state(false);
 
-  function start() {
-    // total == null means a quote is in flight or failed — never submit without a shown price
-    // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
-    if (
-      starting ||
+  // total == null means a quote is in flight or failed — never submit without a shown price
+  // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
+  const startBlocked = $derived(
+    starting ||
       trainingDisabled ||
+      !!blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
       ackMissing ||
-      imagesProblem ||
-      uploadingImage
-    )
-      return;
+      !!imagesProblem ||
+      uploadingImage ||
+      holdsStart(readiness)
+  );
+  const readinessNote = $derived(
+    readinessMessage(readiness, {
+      unusableCount: readinessUnusableCount,
+      noun: trainsPairs ? 'pair' : 'file',
+    })
+  );
+
+  function start() {
+    if (startBlocked) return;
     if (spend && !spend.matureYellow) {
       confirmSpend = spend;
       spendDialogOpen = true;
@@ -449,19 +532,24 @@
   }
 
   async function reallyStart() {
-    if (starting || trainingDisabled) return;
+    if (starting || trainingDisabled || blockedMessage) return;
     spendDialogOpen = false;
     starting = true;
     startError = '';
+    filesProcessing = false;
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
         prompts,
         name,
-        buzzMode.currencies
+        buzzMode.currencies,
+        ackKey !== null && !ackMissing,
+        matureCount
       );
     } catch (e) {
-      startError = e instanceof Error ? e.message : 'Could not start training';
+      if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
+      if (e instanceof FilesProcessingError) filesProcessing = true;
+      else startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
       starting = false;
     }
@@ -543,17 +631,17 @@
 {/snippet}
 
 {#snippet paramRow(i: number, f: FieldDef, last: boolean)}
-  {@const locked = f.field === 'textEncoderLr' && teLocked(selection.runs[i]!)}
+  {@const locked = paramLockReason(selection.runs[i]!, f.field) !== undefined}
   {@const changed = deviates(i, f.field)}
   {@const bound = fieldBound(i, f.field)}
   {@const unacknowledged = fieldLocked(i, f.field)}
   <div
-    class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm {last
+    class="grid min-w-0 grid-cols-[minmax(0,1fr)_120px] items-center gap-2 py-1.5 text-sm {last
       ? ''
       : 'border-b border-dark-4/60'}"
   >
     <span class="flex min-w-0 flex-col">
-      <span class="flex items-center gap-1 text-dark-2">
+      <span class="flex flex-wrap items-center gap-1 text-dark-2">
         {PARAM_LABELS[f.field]}
         {#if locked}<span>(unavailable)</span>{/if}
         {@render help(helpFor(i, f.field), PARAM_LABELS[f.field])}
@@ -562,7 +650,15 @@
         {@render recommendedHint(i, f.field, paramDisplay(defaultsAt(i)[f.field]))}
       {/if}
     </span>
-    {#if f.kind === 'bool'}
+    {#if f.kind === 'text'}
+      <Textarea
+        aria-label={PARAM_LABELS[f.field]}
+        rows={2}
+        bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
+        disabled={unacknowledged}
+        class="text-xs"
+      />
+    {:else if f.kind === 'bool'}
       <div class="flex h-7 items-center justify-end pr-1">
         <Checkbox
           aria-label={PARAM_LABELS[f.field]}
@@ -576,12 +672,14 @@
         disabled={unacknowledged}
         bind:value={() => String(paramsAt(i)[f.field]), (v) => setField(i, f.field, v)}
       >
-        <Select.Trigger class="h-7 font-mono" aria-label={PARAM_LABELS[f.field]}>
-          {String(paramsAt(i)[f.field])}
+        <Select.Trigger class="h-7 w-full min-w-0 font-mono" aria-label={PARAM_LABELS[f.field]}>
+          <span class="min-w-0 truncate" title={optionLabel(String(paramsAt(i)[f.field]))}>
+            {optionLabel(String(paramsAt(i)[f.field]))}
+          </span>
         </Select.Trigger>
         <Select.Content portalProps={portalProps()}>
           {#each f.options ?? [] as o (o)}
-            <Select.Item value={o}>{o}</Select.Item>
+            <Select.Item value={o}>{optionLabel(o)}</Select.Item>
           {/each}
         </Select.Content>
       </Select.Root>
@@ -592,7 +690,8 @@
         max={bound?.max}
         step={bound?.step}
         aria-label={PARAM_LABELS[f.field]}
-        bind:value={() => paramsAt(i)[f.field] as NumericInput, (v) => setField(i, f.field, v ?? '')}
+        bind:value={() => numberInputValue(paramsAt(i)[f.field] as NumericInput),
+          (v) => setField(i, f.field, v ?? '')}
         onblur={() => bound && clampField(i, f.field, bound)}
         disabled={locked || unacknowledged}
         class="h-7 font-mono"
@@ -608,7 +707,7 @@
   {/if}
 {/snippet}
 
-<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-5">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">Review &amp; start</h2>
@@ -632,7 +731,7 @@
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
       <!-- The Character/Style/Concept exposure targets are about subjects; an edit run has none. -->
-      <div class="flex items-center gap-1.5" class:hidden={trainsPairs}>
+      <div class="flex flex-wrap items-center gap-1.5" class:hidden={trainsPairs}>
         <span class="inline-flex items-center gap-1 font-mono text-xs text-dark-2">
           exposure guidance {@render help(GUIDANCE_HELP, 'exposure guidance')}
         </span>
@@ -657,7 +756,7 @@
             <div>
               <div class="text-sm font-bold text-dark-0">
                 {multi ? `Run ${i + 1} · ` : ''}{card.name}
-                {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}
+                {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}{runEngine(run) === 'kohya' ? ' · Kohya' : ''}
               </div>
               {#if noAdvancedParams(run)}
                 <div class="mt-1 font-mono text-xs text-dark-2">
@@ -666,9 +765,9 @@
               {:else}
                 <button
                   type="button"
-                  onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                  onclick={() => (openAdvanced = advancedOpen(i) ? '' : runParamsKey(run))}
                   class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
-                  {openAdv === i
+                  {advancedOpen(i)
                     ? 'border-primary/50 bg-primary/10 text-primary'
                     : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
                 >
@@ -678,7 +777,7 @@
                       {advancedDeviationsAt(i).length} changed
                     </span>
                   {/if}
-                  {#if openAdv === i}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
+                  {#if advancedOpen(i)}<IconChevronUp size={12} stroke={2} />{:else}<IconChevronDown
                       size={12}
                       stroke={2}
                     />{/if}
@@ -721,10 +820,18 @@
               />{/if}each image seen ~{seen(i)}× ({low(i)
               ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
               : `good for a ${presetType}, target ~${presetSeen}×`})
+            {#if runEngine(run) === 'kohya'}
+              {@render help('Estimated from steps × batch size; partially filled batches can reduce exposure.', 'Image exposure')}
+            {/if}
           </div>
+          {#if repeated}
+            <div class="bg-dark-6 px-4 pb-3 font-mono text-xs text-dark-2">
+              includes {repeated.extra.toLocaleString()} repeat {repeated.extra === 1 ? 'copy' : 'copies'} · a ×{repeated.max} image is seen ~{seen(i) * repeated.max}×
+            </div>
+          {/if}
           {/if}
 
-          {#if openAdv === i && !noAdvancedParams(run)}
+          {#if advancedOpen(i) && !noAdvancedParams(run)}
             {@const extras = supportedExtras(i)}
             {@const hidden = unsupportedExtras(i)}
             <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
@@ -765,13 +872,16 @@
                 </div>
               </div>
               <div class="grid gap-x-6 sm:grid-cols-2">
-                {#each CORE_FIELDS as f, k (f.field)}
-                  {@render paramRow(i, f, extras.length === 0 && k === CORE_FIELDS.length - 1)}
+                {#each coreFields(i) as f, k (f.field)}
+                  {@render paramRow(i, f, extras.length === 0 && k === coreFields(i).length - 1)}
                 {/each}
                 {#each extras as f, k (f.field)}
                   {@render paramRow(i, f, k === extras.length - 1)}
                 {/each}
               </div>
+              {#if runEngine(run) === 'kohya'}
+                <p class="mb-0 mt-3 text-xs text-dark-2">LoRA type: LoRA · Optimizer arguments: automatic</p>
+              {/if}
               {#if hidden.length > 0}
                 <ul class="m-0 mt-2.5 list-none p-0 font-mono text-[11px] leading-snug text-dark-2">
                   {#each hidden as group (group.reason)}
@@ -850,7 +960,7 @@
     </div>
   </div>
 
-  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <StickySummary>
     <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">What you're starting</h3>
     <dl class="m-0 flex flex-col gap-1 text-sm">
       <div class="flex justify-between gap-2.5">
@@ -952,13 +1062,19 @@
           {matureCount}
           {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
           <strong>mature</strong> (R or above).
-          <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
-            See which
-          </button>.
+          {#if scannedMature > 0}
+            <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
+              See which
+            </button>.
+          {/if}
           {#if membership === true}
             Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
-            <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is charged
-            in <span class="text-yellow-400">Yellow</span> Buzz.
+            {#if buzzMode.blueFirst}
+              <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
+              charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
           {:else}
             <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
             can't pay for mature content without a membership, so {membership === undefined
@@ -979,10 +1095,19 @@
             class="mt-0.5 shrink-0"
           />
           <label for="ack-mature-yellow" class="cursor-pointer">
-            I understand {spend?.uncertain ? 'up to ' : ''}<strong
-              >{spend?.amount.toLocaleString()} Yellow Buzz</strong
-            >
-            will be charged because this dataset has mature images.
+            {#if spend}
+              I understand {spend.uncertain ? 'up to ' : ''}<strong
+                >{spend.amount.toLocaleString()} Yellow Buzz</strong
+              >
+              will be charged because this dataset has mature images.
+            {:else if buzzMode.blueFirst}
+              I understand this dataset has mature images, so anything beyond my
+              <span class="text-blue-400">Blue</span> Buzz is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {:else}
+              I understand this dataset has mature images, so it is charged in
+              <span class="text-yellow-400">Yellow</span> Buzz.
+            {/if}
           </label>
         </div>
       {/if}
@@ -1005,13 +1130,7 @@
     <Button
       class="mt-4 w-full"
       onclick={start}
-      disabled={starting ||
-        trainingDisabled ||
-        total == null ||
-        (needsAttestation && !attestSfw) ||
-        ackMissing ||
-        !!imagesProblem ||
-        uploadingImage}
+      disabled={startBlocked}
     >
       {#if starting}
         <IconBoltFilled size={16} stroke={2} class="mr-1 inline" /> Starting…
@@ -1024,6 +1143,25 @@
       <p class="mt-2 text-center font-mono text-xs text-dark-2">
         Training is currently disabled — see the notice above.
       </p>
+    {:else if blockedMessage}
+      <p class="mt-2 text-center font-mono text-xs text-buzz">{blockedMessage}</p>
+    {:else if readinessNote}
+      <div class="mt-2 flex flex-col items-center gap-2">
+        <p class="text-center font-mono text-xs text-dark-2">{readinessNote}</p>
+        {#if readiness.kind === 'unusable'}
+          {@const blobIds = readiness.blobIds}
+          <Button variant="outline" size="sm" onclick={() => onRemoveFiles(blobIds)}>
+            Remove {(readinessUnusableCount ?? blobIds.length) === 1 ? 'it' : 'them'}
+          </Button>
+        {:else if readiness.kind === 'slow'}
+          <Button variant="outline" size="sm" onclick={onCheckReadinessAgain}>Check again</Button>
+        {/if}
+      </div>
+    {:else if filesProcessing}
+      <div class="mt-2 flex flex-col items-center gap-2">
+        <p class="text-center font-mono text-xs text-dark-2">{FILES_PROCESSING_MESSAGE}</p>
+        <Button variant="outline" size="sm" disabled={startBlocked} onclick={start}>Try again</Button>
+      </div>
     {:else if startError}
       <p class="mt-2 text-center font-mono text-xs text-red-400">{startError}</p>
     {:else if imagesProblem}
@@ -1036,14 +1174,14 @@
     <p class="mt-3 text-center font-mono text-xs text-dark-2">
       Refunded automatically if training fails
     </p>
-  </aside>
+  </StickySummary>
 </div>
 
-<div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
+<div class="mt-6 flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
   <Button variant="outline" onclick={onBack}>
     <IconArrowLeft size={15} stroke={2} class="mr-1.5 inline" />Back
   </Button>
-  <span class="font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
+  <span class="text-right font-mono text-xs text-dark-2">This is the only step that spends Buzz</span>
 </div>
 
 <Dialog.Root bind:open={spendDialogOpen}>
@@ -1054,7 +1192,10 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if confirmSpend?.uncertain}
+        {#if !buzzMode.blueFirst}
+          Blue Buzz first is off, so all <strong>{confirmSpend?.amount.toLocaleString()}</strong> of
+          this run will come out of your {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.
+        {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.

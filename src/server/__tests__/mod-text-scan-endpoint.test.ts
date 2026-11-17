@@ -58,7 +58,9 @@ function call(
 const MOD = 990000123;
 beforeEach(() => {
   vi.clearAllMocks();
-  session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+  session.current = {
+    user: { id: MOD, isModerator: true, bannedAt: null, permissions: ['textScanPromptPublish'] },
+  };
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -86,6 +88,37 @@ describe('mod/text-scan', () => {
       401
     );
     expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it('refuses putPrompt to a moderator without the publish permission, reaching no harness', async () => {
+    session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+    const res = await call({ action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' });
+    expect(res.status).toBe(403);
+    expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['putConfig', { action: 'putConfig', config: { thinking: true } }],
+    ['putModes', { action: 'putModes', entityType: 'Model', rollout: { shadow: 100 } }],
+    [
+      'putWebSearchModes',
+      { action: 'putWebSearchModes', entityType: 'Model', rollout: { shadow: 10 } },
+    ],
+    ['putLabelModes', { action: 'putLabelModes', label: 'poi', mode: 'review' }],
+  ])(
+    'refuses %s to a moderator without the publish permission, reaching no harness',
+    async (_, body) => {
+      session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+      const res = await call(body);
+      expect(res.status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('serves other actions to a moderator without the publish permission (control)', async () => {
+    session.current = { user: { id: MOD, isModerator: true, bannedAt: null, permissions: [] } };
+    expect((await call({ action: 'getPrompts' })).status).toBe(200);
+    expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
   });
 
   it('writes a prompt as the signed-in moderator, whatever id the body names', async () => {
@@ -166,12 +199,12 @@ describe('mod/text-scan', () => {
   it('keeps free text out of the audit row', async () => {
     await call({
       action: 'scanTexts',
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'USER TEXT' }] }],
       promptOverrides: { base: 'CANDIDATE PROMPT' },
     });
     const payload = mockAudit.mock.calls[0][0].payload as Record<string, unknown>;
-    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'Comment' });
+    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'CommentV3' });
     expect(JSON.stringify(payload)).not.toContain('USER TEXT');
     expect(JSON.stringify(payload)).not.toContain('CANDIDATE PROMPT');
   });
@@ -193,7 +226,12 @@ describe('mod/text-scan', () => {
   });
 
   describe('API keys', () => {
-    const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
+    const MOD_USER = {
+      id: MOD,
+      isModerator: true,
+      bannedAt: null,
+      permissions: ['textScanPromptPublish'],
+    };
     const asApiKey = (tokenScope: number) => {
       vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
         user: MOD_USER,
@@ -217,7 +255,7 @@ describe('mod/text-scan', () => {
       { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
       {
         action: 'scanTexts',
-        entityType: 'Comment',
+        entityType: 'CommentV3',
         texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
       },
     ];

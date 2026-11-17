@@ -1,4 +1,5 @@
-import { Center, Skeleton, Text, Tooltip } from '@mantine/core';
+import { Center, Skeleton, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff, IconPhotoOff } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { SubmissionThumb } from '~/components/RemixGallery/SubmissionThumb';

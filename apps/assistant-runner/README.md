@@ -119,7 +119,7 @@ makes, which `WORKFLOW_VERSION` protects.
   - **Save before run.** Every call, sandbox ones included, waits until the head save that records its
     start has landed (`runAfterSaved`), so a recovered run sends a finished call's result and closes a
     started one as interrupted, never running either again.
-  - **The gate is App Assistant's own** (`@civitai/app-assistant`, the same code the page runs): 150
+  - **The gate is App Assistant's own** (`@civitai/app-assistant`, the same code the page runs): 300
     parent calls per reply (a subagent's are not counted), then the reply ends with Continue;
     `report_ready` refused until, since the last file change or other command, the parent's
     `sandbox__preview_check`, test run and typecheck passed and every checklist item is done, and

@@ -157,6 +157,15 @@ const writes = () =>
   );
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   // The poll catches and logs any throw, then returns the panel unchanged: the same result as the
   // hold. Every case asserts nothing was logged, so a broken fixture cannot pass as a held output.
@@ -321,7 +330,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     mocks.s3Send.mock.calls.map((c) => (c[0] as { input: { Key: string } }).input.Key);
   const recordedOwners = () =>
     vi
-      .mocked(redisMock.sysRedis.set)
+      .mocked(redisMock.redis.set)
       .mock.calls.filter((c) => String(c[0]).startsWith('system:upload-key-owner:'));
   beforeEach(() => track.imageUploadRequest.mockClear());
 

@@ -66,6 +66,15 @@ const caller = () =>
 const refused = new TRPCError({ code: 'BAD_REQUEST', message: 'unavailable' });
 
 beforeEach(() => {
+  // Only the generation procedures' account-restriction read gets a row.
+  dbMock.dbWrite.user.findUnique.mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    Object.keys(args.select ?? {})
+      .sort()
+      .join() === 'bannedAt,muted'
+      ? { muted: false, bannedAt: null }
+      : undefined) as never);
   vi.clearAllMocks();
   mocks.assertUsable.mockRejectedValue(refused);
   mocks.assertInputs.mockRejectedValue(refused);
@@ -262,6 +271,20 @@ describe('comics generation inputs the server loads', () => {
     expect(mocks.submit).toHaveBeenCalledOnce();
     const sent = (mocks.submit.mock.calls[0][0] as { images: { url: string }[] }).images;
     expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
+  });
+
+  // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,
+  // non-moderator caller must arrive as one, or a forced tier or moderator flag is a bypass.
+  it('submits as the signed-in user, for the generation kill switch', async () => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([]);
+    mocks.submit.mockRejectedValue(new Error('stop'));
+    await caller()
+      .iterateGenerate({ projectId: 11, chapterPosition: 0, prompt: 'p' })
+      .catch(() => undefined);
+    expect(mocks.submit).toHaveBeenCalledOnce();
+    const { user } = mocks.submit.mock.calls[0][0] as { user: { tier?: string } };
+    expect(user).toMatchObject({ id: USER_ID, isModerator: false });
+    expect(user.tier ?? 'free').toBe('free');
   });
 
   it("getGenerationCostEstimate reads only the caller's own references", async () => {

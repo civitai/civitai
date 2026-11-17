@@ -1,14 +1,5 @@
-import {
-  ActionIcon,
-  Anchor,
-  Badge,
-  Card,
-  Group,
-  Progress,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Card, Group, Progress, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconPlayerStop, IconRefresh, IconTrash, IconUnlink } from '@tabler/icons-react';
 import { AttachControl } from '~/components/Moderation/HuggingFaceImport/AttachControl';

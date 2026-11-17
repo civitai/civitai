@@ -100,6 +100,18 @@ export const MAX_ANIMATION_FPS = 30;
 // (~30.3fps) encode of a nominal 30fps animation isn't rejected by rounding.
 export const MIN_ANIMATION_FRAME_DELAY_MS = Math.floor(1000 / MAX_ANIMATION_FPS);
 
+export const LOOP_SEAM_CHECK_LABEL = 'No empty frame where the loop restarts';
+export const LOOP_SEAM_FIX_HINT = 'The last frame is blank: remove it and re-export';
+// A lone transparent final frame (a video→webp export sampling past the clip's end) flashes
+// empty once per loop; an intentional fade has an empty first frame or a run of them.
+export function hasEmptyLoopSeam(frameHasContent: {
+  first: boolean;
+  penultimate: boolean;
+  last: boolean;
+}) {
+  return frameHasContent.first && frameHasContent.penultimate && !frameHasContent.last;
+}
+
 // Cosmetic subtypes a creator may submit (merch is a separate, later product).
 /** Review-queue filter value for packs, which have no CosmeticType of their own. */
 export const PACK_FILTER_VALUE = 'Pack' as const;
@@ -512,6 +524,11 @@ const rightsAffirmedSchema = z
 // can't be charged a number the creator never saw.
 const quotedFeeSchema = z.number().int().min(0).max(CREATOR_SHOP_FEE_MAX);
 
+// Minted by the client once per submission and resent on its retries. The fee is charged under an
+// id derived from it, so a retry after an unanswered submit cannot charge again. Optional: without
+// one, every call is a new submission charged under a new id, with no dedup.
+const submissionIdempotencyKeySchema = z.string().uuid().optional();
+
 export type SubmitCreatorShopItemInput = z.infer<typeof submitCreatorShopItemSchema>;
 export const submitCreatorShopItemSchema = z
   .object({
@@ -547,6 +564,7 @@ export const submitCreatorShopItemSchema = z
     // Recorded on the item (see cosmeticShopItemMeta.rightsAffirmation).
     rightsAffirmed: rightsAffirmedSchema,
     quotedFee: quotedFeeSchema,
+    idempotencyKey: submissionIdempotencyKeySchema,
   })
   .superRefine((input, ctx) => {
     // `uses` drives the buyer's balance AND the creator's 10x grant. Absent, both
@@ -609,6 +627,7 @@ export const submitCreatorShopPackSchema = z.object({
   // without one supplies none. Its members were each affirmed at submission.
   rightsAffirmed: rightsAffirmedSchema.optional(),
   quotedFee: quotedFeeSchema,
+  idempotencyKey: submissionIdempotencyKeySchema,
 });
 
 export type UpdateCreatorShopPackInput = z.infer<typeof updateCreatorShopPackSchema>;
@@ -825,6 +844,7 @@ export const creatorShopSectionKeys = [
   'services',
   'merch',
   'models',
+  'mysteryPacks',
 ] as const;
 export type CreatorShopSectionKey = (typeof creatorShopSectionKeys)[number];
 export const creatorShopSectionSchema = z.object({
@@ -899,6 +919,7 @@ export const submitMysteryPackSchema = mysteryPackProposalSchema.extend({
   rightsAffirmed: rightsAffirmedSchema.optional(),
   buzzType: z.enum(['green', 'yellow', 'blue']).default('yellow'),
   quotedFee: quotedFeeSchema,
+  idempotencyKey: submissionIdempotencyKeySchema,
 });
 
 export type ReviseMysteryPackInput = z.infer<typeof reviseMysteryPackSchema>;

@@ -1,10 +1,21 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join, resolve, sep } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildApplyScript } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  buildApplyReviewScript,
+  buildApplyScript,
+} from '~/server/services/blocks/apps-pipeline.service';
 
 /**
  * RUNS the generated apply-Job script under bash, with `kubectl` and `curl` replaced by stubs
@@ -49,6 +60,29 @@ echo "publish: WARNING: continuing WITHOUT publishing" >&2
 exit 0
 `;
 
+/**
+ * The script runs under bash in production, so it runs under bash here. On Windows that is Git's
+ * bash, found through `git` itself: `bash` on PATH there is often WSL, which cannot see these
+ * temp files. Its `usr/bin` copy, not `bin/bash.exe`: that one is a launcher that puts Git's own
+ * `curl` ahead of the stubs on PATH.
+ */
+function findBash() {
+  if (process.platform !== 'win32') return { bash: 'bash', tools: [] };
+  // <git>/mingw64/libexec/git-core, or <git>/libexec/git-core
+  const execPath = spawnSync('git', ['--exec-path'], { encoding: 'utf8' }).stdout.trim();
+  const bash = [
+    resolve(execPath, '../../../usr/bin/bash.exe'),
+    resolve(execPath, '../../usr/bin/bash.exe'),
+  ].find(existsSync);
+  if (!bash) throw new Error(`Git for Windows' bash.exe not found from ${execPath}`);
+  // The script's tools (tr, grep) live beside it, and a Windows PATH need not include them.
+  return { bash, tools: [dirname(bash)] };
+}
+const BASH = findBash();
+
+/** A path bash reads the same on every OS: `C:\x\y` becomes `C:/x/y`, which Git's bash accepts. */
+const forBash = (path: string) => path.split(sep).join('/');
+
 type RunOpts = {
   perAppObjects: boolean;
   slug: string;
@@ -87,17 +121,17 @@ function run(opts: RunOpts) {
   // path being rewritten is really there, or the tests below would run against nothing.
   expect(script).toContain('/templates/publish.sh');
   const local = script
-    .replaceAll('/templates/', `${templates}/`)
-    .replaceAll('/tmp/rendered.yaml', join(dir, 'rendered.yaml'));
+    .replaceAll('/templates/', `${forBash(templates)}/`)
+    .replaceAll('/tmp/rendered.yaml', forBash(join(dir, 'rendered.yaml')));
   const scriptPath = join(dir, 'apply.sh');
   writeFileSync(scriptPath, local);
 
-  const res = spawnSync('bash', [scriptPath], {
+  const res = spawnSync(BASH.bash, [forBash(scriptPath)], {
     encoding: 'utf8',
     env: {
-      PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-      CALL_LOG: callLog,
-      FAKE_TEMPLATES: templates,
+      PATH: [bin, ...BASH.tools, process.env.PATH ?? '/usr/bin:/bin'].join(delimiter),
+      CALL_LOG: forBash(callLog),
+      FAKE_TEMPLATES: forBash(templates),
       FAKE_PUBLISH_FAILS: opts.publishFails ? '1' : '0',
       SLUG: opts.slug,
       SHA,
@@ -176,5 +210,109 @@ describe('apply script, per-app objects ON (rollback)', () => {
     expect(r.status).not.toBe(0);
     expect(r.idx(PUBLISH)).toBeGreaterThan(-1);
     expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c))).toEqual([]);
+  });
+});
+
+/** The review lane of the shared server's publish: logs its lane and env, fails on demand. */
+const REVIEW_FAKE_PUBLISH = `#!/usr/bin/env bash
+echo "publish PUBLISH_LANE=\${PUBLISH_LANE:-unset} SHA=\${SHA} IMAGE=\${IMAGE}" >> "$CALL_LOG"
+[ "\${FAKE_PUBLISH_FAILS:-0}" = 1 ] && { echo "publish: ERROR: review bucket down" >&2; exit 1; }
+exit 0
+`;
+
+/** Runs the mod-review apply script the same way: stubbed kubectl/curl, fixture template. */
+function runReview(opts: { sharedServer?: boolean; publishFails?: boolean } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'apply-review-script-'));
+  dirs.push(dir);
+  const bin = join(dir, 'bin');
+  const templates = join(dir, 'templates');
+  mkdirSync(bin);
+  mkdirSync(templates);
+  const callLog = join(dir, 'calls.log');
+  writeFileSync(callLog, '');
+  for (const [name, body] of [
+    ['kubectl', KUBECTL_STUB],
+    ['curl', CURL_STUB],
+  ] as const) {
+    writeFileSync(join(bin, name), body);
+    chmodSync(join(bin, name), 0o755);
+  }
+  writeFileSync(
+    join(templates, 'review.yaml.tmpl'),
+    'kind: Deployment\nmetadata:\n  name: ${REVIEW_NAME}\n'
+  );
+  writeFileSync(join(templates, 'publish.sh'), REVIEW_FAKE_PUBLISH);
+  const script = buildApplyReviewScript(NS, { sharedServer: opts.sharedServer });
+  expect(script).toContain(
+    opts.sharedServer ? '/templates/publish.sh' : '/templates/review.yaml.tmpl'
+  );
+  const local = script
+    .replaceAll('/templates/', `${forBash(templates)}/`)
+    .replaceAll('/tmp/rendered.yaml', forBash(join(dir, 'rendered.yaml')));
+  const scriptPath = join(dir, 'apply-review.sh');
+  writeFileSync(scriptPath, local);
+  const res = spawnSync(BASH.bash, [forBash(scriptPath)], {
+    encoding: 'utf8',
+    env: {
+      PATH: [bin, ...BASH.tools, process.env.PATH ?? '/usr/bin:/bin'].join(delimiter),
+      CALL_LOG: forBash(callLog),
+      SLUG: NEW_SLUG,
+      SHA,
+      REVIEW_HOST_SHA: SHA.slice(0, 16),
+      IMAGE: `ghcr.io/civitai/app-block-review-${NEW_SLUG}:${SHA}`,
+      PUBLISH_REQUEST_ID: 'pubreq_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      APPS_DOMAIN: 'example.test',
+      FAKE_PUBLISH_FAILS: opts.publishFails ? '1' : '0',
+      // The app's ProcessEnv type requires NODE_ENV; a child bash does not need it.
+    } as unknown as NodeJS.ProcessEnv,
+    timeout: 30_000,
+  });
+  const calls = readFileSync(callLog, 'utf8').split('\n').filter(Boolean);
+  const idx = (re: RegExp) => calls.findIndex((c) => re.test(c));
+  return { status: res.status, stderr: res.stderr, calls, idx };
+}
+
+describe('review apply script', () => {
+  // The janitor reaps review resources 14 days after creationTimestamp and civitai reports the
+  // preview expired 14 days after the build started. A same-sha rebuild renders the same names,
+  // so unless the apply recreates them, creation keeps the FIRST build's time and the janitor
+  // reaps a preview civitai still reports live.
+  it('deletes the rendered review objects before applying them, after the smoke test', () => {
+    const r = runReview();
+    expect(r.stderr).not.toMatch(/ERROR/);
+    expect(r.status).toBe(0);
+    const del = r.idx(/^kubectl delete -f \S*rendered\.yaml --ignore-not-found=true --wait=true$/);
+    expect(del).toBeGreaterThan(r.idx(SMOKE_RUN));
+    expect(r.idx(APPLY)).toBeGreaterThan(del);
+    expect(r.idx(ROLLOUT)).toBeGreaterThan(r.idx(APPLY));
+  });
+});
+
+describe('review apply script, shared static server', () => {
+  it('smoke-tests, then publishes in the review lane; renders, applies and rolls out nothing', () => {
+    const r = runReview({ sharedServer: true });
+    expect(r.stderr).not.toMatch(/ERROR/);
+    expect(r.status).toBe(0);
+    const publish = r.idx(/^publish PUBLISH_LANE=review /);
+    expect(r.idx(SMOKE_RUN)).toBeGreaterThan(-1);
+    expect(publish).toBeGreaterThan(r.idx(SMOKE_RUN));
+    expect(r.calls[publish]).toBe(
+      `publish PUBLISH_LANE=review SHA=${SHA} IMAGE=ghcr.io/civitai/app-block-review-${NEW_SLUG}:${SHA}`
+    );
+    expect(r.calls.filter((c) => APPLY.test(c) || ROLLOUT.test(c) || /delete -f/.test(c))).toEqual(
+      []
+    );
+  });
+
+  it('a failed review publish fails the Job (always fatal in the review lane)', () => {
+    const r = runReview({ sharedServer: true, publishFails: true });
+    expect(r.status).not.toBe(0);
+  });
+
+  it('CONTROL: without the flag nothing is published', () => {
+    const r = runReview();
+    expect(r.status).toBe(0);
+    expect(r.idx(/^publish /)).toBe(-1);
+    expect(r.idx(APPLY)).toBeGreaterThan(-1);
   });
 });

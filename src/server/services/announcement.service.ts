@@ -4,11 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import {
-  readDismissedAnnouncementIdsViaKysely,
-  readDismissedAnnouncementIdsViaPrisma,
-} from '~/server/services/hot-reads-5.reads';
+import { readDismissedAnnouncementIdsViaKysely } from '~/server/services/hot-reads-5.reads';
 import {
   activeAnnouncementWhere,
   announcementWindowOverlapsWhere,
@@ -163,6 +159,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       select: {
         id: true,
         createdAt: true,
+        updatedAt: true,
         startsAt: true,
         endsAt: true,
         title: true,
@@ -244,6 +241,25 @@ export async function getCurrentAnnouncements({
 // shared per-domain array.
 const ANNOUNCEMENTS_INPROC_TTL_MS = 30_000;
 
+/**
+ * Lifetime of a per-domain redis entry. Apart from a moderator upsert/delete, expiry is the
+ * only thing that refills one, so it bounds how late anything excluded at fill time can appear.
+ */
+const ANNOUNCEMENTS_CACHE_TTL_S = CacheTTL.day;
+
+/**
+ * How far past "now" a fill reaches for announcements that have not started yet.
+ *
+ * A fill must hold every announcement that can go live while the entry exists: `startsAt` is
+ * applied on READ (getCurrentAnnouncements), so a scheduled announcement shows the moment its
+ * start passes. Excluding not-yet-started rows at fill time made one scheduled inside the
+ * entry's lifetime appear only at the next fill — up to a day late, and at a different moment
+ * on each domain. Twice the entry's lifetime covers every start the entry can outlive, with
+ * margin for the gap between computing `now` and the `SET`; anything later is picked up by a
+ * later fill, which keeps rows scheduled months out from riding every entry.
+ */
+const ANNOUNCEMENTS_FILL_LOOKAHEAD_MS = 2 * ANNOUNCEMENTS_CACHE_TTL_S * 1000;
+
 const getAnnouncementsCachedMemo = createKeyedTtlMemo<CachedAnnouncement[]>(
   async (domainKey) => {
     const domain = (domainKey || undefined) as DomainColor | undefined;
@@ -257,7 +273,7 @@ const getAnnouncementsCachedMemo = createKeyedTtlMemo<CachedAnnouncement[]>(
     const announcements = await getAnnouncements(domain);
 
     await redis.set(cacheKey, JSON.stringify(announcements), {
-      EX: CacheTTL.day,
+      EX: ANNOUNCEMENTS_CACHE_TTL_S,
     });
 
     return announcements;
@@ -319,18 +335,15 @@ export async function getDismissedAnnouncementIds({
   userId: number;
   domain?: DomainColor;
 }) {
-  const now = new Date();
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-    return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
-      userId,
-      now,
-      domain,
-    });
-  return readDismissedAnnouncementIdsViaPrisma(dbRead, { userId, now, domain });
+  return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
+    userId,
+    now: new Date(),
+    domain,
+  });
 }
 
-// The live-window predicates live in a leaf module so the kysely-hot-reads-5 Prisma reader and its
-// parity suite use them without importing this service; re-exported so every caller is unchanged.
+// The live-window predicates live in a leaf module (announcement-window.ts); re-exported so every
+// caller is unchanged.
 export { activeAnnouncementWhere, announcementWindowOverlapsWhere };
 
 /**
@@ -385,7 +398,12 @@ async function getAnnouncements(domain?: DomainColor) {
   const now = new Date();
   const announcements = await dbWrite.announcement.findMany({
     where: {
-      ...activeAnnouncementWhere(now),
+      // Live now OR starting within the lookahead: the start is enforced on read, so this
+      // must not drop an announcement that goes live while the entry is still cached.
+      ...announcementWindowOverlapsWhere(
+        now,
+        new Date(now.getTime() + ANNOUNCEMENTS_FILL_LOOKAHEAD_MS)
+      ),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
       // Platform announcements only. This cache is global per domain, so an
       // authored row reaching it would show one creator's post to everyone.
@@ -393,6 +411,7 @@ async function getAnnouncements(domain?: DomainColor) {
     },
     select: {
       createdAt: true,
+      updatedAt: true,
       startsAt: true,
       endsAt: true,
       id: true,

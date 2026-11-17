@@ -177,6 +177,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   };
 });
 
+// 🔴 NO RAIL IN THIS CHAIN, PINNED RATHER THAN INHERITED. This file measures the
+// scroll-box → container → grid width chain with no rail beside the body. It used to get
+// that only because its viewer (anon, `appBlocks`) happened to qualify for a single rail
+// entry, so the `< 2` collapse removed the rail — an accident of the section table that
+// the "My apps" row briefly changed. The rail's own geometry is pinned in
+// `AppsPageLayout.*.browser.test.tsx`; here it is held out explicitly so the chain this
+// file is about stays the only thing measured, whatever the section table does.
+vi.mock('~/components/Apps/useAppsNavSections', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useAppsNavSections: () => [],
+}));
+
 // Import AFTER the mocks (vi.mock is hoisted; static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsPageLayout } = await import('./AppsPageLayout');

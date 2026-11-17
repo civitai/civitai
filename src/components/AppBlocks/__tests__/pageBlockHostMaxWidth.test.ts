@@ -573,7 +573,6 @@ describe('the full-page App Block host declares no width bound', () => {
       // attribute NAME, so it catches every form regardless.
       //
       // ⚠️ PLAUSIBLE, NOT THEORETICAL: the exact mutant exists verbatim nearby —
-      // `<Box maw={1000} mx="auto">` in `src/components/Collections/CollectionsLanding.tsx`, and
       // `<Box maw={appsMeasureCss(measure)}>` in `src/components/Apps/AppsPageLayout.tsx`, i.e.
       // in the Apps neighbourhood itself.
       expect(

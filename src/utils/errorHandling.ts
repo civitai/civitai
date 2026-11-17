@@ -16,6 +16,20 @@ export async function sleep(timeout: number) {
   return new Promise((resolve) => setTimeout(resolve, timeout));
 }
 
+/** Resolves after `ms`, or as soon as `signal` aborts — never rejects. */
+export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    }
+    signal.addEventListener('abort', done, { once: true });
+  });
+}
+
 export function withRetries<T>(
   fn: (remainingAttempts: number) => Promise<T>,
   retries = 3,

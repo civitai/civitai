@@ -4,6 +4,8 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getTosMeta } from '~/server/services/content.service';
 import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import { getNavBanners } from '~/server/services/nav-banner.service';
+import { getEventSeeds } from '~/server/services/event-seeds.service';
+import type { EventCosmeticReads } from '~/server/services/event-cosmetic-reads';
 import { getActiveSiteAlerts } from '~/server/services/site-alert.service';
 import { getUserFollows } from '~/server/redis/caches';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
@@ -12,6 +14,7 @@ import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { env } from '~/env/server';
 import { env as clientEnv } from '~/env/client';
 import { logToAxiom } from '~/server/logging/client';
+import { eventViewerOf } from '~/server/events/event-viewer';
 
 /**
  * The per-user settings bootstrap: the session plus every ambient seed a page needs on its
@@ -28,6 +31,8 @@ import { logToAxiom } from '~/server/logging/client';
  */
 
 type AuthArgs = Parameters<typeof getServerAuthSession>[0];
+/** What `getServerAuthSession` records on the request it was given (`req.context`). */
+type SessionCredential = Omit<Parameters<typeof eventViewerOf>[0], 'user'>;
 
 /** What the route answers with, and what a server render is seeded from. */
 export const SETTINGS_BOOTSTRAP_PATH = '/api/user/settings';
@@ -49,7 +54,7 @@ function settle<T, F>(promise: Promise<T>, fallback: F, member: string): Promise
         timeoutMs,
       },
       'settings'
-    ).catch();
+    );
   }).catch(() => fallback);
 }
 
@@ -62,7 +67,11 @@ export async function resolveSettingsBootstrap({ req, res }: AuthArgs) {
   // Deliberately unbounded: failing this open renders a logged-in user anonymous, which
   // `_app`'s hasAuthCookie carve-out exists to avoid.
   const session = await getServerAuthSession({ req, res });
-  return resolveSettingsBootstrapSeeds(req, session);
+  return resolveSettingsBootstrapSeeds(
+    req,
+    session,
+    (req as { context?: SessionCredential }).context ?? null
+  );
 }
 
 /** The bootstrap's `session`: a session with no user fields is "signed out", never a session. */
@@ -76,13 +85,22 @@ export function bootstrapSession(session: Awaited<ReturnType<typeof getServerAut
  */
 export async function resolveSettingsBootstrapSeeds(
   req: AuthArgs['req'],
-  session: Awaited<ReturnType<typeof getServerAuthSession>>
+  session: Awaited<ReturnType<typeof getServerAuthSession>>,
+  credential: SessionCredential | null
 ) {
   // Concurrent, to keep this hot per-bootstrap read off the critical path.
   // EVERY member swallows its own errors: a single rejection fails the whole
   // bootstrap, which `_app` reads as "degraded" — so one blip would drop the
   // session seed and the browsing-settings addons too.
   const domainColor = getRequestDomainColor(req);
+  const announcementsDomainColor = getRequestDomainColor({ headers: { host: viewerHost(req) } });
+  // The nav banners and the event seeds both read the viewer's event cosmetic: one read each
+  // per request, not one per member (event-cosmetic-reads.ts).
+  const eventCosmeticReads: EventCosmeticReads = new Map();
+  const eventUser = session?.user && {
+    ...session.user,
+    isModerator: !!credential && eventViewerOf({ ...credential, user: session.user }).isModerator,
+  };
   const [
     settings,
     tosMeta,
@@ -92,6 +110,7 @@ export async function resolveSettingsBootstrapSeeds(
     liveNow,
     navBanners,
     siteAlerts,
+    eventSeeds,
   ] = await Promise.all([
     // Content-settings view so SSR initialData matches the tRPC getSettings response
     // shape. `undefined` — NOT `{}` — because AppProvider passes this straight to
@@ -113,11 +132,13 @@ export async function resolveSettingsBootstrapSeeds(
     // Seeds the ambient `announcement.getAnnouncements` query (fires on every
     // bootstrap, anon + authed). Match the resolver byte-for-byte: its
     // `applyRequestDomainColor` middleware overrides the client input with
-    // `getRequestDomainColor(req)` (NO 'blue' fallback), so we pass the same raw
-    // value here. On failure fall back to undefined and let the client self-heal
-    // via a live fetch.
+    // `getRequestDomainColor(req)` (NO 'blue' fallback) for the request the BROWSER
+    // sends, so we resolve the same raw value from the viewer's host — not the
+    // internal bootstrap host, which maps to no domain and would seed the
+    // all-domains list under the client's per-domain query key (`viewerHost`). On
+    // failure fall back to undefined and let the client self-heal via a live fetch.
     settle(
-      getCurrentAnnouncements({ domain: domainColor, userId: session?.user?.id }),
+      getCurrentAnnouncements({ domain: announcementsDomainColor, userId: session?.user?.id }),
       undefined,
       'getCurrentAnnouncements'
     ),
@@ -146,8 +167,20 @@ export async function resolveSettingsBootstrapSeeds(
     // Seeds `event.getNavBanners` so the nav strip is in the first paint and never shifts
     // the page. Session-only (no cookies), so the anonymous answer is the same for every
     // anonymous caller, as the route's public cache header requires.
-    settle(getNavBanners({ viewer: session?.user }), undefined, 'getNavBanners'),
+    settle(
+      getNavBanners({ viewer: eventUser, reads: eventCosmeticReads }),
+      undefined,
+      'getNavBanners'
+    ),
     settle(getActiveSiteAlerts(), undefined, 'getActiveSiteAlerts'),
+    // Seeds `event.getAccess` and `event.getCosmetic` for the released event decorations, which
+    // every page otherwise asks for once (see event-seeds.service.ts). Session-only, like the
+    // nav banners above.
+    settle(
+      getEventSeeds({ user: eventUser, reads: eventCosmeticReads }),
+      undefined,
+      'getEventSeeds'
+    ),
   ]);
   return {
     settings,
@@ -158,6 +191,7 @@ export async function resolveSettingsBootstrapSeeds(
     liveNow,
     navBanners,
     siteAlerts,
+    eventSeeds,
     session: bootstrapSession(session),
   };
 }
@@ -184,9 +218,14 @@ const TIMED_OUT = Symbol('settings bootstrap timed out');
  * (measured on Node 24.19 and 24.21: a forwarded `Host: civitai.com` arrived as the URL's
  * `host:port`). So the route never saw the page's public host, and everything it derives from
  * the host — the domain colour behind the ToS fields and the domain-targeted announcements —
- * resolved for the internal host. Rendering with the page's host would change both on first
- * paint. Derived exactly as `_app` derived that URL; whether a render SHOULD see the public
- * host is a separate product question, not part of moving this call in-process.
+ * resolved for the internal host. Derived exactly as `_app` derived that URL; whether the ToS
+ * fields SHOULD see the public host is a separate product question.
+ *
+ * The announcements seed does NOT read this host: it resolves its domain from the viewer's
+ * (`viewerHost`). It seeds a query the browser keeps fresh for minutes and then refetches at
+ * the public host, so a seed for any other domain is a different answer under the same query
+ * key — the banner showed the all-domains list until that refetch, and the two lists were
+ * cached under different keys that went stale independently.
  *
  * No base URL rejects, as the fetch to `undefined/...` did: the render degrades.
  */
@@ -201,6 +240,19 @@ function bootstrapHost(): string {
 
 type BootstrapSourceRequest = IncomingMessage & { cookies?: Partial<Record<string, string>> };
 
+/** Where `settingsBootstrapRequest` keeps the caller's own `Host` once it has replaced the header. */
+const VIEWER_HOST = Symbol('settings bootstrap viewer host');
+
+/**
+ * The host the viewer's browser addressed. For a request built by `settingsBootstrapRequest` that
+ * is the caller's original `Host`; for the HTTP route (a real request, which the browser sent
+ * itself) it is the request's own.
+ */
+function viewerHost(req: AuthArgs['req']): string | undefined {
+  const built = (req as unknown as { [VIEWER_HOST]?: string | undefined })[VIEWER_HOST];
+  return VIEWER_HOST in (req as object) ? built : req.headers?.host;
+}
+
 /**
  * The request the settings bootstrap reads, built from a page's (or page-data endpoint's) own
  * request. ONE builder for every in-process caller, so they cannot drift:
@@ -212,6 +264,7 @@ type BootstrapSourceRequest = IncomingMessage & { cookies?: Partial<Record<strin
  *   - Host: the internal bootstrap host by default (`bootstrapHost`), which is what the seeds were
  *     built against. `host` overrides it for a session lookup whose cookie writes reach the browser:
  *     the rolled cookie's Domain is derived from it, so it must be the viewer's own host.
+ *     The caller's own `Host` is kept aside either way, for the announcements seed (`viewerHost`).
  *   - Its own `req.context`, unless `context` is passed: whatever the session lookup records (the
  *     credential) lands there, never on the caller's request by accident.
  */
@@ -224,6 +277,7 @@ export function settingsBootstrapRequest(
     headers: { ...request.headers, host: host ?? bootstrapHost() },
     cookies: request.cookies,
     url: SETTINGS_BOOTSTRAP_PATH,
+    [VIEWER_HOST]: request.headers?.host,
     ...(context ? { context } : {}),
   } as unknown as AuthArgs['req'];
 }
@@ -235,7 +289,8 @@ export function settingsBootstrapRequest(
  * base URL, forwarding the page request's headers, would have answered, because that is what
  * callers were built against:
  *
- *   - `Host` is the internal base URL's, not the page's — `bootstrapHost` says why.
+ *   - `Host` is the internal base URL's, not the page's — `bootstrapHost` says why, and why the
+ *     announcements seed is the one member that resolves the page's host instead.
  *   - The session is resolved from the page request's HEADERS AND COOKIES ONLY, never its
  *     URL. `getServerAuthSession` treats a `?token=` query parameter as an API credential,
  *     and a page URL may carry an unrelated one.
@@ -276,7 +331,7 @@ export async function resolveSettingsBootstrapForRender(
         message: e instanceof Error ? e.message : String(e),
       },
       'settings'
-    ).catch();
+    );
     throw new Error(
       `settings bootstrap failed: ${[name, typeof code === 'string' ? code : undefined]
         .filter(Boolean)

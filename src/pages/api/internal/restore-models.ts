@@ -52,7 +52,9 @@ export default JobEndpoint(async function (req: NextApiRequest, res: NextApiResp
         return meta;
       },
     }).catch((error) => {
-      if (error instanceof TRPCError && error.code === 'UNAUTHORIZED') return;
+      // A publish rule refusing one model must not abort the rest of the batch.
+      if (error instanceof TRPCError && ['UNAUTHORIZED', 'BAD_REQUEST'].includes(error.code))
+        return;
       throw error;
     });
     console.timeEnd(consoleKey);

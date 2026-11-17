@@ -9,6 +9,8 @@ import {
 } from '../utils/errorHandling';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getImagesByEntity } from '~/server/services/image.service';
+import { capNestedImages } from '~/server/utils/browsing-level';
+import { getRequestImageFilter } from '~/server/services/blocked-browsing-tags.service';
 import {
   awardBountyEntry,
   deleteBountyEntry,
@@ -16,6 +18,7 @@ import {
   getBountyEntryFilteredFiles,
   getEntryById,
   upsertBountyEntry,
+  BOUNTY_ENTRY_LIMIT_REACHED,
 } from '../services/bountyEntry.service';
 import type {
   SubmitBountyEntryInput,
@@ -26,6 +29,7 @@ import { viewerReactionsSelect } from '~/server/selectors/reaction.selector';
 import { getBountyById } from '../services/bounty.service';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyStarted } from '~/server/services/bounty-schedule';
 import { assertBountyVisible } from '~/server/services/bounty-visibility';
@@ -68,13 +72,18 @@ export const getBountyEntryHandler = async ({
       if (blocked) throw throwNotFoundError();
     }
 
-    const images = await getImagesByEntity({
-      id: entry.id,
-      type: 'BountyEntry',
-      isModerator: ctx.user?.isModerator,
-      userId: ctx.user?.id,
-      imagesPerId: 10,
-    });
+    const canEdit = !!ctx.user && (ctx.user.isModerator || ctx.user.id === entry.user?.id);
+    const [images, showsImage] = await Promise.all([
+      getImagesByEntity({
+        id: entry.id,
+        type: 'BountyEntry',
+        include: ['tags'],
+        isModerator: ctx.user?.isModerator,
+        userId: ctx.user?.id,
+        imagesPerId: canEdit ? constants.bounties.maxEntryImagesForEdit : 10,
+      }),
+      getRequestImageFilter(ctx),
+    ]);
     const files = await getBountyEntryFilteredFiles({
       id: entry.id,
       userId: ctx.user?.id,
@@ -85,10 +94,12 @@ export const getBountyEntryHandler = async ({
 
     return {
       ...entry,
-      images: images.map((i) => ({
-        ...i,
-        metadata: i.metadata as MixedObject,
-      })),
+      images: capNestedImages(images.filter(showsImage), ctx, { ownerId: entry.user?.id }).map(
+        (i) => ({
+          ...i,
+          metadata: i.metadata as MixedObject,
+        })
+      ),
       files,
       fileCount: files.length,
       // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
@@ -137,7 +148,7 @@ export const upsertBountyEntryHandler = async ({
       bounty.entryLimit &&
       bounty.entries.filter((entry) => entry.userId === userId).length >= bounty.entryLimit
     ) {
-      throw throwBadRequestError('You have reached the maximum number of entries for this bounty');
+      throw throwBadRequestError(BOUNTY_ENTRY_LIMIT_REACHED);
     }
 
     const entry = await upsertBountyEntry({

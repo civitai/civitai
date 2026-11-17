@@ -37,7 +37,9 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     appBlockPublishRequest: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
-  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(write));
+  write.$transaction.mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+    cb(write)
+  );
   const read: ReadMock = {
     appListing: { findUnique: vi.fn(async () => null) },
     appBlockPublishRequest: { findFirst: vi.fn(async () => null) },
@@ -51,7 +53,19 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({
+  notifyAppListingOwner: mockNotify,
+}));
+// LIVE UNPUBLISH (`app-blocks-live-unpublish`): what the reset hands the shared static server
+// after it commits. Its own behaviour (flag, Jobs, readiness list) is pinned in
+// live-unpublish.service.test.ts.
+const live = vi.hoisted(() => ({
+  takeDown: vi.fn(async (_slug: string): Promise<{ liveNote?: string }> => ({})),
+}));
+vi.mock('~/server/services/blocks/live-unpublish.service', () => ({
+  takeDownLiveApp: (slug: string) => live.takeDown(slug),
+  restoreLiveAppSoon: () => undefined,
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
   newAppListingPublishRequestId: () => `alpr_test_${++ids.n}`,
@@ -117,6 +131,7 @@ beforeEach(() => {
     .mockReset()
     .mockImplementation(async (a: { data: unknown }) => a.data);
   mockNotify.mockReset().mockResolvedValue(undefined);
+  live.takeDown.mockReset().mockResolvedValue({});
 });
 
 describe('resetOnsiteListingToPending', () => {
@@ -348,5 +363,57 @@ describe('resetOnsiteListingToPending', () => {
     }).catch((err) => {
       expect(err).toBeInstanceOf(OffsiteModerationError);
     });
+  });
+});
+
+// The re-approval publishes again; until then the app's subdomain must not serve the old version.
+describe('resetOnsiteListingToPending — live unpublish', () => {
+  const READINESS_NOTE = "my-app keeps serving: it is the static server's readiness app";
+
+  it('takes the app down after the reset commits', async () => {
+    const res = await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    expect(live.takeDown).toHaveBeenCalledTimes(1);
+    expect(live.takeDown).toHaveBeenCalledWith('my-app');
+    expect(live.takeDown.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockWrite.appBlock.updateMany.mock.invocationCallOrder[0]
+    );
+    expect(res).not.toHaveProperty('liveNote');
+  });
+
+  it('the readiness app: the reset succeeds and returns the note', async () => {
+    live.takeDown.mockResolvedValue({ liveNote: READINESS_NOTE });
+    const res = await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    expect(res).toMatchObject({
+      appListingId: 'apl_1',
+      status: 'pending',
+      liveNote: READINESS_NOTE,
+    });
+  });
+
+  it('a failing live step never fails the reset', async () => {
+    live.takeDown.mockRejectedValue(new Error('k8s down'));
+    const res = await resetOnsiteListingToPending({
+      input: { appListingId: 'apl_1', reason: 'needs another look' },
+      reviewerUserId: MOD,
+    });
+    expect(res).toMatchObject({ appListingId: 'apl_1', status: 'pending' });
+    expect(live.takeDown).toHaveBeenCalledWith('my-app');
+  });
+
+  it('a reset that lost its race takes nothing down', async () => {
+    mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 0 });
+    await expect(
+      resetOnsiteListingToPending({
+        input: { appListingId: 'apl_1', reason: 'reason here' },
+        reviewerUserId: MOD,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect(live.takeDown).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@
 import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import { createRequire } from 'module';
+import { STATIC_ASSET_CACHE_RULES } from './src/shared/constants/static-asset-cache-rules.mjs';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -26,6 +27,10 @@ const analyze = process.env.ANALYZE === 'true';
  * `next build` no longer runs ESLint (Next 16), so there is no lint equivalent to switch.
  */
 const skipBuildTypecheck = process.env.CIVITAI_SKIP_BUILD_TYPECHECK === '1';
+
+// Production only (like the dev-only X-Robots-Tag rule below), so a rebuilt worker shows up at once
+// under `next dev`. The rules, their TTLs and the page-render hazard they carry are documented in
+// the shared module; `static-asset-cache-headers.test.ts` reads them through Next's route compiler.
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
@@ -196,6 +201,7 @@ export default defineNextConfig(
       '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
+      '@civitai/email',
       '@civitai/clickhouse',
       '@civitai/axiom',
       '@civitai/flipt',
@@ -384,9 +390,28 @@ export default defineNextConfig(
         headers: [{ key: 'X-Frame-Options', value: 'DENY' }],
       });
 
+      if (process.env.NODE_ENV === 'production') {
+        for (const { source, cacheControl } of STATIC_ASSET_CACHE_RULES) {
+          headers.push({ source, headers: [{ key: 'Cache-Control', value: cacheControl }] });
+        }
+      }
+
       return headers;
     },
     poweredByHeader: false,
+    // The `feedGoTransport` / `feedGoTransportModelGetAll` client path (`GO_TRANSPORT_URL` in
+    // src/utils/trpc-go-transport.ts). An exact-path route in front of this app may send it to a
+    // separate Go feed service; whatever reaches this app is served by the ordinary tRPC route, so
+    // the flag can never strand a request (edge rules keyed on `/api/trpc/` still do not match this
+    // path; see `feedGoTransport`).
+    // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
+    // make `/api/trpc-go/*` an alias of the whole tRPC API. src/utils/__tests__/trpc-go-transport.test.ts
+    // pins that this list and that set agree.
+    rewrites: async () =>
+      ['image.getImagesAsPostsInfinite', 'model.getAll'].map((procedure) => ({
+        source: `/api/trpc-go/${procedure}`,
+        destination: `/api/trpc/${procedure}`,
+      })),
     redirects: async () => {
       // Note: the .red-host support-portal bounce is implemented as a
       // Cloudflare Redirect Rule on the civitai.red zone. Config lives at

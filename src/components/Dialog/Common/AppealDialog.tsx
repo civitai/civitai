@@ -3,6 +3,11 @@ import { useHotkeys } from '@mantine/hooks';
 import { useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import {
+  paymentIntentKey,
+  settlePaymentIntentKey,
+  submissionIntent,
+} from '~/components/Buzz/payment-intent-keys';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
@@ -20,8 +25,13 @@ export function AppealDialog({ entityId, entityType }: Props) {
 
   const { data = 0, isLoading } = trpc.report.getRecentAppeals.useQuery({});
 
+  // One key per appealed entity, held across a failure that may have charged the fee, so submitting
+  // again is the same appeal, charged once. The message is not part of it: editing it before
+  // resending is still the same appeal of the same removal.
+  const intent = submissionIntent('appeal', { entityType, entityId });
   const createAppealMutation = trpc.report.createAppeal.useMutation({
-    onSuccess: () => {
+    onSuccess: (_, input) => {
+      if (input.idempotencyKey) settlePaymentIntentKey(intent, input.idempotencyKey);
       handleClose();
       queryUtils.report.getRecentAppeals.setData({}, (old) => (old ? old + 1 : 1));
 
@@ -39,7 +49,8 @@ export function AppealDialog({ entityId, entityType }: Props) {
         imageStore.setImage(entityId, { needsReview: 'appeal' });
       }
     },
-    onError: (error) => {
+    onError: (error, input) => {
+      if (input.idempotencyKey) settlePaymentIntentKey(intent, input.idempotencyKey, error);
       showErrorNotification({
         title: 'Unable to create appeal',
         error: new Error(error.message),
@@ -61,7 +72,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
       return;
     }
 
-    createAppealMutation.mutate(result.data);
+    createAppealMutation.mutate({ ...result.data, idempotencyKey: paymentIntentKey(intent) });
   };
 
   const handleClose = () => {

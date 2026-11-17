@@ -31,11 +31,11 @@ vi.mock('~/components/generation_v2/inputs/useSizePresets', async (importOrigina
 
 // The picker imposes one order — widest first — whatever order an ecosystem
 // declares its options in, and a pick from "More" lands in its place in that
-// order rather than in the row's last slot. The row is a Mantine SegmentedControl,
-// one radio per segment; reading their values in DOM order reads the row.
+// order rather than in the row's last slot. The row is a ChoiceGroup,
+// one radio tile per option; reading their values in DOM order reads the row.
 
 const rowValues = () =>
-  Array.from(document.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+  Array.from(document.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
     .map((input) => input.value)
     .filter((value) => value !== '__more__');
 
@@ -61,6 +61,29 @@ function renderPicker(props: {
     </div>
   );
 }
+
+describe('AspectRatioInput row', () => {
+  test('four options and More share one line', async () => {
+    renderWithProviders(
+      <div style={{ width: 800 }}>
+        {/* No Tailwind in this tier: the two utilities the row's layout rests on. */}
+        <style>{String.raw`.grid { display: grid } .gap-1.5 { gap: 6px }`}</style>
+        <AspectRatioInput
+          value={toValue('1:1')}
+          options={sdxlFullAspectRatioBuckets}
+          onChange={vi.fn()}
+        />
+      </div>
+    );
+    await vi.waitFor(() => expect(document.querySelector('[value="__more__"]')).not.toBeNull());
+
+    const tops = Array.from(document.querySelectorAll('[role="radio"]'), (tile) =>
+      Math.round(tile.getBoundingClientRect().top)
+    );
+    expect(tops).toHaveLength(5);
+    expect(new Set(tops).size).toBe(1);
+  });
+});
 
 describe('AspectRatioInput order', () => {
   test('sorts a portrait-first list widest first', async () => {
@@ -113,7 +136,6 @@ describe('AspectRatioInput order', () => {
 });
 
 describe('AspectRatioInput "More"', () => {
-  // Click the More segment's label: Mantine hides the radio itself.
   const openMore = () => userEvent.click(page.getByText('More'));
 
   test('opens a bottom sheet titled with the label on a phone, and a pick closes it', async () => {

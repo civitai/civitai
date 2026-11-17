@@ -1,6 +1,17 @@
 import JSZip from 'jszip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * `approveRequest` (3b) — onsite AppListing CREATE vs manifest-governed COPY RE-SYNC.
@@ -34,9 +45,21 @@ const { db, s3, holder } = vi.hoisted(() => {
   const holder: { zipBytes: Uint8Array } = { zipBytes: new Uint8Array() };
   const makeDb = () => ({
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    // The storage-migration approve gate (`reserveStorageMigrationRuns`): no open run.
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        $queryRaw: async () => [],
+        $executeRaw: async () => 0,
+        $executeRawUnsafe: async () => 0,
+      })
+    ),
     $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appBlockPublishRequest: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The previous approved version (`getPreviousApprovedState`): none.
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The storage-migration history (`loadStorageMigrationBaseline`): none.
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
       update: vi.fn(async (a: { data?: unknown }) => a?.data ?? {}),
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },

@@ -1,4 +1,5 @@
-import { Box, Group, Paper, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Box, Group, Paper, Progress, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import dayjs from '~/shared/utils/dayjs';
 import {
   type SubscriptionProductMetadata,

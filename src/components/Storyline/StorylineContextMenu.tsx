@@ -1,4 +1,5 @@
-import { ActionIcon, Menu, Text } from '@mantine/core';
+import { ActionIcon, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';

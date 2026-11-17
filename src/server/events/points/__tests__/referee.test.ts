@@ -11,9 +11,8 @@ const { eventPointsRefereeSql, eventPointsRefereeUsersSql } = await import(
 );
 const { diffHats } = await import('~/server/events/points/sync');
 const { liveBucketRange } = await import('~/server/events/points/read');
-const { LIVE_BUCKET_MS, liveBucket, hatTopicId, parseHatField, hatField } = await import(
-  '~/server/events/points/keys'
-);
+const { LIVE_BUCKET_MS, LIVE_BUCKET_TTL_S, liveBucket, hatTopicId, parseHatField, hatField } =
+  await import('~/server/events/points/keys');
 
 const scoring = {
   capPerActorPerOwnerPerDay: 50,
@@ -330,12 +329,12 @@ describe('diffHats', () => {
 });
 
 describe('liveBucketRange', () => {
-  it('reads from the cut to now, and at most three hours back when the referee has stopped', () => {
+  it('reads from the cut to now, and back no further than a bucket lives when the referee has stopped', () => {
     const now = new Date('2026-11-05T12:07:00.000Z');
     const last = liveBucket(now);
     expect(liveBucketRange(last - 2, now)).toEqual([last - 2, last - 1, last]);
     const stale = liveBucketRange(0, now);
-    expect(stale).toHaveLength((3 * 60 * 60 * 1000) / LIVE_BUCKET_MS);
+    expect(stale).toHaveLength((LIVE_BUCKET_TTL_S * 1000) / LIVE_BUCKET_MS);
     expect(stale.at(-1)).toBe(last);
   });
 });

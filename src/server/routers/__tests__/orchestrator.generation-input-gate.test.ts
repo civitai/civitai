@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   submitPresetImageGen: vi.fn(async () => ({ workflowId: 'w', cost: 0 })),
   whatIfPresetImageGen: vi.fn(async () => ({ cost: 1, ready: true })),
   getOrchestratorToken: vi.fn(async () => 'token'),
+  enhancePrompt: vi.fn(async () => ({})),
 }));
 
 vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
@@ -28,6 +29,10 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', async (impor
   buildGenerationContext: vi.fn(async () => ({ externalCtx: {}, status: {} })),
   generateFromGraph: h.generateFromGraph,
   whatIfFromGraph: h.whatIfFromGraph,
+}));
+vi.mock('~/server/services/orchestrator/promptEnhancement', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  enhancePrompt: h.enhancePrompt,
 }));
 vi.mock('~/server/services/orchestrator/imageUpload', () => ({ imageUpload: h.imageUpload }));
 vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
@@ -122,6 +127,35 @@ describe('orchestrator generation inputs', () => {
     expect(h.imageUpload).not.toHaveBeenCalled();
   });
 
+  // The kill switch is applied inside `submitPresetImageGen` from the user it is handed: a free,
+  // non-moderator caller must arrive as one, or a forced tier or moderator flag is a bypass.
+  it('iterateGenerate submits as the signed-in user, for the generation kill switch', async () => {
+    h.assertInputs.mockResolvedValue(undefined);
+    await orchestratorRouter
+      .createCaller({
+        user: {
+          id: USER_ID,
+          onboarding: OnboardingSteps.Buzz,
+          emailVerified: new Date('2020-01-01'),
+          muted: false,
+          bannedAt: null,
+          showNsfw: false,
+          tier: 'free',
+          isModerator: false,
+        },
+        ip: '1.2.3.4',
+        features: {},
+        acceptableOrigin: true,
+        tokenScope: TokenScope.Full,
+        apiKeyId: null,
+        track: {},
+      } as never)
+      .iterateGenerate({ prompt: 'a cat' });
+    expect(h.submitPresetImageGen).toHaveBeenCalledTimes(1);
+    const [[args]] = h.submitPresetImageGen.mock.calls as unknown as [[{ user: unknown }]];
+    expect(args.user).toMatchObject({ id: USER_ID, tier: 'free', isModerator: false });
+  });
+
   it('POSITIVE CONTROL: each route proceeds when the check passes', async () => {
     h.assertInputs.mockResolvedValue(undefined);
     await caller().imageUpload({ sourceImage: REF });
@@ -151,4 +185,75 @@ describe('orchestrator generation inputs', () => {
       ]);
     }
   );
+
+  // Boost-to-load lets a free account past the members gate; API callers must never opt in to it.
+  it.each([
+    ['a session', null, true],
+    ['an API key', 42, false],
+  ])(
+    'generateFromGraph and whatIfFromGraph pass the boost-to-load opt-in only for %s',
+    async (_, key, accepted) => {
+      await caller(key)
+        .generateFromGraph({ input: { prompt: 'x' }, acceptBoostRequired: true })
+        .catch(() => undefined);
+      await caller(key)
+        .whatIfFromGraph({ prompt: 'x', acceptBoostRequired: true })
+        .catch(() => undefined);
+      const optIns = [h.generateFromGraph, h.whatIfFromGraph].map(
+        (fn) =>
+          (fn.mock.calls[0] as unknown as [{ acceptBoostRequired: unknown }])[0].acceptBoostRequired
+      );
+      expect(optIns).toEqual([accepted, accepted]);
+    }
+  );
+});
+
+describe('orchestrator.enhancePrompt images', () => {
+  // What the generation form's images node holds: an orchestrator blob, or an image CDN url.
+  const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/ABC123.jpeg?sig=s&exp=x';
+  const clientPayload = (images: string[] | null) => ({
+    ecosystem: 'sdxl',
+    prompt: 'a cat',
+    negativePrompt: null,
+    instruction: null,
+    temperature: 0.7,
+    preserveTriggerWords: null,
+    snippetTargets: null,
+    segmentPrompt: false,
+    singleTake: null,
+    images,
+  });
+
+  it('checks the images before the enhancement runs', async () => {
+    await expect(caller().enhancePrompt(clientPayload([BLOB, REF]))).rejects.toBe(refused);
+    expect(checked()).toEqual({
+      urls: [BLOB, REF],
+      userId: USER_ID,
+      entry: 'enhancePrompt',
+      isApiCaller: false,
+    });
+    expect(h.enhancePrompt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a data URI', 'data:image/png;base64,iVBORw0KGgo='],
+    [
+      'raw base64',
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    ],
+    ['an AIR', 'urn:air:sdxl:image:civitai:1@1'],
+  ])('refuses %s as an image at the input', async (_, image) => {
+    h.assertInputs.mockResolvedValue(undefined);
+    await expect(caller().enhancePrompt(clientPayload([image]))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(h.enhancePrompt).not.toHaveBeenCalled();
+  });
+
+  it('POSITIVE CONTROL: the payload the client sends runs when the check passes', async () => {
+    h.assertInputs.mockResolvedValue(undefined);
+    await caller().enhancePrompt(clientPayload([BLOB, REF]));
+    await caller().enhancePrompt(clientPayload(null));
+    expect(h.enhancePrompt).toHaveBeenCalledTimes(2);
+  });
 });

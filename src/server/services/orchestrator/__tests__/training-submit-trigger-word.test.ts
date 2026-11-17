@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 /** The trainer's submit checks the version's trigger word before claiming the version or charging
  *  (real rule, classifier mocked). */
 
+import type * as TrainingConstants from '~/shared/constants/training.constants';
+
+// The classic trainer's submit is date-gated; these cases cover a run it still accepts.
+vi.mock('~/shared/constants/training.constants', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrainingConstants>()),
+  isClassicTrainerRetired: () => false,
+}));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
@@ -52,7 +59,7 @@ const submit = () =>
     modelVersionId: 55,
     token: 'tok',
     user: { id: 7, isModerator: false } as never,
-    features: { trainingStepsPricing: true } as never,
+    features: { krea2Training: true, trainingStepsPricing: true } as never,
     domain: 'red',
   } as never);
 

@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WATCHDOG_WORKER_SOURCE } from '~/server/eventloop-watchdog';
+import { allowConnection } from '~/__tests__/network-guard';
 
 // The worker source is an inline string (see the tracing note in
 // eventloop-watchdog.ts), so it is NOT type-checked and NOT linted. This suite is
@@ -20,7 +21,9 @@ const THRESHOLD_MS = 300;
 
 const harnesses: Harness[] = [];
 
-async function startWorker(opts: { thresholdMs?: number; token?: string } = {}): Promise<Harness> {
+async function startWorker(
+  opts: { thresholdMs?: number; token?: string; previousToken?: string } = {}
+): Promise<Harness> {
   const sab = new SharedArrayBuffer(8);
   const beat = new BigInt64Array(sab);
   Atomics.store(beat, 0, BigInt(Date.now()));
@@ -34,6 +37,7 @@ async function startWorker(opts: { thresholdMs?: number; token?: string } = {}):
       // concurrent test files can never collide on a fixed port.
       port: 0,
       token: opts.token ?? TOKEN,
+      previousToken: opts.previousToken,
       heartbeatIntervalMs: 50,
       pollMs: 25,
     },
@@ -55,6 +59,9 @@ async function startWorker(opts: { thresholdMs?: number; token?: string } = {}):
       reject(err);
     });
   });
+
+  // The worker's own server: the guard does not see a listen in another thread.
+  allowConnection('127.0.0.1', port);
 
   const scrape = async (token: string | undefined = opts.token ?? TOKEN) => {
     const query = token === undefined ? '' : `?token=${encodeURIComponent(token)}`;
@@ -170,6 +177,37 @@ describe('event-loop watchdog worker', () => {
     // than the length short-circuit.
     expect((await h.scrape('x'.repeat(TOKEN.length))).status).toBe(401);
     expect((await h.scrape()).status).toBe(200);
+  });
+
+  it('accepts the previous token as well as the current one', async () => {
+    const h = await startWorker({ previousToken: 'test-watchdog-previous' });
+
+    expect((await h.scrape('test-watchdog-previous')).status).toBe(200);
+    expect((await h.scrape('nope')).status).toBe(401);
+    const { status, body } = await h.scrape(TOKEN);
+    expect(status).toBe(200);
+    // Counted by slot, so the previous value's last user on this port is visible.
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="current"} 1');
+    expect(body).toContain('civitai_app_watchdog_token_match_total{slot="previous"} 1');
+  });
+
+  it('accepts the token as Authorization: Bearer, and refuses a wrong Bearer', async () => {
+    const h = await startWorker({ previousToken: 'test-watchdog-previous' });
+    const bearer = async (value: string) =>
+      (await fetch(`http://127.0.0.1:${h.port}/metrics`, { headers: { authorization: value } }))
+        .status;
+
+    expect(await bearer(`Bearer ${TOKEN}`)).toBe(200);
+    expect(await bearer('Bearer test-watchdog-previous')).toBe(200);
+    expect(await bearer(`Bearer ${'x'.repeat(TOKEN.length)}`)).toBe(401);
+    expect(await bearer(TOKEN)).toBe(401);
+    expect(await bearer('Bearer ')).toBe(401);
+  });
+
+  it('a blank previous token never lets an empty token through', async () => {
+    const h = await startWorker({ previousToken: '' });
+
+    expect((await h.scrape('')).status).toBe(401);
   });
 
   it('FAILS CLOSED: refuses to listen at all when no token is configured', async () => {

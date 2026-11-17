@@ -2,7 +2,7 @@ import type { MediaRatingOutput } from '@civitai/orchestration-client';
 import { dbWrite } from '~/server/db/client';
 import { computePerceptualHash } from '~/server/services/orchestrator/orchestrator.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import { NsfwLevel } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import type { MediaMetadata } from '~/server/schema/media.schema';
@@ -10,6 +10,7 @@ import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import {
   readJobFailureReason,
   sendIngestionSignal,
@@ -36,7 +37,7 @@ export async function isExemptFromAiVerification(
     SELECT (
       EXISTS(SELECT 1 FROM "User" WHERE "profilePictureId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
-      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId} OR "bannerId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty', 'Article'))
     ) AS exempt
@@ -124,7 +125,7 @@ export async function processImageScanWorkflow({
         retryCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
@@ -162,7 +163,7 @@ export async function processImageScanWorkflow({
         retryCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
@@ -231,7 +232,8 @@ export async function processImageScanWorkflow({
           status,
         },
         'webhooks'
-      ).catch(() => null);
+      );
+      await refreshProfilePicturesForImagesLazy([imageId]);
       if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
       return;
     }
@@ -261,7 +263,7 @@ export async function processImageScanWorkflow({
         retryCount,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     await sendIngestionSignal({ imageId, userId, ingestion: ImageIngestionStatus.Error });
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
@@ -304,7 +306,7 @@ export async function processImageScanWorkflow({
         ingestion: outcome.ingestion,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   // Last step, after everything is committed — throwing here would 400 a finished webhook
@@ -430,7 +432,7 @@ function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
   );
 }
 
-async function blockImageFromRating({
+export async function blockImageFromRating({
   imageId,
   pHash,
   blockedReason,
@@ -439,13 +441,18 @@ async function blockImageFromRating({
   pHash?: bigint;
   blockedReason?: string | null;
 }) {
-  await dbWrite.image.updateMany({
-    where: { id: imageId },
-    data: {
-      pHash,
-      ingestion: ImageIngestionStatus.Blocked,
-      nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: blockedReason,
-    },
-  });
+  // A stored CSAM reason is kept: only a moderator's CSAM review re-labels it.
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      "updatedAt" = NOW(),
+      "pHash" = COALESCE(${pHash ?? null}, "pHash"),
+      ingestion = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus",
+      "nsfwLevel" = ${NsfwLevel.Blocked}::int,
+      "blockedFor" = CASE WHEN "blockedFor" = ${BlockedReason.CSAM} OR ${
+    blockedReason === undefined
+  }
+        THEN "blockedFor" ELSE ${blockedReason ?? null} END
+    WHERE id = ${imageId}
+  `;
 }

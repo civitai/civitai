@@ -39,6 +39,22 @@ export const healthWorkerStallMs = positiveMs(process.env.HEALTH_WORKER_STALL_MS
 /** Bound on one recipient's unread-counter bump, so a stuck redis call can't hold the tick. */
 export const counterBumpTimeoutMs = positiveMs(process.env.COUNTER_BUMP_TIMEOUT_MS, 2_000);
 
+// --- count path ---
+/** Bound on each redis call the count path makes (lag flag, cache read/bust/write). */
+export const countRedisDeadlineMs = positiveMs(
+  process.env.NOTIFICATIONS_COUNT_REDIS_DEADLINE_MS,
+  300
+);
+/**
+ * What a count does when one of its redis calls fails or times out. Off (unset, the default): answer an
+ * empty count at once, the same answer the main app already gives when this service fails. On
+ * (`NOTIFICATIONS_COUNT_DB_FALLBACK=true`): answer from the DB, the replica when the lag flag is
+ * unreadable. Read per call, so it can be flipped without a rebuild of the module graph.
+ */
+export function countDbFallbackEnabled(): boolean {
+  return process.env.NOTIFICATIONS_COUNT_DB_FALLBACK === 'true';
+}
+
 // --- web push (VAPID) ---
 export const vapidPublicKey = process.env.VAPID_PUBLIC_KEY ?? '';
 export const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY ?? '';

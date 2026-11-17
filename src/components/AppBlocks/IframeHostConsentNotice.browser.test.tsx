@@ -639,6 +639,102 @@ describe('IframeHost consent backstop — the surface', () => {
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
+  // ── A REFUSAL BRINGS A DISMISSED NOTICE BACK ───────────────────────────────
+  // The rule is `resolveConsentNoticeAfterRefusal` (unit-tested in
+  // `__tests__/requestConsentGate.test.ts`); these pin that the MODEL SLOT wires a
+  // reaction refused as `needs-consent` to it, as PageBlockHost does, and that
+  // REQUEST_CONSENT does not revive it.
+  const REACT = 'social:react:self';
+  const reactionRequest = {
+    requestId: 'react-1',
+    entityType: 'image',
+    entityId: 5,
+    reaction: 'Heart',
+    reacted: true,
+  };
+
+  async function dismissNotice() {
+    await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+    await page.getByTestId('block-consent-notice-dismiss').click();
+    await vi.waitFor(() => expect(noticeQuery()).toBeNull());
+  }
+
+  test('🔴 dismissed, then a reaction is refused for a MISSING permission → the notice is back, highlighted', async () => {
+    renderWithProviders(
+      <IframeHost {...baseProps} missingScopes={[WITHHELD, REACT]} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() =>
+        expect(posts.of('ENTITY_REACTION_RESULT').map((m) => m.payload)).toEqual([
+          { requestId: 'react-1', error: 'needs-consent' },
+        ])
+      );
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull());
+      expect((noticeQuery() as HTMLElement).getAttribute('data-highlight')).toBe('true');
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 ONE revival per mount: dismissed again, later refusals do NOT bring it back', async () => {
+    // An app can send this request whenever it likes, with no user gesture, so an
+    // uncapped revival would make the notice impossible to get rid of.
+    renderWithProviders(
+      <IframeHost {...baseProps} missingScopes={[WITHHELD, REACT]} onConsentGranted={vi.fn()} />
+    );
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      await vi.waitFor(() => expect(noticeQuery()).not.toBeNull()); // first revival
+      await dismissNotice();
+      for (let i = 2; i <= 3; i++) {
+        postFromBlock('SET_ENTITY_REACTION', { ...reactionRequest, requestId: `react-${i}` });
+        // Positive control: each later refusal still reached the app.
+        await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(i));
+      }
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('CONTROL — the same refusal for a permission the viewer CANNOT grant here leaves it dismissed', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('SET_ENTITY_REACTION', reactionRequest);
+      // Positive control: the refusal reached the block.
+      await vi.waitFor(() => expect(posts.of('ENTITY_REACTION_RESULT')).toHaveLength(1));
+      await new Promise((r) => setTimeout(r, 150));
+      expect(noticeQuery()).toBeNull();
+    } finally {
+      posts.stop();
+    }
+  });
+
+  test('🔴 dismissed, then REQUEST_CONSENT for a missing scope opens the modal and does NOT bring the notice back', async () => {
+    // That path already answers the request with the consent modal, so a notice
+    // reappearing behind it (and staying after the viewer declines) would only undo
+    // the dismissal. The modal is the positive control that the request was handled.
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    await dismissNotice();
+    postFromBlock('REQUEST_CONSENT', { scopes: [WITHHELD] });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 150));
+    expect(noticeQuery()).toBeNull();
+  });
+
   // 🔴 ONE VARIABLE EACH. A fixture that moves `missingScopes` AND `needsConsent`
   // together cannot attribute the absence to either term, which is how the page
   // host's `needsConsent &&` once sat in a render condition with no killing
@@ -806,6 +902,27 @@ describe('IframeHost consent backstop — the surface', () => {
       await new Promise((r) => setTimeout(r, 100));
       expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(0);
       expect(showNotificationSpy).not.toHaveBeenCalled();
+    } finally {
+      posts.stop();
+    }
+  });
+  // GUARD: the model slot has no prompt for `apps:storage:publish` in a SOURCE app (only the page
+  // host has one), so a request carrying `from` is refused here. Read as an ordinary request it
+  // would open THIS app's own prompt for its missing scopes, which is not what the block asked.
+  // `baseProps` leaves `WITHHELD` missing, so without the refusal each request below opens it.
+  test('a REQUEST_CONSENT carrying from gets CONSENT_UNAVAILABLE and opens no modal', async () => {
+    renderWithProviders(<IframeHost {...baseProps} onConsentGranted={vi.fn()} />);
+    await driveToReady();
+    const posts = listenForPosts();
+    try {
+      postFromBlock('REQUEST_CONSENT', { scopes: ['apps:storage:publish'], from: 'notes-app' });
+      postFromBlock('REQUEST_CONSENT', { scopes: [WITHHELD], from: 'notes-app' });
+      await vi.waitFor(() => expect(posts.of('CONSENT_UNAVAILABLE')).toHaveLength(2));
+      for (const m of posts.of('CONSENT_UNAVAILABLE')) {
+        expect(m.payload).toEqual({ reason: 'ungrantable', scopes: ['apps:storage:publish'] });
+      }
+      await new Promise((r) => setTimeout(r, 100));
+      expect(useDialogStore.getState().dialogs).toHaveLength(0);
     } finally {
       posts.stop();
     }

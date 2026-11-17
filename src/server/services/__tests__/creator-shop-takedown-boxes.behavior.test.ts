@@ -108,6 +108,7 @@ const MIGRATIONS = [
   '20261105120000_mystery_box_items',
   '20261107120000_mystery_box_listing_unlisted_and_refunds',
   '20261108120000_creator_mystery_packs',
+  '20261231000000_box_opening_guaranteed',
 ].map((name) =>
   readFileSync(
     join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`),
@@ -556,6 +557,22 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.failures).toEqual([]);
   });
 
+  // The refund notice says Buzz came back; for a granted box none was paid.
+  it('tells a granted box’s opener it was removed, not refunded', async () => {
+    const boxId = await seedBox();
+    await seedOpening(boxId, { userId: GRANTEE, sourceKey: 'mod-grant-5-102-0', purchased: false });
+
+    await takedown();
+
+    const sent = notifications.createNotification.mock.calls.map(([n]) => n);
+    expect(sent).toContainEqual(
+      expect.objectContaining({ type: 'cosmetic-shop-item-removed', userId: GRANTEE })
+    );
+    expect(sent).not.toContainEqual(
+      expect.objectContaining({ type: 'cosmetic-shop-item-taken-down', userId: GRANTEE })
+    );
+  });
+
   it('does not refund a box purchase a moderator already refunded', async () => {
     const boxId = await seedBox();
     const { boxItemId, sourceKey } = await seedOpening(boxId);
@@ -622,16 +639,95 @@ describe('takedownCosmeticShopItem on a cosmetic boxes hold', () => {
     expect(result.clawedBack).toBe(560);
   });
 
-  // Unreachable while creator boxes are not sold; kept so the first sale without a record is loud.
-  it('leaves a creator box sale with no payout record to a moderator, against the creator', async () => {
+  it('leaves a creator box payout the ledger shows unreversed to a moderator, for what was paid', async () => {
     const boxId = await seedBox({ sellerId: CREATOR });
-    await seedOpening(boxId);
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
 
     const result = await takedown();
 
     expect(result.failures).toEqual([
-      expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId }),
+      expect.objectContaining({ stage: 'clawback', userId: CREATOR, boxId, amount: 560 }),
     ]);
+  });
+
+  it('files no clawback for a late payout already reversed on the ledger', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
+    buzz.getTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === 'refund-payout-1' ? { externalTransactionId: id } : null
+    );
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it('files no clawback for a late payout whose own reversal the sweep is still finishing', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId, {
+      meta: { payoutReversal: { transactionId: 'payout-1', at: 'x' } },
+    });
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      {
+        transactionId: 'payout-1',
+        externalTransactionId: `${sourceKey}:sell:${CREATOR}:yellow`,
+        accountId: 0,
+        amount: 560,
+      },
+    ]);
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
+  });
+
+  it('leaves the whole price to a moderator when the ledger cannot be read after the refund', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    const { sourceKey } = await seedOpening(boxId);
+    // The box refund goes by prefix (`refundMultiAccountTransaction`); the ledger read that fails
+    // is the clawback check's.
+    buzz.getMultiAccountTransactionsByPrefix.mockRejectedValue(new Error('buzz down'));
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        stage: 'clawback',
+        userId: CREATOR,
+        boxId,
+        amount: 800,
+        error: expect.stringContaining(
+          `${sourceKey} has no recorded payouts and its ledger could not be read`
+        ),
+      }),
+    ]);
+  });
+
+  // The payout failed, or landed after the refund began and reversed itself: nothing is owed.
+  it('files no clawback for a creator box sale whose ledger shows no unreversed payout', async () => {
+    const boxId = await seedBox({ sellerId: CREATOR });
+    await seedOpening(boxId);
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([]);
+
+    const result = await takedown();
+
+    expect(result.failures).toEqual([]);
   });
 });
 
@@ -663,6 +759,150 @@ const withFailing = async <T>(
     ) => raw()(strings, ...values)) as never);
   }
 };
+
+describe('takedownCosmeticShopItem on a pack box that drew it', () => {
+  const PACK_TX = 'item-purchase-v1-101-60-packkey';
+  const packKey = (n: number) => `${PACK_TX}#pack-${String(n).padStart(2, '0')}`;
+
+  /** A pack bought for `price`: box 3 drew the taken-down cosmetic, box 4 the kept one. */
+  const seedPack = async ({ price = 4500, size = 10 } = {}) => {
+    const boxId = await seedBox();
+    const [{ id: listingId }] = await q<{ id: number }>(
+      `INSERT INTO "CosmeticShopItem" ("unitAmount", title, "itemDefinitionId", listed, meta)
+       VALUES ($1, 'Box pack', $2, false, $3) RETURNING id`,
+      // The listing's terms have changed since the sale: the purchase's are the ones paid out.
+      [price, boxId, JSON.stringify({ pack: { size: size + 5, guaranteedTierIds: [1] } })]
+    );
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchases" ("buzzTransactionId", "userId", "shopItemId", "unitAmount", refunded, meta)
+       VALUES ($1, $2, $3, $4, false, $5)`,
+      [PACK_TX, BUYER, listingId, price, JSON.stringify({ pack: { size, guaranteedTierIds: [1] } })]
+    );
+    const open = (boxItemId: number, n: number, cosmeticId: number) =>
+      q(
+        `INSERT INTO "BoxOpening" ("boxItemId", "boxDefinitionId", "boxVersion", "userId", "boxSourceKey",
+           "tierId", "contentId", "rewardDefinitionId", "rewardType", "tierWeight", "eligibleWeight",
+           "tierRoll", "tierPoolSize", "itemRoll", "rewardStatus")
+         SELECT $1, $2, 1, $3, $4, 0, 0, id, 'cosmetic', 10, 100, 0, 1, 0, 'granted'
+         FROM "ItemDefinition" WHERE "cosmeticId" = ${cosmeticId}`,
+        [boxItemId, boxId, BUYER, packKey(n)]
+      );
+    await open(901, 3, TAKEN_DOWN);
+    await open(902, 4, KEPT);
+    buzz.getMultiAccountTransactionsByPrefix.mockImplementation((async (prefix: string) =>
+      prefix === PACK_TX
+        ? [{ transactionId: 'pack-charge', accountType: 'yellow', amount: 4500 }]
+        : []) as never);
+    buzz.createBuzzTransaction.mockResolvedValue({ transactionId: 'credit' });
+    return boxId;
+  };
+  const credits = () => buzz.createBuzzTransaction.mock.calls.map(([input]) => input);
+
+  it("pays the box its share of the pack into the charge's account, once, and leaves the rest of the pack alone", async () => {
+    await seedPack();
+
+    const first = await takedown();
+    const second = await takedown();
+
+    expect(credits()).toEqual([
+      expect.objectContaining({
+        fromAccountId: 0,
+        toAccountId: BUYER,
+        toAccountType: 'yellow',
+        amount: 450,
+        externalTransactionId: `takedown-pack-share:${packKey(3)}`,
+      }),
+    ]);
+    expect(refundedPrefixes()).toEqual([]);
+    expect([await rewardStatusOf(901), await rewardStatusOf(902)]).toEqual(['refunded', 'granted']);
+    expect(await purchaseRefunded(PACK_TX)).toBe(false);
+    expect([first.boxRefundedValue, first.failures]).toEqual([450, []]);
+    expect(second.boxRefundedValue).toBe(0);
+  });
+
+  it('keeps a failed share owed, and pays it on the same id when the takedown runs again', async () => {
+    await seedPack();
+    buzz.createBuzzTransaction.mockRejectedValue(new Error('buzz is down'));
+
+    const failed = await takedown();
+    expect(failed.failures).toEqual([
+      expect.objectContaining({ stage: 'refund', userId: BUYER, amount: 450 }),
+    ]);
+
+    buzz.createBuzzTransaction.mockReset().mockResolvedValue({ transactionId: 'credit' });
+    const retried = await takedown();
+
+    expect([retried.boxRefundedValue, retried.failures]).toEqual([450, []]);
+    expect(credits()).toEqual([
+      expect.objectContaining({ externalTransactionId: `takedown-pack-share:${packKey(3)}` }),
+    ]);
+  });
+
+  it('pays a share rounded down, so the shares never add up to more than the pack cost', async () => {
+    await seedPack({ price: 1350, size: 4 });
+    const result = await takedown();
+    expect(credits()).toEqual([expect.objectContaining({ amount: 337 })]);
+    expect(result.boxRefundedValue).toBe(337);
+  });
+
+  it('pays the last box the remainder, so a whole pack taken down returns exactly its price', async () => {
+    // Box 3 of 3: 333 + 333 + 334 = 1000. Earlier boxes keep the rounded-down share (the test above).
+    await seedPack({ price: 1000, size: 3 });
+    const result = await takedown();
+    expect(credits()).toEqual([
+      expect.objectContaining({
+        amount: 334,
+        externalTransactionId: `takedown-pack-share:${packKey(3)}`,
+      }),
+    ]);
+    expect(result.boxRefundedValue).toBe(334);
+  });
+
+  it('records malformed pack terms as a failure and finishes the takedown', async () => {
+    await seedPack();
+    await q(`UPDATE "UserCosmeticShopPurchases" SET meta = $1 WHERE "buzzTransactionId" = $2`, [
+      JSON.stringify({ pack: { size: 1, guaranteedTierIds: [1] } }),
+      PACK_TX,
+    ]);
+    const result = await takedown();
+    expect(credits()).toEqual([]);
+    expect(result.failures).toEqual([
+      expect.objectContaining({ stage: 'refund', userId: BUYER, amount: 4500 }),
+    ]);
+  });
+
+  it('counts a share refused as a duplicate as paid', async () => {
+    await seedPack();
+    buzz.createBuzzTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'conflict', cause: new BuzzApiError(409, 'x') })
+    );
+
+    const result = await takedown();
+    const again = await takedown();
+
+    expect([result.boxRefundedValue, result.failures]).toEqual([450, []]);
+    expect(again.boxRefundedValue).toBe(0);
+  });
+
+  it('leaves a share owed, for a moderator, when the charge was split across accounts', async () => {
+    await seedPack();
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { transactionId: 'a', accountType: 'yellow', amount: 4000 },
+      { transactionId: 'b', accountType: 'green', amount: 500 },
+    ]);
+
+    const result = await takedown();
+
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        stage: 'refund',
+        userId: BUYER,
+        error: expect.stringContaining('by hand'),
+      }),
+    ]);
+  });
+});
 
 describe('takedownCosmeticShopItem paying box refunds still owed', () => {
   it('pays a box refund still owed, though the box no longer lists the content', async () => {

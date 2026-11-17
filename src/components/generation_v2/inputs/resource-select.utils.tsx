@@ -95,7 +95,7 @@ export function resolveResourceOptions(
  */
 export function ResourceCardSkeleton() {
   return (
-    <div className="rounded-lg border border-solid border-gray-3 bg-gray-0 p-2 dark:border-dark-4 dark:bg-dark-6">
+    <div className="rounded-lg border border-solid border-[var(--mantine-color-default-border)] bg-[var(--mantine-color-body)] p-2">
       <Group gap="xs" justify="space-between" wrap="nowrap">
         <Skeleton height={20} width="60%" />
         <Group gap={4}>

@@ -6,6 +6,7 @@ import type { UserMeta } from '~/server/schema/user.schema';
 import type { ScrubOutcome } from '~/server/services/gdpr/stripe-account-scrub';
 import { CUSTOMER_ID_SHAPE, scrubStripeAccount } from '~/server/services/gdpr/stripe-account-scrub';
 import { createJob } from './job';
+import { backoffDelay } from '~/utils/backoff';
 
 /**
  * Brings deleted accounts to the same Stripe state as the one-time backfill of 2026-09-18:
@@ -44,7 +45,10 @@ export const isDue = (state: ScrubState | undefined, now: Date) => {
   if (!state) return true;
   const last = Date.parse(state.lastAttemptAt);
   if (!Number.isFinite(last)) return true;
-  const wait = Math.min(BASE_BACKOFF_MS * 2 ** Math.max(0, state.attempts - 1), MAX_BACKOFF_MS);
+  const wait = backoffDelay(Math.max(0, state.attempts - 1), {
+    baseMs: BASE_BACKOFF_MS,
+    maxMs: MAX_BACKOFF_MS,
+  });
   return now.getTime() - last >= wait;
 };
 
@@ -188,9 +192,7 @@ export const gdprStripeScrubJob = createJob(
     // emit the same warning every ten minutes until someone hand-fixes those rows, which is how a
     // channel gets muted — taking this error with it. The count stays in the returned summary.
     if (candidates.length >= WINDOW_SIZE)
-      await logToAxiom({ name: 'gdpr-stripe-scrub-queue', type: 'error', ...summary }).catch(
-        () => null
-      );
+      logToAxiom({ name: 'gdpr-stripe-scrub-queue', type: 'error', ...summary });
 
     return summary;
   },
@@ -236,7 +238,7 @@ async function recordAttempt(
   // the backoff reaches attempt 8 in under 11 hours against a 4-day window — so alerting on those
   // would fire four or five times for an account behaving exactly as designed.
   if ((failure || unbounded) && attempts >= ALERT_AFTER_ATTEMPTS) {
-    await logToAxiom({
+    logToAxiom({
       name: 'gdpr-stripe-scrub-stuck',
       type: 'error',
       userId,
@@ -247,6 +249,6 @@ async function recordAttempt(
       // its place in the window and nothing else reports it.
       step: failure?.step ?? 'pending',
       message: failure?.message,
-    }).catch(() => null);
+    });
   }
 }

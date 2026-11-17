@@ -136,6 +136,11 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   'storage-doc-unhide',
   'storage-doc-delete',
   'storage-doc-dismiss',
+  // Edits content only; must not displace the event that explains a removal.
+  'moderator-edit',
+  // Writes `is_official` only — a label, never a status — so it must not displace the event
+  // that explains a removal either.
+  'set-official',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

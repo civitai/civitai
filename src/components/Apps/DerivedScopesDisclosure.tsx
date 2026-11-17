@@ -2,6 +2,7 @@ import { Alert, Collapse, Group, Stack, Text, Textarea, UnstyledButton } from '@
 import { useDisclosure, useReducedMotion } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
+import { PERMISSION_GROUP_LABELS } from '~/components/Apps/listingPermissions';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
 import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
@@ -95,7 +96,7 @@ export function DerivedScopesDisclosure({
                 <Group gap={6} wrap="nowrap">
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
                   <Text size="sm" fw={600} c="orange">
-                    Sensitive permissions ({sensitive.length})
+                    {PERMISSION_GROUP_LABELS.sensitive} ({sensitive.length})
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
@@ -168,7 +169,7 @@ export function DerivedScopesDisclosure({
                     }}
                   />
                   <Text size="sm" fw={500}>
-                    Other permissions ({nonSensitive.length})
+                    {PERMISSION_GROUP_LABELS.other} ({nonSensitive.length})
                   </Text>
                   <Text size="xs" c="dimmed">
                     {otherOpened ? 'Hide' : 'Show'}

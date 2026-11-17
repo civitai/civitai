@@ -1,112 +1,77 @@
-import { Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
-import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
+import { Alert, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { IconMessageCancel } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
-
-import { CommentMasonryVirtual } from '~/components/Model/ModelDiscussion/CommentMasonryVirtual';
-import { ReviewSort } from '~/server/common/enums';
-import type { CommentGetAllItem } from '~/types/router';
-import { trpc } from '~/utils/trpc';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import { useCommentSection } from '~/components/CommentsV3/CommentSectionContext';
+import type { CommentV3Comment } from '~/components/CommentsV3/types';
+import { LoadMoreButton } from '~/components/LoadMoreButton/LoadMoreButton';
+import { CommentMasonryVirtual } from '~/components/Model/ModelDiscussion/CommentMasonryVirtual';
 
-export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 8 }: Props) {
-  const isMobile = useContainerSmallerThan('sm');
-  const features = useFeatureFlags();
-  const singleCall = !!features.commentCountsSingleCall;
-  const limit = isMobile ? initialLimit / 2 : initialLimit;
-  const filters = { modelId, limit, sort: ReviewSort.Newest };
+export function ModelDiscussionV2({ modelUserId }: Props) {
+  const {
+    entityId,
+    counts,
+    rootIds,
+    byId,
+    created,
+    removed,
+    isLoading,
+    isError,
+    retry,
+    hasMore,
+    isFetchingMore,
+    loadMore,
+  } = useCommentSection();
 
-  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, isRefetching } =
-    trpc.comment.getAll.useInfiniteQuery(filters, {
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-      placeholderData: undefined,
-    });
+  // Comments written this session lead, as the newest; a refetch then lists them in place.
   const comments = useMemo(() => {
-    const byId = new Map<number, CommentGetAllItem>();
-    for (const comment of data?.pages.flatMap((x) => x.comments) ?? [])
-      if (!byId.has(comment.id)) byId.set(comment.id, comment);
-    return [...byId.values()];
-  }, [data?.pages]);
-  const hasItems = comments.length > 0;
+    const list: CommentV3Comment[] = [];
+    const seen = new Set<number>();
+    const push = (comment?: CommentV3Comment) => {
+      if (!comment || seen.has(comment.id) || removed.has(comment.id)) return;
+      seen.add(comment.id);
+      list.push(comment);
+    };
+    for (const comment of [...(created[0] ?? [])].reverse()) push(comment);
+    for (const id of rootIds) push(byId.get(id));
+    return list;
+  }, [rootIds, byId, created, removed]);
 
-  // `commentCountsSingleCall` off: the plain and the hidden view's counts as two calls, as before.
-  const { data: singleHiddenCount = 0 } = trpc.comment.getVisibleCountByModel.useQuery(
-    { modelId, hidden: true },
-    { enabled: !singleCall }
-  );
-  const { data: singleVisibleCount } = trpc.comment.getVisibleCountByModel.useQuery(
-    { modelId },
-    { enabled: !singleCall }
-  );
-
-  // On: one call, once the first page is in, and only when there is a list to label (both counts
-  // render inside it). When the first page has no next page it holds every comment the visible
-  // count counts (the whole unpinned list and the pinned block, same viewer filter), so that count
-  // is the loaded total and is not asked for.
-  const firstPage = data?.pages[0];
-  const firstPageHoldsAll = !!firstPage && firstPage.nextCursor === undefined;
-  const { data: counts } = trpc.comment.getVisibleCountsByModel.useQuery(
-    { modelId, includeVisible: !firstPageHoldsAll },
-    { enabled: singleCall && hasItems }
-  );
-
-  const hiddenCommentsCount = singleCall ? counts?.hidden ?? 0 : singleHiddenCount;
-  const hasHiddenComments = hiddenCommentsCount > 0;
-  const loadedTotal = singleCall
-    ? firstPageHoldsAll
-      ? comments.length
-      : counts?.visible ?? undefined
-    : singleVisibleCount;
-  const totalCount = Math.max(loadedTotal ?? 0, comments.length);
+  const total = Math.max(counts?.visible ?? 0, comments.length);
   // Without the total, the loaded count alone would read as the full count beside Load more.
-  const countLabel =
-    loadedTotal === undefined
-      ? null
-      : totalCount > comments.length
-      ? `Showing ${comments.length} of ${totalCount} comments`
-      : totalCount > 0
-      ? `${totalCount} ${totalCount === 1 ? 'comment' : 'comments'}`
-      : null;
+  const countLabel = !counts
+    ? null
+    : total > comments.length
+    ? `Showing ${comments.length} of ${total} comments`
+    : `${total} ${total === 1 ? 'comment' : 'comments'}`;
+  const hiddenCount = counts?.hidden ?? 0;
 
   return (
     <ContainerGrid2 gutter="xl">
       <ContainerGrid2.Col span={12} style={{ position: 'relative' }}>
-        <LoadingOverlay visible={isLoading} zIndex={10} />
-        {hasItems ? (
+        {isLoading ? (
+          <Center py="xl" mih={200}>
+            <Loader type="bars" />
+          </Center>
+        ) : isError ? (
+          <Alert color="red" classNames={{ message: 'flex items-center justify-between gap-4' }}>
+            <Text size="sm">Comments could not be loaded.</Text>
+            <Button size="compact-sm" variant="light" color="red" onClick={retry}>
+              Try again
+            </Button>
+          </Alert>
+        ) : comments.length > 0 ? (
           <Stack gap={8}>
-            <div style={{ position: 'relative' }}>
-              <LoadingOverlay visible={isRefetching && !isFetchingNextPage} zIndex={9} />
-              <CommentMasonryVirtual comments={comments} modelUserId={modelUserId} />
-            </div>
+            <CommentMasonryVirtual comments={comments} modelUserId={modelUserId} />
             <Stack gap={8} align="center">
-              {hasNextPage && (
-                <LoadMoreButton onClick={fetchNextPage} loading={isFetchingNextPage} />
-              )}
+              {hasMore && <LoadMoreButton onClick={loadMore} loading={isFetchingMore} />}
               {countLabel && (
                 <Text size="xs" c="dimmed">
                   {countLabel}
                 </Text>
               )}
             </Stack>
-            {hasHiddenComments && (
-              <RoutedDialogLink
-                name="hiddenComments"
-                state={{ entityId: modelId, entityType: 'model' }}
-                style={{ display: 'flex', justifyContent: 'center', alignSelf: 'center' }}
-              >
-                <Group gap={4} justify="center">
-                  <IconMessageCancel size={16} />
-                  <Text size="xs" c="dimmed" inline>
-                    {`See ${hiddenCommentsCount} more hidden ${
-                      hiddenCommentsCount > 1 ? 'comments' : 'comment'
-                    }`}
-                  </Text>
-                </Group>
-              </RoutedDialogLink>
-            )}
           </Stack>
         ) : (
           <Paper
@@ -126,13 +91,23 @@ export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 
             </Stack>
           </Paper>
         )}
+        {hiddenCount > 0 && (
+          <RoutedDialogLink
+            name="hiddenComments"
+            state={{ modelId: entityId }}
+            style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}
+          >
+            <Group gap={4} justify="center">
+              <IconMessageCancel size={16} />
+              <Text size="xs" c="dimmed" inline>
+                {`See ${hiddenCount} more hidden ${hiddenCount > 1 ? 'comments' : 'comment'}`}
+              </Text>
+            </Group>
+          </RoutedDialogLink>
+        )}
       </ContainerGrid2.Col>
     </ContainerGrid2>
   );
 }
 
-type Props = {
-  modelId: number;
-  modelUserId?: number;
-  limit?: number;
-};
+type Props = { modelUserId?: number };

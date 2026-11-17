@@ -93,6 +93,12 @@ export function forgejoUsernameForUser(userId: number): string {
   return `dev-${userId}`;
 }
 
+/** The civitai user behind a `dev-<userId>` handle; null for any other account (e.g. the service account). */
+export function userIdForForgejoUsername(username: string | undefined): number | null {
+  const m = username?.match(/^dev-(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
 export type ForgejoIdentity = { forgejoUsername: string; token: string };
 
 type IdentityRow = {

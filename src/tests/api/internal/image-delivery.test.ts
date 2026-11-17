@@ -6,7 +6,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // it — which is exactly how these media-type assertions first went green against unchanged
 // production code.
 import { respondWithRows } from '~/test-utils/queryRawProjection';
-import type * as RedisClientModule from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
@@ -25,18 +24,27 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * which never selects `type`/`mimeType`.
  */
 
-const { store,  } = vi.hoisted(() => ({
+const { store } = vi.hoisted(() => ({
   store: new Map<string, unknown>(),
-  
 }));
-const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
-const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+// The lookup runs through Kysely over the pg pools; each client's statements go to a
+// `$queryRaw`-shaped fake, so `respondWithRows` answers it as it answered Prisma.
+const kysely = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }));
+vi.mock('~/server/db/kyselyDb.lazy', async () =>
+  (await import('~/test-utils/kysely-raw-fake')).fakeKyselyDbLazy(kysely.read, kysely.write)
+);
+const dbReadQueryRaw = kysely.read;
+const dbWriteQueryRaw = kysely.write;
 
-// Keep the real REDIS_KEYS (so the key prefix matches the real one) and swap only the client.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof RedisClientModule>();
+// Keep the real REDIS_KEYS (so the key prefix matches the real one) and swap only the clients.
+// The package, not `importOriginal`: the shim connects real clients when it loads. Same spread as
+// the global mock in src/__tests__/setup.ts.
+vi.mock('~/server/redis/client', async () => {
+  const { redisMock } = await import('~/__tests__/mocks/redis.mock');
   return {
-    ...actual,
+    ...(await import('@civitai/redis/client')),
+    ...(await import('~/server/redis/sys-read-deadline')),
+    sysRedis: redisMock.sysRedis,
     redis: {
       del: vi.fn(async (key: string) => (store.delete(key), 1)),
       packed: {
@@ -81,6 +89,8 @@ const IMAGE_URL = 'abc123/def456.jpeg';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  kysely.read.mockReset();
+  kysely.write.mockReset();
   store.clear();
 });
 
@@ -216,5 +226,22 @@ describe('GET /api/internal/image-delivery/[id]', () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(dbReadQueryRaw).not.toHaveBeenCalled();
+  });
+
+  it('reads through Kysely, never the Prisma query engine', async () => {
+    const handler = (await import('~/pages/api/internal/image-delivery/[id]')).default;
+    dbReadQueryRaw.mockImplementation(
+      respondWithRows([
+        { id: 42, url: IMAGE_URL, hideMeta: false, type: 'image', mimeType: 'image/jpeg' },
+      ])
+    );
+    const res = makeRes();
+
+    await handler(makeReq(IMAGE_URL) as any, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(dbReadQueryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });

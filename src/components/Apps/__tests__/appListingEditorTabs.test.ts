@@ -55,6 +55,20 @@ describe('editorTabsFor — kind-derived tabs, pinned both directions', () => {
     ]);
   });
 
+  it('ON-SITE accepted EDITOR on a LIVE listing: Earnings too, as the invite disclosure says', () => {
+    expect(
+      editorTabsFor({
+        kind: 'onsite',
+        appBlockId: 'ab_1',
+        role: 'editor',
+        status: 'approved',
+        capabilities: onsite,
+        lastModerationAction: null,
+        hasFeedback: false,
+      })
+    ).toEqual(['details', 'media', 'manifest', 'earnings', 'collaborators', 'history']);
+  });
+
   it('OFF-SITE owner: NO Manifest and NO Media — only Details + Collaborators', () => {
     const tabs = editorTabsFor({
       kind: 'offsite',
@@ -851,5 +865,35 @@ describe('🔴 the shared AUTHORABLE set was not widened to make the repair stat
       });
       expect(isAuthorableListingStatus(status) && repair, status).toBe(false);
     }
+  });
+});
+
+describe('a moderator on a listing they hold no seat on gets the content tabs only', () => {
+  it('on-site, live, with feedback: Details, Media and History — nothing owner- or money-shaped', () => {
+    expect(
+      editorTabsFor({
+        kind: 'onsite',
+        appBlockId: 'ab_1',
+        role: 'moderator',
+        status: 'approved',
+        capabilities: onsite,
+        lastModerationAction: null,
+        hasFeedback: true,
+      })
+    ).toEqual(['details', 'media', 'history']);
+  });
+
+  it('off-site draft: Details and History', () => {
+    expect(
+      editorTabsFor({
+        kind: 'offsite',
+        appBlockId: null,
+        role: 'moderator',
+        status: 'draft',
+        capabilities: offsite,
+        lastModerationAction: null,
+        hasFeedback: false,
+      })
+    ).toEqual(['details', 'history']);
   });
 });

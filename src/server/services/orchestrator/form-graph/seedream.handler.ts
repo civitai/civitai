@@ -1,12 +1,11 @@
 /** Seedream handler for the form-graph lane — one seedream-engine imageGen step. */
 
-import type {
-  ImageGenStepTemplate,
-  SeedreamImageGenInput,
-  SeedreamVersion,
-} from '@civitai/orchestration-client';
+import type { ImageGenStepTemplate, SeedreamImageGenInput } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
+import {
+  seedreamVersionIds,
+  type SeedreamVersion,
+} from '~/shared/form-graph/generation/image/seedream.graph';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 

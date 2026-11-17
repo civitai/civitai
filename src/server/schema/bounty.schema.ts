@@ -16,6 +16,7 @@ import { tagSchema } from './tag.schema';
 import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { BOUNTY_AWARD_RULINGS } from '@civitai/shared/bounty-award';
 
 // A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
 const utcToday = () => dayjs.utc(stripTime(new Date()));
@@ -95,6 +96,13 @@ export const createBountyInputSchema = z.object({
     )
     .min(1, 'At least one example image must be uploaded'),
   buzzType: z.enum(['green', 'yellow']).default('yellow'),
+  // Minted by the client once per new bounty and resent on its retries, with the time it was
+  // minted (epoch ms): the creation charge's ledger prefix derives from both, so a retry after an
+  // unanswered request charges once. Award pricing reads the charge time from the prefix's last
+  // segment, which is why the time travels with the key. Optional for clients from before keys,
+  // which get a new prefix per call as before.
+  idempotencyKey: z.string().uuid().optional(),
+  chargedAt: z.number().int().positive().optional(),
 });
 
 export type UpdateBountyInput = z.infer<typeof updateBountyInputSchema>;
@@ -138,6 +146,13 @@ export type AddBenefactorUnitAmountInputSchema = z.infer<typeof addBenefactorUni
 export const addBenefactorUnitAmountInputSchema = z.object({
   unitAmount: z.number().min(1),
   bountyId: z.number(),
+});
+
+export const resolveUnpaidBountyAwardInputSchema = z.object({
+  bountyId: z.number().int().positive(),
+  userId: z.number().int().positive(),
+  ruling: z.enum(BOUNTY_AWARD_RULINGS),
+  ledgerReference: z.string().trim().min(1).max(500),
 });
 
 export type GetBountyEntriesInputSchema = z.infer<typeof getBountyEntriesInputSchema>;

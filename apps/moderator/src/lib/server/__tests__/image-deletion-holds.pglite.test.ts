@@ -79,9 +79,10 @@ CREATE TABLE "CsamReport" (
 );
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER, "postId" INTEGER);
-CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER);
+CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
+CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "CdnQueued" ("imageId" INTEGER);
 CREATE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
   RETURNS void LANGUAGE sql AS $$ INSERT INTO "CdnQueued" VALUES (entity_id) $$;

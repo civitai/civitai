@@ -10,15 +10,27 @@ const hasAudio = (video: any): boolean => {
   );
 };
 
+const errorMessage =
+  'Failed to load video. This may indicate that the file is poorly encoded for use on the web.';
+
+// A stuck seek may fire neither seeked nor error; without this limit the upload's loading state never ends.
+export const SEEK_TIMEOUT_MS = 15000;
+
 function seekVideo(video: HTMLVideoElement, time: number): Promise<void> {
-  return new Promise((resolve) => {
-    video.onseeked = () => resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(errorMessage), SEEK_TIMEOUT_MS);
+    video.onseeked = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    video.onerror = () => {
+      clearTimeout(timer);
+      reject(errorMessage);
+    };
     video.currentTime = time;
   });
 }
 
-const errorMessage =
-  'Failed to load video. This may indicate that the file is poorly encoded for use on the web.';
 export const getVideoData = async <T = HTMLVideoElement>(
   src: string,
   cb?: (video: HTMLVideoElement) => T

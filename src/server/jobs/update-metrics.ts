@@ -15,9 +15,6 @@ const metricSets = {
   model3ds: [metrics.model3dMetrics],
   comics: [metrics.comicProjectMetrics],
   'app-listings': [metrics.appListingMetrics],
-  // other: [
-  //   metrics.answerMetrics, metrics.questionMetrics // disable questions and answers
-  // ],
 };
 
 // Custom schedules for specific metric sets (default is every 1 minute)

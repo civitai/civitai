@@ -8,6 +8,7 @@ import {
   BOOST_LANE_LABEL,
   DownloadLanesInfo,
   BoostFeeNote,
+  BoostRequiredNote,
 } from '~/components/ResourceLoad/download-lanes';
 import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
@@ -17,10 +18,13 @@ export type DownloadBoostChoice = 'boost' | 'continue';
 function DownloadBoostConfirmModal({
   preparation,
   boostFee,
+  required,
   onResolve,
 }: {
   preparation: DownloadPreparation;
   boostFee: number | null;
+  /** The boost is the only way to load it: no "continue without". */
+  required?: boolean;
   onResolve: (choice: DownloadBoostChoice | null) => void;
 }) {
   const dialog = useDialogContext();
@@ -42,6 +46,7 @@ function DownloadBoostConfirmModal({
       centered
     >
       <Stack gap="md">
+        {required && <BoostRequiredNote />}
         <Text size="sm">
           {count === 1 ? 'A resource needs' : `${count} resources need`} to be loaded before this
           generation can start — {formatBytes(totalBytes)}.
@@ -82,9 +87,11 @@ function DownloadBoostConfirmModal({
           >
             Boost{boostFee != null ? ` · ${numberWithCommas(boostFee)} Buzz` : ''}
           </Button>
-          <Button variant="default" onClick={() => choose('continue')}>
-            Continue without boosting
-          </Button>
+          {!required && (
+            <Button variant="default" onClick={() => choose('continue')}>
+              Continue without boosting
+            </Button>
+          )}
         </Stack>
       </Stack>
     </Modal>
@@ -95,6 +102,7 @@ function DownloadBoostConfirmModal({
 export function confirmDownloadBoost(props: {
   preparation: DownloadPreparation;
   boostFee: number | null;
+  required?: boolean;
 }) {
   return new Promise<DownloadBoostChoice | null>((resolve) => {
     let resolved = false;

@@ -12,13 +12,13 @@ import {
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { getRunnerDevTunnelUser } from '~/server/services/app-assistant/app-assistant.service';
 import type { VerifiedRunGrant } from '~/server/services/app-assistant/assistant-runner-tokens';
-import { readRunnerRequest } from '~/server/services/app-assistant/runner-request';
+import { readRunnerRequest, runnerAppKey } from '~/server/services/app-assistant/runner-request';
 import { listMyAppListings } from '~/server/services/blocks/app-access.service';
 import { listAppFeedbackForListing } from '~/server/services/blocks/app-feedback.service';
 import { listListingHistory } from '~/server/services/blocks/app-listing-history.service';
 
 /**
- * The open app's feedback as `userId` may read it, through the SAME author reads My apps and the
+ * The open app's feedback as `userId` may read it, through the SAME author reads My builds and the
  * listing editor use: `listMyAppListings` (owned ∪ accepted seats) finds the app by its key, then
  * `listListingHistory` (the review history) and `listAppFeedbackForListing` (the user-feedback
  * inbox, owner and editor only) read it, each re-checking the caller's role on the listing.
@@ -32,7 +32,7 @@ export function appFeedbackSourceFor(userId: number): AppFeedbackSource {
 }
 
 const grant = z.string().min(1).max(4096);
-const app = z.string().min(1).max(200);
+const app = runnerAppKey;
 const reviewBody = z.object({ grant, app });
 const userBody = z.object({
   grant,
@@ -96,7 +96,7 @@ export function runnerAppFeedbackRoute(kind: 'review' | 'user') {
         app: appKey,
         grantId: verified.grantId,
         ...extra,
-      }).catch(() => undefined);
+      });
 
     try {
       // Every gate the runner's token mint checks, then the App Blocks author capability that My

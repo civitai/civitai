@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { kyselyV3Write } from '~/server/db/kyselyDb';
 
 // Type-only: the v3 handles must refuse writes to the tree columns Postgres generates or sets by
-// trigger. Nothing here runs; `pnpm run typecheck` is the assertion.
+// trigger. Nothing here runs; `pnpm run typecheck:tests` is the assertion.
 declare const w: typeof kyselyV3Write;
 
 function treeColumnsAreSelectOnly() {

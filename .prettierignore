@@ -39,3 +39,12 @@ src/server/services/__tests__/__fixtures__/moderator-vocabulary/
 # literal. The generator owns the format, and a test compares the file with a fresh bundle byte for
 # byte, so a reformat would fail it.
 src/server/services/resource-intent-tags/decode-worker.source.generated.ts
+
+# Generated one-line by apps/training-studio/scripts/gen-tag-categories.mjs; prettier would expand every name onto its own line.
+apps/training-studio/src/lib/data/tag-categories.json
+
+# Generated: expected.json by packages/civitai-flipt/src/__tests__/parity.test.ts (one case per line, so a
+# regeneration diffs per case), latest-divergences.json by the flipt-parity job in feed-go.yml. The
+# generators own the format; both files are compared structurally, never byte for byte.
+packages/civitai-flipt/parity/expected.json
+packages/civitai-flipt/parity/latest-divergences.json

@@ -45,7 +45,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         stack: error instanceof Error ? error.stack : undefined,
       },
       'webhooks'
-    ).catch(() => null);
+    );
     return res.status(500).json({ message: 'An unexpected error occurred' });
   }
 });

@@ -8,6 +8,7 @@ import type { luaSysRedis } from '../../../../../test/lua-sys-redis';
 const h = vi.hoisted(() => ({
   sys: undefined as unknown as ReturnType<typeof luaSysRedis>,
   setSessionCookie: vi.fn(),
+  bannedIds: new Set<number>(),
 }));
 
 vi.mock('$lib/server/db/db', () => ({
@@ -40,7 +41,11 @@ vi.mock('$lib/server/auth/session', () => ({
   setSessionCookie: h.setSessionCookie,
 }));
 vi.mock('$lib/server/auth/session-producer', () => ({
-  getOrProduceSessionUser: async (id: number) => ({ id, username: `u${id}` }),
+  getOrProduceSessionUser: async (id: number) => ({
+    id,
+    username: `u${id}`,
+    ...(h.bannedIds.has(id) && { bannedAt: new Date('2026-01-01') }),
+  }),
 }));
 
 import { REDIS_SYS_KEYS } from '@civitai/redis';
@@ -90,6 +95,7 @@ async function switchAs(userId: number, target: number, impersonatedBy?: number)
 beforeEach(() => {
   h.sys = makeLuaSysRedis();
   h.setSessionCookie.mockClear();
+  h.bannedIds.clear();
   const now = String(Date.now());
   h.sys.lua.setHash(`${REDIS_SYS_KEYS.DEVICE.ACCOUNTS}:${DEVICE}`, { '100': now, '200': now });
 });
@@ -122,6 +128,12 @@ describe('consent screen switch', () => {
 
   it('switches a moderator in the list who is impersonating someone outside it', async () => {
     expect(await switchAs(400, 200, 100)).toBe(303);
+  });
+
+  it('refuses a banned account in the list and sets no session', async () => {
+    h.bannedIds.add(200);
+    expect(await switchAs(100, 200)).toBe(403);
+    expect(h.setSessionCookie).not.toHaveBeenCalled();
   });
 
   it('refuses an account outside the list and sets no session', async () => {

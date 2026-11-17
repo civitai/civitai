@@ -137,6 +137,20 @@ describe('getResourceData: the resource data shape', () => {
     expect(resource).not.toHaveProperty('turbo');
     expect(resource).not.toHaveProperty('recommendedSettings');
   });
+
+  // The client gets the disclosure booleans, never the raw bitfield (it carries moderator bits too).
+  it.each([
+    [0, false, false],
+    [32 | 8, true, false],
+    [32 | 64 | 2, true, true],
+  ])(
+    'flags %s reach the client as partnerService %s, partnerTrains %s',
+    async (flags, partnerService, partnerTrains) => {
+      const resource = await fetchOne(dbRow({ flags }));
+      expect(resource).not.toHaveProperty('flags');
+      expect(resource).toMatchObject({ partnerService, partnerTrains });
+    }
+  );
 });
 
 // The call site, not the helper, is what can drop the image's strength.

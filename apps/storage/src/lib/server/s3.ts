@@ -27,7 +27,63 @@ export type S3BackendConfig = {
   forcePathStyle?: boolean;
 };
 
-export type S3ClientOptions = { uploadExpiration?: number; downloadExpiration?: number };
+/**
+ * The timeouts every client this service builds gets. The SDK sets no connect timeout and no socket
+ * timeout, so a store that accepts a connection and never answers holds the request (and the caller's own
+ * retries on top) indefinitely.
+ * - `connectionTimeoutMs` covers waiting for a free socket in the pool PLUS the TCP/TLS connect, so the
+ *   pool is sized past smithy's default of 50 (`maxSockets`); a burst would otherwise fail at this timeout
+ *   instead of queueing.
+ * - `requestTimeoutMs` is socket INACTIVITY, not total duration, so a transfer that keeps moving bytes is
+ *   never cut off.
+ * Attempts stay at the SDK default (3). Same numbers as the main app's `src/utils/s3-client-factory.ts`,
+ * and the same off-switch: `S3_CLIENT_TIMEOUTS=off` (or `0` / `false`, any case).
+ */
+export const S3_CLIENT_BOUNDS = {
+  connectionTimeoutMs: 10_000,
+  requestTimeoutMs: 30_000,
+  maxSockets: 256,
+};
+export type S3ClientBounds = typeof S3_CLIENT_BOUNDS;
+
+export type S3ClientOptions = {
+  uploadExpiration?: number;
+  downloadExpiration?: number;
+  /** Overrides {@link S3_CLIENT_BOUNDS} (tests). */
+  bounds?: Partial<S3ClientBounds>;
+  /** Overrides the SDK's attempt count (tests). */
+  maxAttempts?: number;
+};
+
+/** The SDK client for one backend, with {@link S3_CLIENT_BOUNDS} unless `bounds` overrides them. */
+export function buildS3Client(
+  config: S3BackendConfig,
+  boundsOverride: Partial<S3ClientBounds> = {},
+  maxAttempts?: number
+): S3Client {
+  const bounds = { ...S3_CLIENT_BOUNDS, ...boundsOverride };
+  const timeoutsOff = ['off', '0', 'false'].includes(
+    (process.env.S3_CLIENT_TIMEOUTS ?? '').trim().toLowerCase()
+  );
+  return new S3Client({
+    credentials: { accessKeyId: config.accessKey, secretAccessKey: config.secretKey },
+    endpoint: config.endpoint,
+    // R2/custom S3-compatible endpoints ignore region, but the SDK requires a value.
+    region: config.region ?? 'us-east-1',
+    ...(config.forcePathStyle ? { forcePathStyle: true } : {}),
+    ...(maxAttempts ? { maxAttempts } : {}),
+    ...(timeoutsOff
+      ? {}
+      : {
+          requestHandler: {
+            connectionTimeout: bounds.connectionTimeoutMs,
+            requestTimeout: bounds.requestTimeoutMs,
+            httpAgent: { maxSockets: bounds.maxSockets },
+            httpsAgent: { maxSockets: bounds.maxSockets },
+          },
+        }),
+  });
+}
 
 const DEFAULT_UPLOAD_EXPIRATION = 60 * 60 * 12; // 12h
 const DEFAULT_DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24h
@@ -50,13 +106,7 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
   const uploadExpiration = options.uploadExpiration ?? DEFAULT_UPLOAD_EXPIRATION;
   const downloadExpiration = options.downloadExpiration ?? DEFAULT_DOWNLOAD_EXPIRATION;
 
-  const client = new S3Client({
-    credentials: { accessKeyId: config.accessKey, secretAccessKey: config.secretKey },
-    endpoint: config.endpoint,
-    // R2/custom S3-compatible endpoints ignore region, but the SDK requires a value.
-    region: config.region ?? 'us-east-1',
-    ...(config.forcePathStyle ? { forcePathStyle: true } : {}),
-  });
+  const client = buildS3Client(config, options.bounds, options.maxAttempts);
 
   const endpointHost = new URL(config.endpoint).hostname;
 

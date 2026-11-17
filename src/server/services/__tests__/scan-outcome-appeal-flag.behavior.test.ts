@@ -15,7 +15,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditMetaData: vi.fn(() => ({ success: true })),
+  auditPostImageMeta: vi.fn(() => ({ success: true })),
   includesInappropriate: vi.fn(() => false),
   includesPoi: vi.fn(() => false),
 }));
@@ -36,7 +36,7 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
-import { auditMetaData } from '~/utils/metadata/audit';
+import { auditPostImageMeta } from '~/utils/metadata/audit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, tagLevel: 1 }));
@@ -82,7 +82,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
+  vi.mocked(auditPostImageMeta).mockReturnValue({ success: true } as never);
   holder.tagLevel = 1;
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
@@ -253,7 +253,10 @@ describe('a rescan that blocks an image under appeal', () => {
   beforeEach(() => {
     // The prompt audit only blocks an nsfw image.
     holder.tagLevel = 16;
-    vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['prompt'] } as never);
+    vi.mocked(auditPostImageMeta).mockReturnValue({
+      success: false,
+      blockedFor: ['prompt'],
+    } as never);
   });
 
   it("records the scan's own block reason on an image that was already blocked", async () => {
@@ -314,7 +317,10 @@ describe('a rescan of an image carrying the moderator-only review flag', () => {
 
   it('keeps the flag when the scan blocks the image', async () => {
     holder.tagLevel = 16;
-    vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['prompt'] } as never);
+    vi.mocked(auditPostImageMeta).mockReturnValue({
+      success: false,
+      blockedFor: ['prompt'],
+    } as never);
 
     await scan(CSAM_SCANNED);
 

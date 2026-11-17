@@ -277,6 +277,19 @@ describe('seeded series', () => {
     expect(has('storage_tally', 'consent_unavailable')).toBe(false);
   });
 
+  it('publishes every (op, route) storage tally series at 0', async () => {
+    const { seedAppBlockDocStoreMetrics } = await import(
+      '~/server/metrics/app-block-runtime.metrics'
+    );
+    const reg = new Registry();
+    seedAppBlockDocStoreMetrics(reg);
+    const ops = await values('civitai_app_block_doc_store_tally_ops_total', reg);
+    expect(ops.map((v) => `${v.labels.op}|${v.labels.route}`).sort()).toEqual(
+      ['inc|legacy', 'inc|v2', 'mark|legacy', 'mark|v2', 'unmark|legacy', 'unmark|v2'].sort()
+    );
+    expect(ops.every((v) => v.value === 0)).toBe(true);
+  });
+
   it('seeding does not reset a series that has already counted', async () => {
     const { ensureRegisterAppBlockRuntimeMetrics, seedAppBlockDocStoreMetrics } = await import(
       '~/server/metrics/app-block-runtime.metrics'

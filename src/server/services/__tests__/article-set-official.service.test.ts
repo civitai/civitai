@@ -92,7 +92,7 @@ describe('setArticleOfficial', () => {
   it('queues a search-index update for the article it changed', async () => {
     await setArticleOfficial({ id: 7, isOfficial: true, isModerator: true });
 
-    expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: 7, action: 'Update' }]);
+    expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: 7, action: 'Update' }], { reason: 'edit' });
   });
 
   // The chip filters on the tag row, not the column; a mark that wrote only the column would

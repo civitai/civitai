@@ -1,6 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
 import { refuseModerationAccountSession } from '~/server/auth/moderation-account';
@@ -49,6 +50,8 @@ export type ModeratorCtx = {
   tracker: Tracker;
   req: NextApiRequest;
   res: NextApiResponse;
+  /** The personal API key that authenticated the call; null for a session. */
+  apiKeyId: number | null;
 };
 
 export type ModeratorMethod = 'GET' | 'POST';
@@ -103,7 +106,7 @@ export const moderatorBoolean = z.preprocess((v) => {
 }, z.boolean());
 
 type ActorResult =
-  | { actor: SessionUser; fullCredential: boolean }
+  | { actor: SessionUser; fullCredential: boolean; apiKeyId: number | null }
   | { status: number; error: string };
 
 async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<ActorResult> {
@@ -115,12 +118,17 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
     return {
       actor: session.user as SessionUser,
       fullCredential: isFullScopeUserKey(session as BearerCredential),
+      apiKeyId: (session as { apiKeyId?: number }).apiKeyId ?? null,
     };
   }
 
   const session = await getServerAuthSession({ req, res });
   if (!session?.user) return { status: 401, error: 'Not signed in' };
-  return { actor: session.user as SessionUser, fullCredential: isFullScopeSession(req) };
+  return {
+    actor: session.user as SessionUser,
+    fullCredential: isFullScopeSession(req),
+    apiKeyId: null,
+  };
 }
 
 function collectInput(req: NextApiRequest): Record<string, unknown> {
@@ -212,7 +220,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const resolved = await resolveActor(req, res);
     if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
 
-    const { actor, fullCredential } = resolved;
+    const { actor, fullCredential, apiKeyId } = resolved;
     if (
       !actor.isModerator ||
       actor.bannedAt ||
@@ -267,7 +275,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const auditPayload = auditablePayload(raw, input, Boolean(def.input), def.auditExclude);
     const tracker = new Tracker(req, res);
     try {
-      const result = await def.handler(input, { actor, tracker, req, res });
+      const result = await def.handler(input, { actor, tracker, req, res, apiKeyId });
       const { affected, response } = extractAffected(result);
       void tracker.retoolAudit({
         action: name,
@@ -282,9 +290,10 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
       void tracker.retoolAudit({
         action: name,
         privileged: Boolean(def.privileged),
-        outcome: 'error',
+        outcome: e instanceof CommittedRetryableError ? 'warning' : 'error',
         errorMsg: err.message ?? String(e),
         payload: auditPayload,
+        affected: e instanceof CommittedRetryableError ? e.affected : undefined,
       });
       return handleEndpointError(res, e);
     }
@@ -293,6 +302,16 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
   // The catalog reads `spec` off the exported handler — same trick the spoke uses, so neither side has
   // a documentation list that can disagree with the code.
   return Object.assign(handle, { spec, endpointName: name });
+}
+
+/**
+ * Thrown by a handler whose write committed but whose follow-up step failed, so repeating the call is
+ * safe. Answers 503, and is audited as a `warning` rather than an `error`: the action took.
+ */
+export class CommittedRetryableError extends TRPCError {
+  constructor(message: string, readonly affected?: Record<string, unknown>) {
+    super({ code: 'SERVICE_UNAVAILABLE', message });
+  }
 }
 
 export type ModeratorEndpointDoc = {

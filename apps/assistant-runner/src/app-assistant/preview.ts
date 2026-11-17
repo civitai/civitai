@@ -27,8 +27,9 @@ const DETAIL_CHARS = 500;
 /**
  * How long `startDevServer` waits for the dev server it started to listen; its last probe can run
  * up to `PROBE_TIMEOUT_MS` past it. Vite on a scaffolded App Block listens within seconds. The whole
- * Restart is one request whose grant lives about 2 minutes and must still open the tunnel after
- * this, behind up to `RESTART_WAIT_MS` of waiting for a starting app, so this is kept short.
+ * Restart is one request whose grant must still cover the tunnel's start after this
+ * (`TUNNEL_START_BUDGET_MS`), behind up to `RESTART_WAIT_MS` of waiting for a starting app, so
+ * this is kept short.
  */
 export const DEV_SERVER_WAIT_MS = 20_000;
 const DEV_SERVER_POLL_MS = 1_000;
@@ -63,6 +64,12 @@ export interface RunnerPreviewDeps {
   /** `startDevServer`'s wait for the dev server to listen (`DEV_SERVER_WAIT_MS`), and its step. */
   devServerWaitMs?: number;
   devServerPollMs?: number;
+  /**
+   * The last moment (epoch ms) a tunnel start may begin: past it, a start asks civitai nothing and
+   * fails as a grant that ran out (`invalid_grant`). Set by the page's Restart preview, whose grant
+   * must still be good for every call the start makes after it (`TUNNEL_START_BUDGET_MS`).
+   */
+  tunnelStartBy?: number;
 }
 
 /** The tunnel this run opened: kept in this process's memory only, never in a result. */
@@ -147,6 +154,28 @@ export class RunnerPreview {
 
   tools(): Record<string, ChatTool> {
     return { [START_PREVIEW]: this.#startTool(), [STOP_PREVIEW]: this.#stopTool() };
+  }
+
+  /**
+   * The block id the open app's preview runs under, which its calls and errors are kept by: the one
+   * this run started for it, else the `blockId` in its project's manifest (what a start uses, and
+   * what a preview an earlier run or the page's Restart preview opened ran under), else the app's
+   * key (a start's own default). It can differ from the key: the assistant picks another blockId
+   * when the key's is taken. `null` when no app is open.
+   */
+  async previewBlockId(signal?: AbortSignal): Promise<string | null> {
+    const app = this.#deps.sandbox.active;
+    if (!app) return null;
+    const open = this.#open;
+    if (open && open.app === app.name) return open.blockId;
+    try {
+      const dir = await this.#projectDir(app.app, await this.#devServerStatus(signal), signal);
+      const blockId = dir ? (await this.#manifest(dir, signal)).block_id : undefined;
+      if (typeof blockId === 'string' && isAppBlockId(blockId)) return blockId;
+    } catch {
+      // The sandbox did not answer: the app's own key.
+    }
+    return app.app;
   }
 
   #startTool(): ChatTool {
@@ -400,6 +429,17 @@ export class RunnerPreview {
     const publicKey = key.isError ? null : publicKeyOf(key.text);
     if (!publicKey)
       throw new Error(`The preview could not start: ${detail(key.text)} Call start_preview again.`);
+
+    // Too late for a start this grant can still see through (the connect, or the close): civitai is
+    // asked nothing, so nothing is opened. (The key made above is the sandbox's alone, single-use.)
+    if (this.#deps.tunnelStartBy !== undefined && Date.now() > this.#deps.tunnelStartBy) {
+      const expired = new DevTunnelError(
+        'This preview grant runs out before the preview could open.',
+        401,
+        'invalid_grant'
+      );
+      throw new Error(refusalMessage(expired), { cause: expired });
+    }
 
     // 2. civitai opens the tunnel for this run's user, judging every gate itself.
     let started;

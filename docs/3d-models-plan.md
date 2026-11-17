@@ -244,7 +244,7 @@ enum Model3DEngagementType { Favorite Hide Notify }
 | `CosmeticEntity` enum | add `Model3D` | optional |
 | `TagTarget` enum | add `Model3D` | + `image-scan-result.ts:646` default-target list |
 | `ReportEntity` enum (`src/shared/utils/report-helpers.ts`) | add `Model3D`, `Model3DReview` | hardcoded |
-| `commentv2.schema.ts` | add `Model3D` + `Model3DReview` to enum lists | two locations |
+| `commentv3/surfaces.ts` (`commentSurfaces`) | entries for `model3d` / `model3dReview` (already present; `commentv2.schema.ts` was deleted in comments v3 release 2) | one location |
 | Notifications | new SQL for `new-3d-model-comment` + `new-3d-model-review` | hand-written |
 | `ProfileNavigation.tsx` | add 3D Models tab | hardcoded static list |
 | `SearchIndexEntityTypes` (`src/components/Search/parsers/base.ts:25-34`) | add `'Model3D'` key (PascalCase) + new parser | for new Meilisearch index |
@@ -288,7 +288,7 @@ Behind feature flags `model3d-feed` + `model3d-generator` (both mod-only at laun
   - Register in `src/server/orchestrator/generation/generation.config.ts` (sibling to existing video/image configs).
   - **Workflow result handler** (server-side, runs on workflow completion): ingests `PolyGenOutput.thumbnail` as an `Image` row via the existing image-ingest pipeline (NSFW + CSAM scan); copies `model.url` and `fbxModel?.url` blobs into our S3 (`3d/` prefix); normalizes `Model3dBlob.format` (lowercase, strip leading dot); creates the `Model3D` row in `Draft` with `workflowId` set; creates `Model3DFile` rows (one per format).
   - Idempotence: `Model3D.workflowId` is UNIQUE; re-running the handler on the same workflow returns the existing draft.
-- `commentsv2.service.ts` + `commentv2.schema.ts` enum edits.
+- `commentsv2.service.ts` edits (the `commentv2.schema.ts` enum lists are gone, and `commentsv2.service.ts` itself went in CommentV3 Phase 5; see `commentv3/surfaces.ts` and `comment-owner.service.ts`).
 - `BuzzTip` schema validation edit.
 - `ReportEntity` enum edit (`src/shared/utils/report-helpers.ts`).
 - New `Model3DReport` + `Model3DReviewReport` tables + report router edits.

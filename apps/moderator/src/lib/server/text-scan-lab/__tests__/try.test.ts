@@ -153,15 +153,15 @@ describe('runTry — more refusals', () => {
 describe('runTry — what gets scanned', () => {
   it('judges text as the chosen type under its default heading, with active prompts only', async () => {
     harness.scanTexts.mockImplementation(echoScan);
-    const res = await tryWith({ input: 'buy now', judgeAs: 'Comment' });
-    expect(harness.scanTexts).toHaveBeenCalledWith('Comment', [
+    const res = await tryWith({ input: 'buy now', judgeAs: 'CommentV3' });
+    expect(harness.scanTexts).toHaveBeenCalledWith('CommentV3', [
       { key: 'text', fields: [{ heading: 'Comment', text: 'buy now' }] },
     ]);
     expect(harness.scanTexts).toHaveBeenCalledTimes(1);
     expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
     expect(res).toMatchObject({
       tried: true,
-      entityType: 'Comment',
+      entityType: 'CommentV3',
       labels: ['scam'],
       items: [{ key: 'text', current: { ok: true }, edited: null }],
       current: { system: 'SYS' },
@@ -197,7 +197,7 @@ describe('runTry — what gets scanned', () => {
   it('judges an unknown link as text and passes its notice on', async () => {
     harness.scanTexts.mockImplementation(echoScan);
     const res = await tryWith({ input: 'https://example.com/x' });
-    expect(harness.scanTexts).toHaveBeenCalledWith('CommentV2', expect.any(Array));
+    expect(harness.scanTexts).toHaveBeenCalledWith('CommentV3', expect.any(Array));
     expect((res as { notice: string }).notice).toBeTruthy();
   });
 

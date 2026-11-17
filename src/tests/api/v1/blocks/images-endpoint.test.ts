@@ -24,13 +24,19 @@ import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service
  * search service is mocked so no Prisma/Meili/Flipt is loaded.
  */
 
-const { mockRunImageSearch, mockCheckRateLimit, mockGetHeldGalleryLevel, mockWithoutHeld } =
-  vi.hoisted(() => ({
-    mockWithoutHeld: vi.fn(),
-    mockRunImageSearch: vi.fn(),
-    mockCheckRateLimit: vi.fn(),
-    mockGetHeldGalleryLevel: vi.fn(),
-  }));
+const {
+  mockRunImageSearch,
+  mockCheckRateLimit,
+  mockGetHeldGalleryLevel,
+  mockWithoutHeld,
+  mockIsWithheld,
+} = vi.hoisted(() => ({
+  mockIsWithheld: vi.fn(async () => false),
+  mockWithoutHeld: vi.fn(),
+  mockRunImageSearch: vi.fn(),
+  mockCheckRateLimit: vi.fn(),
+  mockGetHeldGalleryLevel: vi.fn(),
+}));
 
 const claimsBox: { claims: BlockTokenClaims | undefined } = { claims: undefined };
 
@@ -41,6 +47,7 @@ vi.mock('~/server/services/image-search.service', () => ({
 
 vi.mock('~/server/services/model.service', () => ({
   getHeldGalleryLevel: mockGetHeldGalleryLevel,
+  isModelGalleryWithheld: mockIsWithheld,
 }));
 
 // Per-token catalog rate limiter — mocked so the existing maturity-clamp tests
@@ -153,6 +160,7 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     // Default: under the per-token ceiling (existing clamp tests must be served).
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
@@ -213,26 +221,23 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(input.data).not.toHaveProperty('someJunk');
   });
 
-  it.each([{ ids: '1,2' }, { imageId: '2' }])(
-    'leaves out held images from a search by image id (%o)',
-    async (query) => {
-      claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-      const found = [{ id: 1 }, { id: 2 }];
-      mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
-      mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
-
-      const res = await invoke(query);
-
-      expect(mockWithoutHeld).toHaveBeenCalledWith(found);
-      expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
-    }
-  );
-
-  it('does not filter a search that names no image id', async () => {
+  it.each([
+    { ids: '1,2' },
+    { imageId: '2' },
+    { username: 'someone' },
+    {},
+    { modelId: '5' },
+    { ids: '1,2', modelId: '5' },
+  ])("leaves out images above their own post's held level (%o)", async (query) => {
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
-    await invoke({ username: 'someone' });
+    const found = [{ id: 1 }, { id: 2 }];
+    mockRunImageSearch.mockResolvedValue({ items: found, nextCursor: undefined });
+    mockWithoutHeld.mockResolvedValue([{ id: 1 }]);
 
-    expect(mockWithoutHeld).not.toHaveBeenCalled();
+    const res = await invoke(query);
+
+    expect(mockWithoutHeld).toHaveBeenCalledWith(found);
+    expect(res.body?.items.map((image: { id: number }) => image.id)).toEqual([1]);
   });
 
   it('forwards the selector params (type/limit/sort/modelId/postId/username)', async () => {
@@ -385,6 +390,7 @@ describe('/api/v1/blocks/images — a held model or version', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
     claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag, domain: 'red' });
   });
@@ -415,6 +421,24 @@ describe('/api/v1/blocks/images — a held model or version', () => {
     expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['modelId', { modelId: '5' }, { modelId: 5 }],
+    ['modelVersionId', { modelVersionId: '50' }, { modelVersionId: 50 }],
+    ['postId', { postId: '500' }, { postId: 500 }],
+  ])(
+    'serves ?%s= of a taken-down model no images, searching nothing',
+    async (_n, query, selector) => {
+      mockIsWithheld.mockResolvedValueOnce(true);
+
+      const res = await invoke(query);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(mockIsWithheld).toHaveBeenCalledWith(expect.objectContaining(selector));
+      expect(mockRunImageSearch).not.toHaveBeenCalled();
+    }
+  );
+
   it('leaves an unheld model at the token level', async () => {
     mockGetHeldGalleryLevel.mockResolvedValue(undefined);
 
@@ -441,6 +465,7 @@ describe('/api/v1/blocks/images — ?ids= batch', () => {
     vi.clearAllMocks();
     regionBox.restricted = false;
     mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
 

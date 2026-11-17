@@ -9,6 +9,7 @@ import {
   deletePostHandler,
   getPostContestCollectionDetailsHandler,
   getPostHandler,
+  getPostResourceCoversHandler,
   getPostResourcesHandler,
   getPostsInfiniteHandler,
   getPostTagsHandler,
@@ -32,11 +33,13 @@ import {
   getScheduledPostsSchema,
   plannerPostIdSchema,
   plannerPublishNowSchema,
+  getPostResourceCoversSchema,
   plannerRescheduleSchema,
   plannerShiftSchema,
   plannerUnscheduleSchema,
   postAddImageInput,
   postCreateSchema,
+  POST_CREATE_RATE_LIMIT_KEY,
   postRateLimits,
   postsQuerySchema,
   postUpdateSchema,
@@ -135,12 +138,12 @@ export const postRouter = router({
   create: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(postCreateSchema)
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(createPostHandler),
   createWithImages: guardedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(createPostWithImagesSchema)
-    .use(rateLimit(postRateLimits, undefined, { sharedKey: 'post:create' }))
+    .use(rateLimit(postRateLimits, undefined, { sharedKey: POST_CREATE_RATE_LIMIT_KEY }))
     .mutation(createPostWithImagesHandler),
   update: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
@@ -216,6 +219,10 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getPostResourcesHandler),
+  getResourceCovers: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getPostResourceCoversSchema)
+    .query(getPostResourceCoversHandler),
   getContestCollectionDetails: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)

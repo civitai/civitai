@@ -79,6 +79,9 @@ export const homeBlockMetaSchema = z
       // Caps how many items from the same creator can appear in one homeblock render.
       // Pair with a fetch `limit` larger than `rows * 7` so the dedup has a pool to pick from.
       maxPerUser: z.number().int().positive().optional(),
+      // The event whose Flag Race flags this Collection holds: the row keeps the flags' rank order
+      // and draws their flag badges.
+      flagRace: z.string().optional(),
     }),
     leaderboards: z.array(
       z.object({

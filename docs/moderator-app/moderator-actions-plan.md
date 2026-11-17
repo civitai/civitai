@@ -76,8 +76,9 @@ faithful choice (no callback, no query/packed-write duplication).
 - [x] Refresh `userArticleCountCache` (`bustCachedObject`) — **Redis**
 - [n/a] Owner ingestion notifications — the legacy's `article-published`/`article-images-blocked` are gated on `status='Processing'`; restore sets `status='Published'` first, so they don't fire on the restore path (they belong to the scan pipeline). Replication-lag guards omitted (lag routing off by default).
 
-### Article delete — `deleteArticle`  ·  (articles) — ⛔ blocked on `@civitai/storage`
-- [ ] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN** — needs the S3/storage client
+### Article delete — `deleteArticle`  ·  (articles) — ✅ complete
+- [x] Delete cover image + orphaned content images (`deleteImageById`) — **DB + S3 + CDN** — done via the spoke's storage client; see `docs/moderator-app/side-effect-parity-checklist.md`
+- [x] Comments go with the article, as in the main app's delete: `CommentTopic` delete first, for lock order
 
 ### Article rating resolve — `resolveArticleRatingReview`  ·  (article-rating-review) — ✅ complete
 - [x] Notify owner (`article-rating-review-approved` when the mod grants the suggested level / `-rejected` when a different level is applied; level labels + modComment) — **notifications** (`@civitai/notifications`)

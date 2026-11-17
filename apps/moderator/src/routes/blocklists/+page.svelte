@@ -10,13 +10,34 @@
   import { badgeVariants } from '@civitai/ui/components/ui/badge/index.js';
   import ListFilterBar from '$lib/components/ListFilterBar.svelte';
   import { num } from '$lib/format';
-  import { BLOCKLIST_TYPES, BLOCKLIST_DESCRIPTIONS, humanizeBlocklistType } from '$lib/blocklist';
+  import {
+    BLOCKLIST_TYPES,
+    BLOCKLIST_DESCRIPTIONS,
+    QUERY_RULE_TYPES,
+    humanizeBlocklistType,
+  } from '$lib/blocklist';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { visibleBlocklistItems } from './filter';
   import { chipFocusTarget, confirmDismissTarget, type RemovalFocusGuards } from './focus';
   import type { ActionData, PageData } from './$types';
+  import type { DryRunState } from './+page.server';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  // Only the dryRun action sets these keys; `in` cannot narrow the ActionData union to them.
+  const dryRun = $derived(
+    form && 'dryRun' in form ? (form.dryRun as DryRunState) : undefined
+  );
+  const dryRunError = $derived(
+    form && 'dryRunError' in form ? String(form.dryRunError) : undefined
+  );
+
+  const DRY_RUN_LABELS = {
+    allow: 'Allowed',
+    narrow: 'Narrowed to safe results',
+    refuse: 'Refused',
+  } as const;
 
   let mode = $state<'add' | 'remove'>('add');
   let text = $state('');
@@ -203,6 +224,35 @@
 
 {#if BLOCKLIST_DESCRIPTIONS[data.type]}
   <p class="mb-4 max-w-xl text-sm text-dark-2">{BLOCKLIST_DESCRIPTIONS[data.type]}</p>
+{/if}
+
+{#if QUERY_RULE_TYPES.includes(data.type)}
+  <form
+    method="POST"
+    action="?/dryRun"
+    use:enhance
+    class="mb-4 flex max-w-xl flex-col gap-2 rounded-xl border p-3"
+  >
+    <label for="dry-run-query" class="text-sm font-medium">Dry run a search query</label>
+    <p class="text-xs text-dark-2">
+      Runs the semantic search query audit, these rules included, and shows what it would do. It
+      never shows which rule matched.
+    </p>
+    <div class="flex gap-2">
+      <Input id="dry-run-query" name="query" maxlength={500} value={dryRun?.query ?? ''} />
+      <Button type="submit" variant="outline">Test</Button>
+    </div>
+    {#if dryRunError}
+      <ErrorAlert message={dryRunError} />
+    {:else if dryRun}
+      <dl class="grid grid-cols-[auto_1fr] gap-x-3 text-sm" data-testid="dry-run-result">
+        <dt class="text-dark-2">Non-moderator</dt>
+        <dd>{DRY_RUN_LABELS[dryRun.nonModerator.result]}</dd>
+        <dt class="text-dark-2">Moderator</dt>
+        <dd>{DRY_RUN_LABELS[dryRun.moderator.result]}</dd>
+      </dl>
+    {/if}
+  </form>
 {/if}
 
 {#if form?.error}

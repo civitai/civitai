@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Chip, Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Stack } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';

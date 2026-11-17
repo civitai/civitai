@@ -21,7 +21,8 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: vi.fn(async () => undefined),
 }));
-// See comics.router.createChapterComment.test.ts: `isFlagProtected` recomputes flags.
+// `isFlagProtected` recomputes flags from the user unless `ctx.features.trpcFlagGuardPerRequest` is
+// set, so without this a non-moderator caller is refused before the handler.
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ comicCreator: true }),

@@ -12,19 +12,17 @@ import {
   Indicator,
   Loader,
   type MantineSize,
-  Menu,
   ScrollArea,
   Spoiler,
   Stack,
   Text,
-  Popover,
   Progress,
   ThemeIcon,
   Title,
-  Tooltip,
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Popover, Tooltip } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
@@ -32,7 +30,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
+import { ToggleLockComments } from '~/components/CommentsV3/ToggleLockComments';
 import { Page } from '~/components/AppLayout/Page';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
@@ -69,6 +67,7 @@ import {
   IconDotsVertical,
   IconFilter,
   IconFlag,
+  IconGavel,
   IconGift,
   IconPencil,
   IconPhoto,
@@ -300,6 +299,17 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
     onError: handleMutationError,
   });
 
+  const rejudgeMutation = trpc.challenge.rejudge.useMutation({
+    onSuccess: ({ entries }) => {
+      showSuccessNotification({
+        message: entries
+          ? `${entries} entries queued for judging again.`
+          : 'No judged entries to re-judge.',
+      });
+    },
+    onError: handleMutationError,
+  });
+
   const deleteMutation = trpc.challenge.delete.useMutation({
     onSuccess: () => {
       showSuccessNotification({ message: 'Challenge deleted' });
@@ -387,6 +397,33 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         ),
         labels: { cancel: 'Cancel', confirm: 'Rescan' },
         onConfirm: () => rescanMutation.mutateAsync({ id }),
+      },
+    });
+  };
+
+  const handleRejudge = () => {
+    if (!challenge) return;
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Re-judge Entries',
+        message: (
+          <Stack gap="xs">
+            <Text>
+              Have the judge review every judged entry in{' '}
+              <strong>&ldquo;{challenge.title}&rdquo;</strong> again?
+            </Text>
+            <Text size="sm" c="dimmed">
+              Deletes the judge&apos;s comments, reactions and scores on those entries and resets
+              the rankings. The review job then judges each entry again over its next runs (about
+              one judge call per entry, plus ranking comparisons), and entrants get new comments. An
+              entry whose review keeps failing is dropped after 3 attempts.
+            </Text>
+          </Stack>
+        ),
+        labels: { cancel: 'Cancel', confirm: 'Re-judge' },
+        confirmProps: { color: 'red' },
+        onConfirm: () => rejudgeMutation.mutateAsync({ id }),
       },
     });
   };
@@ -587,6 +624,19 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
                               End & Pick Winners
                             </Menu.Item>
                             <Menu.Item
+                              leftSection={
+                                rejudgeMutation.isPending ? (
+                                  <Loader size={14} />
+                                ) : (
+                                  <IconGavel size={14} />
+                                )
+                              }
+                              onClick={handleRejudge}
+                              disabled={rejudgeMutation.isPending}
+                            >
+                              Re-judge Entries
+                            </Menu.Item>
+                            <Menu.Item
                               leftSection={<IconX size={14} />}
                               color="red"
                               onClick={handleVoidChallenge}
@@ -760,7 +810,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               <article>
                 <Stack gap={4}>
                   {challenge.description ? (
-                    <RenderHtml html={challenge.description} />
+                    <RenderHtml html={challenge.description} withMentions />
                   ) : (
                     <Text c="dimmed">No description provided.</Text>
                   )}
@@ -1819,6 +1869,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 disableStoreFilters
                 judgeInfo={judgeInfo}
                 judgingCategories={challenge.judgingCategories}
+                hideHatTurf
               />
             )}
           </Stack>

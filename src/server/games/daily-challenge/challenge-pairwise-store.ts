@@ -194,3 +194,11 @@ export async function recordComparison(input: {
     ON CONFLICT ("challengeId", "phase", "imageIdA", "imageIdB", "firstSeatImageId") DO NOTHING
   `;
 }
+
+/** Empties a challenge's ladder: standings and comparisons. Statements for a caller's transaction. */
+export function clearLadder(challengeId: number) {
+  return [
+    dbWrite.$executeRaw`DELETE FROM "ChallengeEntryComparison" WHERE "challengeId" = ${challengeId}`,
+    dbWrite.$executeRaw`DELETE FROM "ChallengeEntryStanding" WHERE "challengeId" = ${challengeId}`,
+  ];
+}

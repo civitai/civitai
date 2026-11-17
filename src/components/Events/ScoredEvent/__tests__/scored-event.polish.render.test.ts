@@ -422,25 +422,33 @@ describe('MyEventHats cooldown', () => {
       moveCooldownLeftMs: 10 * MINUTE,
     });
     expect(page.textContent).toContain('Can move in 10 min');
-    expect(page.querySelector('button')?.disabled).toBe(true);
+    expect(page.querySelector<HTMLButtonElement>('[data-testid="my-hat"] button')?.disabled).toBe(
+      true
+    );
   });
 
   it('unlocks the Move button once the server says the cooldown is over', () => {
     const page = hats({ movableAt: new Date(Date.now() + 5 * MINUTE), moveCooldownLeftMs: 0 });
     expect(page.textContent).not.toContain('Can move in');
-    expect(page.querySelector('button')?.disabled).toBe(false);
+    expect(page.querySelector<HTMLButtonElement>('[data-testid="my-hat"] button')?.disabled).toBe(
+      false
+    );
   });
 
   // The server's count is as of the fetch; the time since then comes off it.
   it('takes the time since the fetch off the server count', () => {
     const page = hats({ moveCooldownLeftMs: 10 * MINUTE }, Date.now() - 3 * MINUTE);
     expect(page.textContent).toContain('Can move in 7 min');
-    expect(page.querySelector('button')?.disabled).toBe(true);
+    expect(page.querySelector<HTMLButtonElement>('[data-testid="my-hat"] button')?.disabled).toBe(
+      true
+    );
   });
 
   it('unlocks once the cooldown has run out since the fetch', () => {
     const page = hats({ moveCooldownLeftMs: 10 * MINUTE }, Date.now() - 11 * MINUTE);
     expect(page.textContent).not.toContain('Can move in');
-    expect(page.querySelector('button')?.disabled).toBe(false);
+    expect(page.querySelector<HTMLButtonElement>('[data-testid="my-hat"] button')?.disabled).toBe(
+      false
+    );
   });
 });

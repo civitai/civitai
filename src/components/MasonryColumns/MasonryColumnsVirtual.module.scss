@@ -24,3 +24,9 @@
   content-visibility: visible !important;
   transition-delay: 0s;
 }
+
+// A wide item overlays the next column, whose box comes later in the DOM and would otherwise sit
+// on top of the wide card's right half and take its pointer events. Only the cards take them.
+.column {
+  pointer-events: none;
+}

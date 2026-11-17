@@ -155,13 +155,38 @@ describe('BlockRegistry — NSFW-app-red-only host gate (public reads)', () => {
       expect(detail).toBeNull();
     });
 
-    it('red-capable host: a MATURE (x) app resolves normally', async () => {
+    it('red-capable host: a MATURE (x) app resolves normally for a viewer with X enabled', async () => {
       mockDbRead.$queryRaw.mockResolvedValueOnce([detailRow({ content_rating: 'x' })]);
       const { BlockRegistry } = await import('../block-registry.service');
-      const detail = await BlockRegistry.getAppDetail('ab_det', false, true);
+      // 4th arg: the viewer's browsing level (PG|PG13|R|X = 15).
+      const detail = await (BlockRegistry.getAppDetail as (...a: unknown[]) => Promise<any>)(
+        'ab_det',
+        false,
+        true,
+        15
+      );
       expect(detail).not.toBeNull();
       expect(detail?.contentRating).toBe('x');
     });
+
+    it.each([
+      ['r', 'PG only', 1],
+      ['r', 'signed out (no level)', undefined],
+      ['x', 'R but not X', 7],
+    ])(
+      '🔴 red-capable host: a %s app returns NO details to a viewer with %s',
+      async (rating, _label, level) => {
+        mockDbRead.$queryRaw.mockResolvedValueOnce([detailRow({ content_rating: rating })]);
+        const { BlockRegistry } = await import('../block-registry.service');
+        const detail = await (BlockRegistry.getAppDetail as (...a: unknown[]) => Promise<any>)(
+          'ab_det',
+          false,
+          true,
+          level
+        );
+        expect(detail).toBeNull();
+      }
+    );
 
     it('non-red host: an SFW (g) app resolves normally (host gate only touches mature)', async () => {
       mockDbRead.$queryRaw.mockResolvedValueOnce([detailRow({ content_rating: 'g' })]);

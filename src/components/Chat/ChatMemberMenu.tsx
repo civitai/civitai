@@ -1,4 +1,5 @@
-import { Menu, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCrown, IconDotsVertical, IconUserX } from '@tabler/icons-react';
 import produce from 'immer';

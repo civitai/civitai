@@ -74,6 +74,7 @@ function detailFixture(over: Partial<ListingDetail> = {}): ListingDetail {
     recommend: { recommendedCount: 7, notRecommendedCount: 1, recommendPct: 0.875 },
     reviewCount: 8,
     installCount: 3,
+    openCount: null,
     sourceRepoUrl: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],

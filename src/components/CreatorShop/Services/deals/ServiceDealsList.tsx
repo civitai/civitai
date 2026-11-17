@@ -1,6 +1,6 @@
 import { Anchor, Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { awaitsViewer, dealStatusLabel } from '~/components/CreatorShop/Services/deals/deal-ui';
+import { awaitsViewer, dealStatusBadge } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
@@ -70,7 +70,7 @@ export function ServiceDealsList({
                   </Badge>
                 ) : (
                   <Badge color="gray" variant="light" radius="sm">
-                    {dealStatusLabel[deal.status]}
+                    {dealStatusBadge(deal)}
                   </Badge>
                 )}
               </Group>

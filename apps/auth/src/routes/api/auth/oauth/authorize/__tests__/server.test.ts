@@ -41,7 +41,7 @@ vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { authorize: h.authori
 vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
-vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => undefined) }));
+vi.mock('$lib/server/oauth/oidc-nonce', () => ({ storeOidcContext: vi.fn(async () => true) }));
 vi.mock('$lib/server/auth/device', () => ({
   getOrCreateDeviceId: () => 'dev',
   touchAccount: vi.fn(async () => undefined),
@@ -289,11 +289,49 @@ describe('authorize — family', () => {
 
   it("hands an impersonation hub session's impersonation to the site's session", async () => {
     const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
-    await start({}, { user: { id: 7 }, session });
+    await start({}, { user: { id: 7 }, session, impersonatedBy: 100 });
     expect(storeOidcContext).toHaveBeenCalledWith(
       'the-code',
       expect.objectContaining({ family: 'family-a', impersonatedBy: 100, impExp: 999 })
     );
+  });
+
+  it('sends no code back when an impersonation hub session cannot store its context', async () => {
+    vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
+    const session = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    const res = await start({}, { user: { id: 7 }, session, impersonatedBy: 100 });
+    // A first-party client gets the error as JSON, with no redirect carrying the code.
+    expect(res).toEqual({ status: 503 });
+  });
+
+  it('still signs in an ordinary hub session whose context could not be stored', async () => {
+    vi.mocked(storeOidcContext).mockResolvedValueOnce(false);
+    const session = { sub: '7', jti: 'j', sid: 'family-a', iat0: 5 };
+    const res = await start({}, { user: { id: 7 }, session });
+    expect(res.location).toContain('code=the-code');
+  });
+
+  it("marks the code of an impersonation hub session's own user only", async () => {
+    const imp = { sub: '7', jti: 'j', sid: 'family-a', impersonatedBy: 100, impExp: 999 };
+    const authenticated = async (locals: Record<string, unknown>) => {
+      h.authorize.mockClear();
+      await start({}, locals);
+      const opts = h.authorize.mock.calls[0][2] as {
+        authenticateHandler: { handle: () => unknown };
+      };
+      return opts.authenticateHandler.handle();
+    };
+    expect(await authenticated({ user: { id: 7 }, session: imp, impersonatedBy: 100 })).toEqual({
+      id: 7,
+      impersonation: true,
+    });
+    expect(await authenticated({ user: { id: 7 }, session: { sub: '7', jti: 'j' } })).toEqual({
+      id: 7,
+    });
+    // A code for another account than the impersonation hub session's own.
+    expect(
+      await authenticated({ user: { id: 7 }, session: { ...imp, sub: '8' }, impersonatedBy: 100 })
+    ).toEqual({ id: 7 });
   });
 });
 
@@ -320,5 +358,24 @@ describe('authorize — scope in a JSON body', () => {
       cookies: { get: () => undefined, set: () => undefined },
     } as never);
     expect(await redirectedError(pending)).toBe('invalid_scope');
+  });
+});
+
+describe('authorize — during impersonation', () => {
+  beforeEach(() => {
+    h.authorize.mockRejectedValue(new Error('code issued'));
+  });
+
+  it('refuses a registered app and issues nothing', async () => {
+    const res = await start({}, { user: { id: 7 }, impersonatedBy: 5 });
+    expect(res.status).toBe(303);
+    expect(res.location).toContain('error=access_denied');
+    expect(h.authorize).not.toHaveBeenCalled();
+  });
+
+  it('control: the same registered app outside impersonation reaches code issuance', async () => {
+    h.skipConsent = true;
+    await start({}, { user: { id: 7 } });
+    expect(h.authorize).toHaveBeenCalled();
   });
 });

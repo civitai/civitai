@@ -9,7 +9,7 @@ const item = (over: Partial<HandOffItem> = {}): HandOffItem => ({
   tag: 'CSAM',
   answeredAt: new Date('2026-10-04T00:00:00Z'),
   reportId: 42,
-  entityType: 'commentV2',
+  entityType: 'commentV3',
   entityId: 7,
   authorId: 9,
   ...over,
@@ -26,18 +26,6 @@ describe('handOffLinks', () => {
       `${SITE}/posts/3?highlight=7`,
       expect.stringContaining('9'),
     ]);
-  });
-
-  // A legacy model comment has no page of its own; without its context URL it would get no content
-  // link at all.
-  it('links a legacy model comment through its context URL', () => {
-    const links = handOffLinks(SITE, {
-      ...item({ entityType: 'comment' }),
-      contextUrl: '/models/1?dialog=commentThread&highlight=7',
-    });
-    expect(links.find((l) => l.label === 'Open the content')?.href).toBe(
-      `${SITE}/models/1?dialog=commentThread&highlight=7`
-    );
   });
 
   it('opens a chat in Chat Audit, since a chat has no page on the site', () => {

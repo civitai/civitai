@@ -13,6 +13,7 @@ import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { useHeadingsData } from '~/hooks/useHeadingsData';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import type { ArticleGetById } from '~/server/services/article.service';
 import utilClasses from '~/libs/helpers.module.scss';
 
@@ -21,13 +22,24 @@ export function Sidebar({ articleId, attachments, creator, hiddenNotice }: Props
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
 
-  const [activeAccordion, setActiveAccordion] = useLocalStorage<string>({
-    key: 'article-active-accordion',
-    defaultValue: 'toc',
+  // A new key: the old one holds the 'toc' default it wrote for every reader, not their choice.
+  const [storedAccordion, setActiveAccordion] = useLocalStorage<string>({
+    key: 'article-active-accordion-v2',
+    defaultValue: '',
   });
+  // The contents are `hideMobile`, so on a phone they can't be the open item.
+  const tocHidden = useIsMobile({ breakpoint: 'xs', type: 'media' });
 
   const hasAttachments = !!attachments.length;
   const hasHeadings = !!nestedHeadings.length;
+  const shown = [hasHeadings && !tocHidden && 'toc', hasAttachments && 'attachments'].filter(
+    (item): item is string => !!item
+  );
+  const activeAccordion = shown.includes(storedAccordion)
+    ? storedAccordion
+    : hasAttachments
+    ? 'attachments'
+    : shown[0] ?? null;
 
   return (
     <aside
@@ -41,7 +53,6 @@ export function Sidebar({ articleId, attachments, creator, hiddenNotice }: Props
         {(hasAttachments || hasHeadings) && (
           <Accordion
             variant="separated"
-            defaultValue="toc"
             value={activeAccordion}
             onChange={(value) => (value ? setActiveAccordion(value) : undefined)}
             styles={{

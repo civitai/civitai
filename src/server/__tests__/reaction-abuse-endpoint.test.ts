@@ -224,8 +224,7 @@ describe('POST /api/admin/reaction-abuse — mod-action audit trail', () => {
       expect(res._status()).toBe(200);
       expect(res._body()).toMatchObject({ excluded: 1, auditRecorded: false });
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ message: expect.stringContaining('exceeded') }),
-        'moderation'
+        expect.objectContaining({ message: expect.stringContaining('exceeded') })
       );
     } finally {
       vi.useRealTimers();

@@ -7,7 +7,8 @@
  * workflows, whose params are described by the same `ParamSpec` shape.
  */
 
-import { Select, Switch } from '@mantine/core';
+import { Switch } from '@mantine/core';
+import { SheetSelect } from './SheetSelect';
 import type { ParamSpec } from '~/shared/generation/preprocess-specs';
 import { SliderInput } from './SliderInput';
 
@@ -53,7 +54,7 @@ export function PreprocessKindParamsInput({
           );
         }
         return (
-          <Select
+          <SheetSelect
             key={spec.key}
             label={spec.label}
             data={spec.options.map((o) => ({ label: o, value: o }))}

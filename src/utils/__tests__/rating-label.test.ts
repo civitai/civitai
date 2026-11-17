@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
-import { getRatingLabel } from '~/utils/rating-label';
+import { getRatingLabel, getRatingSummary } from '~/utils/rating-label';
 
 /**
  * The SHARED Steam-style rating ladder (blocking `unit` project).
@@ -129,6 +129,29 @@ describe('getRatingLabel — the rating × count ladder', () => {
       expect(getRatingLabel({ positiveRating, totalCount })).toEqual({ label, color });
     });
   }
+});
+
+describe('getRatingSummary', () => {
+  it('is null with no reviews, since there is no rating to label', () => {
+    expect(getRatingSummary({ thumbsUp: 0, thumbsDown: 0 })).toBeNull();
+  });
+
+  it('labels the thumbs and floors the share, so one thumbs down never reads 100%', () => {
+    // 599 / 600 = 99.83%: rounding would show 100%.
+    expect(getRatingSummary({ thumbsUp: 599, thumbsDown: 1 })).toEqual({
+      label: 'Overwhelmingly Positive',
+      color: 'green',
+      percent: 99,
+      total: 600,
+    });
+    expect(getRatingSummary({ thumbsUp: 7, thumbsDown: 0 })).toMatchObject({
+      label: 'Positive',
+      percent: 100,
+      total: 7,
+    });
+    // 7 / 8 = 87.5%: floors to 87, where rounding would show 88.
+    expect(getRatingSummary({ thumbsUp: 7, thumbsDown: 1 })?.percent).toBe(87);
+  });
 });
 
 /**
@@ -336,7 +359,9 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
 
   it('🔴 a textual MENTION is not a consumer (the matcher fires on the import FORM)', () => {
     // Fault 2, pinned. Both strings below name the module; only one depends on it.
-    expect("import { getRatingLabel } from '~/utils/rating-label';").toMatch(IMPORT_FORM);
+    expect("import { getRatingLabel, getRatingSummary } from '~/utils/rating-label';").toMatch(
+      IMPORT_FORM
+    );
     expect("const m = await import('~/utils/rating-label');").toMatch(IMPORT_FORM);
     expect('// see `~/utils/rating-label` for the shared ladder').not.toMatch(IMPORT_FORM);
     expect(' * The word label comes from ~/utils/rating-label, not a local copy.').not.toMatch(
@@ -349,6 +374,10 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
       [
         // The model version page's review link — the ladder's original home.
         'components/Model/ModelVersions/ModelVersionReview.tsx',
+        // The model page Reviews section's summary line.
+        'components/Model/ModelVersions/ModelVersionWrittenReviews.tsx',
+        // The model reviews page's summary (label, share, up/down bar).
+        'pages/models/[id]/reviews.tsx',
         // The app-store listing detail's "Reviews" row, via the pure row builder.
         'components/Apps/appListingDetailRows.ts',
         // This file.
@@ -441,8 +470,8 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
     // Positive control for the matcher — it CAN see a local definition.
     expect('function getRatingLabel({').toMatch(/function getRatingLabel\b/);
     expect(src).not.toMatch(/function getRatingLabel\b/);
-    // …and it does still call it.
-    expect(src).toMatch(/getRatingLabel\(/);
+    // …and it does still reach it, through the shared summary.
+    expect(src).toMatch(/getRatingSummary\(/);
   });
 
   /**
@@ -508,7 +537,7 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
           contentRating: null,
           recommend: { recommendedCount: up, notRecommendedCount: down, recommendPct: up / total },
           reviewCount: total,
-          installCount: 0,
+          openCount: 0,
           updatedAt: '2026-03-04T05:06:07.000Z',
         } as Parameters<typeof buildListingDetailRows>[0],
         { formatDate: (iso) => iso }
@@ -566,7 +595,7 @@ describe('🔴 the rating ladder has exactly the callers it is supposed to have'
             recommendPct: (4 / 137) * 100,
           },
           reviewCount: 137,
-          installCount: 0,
+          openCount: 0,
           updatedAt: '2026-03-04T05:06:07.000Z',
         } as Parameters<typeof buildListingDetailRows>[0],
         { formatDate: (iso) => iso }

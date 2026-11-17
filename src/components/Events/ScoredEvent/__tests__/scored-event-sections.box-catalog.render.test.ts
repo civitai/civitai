@@ -64,9 +64,14 @@ vi.mock('~/components/Events/ScoredEvent/HatCatalogPreview', () => ({
   },
 }));
 vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marker('rules') }));
+// Its own browser test covers it; it needs the feature-flag context these tests do not provide.
+vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
+  HatTurfEventSection: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
   TopHats: marker('topHats'),
+  TopTurfPlayers: marker('turfPlayers'),
 }));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');

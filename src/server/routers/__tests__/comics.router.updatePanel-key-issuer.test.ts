@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 
-// See comics.router.createChapterComment.test.ts: `isFlagProtected` recomputes flags.
+// `isFlagProtected` recomputes flags from the user unless `ctx.features.trpcFlagGuardPerRequest` is
+// set, so without this a non-moderator caller is refused before the handler.
 vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsService>()),
   getFeatureFlags: () => ({ comicCreator: true }),
@@ -43,7 +44,7 @@ const updatePanel = (imageUrl: string) =>
     .updatePanel({ panelId: PANEL_ID, imageUrl } as never);
 
 const issuedTo = (userId: number) =>
-  redisMock.sysRedis.mGet.mockResolvedValue([String(userId)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(userId)] as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -71,7 +72,7 @@ describe('comics.updatePanel - the upload key of a new image url', () => {
     issuedTo(USER_ID);
 
     await updatePanel(NEW_URL);
-    expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.mGet).toHaveBeenCalledTimes(1);
     expect(dbMock.dbWrite.comicPanel.update.mock.calls[0][0].data.imageUrl).toBe(NEW_URL);
   });
 
@@ -79,7 +80,7 @@ describe('comics.updatePanel - the upload key of a new image url', () => {
     issuedTo(OTHER_USER_ID);
 
     await updatePanel(CURRENT_URL);
-    expect(redisMock.sysRedis.mGet).not.toHaveBeenCalled();
+    expect(redisMock.redis.mGet).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.comicPanel.update).toHaveBeenCalledTimes(1);
   });
 });

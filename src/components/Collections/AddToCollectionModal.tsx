@@ -12,8 +12,8 @@ import {
   TextInput,
   ThemeIcon,
   Modal,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedValue } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -248,11 +248,14 @@ function CollectionListForm({
       // Active contests only surface for models the user owns, so the server can gate the branch
       // on ownership. Only meaningful when includeActiveContests is true (Model saves).
       contestModelId: props.modelId,
+      // Archived collections accept no new entries, so keep them out of the picker entirely.
+      excludeArchived: true,
     });
 
   const { data: collectionItems = [], isLoading: loadingStatus } =
     trpc.collection.getUserCollectionItemsByItem.useQuery({
       ...target,
+      excludeArchived: true,
     });
 
   // Ensures we don't present the user with a list of collections

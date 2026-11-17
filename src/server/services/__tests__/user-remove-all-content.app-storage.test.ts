@@ -178,7 +178,6 @@ vi.mock('~/server/search-index', async (importOriginal) => {
   return {
     ...actual,
     modelsSearchIndex: idx,
-    imagesSearchIndex: idx,
     imagesMetricsSearchIndex: idx,
     articlesSearchIndex: idx,
     collectionsSearchIndex: idx,
@@ -443,7 +442,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
       where: { userId: TARGET },
     });
     // The evidence deletes are raw, so each can carry the legal hold in its own statement.
-    for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
+    for (const table of ['Model', 'Image', 'Post', 'Article']) {
       const deleted = dbMock.dbWrite.$executeRaw.mock.calls
         .map(flatten)
         .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));

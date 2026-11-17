@@ -31,6 +31,12 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: getSession,
 }));
 
+// A text's thread is gated by its text's visibility; that rule is tested where it lives.
+const textVisible = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/post-viewer-visibility.service', () => ({
+  assertPostTextVisible: textVisible,
+}));
+
 const COMMENT_ID = 8123;
 const PARENT_ID = 3310;
 const SLUG = 'pixel-forge';
@@ -41,7 +47,9 @@ const row = (over: Record<string, unknown>) => ({
   entityType: 'post',
   entityId: PARENT_ID,
   comicProjectId: null,
+  comicChapterPosition: null,
   appListingSlug: null,
+  postTextAnchorImageId: null,
   ...over,
 });
 
@@ -58,6 +66,25 @@ const run = async () => {
 beforeEach(() => {
   getRow.mockReset();
   getSession.mockReset().mockResolvedValue(null);
+});
+
+describe('/comments/<id> — a storyline text comment', () => {
+  const textRow = row({ entityType: 'postText', entityId: 50, postTextAnchorImageId: 10 });
+
+  it('redirects to the text slide when the viewer may read the text', async () => {
+    getRow.mockResolvedValue(textRow);
+    textVisible.mockResolvedValue({ postId: 31 });
+    expect(await run()).toEqual({
+      redirect: { destination: `/images/10?text=50&${QUERY}`, permanent: false },
+    });
+    expect(textVisible).toHaveBeenCalledWith(50, expect.anything());
+  });
+
+  it('is not found, not redirected, when the viewer may not', async () => {
+    getRow.mockResolvedValue(textRow);
+    textVisible.mockRejectedValue(new Error('Text not found'));
+    expect(await run()).toEqual({ notFound: true });
+  });
 });
 
 describe('/comments/<id> — getServerSideProps wiring', () => {
@@ -85,12 +112,17 @@ describe('/comments/<id> — getServerSideProps wiring', () => {
     });
   });
 
-  it('resolves a comic chapter through its project, not its chapter id', async () => {
+  it('resolves a comic chapter through its project and position, not its chapter id', async () => {
     getRow.mockResolvedValue(
-      row({ entityType: 'comicChapter', entityId: 9901, comicProjectId: PARENT_ID })
+      row({
+        entityType: 'comicChapter',
+        entityId: 9901,
+        comicProjectId: PARENT_ID,
+        comicChapterPosition: 0,
+      })
     );
     expect(await run()).toEqual({
-      redirect: { destination: `/comics/${PARENT_ID}?${QUERY}`, permanent: false },
+      redirect: { destination: `/comics/${PARENT_ID}/comic/1?${QUERY}`, permanent: false },
     });
   });
 

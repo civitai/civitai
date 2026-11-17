@@ -17,7 +17,7 @@ export const BUZZ_MEMBERSHIP_PREMIUM_MULTIPLIER = 1.25;
  */
 export const BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE = 'buzzPurchase';
 
-const isMetadataTrue = (value: unknown) => value === true || value === 'true';
+export const isMetadataTrue = (value: unknown) => value === true || value === 'true';
 
 /**
  * Several products share a `tier`: the cash one, the Buzz-purchase variant
@@ -30,6 +30,17 @@ export function isCanonicalTierProduct(metadata: unknown) {
   const meta = (metadata ?? {}) as Record<string, unknown>;
   return !isMetadataTrue(meta.buzzPurchase) && !isMetadataTrue(meta.referralGrantable);
 }
+
+/** Statuses after which a subscription row never grants perks again. */
+export const terminalSubscriptionStatuses = ['canceled', 'incomplete_expired'];
+/** Payment problems a subscription can still recover from. */
+export const recoverableBadSubscriptionStatuses = ['past_due', 'unpaid'];
+/** Every status in which a row counts as having a payment problem (`isBadState`). */
+export const badStateSubscriptionStatuses = [
+  'incomplete',
+  'incomplete_expired',
+  ...recoverableBadSubscriptionStatuses,
+];
 
 type MembershipStanding = {
   isBadState?: boolean;

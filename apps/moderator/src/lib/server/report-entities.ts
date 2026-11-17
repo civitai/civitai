@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { reportEntityLabels, type ReportEntity } from '$lib/reports';
+import { reportEntityLabels, reportQueueOf, type ReportEntity } from '$lib/reports';
 
 /**
  * Where each report type's rows live, and who owns the thing being reported.
@@ -29,22 +29,21 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
   image: { reportTable: 'ImageReport', fk: 'imageId', table: 'Image', ownerColumn: 'userId' },
   model: { reportTable: 'ModelReport', fk: 'modelId', table: 'Model', ownerColumn: 'userId' },
   post: { reportTable: 'PostReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
+  // A storyline text's report, keyed by the text's post: it is worked in the post queue
+  // (`REPORT_QUEUE_OF`) and outlives the text. The text itself is `PostTextReport.postTextId`.
+  postText: { reportTable: 'PostTextReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
   article: {
     reportTable: 'ArticleReport',
     fk: 'articleId',
     table: 'Article',
     ownerColumn: 'userId',
   },
-  comment: {
-    reportTable: 'CommentReport',
+  // Every comment report, including those filed on the old tables whose comment reached CommentV3: one
+  // row per report (`reportId` is unique).
+  commentV3: {
+    reportTable: 'CommentV3Report',
     fk: 'commentId',
-    table: 'Comment',
-    ownerColumn: 'userId',
-  },
-  commentV2: {
-    reportTable: 'CommentV2Report',
-    fk: 'commentV2Id',
-    table: 'CommentV2',
+    table: 'CommentV3',
     ownerColumn: 'userId',
   },
   bounty: { reportTable: 'BountyReport', fk: 'bountyId', table: 'Bounty', ownerColumn: 'userId' },
@@ -136,6 +135,13 @@ export const REPORT_ENTITIES: ReportEntityMeta[] = (Object.keys(TABLES) as Repor
 const BY_TYPE = new Map(REPORT_ENTITIES.map((e) => [e.type, e]));
 
 export const reportEntity = (type: ReportEntity): ReportEntityMeta => BY_TYPE.get(type)!;
+
+/**
+ * Every report type worked in `queue`: its own, and those `REPORT_QUEUE_OF` files there. Each one's
+ * `fk` names the queue's entity (the post queue's types both key by `postId`).
+ */
+export const reportQueueMembers = (queue: ReportEntity): ReportEntityMeta[] =>
+  REPORT_ENTITIES.filter((e) => reportQueueOf(e.type) === queue);
 
 /**
  * Which account a chat report is ABOUT, as a predicate over a joined `Chat` and its `Report`.

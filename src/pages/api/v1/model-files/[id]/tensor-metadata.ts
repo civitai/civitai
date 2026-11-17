@@ -10,11 +10,14 @@ import { resolveActorFor } from '~/utils/resolve-attribution';
 import { getFullTensorAnalysisCached } from '~/server/services/tensor-metadata.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { downloadCredentialGate } from '~/server/utils/download-credential-gate';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   inferTensorMetadataFormat,
   parseModelTensorMetadata,
   supportsTensorVramEstimate,
 } from '~/utils/model-tensor-metadata';
+import { FAILED_SCAN_DOWNLOAD_MESSAGE } from '~/server/utils/failed-scan';
 
 /**
  * 🔴 `id` is bounded to a Postgres int4, and the bound is load-bearing — this is
@@ -47,9 +50,18 @@ const NO_STORE_CACHE_CONTROL = 'private, no-store';
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
-  user: Session['user'] | undefined
+  sessionUser: Session['user'] | undefined
 ) {
   res.setHeader('Cache-Control', NO_STORE_CACHE_CONTROL);
+  // Moderator rights through a bearer credential follow the download routes' rule, and need the
+  // route's scope whatever the rollout flag says.
+  const credential = downloadCredentialGate(req, sessionUser, {
+    requiredScope: TokenScope.ModelsRead,
+  });
+  const user =
+    credential.effectiveUser?.isModerator && credential.outcome === 'refused'
+      ? { ...credential.effectiveUser, isModerator: false }
+      : credential.effectiveUser;
 
   const result = schema.safeParse(req.query);
   if (!result.success)
@@ -76,6 +88,7 @@ export default MixedAuthEndpoint(async function handler(
     fileId: id,
     user,
     attribution: { caller: 'other', actor: resolveActorFor(user) },
+    redCapable: false,
   });
 
   if (fileResult.status !== 'success') {
@@ -176,7 +189,7 @@ export default MixedAuthEndpoint(async function handler(
       fileId: id,
       modelVersionId: file.modelVersionId,
       format,
-    }).catch(() => undefined);
+    });
 
     // 🔴 civitai#3845 TIER 1. This was `{ error: err.message }` on a
     // `MixedAuthEndpoint` whose read path is public, so an anonymous caller got
@@ -207,6 +220,7 @@ function getStatusCode(
     case 'no-access':
     case 'downloads-disabled':
     case 'early-access':
+    case 'failed-scan':
       return 403;
     case 'archived':
       return 410;
@@ -230,6 +244,8 @@ function getErrorMessage(
       return 'Downloads are disabled for this file';
     case 'early-access':
       return 'File is in early access';
+    case 'failed-scan':
+      return FAILED_SCAN_DOWNLOAD_MESSAGE;
     case 'archived':
       return 'Model archived, not available';
     case 'not-found':

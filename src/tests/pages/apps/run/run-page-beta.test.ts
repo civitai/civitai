@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ServerDomain from '~/server/utils/server-domain';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts.
@@ -44,6 +45,16 @@ vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: { resolvePageBlockBySlug: mockResolvePageBlockBySlug },
 }));
 
+// The launch's ClickHouse event, which the page sends without awaiting.
+vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
+  recordAppListingOpen: vi.fn(async () => undefined),
+}));
+// "Opening clears the hide" read on a signed-in public launch (its own test:
+// run-page-reopen-clears-hide.test.ts). Stubbed so this file never reaches the settings cache.
+vi.mock('~/server/services/blocks/my-apps-hidden.service', () => ({
+  isMyAppHidden: vi.fn(async () => false),
+}));
+
 /**
  * 🔴 THE CANONICAL `dbMock`, NOT A PER-FILE MOCK OF THE DB CLIENT MODULE. A per-file mock of
  * a shared module freezes THIS file's mock shape into every later file in the same worker
@@ -55,7 +66,10 @@ vi.mock('~/server/services/block-registry.service', () => ({
  */
 const mockFindUnique = dbMock.dbRead.appListing.findUnique;
 
-vi.mock('~/server/utils/server-domain', () => ({ ratingAllowedOnHost: () => true }));
+vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
+  ...(await importOriginal<typeof ServerDomain>()),
+  ratingAllowedOnHost: () => true,
+}));
 
 vi.mock('@mantine/core', () => ({
   Alert: () => null,

@@ -122,16 +122,14 @@ export function hasAnyLegacyCookie(cookies: Partial<Record<string, string>>): bo
  * Expire EVERY legacy next-auth cookie a returning pre-cutover user's browser might still carry, across every
  * scope next-auth could have set them on:
  *   - the SESSION cookie (`civitai-token` / prod `__Secure-civitai-token`) — the only one that authenticated a
- *     user; a valid civ-token supersedes it, and getServerAuthSession only falls back to it when civ-token is
- *     absent, so a lingering one keeps a migrated user "logged in" via the stale fallback.
+ *     user; now read only by a PR preview's test sign-in.
  *   - the ANCILLARY cruft (CSRF, callback-url, and the transient OIDC/OAuth `state` / PKCE `code_verifier` /
  *     `nonce`) — none authenticate, but we de-crud them so the browser is fully cleaned.
- * Call at the auth transitions where these must go: the login callback, upgrade-on-read, and logout. (NOT baked
+ * Call at the auth transitions where these must go: the login callback and logout. (NOT baked
  * into setSessionCookie — that fires on every rolling refresh, and re-emitting ~30 expiries for already-gone
- * cookies on each refresh is pure waste; the only paths that set a civ-token while a legacy cookie still exists
- * are callback + upgrade, which both call this.) Names are the next-auth defaults (dev: `next-auth.<x>`; prod:
+ * cookies on each refresh is pure waste; the only path that sets a civ-token while a legacy cookie still exists
+ * is the callback, which calls this.) Names are the next-auth defaults (dev: `next-auth.<x>`; prod:
  * secure-prefixed). The CSRF cookie's `__Host-` prefix forbids a Domain attribute, so it's cleared host-only.
- * Remove this whole helper once pre-cutover cookies have aged out.
  */
 export function clearLegacyCookies(host?: string): string[] {
   const scopes = legacyClearScopes(host);
@@ -166,7 +164,7 @@ export function clearLegacyCookies(host?: string): string[] {
  * any Set-Cookie already on the response. Pass `host` (the request's `Host` header) so the cookie Domain matches
  * the serving color; omit it only where there's no request (then the cookie is host-only). Pass `deviceCookie`
  * to roll the device cookie in lockstep (switch + rolling-refresh; impersonation does NOT touch the device set).
- * Does NOT clear legacy cookies — the transitions that need that (login callback, upgrade-on-read) call
+ * Does NOT clear legacy cookies — the transition that needs that (the login callback) calls
  * clearLegacyCookies explicitly; keeping it out of here avoids re-emitting the de-crud on every rolling refresh.
  * `slot` defaults to this app's cookie mode; a roll passes the slot the token was read from. The host-only slot
  * never carries a Domain (`__Host-` forbids it). Pass `requestCookies` so the write also expires, host-only, the

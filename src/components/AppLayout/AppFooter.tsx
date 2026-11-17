@@ -3,7 +3,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
-import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { FloatingHelpMenu } from '~/components/Assistant/FloatingHelpMenu';
 import { ManageConsentFooterLink } from '~/components/Consent/ManageConsentFooterLink';
 import { PrivacyPreferencesFooterLink } from '~/components/Consent/PrivacyPreferencesFooterLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -33,6 +33,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     key: 'privacy',
     href: '/content/privacy',
     children: 'Privacy',
+  },
+  {
+    key: 'take-it-down',
+    href: '/content/take-it-down',
+    children: 'Remove Intimate Images',
   },
   {
     key: 'safety',
@@ -139,6 +144,9 @@ export function AppFooter() {
       // this bar is the other thing that can be. See globals.css for why this
       // zeroes `--safe-area-inset-bottom-page` and pointedly not `…-unpaid`.
       data-app-footer=""
+      // Lets bars outside this tree follow the slide-out: globals.css turns it
+      // into `--app-footer-offset`.
+      data-hidden={!showFooter || undefined}
       // The hide transform has to travel the bar's REAL height, which is now
       // `--footer-height` plus whatever inset the bar pays. Using
       // `--footer-height` alone leaves the "hidden" footer peeking by up to 34px.
@@ -185,7 +193,7 @@ export function AppFooter() {
               <IconArrowUp size={20} stroke={2.5} />
             </Button>
           )}
-          <AssistantButton />
+          <FloatingHelpMenu />
         </div>
       </div>
       {/* THIS is the box that carries the background, so this is the box that

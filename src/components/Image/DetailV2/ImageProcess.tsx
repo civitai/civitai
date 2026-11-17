@@ -1,5 +1,6 @@
 import type { MantineColor } from '@mantine/core';
-import { Card, Text, Badge, UnstyledButton, Popover } from '@mantine/core';
+import { Card, Text, Badge, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconChartBubble, IconMessage } from '@tabler/icons-react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { slugit } from '~/utils/string-helpers';

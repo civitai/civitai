@@ -2,6 +2,8 @@ import React, { createContext, memo, useContext, useEffect, useState } from 'rea
 import type { Dialog } from '~/components/Dialog/dialogStore';
 import { DialogIdContext, useDialogId } from '~/components/Dialog/dialogId';
 import { dialogStore, useDialogStore, useIsLevelFocused } from '~/components/Dialog/dialogStore';
+import { useHistoryLayer } from '~/hooks/useHistoryLayer';
+import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
 
 type DialogState = {
   opened: boolean;
@@ -41,6 +43,10 @@ const DialogProviderInner = memo(function DialogProviderInner({
       setOpened(true);
     }, 0);
   }, []);
+
+  // Over the mobile generator, Back closes the dialog first. Routed dialogs have their own entry.
+  const overMobileGenerator = useMobileGeneratorStore((state) => state.showing);
+  useHistoryLayer(opened, onClose, overMobileGenerator && dialog.type !== 'routed-dialog');
 
   return (
     <DialogContext.Provider

@@ -23,6 +23,7 @@ import type {
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { SubscriptionPlan } from '~/server/services/subscriptions.service';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
+import { capitalize } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 function formatBoostCopy(
@@ -56,6 +57,13 @@ export const getPlanDetails: (
   isAnnual
 ) => {
   const metadata = (product.metadata ?? {}) as SubscriptionProductMetadata;
+  // The colour the plan's monthly Buzz is paid in; delivery falls back to yellow too. Buzz-bought
+  // plans grant none and are sold on both sites, so they take the site's colour, as PlanCard does.
+  const monthlyBuzzType = metadata.buzzPurchase
+    ? features.isGreen
+      ? 'green'
+      : 'yellow'
+    : metadata.buzzType ?? 'yellow';
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
     buzzType: product.metadata.buzzType,
@@ -65,14 +73,13 @@ export const getPlanDetails: (
     benefits: [
       {
         icon: <IconBolt size={benefitIconSize} />,
-        iconColor:
-          (metadata?.monthlyBuzz ?? 0) === 0 ? 'gray' : features.isGreen ? 'green' : 'yellow',
+        iconColor: (metadata?.monthlyBuzz ?? 0) === 0 ? 'gray' : monthlyBuzzType,
         iconVariant: 'light' as ThemeIconVariant,
         content: (
           <Text>
             <Text span>
-              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} {features.isGreen ? 'Green Buzz' : 'Buzz'}{' '}
-              per month
+              {numberWithCommas(metadata?.monthlyBuzz ?? 0)} {capitalize(monthlyBuzzType)} Buzz per
+              month
             </Text>
           </Text>
         ),
@@ -113,11 +120,7 @@ export const getPlanDetails: (
             );
             return {
               icon: active && features.isGreen ? splitBolt : <IconBolt size={benefitIconSize} />,
-              iconColor: !active
-                ? 'gray'
-                : features.isGreen
-                  ? 'yellow'
-                  : `rgb(var(--buzz-color))`,
+              iconColor: !active ? 'gray' : features.isGreen ? 'yellow' : `rgb(var(--buzz-color))`,
               iconVariant: 'light' as ThemeIconVariant,
               iconStyle:
                 active && features.isGreen
@@ -148,8 +151,8 @@ export const getPlanDetails: (
               (metadata?.rewardsMultiplier ?? 1) === 1
                 ? 'gray'
                 : features.isGreen
-                  ? 'blue'
-                  : `rgb(var(--buzz-color))`,
+                ? 'blue'
+                : `rgb(var(--buzz-color))`,
             iconVariant: 'light' as ThemeIconVariant,
             content:
               (metadata?.rewardsMultiplier ?? 1) === 1 ? (

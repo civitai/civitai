@@ -4,6 +4,7 @@
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type {
   ArchiveKind,
+  DatasetItem,
   GenerationItem,
   TrainingDetail,
   TrainingRow,
@@ -29,6 +30,8 @@ export type {
 export type { SubmittedBatch, TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
+import type { DatasetRatingCount } from '$lib/dataset-rating';
+import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
 
 /** One run's fully-resolved training config, as `submitTraining` sends it (the wire contract of the
  *  shell's POST /api/train): the core's `TrainingRunInput` minus the continue-only field, with the
@@ -43,7 +46,7 @@ export interface StudioBackend {
   /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
    *  answered by the main app. Rejects when it can't tell. */
   modelLive(modelId: number): Promise<boolean>;
-  getRunDataset(workflowId: string): Promise<{ air: string; caption: string }[]>;
+  getRunDataset(workflowId: string): Promise<DatasetItem[]>;
   /** One dataset image/video/audio blob. Blobs need auth (shell: the session-gated proxy; element: a
    *  Bearer fetch against the orchestrator), so views turn these into object URLs — a bare URL for a
    *  dataset blob is never browser-fetchable in the element. */
@@ -62,11 +65,19 @@ export interface StudioBackend {
     signal: AbortSignal
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
   submitTraining(runs: TrainingRunPayload[]): Promise<SubmittedBatch>;
+  /** The server's mature count for these dataset blobs under the v2 rating, which also starts rating
+   *  the rest. Absent, or `enabled: false`, means Review counts from the upload rating. */
+  datasetRating?(blobIds: string[]): Promise<DatasetRatingCount>;
+  /** Where each of these dataset files stands for training. Absent, or `enabled: false`, means Review
+   *  doesn't wait and the submit's own refusal decides. */
+  datasetReadiness?(blobIds: string[]): Promise<ReadinessProbe>;
+  /** Whether the orchestrator would take this run's dataset now (a whatif; never charges). */
+  datasetReadyToTrain?(run: TrainingRunPayload): Promise<ReadinessCheck>;
   /** The caller's recent single-image edits, one per result — the edit Data step's "From my edit
    *  generations". */
   listEditGenerations(): Promise<EditGenerationItem[]>;
-  /** What one "create the after image" run costs; null when unpriced. */
-  editImageQuote(): Promise<number | null>;
+  /** What one "create the after image" run from this starting image costs; null when unpriced. */
+  editImageQuote(imageUrl: string): Promise<number | null>;
   /** Generates after-image options from a starting image. Charges the caller, so the prompt goes
    *  through the main app's prompt check first and a refusal rejects with its reason. */
   editImageSubmit(req: EditImageRequest): Promise<{ workflowId: string }>;
@@ -90,12 +101,14 @@ export interface StudioBackend {
     fromEpoch: number,
     addEpochs: number,
     currencies: string[]
-  ): Promise<{ cost: number | null; steps?: number }>;
+  ): Promise<{ cost: number | null; steps?: number; matureCount: number }>;
+  /** Refused, charging nothing, when the source dataset is mature and `matureAck` is false. */
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
-    currencies: string[]
+    currencies: string[],
+    matureAck: boolean
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;

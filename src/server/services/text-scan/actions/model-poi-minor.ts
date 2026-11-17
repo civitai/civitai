@@ -20,6 +20,7 @@ import {
   type HeldDetectionKind,
   type TextScanFlagLabel,
 } from '~/server/services/text-scan/flag-snapshot';
+import { holdLeadAfterFlagLift } from '~/server/services/text-scan/actions/model-nsfw';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import {
   getTextScanLabelMode,
@@ -261,7 +262,7 @@ async function recordHold({
       entityType: 'Model',
       entityId: modelId,
       workflowId,
-    }).catch(() => null);
+    });
   return written > 0;
 }
 
@@ -422,7 +423,7 @@ export async function flagModelPoi({
               )
             )
           )
-        )
+        ) #- '{restrictedNsfwVerdict,liftedBy}'
     WHERE m.id = ${modelId}
       AND NOT m.poi
       AND ${flagGuard('poi', kept ? textHash : null)}
@@ -483,7 +484,7 @@ export async function flagModelPoi({
     entityType: 'Model',
     entityId: modelId,
     workflowId,
-  }).catch(() => null);
+  });
   return { written: true, notified };
 }
 
@@ -573,7 +574,7 @@ export async function flagModelMinor({
     entityType: 'Model',
     entityId: modelId,
     workflowId,
-  }).catch(() => null);
+  });
   return { written: true, notified };
 }
 
@@ -636,7 +637,8 @@ export async function grantModelTextScanPoi({
 
   const [granted] = await writeTextScanRuling(
     { modelId, labels: ['poi'], decision: 'appealGranted', via, moderatorId: userId, reason, note },
-    (tx) => tx.$queryRaw<ModelFlagRow[]>`
+    async (tx) => {
+      const rows = await tx.$queryRaw<ModelFlagRow[]>`
     UPDATE "Model" m
     SET poi = FALSE,
         nsfw = CASE WHEN m.minor THEN m.nsfw
@@ -682,7 +684,11 @@ export async function grantModelTextScanPoi({
       }
     RETURNING m.id, m.name, m.description, m."userId", m.poi, m.nsfw, m.minor, m."sfwOnly",
               m.status, m."gallerySettings", m."lockedProperties"
-  `,
+  `;
+      if (rows.length)
+        await holdLeadAfterFlagLift(tx, modelId, via === 'appeal' ? 'appeal' : 'moderator');
+      return rows;
+    },
     (rows) => rows.length > 0
   );
   if (!granted) return false;
@@ -729,7 +735,7 @@ export async function grantModelTextScanPoi({
     entityType: 'Model',
     entityId: modelId,
     moderatorId: userId,
-  }).catch(() => null);
+  });
   return true;
 }
 

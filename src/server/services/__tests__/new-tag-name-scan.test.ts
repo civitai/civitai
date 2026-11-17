@@ -16,7 +16,7 @@ const { throwOnBlockedUserContent } = vi.hoisted(() => ({
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent }));
 
 import { newTagNames } from '~/server/services/new-tag-names';
-import { upsertQuestion } from '~/server/services/question.service';
+import { upsertBounty } from '~/server/services/bounty.service';
 import { addPostTag } from '~/server/services/post.service';
 import { findOrCreateTagsByName } from '~/server/services/tag.service';
 
@@ -41,21 +41,29 @@ describe('newTagNames', () => {
   });
 });
 
-describe('a writer that appends new tag names to its own scan (questions)', () => {
+describe('a writer that appends new tag names to its own scan (bounties)', () => {
+  // Past the scan, the update first reads the stored bounty: stopping there shows the scan let it through.
   const save = (tags: { id?: number; name: string }[]) =>
-    upsertQuestion({ title: 't', content: 'c', tags, userId: 1 } as never);
+    upsertBounty({
+      id: 9,
+      name: 'n',
+      description: 'd',
+      tags,
+      userId: 1,
+      isModerator: false,
+    } as never);
 
   beforeEach(() => {
-    dbMock.dbWrite.$transaction.mockImplementation(async () => ({ id: 9, title: 't' }));
+    dbMock.dbRead.bounty.findUnique.mockRejectedValue(new Error('past the scan'));
   });
 
-  it('saves an existing tag sent by name without an id, even one the list refuses', async () => {
-    await expect(save([{ name: STORED }])).resolves.toBeDefined();
+  it('lets an existing tag sent by name without an id through, even one the list refuses', async () => {
+    await expect(save([{ name: STORED }])).rejects.toThrow('past the scan');
   });
 
-  it('refuses a new tag name the list refuses', async () => {
+  it('refuses a new tag name the list refuses, before reading anything', async () => {
     await expect(save([{ name: 'new BLOCKED tag' }])).rejects.toThrow('blocked');
-    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.bounty.findUnique).not.toHaveBeenCalled();
   });
 });
 

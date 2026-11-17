@@ -1,5 +1,6 @@
 import type { ActionIconProps } from '@mantine/core';
-import { Group, Menu } from '@mantine/core';
+import { Group } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import React from 'react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import type { ImageContextMenuProps } from '~/components/Image/ContextMenu/ImageMenuItems';

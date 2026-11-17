@@ -70,7 +70,7 @@ export function textScanWebSearchAdapters() {
 
 export function createTextScanAdapter(
   entityType: TextScanEntityType,
-  hooks: Pick<ModerationAdapter, 'applyTextScan' | 'applyFailure'>
+  hooks: Pick<ModerationAdapter, 'applyTextScan' | 'applyFailure' | 'readRating'>
 ): ModerationAdapter {
   return {
     resolveContent: async (ids) => {

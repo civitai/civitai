@@ -19,7 +19,7 @@ vi.hoisted(() => {
   process.env.SERVER_DOMAIN_BLUE = 'civitai.blue';
   process.env.SERVER_DOMAIN_RED = 'civitai.red';
   // All read once, at module load, by `getEnvOverrides`.
-  process.env.FEATURE_FLAG_IMAGE_SEARCH = 'public';
+  process.env.FEATURE_FLAG_TRPC_UNIFIED_BATCH_WINDOW = 'public';
   process.env.FEATURE_FLAG_CIVITAI_LINK = 'public';
   process.env.FEATURE_FLAG_API_KEY_BUZZ_LIMIT = 'public';
   process.env.FEATURE_FLAG_COINBASE_PAYMENTS = 'public';
@@ -77,7 +77,7 @@ describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
     // "flag not found" and not an uninitialized client.
     expect(isFliptSync('app-blocks-enabled', 'anonymous', anon)).toBe(false);
     expect(isFliptSync('user-hubs', 'anonymous', anon)).toBe(true);
-    expect(isFliptSync('image-search', 'anonymous', anon)).toBe(null);
+    expect(isFliptSync('trpc-unified-batch-window', 'anonymous', anon)).toBe(null);
     expect(isFliptSync('api-key-buzz-limit', 'anonymous', anon)).toBe(null);
   });
 
@@ -85,8 +85,8 @@ describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
     const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
     const features = await getFeatureFlagsAsync({});
 
-    // `imageSearch` is `{ availability: [], fliptKey: 'image-search' }`.
-    expect(features.imageSearch).toBeFalsy();
+    // `trpcUnifiedBatchWindow` is `{ availability: [], fliptKey: 'trpc-unified-batch-window' }`.
+    expect(features.trpcUnifiedBatchWindow).toBeFalsy();
   });
 
   it('says so when it discards one, naming the flag and the way to change it', async () => {
@@ -97,7 +97,7 @@ describe('what a FEATURE_FLAG_<KEY> override may and may not do', () => {
     // second instance of the dark-with-key class and its override grants nothing, so it is the
     // one a narrower guard would drop.
     for (const [flag, fliptKey] of [
-      ['imageSearch', 'image-search'],
+      ['trpcUnifiedBatchWindow', 'trpc-unified-batch-window'],
       ['userHubs', 'user-hubs'],
     ]) {
       expect(discarded.some((w) => w.includes(`"${flag}"`))).toBe(true);

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
+import { parseModelIdFilter } from '$lib/training-model-filter';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { setBanned } from '$lib/server/user-actions.service';
 import {
@@ -28,6 +29,7 @@ const dayStart = (value: string | undefined) => localDay(value, false);
 const dayEnd = (value: string | undefined) => localDay(value, true);
 
 const querySchema = z.object({
+  modelId: z.string().trim().max(20).default('').catch('0'),
   username: z.string().trim().max(100).catch(''),
   workflowId: z.string().trim().max(100).catch(''),
   from: z
@@ -51,6 +53,7 @@ export const load: PageServerLoad = async ({ url }) => {
     getTrainingModelsFeed({
       limit: PAGE_SIZE,
       cursor: q.cursor,
+      modelId: parseModelIdFilter(q.modelId),
       username: q.username || undefined,
       workflowId: q.workflowId || undefined,
       dateFrom: dayStart(q.from),

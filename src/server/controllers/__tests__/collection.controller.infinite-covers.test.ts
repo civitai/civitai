@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as CollectionCoverVisibility from '~/server/services/collection-cover-visibility';
 import type * as CollectionService from '~/server/services/collection.service';
 
 /**
@@ -45,7 +44,7 @@ vi.mock('~/server/services/collection-collaborator.service', () => ({
 }));
 
 vi.mock('~/server/services/collection-cover-visibility', async (importOriginal) => ({
-  ...(await importOriginal<typeof CollectionCoverVisibility>()),
+  ...(await importOriginal<Record<string, unknown>>()),
   withServableCovers: mockServableCovers,
   getServableCoverCollectionIds: mockServableIds,
 }));
@@ -62,7 +61,7 @@ const row = (id: number) => ({
   userId: 1,
   name: `c${id}`,
   metadata: {},
-  image: { id: 100 + id, url: `cover-${id}`, meta: null, tags: [] },
+  image: { id: 100 + id, url: `cover-${id}`, nsfwLevel: 1, meta: null, tags: [] },
 });
 
 const servableOnly = (ids: number[]) => async (rows: ReturnType<typeof row>[]) =>
@@ -77,7 +76,7 @@ beforeEach(() => {
 const feed = () =>
   getAllCollectionsInfiniteHandler({
     input: { limit: 10 } as never,
-    ctx: { user: VIEWER } as never,
+    ctx: { user: VIEWER, features: {}, req: { headers: {} } } as never,
   });
 
 describe('getAllCollectionsInfiniteHandler covers', () => {

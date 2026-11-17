@@ -55,6 +55,22 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
+const refreshShowcase = vi.hoisted(() => vi.fn(async (_ids: number[]) => undefined));
+vi.mock('~/server/services/image.service', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    imagesForModelVersionsCache: {
+      ...(actual.imagesForModelVersionsCache as object),
+      refresh: refreshShowcase,
+    },
+  };
+});
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCacheTag: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: makePermissive({ insert: async () => undefined }),
 }));
@@ -76,5 +92,35 @@ describe('bustCachesForPosts', () => {
     await bustCachesForPosts([123]);
 
     expect(mockQueryRaw).toHaveBeenCalled();
+  });
+});
+
+describe('bustCachesForPosts and the version showcase', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.model.findMany.mockResolvedValue([]);
+  });
+
+  const post = (isShowcase: boolean) => ({
+    isShowcase,
+    modelVersionId: 77,
+    modelId: 7,
+    model3dId: null,
+  });
+
+  it("refreshes the version's showcase when the post is the model owner's", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(true)] as never);
+
+    await bustCachesForPosts([1]);
+
+    expect(refreshShowcase).toHaveBeenCalledWith([77]);
+  });
+
+  it("leaves the showcase alone for someone else's post on the version", async () => {
+    mockQueryRaw.mockResolvedValueOnce([post(false)] as never);
+
+    await bustCachesForPosts([1]);
+
+    expect(refreshShowcase).not.toHaveBeenCalled();
   });
 });

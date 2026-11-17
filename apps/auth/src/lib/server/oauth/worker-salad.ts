@@ -78,7 +78,8 @@ export async function verifySaladJwt(token: string): Promise<SaladIdentity> {
     throw new SaladTokenError('token expires too far in the future');
   }
   const machineId = payload.salad_machine_id;
-  const containerGroupId = payload.salad_container_group_id;
+  // Salad's IMDS token carries the container group id as `salad_workload_id`; it has no `salad_container_group_id`.
+  const containerGroupId = payload.salad_workload_id;
   if (typeof machineId !== 'string' || typeof containerGroupId !== 'string') {
     throw new SaladTokenError('token is missing Salad claims');
   }

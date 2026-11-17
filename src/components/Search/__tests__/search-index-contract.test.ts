@@ -4,7 +4,6 @@ import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.p
 import { BountiesSearchIndexSortBy } from '~/components/Search/parsers/bounties.parser';
 import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
 import { ComicsSearchIndexSortBy } from '~/components/Search/parsers/comic.parser';
-import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
 import { ToolsSearchIndexSortBy } from '~/components/Search/parsers/tool.parser';
 import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
@@ -19,26 +18,32 @@ import {
   sortableAttributesByIndex,
 } from '~/server/search-index/sortable-attributes';
 
-const searchIndexKeys = Object.keys(searchIndexMap) as SearchIndexKey[];
+// Image search answers from the semantic search, not a Meilisearch index, so it declares no
+// attributes for these contracts to check.
+const meiliIndexKeys: SearchIndexKey[] = (Object.keys(searchIndexMap) as SearchIndexKey[]).filter(
+  (key) => key !== 'images'
+);
+const declaredFilterable: Record<string, readonly string[]> = filterableAttributesByIndex;
 
 describe('BROWSING_LEVEL_ATTRIBUTE', () => {
-  it.each(Object.entries(BROWSING_LEVEL_ATTRIBUTE) as [SearchIndexKey, string][])(
-    '"%s" filters on an attribute its index actually declares',
-    (key, attribute) => {
-      const indexName = searchIndexMap[key];
-      const filterable = filterableAttributesByIndex[indexName];
+  it.each(
+    (Object.entries(BROWSING_LEVEL_ATTRIBUTE) as [SearchIndexKey, string][]).filter(([key]) =>
+      meiliIndexKeys.includes(key)
+    )
+  )('"%s" filters on an attribute its index actually declares', (key, attribute) => {
+    const indexName = searchIndexMap[key];
+    const filterable = declaredFilterable[indexName];
 
-      expect(
-        filterable,
-        `"${key}" search filters on ${attribute}, but ${indexName} does not declare it filterable — Meilisearch answers 400 invalid_search_filter and the whole search fails`
-      ).toContain(attribute);
-    }
-  );
+    expect(
+      filterable,
+      `"${key}" search filters on ${attribute}, but ${indexName} does not declare it filterable — Meilisearch answers 400 invalid_search_filter and the whole search fails`
+    ).toContain(attribute);
+  });
 
   it('covers every index that can filter on a browsing level', () => {
-    const unmapped = searchIndexKeys.filter(
+    const unmapped = meiliIndexKeys.filter(
       (key) =>
-        filterableAttributesByIndex[searchIndexMap[key]].includes('nsfwLevel') &&
+        declaredFilterable[searchIndexMap[key]].includes('nsfwLevel') &&
         !BROWSING_LEVEL_ATTRIBUTE[key]
     );
 
@@ -47,11 +52,13 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
 });
 
 describe('queryFilters', () => {
-  const tokenAttributes = Object.entries(queryFilters).flatMap(([key, config]) =>
-    Object.keys(config?.filters ?? {}).map(
-      (attribute) => [key, attribute] as [SearchIndexKey, string]
-    )
-  );
+  const tokenAttributes = Object.entries(queryFilters)
+    .filter(([key]) => meiliIndexKeys.includes(key as SearchIndexKey))
+    .flatMap(([key, config]) =>
+      Object.keys(config?.filters ?? {}).map(
+        (attribute) => [key, attribute] as [SearchIndexKey, string]
+      )
+    );
 
   it.each(tokenAttributes)(
     '"%s" builds its %s token filter on an attribute its index actually declares',
@@ -59,7 +66,7 @@ describe('queryFilters', () => {
       const indexName = searchIndexMap[key];
 
       expect(
-        filterableAttributesByIndex[indexName],
+        declaredFilterable[indexName],
         `"${key}" autocomplete turns a search token into \`${attribute} = ...\`, but ${indexName} does not declare ${attribute} filterable — Meilisearch answers 400 invalid_search_filter and the dropdown goes empty`
       ).toContain(attribute);
     }
@@ -89,7 +96,6 @@ describe('search sort options', () => {
     [searchIndexMap.bounties]: BountiesSearchIndexSortBy,
     [searchIndexMap.collections]: CollectionsSearchIndexSortBy,
     [searchIndexMap.comics]: ComicsSearchIndexSortBy,
-    [searchIndexMap.images]: ImagesSearchIndexSortBy,
     [searchIndexMap.models]: ModelSearchIndexSortBy,
     [searchIndexMap.tools]: ToolsSearchIndexSortBy,
     [searchIndexMap.users]: UsersSearchIndexSortBy,
@@ -105,7 +111,7 @@ describe('search sort options', () => {
 
   it('covers a sort option from every index', () => {
     expect(Object.keys(sortOptionsByIndex).sort()).toEqual(
-      Object.values(searchIndexMap).slice().sort()
+      meiliIndexKeys.map((key) => searchIndexMap[key]).sort()
     );
     expect(sortedAttributes.length).toBeGreaterThan(0);
   });

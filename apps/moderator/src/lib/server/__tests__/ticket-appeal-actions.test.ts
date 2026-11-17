@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../db', () => ({ dbRead: {}, dbWrite: {} }));
 
 const { createTicketAppealActions } = await import('../tickets/appeal-write');
+const { AppealRestoreRefusedError, APPEAL_RESTORE_REFUSED } = await import(
+  '../image-moderation.service'
+);
 
 const linkedUser = vi.fn();
 const canAct = vi.fn();
@@ -182,5 +185,20 @@ describe('appealResolveImage', () => {
     resolve.mockResolvedValue(undefined);
     expect(await run()).toMatchObject({ status: 409 });
     expect(note).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 with the reason, and leaves no note, when the approval cannot restore the image', async () => {
+    resolve.mockRejectedValue(new AppealRestoreRefusedError(100));
+
+    const result = await run();
+
+    expect(result).toMatchObject({ status: 409, data: { error: APPEAL_RESTORE_REFUSED } });
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it('lets any other failure of the resolve through', async () => {
+    resolve.mockRejectedValue(new Error('db down'));
+
+    await expect(run()).rejects.toThrow('db down');
   });
 });

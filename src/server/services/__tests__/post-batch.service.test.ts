@@ -15,6 +15,8 @@ const {
   removePost,
   addTools,
   addTechniques,
+  creditResources,
+  findVersion,
   canViewVersion,
   heldLocks,
 } = vi.hoisted(() => ({
@@ -24,6 +26,8 @@ const {
   removePost: vi.fn(),
   addTools: vi.fn(),
   addTechniques: vi.fn(),
+  creditResources: vi.fn(),
+  findVersion: vi.fn(),
   canViewVersion: vi.fn(),
   heldLocks: new Set<string>(),
 }));
@@ -49,7 +53,16 @@ vi.mock('~/server/controllers/post.controller', async (importOriginal) => ({
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   addPostImage: addImage,
+  creditResourcesToImages: creditResources,
+  findCreditableModelVersion: findVersion,
   deletePost: removePost,
+}));
+const { announceReviewsInBackground } = vi.hoisted(() => ({
+  announceReviewsInBackground: vi.fn(),
+}));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  announceReviewsInBackground,
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -90,6 +103,7 @@ const batchOf = (
   tags: [],
   tools: [],
   techniques: [],
+  resourceIds: [],
   posts: dates.map((publishedAt, index) => ({
     title: `Post ${index + 1}`,
     publishedAt,
@@ -127,6 +141,8 @@ beforeEach(() => {
   removePost.mockResolvedValue(undefined);
   addTools.mockResolvedValue(undefined);
   addTechniques.mockResolvedValue(undefined);
+  creditResources.mockResolvedValue([]);
+  findVersion.mockImplementation(async (id: number) => ({ id, model: { id: id + 1 } }));
 });
 
 afterEach(() => {
@@ -265,6 +281,22 @@ describe('scheduleBatch', () => {
     expect(removePost).not.toHaveBeenCalled();
   });
 
+  it('announces the unreleased reviews of the post it rolls back, read before the delete', async () => {
+    addImage.mockRejectedValueOnce(new TRPCError({ code: 'BAD_REQUEST', message: 'nope' }));
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      Array.isArray(strings) && strings.join('?').includes('"releasedAt" IS NULL')
+        ? [{ id: 77 }]
+        : []) as never);
+
+    await scheduleBatch({ input: batchOf([at(2)]), ctx: ctxFor() });
+
+    expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reviewIds: [77] })
+    );
+    const capture = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder.at(-1)!;
+    expect(capture).toBeLessThan(dbMock.dbWrite.post.delete.mock.invocationCallOrder[0]);
+  });
+
   it('masks a server-side failure message', async () => {
     updatePost.mockRejectedValueOnce(
       new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'connect ECONNREFUSED 10.0.0.1' })
@@ -354,8 +386,62 @@ describe('scheduleBatch', () => {
 
     expect(addTools).not.toHaveBeenCalled();
     expect(addTechniques).not.toHaveBeenCalled();
+    expect(findVersion).not.toHaveBeenCalled();
+    expect(creditResources).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.modelVersion.findUnique).not.toHaveBeenCalled();
     expect(updatePost).toHaveBeenCalledTimes(1);
+  });
+
+  it('checks the shared resources once per call and credits each post once, meta untouched', async () => {
+    const ctx = ctxFor();
+    const input = batchOf([at(2), at(3)], { resourceIds: [40, 41] });
+
+    await scheduleBatch({ input, ctx });
+
+    expect(addImage.mock.calls.map(([arg]) => arg.meta)).toEqual([null, null, null, null]);
+    expect(findVersion.mock.calls).toEqual([
+      [40, OWNER],
+      [41, OWNER],
+    ]);
+    const versions = [
+      { id: 40, model: { id: 41 } },
+      { id: 41, model: { id: 42 } },
+    ];
+    expect(creditResources.mock.calls.map(([arg]) => arg)).toEqual([
+      { imageIds: [1000, 1001], modelVersions: versions, user: OWNER, skipOnSite: true },
+      { imageIds: [1002, 1003], modelVersions: versions, user: OWNER, skipOnSite: true },
+    ]);
+    expect(creditResources.mock.invocationCallOrder[0]).toBeLessThan(
+      updatePost.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('refuses the chunk before any write when a shared resource cannot be credited', async () => {
+    findVersion.mockRejectedValueOnce(new TRPCError({ code: 'NOT_FOUND', message: 'nope' }));
+
+    await expect(
+      scheduleBatch({ input: batchOf([at(2)], { resourceIds: [40] }), ctx: ctxFor() })
+    ).rejects.toThrow('nope');
+    nothingWritten();
+  });
+
+  it('deletes the post whose resources are refused, before it is scheduled', async () => {
+    creditResources.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Images can have at most 3 checkpoints.' })
+    );
+
+    const result = await scheduleBatch({
+      input: batchOf([at(2)], { resourceIds: [40] }),
+      ctx: ctxFor(),
+    });
+
+    expect(result).toEqual({
+      created: [],
+      failedAt: 0,
+      message: 'Images can have at most 3 checkpoints.',
+    });
+    expect(updatePost).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.post.delete).toHaveBeenCalledWith({ where: { id: 100 } });
   });
 
   it('deletes the post that failed mid-chunk, keeps the ones before it and stops', async () => {

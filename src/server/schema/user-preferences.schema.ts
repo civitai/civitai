@@ -42,3 +42,14 @@ export const toggleHiddenTagsSchema = z.object({
 
 export type GetHiddenImagesForUserInput = z.infer<typeof getHiddenImagesForUserSchema>;
 export const getHiddenImagesForUserSchema = z.object({ userId: z.number() });
+
+export type GetHiddenModelsInput = z.infer<typeof getHiddenModelsSchema>;
+export const getHiddenModelsSchema = z.object({
+  query: z.string().trim().min(2).max(100).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  // The last model id of the previous page; pages run by model id descending.
+  cursor: z.number().int().optional(),
+});
+
+export type ClearHiddenInput = z.infer<typeof clearHiddenSchema>;
+export const clearHiddenSchema = z.object({ kind: z.enum(['model', 'user']) });

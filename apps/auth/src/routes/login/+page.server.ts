@@ -1,7 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { SYNC_PARAM } from '@civitai/auth';
-import { isEmailConfigured } from '@civitai/email';
+import { parsePlainEmailAddress } from '@civitai/auth/plain-email';
+import { addressparser, isEmailConfigured } from '@civitai/email';
 import type { Actions, PageServerLoad } from './$types';
 import { listEnabledProviders } from '$lib/server/auth/providers';
 import { readReturnUrl, readSync, buildPostLoginRedirect } from '$lib/server/auth/redirect';
@@ -14,15 +15,11 @@ import {
   isCaptchaEnabled,
   verifyCaptchaToken,
 } from '$lib/server/auth/captcha';
-import {
-  emailDomain,
-  isBlockedEmailDomain,
-  normalizeEmailAddress,
-} from '$lib/server/auth/blocklist';
+import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { checkRateLimit } from '$lib/server/auth/rate-limit';
 import { getClientIp } from '$lib/server/auth/request';
+import { signupRefusal } from '$lib/server/auth/signup-rules';
 import { trackLoginRedirect } from '$lib/server/tracking';
-import { userExistsByEmail } from '$lib/server/auth/users';
 import { blockedEmailDomainSignupsTotal, emailLoginFailuresTotal } from '$lib/server/metrics';
 import { logAxiomError } from '$lib/server/axiom';
 
@@ -94,6 +91,7 @@ export const actions: Actions = {
     const sync = data.get(SYNC_PARAM) ? String(data.get(SYNC_PARAM)) : null;
 
     if (!EMAIL_RE.test(email)) return fail(400, { email, invalid: true });
+    const plain = parsePlainEmailAddress(email, addressparser);
 
     // Resolve the real client IP from proxy headers (not the shared ingress socket peer) so the per-IP
     // limit is genuinely per-client; null behind a misconfigured proxy → checkRateLimit skips the limit.
@@ -119,22 +117,11 @@ export const actions: Actions = {
       return fail(400, { email, captcha: true });
     }
 
-    // 3. Blocked email domains: reject NEW signups on a blocklisted domain — an exact entry, or a
-    //    domain a moderator opted into suffix blocking — but don't retroactively lock out EXISTING
-    //    accounts when a domain is later added to either list (mirrors the exemption in step 4).
-    //    "Either list" matters: the exact list is appended weekly from upstream, while the suffix
-    //    list is hand-maintained and synced by nothing.
-    const domain = emailDomain(email);
-    if (domain && (await isBlockedEmailDomain(domain)) && !(await userExistsByEmail(email))) {
-      blockedEmailDomainSignupsTotal.inc({ path: 'email' });
-      return fail(400, { email, blockedDomain: true });
-    }
-
-    // 4. Plus-address anti-abuse: block NEW signups whose address contains '+', but let EXISTING users with a
-    //    '+' address still sign in (ports the legacy isAllowedToSignIn plus-address gate; skipped in dev).
-    if (!dev && email.includes('+') && !(await userExistsByEmail(email))) {
-      return fail(400, { email, plusBlocked: true });
-    }
+    // 3. New-account rules (plain address, blocked domain, plus address). The account lookup sits after the
+    //    captcha so it is rate limited like every other one here.
+    const refusal = await signupRefusal(email, plain);
+    if (refusal === 'blockedDomain') blockedEmailDomainSignupsTotal.inc({ path: 'email' });
+    if (refusal) return fail(400, { email, [refusal]: true });
 
     try {
       const token = await createVerificationToken(email);

@@ -27,12 +27,18 @@ export const LISTING_CARD_ICON_SIZE_PX = 56;
 export const LISTING_CARD_ICON_OVERLAP_PX = 14;
 
 /**
- * The icon's vertical centre, measured from the top of the header row (the row
+ * How far the title and the CTA sit BELOW the icon's own centre. Centred exactly on the icon they
+ * put the CTA's top edge 1px under the cover; this leaves a visible gap between the two.
+ */
+const LISTING_CARD_HEADER_DROP_PX = 10;
+
+/**
+ * The title and CTA's vertical centre (the icon's centre plus the drop), measured from the top of the header row (the row
  * starts at the cover's bottom edge). The title and the CTA are centred on THIS, not
  * on the row, so they line up with the icon whatever their own height is.
  */
 export const LISTING_CARD_HEADER_CENTER_PX =
-  LISTING_CARD_ICON_SIZE_PX / 2 - LISTING_CARD_ICON_OVERLAP_PX;
+  LISTING_CARD_ICON_SIZE_PX / 2 - LISTING_CARD_ICON_OVERLAP_PX + LISTING_CARD_HEADER_DROP_PX;
 
 /** The title's font size (Mantine `xl`). The anchor around it inherits 16px, so margins must not use `em`. */
 export const LISTING_CARD_TITLE_FONT_PX = 20;

@@ -35,6 +35,10 @@
   import SocialsPanel from '../SocialsPanel.svelte';
   import SubscriptionPanel from '../SubscriptionPanel.svelte';
   import MembershipCodePanel from '../MembershipCodePanel.svelte';
+  import MembershipExtendPanel from '../MembershipExtendPanel.svelte';
+  import MembershipCancelPanel from '../MembershipCancelPanel.svelte';
+  import MembershipResyncPanel from '../MembershipResyncPanel.svelte';
+  import { page } from '$app/state';
   import ReactionErasurePanel from '../ReactionErasurePanel.svelte';
   import CreatorScoreGrantPanel from '../CreatorScoreGrantPanel.svelte';
   import {
@@ -46,6 +50,7 @@
   import TrainingsPanel from '../TrainingsPanel.svelte';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
   import GenerationBanAction from '../GenerationBanAction.svelte';
+  import { workflowIdsParam } from '$lib/user-workflows-request';
 
   let { data }: { data: PageData } = $props();
 
@@ -63,6 +68,12 @@
   const links = $derived(
     browser && result && section === 'basic' ? fetchAccountLinks(result.identity.id, version) : null
   );
+
+  const showAllHref = $derived.by(() => {
+    const url = new URL(page.url);
+    url.searchParams.delete('workflows');
+    return url.pathname + url.search;
+  });
 
   // Panels own their own submit state and reset it themselves; the page owns only the refresh,
   // because it owns the promises. See form-state.svelte.ts.
@@ -90,6 +101,26 @@
       <!-- On the first screen because the enforcement history and the paying relationship are what it
            is read FOR; both were two clicks and a scroll away. -->
       <SubscriptionPanel subscription={result.subscription} />
+      {#if data.grants['user.membership.extend']}
+        <!-- `extendDays` / `extendReason` arrive on the assistant's proposal link; a person still
+             previews and confirms. -->
+        <MembershipExtendPanel
+          userId={result.identity.id}
+          initialDays={page.url.searchParams.get('extendDays') ?? ''}
+          initialReason={page.url.searchParams.get('extendReason') ?? ''}
+        />
+        <MembershipResyncPanel
+          userId={result.identity.id}
+          initialReason={page.url.searchParams.get('resyncReason') ?? ''}
+        />
+      {/if}
+      {#if data.grants['user.membership.cancel']}
+        <MembershipCancelPanel
+          userId={result.identity.id}
+          initialCancel={page.url.searchParams.get('cancelAtPeriodEnd') ?? ''}
+          initialReason={page.url.searchParams.get('cancelReason') ?? ''}
+        />
+      {/if}
       {#if data.grants['user.membership.code']}
         <MembershipCodePanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       {/if}
@@ -130,7 +161,7 @@
       <BuzzBalances userId={result.identity.id} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         {#if data.grants['user.buzz.send']}
-          <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+          <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
             <BuzzTransactionPanel
               userId={result.identity.id}
               onSuccess={() => (version += 1)}
@@ -175,12 +206,14 @@
             title="Generated media"
             open
             canView={!!data.grants['user.generations.view']}
+            workflowIds={workflowIdsParam(page.url.searchParams)}
+            {showAllHref}
             headerAction={data.grants['user.ban'] && !result.identity.bannedAt
               ? banAccount
               : undefined}
           />
         </div>
-        <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
+        <div class="xl:sticky xl:top-0 xl:w-96 xl:shrink-0">
           <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
         </div>
       </div>
@@ -189,9 +222,8 @@
     {:else if section === 'bounties'}
       <BountiesPanel {account} civitaiUrl={data.civitaiUrl} />
     {:else if section === 'comments'}
-      <!-- No `onSuccess`: the panel keeps its own rows in step, and a refresh here would discard them. -->
+      <!-- No `onSuccess`: the panel fetches its own pages and refetches the current one after a delete. -->
       <CommentsPanel
-        {account}
         userId={result.identity.id}
         canBulkAct={!!data.grants['user.comments.bulk']}
         civitaiUrl={data.civitaiUrl}

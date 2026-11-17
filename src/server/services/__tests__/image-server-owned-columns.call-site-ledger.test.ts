@@ -77,9 +77,10 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/routers/post.router.ts': { postAddImageInput: 2 },
   // Covers: an `id` is a reference the service checks (resolveCoverImageId's assertOwnership,
   // or a moderator-only route).
-  'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 2 },
+  'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
+  'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
   'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
@@ -98,7 +99,7 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/generation.schema.ts': { imageSchema: 2 },
   // Client form schemas. Their payloads go to `article.upsert` and to a report flow that keeps
   // only `url`, so the server parses them again with its own input schema.
-  'src/components/Article/ArticleUpsertForm.tsx': { imageSchema: 2 },
+  'src/components/Article/article-form.schema.ts': { imageSchema: 3 },
   'src/components/Report/OwnershipForm.tsx': { imageSchema: 2 },
 };
 
@@ -121,8 +122,9 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
   // re-checks here so no other path can write into someone else's post.
   'src/server/services/image.service.ts#createImage': {
     sites: 1,
-    // `metadata`: the stripped client metadata, plus the caller-verified App Blocks stamp.
-    spreads: ['pickClientImageColumns(image)', 'metadata'],
+    // `metadata`: the stripped client metadata, plus the caller-verified App Blocks stamp or the
+    // feedback capture stamp (one spread each).
+    spreads: ['pickClientImageColumns(image)', 'metadata', 'metadata'],
     serverColumns: ['postId: image.postId', 'index: image.index'],
     guards: [
       'if (image.postId != null) await assertPostOwnedBy({ postId: image.postId, userId: image.userId });',
@@ -230,10 +232,21 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
   },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': {
     calls: 1,
-    spreads: ['blurhashMetadata(blur)'],
+    spreads: [],
+    serverColumns: [],
+  },
+  // `metadata` is built before the call from the staged bytes' own metadata and the source ref.
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage': {
+    calls: 1,
+    spreads: [],
     serverColumns: [],
   },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
+  'src/server/services/feedback-capture.service.ts#createCapture': {
     calls: 1,
     spreads: [],
     serverColumns: [],
@@ -289,7 +302,8 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   string,
   { calls: number; decision: 'assertOwnership' | 'moderator-route' | 'input-has-no-id' }
 > = {
-  'src/server/services/article.service.ts#upsertArticle': { calls: 1, decision: 'assertOwnership' },
+  // The cover and the banner.
+  'src/server/services/article.service.ts#upsertArticle': { calls: 2, decision: 'assertOwnership' },
   'src/server/services/creator-announcement.service.ts#upsertCreatorAnnouncement': {
     calls: 1,
     decision: 'assertOwnership',
@@ -306,6 +320,11 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   'src/server/services/challenge.service.ts#upsertChallengeEvent': {
     calls: 1,
     decision: 'moderator-route',
+  },
+  // A service cover the seller supplies by id must be their own image, or the offering's current cover.
+  'src/server/services/creator-service.service.ts#resolveServiceCoverImageId': {
+    calls: 1,
+    decision: 'assertOwnership',
   },
   // The crucible inputs' cover and hero schemas have no `id`.
   'src/server/services/crucible.service.ts#createCrucible': {
@@ -414,6 +433,12 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   string,
   { writes: string[]; decision: FkDecision; guards?: Record<string, string> }
 > = {
+  // A team hat sticker on someone's image: any visible image in a published post is a target by
+  // design, and placeTurfSticker checks that before the write.
+  'src/server/events/turf/turf.service.ts#placeTurfSticker': {
+    writes: ['imageId'],
+    decision: 'subject',
+  },
   // Called from the daily-challenge jobs, and from upsertUserChallenge with its resolved cover.
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeRecord': {
     writes: ['coverImageId: input.coverImageId'],
@@ -422,6 +447,13 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/games/daily-challenge/challenge-helpers.ts#createChallengeWinner': {
     writes: ['imageId: input.imageId'],
     decision: 'server-derived',
+  },
+  // The New Order final-ratings settle SQL: a ClickHouse JOIN condition, not an assignment.
+  'src/server/games/new-order/final-ratings-sql.ts#<module>': {
+    writes: [
+      'new.imageId = orig.imageId WHERE orig.latestCreatedAt <= new.createdAt + INTERVAL ${SETTLE_CLOCK_MARGIN_SECONDS} SECOND`',
+    ],
+    decision: 'not-a-write',
   },
   'src/server/jobs/daily-challenge-processing.ts#createChallengeFromSelection': {
     writes: ['imageId: coverImageId'],
@@ -503,7 +535,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'server-derived',
   },
   'src/server/services/article.service.ts#upsertArticle': {
-    writes: ['coverId', 'coverId'],
+    writes: ['coverId', 'bannerId', 'coverId', 'bannerId'],
     decision: 'resolver',
   },
   'src/server/services/auto-feature-images.service.ts#runAutoFeatureImages': {
@@ -586,6 +618,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     ],
     decision: 'moderator-route',
   },
+  'src/server/services/creator-service.service.ts#upsertServiceOffering': {
+    writes: ['coverImageId', 'coverImageId'],
+    decision: 'resolver',
+  },
   'src/server/services/crucible.service.ts#createCrucible': {
     writes: ['imageId', 'heroImageId'],
     decision: 'resolver',
@@ -601,12 +637,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/crucible.service.ts#withdrawCrucibleEntry': {
     writes: ['imageId: null'],
     decision: 'clears',
-  },
-  'src/server/services/games/new-order.service.ts#processFinalRatings': {
-    writes: [
-      "new.imageId = orig.imageId WHERE orig.imageId IN (SELECT imageId FROM batch) AND orig.rank != 'Acolyte'",
-    ],
-    decision: 'not-a-write',
   },
   'src/server/services/image.service.ts#createEntityImages': {
     writes: ['imageId: image.id'],
@@ -629,7 +659,9 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     writes: ['thumbnailImageId', 'sourceImageId'],
     decision: 'server-derived',
   },
-  'src/server/services/post.service.ts#addResourceToPostImage': {
+  // Reached from addResourceToPostImage behind the route guard, and from scheduleBatch with the
+  // images it just created.
+  'src/server/services/post.service.ts#creditResourcesToImages': {
     writes: ['imageId'],
     decision: 'route-guard',
   },
@@ -652,7 +684,15 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline-caption.service.ts#setStorylineImageCaption': {
     writes: ['imageId'],
     decision: 'owner-checked',
-    guards: { imageId: 'if (image.post.userId !== userId)' },
+    // The author check is assertChapterPostAuthor's first line.
+    guards: { imageId: 'await assertChapterPostAuthor({' },
+  },
+  // The spark: someone else's image by design, refused unless it may be shown, is outside a block
+  // with the starter and its creator's remix gallery is open. Written once, here.
+  'src/server/services/storyline.service.ts#createStoryline': {
+    writes: ['sparkImageId'],
+    decision: 'owner-checked',
+    guards: { sparkImageId: 'if (sparkImageId) await assertStorylineSpark({' },
   },
   // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
   // collaborator, or an image this request uploaded, refused otherwise. A pick sent back unchanged
@@ -665,10 +705,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
-  },
-  'src/server/services/text-scan/actions/image-caption.ts#applyImageCaptionTextScan': {
-    writes: ['imageId: entityId'],
-    decision: 'server-derived',
   },
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],
@@ -683,7 +719,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
 
 /** The middleware each `route-guard` site sits behind, as it appears in its router. */
 const ROUTE_GUARDS: Record<string, { router: string; procedure: string }> = {
-  'src/server/services/post.service.ts#addResourceToPostImage': {
+  'src/server/services/post.service.ts#creditResourcesToImages': {
     router: 'src/server/routers/post.router.ts',
     procedure:
       'addResourceToImage: verifiedProcedure .meta({ requiredScope: TokenScope.MediaWrite }) .input(addResourceToPostImageInput) .use(isImageOwnerOrModerator) .mutation(addResourceToPostImageHandler)',
@@ -831,7 +867,7 @@ function serverColumnsOf(region: string): string[] {
 /** An image foreign-key column, by name: `…ImageId`, `imageId`, `coverId`, `profilePictureId`,
  * `iconId`, `avatarId`. Name-based, so a new column spelled this way is caught before it has a
  * relation in the Prisma schema. */
-const IMAGE_ID_COLUMN = String.raw`\w*ImageId|imageId|coverId|profilePictureId|iconId|avatarId`;
+const IMAGE_ID_COLUMN = String.raw`\w*ImageId|imageId|coverId|bannerId|profilePictureId|iconId|avatarId`;
 
 /** A Prisma write call on any model. */
 const PRISMA_WRITE =

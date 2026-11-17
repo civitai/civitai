@@ -1,3 +1,4 @@
+import { pageNotifications } from '@civitai/notifications';
 import type { ProtectedContext } from '~/server/createContext';
 import type {
   GetUserNotificationsSchema,
@@ -32,13 +33,7 @@ export const getUserNotificationsInfiniteHandler = async ({
       showSfwFace: showsSfwFace(getRequestBrowsingLevel(ctx)),
     });
 
-    let nextCursor: Date | undefined;
-    if (items.length > limit) {
-      const nextItem = items.pop();
-      nextCursor = nextItem?.createdAt;
-    }
-
-    return { items, nextCursor };
+    return pageNotifications(items, limit);
   } catch (error) {
     throw throwDbError(error);
   }

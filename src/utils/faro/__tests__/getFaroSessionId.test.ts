@@ -6,8 +6,9 @@ import { FEEDBACK_SESSION_ID_MAX_LENGTH } from '~/shared/constants/feedback.cons
  *
  * `FaroProvider` only calls `initializeFaro` when the build-arg, the collector URL
  * and the `faro` feature flag all agree, so Faro is NOT running in dev, test or
- * preview, and in production it is still absent for any session that blocked or
- * did not sample the SDK. Until then the SDK's `faro` export is a bare `{}`.
+ * preview, and in production it is still absent for any browser that blocked the
+ * SDK. Until then the SDK's `faro` export is a bare `{}`. A running SDK whose
+ * session was not sampled also yields no id: nothing is stored under it.
  *
  * The uninitialised shapes below are modelled on that: `{}` (never initialised),
  * `{ api: {} }` (partially wired), and an `api.getSession()` that returns
@@ -30,24 +31,54 @@ const setFaro = (value: Record<string, unknown>) => {
 
 const withSession = (session: unknown) => setFaro({ api: { getSession: () => session } });
 
+/** A session the SDK sampled: faro-web-sdk stamps `attributes.isSampled` as the string `'true'`. */
+const sampled = (fields: Record<string, unknown>) => ({
+  ...fields,
+  attributes: { isSampled: 'true', region: 'eu' },
+});
+
 beforeEach(() => setFaro({}));
 
 describe('Faro is running', () => {
   it('returns the session id', () => {
-    withSession({ id: 'sess-abc123' });
+    withSession(sampled({ id: 'sess-abc123' }));
     expect(getFaroSessionId()).toBe('sess-abc123');
   });
 
   it('trims surrounding whitespace', () => {
-    withSession({ id: '  sess-abc123  ' });
+    withSession(sampled({ id: '  sess-abc123  ' }));
     expect(getFaroSessionId()).toBe('sess-abc123');
   });
 
   it('truncates an over-long id to the boundary schema’s bound rather than failing', () => {
-    withSession({ id: 'x'.repeat(FEEDBACK_SESSION_ID_MAX_LENGTH + 50) });
+    withSession(sampled({ id: 'x'.repeat(FEEDBACK_SESSION_ID_MAX_LENGTH + 50) }));
     const id = getFaroSessionId();
     expect(id).toHaveLength(64);
     expect(FEEDBACK_SESSION_ID_MAX_LENGTH).toBe(64);
+  });
+});
+
+describe('🔴 the session was not sampled — its id names no telemetry', () => {
+  // The SDK still creates a session and an id for an unsampled session, but its transport drops
+  // every item unless `attributes.isSampled === 'true'`. A report must not point at that id.
+  it('returns undefined when the session is marked unsampled', () => {
+    withSession({ id: 'sess-abc123', attributes: { isSampled: 'false', region: 'eu' } });
+    expect(getFaroSessionId()).toBeUndefined();
+  });
+
+  it('returns undefined when the session carries no sampling attribute', () => {
+    withSession({ id: 'sess-abc123', attributes: { region: 'eu' } });
+    expect(getFaroSessionId()).toBeUndefined();
+  });
+
+  it('returns undefined when the session carries no attributes at all', () => {
+    withSession({ id: 'sess-abc123' });
+    expect(getFaroSessionId()).toBeUndefined();
+  });
+
+  it('accepts only the string the SDK writes, not a boolean', () => {
+    withSession({ id: 'sess-abc123', attributes: { isSampled: true } });
+    expect(getFaroSessionId()).toBeUndefined();
   });
 });
 
@@ -68,17 +99,17 @@ describe('🔴 Faro is absent — the ordinary dev/test/preview case', () => {
   });
 
   it('returns undefined when the session carries no id', () => {
-    withSession({});
+    withSession(sampled({}));
     expect(getFaroSessionId()).toBeUndefined();
   });
 
   it('returns undefined for a non-string id', () => {
-    withSession({ id: 12345 });
+    withSession(sampled({ id: 12345 }));
     expect(getFaroSessionId()).toBeUndefined();
   });
 
   it('returns undefined for a whitespace-only id', () => {
-    withSession({ id: '   ' });
+    withSession(sampled({ id: '   ' }));
     expect(getFaroSessionId()).toBeUndefined();
   });
 

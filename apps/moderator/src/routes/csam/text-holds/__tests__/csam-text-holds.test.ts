@@ -230,7 +230,7 @@ describe('csam text holds load', () => {
     listCsamHolds.mockResolvedValue({
       items: [
         { id: 1, entityType: 'UserProfile', entityId: 10 },
-        { id: 2, entityType: 'CommentV2', entityId: 20 },
+        { id: 2, entityType: 'CommentV3', entityId: 20 },
         { id: 3, entityType: 'Post', entityId: 30 },
       ],
       hasMore: false,
@@ -434,13 +434,14 @@ describe('csam text holds decide with the author’s other holds', () => {
 });
 
 describe('csam hold removal', () => {
-  it.each(['ChatMessage', 'Comment', 'CommentV2', 'UserProfile', 'Post', 'Model', 'Article'])(
+  it.each(['ChatMessage', 'CommentV3', 'UserProfile', 'Post', 'Model', 'Article'])(
     'offers removal for a %s hold',
     (type) => expect(canRemoveHeld(type)).toBe(true)
   );
 
-  it('offers none for a type the main app cannot remove', () => {
-    expect(canRemoveHeld('Image')).toBe(false);
+  // A hold still carrying an old comment type points at no comment the main app can remove.
+  it.each(['Image', 'Comment', 'CommentV2'])('offers none for a %s hold', (type) => {
+    expect(canRemoveHeld(type)).toBe(false);
   });
 });
 
@@ -514,8 +515,7 @@ describe('csam hold row text', () => {
 
   it('titles chat, comments and profiles by what they are', () => {
     expect(holdTitle({ ...base, entityType: 'ChatMessage' })).toBe('Chat');
-    expect(holdTitle({ ...base, entityType: 'CommentV2' })).toBe('Comment');
-    expect(holdTitle({ ...base, entityType: 'Comment' })).toBe('Comment');
+    expect(holdTitle({ ...base, entityType: 'CommentV3' })).toBe('Comment');
     expect(holdTitle({ ...base, entityType: 'UserProfile', username: 'someone' })).toBe('someone');
     expect(holdTitle({ ...base, entityType: 'UserProfile', userId: 3 })).toBe('user #3');
   });
@@ -547,16 +547,10 @@ describe('csam hold row text', () => {
 describe('holdEntityHref', () => {
   const ref = { entityId: 5, userId: null, username: null, chatId: null };
 
-  it('opens a legacy comment on its model, highlighting the comment', () => {
-    expect(
-      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: 70 })
-    ).toBe('https://site.test/models/70?dialog=commentThread&highlight=5');
-  });
-
-  it('has no link for a legacy comment whose model is unknown', () => {
-    expect(
-      holdEntityHref('https://site.test', { ...ref, entityType: 'Comment', commentModelId: null })
-    ).toBeNull();
+  it('opens a comment hold through its CommentV3 permalink', () => {
+    expect(holdEntityHref('https://site.test', { ...ref, entityType: 'CommentV3' })).toBe(
+      'https://site.test/comments/5'
+    );
   });
 });
 

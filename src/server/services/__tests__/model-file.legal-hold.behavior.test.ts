@@ -44,6 +44,9 @@ vi.mock('~/server/redis/resource-data.redis', () => ({
 }));
 vi.mock('~/server/services/orchestrator/models', () => ({
   bustOrchestratorModelCache: vi.fn(() => Promise.resolve()),
+  getOrchestratorVersionAirs: vi.fn(() => Promise.resolve([])),
+  bustOrchestratorAirs: vi.fn(() => Promise.resolve()),
+  bustOrchestratorScannedFileCache: vi.fn(() => Promise.resolve()),
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
@@ -186,7 +189,7 @@ describe('a new upload replacing a file', () => {
         model: { type: 'Checkpoint', userId: owner },
       },
     } as never);
-    dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: 99_999 } as never);
+    dbMock.dbWrite.modelFile.create.mockResolvedValue({ id: 990200001 } as never);
   }
   const replace = (owner: number, isModerator = false) =>
     updateFile({

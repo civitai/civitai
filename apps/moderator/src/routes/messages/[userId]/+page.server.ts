@@ -11,11 +11,12 @@ import {
   sendAsCivitai,
 } from '$lib/server/message-as-civitai';
 import { MESSAGE_AS_CIVITAI_MAX_LENGTH } from '$lib/message-as-civitai';
-import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { int4Id, parseForm, parseQuery, userIdSchema } from '$lib/server/query';
+import { toTranscriptCursor, transcriptCursorSchema } from '$lib/chat-transcript-cursor';
 
 const threadFail = (message: string) => fail(400, { scope: 'thread' as const, error: message });
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, url }) => {
   const parsed = int4Id.safeParse(params.userId);
   if (!parsed.success) error(404, 'Not a user id.');
   const userId = parsed.data;
@@ -34,7 +35,14 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 
   const { chatId, claim } = thread.value;
   const [transcript, members] = chatId
-    ? await Promise.all([getTranscript(readerOf(locals.user), chatId), getChatMembers(chatId)])
+    ? await Promise.all([
+        getTranscript(
+          readerOf(locals.user),
+          chatId,
+          toTranscriptCursor(parseQuery(url, transcriptCursorSchema))
+        ),
+        getChatMembers(chatId),
+      ])
     : [null, []];
   return { userId, error: null, claim, chatId, transcript, members, me: locals.user.id };
 };

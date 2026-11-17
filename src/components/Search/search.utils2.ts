@@ -4,9 +4,9 @@ import { useHits, useInfiniteHits } from 'react-instantsearch';
 import type { ArticleSearchIndexRecord } from '~/server/search-index/articles.search-index';
 import type { BountySearchIndexRecord } from '~/server/search-index/bounties.search-index';
 import type { CollectionSearchIndexRecord } from '~/server/search-index/collections.search-index';
-import type { ImageSearchIndexRecord } from '~/server/search-index/images.search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { transformModelHits } from '~/shared/search/models-transform';
@@ -22,15 +22,40 @@ function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
   return transformModelHits(items);
 }
 
+// Image search hits are full images; the optional fields are the ones the retired Meilisearch
+// record carried that the dropdown row still reads when they are there.
+type ImageSearchHit = ImagesInfiniteModel & {
+  prompt?: string;
+  hideMeta?: boolean;
+  tagNames?: string[];
+  sortAt?: Date | null;
+  stats?: ImagesInfiniteModel['stats'] & { reactionCountAllTime?: number };
+};
+
 type ImagesTransformed = ReturnType<typeof imagesTransform>;
-function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
-  return items.map((item) => ({
-    ...item,
-    hasMeta: !item.hideMeta && item.prompt,
-    nsfwLevel: item.nsfwLevel,
-    ingestion: ImageIngestionStatus.Scanned,
-    publishedAt: item.sortAt,
-  }));
+function imagesTransform(items: Hit<ImageSearchHit>[]) {
+  return items.map((item) => {
+    // Semantic search hits are already full images and carry their own values.
+    const hydrated = item as { hasMeta?: boolean; publishedAt?: Date | null };
+    return {
+      ...item,
+      prompt: item.prompt ?? '',
+      tagNames: item.tagNames ?? [],
+      stats: item.stats && {
+        ...item.stats,
+        reactionCountAllTime:
+          item.stats.reactionCountAllTime ??
+          item.stats.likeCountAllTime +
+            item.stats.heartCountAllTime +
+            item.stats.laughCountAllTime +
+            item.stats.cryCountAllTime,
+      },
+      hasMeta: hydrated.hasMeta ?? (!item.hideMeta && item.prompt),
+      nsfwLevel: item.nsfwLevel,
+      ingestion: ImageIngestionStatus.Scanned,
+      publishedAt: hydrated.publishedAt ?? item.sortAt,
+    };
+  });
 }
 
 type ArticlesTransformed = ReturnType<typeof articlesTransform>;
@@ -38,7 +63,7 @@ function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
   return items.map((article) => ({
     ...article,
     nsfwLevel: flagifyBrowsingLevel(article.nsfwLevel),
-    coverImage: {
+    coverImage: article.coverImage && {
       ...article.coverImage,
       tags: article.coverImage.tags.map((x) => x.id),
       metadata: article.coverImage.metadata as ImageMetadata,

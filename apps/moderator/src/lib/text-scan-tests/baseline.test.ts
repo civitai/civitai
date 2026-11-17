@@ -31,7 +31,7 @@ describe('promptIdsFor', () => {
 
 describe('labelsOf', () => {
   it('unions the labels of the entity types, in label order', () => {
-    expect(labelsOf(['CommentV2', 'Model'])).toEqual(['nsfw', 'poi', 'minor', 'scam']);
+    expect(labelsOf(['CommentV3', 'Model'])).toEqual(['nsfw', 'poi', 'minor', 'scam']);
   });
 });
 

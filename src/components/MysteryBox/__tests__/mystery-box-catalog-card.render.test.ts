@@ -70,6 +70,7 @@ const box = (overrides: Partial<MysteryBoxCatalogView> = {}): MysteryBoxCatalogV
   name: 'Birthday Box',
   description: null,
   unitAmount: 500,
+  pack: null,
   tiers: [
     { id: COMMON, key: 'common', name: 'Common', color: null, weight: 3, sortOrder: 0 },
     { id: RARE, key: 'rare', name: 'Rare', color: null, weight: 1, sortOrder: 1 },

@@ -7,8 +7,6 @@ import {
   getBounties,
   getBountyEntries,
   getShopPurchases,
-  getComments,
-  getCommentsV2,
   getCosmetics,
   getGrantedBoxes,
   getReceivedReviews,
@@ -26,8 +24,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
   const [
     receivedReviews,
-    comments,
-    commentsV2,
     cosmetics,
     trainings,
     bounties,
@@ -38,8 +34,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
     grantableBoxes,
   ] = await Promise.all([
     getReceivedReviews(userId),
-    getComments(userId),
-    getCommentsV2(userId),
     getCosmetics(userId),
     getTrainingRuns(userId),
     getBounties(userId),
@@ -52,8 +46,6 @@ export const GET: RequestHandler = async ({ params, locals }) => {
 
   return json({
     receivedReviews,
-    comments,
-    commentsV2,
     cosmetics,
     trainings,
     bounties,

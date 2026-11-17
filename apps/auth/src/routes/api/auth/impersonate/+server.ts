@@ -19,6 +19,8 @@ import { isSystemAccountUser } from '$lib/server/auth/users';
 export const POST: RequestHandler = async ({ request, locals }) => {
   const mod = locals.user;
   if (!mod) error(401, 'unauthorized');
+  // In an impersonation session `locals.user` is the target, not the moderator.
+  if (locals.impersonatedBy != null) error(403, 'exit impersonation first');
 
   const permitted =
     mod.isModerator &&

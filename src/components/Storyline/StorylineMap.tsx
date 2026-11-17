@@ -4,11 +4,11 @@ import {
   CloseButton,
   Drawer,
   Loader,
-  Popover,
   Progress,
   Text,
   UnstyledButton,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import {
   IconArrowRight,
   IconBook2,

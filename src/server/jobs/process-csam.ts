@@ -1,4 +1,10 @@
+import { randomUUID } from 'node:crypto';
+import { archiveQueueStates } from '@civitai/db-queries/evidence-archive-queue';
+import { JOB_QUEUE_OVERDUE_MINUTES } from '@civitai/shared/job-queue';
 import { isDev, isProd } from '~/env/other';
+import { env } from '~/env/server';
+import { kyselyWrite } from '~/server/db/kyselyDb';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { createJob } from './job';
 import {
   archiveCsamDataForReport,
@@ -6,7 +12,10 @@ import {
   getCsamsToRemoveContent,
   getCsamsToReport,
   logBlockedCsamReports,
+  logOverdueEvidenceApprovals,
   processCsamReport,
+  sweepArchiveScratchDirs,
+  sweepStaleSendDirs,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
 import { checkCsamArchiveEvidence } from '~/server/services/csam-archive-evidence.service';
@@ -37,6 +46,24 @@ const sendCsamReportsJob = createJob(
   'send-csam-reports',
   '0 */1 * * *',
   async () => {
+    try {
+      const removed = await sweepStaleSendDirs();
+      if (removed.length)
+        logToAxiom({
+          name: 'csam-report',
+          type: 'info',
+          subType: 'send-scratch-sweep',
+          message: `removed ${removed.length} stale send scratch dir(s)`,
+        });
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-scratch-sweep',
+        message: errorMessage(e),
+      });
+    }
+
     const reports = await getCsamsToReport();
     // wait for each process to finish before going to the next
     for (const report of reports) {
@@ -49,12 +76,25 @@ const sendCsamReportsJob = createJob(
           type: 'error',
           subType: 'send-report',
           message: errorMessage(e),
+          reportId: report.id,
+          ncmecReportId: report.reportId ?? undefined,
         });
       }
     }
 
     try {
       await logBlockedCsamReports(reports.map((report) => report.id));
+    } catch (e) {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'send-blocked-check',
+        message: errorMessage(e),
+      });
+    }
+
+    try {
+      await logOverdueEvidenceApprovals();
     } catch (e) {
       logToAxiom({
         name: 'csam-report',
@@ -131,37 +171,155 @@ export const CSAM_ARCHIVE_MEASURED_PASS_SECONDS = 80 * 60;
  */
 export const CSAM_ARCHIVE_JOB_LOCK_SECONDS = 4 * 60 * 60;
 
-const archiveCsamReportDataJob = createJob(
-  'archive-csam-reports',
-  '20 */1 * * *',
-  async () => {
-    const reports = await getCsamsToArchive();
-    // wait for each process to finish before going to the next
-    for (const report of reports) {
-      try {
-        await archiveCsamDataForReport(report);
-      } catch (e) {
+/**
+ * Whether the in-app archive runs this tick. Unreadable (no Flipt client yet, an evaluation error,
+ * a missing key) counts as ON, so a Flipt problem keeps reports archiving.
+ */
+async function readInAppArchive() {
+  try {
+    await ensureFliptInitialized();
+  } catch {
+    // No client: the read below is null, so the tick runs ON and logs the flag as unreadable.
+  }
+  const value = isFliptSync(FLIPT_FEATURE_FLAGS.EVIDENCE_ARCHIVE_IN_APP);
+  return { inAppOn: value !== false, readable: value !== null };
+}
+
+/** In the separate archiver's queue: read on the primary just before archiving, never from the tick's list. */
+async function inArchiverQueue(reportId: number) {
+  const states = await archiveQueueStates(
+    kyselyWrite,
+    [reportId],
+    JOB_QUEUE_OVERDUE_MINUTES.CsamArchive
+  );
+  return states.has(reportId);
+}
+
+async function wasStamped(reportId: number) {
+  const row = await kyselyWrite
+    .selectFrom('CsamReport')
+    .select('archivedAt')
+    .where('id', '=', reportId)
+    .executeTakeFirst();
+  return !!row?.archivedAt;
+}
+
+type Tick = { tickId: string; pod: string | null; inAppOn: boolean; readable: boolean };
+
+// civitai-prod is at Axiom's field cap, so a new top-level key is dropped on ingest; only keys that
+// are already dataset fields (pod, phase, reportId, ...) may stay top level.
+const tickFields = (tick: Tick) => ({
+  pod: tick.pod,
+  payload: { tickId: tick.tickId, inAppOn: tick.inAppOn, readable: tick.readable },
+});
+
+async function archiveTick(tick: Tick) {
+  try {
+    const removed = await sweepArchiveScratchDirs();
+    if (removed.length)
+      logToAxiom({
+        name: 'csam-report',
+        type: 'info',
+        subType: 'archive-scratch-sweep',
+        message: `removed ${removed.length} stale archive scratch dir(s)`,
+      });
+  } catch (e) {
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-scratch-sweep',
+      message: errorMessage(e),
+    });
+  }
+
+  const reports = await getCsamsToArchive();
+  for (const report of reports) {
+    try {
+      // OFF: the archiver archives every report with a user; this job still stamps the rest.
+      if (!tick.inAppOn && report.userId != null) continue;
+      if (report.userId != null) {
+        let queued: boolean;
+        try {
+          queued = await inArchiverQueue(report.id);
+        } catch (e) {
+          // Not knowing is not archiving: the report waits for the next tick.
+          logToAxiom({
+            name: 'csam-report',
+            type: 'error',
+            subType: 'archive-queue-lookup',
+            reportId: report.id,
+            error: e instanceof Error ? e.name : typeof e,
+          });
+          continue;
+        }
+        if (queued) continue;
+      }
+      await archiveCsamDataForReport(report);
+      // Each report stamped under an unreadable flag gets the archiver's copy by hand.
+      // A read-back that fails lists the report too: a hand re-queue of an unstamped one is harmless.
+      if (!tick.readable && (await wasStamped(report.id).catch(() => true)))
         logToAxiom({
           name: 'csam-report',
           type: 'error',
-          subType: 'archive-data',
-          message: errorMessage(e),
+          subType: 'archive-flag-unreadable',
+          ...tickFields(tick),
           reportId: report.id,
-          hoursSinceSent: report.reportSentAt
-            ? Math.floor((Date.now() - report.reportSentAt.getTime()) / 3_600_000)
-            : null,
         });
-      }
-    }
-
-    try {
-      await checkCsamArchiveEvidence();
     } catch (e) {
       logToAxiom({
         name: 'csam-report',
         type: 'error',
-        subType: 'archive-evidence-check',
+        subType: 'archive-data',
         message: errorMessage(e),
+        reportId: report.id,
+        hoursSinceSent: report.reportSentAt
+          ? Math.floor((Date.now() - report.reportSentAt.getTime()) / 3_600_000)
+          : null,
+      });
+    }
+  }
+
+  try {
+    await checkCsamArchiveEvidence();
+  } catch (e) {
+    logToAxiom({
+      name: 'csam-report',
+      type: 'error',
+      subType: 'archive-evidence-check',
+      message: errorMessage(e),
+    });
+  }
+}
+
+const archiveCsamReportDataJob = createJob(
+  'archive-csam-reports',
+  '20 */1 * * *',
+  async () => {
+    const { inAppOn, readable } = await readInAppArchive();
+    const tick: Tick = { tickId: randomUUID(), pod: env.PODNAME ?? null, inAppOn, readable };
+    logToAxiom({
+      name: 'csam-report',
+      type: 'info',
+      subType: 'archive-tick',
+      phase: 'start',
+      ...tickFields(tick),
+    });
+    if (!readable)
+      logToAxiom({
+        name: 'csam-report',
+        type: 'error',
+        subType: 'archive-flag-unreadable',
+        ...tickFields(tick),
+      });
+    try {
+      await archiveTick(tick);
+    } finally {
+      logToAxiom({
+        name: 'csam-report',
+        type: 'info',
+        subType: 'archive-tick',
+        phase: 'end',
+        ...tickFields(tick),
       });
     }
   },

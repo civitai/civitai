@@ -1,4 +1,5 @@
-import { Loader, Text, Tooltip } from '@mantine/core';
+import { Loader, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconPackage, IconPlus, IconUser, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -40,12 +41,7 @@ export type ActiveWildcardsProps = {
  * set without navigating back to the wildcard model page. Adding sets
  * also happens here via the inline "+ Add set" button.
  */
-export function ActiveWildcards({
-  onRemoveSet,
-  onAdd,
-  isAdding,
-  className,
-}: ActiveWildcardsProps) {
+export function ActiveWildcards({ onRemoveSet, onAdd, isAdding, className }: ActiveWildcardsProps) {
   // Pulls `loadedSets`/`loadingSetIds`/`ownSetId` straight from the graph
   // via `useSnippetCategories` — keeps the parent (GenerationForm) from
   // having to call the hook just to feed this strip.
@@ -177,6 +173,7 @@ function AddSetButton({ onAdd, isAdding }: { onAdd: () => void; isAdding?: boole
       type="button"
       onClick={onAdd}
       disabled={isAdding}
+      data-tap-area
       className={clsx(
         'inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-dashed px-2 text-xs transition-colors',
         'border-gray-4 text-gray-6 hover:border-gray-5 hover:text-gray-7',

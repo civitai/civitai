@@ -40,12 +40,10 @@ beforeEach(() => resetSearchApiKey());
 afterEach(() => vi.unstubAllGlobals());
 
 describe('searchFetch', () => {
-  it('without a signing key on the server, searches with the public key as before', async () => {
-    const { fetchMock, searchKeys } = stubNetwork([{ token: null }]);
-    await searchFetch(SEARCH_URL, { method: 'POST', headers: { Authorization: 'Bearer x' } });
-    await searchFetch(SEARCH_URL, { method: 'POST' });
-
-    expect(searchKeys).toEqual(['public-key', 'public-key']);
+  it('without a signing key on the server there is no key, even with a public key configured', async () => {
+    const { fetchMock } = stubNetwork([{ token: null }]);
+    await expect(getSearchApiKey()).resolves.toBeUndefined();
+    await expect(getSearchApiKey()).resolves.toBeUndefined();
     // Asked once per page load, not per search.
     expect(tokenCalls(fetchMock)).toBe(1);
   });
@@ -81,6 +79,18 @@ describe('searchFetch', () => {
     expect(searchKeys).toEqual(['revoked', 'tok-2']);
   });
 
+  it('a rejected token with no fresh one does not search again without a key', async () => {
+    const { searchKeys } = stubNetwork(
+      [{ token: 'revoked', expiresAt: Date.now() + 3_600_000 }, { token: null }],
+      () => 403
+    );
+    await expect(searchFetch(SEARCH_URL, { method: 'POST' })).rejects.toMatchObject({
+      name: 'MeiliSearchApiError',
+      httpStatus: 403,
+    });
+    expect(searchKeys).toEqual(['revoked']);
+  });
+
   it('throws an error the resilient client classifies as a Meilisearch API error', async () => {
     stubNetwork([{ token: null }], () => 403);
     await expect(searchFetch(SEARCH_URL, { method: 'POST' })).rejects.toMatchObject({
@@ -90,11 +100,19 @@ describe('searchFetch', () => {
     });
   });
 
-  it('falls back to the public key while the token endpoint is unreachable', async () => {
+  it('has no key while the token endpoint is unreachable', async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError('Failed to fetch');
     });
     vi.stubGlobal('fetch', fetchMock);
-    await expect(getSearchApiKey()).resolves.toBe('public-key');
+    await expect(getSearchApiKey()).resolves.toBeUndefined();
+  });
+
+  it('has no key when the token endpoint fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => json({ message: 'nope' }, 500))
+    );
+    await expect(getSearchApiKey()).resolves.toBeUndefined();
   });
 });

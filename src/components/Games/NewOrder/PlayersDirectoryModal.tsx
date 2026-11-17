@@ -7,8 +7,8 @@ import {
   LoadingOverlay,
   Modal,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDebouncedState } from '@mantine/hooks';
 import {
   IconArrowLeft,

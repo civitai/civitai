@@ -16,6 +16,12 @@ vi.mock('~/server/flipt/client', () => ({
   isFliptSync: () => null,
   ensureFliptInitialized: async () => undefined,
 }));
+// The listing checks the requested version belongs to the model; version 7 does.
+vi.mock('~/server/services/model-version.service', () => ({
+  getDefaultModelVersion: vi.fn(async ({ modelVersionId }: { modelVersionId?: number }) => ({
+    id: modelVersionId ?? 7,
+  })),
+}));
 
 let nextHost = 0;
 // A `/_next/data` URL is a client-nav fetch, which skips the SSG prefetch: the redirect decision

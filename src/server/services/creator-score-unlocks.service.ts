@@ -8,10 +8,6 @@ import {
 import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import { scoreRungs } from '~/server/utils/early-access-helpers';
 import { dbRead } from '~/server/db/client';
-import { dailyArticleTiers } from '~/server/schema/article.schema';
-import { COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE } from '~/server/schema/comment.schema';
-import { dailyPostTiers, MEMBER_DAILY_POST_MULTIPLIER } from '~/server/schema/post.schema';
-import { REACTION_RATE_LIMIT_MIN_CREATOR_SCORE } from '~/server/schema/reaction.schema';
 import {
   ANNOUNCEMENT_DEFAULT_MIN_SCORE,
   getAnnouncementMinScore,
@@ -22,8 +18,16 @@ import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import { getServicesMinCreatorScore } from '~/server/services/creator-service-min-score';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
+import { isHatTurfLive } from '~/server/events/turf/live';
+import { TURF_SCORE_TIER_KEY } from '~/server/events/turf/config';
 import { SERVICES_MIN_CREATOR_SCORE } from '~/shared/constants/creator-service.constants';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
+import { getUsageLimitConfig } from '~/server/services/usage-limit-config.service';
+import {
+  defaultUsageLimitConfig,
+  resolveUsageLimitValues,
+  type UsageLimitConfig,
+} from '~/shared/constants/usage-limits';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
   PLACEMENT_FREE_SLOT_CAP_TIERS,
@@ -50,6 +54,11 @@ export type CreatorScoreUnlockInputs = {
   /** Kept out of the list, including tier-reached notifications, until the flag is on for everyone. */
   servicesEnabled: boolean;
   servicesMinScore: number;
+  /** Listed only while Hat Turf is open to everyone. */
+  hatTurfLive: boolean;
+  /** The Spark tier's threshold, from its CreatorMilestone row; 0 (not listed) when unread. */
+  turfMinScore: number;
+  usageLimits: UsageLimitConfig;
 };
 
 export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
@@ -59,7 +68,31 @@ export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
   placementFreeSlotTiers: () => PLACEMENT_FREE_SLOT_CAP_TIERS,
   servicesEnabled: false,
   servicesMinScore: SERVICES_MIN_CREATOR_SCORE,
+  hatTurfLive: false,
+  turfMinScore: 0,
+  usageLimits: defaultUsageLimitConfig,
 };
+
+/** The lowest Creator Score that raises a usage limit; 0 (not listed) when none does. */
+function lowestRaise(config: UsageLimitConfig, id: string) {
+  const values = config.get(id);
+  if (!values || values.disabled || !values.byScore?.length) return 0;
+  return Math.min(...values.byScore.map((tier) => tier.minScore));
+}
+
+/** The Creator Score tiers of a usage limit, with what a member gets at each. */
+function scoreTiersOf(config: UsageLimitConfig, id: string) {
+  const values = config.get(id);
+  if (!values || values.disabled) return [];
+  return (values.byScore ?? []).map(({ minScore, limit }) => ({
+    minScore,
+    limit,
+    memberLimit: resolveUsageLimitValues(values, {
+      tier: 'bronze',
+      meta: { scores: { total: minScore } },
+    }).limit,
+  }));
+}
 
 /** Every privilege a Creator Score unlocks, lowest first. A threshold of 0 is not an unlock. */
 export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): CreatorScoreUnlock[] {
@@ -72,13 +105,11 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       scoreKind: 'total',
       source: 'compiled',
     },
-    ...dailyPostTiers.map(
-      ({ minScore, limit }): CreatorScoreUnlock => ({
+    ...scoreTiersOf(inputs.usageLimits, 'posts.daily').map(
+      ({ minScore, limit, memberLimit }): CreatorScoreUnlock => ({
         key: `daily-posts:${minScore}`,
         minScore,
-        label: `Post up to ${limit} times a day (${
-          limit * MEMBER_DAILY_POST_MULTIPLIER
-        } as a member)`,
+        label: `Post up to ${limit} times a day (${memberLimit} as a member)`,
         surface: 'posting',
         scoreKind: 'total',
         source: 'compiled',
@@ -86,7 +117,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
     ),
     {
       key: 'comment-rate-limit',
-      minScore: COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE,
+      minScore: lowestRaise(inputs.usageLimits, 'comments.hourly'),
       label: 'Higher comment limits',
       surface: 'comments',
       scoreKind: 'total',
@@ -94,13 +125,13 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
     },
     {
       key: 'reaction-rate-limit',
-      minScore: REACTION_RATE_LIMIT_MIN_CREATOR_SCORE,
+      minScore: lowestRaise(inputs.usageLimits, 'reactions.minute'),
       label: 'Higher reaction limits',
       surface: 'reactions',
       scoreKind: 'total',
       source: 'compiled',
     },
-    ...dailyArticleTiers.map(
+    ...scoreTiersOf(inputs.usageLimits, 'articles.daily').map(
       ({ minScore, limit }): CreatorScoreUnlock => ({
         key: `daily-articles:${minScore}`,
         minScore,
@@ -207,6 +238,18 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
           } satisfies CreatorScoreUnlock,
         ]
       : []),
+    ...(inputs.hatTurfLive
+      ? [
+          {
+            key: 'hat-turf-team-stickers',
+            minScore: inputs.turfMinScore,
+            label: 'Hat Turf: your stickers count for your team (accounts made since Nov 1)',
+            surface: 'events',
+            scoreKind: 'total',
+            source: 'compiled',
+          } satisfies CreatorScoreUnlock,
+        ]
+      : []),
   ];
 
   return unlocks.filter((unlock) => unlock.minScore > 0).sort((a, b) => a.minScore - b.minScore);
@@ -235,14 +278,25 @@ async function getSaleMinScore() {
 
 /** The unlocks as the gates enforce them right now, KeyValue overrides included. */
 export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
-  const [saleMinScore, announcementMinScore, placementConfig, servicesEnabled, servicesMinScore] =
-    await Promise.all([
-      getSaleMinScore(),
-      getAnnouncementMinScore(),
-      getPlacementConfig(),
-      isServicesPublic(),
-      getServicesMinCreatorScore(),
-    ]);
+  const [
+    saleMinScore,
+    announcementMinScore,
+    placementConfig,
+    servicesEnabled,
+    servicesMinScore,
+    hatTurfLive,
+    turfMinScore,
+    usageLimits,
+  ] = await Promise.all([
+    getSaleMinScore(),
+    getAnnouncementMinScore(),
+    getPlacementConfig(),
+    isServicesPublic(),
+    getServicesMinCreatorScore(),
+    isHatTurfLive(),
+    getTurfMinScore(),
+    getUsageLimitConfig(),
+  ]);
 
   return buildCreatorScoreUnlocks({
     saleMinScore,
@@ -251,5 +305,20 @@ export async function getCreatorScoreUnlocks(): Promise<CreatorScoreUnlock[]> {
     placementFreeSlotTiers: placementConfig.freeSlotTiers,
     servicesEnabled,
     servicesMinScore,
+    hatTurfLive,
+    turfMinScore,
+    usageLimits,
   });
+}
+
+async function getTurfMinScore() {
+  try {
+    const row = await dbRead.creatorMilestone.findUnique({
+      where: { key: TURF_SCORE_TIER_KEY },
+      select: { threshold: true },
+    });
+    return row?.threshold ?? 0;
+  } catch {
+    return 0;
+  }
 }

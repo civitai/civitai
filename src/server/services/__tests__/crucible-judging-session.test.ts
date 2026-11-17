@@ -6,6 +6,7 @@ import {
   MediaType,
 } from '~/shared/utils/prisma/enums';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
 
@@ -24,6 +25,14 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
     getVoteCount: vi.fn().mockResolvedValue(0),
     getAllVoteCounts: vi.fn().mockResolvedValue({}),
     incrementVoteCount: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+// The vote's ClickHouse event, sent fire-and-forget after the vote is recorded.
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  Tracker: class {
+    crucibleVote = vi.fn();
   },
 }));
 

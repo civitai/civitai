@@ -80,11 +80,18 @@ vi.mock('~/server/redis/client', () => ({
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 vi.mock('~/server/utils/server-domain', () => ({
-  getAllServerHosts: () => ['civitai.com'],
+  // civitai.red is an allowed origin too, so the browsing-level cases below reach the mint.
+  getAllServerHosts: () => ['civitai.com', 'civitai.red'],
   // #2670 (color-domain maturity) added a getRequestDomainColor(req) call to the
   // mint. The test reqs carry no `host` header, so the real impl returns
   // undefined → SFW ceiling; mirror that here so the module mock stays complete.
   getRequestDomainColor: () => undefined,
+  // The red-capable host and the mature-rating rule, mirrored as in index.test.ts so the
+  // browsing-level cases below can run on civitai.red.
+  isHostForColor: (host: string, color: string) =>
+    color === 'red' && (host === 'civitai.red' || host === 'www.civitai.red'),
+  isMatureContentRating: (rating: unknown) =>
+    typeof rating === 'string' && (rating.toLowerCase() === 'r' || rating.toLowerCase() === 'x'),
 }));
 vi.mock('~/server/services/feature-flags.service', () => mockFlags);
 // Phase 2 dev-tunnel flag helpers (dynamically imported by the mint's dev branch).
@@ -1302,5 +1309,88 @@ describe('POST /api/v1/block-tokens — approved page app previewed through the 
     const res = await mint({ ...pageBody(), devTunnel: 'yes' });
     expect(res._status).toBe(400);
     expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE PAGE (RUN) MINT FOLLOWS THE VIEWER'S BROWSING LEVEL. The run page shows a hidden state
+ * for an R/X app the viewer's level excludes; a direct `page_<appBlockId>` mint must not hand
+ * that viewer a token either. Refused with the same 403 shape as the host refusal.
+ */
+describe("POST /api/v1/block-tokens — page mint, R/X apps follow the viewer's browsing level", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBlockRegistry.resolvePageBlock.mockReset();
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['apps:storage:read', 'apps:storage:write'],
+      revokedAt: null,
+    });
+    mockRedis.incrBy.mockResolvedValue(1);
+    mockTokenService.checkRateLimit.mockResolvedValue(true);
+    (mockFlags.getFeatureFlags as any).mockImplementation(() => ({
+      appBlocks: true,
+      appBlocksPages: true,
+      canViewNsfw: true,
+    }));
+  });
+
+  const viewer = (browsingLevel: number) =>
+    ({
+      user: { id: 61, isModerator: false, bannedAt: null, showNsfw: true, browsingLevel },
+    } as any);
+
+  async function mintPage(rating: string, session: unknown) {
+    const block = PAGE_BLOCK(['apps:storage:read', 'apps:storage:write']);
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue({
+      ...block,
+      appBlock: {
+        ...block.appBlock,
+        manifest: { ...block.appBlock.manifest, contentRating: rating },
+      },
+    });
+    mockSession.value = session as any;
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        origin: 'https://civitai.red',
+        headers: { host: 'civitai.red' },
+        body: pageBody(),
+      }),
+      res
+    );
+    return res;
+  }
+
+  it.each([
+    ['a PG-only viewer', viewer(1)],
+    ['a signed-out viewer', null],
+  ])('🔴 refuses an R app for %s on civitai.red — no token', async (_label, session) => {
+    const res = await mintPage('r', session);
+    expect(res._status).toBe(403);
+    // THIS guard's refusal, not an earlier 403 (origin, flags) — which would pass vacuously.
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+    expect(res._body).not.toHaveProperty('token');
+    expect(res._body).not.toHaveProperty('scopes');
+  });
+
+  it('an R-enabled viewer gets a token for the R app', async () => {
+    const res = await mintPage('r', viewer(7));
+    expect(res._status).toBe(200);
+    expect(res._body.token).toBe('jwt.signed.value');
+  });
+
+  it('🔴 X needs X: an R-enabled viewer is refused an X app', async () => {
+    const res = await mintPage('x', viewer(7));
+    expect(res._status).toBe(403);
+    expect(res._body).toEqual({ error: 'This app is hidden by your browsing settings.' });
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  it('a PG-13 app still mints for a PG-only viewer (not gated by the level)', async () => {
+    const res = await mintPage('pg13', viewer(1));
+    expect(res._status).toBe(200);
   });
 });

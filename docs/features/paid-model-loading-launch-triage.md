@@ -161,14 +161,13 @@ reason:
 - **Unscanned** — the last 2 are ~63 GB uploads with pickle and virus scans still `Pending`, or whose
   only SafeTensor is an `Enhancement LoRA` rather than a `Model` file.
 
-Those reasons no longer decide the case for **community** checkpoints here. MiniMax H3 is
-`modelLocked`, so
-`isGenerationEligible` holds every **community** checkpoint on it to the live rule — 47 were being
-offered on 2026-09-29, 4 of them already loaded. The ecosystem's own
-`EcosystemCheckpoints` versions keep their coverage. The refusal is now deliberate rather than
-incidental: the graph rewrites a custom checkpoint back to the workflow default, so loading one buys
-nothing. Reasoning and the per-base-model table:
-[paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
+Those reasons no longer decide the case for **community** checkpoints here. MiniMax H3 is no longer
+`modelLocked`: the graph keeps a custom checkpoint and runs it on the comfy build, so
+`isGenerationEligible` applies the flag-picked coverage rule to community checkpoints on it like any
+unlocked ecosystem. (Until 2026-11 it was locked: 47 community checkpoints were offered on
+2026-09-29, 4 already loaded, and the refusal was deliberate because the graph rewrote them to the
+default.) The ecosystem's own `EcosystemCheckpoints` versions keep their coverage. The locked-ecosystem
+reasoning and table: [paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
 
 Nothing to fix. The gap is that none of it is stated where a user hits it.
 

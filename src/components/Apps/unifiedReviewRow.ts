@@ -4,6 +4,14 @@ import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteRe
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import type { ListingReviewMedia } from '~/server/services/blocks/app-listing.service';
 import {
+  agentReviewLane,
+  listingEditCheckBadge,
+  type AgentReviewLaneResult,
+  type AgentReviewSummary,
+  type ListingEditCheckSummary,
+} from '~/shared/utils/agent-review-findings';
+import { sensitiveScopeCount } from '~/components/Apps/reviewQueueSignals';
+import {
   BUILD_STEP_LABELS,
   isBuildFailureClassSignal,
   isBuildPipelineStep,
@@ -166,6 +174,25 @@ export type UnifiedReviewRow = {
   coverUrl: string | null;
   /** The listing media with levels (moderator-only), so the row can blur an above-SFW icon. */
   reviewMedia: ListingReviewMedia | null;
+  /**
+   * PENDING decision signals (on-site CODE rows only; `undefined` elsewhere):
+   *  - `previewState` — the review preview's `preview-*` lifecycle value, or null for none;
+   *  - `agentReview` — the agentic review summary; `null` = none ran, and ABSENT (undefined)
+   *    when the viewer has no agentic surface, in which case no AI chip renders at all;
+   *  - `sensitiveCount` — sensitive permissions the manifest requests.
+   */
+  signals?: ReviewRowSignals;
+  /**
+   * PENDING listing-edit rows (and the combined row that holds one): the impersonation check on
+   * an approved app's listing edit. Absent / null = not checked (no identity change).
+   */
+  listingEditCheck?: ListingEditCheckSummary | null;
+};
+
+export type ReviewRowSignals = {
+  previewState: string | null;
+  agentReview?: AgentReviewSummary | null;
+  sensitiveCount: number;
 };
 
 /** The deploy lifecycle projection carried on an on-site approved review row. */
@@ -240,6 +267,20 @@ export function onsiteRequestToUnifiedRow(
         }
       : undefined;
   const mds = (req.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  // Only PENDING rows carry the signals (`listPendingRequests` projects `previewState`, and
+  // `agentReview` when the viewer has the agentic surface); history rows never do.
+  const pendingSignals = req as {
+    previewState?: string | null;
+    agentReview?: AgentReviewSummary | null;
+  };
+  const signals: ReviewRowSignals | undefined =
+    'previewState' in pendingSignals
+      ? {
+          previewState: pendingSignals.previewState ?? null,
+          ...('agentReview' in pendingSignals ? { agentReview: pendingSignals.agentReview } : {}),
+          sensitiveCount: sensitiveScopeCount(req.manifest),
+        }
+      : undefined;
   return {
     key: `onsite:${req.id}`,
     kind: 'onsite',
@@ -261,6 +302,7 @@ export function onsiteRequestToUnifiedRow(
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
     reviewMedia: req.reviewMedia ?? null,
+    signals,
   };
 }
 
@@ -302,6 +344,8 @@ export type OffsiteReviewRequest = {
   iconUrl?: string | null;
   coverUrl?: string | null;
   reviewMedia?: ListingReviewMedia | null;
+  /** PENDING queue only: the impersonation check on an approved app's listing edit. */
+  listingEditCheck?: ListingEditCheckSummary | null;
 };
 
 /**
@@ -368,6 +412,7 @@ export function offsiteRequestToUnifiedRow(
     iconUrl: req.iconUrl ?? null,
     coverUrl: req.coverUrl ?? null,
     reviewMedia: req.reviewMedia ?? null,
+    listingEditCheck: req.listingEditCheck ?? null,
   };
 }
 
@@ -438,6 +483,10 @@ function combineCodeAndMediaRows(
         redIcon: code.reviewMedia?.redIcon ?? media.reviewMedia?.redIcon ?? null,
         redCover: code.reviewMedia?.redCover ?? media.reviewMedia?.redCover ?? null,
       },
+      // The CODE half owns the preview, the AI review and the permissions; the MEDIA half owns
+      // the listing-edit impersonation check.
+      signals: code.signals,
+      listingEditCheck: media.listingEditCheck ?? null,
     });
   }
 
@@ -466,6 +515,7 @@ function combineCodeAndMediaRows(
  *     row + an on-site listing-MEDIA row for the SAME app into ONE combined row
  *     carrying both ids/payloads (see `combineCodeAndMediaRows`). History tabs omit
  *     the opener, so decided rows are never combined;
+ *   - with `opts.fastLane` (the PENDING queue), `agent-clean` rows first;
  *   - sort by `submittedAt` — `asc` = oldest-first (pending FIFO), `desc` =
  *     newest-first (history);
  *   - STABLE, direction-independent tiebreak by `key` so equal timestamps always
@@ -474,11 +524,43 @@ function combineCodeAndMediaRows(
  * Pure — no side effects. Every input row appears in the output exactly once, EXCEPT
  * a combined code+media pair, which appears as its single combined row.
  */
+/**
+ * A PENDING row's queue lane, from its agent review (see `agentReviewLane`). A row with no
+ * decision signals (a listing-only row, a history row) or a viewer without the agentic surface
+ * is `waiting`. Only a LIVE review preview lets a clean row into the fast lane: a failed,
+ * expired, missing or still-building preview keeps it out.
+ */
+export function reviewRowLane(
+  row: Pick<UnifiedReviewRow, 'signals' | 'listingEditCheck'>
+): AgentReviewLaneResult {
+  const signals = row.signals;
+  if (!signals || signals.agentReview === undefined) return { lane: 'waiting', reasons: [] };
+  const result = agentReviewLane(signals.agentReview);
+  if (result.lane === 'agent-clean' && listingEditCheckBadge(row.listingEditCheck)) {
+    return { lane: 'flagged', reasons: ['the listing edit hit the impersonation check'] };
+  }
+  // POSITIVE: only a LIVE review preview can be agent-clean (the app was seen running).
+  if (result.lane === 'agent-clean' && signals.previewState !== 'preview-live') {
+    return {
+      lane: 'flagged',
+      reasons: [
+        signals.previewState === 'preview-failed'
+          ? 'the review preview failed to build'
+          : 'the review preview is not live',
+      ],
+    };
+  }
+  return result;
+}
+
 export function mergeReviewRows(
   onsite: UnifiedReviewRow[],
   offsite: UnifiedReviewRow[],
   direction: 'asc' | 'desc',
-  openCombined?: (payload: CombinedReviewPayload) => void
+  openCombined?: (payload: CombinedReviewPayload) => void,
+  /** PENDING tab: `agent-clean` rows sort ahead of every other row (each group keeping the
+   *  date order below). Only the rows already loaded are reordered. */
+  opts: { fastLane?: boolean } = {}
 ): UnifiedReviewRow[] {
   const byKey = new Map<string, UnifiedReviewRow>();
   for (const row of onsite) if (!byKey.has(row.key)) byKey.set(row.key, row);
@@ -487,7 +569,14 @@ export function mergeReviewRows(
   let rows = Array.from(byKey.values());
   if (openCombined) rows = combineCodeAndMediaRows(rows, openCombined);
 
+  const clean = opts.fastLane
+    ? new Set(rows.filter((r) => reviewRowLane(r).lane === 'agent-clean').map((r) => r.key))
+    : null;
   rows.sort((a, b) => {
+    if (clean) {
+      const ca = clean.has(a.key);
+      if (ca !== clean.has(b.key)) return ca ? -1 : 1;
+    }
     const ta = a.submittedAt.getTime();
     const tb = b.submittedAt.getTime();
     if (ta !== tb) return direction === 'asc' ? ta - tb : tb - ta;

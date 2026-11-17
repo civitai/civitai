@@ -1,7 +1,9 @@
 import React from 'react';
 import {
+  IconApps,
   IconAssembly,
   IconBook,
+  IconBook2,
   IconBookmark,
   IconCategory,
   IconCube,
@@ -15,6 +17,7 @@ import {
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
+import { canShowProfileAppsTab } from '~/components/Profile/profile-apps-tab';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
@@ -98,6 +101,18 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       icon: (props) => <IconBook {...props} />,
       count: userOverview?.comicCount ?? 0,
       disabled: !features.comicCreator || !!user?.bannedAt,
+    },
+    storylines: {
+      url: `${baseUrl}/storylines`,
+      icon: (props) => <IconBook2 {...props} />,
+      disabled: !features.storylines || !!user?.bannedAt,
+    },
+    apps: {
+      url: `${baseUrl}/apps`,
+      icon: (props) => <IconApps {...props} />,
+      label: 'Apps',
+      // No count: the store-visible set depends on the viewer, so there is no one number.
+      disabled: !canShowProfileAppsTab(features, user),
     },
     achievements: {
       url: `${baseUrl}/achievements`,

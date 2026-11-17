@@ -13,9 +13,9 @@ import {
   Table,
   Text,
   Title,
-  Tooltip,
   VisuallyHidden,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { keepPreviousData } from '@tanstack/react-query';
 import type { ChartOptions } from 'chart.js';
 import {

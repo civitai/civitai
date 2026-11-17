@@ -53,18 +53,20 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy({
       'storyline.getById': { useQuery: () => ({ data: STORYLINE, isLoading: false }) },
-      'commentv2.getSingle': { useQuery: () => ({ data: undefined }) },
-      'commentv2.getThreadDetails': { useQuery: () => ({ data: undefined }) },
-      'commentv2.getInfinite': {
+      'commentv3.getSection': {
         useInfiniteQuery: () => ({
-          data: { pages: [{ comments: [] }] },
+          data: {
+            pages: [{ comments: [], rootIds: [], children: {}, nextCursor: null, locked: false }],
+          },
           isLoading: false,
-          isRefetching: false,
+          isError: false,
+          refetch: vi.fn(),
           fetchNextPage: vi.fn(),
           hasNextPage: false,
           isFetchingNextPage: false,
         }),
       },
+      'commentv3.getThread': { useQuery: () => ({ data: undefined, isLoading: false }) },
     }),
   };
 });

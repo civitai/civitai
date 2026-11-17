@@ -26,8 +26,6 @@ export type CsamHoldRow = {
   /** A chat hold's judged messages, and who sent them; empty and null for other types. */
   messageIds: number[];
   senderId: number | null;
-  /** The model a legacy `Comment` hold was posted on. */
-  commentModelId: number | null;
   title: string | null;
   live: boolean | null;
   status: string;
@@ -166,9 +164,6 @@ export async function listCsamHolds({
     .leftJoin('Model as m', (join) =>
       join.onRef('m.id', '=', 'h.entityId').on('h.entityType', '=', 'Model')
     )
-    .leftJoin('Comment as lc', (join) =>
-      join.onRef('lc.id', '=', 'h.entityId').on('h.entityType', '=', 'Comment')
-    )
     .select([
       'h.id',
       'h.entityType',
@@ -190,7 +185,6 @@ export async function listCsamHolds({
       'ph.status as priorStatus',
       'ph.decidedAt as priorDecidedAt',
       'pd.username as priorDecidedByUsername',
-      'lc.modelId as commentModelId',
       sql<number>`case when h.status = 'Pending' and h."userId" is not null then (
         select count(*)::int from "TextScanHold" x
         where x."userId" = h."userId" and x.label = 'csam' and x.status = 'Pending' and x.id <> h.id
@@ -256,7 +250,6 @@ export async function listCsamHolds({
       chatId: typeof chatId === 'number' ? chatId : null,
       messageIds: chatMessageIds(messageIds),
       senderId: typeof senderId === 'number' ? senderId : null,
-      commentModelId: row.commentModelId ?? null,
       decision: typeof decision === 'string' ? decision : null,
     };
   });

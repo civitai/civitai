@@ -3,12 +3,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
+import type * as RegionBlocking from '~/server/utils/region-blocking';
+import { NsfwLevel } from '~/server/common/enums';
 import { MODELS_SEARCH_INDEX, USERS_SEARCH_INDEX } from '~/server/common/constants';
 
-const { mockGetServerAuthSession, mockGetFeatureFlagsLazy, mockRateLimit } = vi.hoisted(() => ({
+const {
+  mockGetServerAuthSession,
+  mockGetFeatureFlagsLazy,
+  mockRateLimit,
+  mockRegionBlocked,
+  mockPassthroughOn,
+} = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlagsLazy: vi.fn(),
   mockRateLimit: vi.fn(),
+  mockRegionBlocked: vi.fn(),
+  mockPassthroughOn: vi.fn(),
+}));
+
+vi.mock('~/server/services/site-search-passthrough', () => ({
+  isSiteSearchPassthroughOn: mockPassthroughOn,
+}));
+
+vi.mock('~/server/utils/region-blocking', async (importOriginal) => ({
+  ...(await importOriginal<typeof RegionBlocking>()),
+  isAPIAccessBlocked: mockRegionBlocked,
 }));
 
 vi.mock('~/server/utils/site-search-rate-limit', () => ({
@@ -33,8 +52,9 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
 
 const fetchMock = vi.fn();
 
-async function post(path: string[], body: unknown) {
+async function post(path: string[], body: unknown, headers: Record<string, string> = {}) {
   const res = {
+    statusCode: 200,
     status: vi.fn().mockReturnThis(),
     end: vi.fn().mockReturnThis(),
     send: vi.fn().mockReturnThis(),
@@ -44,7 +64,8 @@ async function post(path: string[], body: unknown) {
   } as unknown as NextApiResponse;
   const req = {
     method: 'POST',
-    headers: { host: 'example.test' },
+    headers: { host: 'example.test', ...headers },
+    url: `/api/search/${path.join('/')}`,
     cookies: {},
     query: { path },
     body,
@@ -53,14 +74,24 @@ async function post(path: string[], body: unknown) {
   // The wrapper swaps response methods on entry; keep the spies from before the call.
   const spies = {
     json: res.json as any,
+    send: res.send as any,
     status: res.status as any,
+    end: res.end as any,
     setHeader: res.setHeader as any,
   };
   const handler = (await import('~/pages/api/search/[...path]')).default;
   await handler(req, res);
   return {
-    status: spies.status.mock.calls.at(-1)?.[0],
+    status: spies.status.mock.calls.at(-1)?.[0] ?? res.statusCode,
+    ended: spies.end.mock.calls.at(-1)?.[0],
     body: spies.json.mock.calls.at(-1)?.[0],
+    sent: spies.send.mock.calls.at(-1)?.[0],
+    contentLength: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Length')
+      .at(-1)?.[1],
+    contentType: spies.setHeader.mock.calls
+      .filter(([name]: [string]) => name === 'Content-Type')
+      .at(-1)?.[1],
     cacheControl: spies.setHeader.mock.calls
       .filter(([name]: [string]) => name === 'Cache-Control')
       .at(-1)?.[1],
@@ -82,6 +113,8 @@ beforeEach(() => {
   mockGetServerAuthSession.mockResolvedValue(null);
   mockGetFeatureFlagsLazy.mockReturnValue({ canViewNsfw: true });
   mockRateLimit.mockResolvedValue({ allowed: true });
+  mockRegionBlocked.mockReturnValue(false);
+  mockPassthroughOn.mockReturnValue(false);
   setEnv({ NEXT_PUBLIC_SEARCH_HOST: 'http://search.test', SEARCH_TOKEN_API_KEY: 'server-key' });
 });
 afterEach(() => {
@@ -130,6 +163,15 @@ describe('POST /api/search/multi-search', () => {
     expect(sentQueries()[0].filter).toEqual(['nsfwLevel=1 OR nsfwLevel=2']);
   });
 
+  it('a client-sent verified-bot header does not lift the signed-out cap', async () => {
+    await post(
+      ['multi-search'],
+      { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }] },
+      { 'x-civitai-verified-bot': 'googlebot' }
+    );
+    expect(sentQueries()[0].filter).toContain('nsfwLevel=1');
+  });
+
   it('refuses an index the site does not search, without calling the backend', async () => {
     const { status } = await post(['multi-search'], {
       queries: [
@@ -141,15 +183,93 @@ describe('POST /api/search/multi-search', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('reports a backend that refuses our key as unavailable, not as a bad query', async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ code: 'invalid_api_key' }), { status: 403 })
-    );
-    const { status, body } = await post(['multi-search'], {
-      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }],
+  it.each([401, 403])(
+    'reports a backend that refuses our key (%i) as a 502 with no Retry-After, not as a bad query',
+    async (upstreamStatus) => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'invalid_api_key' }), { status: upstreamStatus })
+      );
+      const { status, body, retryAfter } = await post(['multi-search'], {
+        queries: [{ indexUid: MODELS_SEARCH_INDEX, q: '' }],
+      });
+      expect(status).toBe(502);
+      expect(body.code).toBe('search_unavailable');
+      expect(retryAfter).toBeUndefined();
+    }
+  );
+});
+
+describe('search backend unavailable', () => {
+  const query = { queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }] };
+
+  it.each([
+    ['a network error', new TypeError('fetch failed')],
+    ['a timeout', new DOMException('The operation was aborted due to timeout', 'TimeoutError')],
+  ])('%s is a retryable 503 with Retry-After', async (_, error) => {
+    fetchMock.mockRejectedValue(error);
+    const { status, body, retryAfter, cacheControl } = await post(['multi-search'], query);
+    expect(status).toBe(503);
+    expect(retryAfter).toBe('2');
+    expect(cacheControl).toBe('private, no-store');
+    expect(body).toEqual({
+      message: 'Search is temporarily unavailable',
+      code: 'search_unavailable',
+      type: 'system',
     });
+  });
+
+  it.each([500, 502, 503, 504])(
+    'an upstream %i is a retryable 503 with Retry-After',
+    async (upstreamStatus) => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ code: 'internal' }), { status: upstreamStatus })
+      );
+      const { status, body, retryAfter } = await post(['indexes', MODELS_SEARCH_INDEX, 'search'], {
+        q: 'x',
+      });
+      expect(status).toBe(503);
+      expect(retryAfter).toBe('2');
+      expect(body.code).toBe('search_unavailable');
+    }
+  );
+
+  it('an upstream 5xx with a non-JSON body is still a 503', async () => {
+    fetchMock.mockResolvedValue(new Response('<html>Bad Gateway</html>', { status: 502 }));
+    const { status, retryAfter } = await post(['indexes', MODELS_SEARCH_INDEX, 'facet-search'], {
+      facetName: 'type',
+    });
+    expect(status).toBe(503);
+    expect(retryAfter).toBe('2');
+  });
+
+  it('a query the backend rejects is passed through as-is, with no Retry-After', async () => {
+    const rejection = {
+      message: 'Attribute `nope` is not filterable.',
+      code: 'invalid_search_filter',
+      type: 'invalid_request',
+    };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(rejection), { status: 400 }));
+    const { status, body, retryAfter } = await post(['multi-search'], query);
+    expect(status).toBe(400);
+    expect(body).toEqual(rejection);
+    expect(retryAfter).toBeUndefined();
+  });
+
+  it('a 2xx whose body cannot be read is a 502 with no Retry-After', async () => {
+    fetchMock.mockResolvedValue(new Response('{"results": [', { status: 200 }));
+    const { status, body, retryAfter } = await post(['multi-search'], query);
     expect(status).toBe(502);
     expect(body.code).toBe('search_unavailable');
+    expect(retryAfter).toBeUndefined();
+  });
+
+  it('search with no host configured is a 503 with no Retry-After, and nothing is fetched', async () => {
+    setEnv({ NEXT_PUBLIC_SEARCH_HOST: undefined });
+    const { status, body, retryAfter } = await post(['multi-search'], query);
+    expect(status).toBe(503);
+    expect(body).toMatchObject({ code: 'search_unavailable', message: 'Search is not configured' });
+    expect(retryAfter).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -168,6 +288,43 @@ describe('rate limit', () => {
   });
 });
 
+describe('request policy', () => {
+  it('a blocked region gets a 451, and the backend is not called', async () => {
+    mockRegionBlocked.mockReturnValue(true);
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.status).toBe(451);
+    expect(String(res.ended)).toContain('not available in your region');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('nested images', () => {
+  it('a capped viewer never gets a model image above the cap', async () => {
+    const images = [
+      { id: 1, nsfwLevel: NsfwLevel.PG },
+      { id: 2, nsfwLevel: NsfwLevel.R },
+    ];
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { indexUid: MODELS_SEARCH_INDEX, hits: [{ id: 9, images, _formatted: { images } }] },
+            ],
+          })
+        )
+    );
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    const [hit] = res.body.results[0].hits;
+    expect(hit.images.map((image: { id: number }) => image.id)).toEqual([1]);
+    expect(hit._formatted.images.map((image: { id: number }) => image.id)).toEqual([1]);
+  });
+});
+
 describe('other paths', () => {
   it('only the three search paths exist', async () => {
     for (const path of [
@@ -178,5 +335,65 @@ describe('other paths', () => {
       expect((await post(path, {})).status).toBe(404);
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('passthrough (site-search-passthrough)', () => {
+  // Spacing a parse and re-serialize would rewrite, so only the upstream bytes equal it.
+  const upstream = '{ "results" : [ { "indexUid" : "users_v3", "hits" : [ { "id" : 1 } ] } ] }';
+
+  it('on: an unshaped response is sent as the upstream bytes, as JSON, still uncacheable', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.status).toBe(200);
+    expect(res.sent).toBeUndefined();
+    expect(Buffer.isBuffer(res.ended)).toBe(true);
+    expect(res.ended.toString('utf8')).toBe(upstream);
+    expect(res.contentLength).toBe(Buffer.byteLength(upstream));
+    expect(res.contentType).toBe('application/json; charset=utf-8');
+    expect(res.cacheControl).toBe('private, no-store');
+    expect(res.body).toBeUndefined();
+  });
+
+  it('on: a response with model hits is still shaped and sent through res.json', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            results: [
+              { indexUid: MODELS_SEARCH_INDEX, hits: [{ id: 9, name: 'Red', sfwName: 'Com' }] },
+            ],
+          })
+        )
+    );
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: MODELS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
+    expect(res.body.results[0].hits[0]).not.toHaveProperty('sfwName');
+  });
+
+  it('off: the same unshaped response goes through res.json, as before', async () => {
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    const res = await post(['multi-search'], {
+      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x' }],
+    });
+    expect(res.sent).toBeUndefined();
+    expect(res.ended).toBeUndefined();
+    expect(res.body).toEqual({ results: [{ indexUid: USERS_SEARCH_INDEX, hits: [{ id: 1 }] }] });
+  });
+
+  it('on: the request body is still validated, so unknown params never reach the backend', async () => {
+    mockPassthroughOn.mockReturnValue(true);
+    fetchMock.mockImplementation(async () => new Response(upstream));
+    await post(['multi-search'], {
+      queries: [{ indexUid: USERS_SEARCH_INDEX, q: 'x', hybrid: { embedder: 'e' } }],
+    });
+    expect(sentQueries()[0]).not.toHaveProperty('hybrid');
   });
 });

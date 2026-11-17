@@ -1,4 +1,8 @@
-import { isModerationAccountUser, MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
+import {
+  isModerationAccountUser,
+  isSystemAccountMeta,
+  MODERATION_ACCOUNT_USERNAME,
+} from '@civitai/auth';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { isUsernameBlocked } from '~/server/utils/username-blocklist';
@@ -31,6 +35,15 @@ export function isModerationAccountRow(row: { id: number; username?: string | nu
   return id !== null ? row.id === id : isModerationAccountUser(row, null);
 }
 
+/** Whether a user row is one of Civitai's own accounts: the shared one, or any carrying the system marker. */
+export function isSystemAccountRow(row: {
+  id: number;
+  username?: string | null;
+  meta?: unknown;
+}): boolean {
+  return isModerationAccountRow(row) || isSystemAccountMeta(row.meta);
+}
+
 type Who = number | string | { id: number; username?: string | null } | null | undefined;
 
 /**
@@ -45,6 +58,6 @@ export function refuseModerationAccountSession(who: Who, source: string): boolea
   logToAxiom(
     { name: 'moderation-account-session-refused', type: 'error', source, userId: user.id },
     'auth'
-  ).catch(() => undefined);
+  );
   return true;
 }

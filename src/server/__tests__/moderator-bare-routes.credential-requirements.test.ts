@@ -20,7 +20,6 @@ vi.mock('~/server/auth/session-client', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionClient>()),
   getHubSession: vi.fn(async () => hubSession.current),
   maybeRollHubCookie: vi.fn(async () => undefined),
-  maybeUpgradeLegacySession: vi.fn(async () => undefined),
 }));
 
 type Handler = (req: NextApiRequest, res: NextApiResponse) => Promise<unknown>;

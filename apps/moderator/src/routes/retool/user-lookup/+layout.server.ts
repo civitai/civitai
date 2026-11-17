@@ -19,8 +19,6 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
   const canSeeAbuse = canAccess(locals.user, '/abuse');
   // Chat Audit is granted separately: someone who cannot open it must not read DM bodies here instead.
   const canSeeChats = canAccess(locals.user, '/retool/chat-audit');
-  // Full content width: the panels are multi-column and data-dense (Buzz shows the transaction form
-  // and the history together), and the 6xl cap forced them into a single narrow stack.
   const base = {
     q,
     canAct,
@@ -28,7 +26,8 @@ export const load: LayoutServerLoad = async ({ url, locals }) => {
     canSeeAbuse,
     canSeeChats,
     canInvestigate: canInvestigate(locals),
-    wide: true,
+    fullBleed: true,
+    headerInline: true,
   };
   if (!q) return { ...base, result: null, notFound: false };
 

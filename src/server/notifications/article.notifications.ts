@@ -17,6 +17,11 @@ export const NEW_ARTICLE_FROM_FOLLOWING_TYPE = 'new-article-from-following';
  * is safe: the key is per article and the notifications worker skips a recipient who already has it.
  */
 const PUBLISHED_LOOKBACK = '5 minutes';
+/**
+ * An article that clears its scan after the lookback has passed its `publishedAt` still notifies:
+ * `contentScannedAt` re-triggers it, for this long after publish.
+ */
+const SCANNED_AFTER_PUBLISH_WINDOW = '7 days';
 
 export function newArticleFromFollowingMessage(details: {
   username?: string;
@@ -57,9 +62,16 @@ export function newArticleFromFollowingQuery({ lastSent }: { lastSent: string })
         ) ac ON true
         JOIN "User" u ON u.id = a."userId"
         JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
-        WHERE a."publishedAt" > '${lastSent}'::timestamp - INTERVAL '${PUBLISHED_LOOKBACK}'
+        JOIN "User" fu ON fu.id = ue."userId"
+        WHERE GREATEST(a."publishedAt", a."contentScannedAt") > '${lastSent}'::timestamp - INTERVAL '${PUBLISHED_LOOKBACK}'
+          AND a."publishedAt" > now() - INTERVAL '${SCANNED_AFTER_PUBLISH_WINDOW}'
           AND a."publishedAt" <= now()
           AND a.status = 'Published'
+          -- The article feed's visibility gates, as on article mentions.
+          AND a.ingestion = 'Scanned'
+          AND NOT a.unlisted
+          AND a.availability <> 'Private'
+          AND (a."nsfwLevel" & fu."browsingLevel") <> 0
           AND NOT a."tosViolation"
           AND u."bannedAt" IS NULL
           AND NOT u.muted

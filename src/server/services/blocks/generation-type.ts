@@ -367,8 +367,8 @@ export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
  * The DETECTOR is `WHERE generation_type = 'step'`, and it is exact rather than
  * approximate: `composeBlockGenerationType(BLOCK_PASS_THROUGH_COARSE_TYPE, …)` is
  * the only producer of a bare `step`, it is called from one place, and the wire
- * guarantees `$type` is a non-empty string — so every bare-`step` row IS a
- * shape-refused `$type` and nothing else is. No alert, one query.
+ * admits only ASCII letters and digits — so a bare-`step` row is a shape refusal
+ * that did not come from the wire, and should not exist. No alert, one query.
  *
  * 🔴 THAT EXACTNESS HAS ONE UNPINNED DEPENDENCY, stated so nobody relies on it
  * blindly: it holds because every `recordSpendAttribution` writer passes this
@@ -394,10 +394,9 @@ export const BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS = 64;
  * 🔴 THE CLASS IS NOT A GUESS: all 50 `$type` keys of the live
  * `WorkflowStepTemplate.discriminator.mapping` match it (measured 2026-09-17; 50
  * of 50, longest 22 chars), so no legitimate submit loses its subtype to this
- * bound. The wire schema is far laxer — `z.string().min(1).max(64)` admits
- * `a:b`, `foo bar`, a newline — so the degrade path is REACHABLE from the wire,
- * not hypothetical, and `generation-type.test.ts` proves that by parsing such a
- * body with the real schema.
+ * bound. The wire schema is stricter (ASCII letters and digits, `STEP_TYPE_RE`),
+ * so the degrade path is defence in depth; `generation-type.test.ts` pins that by
+ * parsing such bodies with the real schema.
  *
  * ⚠️ IT DOES NOT MAKE THE SUBTYPE TRUSTWORTHY, and nothing here should be read as
  * claiming that. `step:toString` is an ACCEPTED value (a legal `$type` string as

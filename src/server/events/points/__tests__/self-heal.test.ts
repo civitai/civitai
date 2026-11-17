@@ -5,6 +5,7 @@ import type { EventScoring } from '~/server/events/base.event';
 import type { EventPointsRedis } from '~/server/events/points/award';
 import type { SelfHealDeps } from '~/server/events/points/self-heal';
 import type { JobLockRedis } from '~/server/jobs/job-lock';
+import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
 
@@ -20,6 +21,7 @@ const {
   ROSTER_STEP_MAX_MS,
 } = await import('~/server/events/points/self-heal');
 const { acquireJobLock, jobLockKey } = await import('~/server/jobs/job-lock');
+const { REFEREE_CLICKHOUSE_BUDGET_S } = await import('~/server/events/points/referee');
 const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventSeasonKeys } = await import(
   '~/server/events/points/keys'
 );
@@ -31,9 +33,10 @@ const { COUNT_BASE_MARK, encodeHat, eventPointKeys, eventSeasonKeys } = await im
  * doing, not a fake's.
  */
 
-// Strings with SET NX / EX, the job lock's two scripts, and hashes and streams for the engine.
+// Strings with SET NX / EX, the job lock's scripts, and hashes and streams for the engine.
 function fakeRedis() {
   const strings = new Map<string, string>();
+  const lua = createLuaRedis(0, { strings });
   const ttls = new Map<string, number>();
   const hashes = new Map<string, Map<string, string>>();
   const sets = new Map<string, Set<string>>();
@@ -44,11 +47,9 @@ function fakeRedis() {
       if (opts?.EX) ttls.set(key, opts.EX);
       return 'OK';
     },
-    async eval(script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) {
-      if (strings.get(keys[0]) !== args[0]) return 0;
-      if (script.includes('"del"')) return Number(strings.delete(keys[0]));
-      ttls.set(keys[0], Number(args[1]));
-      return 'OK';
+    // The job lock's scripts run for real, in the Lua harness, over the same strings.
+    async eval(script: string, opts: { keys: string[]; arguments: string[] }) {
+      return lua.eval(script, opts);
     },
     async hGet(key: string, field: string) {
       return hashes.get(key)?.get(field) ?? null;
@@ -430,8 +431,7 @@ describe('the self-heal', () => {
     );
     const job = source.slice(source.indexOf('export const eventEngineLeaderboardUpdate'));
     expect(job).toMatch(new RegExp(String.raw`^[^;]*createJob\(\s*'${SETTLE_JOB}'`));
-    expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: 15 * 60');
-    expect(SETTLE_LOCK_S).toBe(15 * 60);
+    expect(job.slice(0, job.indexOf('\n);'))).toContain('lockExpiration: SETTLE_LOCK_S');
   });
 
   it('asks for that lock with that expiration', async () => {
@@ -592,6 +592,29 @@ describe('the self-heal, roster step', () => {
     expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
     expect(order).toEqual(['referee', 'roster (locked)']);
     expect(roster).toHaveBeenCalledWith(EVENT.name, NOW.getTime() + ROSTER_STEP_MAX_MS);
+  });
+
+  it('gives the settle a deadline that leaves the roster step inside the lock', async () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date'] });
+    try {
+      const referee = vi.fn((async (_e, season) => ({
+        season,
+        rows: 0,
+        changed: 0,
+        final: false,
+      })) as SelfHealDeps['runReferee']);
+      const { heal } = pod(fakeRedis(), { runReferee: referee });
+      expect(await heal(EVENT.name, 'switch-on')).toBe('ran');
+      const deadline = referee.mock.calls[0]?.[3];
+      expect(deadline).toBe(
+        NOW.getTime() + REFEREE_CLICKHOUSE_BUDGET_S * 1000 - ROSTER_STEP_MAX_MS
+      );
+      expect(deadline! + ROSTER_STEP_MAX_MS).toBeLessThanOrEqual(
+        NOW.getTime() + SETTLE_LOCK_S * 1000
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('still ran when the roster step throws, and logs the step', async () => {

@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { ScrollAreaContext } from '~/components/ScrollArea/ScrollAreaContext';
+import { useRef } from 'react';
 
 const SRC = '00000001-0000-4000-8000-000000000000';
 
@@ -129,6 +132,77 @@ describe('EdgeVideo — standby', () => {
     renderWithProviders(<EdgeVideo src={SRC} options={{ anim: true }} />);
 
     await vi.waitFor(() => expect(play).toHaveBeenCalled());
+  });
+});
+
+function InScrollArea({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <ScrollAreaContext.Provider value={{ ref }}>
+      <div ref={ref} style={{ height: 300, overflow: 'auto' }}>
+        {children}
+      </div>
+    </ScrollAreaContext.Provider>
+  );
+}
+
+describe('EdgeVideo — fullscreen', () => {
+  let pause: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    pause = vi.spyOn(HTMLMediaElement.prototype, 'pause');
+  });
+  afterEach(async () => {
+    pause.mockRestore();
+    useDialogStore.getState().closeAll();
+    if (document.fullscreenElement) await document.exitFullscreen();
+  });
+
+  async function maximize() {
+    const video = document.querySelector('video')!;
+    // requestFullscreen needs a user gesture; a click through the test driver is a trusted one.
+    await userEvent.click(video);
+    const wrapper = video.parentElement!;
+    await wrapper.requestFullscreen();
+    await vi.waitFor(() => expect(document.fullscreenElement).toBe(wrapper));
+    pause.mockClear();
+    return video;
+  }
+
+  test('a maximized video that stops being the current slide pauses', async () => {
+    const screen = await renderWithProviders(<EdgeVideo src={SRC} autoPlay />);
+    const video = await maximize();
+
+    await screen.rerender(<EdgeVideo src={SRC} standby />);
+
+    await vi.waitFor(() => expect(pause.mock.contexts).toContain(video));
+  });
+
+  test('a maximized video pauses once a dialog opens over it', async () => {
+    function Detail() {
+      return <EdgeVideo src={SRC} autoPlay />;
+    }
+    await renderWithProviders(<DialogProvider />);
+    dialogStore.trigger({ id: 'imageDetail_1', component: Detail, type: 'routed-dialog' });
+    await vi.waitFor(() => expect(document.querySelector('video')).toBeTruthy());
+    const video = await maximize();
+
+    dialogStore.trigger({ id: 'imageDetail_2', component: () => null, type: 'routed-dialog' });
+
+    await vi.waitFor(() => expect(pause.mock.contexts).toContain(video));
+  });
+
+  test('a maximized video that stays the current slide keeps playing', async () => {
+    // In the top layer it no longer intersects the scroll area the in-view check watches.
+    await renderWithProviders(
+      <InScrollArea>
+        <EdgeVideo src={SRC} options={{ anim: true }} />
+      </InScrollArea>
+    );
+    await vi.waitFor(() => expect(play).toHaveBeenCalled());
+    const video = await maximize();
+    for (let i = 0; i < 10; i++) await new Promise(requestAnimationFrame);
+
+    expect(pause.mock.contexts).not.toContain(video);
   });
 });
 

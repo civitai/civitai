@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import React, { useRef } from 'react';
 import clsx from 'clsx';
 import styles from './CosmeticWrapper.module.scss';
@@ -46,11 +47,14 @@ export function TwCosmeticWrapper({
   children: React.ReactElement;
 }) {
   const styleRef = useRef<Record<string, unknown> | undefined>();
+  const showEventCosmetics = useShowEventCosmetics();
   // A reader that predates event decorations can still hand one over as the frame.
   if (isEventDecorationData(cosmetic)) {
     eventDecoration ??= cosmetic;
     cosmetic = undefined;
   }
+  // Hidden by the viewer's browsing settings: the card keeps its frame, and no room for a hat.
+  if (!showEventCosmetics) eventDecoration = null;
   const hasFrame = !!cosmetic && !!Object.keys(cosmetic).length;
   if (!hasFrame && !eventDecoration) return children;
 

@@ -56,6 +56,14 @@ export const PERMISSIONS = [
   // the main app's `/api/mod/user/reactions` and `/remove-reactions` by this literal
   // (`ModeratorGrantId`), so rename the two together.
   { id: 'user.removeReactions', label: 'Remove all of an account’s reactions (erasure request)' },
+  // An access request: queueing builds an archive of the account's data and emails the queuer a
+  // link. Nothing reaches the account owner until release, a separate grant. The main app checks the
+  // release literal (`ModeratorGrantId`), so rename the two together.
+  { id: 'user.personalDataExport.queue', label: 'Queue a personal data export (access request)' },
+  {
+    id: 'user.personalDataExport.release',
+    label: 'Send a built personal data export to the account owner',
+  },
   // Money: a membership code is worth up to six months of a paid tier. Checked again by the main
   // app's `/api/mod/user/membership-code` by this literal (`ModeratorGrantId`), so rename the two
   // together.
@@ -65,6 +73,18 @@ export const PERMISSIONS = [
   {
     id: 'user.membership.gift',
     label: 'Revoke or refund a membership gift whose payment did not clear',
+  },
+  // Money: free days on, or a re-sync of, a member's Stripe subscription. The main app checks this
+  // literal (`ModeratorGrantId`), so rename the two together.
+  {
+    id: 'user.membership.extend',
+    label: 'Extend a member’s Stripe membership by free days, or re-sync it from Stripe',
+  },
+  // Undoing a cancel arms the next renewal charge, so it is granted apart from extend. Also checked by
+  // literal in the main app (`ModeratorGrantId`).
+  {
+    id: 'user.membership.cancel',
+    label: 'Set or undo cancel-at-period-end on a member’s Stripe membership',
   },
   // Moves a creator's score, and with it their tier and what the tier unlocks. Checked again by the
   // main app's `/api/mod/user/creator-score-grant` by this literal (`ModeratorGrantId`), so rename the
@@ -156,6 +176,21 @@ export const PERMISSIONS = [
   },
   // Checked by this literal in the main app's `/api/mod/label-store/predictions` (`ModeratorGrantId`).
   { id: 'labelStore.submitPrediction', label: 'Submit model predictions to the label store' },
+  // Money: gives a user back the Buzz an App Blocks generation charged them (the generation legs and
+  // the app author's fee). Also the read right for the lookup, which lists one account's App spend.
+  // Checked by this literal in the main app's `/api/mod/apps/workflow-charges` and
+  // `/api/mod/apps/refund-workflows` (`ModeratorGrantId`), so rename them together.
+  {
+    id: 'apps.buzz.refund',
+    label: 'Look up and refund a user’s App Blocks Buzz spend',
+  },
+  // Raises the per-call ceiling for a holder of `apps.buzz.refund`; useless without it. Apart
+  // because one call can return the spend of many generations. Checked by the same endpoint by this
+  // literal.
+  {
+    id: 'apps.buzz.refund.large',
+    label: 'Refund more than 5,000 App Blocks Buzz in one call',
+  },
   // Model Flags → Needs review lists two kinds of lead, each ruled by its own right: a held text-scan
   // detection (flag or dismiss, recorded with a reason) and a file match (set minor or dismiss). The
   // page grant opens the tab; the tab lists, and its actions rule, only the kinds held here.
@@ -170,6 +205,14 @@ export const PERMISSIONS = [
   // Sends account registration emails to the model provider, a separate call from running turns. Also
   // needs User Lookup, where a moderator reads emails today.
   { id: 'assistant.emails', label: 'Let the mod assistant read account registration emails' },
+  // The `/cases` PAGE grant opens the takedown case list. These are the rights inside it. Three ids
+  // because the harms differ:
+  // - acting sends legal notices;
+  // - reading claimants' names and addresses is personal data, and every read is recorded;
+  // - resuming sends overrides a pause someone else (or the hourly ceiling) set.
+  { id: 'cases.act', label: 'Import, send, pause and act on takedown cases' },
+  { id: 'cases.pii', label: 'Read claimant and recipient details on takedown cases' },
+  { id: 'cases.unpause', label: 'Resume paused takedown notice sends' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

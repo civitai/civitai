@@ -135,13 +135,17 @@ describe('MessageAppOwnerModal — the two-field gate', () => {
     render();
     await expect
       .element(
-        page.getByText(`0/${MOD_MESSAGE_BODY_MIN} characters minimum (max ${MOD_MESSAGE_BODY_MAX})`)
+        page.getByText(`${MOD_MESSAGE_BODY_MIN}+ characters · 0/${MOD_MESSAGE_BODY_MAX} max`, {
+          exact: true,
+        })
       )
       .toBeInTheDocument();
     await page.getByTestId('apps-mod-message-body').fill('ab');
     await expect
       .element(
-        page.getByText(`2/${MOD_MESSAGE_BODY_MIN} characters minimum (max ${MOD_MESSAGE_BODY_MAX})`)
+        page.getByText(`${MOD_MESSAGE_BODY_MIN}+ characters · 2/${MOD_MESSAGE_BODY_MAX} max`, {
+          exact: true,
+        })
       )
       .toBeInTheDocument();
   });

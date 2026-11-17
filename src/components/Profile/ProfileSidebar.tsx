@@ -1,3 +1,4 @@
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import type { MantineSize } from '@mantine/core';
 import {
   Anchor,
@@ -5,13 +6,13 @@ import {
   Button,
   Divider,
   Group,
-  Popover,
   Stack,
   Text,
   Badge,
   UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -42,6 +43,10 @@ import { UserStats } from '~/components/Profile/UserStats';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import {
+  avatarHatOverhang,
+  isShowcaseHatShowing,
+} from '~/components/Cosmetics/EventDecoration/AvatarHat';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -104,6 +109,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   const isMobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { data: user } = trpc.userProfile.get.useQuery({
     username,
   });
@@ -265,8 +271,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     </AlertWithIcon>
   );
 
+  // The sidebar scrolls, so it clips a showcase hat reaching above the avatar unless it makes room.
+  const hatRoom =
+    showEventCosmetics && isShowcaseHatShowing(user.showcaseHat)
+      ? avatarHatOverhang(user.showcaseHat, sizeOpts.avatar)
+      : 0;
+
   return (
-    <Stack className={className} gap={sizeOpts.spacing} p="md">
+    <Stack
+      className={className}
+      gap={sizeOpts.spacing}
+      p="md"
+      pt={hatRoom ? `calc(var(--mantine-spacing-md) + ${hatRoom}px)` : undefined}
+    >
       <Group wrap="nowrap" justify="space-between">
         <Group align="flex-start" justify="space-between" w={!isMobile ? '100%' : undefined}>
           <UserAvatar
@@ -275,6 +292,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             size={sizeOpts.username}
             // Oversized radius to make it always a circle
             radius={1000}
+            withShowcaseHat
           />
 
           {!isMobile && (

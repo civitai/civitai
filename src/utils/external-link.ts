@@ -5,6 +5,29 @@ const normalizeHost = (host: string) =>
   host.trim().toLowerCase().replace(/:\d+$/, '').replace(/\.$/, '');
 
 /**
+ * Civitai-run hosts that are not a server domain, so `serverDomains` cannot supply them. Each is
+ * listed whole, never as a pattern: see `isExternalHref`.
+ */
+export const FIRST_PARTY_HOSTS: readonly string[] = ['status.civitai.com'];
+
+type DomainConfig = { primary: string; aliases: readonly string[] } | null | undefined;
+
+/** The hosts a link may point at without the `/leaving` warning. */
+export function collectInternalHosts(
+  currentHost: string | undefined,
+  serverDomains: Readonly<Record<string, DomainConfig>> | undefined
+): string[] {
+  const hosts = new Set<string>(FIRST_PARTY_HOSTS);
+  if (currentHost) hosts.add(currentHost);
+  for (const config of Object.values(serverDomains ?? {})) {
+    if (!config) continue;
+    hosts.add(config.primary);
+    for (const alias of config.aliases) hosts.add(alias);
+  }
+  return [...hosts];
+}
+
+/**
  * Whether following `href` leaves Civitai.
  *
  * 🔴 Not a suffix match. `evil-civitai.com` and `civitai.com.evil.test` both end in a string
@@ -44,7 +67,7 @@ function resolveHttpHref(href: string): URL | null {
   return url;
 }
 
-const EXTERNAL_LINK_INTERSTITIAL_PATH = '/leaving';
+export const EXTERNAL_LINK_INTERSTITIAL_PATH = '/leaving';
 
 /**
  * The absolute http(s) URL the leaving-Civitai page may offer as a link, or null.

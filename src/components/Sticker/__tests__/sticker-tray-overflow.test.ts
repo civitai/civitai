@@ -87,6 +87,9 @@ import { MantineProvider } from '@mantine/core';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
 const renderTray = async () => {
+  // The tray portals to <body>, outside the mount node, so body is the scope to query;
+  // clear it so earlier renders do not leak in.
+  document.body.innerHTML = '';
   const container = document.createElement('div');
   document.body.appendChild(container);
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -99,7 +102,7 @@ const renderTray = async () => {
       )
     );
   });
-  return container;
+  return document.body;
 };
 
 describe('sticker placement tray overflow', () => {
@@ -135,7 +138,9 @@ describe('sticker placement tray overflow', () => {
   it('wraps the row in no Mantine ScrollArea', async () => {
     const container = await renderTray();
     expect(
-      container.querySelector('[class*="mantine-ScrollArea"]'),
+      // Around the row, not anywhere in the body: the sort Select's dropdown is portaled
+      // there and carries its own ScrollArea.
+      container.querySelector('img[alt^=":"]')?.closest('[class*="mantine-ScrollArea"]'),
       'a Mantine ScrollArea is back around the sticker row. `ScrollArea.Autosize` is what ' +
         'produced the 81px-too-wide viewport and the bar absent on first open'
     ).toBeNull();

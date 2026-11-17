@@ -1,19 +1,24 @@
-// The process's document-store MAINTENANCE (`purgeReview`, `listReviewAppIds`, `wipeAccount`),
-// on the same least-privilege pool as the viewer store but as a separate object, so nothing
-// holding the block-token store can reach it. Imported only by the publish-request decision
-// path (`publish-request.service.ts`), the sweep job (`jobs/sweep-review-storage.ts`) and the
-// account wipe (`user.service.ts` `removeAllContent`); pinned by
-// `__tests__/doc-store-maintenance.ledger.test.ts`.
+// The process's document-store MAINTENANCE (`purgeReview`, `listReviewAppIds`, `wipeAccount`,
+// `purgeApp`, `migrateDocuments`), on the same least-privilege pool as the viewer store but as a
+// separate object, so nothing holding the block-token store can reach it. Imported only by the
+// publish-request decision path (`publish-request.service.ts`), the sweep job
+// (`jobs/sweep-review-storage.ts`), the account/app erasure module (`doc-store-purge.ts`, which
+// `removeAllContent` and the two erasure jobs go through) and the schema-migration run
+// (`storage-migration-run.service.ts`, which the approve path and `jobs/run-storage-migrations.ts`
+// go through); pinned by `__tests__/doc-store-maintenance.ledger.test.ts`.
 import { appdataDb } from '~/server/db/appdataDb';
 import { logToAxiom } from '~/server/logging/client';
 import type { DocStoreMaintenance } from '~/server/services/apps/doc-store';
 import { createDocStoreMaintenance } from '~/server/services/apps/doc-store';
+import { docStoreUserLimits } from '~/server/services/blocks/user-app-caps.service';
 
 let instance: DocStoreMaintenance | undefined;
 
 export function getDocStoreMaintenance(): DocStoreMaintenance {
   return (instance ??= createDocStoreMaintenance({
     db: appdataDb,
+    // A migration's rewrite is charged like a write: each user's ceiling is their tier's.
+    userLimits: docStoreUserLimits,
     onRefused: (role) => {
       logToAxiom(
         {
@@ -26,7 +31,7 @@ export function getDocStoreMaintenance(): DocStoreMaintenance {
           bypassRls: role.bypassRls,
         },
         'app-blocks'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

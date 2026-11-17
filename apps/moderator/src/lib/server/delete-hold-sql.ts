@@ -1,6 +1,10 @@
 // Import-free: the main app's parity test loads this file by path to compare it with its own SQL.
 
 const PLACEHOLDER_OWNER_ID = -1;
+// `FEEDBACK_CAPTURE_OWNER_ID` (`@civitai/shared/feedback-capture`); the parity test reads both.
+const FEEDBACK_CAPTURE_OWNER_ID = -2;
+
+const notCaptureOwner = (id: string) => `(${id}) IS DISTINCT FROM ${FEEDBACK_CAPTURE_OWNER_ID}`;
 
 const reportHolds = (hc: string) => `(
     ${hc}."reportSentAt" IS NULL
@@ -29,10 +33,10 @@ const userUnderLegalHold = (id: string) => `(
 const accountHold = (id: string) =>
   `(${[
     userNamedOnHoldingReport(id),
-    `EXISTS (
+    `${notCaptureOwner(id)} AND EXISTS (
       SELECT 1 FROM "Image" hr WHERE hr."userId" = ${id} AND hr."needsReview" = 'csam'
     )`,
-    `EXISTS (
+    `${notCaptureOwner(id)} AND EXISTS (
       SELECT 1 FROM "Image" bi
       WHERE bi."userId" = ${id} AND bi."blockedFor" = 'CSAM'
         AND NOT EXISTS (
@@ -42,7 +46,7 @@ const accountHold = (id: string) =>
             AND sc.images @> jsonb_build_array(jsonb_build_object('id', bi.id))
         )
     )`,
-    `((${id}) IN (
+    `${notCaptureOwner(id)} AND ((${id}) IN (
       SELECT ri."userId"
       FROM "CsamReport" rr
       CROSS JOIN LATERAL jsonb_array_elements(

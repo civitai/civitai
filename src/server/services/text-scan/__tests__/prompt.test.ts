@@ -293,17 +293,21 @@ describe('setTextScanRollout', () => {
 
   it('writes a shadow rollout, logs who, and removes the field for null', async () => {
     dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
-    await setTextScanRollout('Comment', { shadow: 100, active: 0 }, { moderatorId: 5 });
+    await setTextScanRollout('CommentV3', { shadow: 100, active: 0 }, { moderatorId: 5 });
     expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
       'system:text-scan:modes',
-      'Comment',
+      'CommentV3',
       '{"shadow":100,"active":0}'
     );
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'rollout updated', moderatorId: 5, entityType: 'Comment' })
+      expect.objectContaining({
+        message: 'rollout updated',
+        moderatorId: 5,
+        entityType: 'CommentV3',
+      })
     );
-    await setTextScanRollout('Comment', null, { moderatorId: 5 });
-    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'Comment');
+    await setTextScanRollout('CommentV3', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'CommentV3');
   });
 });
 

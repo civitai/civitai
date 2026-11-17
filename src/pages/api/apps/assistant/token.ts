@@ -42,7 +42,7 @@ export default AuthedEndpoint(
         type: 'app-assistant.token.failed',
         message: `App Assistant token mint failed for user ${user.id}`,
         error: safeError(err),
-      }).catch(() => undefined);
+      });
       return res.status(503).json({ error: 'Could not start an App Assistant session right now' });
     }
   },

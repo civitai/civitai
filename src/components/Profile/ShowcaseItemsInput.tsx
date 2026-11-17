@@ -17,12 +17,16 @@ import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortab
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import classes from './ShowcaseItemsInput.module.scss';
 import { withController } from '~/libs/form/hoc/withController';
+import type { SearchIndexKey } from '~/components/Search/search.types';
+
+const defaultShowcaseIndexes: SearchIndexKey[] = ['models', 'images'];
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
   onChange?: (value: ShowcaseItemSchema[]) => void;
   username?: string;
   limit?: number;
+  supportedIndexes?: SearchIndexKey[];
 };
 
 export const ShowcaseItemsInput = ({
@@ -30,6 +34,7 @@ export const ShowcaseItemsInput = ({
   onChange,
   username,
   limit = 15,
+  supportedIndexes = defaultShowcaseIndexes,
   ...props
 }: ShowcaseItemsInputProps) => {
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseItemSchema[]>(value || []);
@@ -126,9 +131,10 @@ export const ShowcaseItemsInput = ({
       <Stack gap="xs" mt="sm">
         {username && (
           <QuickSearchDropdown
-            supportedIndexes={['models', 'images']}
+            supportedIndexes={supportedIndexes}
             onItemSelected={onItemSelected}
             filters={`user.username = ${quoteMeiliValue(username)}`}
+            imagesFromIndex
             dropdownItemLimit={25}
           />
         )}
@@ -188,7 +194,12 @@ export const ShowcaseItemsInput = ({
                     return (
                       <SortableItem key={key} id={key}>
                         <Box pos="relative">
-                          <GenericImageCard {...item} image={coverImage} disabled />
+                          <GenericImageCard
+                            {...item}
+                            image={coverImage}
+                            disabled
+                            hideEventDecoration
+                          />
                           {removeBtn}
                         </Box>
                       </SortableItem>

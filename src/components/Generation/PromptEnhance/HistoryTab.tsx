@@ -8,8 +8,8 @@ import {
   ScrollArea,
   Stack,
   Text,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import {
   IconCheck,

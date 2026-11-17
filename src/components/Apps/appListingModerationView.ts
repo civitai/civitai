@@ -44,6 +44,13 @@ export function reportRowActions(input: {
   const actions: ReportRowAction[] = [];
   const listingStatus = input.listingStatus ?? null;
 
+  // 🔴 A DISMISSED report offers NOTHING. Dismissing is the decision "no action warranted";
+  // offering Delist / Claim on that row invited acting on a report already judged unfounded.
+  // The listing's lifecycle actions stay reachable where they belong — Manage listings.
+  // (A RESOLVED report keeps them: resolution usually means the listing was acted on, and
+  // undoing that — relist — starts from the same row.)
+  if (input.reportStatus === 'dismissed') return actions;
+
   if (listingStatus === 'approved') {
     actions.push('delist');
     actions.push('claim');
@@ -134,6 +141,8 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   'storage-doc-unhide': { label: 'Stored document unhidden', color: 'blue' },
   'storage-doc-delete': { label: 'Stored document deleted', color: 'red' },
   'storage-doc-dismiss': { label: 'Stored document reports dismissed', color: 'blue' },
+  'moderator-edit': { label: 'Edited by a moderator', color: 'blue' },
+  'set-official': { label: 'Official mark changed', color: 'blue' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

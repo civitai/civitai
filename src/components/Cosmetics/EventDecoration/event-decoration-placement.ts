@@ -64,7 +64,7 @@ export const getHatRoom = (edge: number) =>
 
 // The art convention when a cosmetic says nothing about its own fit: a 128x160 canvas, hat drawn
 // upright, nothing below y=156.
-const DEFAULT_CANVAS: [number, number] = [128, 160];
+export const DEFAULT_CANVAS: [number, number] = [128, 160];
 const DEFAULT_BOUNDS: [number, number, number, number] = [0, 0, 128, 156];
 
 const isNumbers = (value: unknown, length: number): value is number[] =>
@@ -249,7 +249,7 @@ export function getEventDecorationClearLeftCss(
 /** A moderator's unsaved edit to a hat's fit; `null` puts a field back to the default look. */
 export type HatFitChanges = Partial<{
   [K in 'size' | 'tilt' | 'depth' | 'grow' | 'offset']: EventDecorationFit[K] | null;
-}>;
+}> & { brim?: EventDecorationFit['brim'] };
 
 /** The hat's fit with the unsaved changes applied: a cleared field falls back to the look. */
 export function applyHatFitChanges(fit: EventDecorationFit | undefined, changes: HatFitChanges) {
@@ -260,4 +260,60 @@ export function applyHatFitChanges(fit: EventDecorationFit | undefined, changes:
     else Object.assign(next, { [key]: value });
   }
   return next;
+}
+
+/**
+ * The worn look on a round avatar, chosen by eye on the profile header and creator card. `brim` is
+ * the brim's width as a share of the avatar's diameter; the brim's middle sits `sit` of the radius
+ * out from the centre, along `tilt` from straight up, and the hat leans the same way, so it rests on
+ * the head rather than floating over the corner of a square.
+ */
+export const AVATAR_HAT_LOOK = { brim: 0.62, sit: 0.78, tilt: -28 };
+
+/**
+ * The hat's box on a round avatar `size` px across, in px from the avatar's top-left, rotated about
+ * the brim's middle. A hat's card fit carries over as how it differs from the card look: a hat sized
+ * up or leaned further for cards is sized up or leaned further here too.
+ */
+export function getAvatarHatLayout(fit: EventDecorationFit | undefined, size: number) {
+  const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
+  const [left, top, right, bottom] = getArtBounds(fit) ?? DEFAULT_BOUNDS;
+  const [brimLeft, brimRight, brimY] =
+    isNumbers(fit?.brim, 3) && fit.brim[1] > fit.brim[0] ? fit.brim : [left, right, bottom];
+  const sizeRatio =
+    isFiniteNumber(fit?.size) && fit.size > 0
+      ? within(HAT_FIT_LIMITS.size, fit.size) / HAT_LOOK.brim
+      : 1;
+  const tilt =
+    AVATAR_HAT_LOOK.tilt +
+    (isFiniteNumber(fit?.tilt) ? within(HAT_FIT_LIMITS.tilt, fit.tilt) - HAT_LOOK.tilt : 0);
+
+  const scale = (AVATAR_HAT_LOOK.brim * size * sizeRatio) / (brimRight - brimLeft);
+  const pivot = { x: ((brimLeft + brimRight) / 2) * scale, y: brimY * scale };
+  const r = size / 2;
+  const rad = (AVATAR_HAT_LOOK.tilt * Math.PI) / 180;
+  const at = {
+    x: r + AVATAR_HAT_LOOK.sit * r * Math.sin(rad),
+    y: r - AVATAR_HAT_LOOK.sit * r * Math.cos(rad),
+  };
+  // The art's corners after the lean, for how far above the avatar the hat reaches.
+  const [cos, sin] = [Math.cos((tilt * Math.PI) / 180), Math.sin((tilt * Math.PI) / 180)];
+  const artTop = Math.min(
+    ...[left, right].flatMap((x) =>
+      [top, bottom].map((y) => {
+        const [dx, dy] = [x * scale - pivot.x, y * scale - pivot.y];
+        return at.y + dx * sin + dy * cos;
+      })
+    )
+  );
+  return {
+    width: canvasW * scale,
+    height: canvasH * scale,
+    left: at.x - pivot.x,
+    top: at.y - pivot.y,
+    tilt,
+    origin: `${pivot.x}px ${pivot.y}px`,
+    /** How far the art reaches above the avatar's top edge, in px; 0 when it stays below it. */
+    overhangTop: Math.max(0, -artTop),
+  };
 }

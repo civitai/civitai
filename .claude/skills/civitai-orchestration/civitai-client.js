@@ -35,7 +35,8 @@ if (fs.existsSync(skillEnvPath)) {
 }
 
 // Configuration
-const API_URL = process.env.CIVITAI_API_URL || 'https://orchestration-new.civitai.com';
+// A trailing slash (as in the app's ORCHESTRATOR_ENDPOINT) would yield `//v1/...` and a 404.
+const API_URL = (process.env.CIVITAI_API_URL || 'https://orchestration-new.civitai.com').replace(/\/+$/, '');
 const API_TOKEN = process.env.CIVITAI_API_TOKEN;
 
 /**

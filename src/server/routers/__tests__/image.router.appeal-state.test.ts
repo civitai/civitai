@@ -27,6 +27,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 const OWNER = 10;
 const HELD_OWNER = 11;
 const OTHER = 12;
+const FILED_ON_OWNER = 13;
 
 function callerFor(user: { id: number } | undefined) {
   return imageRouter.createCaller({
@@ -55,12 +56,19 @@ beforeAll(async () => {
     -- Stand in for the hold-marker view and its kept-image record.
     CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     INSERT INTO "Image" VALUES
       (1, ${OWNER}, 'moderated', NULL),     -- ordinary moderator block
       (2, ${OWNER}, 'moderated', NULL),     -- kept by a hold
       (3, ${HELD_OWNER}, 'moderated', NULL),-- owner under a hold marker
       (4, ${OWNER}, 'moderated', 'appeal'), -- already under appeal
-      (5, ${OWNER}, 'AiNotVerified', NULL); -- not a moderator block
+      (5, ${OWNER}, 'AiNotVerified', NULL), -- not a moderator block
+      (6, ${OWNER}, 'moderated', NULL),     -- named in a CSAM report
+      (7, ${FILED_ON_OWNER}, 'moderated', NULL); -- owner a CSAM report is filed on
+    INSERT INTO "CsamReport" (images) VALUES ('[{"id": 6}]');
+    INSERT INTO "CsamReport" ("userId") VALUES (${FILED_ON_OWNER});
     INSERT INTO "EvidenceHoldImage" VALUES (2, ${OWNER});
     INSERT INTO "EvidenceHeldUser" VALUES (${HELD_OWNER});
   `);
@@ -86,6 +94,8 @@ describe('image.getAppealState', () => {
 
   it.each([
     ['an image a hold kept', OWNER, 2],
+    ['an image a CSAM report names', OWNER, 6],
+    ['an image of an owner a CSAM report is filed on', FILED_ON_OWNER, 7],
     ['an image of an owner under a hold marker', HELD_OWNER, 3],
     ['an image already under appeal', OWNER, 4],
     ['an image not blocked by a moderator', OWNER, 5],

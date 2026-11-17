@@ -75,6 +75,7 @@ const ASSISTANT = {
   sandboxUrl: 'https://sandbox.example',
   subagents: false,
   remoteRunner: true,
+  hibernate: false,
 };
 const MEMBER = { id: 12, isModerator: false };
 const MODERATOR = { id: 2, isModerator: true };
@@ -140,7 +141,7 @@ describe('/apps/build — which view the page mounts', () => {
     expect(seen('build-body')).toBe(0);
   });
 
-  test('a NON-author in the assistant view gets no "My apps" switch, and ?view=apps does nothing', async () => {
+  test('a NON-author in the assistant view gets no "My builds" switch, and ?view=apps does nothing', async () => {
     (Router as unknown as { query: Record<string, string> }).query = { view: 'apps' };
     await renderPage(ASSISTANT);
     expect(seen('workspace')).toBe(1);
@@ -158,7 +159,7 @@ describe('/apps/build — which view the page mounts', () => {
   });
 
   /**
-   * 🔴 THE COHORT EVERY "My apps" LINK IS POINTED AT `?view=apps` FOR: a NON-moderator author who
+   * 🔴 THE COHORT EVERY "My builds" LINK IS POINTED AT `?view=apps` FOR: a NON-moderator author who
    * also holds the App Assistant. The server hands them the assistant view, so a bare
    * `/apps/build` opens the assistant; `?view=apps` must open their app list instead.
    */

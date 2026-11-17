@@ -74,8 +74,24 @@ export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {
   return type === 'percent' ? amount * fee : fee;
 }
 
-export function getWithdrawalRefCode(id: string, userId: number) {
-  return `CW${userId}_${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
+const TIPALTI_REF_CODE_LENGTH = 16;
+const MIN_REF_CODE_RANDOM_CHARS = 4;
+const BASE36 = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+/**
+ * A new refCode for a cash withdrawal: `CW<userId>_` plus random base36 up to Tipalti's 16
+ * characters. The userId stays so parseRefCodeToWithdrawalId can scope the lookup to one user;
+ * uniqueness only has to hold within that user, which the caller checks before storing it.
+ */
+export function generateWithdrawalRefCode(userId: number) {
+  const prefix = `CW${userId}_`;
+  const randomLength = TIPALTI_REF_CODE_LENGTH - prefix.length;
+  if (randomLength < MIN_REF_CODE_RANDOM_CHARS)
+    throw new Error(`userId ${userId} leaves too little room for a unique withdrawal refCode`);
+
+  const bytes = crypto.getRandomValues(new Uint8Array(randomLength));
+  // shortcut: modulo bias (256 % 36) skews the alphabet slightly; harmless for a collision check.
+  return prefix + Array.from(bytes, (b) => BASE36[b % 36]).join('');
 }
 
 /**

@@ -74,7 +74,8 @@ describe('appListingMetrics.update — the degrade signal is actually wired', ()
 
     await expect(appListingMetrics.update(jobContext)).resolves.toBeUndefined();
 
-    expect(await degradeCount()).toBe(1);
+    // Two discovery reads now (App_Open, then App_Visit); each degrade is counted.
+    expect(await degradeCount()).toBe(2);
     expect(pgCancellableQuery).toHaveBeenCalledTimes(1);
     expect(pgCancellableQuery.mock.calls[0][0]).toContain('app_listings');
   });
@@ -84,18 +85,20 @@ describe('appListingMetrics.update — the degrade signal is actually wired', ()
     // is always non-zero cannot distinguish a degrade from a normal cycle, which is
     // the same blindness with the opposite sign.
     chQuery
-      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_x' }])) // discovery
-      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_x', openCount: 4 }])); // count
+      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_x' }])) // play discovery
+      .mockResolvedValueOnce(chRows([])) // visit discovery
+      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_x', openCount: 4 }])); // play count
     pgCancellableQuery
-      .mockResolvedValueOnce(pgRows([{ id: 'apl_1', app_block_id: 'apb_x' }])) // affected
+      .mockResolvedValueOnce(pgRows([{ id: 'apl_1', app_block_id: 'apb_x', kind: 'onsite' }]))
       .mockResolvedValueOnce(pgRows([])); // upsert
 
     await appListingMetrics.update(jobContext);
 
     expect(await degradeCount()).toBe(0);
     // Positive control on the fixture: the run really did do its work, so the 0
-    // above is "nothing degraded", not "nothing ran".
-    expect(chQuery).toHaveBeenCalledTimes(2);
+    // above is "nothing degraded", not "nothing ran". No off-site listing is affected, so
+    // no visit COUNT read is issued.
+    expect(chQuery).toHaveBeenCalledTimes(3);
     expect(pgCancellableQuery).toHaveBeenCalledTimes(2);
     expect(pgCancellableQuery.mock.calls[1][0]).toContain('ON CONFLICT');
   });
@@ -105,14 +108,90 @@ describe('appListingMetrics.update — the degrade signal is actually wired', ()
     // written over live counts as 0. That must fail the run, not degrade it — and it
     // must not be reported on the counter that means "we degraded and carried on".
     chQuery
-      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_x' }])) // discovery succeeds
+      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_x' }])) // play discovery succeeds
+      .mockResolvedValueOnce(chRows([])) // visit discovery succeeds
       .mockRejectedValueOnce(new Error('Code: 62. DB::Exception: Max query size exceeded'));
-    pgCancellableQuery.mockResolvedValueOnce(pgRows([{ id: 'apl_1', app_block_id: 'apb_x' }]));
+    pgCancellableQuery.mockResolvedValueOnce(
+      pgRows([{ id: 'apl_1', app_block_id: 'apb_x', kind: 'onsite' }])
+    );
 
     await expect(appListingMetrics.update(jobContext)).rejects.toThrow('Code: 62');
 
     expect(await degradeCount()).toBe(0);
     // No upsert ran — the counts stay at their last good values.
+    expect(pgCancellableQuery).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('appListingMetrics.update — visit_count is derived from App_Visit', () => {
+  it('an off-site listing visited since the watermark is recomputed from its App_Visit count', async () => {
+    chQuery
+      .mockResolvedValueOnce(chRows([])) // play discovery
+      .mockResolvedValueOnce(chRows([{ listingId: 'apl_off' }])) // visit discovery
+      .mockResolvedValueOnce(chRows([{ listingId: 'apl_off', visitCount: '7' }])); // visit count
+    pgCancellableQuery
+      .mockResolvedValueOnce(pgRows([{ id: 'apl_off', app_block_id: null, kind: 'offsite' }]))
+      .mockResolvedValueOnce(pgRows([])); // upsert
+
+    await appListingMetrics.update(jobContext);
+
+    // The visit discovery fed the affected query's $3…
+    expect(pgCancellableQuery.mock.calls[0][1][2]).toEqual(['apl_off']);
+    // …the count read was the App_Visit one, for that listing…
+    const countSql = String(chQuery.mock.calls[2][0].query);
+    expect(countSql).toContain(`'App_Visit'`);
+    expect(countSql).toContain(`'apl_off'`);
+    expect(chQuery).toHaveBeenCalledTimes(3); // one count read: a visit-only chunk
+    // …and the upsert received it as the parallel ($4, $5) arrays.
+    const params = pgCancellableQuery.mock.calls[1][1];
+    expect(params[3]).toEqual(['apl_off']);
+    expect(params[4]).toEqual([7]);
+  });
+
+  it('🔴 plays AND visits come from ONE count scan, not a second all-time read', async () => {
+    chQuery
+      .mockResolvedValueOnce(chRows([{ appBlockId: 'apb_on' }])) // play discovery
+      .mockResolvedValueOnce(chRows([{ listingId: 'apl_off' }])) // visit discovery
+      .mockResolvedValueOnce(
+        chRows([
+          { type: 'App_Open', key: 'apb_on', dailyActorSum: '5' },
+          { type: 'App_Visit', key: 'apl_off', dailyActorSum: 3 },
+        ])
+      ); // the ONE combined count
+    pgCancellableQuery
+      .mockResolvedValueOnce(
+        pgRows([
+          { id: 'apl_off', app_block_id: null, kind: 'offsite' },
+          { id: 'apl_on', app_block_id: 'apb_on', kind: 'onsite' },
+        ])
+      )
+      .mockResolvedValueOnce(pgRows([]));
+
+    await appListingMetrics.update(jobContext);
+
+    // Two discovery reads + exactly ONE count read for both streams.
+    expect(chQuery).toHaveBeenCalledTimes(3);
+    const countSql = String(chQuery.mock.calls[2][0].query);
+    expect(countSql).toContain(`IN ('App_Open', 'App_Visit')`);
+    expect(countSql).toContain(`'apb_on'`);
+    expect(countSql).toContain(`'apl_off'`);
+    const params = pgCancellableQuery.mock.calls[1][1];
+    expect(params[1]).toEqual(['apb_on']);
+    expect(params[2]).toEqual([5]);
+    expect(params[3]).toEqual(['apl_off']);
+    expect(params[4]).toEqual([3]);
+  });
+
+  it('a visit COUNT failure fails the run hard and writes nothing', async () => {
+    chQuery
+      .mockResolvedValueOnce(chRows([]))
+      .mockResolvedValueOnce(chRows([{ listingId: 'apl_off' }]))
+      .mockRejectedValueOnce(new Error('Code: 62. DB::Exception: Max query size exceeded'));
+    pgCancellableQuery.mockResolvedValueOnce(
+      pgRows([{ id: 'apl_off', app_block_id: null, kind: 'offsite' }])
+    );
+
+    await expect(appListingMetrics.update(jobContext)).rejects.toThrow('Code: 62');
     expect(pgCancellableQuery).toHaveBeenCalledTimes(1);
   });
 });

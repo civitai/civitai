@@ -4,6 +4,8 @@ One model, two faces. A creator can give a model a separate title, description a
 civitai.com, which shows no mature content, while civitai.red keeps the original listing. With
 nothing set, both sites show the same listing.
 
+The editor presents the two faces as the model's civitai.red card and its civitai.com card.
+
 ## Who sees which face
 
 The face follows the viewer's browsing level, not only the site:
@@ -11,7 +13,8 @@ The face follows the viewer's browsing level, not only the site:
 - A viewer whose browsing level has no mature levels sees the .com face: everyone on civitai.com,
   anyone signed out, and a civitai.red viewer who has mature content turned off.
 - Everyone else sees the .red listing.
-- The owner and moderators always get both, because the same response fills the model editor.
+- The owner and moderators see the same face as anyone else on the model page. The model editor
+  asks `model.getById` with `forEditor: true`, and only then do they get both.
 
 `showsSfwFace(browsingLevel)` in `src/shared/utils/model-sfw-face.ts` is the rule. A server caller
 with no viewer (no browsing level) keeps the .red face.
@@ -47,6 +50,10 @@ saved, when one of the creator's images or posts on the model is deleted, blocke
 moderated, when a version is unpublished, and when an image's rating changes. When the cover stops
 qualifying, the model leaves .com again.
 
+The editor's .com tab says "Not listed on civitai.com" when a saved cover does not count, with what
+to change (`comCoverState` in `src/shared/utils/model-sfw-face.ts`). Any review or moderation state
+on the image reads the same as a flag.
+
 For a mature model shown through its face, the feed sends .com viewers only its PG/PG-13 images.
 
 `hasSfwFace` on model responses and search documents marks a complete face. The client-side drop
@@ -67,6 +74,52 @@ and trigger words, which .com shows unchanged.
 
 The .com fields are never fed to the automatic checks that set `Model.nsfw`; those keep reading the
 .red title and description.
+
+A .com face is also refused when the model's own listing (.red title, description and trigger
+words) fails the listing check. The refusal names those fields; the check's reason is kept for
+moderators and never sent to the owner. A check that could not run says so, separately.
+
+The listing check's verdict is stored on the model (`meta.comFaceIntent`, server-owned, hidden from
+clients) with a hash of the text it read, and reused while that text is unchanged, so a repeat
+attempt is not judged again. A detection means the model is made for sexual content: when it was
+read from the model's stored listing and the model is marked mature, the nsfw rating is locked
+(`model-com-face-intent.service.ts`, marker source `com-face-intent`). A model that is not marked
+mature keeps listing by its images and is refused a face without a lock; if it is later marked
+mature, the stored detection locks it on the next attempt, unless a moderator has ruled on its
+rating since. A text-scan rating marker the lock replaces is kept on the verdict and put back when
+the lock is lifted. The refusal offers the dispute only while the lock is the listing check's. A
+rating marked mature by the text scan alone carries no lock, so the owner can still add a face, but
+the owner cannot unmark it, or remove the face that listed it, without editing the text.
+
+### Dispute
+
+The .com tab of the editor explains the lock and offers **Dispute**, which files a locked-setting
+review of the nsfw lock tagged `dispute: comFaceIntent`, only when it names that lock alone and no
+moderator has ruled on it (a rejected review included) since it was set. A job (`com-face-intent-disputes`, every
+10 minutes) re-checks each one with a slower pass. If that allows it, the review is approved as
+the system: the lock and its marker go, the stored detection is marked overturned, and the owner
+is told. Anything else stays in the moderators' lock-review queue, marked with what the re-check
+found. A moderator who approves any review lifting the nsfw lock also overturns the detection.
+Each re-check is logged with the first verdict, as a sample for tuning the check. Creator Studio's
+Make Safe shows a refused model with a **Dispute** link to the editor.
+
+Creator Studio's models page counts the creator's published mature models with no face, no nsfw
+lock and no flag ruling a face out, in a banner that opens the "Can be listed on civitai.com"
+filter (`comFaceReadySql`), where Make Safe drafts their faces in bulk.
+
+## Listing re-check
+
+When the owner saves the face, edits the .red title, description, version names or trigger words,
+or adds a version to a model with a .com face, a job (`model-com-face-recheck.service.ts`) checks it again. The version names and
+trigger words, which .com shows unchanged, are rated as the .com title is; a mature rating takes the
+face off .com: the .com cover is cleared, the .com title and description stay, and
+`meta.comFaceRemoved` records it. The editor shows the owner a notice on both tabs; for a non-mature model, which stays
+on .com, it says only that the .com cover was removed.
+
+The marker goes when the owner sets a .com cover again (through the save checks), turns the face
+off, or edits the listing so that it passes both checks. That edit gets one check, once the owner has
+stopped editing for two minutes; no verdict keeps the marker. The old cover is not put back.
+Creator Studio's Make Safe can draft a removed face again.
 
 ## Draft action
 

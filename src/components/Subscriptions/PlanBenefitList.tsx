@@ -67,7 +67,6 @@ const defaultBenefits = [
     tiers: ['bronze', 'silver', 'gold'],
     subType: 'yellow',
   },
-  { content: 'Enhanced Model Creator controls', tiers: ['gold'] },
 ];
 
 export const PlanBenefitList = ({

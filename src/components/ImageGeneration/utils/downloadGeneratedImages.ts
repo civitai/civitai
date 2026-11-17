@@ -1,6 +1,6 @@
 import pLimit from 'p-limit';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { fetchBlob } from '~/utils/file-utils';
+import { blobExtension, fetchBlob } from '~/utils/file-utils';
 import { getJSZip } from '~/utils/lazy';
 
 const limit = pLimit(10);
@@ -25,8 +25,7 @@ export async function downloadGeneratedImages(images: BlobData[]): Promise<void>
         }
 
         const file = new File([blob], name);
-        const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
-        zip.file(`${name}.${ext}`, file);
+        zip.file(`${name}.${blobExtension(blob, 'jpg')}`, file);
       })
     )
   );

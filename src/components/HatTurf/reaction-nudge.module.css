@@ -1,0 +1,43 @@
+/* The reaction nudge: the bar glows in the placer's team colour, twice. One class per team palette;
+   an unknown team falls back to blue. */
+.nudge {
+  --nudge-color: var(--mantine-color-blue-filled);
+  border-radius: var(--mantine-radius-sm);
+  animation: nudge-pulse 1.2s ease-in-out 2;
+}
+
+.yellow {
+  --nudge-color: var(--mantine-color-yellow-filled);
+}
+
+.blue {
+  --nudge-color: var(--mantine-color-blue-filled);
+}
+
+.pink {
+  --nudge-color: var(--mantine-color-pink-filled);
+}
+
+.green {
+  --nudge-color: var(--mantine-color-green-filled);
+}
+
+@keyframes nudge-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+
+  45% {
+    box-shadow: 0 0 0 2px var(--nudge-color),
+      0 0 14px 4px color-mix(in srgb, var(--nudge-color) 70%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nudge {
+    animation: none;
+    /* An outline, not a box-shadow: the card's own shadow on the bar would compete with it. */
+    outline: 2px solid var(--nudge-color);
+  }
+}

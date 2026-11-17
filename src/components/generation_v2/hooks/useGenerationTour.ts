@@ -9,6 +9,7 @@ import {
   remixContentGenerationTour,
 } from '~/components/Tours/tours/content-gen.tour';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 
@@ -27,8 +28,11 @@ export function useGenerationTour() {
     state.requestsLoading,
     state.hasGeneratedImages,
   ]);
+  // The tour's steps point at the tabbed layout; the mobile generator has none of them.
+  const mobileGenerator = useMobileGenerator();
 
   useEffect(() => {
+    if (mobileGenerator) return;
     if (!status.available || status.isLoading || loadingGeneratorData) return;
     // `paused` is a tour mid-step, waiting on its own `onNext` hook — and picking a remix
     // option moves `remixOfId` inside exactly that window. Reading only `running` there
@@ -44,6 +48,7 @@ export function useGenerationTour() {
     remixOfId,
     loadingGeneratorData,
     paused,
+    mobileGenerator,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

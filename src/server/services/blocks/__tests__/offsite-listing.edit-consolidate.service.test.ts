@@ -316,6 +316,22 @@ describe('getMyListingForEdit', () => {
     expect(res.assets.screenshots[0].id).toBe('ss_shadow_new');
   });
 
+  it('a moderator opening an APPROVED listing with no shadow creates none; the prefill is the live listing', async () => {
+    wireFindUnique(ownedRow({ status: 'approved' }), { apl_parent: editViewRow('ss_live') });
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    mockWrite.appListing.findFirst.mockResolvedValue(null);
+
+    const res = await getMyListingForEdit({
+      listingId: 'apl_parent',
+      userId: 999,
+      isModerator: true,
+    });
+    expect(res.role).toBe('moderator');
+    expect(res.shadowId).toBeNull();
+    expect(mockWrite.appListing.create).not.toHaveBeenCalled();
+    expect(res.assets.screenshots[0].id).toBe('ss_live');
+  });
+
   /**
    * 🟢 THIS TEST ADDS NO COVERAGE — it is a LABEL on a path this file already exercises,
    * and it is filed here so nobody counts it twice. Say it plainly: `ownedRow` DEFAULTS

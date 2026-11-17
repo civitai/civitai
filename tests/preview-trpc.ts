@@ -40,15 +40,18 @@ function unwrap(body: unknown, proc: string): unknown {
 export async function trpcMutation<T = unknown>(
   request: APIRequestContext,
   proc: string,
-  input: unknown
+  input: unknown,
+  headers: Record<string, string> = {}
 ): Promise<T> {
   const res = await request.post(`/api/trpc/${proc}?batch=1`, {
-    headers: { 'content-type': 'application/json', ...csrfHeaders() },
+    headers: { 'content-type': 'application/json', ...csrfHeaders(), ...headers },
     data: { '0': { json: input } },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok()) {
-    throw new Error(`tRPC mutation ${proc} -> HTTP ${res.status()}: ${JSON.stringify(body).slice(0, 400)}`);
+    throw new Error(
+      `tRPC mutation ${proc} -> HTTP ${res.status()}: ${JSON.stringify(body).slice(0, 400)}`
+    );
   }
   return unwrap(body, proc) as T;
 }
@@ -56,15 +59,18 @@ export async function trpcMutation<T = unknown>(
 export async function trpcQuery<T = unknown>(
   request: APIRequestContext,
   proc: string,
-  input?: unknown
+  input?: unknown,
+  headers: Record<string, string> = {}
 ): Promise<T> {
   const enc = encodeURIComponent(JSON.stringify({ '0': { json: input ?? {} } }));
   const res = await request.get(`/api/trpc/${proc}?batch=1&input=${enc}`, {
-    headers: csrfHeaders(),
+    headers: { ...csrfHeaders(), ...headers },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok()) {
-    throw new Error(`tRPC query ${proc} -> HTTP ${res.status()}: ${JSON.stringify(body).slice(0, 400)}`);
+    throw new Error(
+      `tRPC query ${proc} -> HTTP ${res.status()}: ${JSON.stringify(body).slice(0, 400)}`
+    );
   }
   return unwrap(body, proc) as T;
 }

@@ -1,4 +1,5 @@
-import { Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Text, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';

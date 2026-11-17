@@ -8,12 +8,12 @@ import {
   Group,
   Loader,
   Paper,
-  Popover,
   SegmentedControl,
   Stack,
   Textarea,
   Title,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import type { TooltipProps } from '@mantine/core';
 import {
   IconExternalLink,

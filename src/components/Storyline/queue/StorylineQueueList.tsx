@@ -1,4 +1,5 @@
-import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconBolt, IconCheck, IconStar, IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
@@ -32,6 +33,8 @@ export type StorylineQueueRow = {
    * holds the row: it cannot be answered until the storyline's takedown lifts.
    */
   storyline: { id: number; title: string; maxNsfwLevel?: number; takenDown?: boolean };
+  /** Its chapter already has a main-path chapter after it, so accepting it starts a branch. */
+  startsBranch?: boolean;
 };
 
 export type StorylineQueueAction = 'accept' | 'endorse' | 'decline';
@@ -163,6 +166,17 @@ export function StorylineQueueList({
                     ) : (
                       <Badge size="sm" radius="xl" variant="light" color="green">
                         {storylinePriceLabel(row.amount)}
+                      </Badge>
+                    )}
+                    {row.startsBranch !== undefined && (
+                      <Badge
+                        size="sm"
+                        radius="xl"
+                        variant="light"
+                        color={row.startsBranch ? 'orange' : 'violet'}
+                        data-testid={`storyline-queue-path-${row.id}`}
+                      >
+                        {row.startsBranch ? 'Starts a branch' : 'Joins the main path'}
                       </Badge>
                     )}
                   </Group>

@@ -28,13 +28,20 @@ import type { SessionUser, SessionClaims } from './types';
 // shared cookie is the session); `host` sends a page load to this app's own /api/auth/authorize, and answers any
 // other request 401 with the authorize URL, since a fetch can't follow a sign-in redirect.
 
+/**
+ * Why a request was sent to sign in. `unavailable`: a session cookie is present but the hub could not resolve
+ * it right now — signing in again may not help. `host-cookie`: a valid shared-cookie session on a host-mode
+ * page load that needs this host's own cookie.
+ */
+export type SpokeSignInReason = 'no-session' | 'invalid' | 'unavailable' | 'host-cookie';
+
 export type SpokeGuardResult =
   /** Authenticated and authorized — render the request as `user`, adding `setCookies` to the response. */
   | { status: 'ok'; user: SessionUser; setCookies: string[] }
-  /** No valid session — redirect the browser to `redirect` (it returns to `returnUrl` after). */
-  | { status: 'login'; redirect: string }
-  /** No valid session on a non-navigation request in host mode — answer 401 (`spokeReauthResponse`). */
-  | { status: 'reauth'; authorize: string }
+  /** Sign-in needed (see `reason`) — redirect the browser to `redirect` (it returns to `returnUrl` after). */
+  | { status: 'login'; redirect: string; reason: SpokeSignInReason }
+  /** Sign-in needed on a non-navigation request in host mode — answer 401 (`spokeReauthResponse`). */
+  | { status: 'reauth'; authorize: string; reason: SpokeSignInReason }
   /** Authenticated but fails `require` (e.g. not a moderator) — 403. NOT a login redirect: re-login can't help. */
   | { status: 'forbidden'; user: SessionUser };
 
@@ -100,10 +107,17 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     return `${base}${loginPath}?returnUrl=${encodeURIComponent(returnUrl)}`;
   };
 
-  const signIn = (returnUrl: string, navigation: boolean): SpokeGuardResult => {
-    if (sessionCookieMode() === 'shared') return { status: 'login', redirect: hubLogin(returnUrl) };
+  const signIn = (
+    returnUrl: string,
+    navigation: boolean,
+    reason: SpokeSignInReason
+  ): SpokeGuardResult => {
+    if (sessionCookieMode() === 'shared')
+      return { status: 'login', redirect: hubLogin(returnUrl), reason };
     const authorize = spokeAuthorizeUrl(returnUrl);
-    return navigation ? { status: 'login', redirect: authorize } : { status: 'reauth', authorize };
+    return navigation
+      ? { status: 'login', redirect: authorize, reason }
+      : { status: 'reauth', authorize, reason };
   };
 
   async function roll(
@@ -136,14 +150,16 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     const navigation = opts.navigation ?? true;
     const jar = parseCookieHeader(cookieHeader);
     const read = readSessionToken(jar);
-    const user = read ? await sessions.getSessionUser(read.value) : null;
-    if (!read || !user) return signIn(returnUrl, navigation);
+    if (!read) return signIn(returnUrl, navigation, 'no-session');
+    const resolved = await sessions.resolveSessionUser(read.value);
+    if (!resolved.user) return signIn(returnUrl, navigation, resolved.reason);
+    const { user } = resolved;
     if (config.require && !config.require(user)) return { status: 'forbidden', user };
 
     const mode = sessionCookieMode();
     // A host-mode page load carrying only the shared cookie signs in on this host, so it gets its own cookie.
     if (mode === 'host' && read.slot === 'shared' && navigation) {
-      return { status: 'login', redirect: spokeAuthorizeUrl(returnUrl) };
+      return { status: 'login', redirect: spokeAuthorizeUrl(returnUrl), reason: 'host-cookie' };
     }
     // The spoke rolls only its own host-only cookie; the shared one is rolled by the hub and the main app.
     const setCookies =

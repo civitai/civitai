@@ -1,12 +1,10 @@
 import {
   Anchor,
   Avatar,
-  Badge,
   Card,
   Center,
   Divider,
   Group,
-  List,
   Loader,
   Modal,
   SimpleGrid,
@@ -15,14 +13,15 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconExternalLink, IconLock, IconShieldCheck } from '@tabler/icons-react';
+import { IconExternalLink, IconShieldCheck } from '@tabler/icons-react';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
+import { blockScopePermissions } from '~/components/Apps/listingPermissions';
+import { ListingPermissionGroups } from '~/components/Apps/ListingPermissionsDisclosure';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
-import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import { trpc } from '~/utils/trpc';
 
 export interface AppDetailsModalProps {
@@ -38,12 +37,6 @@ export interface AppDetailsModalProps {
    * /apps/<id> detail page uses.
    */
   block: AvailableBlock;
-}
-
-/** Human label for a scope id, falling back to the raw id for an unknown scope
- *  so a newly-added scope ships without breaking the disclosure list. */
-function scopeLabel(scope: string): string {
-  return SCOPE_DESCRIPTIONS[scope] ?? scope;
 }
 
 /**
@@ -261,28 +254,7 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
                 This app does not request any permissions.
               </Text>
             ) : (
-              <List
-                spacing="xs"
-                size="sm"
-                icon={
-                  <ThemeIcon variant="light" color="gray" size="sm" radius="xl">
-                    <IconLock size={12} />
-                  </ThemeIcon>
-                }
-              >
-                {scopes.map((scope) => (
-                  <List.Item key={scope}>
-                    <Group gap="xs" wrap="nowrap" align="center">
-                      <Badge variant="outline" color="gray" size="xs">
-                        {scope}
-                      </Badge>
-                      <Text component="span" size="sm">
-                        {scopeLabel(scope)}
-                      </Text>
-                    </Group>
-                  </List.Item>
-                ))}
-              </List>
+              <ListingPermissionGroups permissions={blockScopePermissions(scopes)} />
             )}
           </Stack>
         )}

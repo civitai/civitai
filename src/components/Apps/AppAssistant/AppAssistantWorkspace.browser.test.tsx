@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, inject, onTestFinished, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { ModalsProvider } from '@mantine/modals';
 import type { ReactNode } from 'react';
@@ -17,15 +17,6 @@ import type * as RemoteRunnerMod from '~/components/Apps/AppAssistant/remoteRunn
 import { renderWithProviders } from '../../../../test/component-setup';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
-declare module 'vitest' {
-  interface ProvidedContext {
-    quarantineRun?: boolean;
-  }
-}
-
-/** True only in the non-blocking `component-quarantine` project (vitest.config.mts). */
-const quarantineRun = inject('quarantineRun') === true;
-
 const BASE = 'https://sandbox.example';
 const sandbox = (name: string, overrides: Partial<Sandbox> = {}): Sandbox => ({
   name,
@@ -42,7 +33,12 @@ const m = vi.hoisted(() => ({
   chat: null as null | {
     tools: Record<string, ChatTool>;
     instructions: () => string;
-    mcpServers: { id: string; url: string; label?: string }[];
+    mcpServers: {
+      id: string;
+      url: string;
+      label?: string;
+      resultLimit?: { head?: number; tail?: number } | false;
+    }[];
     holdReason?: string;
     beforeToolCall?: (
       name: string,
@@ -62,6 +58,7 @@ const m = vi.hoisted(() => ({
     ) => void;
     onReplyResume?: (trigger: 'retry' | 'visible' | 'online') => boolean;
     onChatChange?: (chatId: string | null) => void;
+    onReady?: () => void;
     subagents?: unknown;
     composerTop?: ReactNode;
     threadEnd?: ReactNode;
@@ -85,6 +82,9 @@ const m = vi.hoisted(() => ({
   suspend: vi.fn(),
   remove: vi.fn(),
   newChat: vi.fn(),
+  chatId: null as string | null,
+  /** Each saved chat the page asked the chat to open (`conversationId`), in order. */
+  opened: [] as string[],
   /** The chat's message box. */
   box: '',
   /** The chat is listing a just-added app's tools, so it holds as it does for `holdReason`. */
@@ -301,6 +301,11 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         if (!props.chatRef) return;
         m.element ??= Object.defineProperties(new EventTarget(), {
           newChat: { value: m.newChat },
+          chatId: { get: () => m.chatId },
+          conversationId: {
+            get: () => m.opened.at(-1),
+            set: (id: string) => m.opened.push(id),
+          },
           send: { value: m.send },
           compose: { value: m.compose },
           draft: { get: () => m.box },
@@ -313,6 +318,8 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
         });
         props.chatRef.current = m.element;
       });
+      // As the real one, once it has started (`chatRef` set).
+      useLayoutEffect(() => props.onReady?.(), []);
       // A new `holdReason` re-renders the element, which announces a change of `canSend`.
       useLayoutEffect(() => m.announce(), [props.holdReason]);
       // 0.14.0 starts listing a new server's tools in its next update: `canSend` reads true until then.
@@ -338,6 +345,35 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', async () => {
 });
 // The server runner's Restart preview: the page's look for a live preview, the runner's restart,
 // and what the pane is handed (`restart`).
+/** App hibernate: the sleeping list, civitai's procedures and the wake/sleep the page asks for. */
+const hib = vi.hoisted(() => ({
+  sleeping: [] as {
+    app: string;
+    sha256: string;
+    bytes: number;
+    lastActivityAt: string | null;
+    hibernatedAt: string;
+  }[],
+  /** `enabled` of every listMine read the page made. */
+  listReads: [] as unknown[],
+  getWakeSeed: vi.fn(async (input: { app: string }) => ({
+    app: input.app,
+    url: `https://archive.example/${input.app}.zip`,
+    sha256: 'd'.repeat(64),
+    bytes: 512,
+    ticket: `ticket-for-${input.app}-0123456789`,
+    expiresAt: '2026-11-13T12:10:00.000Z',
+  })),
+  deleteMine: vi.fn(async (input: { app: string }) => ({ deleted: input.app })),
+  /** The page's FRESH read of the records (`listMine.query`), right after an open had to create. */
+  listMineQuery: vi.fn(async () => hib.sleeping),
+  /** Each wake the page asked for, with the seed it fetched for it. */
+  wakes: [] as { app: string; seed: unknown }[],
+  /** The next wakes throw these, in turn. */
+  wakeRejects: [] as unknown[],
+  sleeps: [] as string[],
+  sleepReject: null as unknown,
+}));
 const r = vi.hoisted(() => ({
   /** `fetchPreviewFrame`: unanswered unless a test says otherwise, so no pane appears by itself. */
   probe: vi.fn<(blockId: string) => Promise<unknown>>(),
@@ -352,18 +388,41 @@ const r = vi.hoisted(() => ({
       ) => Promise<boolean | null>
     >(),
   pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
+  /** How many times the pane was told the dev server came back up (`devServerUp`). */
+  devServerUp: undefined as number | undefined,
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
   AppAssistantPreview: ({
     session,
     restart,
+    devServerUp,
   }: {
     session: unknown;
     restart?: { onRestart: () => void; pending: boolean; error: string | null };
+    devServerUp?: number;
   }) => {
     m.previewSession = session;
     r.pane = restart;
+    r.devServerUp = devServerUp;
     return <div data-testid="preview" />;
+  },
+}));
+// The preview's App activity strip reads this instead of the network.
+const act = vi.hoisted(() => ({
+  asked: [] as string[],
+  activity: {
+    app: 'app-aaaa',
+    summary: '6 generations: 6 succeeded (last 3 min ago); 0 failed; 0 in progress; 0 errors',
+    items: [],
+    omitted: 0,
+    unavailable: [],
+  },
+}));
+vi.mock('~/components/Apps/AppAssistant/appActivity', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  fetchAppActivity: async (blockId: string) => {
+    act.asked.push(blockId);
+    return act.activity;
   },
 }));
 vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
@@ -386,6 +445,7 @@ beforeEach(() => {
   // Built unless a test says otherwise: an app opened on a visit has had a preview.
   r.built.mockReset().mockResolvedValue(true);
   r.pane = undefined;
+  r.devServerUp = undefined;
 });
 vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
   const { useReducer } = await import('react');
@@ -464,6 +524,45 @@ vi.mock('~/components/Apps/AppAssistant/useSandboxes', async () => {
           error: m.openError,
         },
         suspend: { mutate: m.suspend, isPending: false, error: null },
+        // App hibernate: the wake asks civitai for its seed as the real one does, then creates.
+        wake: {
+          mutateAsync: async ({
+            app,
+            getSeed,
+          }: {
+            app: string;
+            getSeed: (app: string) => Promise<unknown>;
+          }) => {
+            const seed = await getSeed(app);
+            hib.wakes.push({ app, seed });
+            const reject = hib.wakeRejects.shift();
+            if (reject) throw reject;
+            const made = sandbox(`sbx-woken-${app}`, { app, state: 'starting' });
+            // A seeded create succeeds only when the app has no sandbox: none other is listed.
+            m.list = [...m.list.filter((s) => s.app !== app), made];
+            hib.sleeping = hib.sleeping.filter((s) => s.app !== app);
+            rerender();
+            return {
+              sandbox: made,
+              created: true,
+              alreadyAwake: false,
+              sha256: (seed as { sha256: string }).sha256,
+            };
+          },
+          isPending: false,
+          variables: undefined,
+        },
+        sleep: {
+          mutate: (
+            name: string,
+            opts?: { onSuccess?: () => void; onError?: (error: unknown) => void }
+          ) => {
+            hib.sleeps.push(name);
+            if (hib.sleepReject) opts?.onError?.(hib.sleepReject);
+            else opts?.onSuccess?.();
+          },
+          isPending: false,
+        },
         remove: {
           mutate: (name: string, opts?: { onSuccess?: () => void }) => {
             m.remove(name);
@@ -504,13 +603,31 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
     reason?: unknown;
   }) => m.toasts.push({ kind: 'error', title, message: reason ?? error.message }),
 }));
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcMod>()),
-  trpc: makeTrpcProxy({
-    'blocks.startDevTunnel': { useMutation: () => ({ mutateAsync: m.start }) },
-    'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: m.stop }) },
-  }),
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const real = await importOriginal<typeof TrpcMod>();
+  const appHibernation = {
+    getWakeSeed: { mutate: hib.getWakeSeed },
+    deleteMine: { mutate: hib.deleteMine },
+    listMine: { query: hib.listMineQuery },
+  };
+  return {
+    ...real,
+    trpc: makeTrpcProxy({
+      'blocks.startDevTunnel': { useMutation: () => ({ mutateAsync: m.start }) },
+      'blocks.stopDevTunnel': { useMutation: () => ({ mutateAsync: m.stop }) },
+      'appHibernation.listMine': {
+        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
+          hib.listReads.push(opts?.enabled);
+          return { data: opts?.enabled ? hib.sleeping : undefined };
+        },
+      },
+    }),
+    trpcVanilla: new Proxy(real.trpcVanilla, {
+      get: (target, key) =>
+        key === 'appHibernation' ? appHibernation : Reflect.get(target, key, target),
+    }),
+  };
+});
 
 const {
   APP_LIST_REFRESH_TIMEOUT_MS,
@@ -625,6 +742,8 @@ beforeEach(() => {
   m.suspend.mockReset();
   m.remove.mockReset();
   m.newChat.mockReset();
+  m.chatId = null;
+  m.opened = [];
   m.send.mockClear();
   m.askAgain.mockClear();
   m.reasked = [];
@@ -729,7 +848,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     screen.rerender(<Workspace />);
     await vi.waitFor(() => expect(m.chat!.holdReason).toBeUndefined());
     expect(m.chat!.mcpServers).toEqual([
-      expect.objectContaining({ id: 'sandbox', label: 'your app' }),
+      expect.objectContaining({
+        id: 'sandbox',
+        label: 'your app',
+        // As the runner's: enough of a file or a test run that it is not read again.
+        resultLimit: { head: 6000, tail: 18000 },
+      }),
     ]);
     expect(await made).toMatchObject({
       app: 'tip-calculator',
@@ -785,7 +909,7 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
   test('a refused set_checklist still counts against the per-reply tool-call limit', async () => {
     m.list = [];
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toHaveProperty('refuse');
     expect(m.chat!.beforeToolCall!('set_checklist', {}, conv)).toMatchObject({ stop: true });
   });
@@ -1226,9 +1350,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
 
   // 0.14.0 asks again for a reply that lost its connection (Retry, or by itself as the page wakes) with
   // no before-send, so the page's hold above never sees it.
-  // Skipped outside the `component-quarantine` run: tests in this group time out at 15s on CI runs;
-  // the cause is not found, so the whole group waits. See scripts/ci/component-quarantine.mjs.
-  describe.skipIf(!quarantineRun)('a failed reply the chat asks for again', () => {
+  describe('a failed reply the chat asks for again', () => {
     /** The paused app's failed reply, and the page waking: the chat asks for it again by itself. */
     async function wakesPaused() {
       const screen = await openPaused();
@@ -1663,8 +1785,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retried).toEqual(['retry']);
     });
 
-    // Skipped for CI browser-starvation timeouts, until it waits on state instead of time.
-    test.skipIf(!quarantineRun)('🟡 an app paused again once it had started ends it', async () => {
+    test('🟡 an app paused again once it had started ends it', async () => {
       const screen = await wakesPaused();
       m.list = [m.list[0], { ...m.list[1], state: 'starting' }];
       screen.rerender(<Workspace />);
@@ -1677,22 +1798,18 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retryReply).not.toHaveBeenCalled();
     });
 
-    // Skipped for CI browser-starvation timeouts, until it waits on state instead of time.
-    test.skipIf(!quarantineRun)(
-      '🟡 an app paused while the reply waits on the chat ends it',
-      async () => {
-        const screen = await wakesPaused();
-        setListing(true);
-        runsB(screen);
-        await settle(100);
-        m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
-        screen.rerender(<Workspace />);
-        await settle(50);
-        setListing(false);
-        await settle(100);
-        expect(m.retryReply).not.toHaveBeenCalled();
-      }
-    );
+    test('🟡 an app paused while the reply waits on the chat ends it', async () => {
+      const screen = await wakesPaused();
+      setListing(true);
+      runsB(screen);
+      await settle(100);
+      m.list = [m.list[0], { ...m.list[1], state: 'suspended' }];
+      screen.rerender(<Workspace />);
+      await settle(50);
+      setListing(false);
+      await settle(100);
+      expect(m.retryReply).not.toHaveBeenCalled();
+    });
 
     test('🟡 a running app whose tools cannot be handed to the chat ends it rather than asking without them', async () => {
       m.list = [
@@ -1822,6 +1939,166 @@ describe('AppAssistantWorkspace on a visit', () => {
     screen.rerender(<Workspace />);
     await settle();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
+  });
+});
+
+describe('AppAssistantWorkspace chats follow the app', () => {
+  /** The chat announces `id` as the chat open now (`chat-change`). */
+  async function chatOpens(id: string) {
+    m.chatId = id;
+    m.chat!.onChatChange!(id);
+    await settle();
+  }
+  /** The assistant, in the open chat, chooses the open app (`use_open_app`), as it does before changing it. */
+  async function chatChooses(app: string) {
+    const input = { app };
+    const output = await m.chat!.tools.use_open_app.execute(input, ctx);
+    m.chat!.onToolResult!({ name: 'use_open_app', input, output, isError: false });
+  }
+  /** Opens app-aaaa in chat-a and app-bbbb in a new chat, chat-b; app-bbbb stays open. */
+  async function workOnBoth() {
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    await openFromSwitcher('app-bbbb');
+    await chatOpens('chat-b');
+    await chatChooses('app-bbbb');
+  }
+
+  test('🔴 switching to another app leaves the open app’s chat: a new chat when the app has none', async () => {
+    await mount();
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    expect(m.newChat).not.toHaveBeenCalled();
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+    expect(m.opened).toEqual([]);
+  });
+
+  test('🔴 switching back to an app opens the chat it was chosen in, each way', async () => {
+    await mount();
+    await workOnBoth();
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+
+    await openFromSwitcher('app-aaaa');
+    expect(m.opened).toEqual(['chat-a']);
+    await chatOpens('chat-a');
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.opened).toEqual(['chat-a', 'chat-b']);
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+  });
+
+  test('🔴 a reload opens the picked app’s own chat, not the chat used last', async () => {
+    const screen = await mount();
+    await workOnBoth();
+    // chat-a was used last, though app-bbbb is the picked app.
+    await chatOpens('chat-a');
+    screen.unmount();
+
+    m.chat = null;
+    m.element = null;
+    m.opened = [];
+    m.newChat.mockReset();
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await vi.waitFor(() => expect(m.opened).toEqual(['chat-b']));
+    expect(m.newChat).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an app’s chat remembered for one user is not opened for another user in the same browser', async () => {
+    const asUser = async (userId: number) => {
+      m.chat = null;
+      m.element = null;
+      m.opened = [];
+      m.newChat.mockReset();
+      await page.viewport(1440, 900);
+      const screen = renderWithProviders(
+        <ModalsProvider>
+          <AppAssistantWorkspace canPreview sandboxUrl={BASE} userId={userId} />
+        </ModalsProvider>
+      );
+      await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+      return screen;
+    };
+    let screen = await asUser(1);
+    await workOnBoth();
+    screen.unmount();
+
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    screen = await asUser(2);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await settle();
+    expect(m.opened).toEqual([]);
+    screen.unmount();
+
+    // POSITIVE CONTROL: user 1 on the same page gets the chat back.
+    await asUser(1);
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await vi.waitFor(() => expect(m.opened).toEqual(['chat-b']));
+  });
+
+  test('🔴 a reload with no chat known for the picked app starts one when the chat opened is another app’s', async () => {
+    const screen = await mount();
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-a');
+    await chatChooses('app-aaaa');
+    screen.unmount();
+
+    m.chat = null;
+    m.element = null;
+    m.list = [
+      sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' }),
+      sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' }),
+    ];
+    m.chatId = null;
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    expect(m.newChat).not.toHaveBeenCalled();
+    await chatOpens('chat-a');
+    expect(m.newChat).toHaveBeenCalledTimes(1);
+    expect(m.opened).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: a reload whose chat is no app’s, or the picked app’s, keeps it', async () => {
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { lastActivityAt: '2026-10-03T10:00:00Z' })];
+    await mount();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    await chatOpens('chat-x');
+    expect(m.newChat).not.toHaveBeenCalled();
+    expect(m.opened).toEqual([]);
+  });
+
+  test('NEGATIVE CONTROL: opening an app from none keeps a chat that is no app’s, and picking the open app changes nothing', async () => {
+    await mount();
+    await chatOpens('chat-x');
+    await openFromSwitcher('app-aaaa');
+    await openFromSwitcher('app-aaaa');
+    expect(m.newChat).not.toHaveBeenCalled();
+    expect(m.opened).toEqual([]);
+  });
+
+  test('switching back to the first app starts a new chat once its chat chose another app', async () => {
+    await mount();
+    await workOnBoth();
+    // chat-b, open with app-bbbb, is then asked to work on app-aaaa.
+    await openFromSwitcher('app-aaaa');
+    await chatOpens('chat-b');
+    await chatChooses('app-aaaa');
+    m.opened = [];
+
+    await openFromSwitcher('app-bbbb');
+    expect(m.opened).toEqual([]);
+    expect(m.newChat).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -2142,10 +2419,51 @@ describe('AppAssistantWorkspace hold while the app starts', () => {
   });
 });
 
+describe('AppAssistantWorkspace app_activity', () => {
+  /** The page's own `app_activity` read (`GET /api/apps/assistant/activity`): the block id asked. */
+  function stubActivityEndpoint() {
+    const asked: string[] = [];
+    const original = window.fetch.bind(window);
+    const spy = vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+      const url = new URL(String(input instanceof Request ? input.url : input), location.href);
+      if (url.pathname !== '/api/apps/assistant/activity') return original(input, init);
+      const blockId = url.searchParams.get('blockId') ?? '';
+      asked.push(blockId);
+      return Response.json({ ...act.activity, app: blockId });
+    });
+    onTestFinished(() => spy.mockRestore());
+    return asked;
+  }
+
+  // REGRESSION: the app key (`app-aaaa`) previews under another blockId when its own is taken, and
+  // the preview's calls and errors are kept under that block id: the tool read the app key.
+  test('reads the block id the live preview runs under, not the app key', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('slideshow-2');
+    const asked = stubActivityEndpoint();
+    const out = await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['slideshow-2']);
+    expect(String(out).split('\n')[0]).toBe(
+      'App activity of slideshow-2 in the last 2 hours, newest first:'
+    );
+  });
+
+  // The control (an invariant guard: it held before the fix too).
+  test('reads the app key while no preview runs', async () => {
+    await mount();
+    await openFirst();
+    const asked = stubActivityEndpoint();
+    await m.chat!.tools.app_activity.execute({}, ctx);
+    expect(asked).toEqual(['app-aaaa']);
+  });
+});
+
 describe('AppAssistantWorkspace tool gate', () => {
   test('offers create_app, generate_app_cover, report_ready, set_checklist and submit_for_review beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
       'generate_app_cover',
       'get_review_feedback',
@@ -2242,7 +2560,7 @@ describe('AppAssistantWorkspace tool gate', () => {
 
   test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
     await mount();
-    for (let i = 0; i < 150; i++)
+    for (let i = 0; i < 300; i++)
       expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toEqual({ allow: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, conv)).toMatchObject({ stop: true });
     expect(m.chat!.beforeToolCall!('sandbox__read_file', {}, { ...conv, reply: 2 })).toEqual({
@@ -2459,11 +2777,14 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     m.chat!.onToolResult!({ name, input: {}, output, isError });
   const pane = () => page.getByTestId('app-assistant-preview-pane');
 
-  test('does not hand the chat the page-only generate_app_cover tool', async () => {
+  // The runner offers generate_app_cover itself now (the same `createCoverArt`); the page's copy shows its calls.
+  test('hands the chat the tools the runner offers, generate_app_cover included', async () => {
     await mountRunner();
     // The runner's host tools (its `RUNNER_PAGE_TOOLS`), the feedback tools' cards included.
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
+      'app_activity',
       'create_app',
+      'generate_app_cover',
       'get_review_feedback',
       'get_user_feedback',
       'report_ready',
@@ -2493,6 +2814,25 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await expect.element(pane()).not.toBeInTheDocument();
     // The page has no id for the runner's tunnel and never stops it: the runner and civitai do.
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  test('the shown preview’s App activity strip puts its activity in the message box, never sends it', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect
+      .element(page.getByTestId('app-activity-summary'))
+      .toHaveTextContent(act.activity.summary);
+    expect(act.asked).toContain('app-aaaa');
+    m.compose.mockClear();
+    m.send.mockClear();
+    await page.getByRole('button', { name: 'Tell the assistant' }).click();
+    await vi.waitFor(() => expect(m.compose).toHaveBeenCalledTimes(1));
+    expect(m.compose.mock.calls[0]![0]).toMatch(
+      /^The preview of my app seems stuck or wrong\. Here is what it did recently;/
+    );
+    expect(m.compose.mock.calls[0]![0]).toContain(act.activity.summary);
+    expect(m.send).not.toHaveBeenCalled();
   });
 
   test('a failed start shows nothing', async () => {
@@ -2527,6 +2867,73 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     await openFromSwitcher('app-bbbb');
     await expect.element(pane()).not.toBeInTheDocument();
     expect(m.stop).not.toHaveBeenCalled();
+  });
+
+  // The page learns of a restart only through `devServerUp` (`devServerUpOf`).
+  test('🔴 the shown preview is told each time the dev server comes back up', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":4242}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 1));
+    reported('sandbox__preview_check', 'render: ok\npage_errors: 0\nconsole_errors: 0');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 2));
+    reported('sandbox__dev_server_start', '{"running":true,"pid":5151}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 3));
+  });
+
+  test('NEGATIVE CONTROL: a failed start or restart, a check that did not render, and other calls tell it nothing', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+
+    reported('sandbox__dev_server_restart', { error: 'port 5173 is in use' }, true);
+    reported('sandbox__dev_server_start', { error: 'npm exited with code 1' }, true);
+    reported('sandbox__preview_check', 'render: start_error\npage_errors: 2');
+    reported('sandbox__preview_check', { error: 'timed out' }, true);
+    reported('sandbox__dev_server_status', '{"running":true,"pid":4242}');
+    await settle();
+    expect(r.devServerUp ?? 0).toBe(before);
+
+    // Control: the same pane hears a restart that worked.
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":6363}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(before + 1));
+  });
+
+  test('NEGATIVE CONTROL: a restart reported while another app is open, its preview gone, is not told to that app’s preview', async () => {
+    await mountRunner();
+    await openFirst();
+    reported('start_preview', { shown: true, blockId: 'app-aaaa', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    const before = r.devServerUp ?? 0;
+    await openFromSwitcher('app-bbbb');
+    await expect.element(pane()).not.toBeInTheDocument();
+
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":7474}');
+    await settle();
+    reported('start_preview', { shown: true, blockId: 'app-bbbb', host: HOST });
+    await expect.element(pane()).toBeInTheDocument();
+    await settle();
+    const shown = r.devServerUp ?? 0;
+    expect(shown).toBe(before);
+    // Control: b's own restart, once its preview shows, is told.
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":8585}');
+    await vi.waitFor(() => expect(r.devServerUp).toBe(shown + 1));
+  });
+
+  test('NEGATIVE CONTROL: replies in the browser tell the preview nothing', async () => {
+    await mount();
+    await openFirst();
+    await startPreview('app-aaaa');
+    await expect.element(pane()).toBeInTheDocument();
+    reported('sandbox__dev_server_restart', '{"running":true,"pid":4242}');
+    await settle();
+    expect(r.devServerUp ?? 0).toBe(0);
   });
 });
 
@@ -2968,6 +3375,8 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card()).toBeVisible();
     return screen;
   }
+  /** Delete → askAgain is several async hops: the 1s default fails on a loaded CI runner. */
+  const CARRIES_ON = { timeout: 5_000 };
   /** The user picks the app themselves (nothing is chosen for them), then confirms. */
   async function confirmDelete(app: string) {
     await card().getByRole('radio', { name: app }).click();
@@ -3114,7 +3523,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
   test('confirmed, deletes the app picked, then the request carries on: one copy of the message and a fresh reply', async () => {
     await atLimit();
     await confirmDelete('app-cccc');
-    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), CARRIES_ON);
     expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
     expect(m.remove.mock.invocationCallOrder[0]).toBeLessThan(
       m.askAgain.mock.invocationCallOrder[0]
@@ -3131,7 +3540,10 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await atLimit();
     m.running = true;
     await confirmDelete('app-bbbb');
-    await vi.waitFor(() => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'));
+    await vi.waitFor(
+      () => expect(m.giveBack).toHaveBeenCalledWith('Make a quiz night app'),
+      CARRIES_ON
+    );
     expect(m.reasked).toEqual([]);
     expect(m.delivered).toEqual(['Make a quiz night app']);
   });
@@ -3204,7 +3616,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
-    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), CARRIES_ON);
     expect(m.send).not.toHaveBeenCalled();
   });
 
@@ -3234,7 +3646,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     await expect.element(card().getByRole('radio', { name: 'app-bbbb' })).not.toBeChecked();
     await confirmDelete('app-bbbb');
     // The request carries on in place: asked again, never sent as a second message.
-    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']));
+    await vi.waitFor(() => expect(m.reasked).toEqual(['A tiny click counter app.']), CARRIES_ON);
     expect(m.send).not.toHaveBeenCalled();
   });
 });
@@ -3466,4 +3878,588 @@ describe('AppAssistantWorkspace Submit for review', () => {
     expect(button(shown)).toBeNull();
     expect(submits).toHaveLength(1);
   });
+});
+
+describe('AppAssistantWorkspace app hibernate (sleeping apps)', () => {
+  const OLD = ago(30);
+  // The record's sha is the one the wake seed carries (`hib.getWakeSeed`): woken here, its lineage.
+  const asleep = (app: string, days = 10) => ({
+    app,
+    sha256: 'd'.repeat(64),
+    bytes: 2_048,
+    lastActivityAt: ago(days),
+    hibernatedAt: OLD,
+  });
+  const dialog = () => page.getByRole('dialog', { name: 'Apps' });
+  const sleepingLimit = (oldest: string) =>
+    new SandboxApiError(
+      'sandbox limit (3) reached; delete one first',
+      409,
+      'limit',
+      'sleeping_limit',
+      {
+        limit: { kind: 'apps', limit: 5, used: 5 },
+        oldest: { app: oldest, hibernatedAt: OLD },
+      }
+    );
+
+  beforeEach(() => {
+    hib.sleeping = [];
+    hib.listReads = [];
+    hib.getWakeSeed.mockClear();
+    hib.deleteMine.mockClear();
+    hib.listMineQuery.mockClear();
+    hib.wakes = [];
+    hib.wakeRejects = [];
+    hib.sleeps = [];
+    hib.sleepReject = null;
+  });
+
+  async function mountHibernate(hibernate: boolean) {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate={hibernate} />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  }
+
+  test('FLAG OFF: nothing is read, no Sleeping row, no Wake or Put to sleep, the tools and copy as before', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended', expiresAt: ago(-5) })];
+    await mountHibernate(false);
+    expect(hib.listReads.length).toBeGreaterThan(0);
+    expect(hib.listReads.every((enabled) => enabled === false)).toBe(true);
+    expect(Object.keys(m.chat!.tools)).not.toContain('wake_app');
+    expect(Object.keys(m.chat!.tools)).not.toContain('list_apps');
+    expect(m.chat!.instructions()).not.toMatch(/sleep|wake_app/i);
+    await switcher().click();
+    await expect.element(dialog().getByText(/deleted in 5 days if unused/)).toBeVisible();
+    await expect
+      .element(dialog().getByText(/and is deleted after 14 days unused\.$/))
+      .toBeVisible();
+    expect(document.querySelector('[role="dialog"]')!.textContent).not.toMatch(
+      /Sleeping|Wake|garden-log|goes to sleep/
+    );
+    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Delete app' })).toBeVisible();
+    expect(page.getByRole('menuitem', { name: /Put to sleep/ }).elements()).toHaveLength(0);
+    expect(hib.getWakeSeed).not.toHaveBeenCalled();
+  });
+
+  test('NEGATIVE CONTROL, FLAG ON: the same apps show a Sleeping row with Wake, and the sleep wording', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    m.list = [sandbox('sbx-aaaaaaaaaaaa', { state: 'suspended', expiresAt: ago(-5) })];
+    await mountHibernate(true);
+    expect(hib.listReads).toContain(true);
+    expect(Object.keys(m.chat!.tools)).toEqual(expect.arrayContaining(['list_apps', 'wake_app']));
+    expect(m.chat!.instructions()).toContain('sleeping apps: garden-log');
+    await switcher().click();
+    await expect
+      .element(dialog().getByText('Sleeping · last used 10 days ago', { exact: true }))
+      .toBeVisible();
+    await expect.element(dialog().getByRole('button', { name: 'Wake garden-log' })).toBeVisible();
+    await expect.element(dialog().getByText(/goes to sleep in 5 days if unused/)).toBeVisible();
+    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
+    await expect.element(page.getByRole('menuitem', { name: /Put to sleep/ })).toBeVisible();
+  });
+
+  test('a live app always wins over a sleeping record of the same app', async () => {
+    hib.sleeping = [asleep('app-aaaa'), asleep('garden-log')];
+    await mountHibernate(true);
+    await switcher().click();
+    expect(
+      dialog()
+        .getByRole('button', { name: /^Wake / })
+        .elements()
+    ).toHaveLength(1);
+    await expect.element(dialog().getByRole('button', { name: 'Wake garden-log' })).toBeVisible();
+  });
+
+  test('Wake: one click fetches the seed and ticket, wakes it under the same key and opens it with its chat', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    localStorage.clear();
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await vi.waitFor(() => expect(hib.wakes).toHaveLength(1));
+    expect(hib.getWakeSeed).toHaveBeenCalledWith({ app: 'garden-log' });
+    expect(hib.wakes[0]).toMatchObject({
+      app: 'garden-log',
+      seed: { ticket: 'ticket-for-garden-log-0123456789' },
+    });
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    // The next reply is told the app's dependencies need installing again.
+    expect(m.chat!.instructions()).toMatch(/garden-log was just woken from sleep.*npm install/);
+  });
+
+  test('a wake at the sleeping-app limit offers to delete the oldest; nothing is deleted until confirmed, then it wakes', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('old-quiz', 60)];
+    hib.wakeRejects = [sleepingLimit('old-quiz')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    const offer = dialog().getByRole('button', { name: 'Delete old-quiz to continue' });
+    await expect.element(offer).toBeVisible();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await offer.click();
+    // The confirmation: Keep it deletes nothing.
+    await page.getByRole('button', { name: 'Keep it' }).click();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await offer.click();
+    await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'old-quiz', why: 'limit' })
+    );
+    expect(hib.deleteMine).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(hib.wakes).toHaveLength(2));
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+  });
+
+  test('when the only apps that could make room cannot sleep, the wake says which and why', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    hib.wakeRejects = [
+      new SandboxApiError(
+        'sandbox limit (3) reached; delete one first',
+        409,
+        'limit',
+        'kept_apps',
+        {
+          kept: [{ name: 'sbx-aaaaaaaaaaaa', app: 'app-aaaa', reason: 'archive_too_large' }],
+        }
+      ),
+    ];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect.element(dialog().getByText(/app-aaaa too large to put to sleep/)).toBeVisible();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('🔴 the limit offer never names the APP BEING WOKEN: no delete offered, none performed', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('old-quiz', 60)];
+    // civitai keeps garden-log's record while it wakes, so it can be the "oldest".
+    hib.wakeRejects = [sleepingLimit('garden-log')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect
+      .element(dialog().getByText(/Delete a sleeping app you no longer need first/))
+      .toBeVisible();
+    await expect
+      .element(dialog().getByText(/Your sleeping apps: garden-log, old-quiz/))
+      .toBeVisible();
+    expect(
+      dialog()
+        .getByRole('button', { name: /to continue$/ })
+        .elements()
+    ).toHaveLength(0);
+    await settle(100);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('🔴 the limit offer never names a LIVE app: no delete offered, none performed', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('app-aaaa')];
+    hib.wakeRejects = [sleepingLimit('app-aaaa')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect
+      .element(dialog().getByText(/Delete a sleeping app you no longer need first/))
+      .toBeVisible();
+    expect(
+      dialog()
+        .getByRole('button', { name: /to continue$/ })
+        .elements()
+    ).toHaveLength(0);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('🔴 THE CARD never offers a LIVE app as the oldest: it says to delete a sleeping app instead', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    await mountHibernate(true);
+    await userSends('Make a quiz night app');
+    m.openReject = sleepingLimit('app-aaaa');
+    const gated = gateToolSet(m.chat!.tools as never, {
+      conversationId: 'c',
+      gate: (name, input, context) => m.chat!.beforeToolCall!(name, input, context) as never,
+      onResult: (result) => m.chat!.onToolResult!(result),
+    });
+    await Promise.resolve(
+      gated.create_app.execute!({ name: 'Quiz night' }, {
+        toolCallId: 't-1',
+        messages: [],
+      } as never)
+    ).catch(() => undefined);
+    m.openReject = null;
+    const card = page.getByRole('region', { name: 'Make room for this app' });
+    await expect
+      .element(card.getByText(/Delete a sleeping app you no longer need first/))
+      .toBeVisible();
+    expect(card.getByRole('button', { name: /to continue$/ }).elements()).toHaveLength(0);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('a wake whose secrets could not be fetched says so in plain words', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    hib.wakeRejects = [
+      new SandboxApiError(
+        'civitai could not return the app’s secrets; retry',
+        503,
+        'unavailable',
+        'secrets_unavailable'
+      ),
+    ];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect
+      .element(dialog().getByText(/saved settings could not be fetched just now/))
+      .toBeVisible();
+    expect(document.querySelector('[role="dialog"]')!.textContent).not.toMatch(/civitai|secrets/);
+  });
+
+  test('Delete app on a sleeping row asks first, then deletes only that app', async () => {
+    hib.sleeping = [asleep('garden-log'), asleep('old-quiz')];
+    await mountHibernate(true);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log', why: 'user' })
+    );
+    expect(hib.deleteMine).toHaveBeenCalledTimes(1);
+  });
+
+  test('LINEAGE: deleting an app woken HERE from its record deletes that record (by its sha) too', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    await mountHibernate(true);
+    await switcher().click();
+    await dialog().getByRole('button', { name: 'Wake garden-log' }).click();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    // civitai keeps the record after the wake (it is the woken sandbox's lineage).
+    hib.sleeping = [asleep('garden-log')];
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-woken-garden-log');
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log', sha256: 'd'.repeat(64) })
+    );
+  });
+
+  test('NO LINEAGE: a confirmed Delete of an app this browser did not wake from the record leaves the record', async () => {
+    // app-bbbb is listed and has a record, but this browser never woke it (another device, or a
+    // reload of an empty app made while it slept): the record may be the only copy.
+    hib.sleeping = [asleep('app-bbbb')];
+    await mountHibernate(true);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+  test('R2-2 LINEAGE from the RUNNER: deleting an app the runner woke (wake_app) deletes its record by sha', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    localStorage.clear();
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    // The runner woke it: the page hears of the call, and its list now has the woken sandbox.
+    m.list = [...m.list, sandbox('sbx-woken-garden-log', { app: 'garden-log', state: 'starting' })];
+    m.chat!.onToolResult!({
+      name: 'wake_app',
+      input: { app: 'garden-log' },
+      output: {
+        app: 'garden-log',
+        state: 'starting',
+        woke: true,
+        sha256: 'd'.repeat(64),
+        note: 'x',
+      },
+      isError: false,
+    });
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-woken-garden-log');
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'garden-log', sha256: 'd'.repeat(64) })
+    );
+  });
+
+  test('R2-2 NEGATIVE CONTROL: a runner wake_app with no sha (already awake) records no lineage', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    localStorage.clear();
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    m.list = [...m.list, sandbox('sbx-woken-garden-log', { app: 'garden-log', state: 'starting' })];
+    m.chat!.onToolResult!({
+      name: 'wake_app',
+      input: { app: 'garden-log' },
+      output: { app: 'garden-log', state: 'starting', woke: true, note: 'x' },
+      isError: false,
+    });
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: garden-log,/);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for garden-log' }).click();
+    await page.getByRole('menuitem', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click();
+    expect(m.remove).toHaveBeenCalledWith('sbx-woken-garden-log');
+    await settle(200);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('R2-5: a start refused at the SLEEPING-app limit says so, not "apps you can keep"', async () => {
+    const { AppError } = await import('./YourApps');
+    renderWithProviders(<AppError error={sleepingLimit('old-quiz')} />);
+    await expect
+      .element(page.getByText('You have as many sleeping apps as you can keep'))
+      .toBeVisible();
+    await expect.element(page.getByText(/Delete a sleeping app you no longer need/)).toBeVisible();
+    expect(page.getByText('You have as many apps as you can keep').elements()).toHaveLength(0);
+  });
+
+  test('Put to sleep asks the service and shows the app going to sleep', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await mountHibernate(true);
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /Put to sleep/ }).click();
+    expect(hib.sleeps).toEqual(['sbx-bbbbbbbbbbbb']);
+    await expect.element(dialog().getByText('Going to sleep…', { exact: true })).toBeVisible();
+  });
+
+  test('THE CARD: the assistant hit the sleeping-app limit; delete the oldest after a confirm, and the request continues', async () => {
+    hib.sleeping = [asleep('garden-log')];
+    await mountHibernate(true);
+    await userSends('Make a quiz night app');
+    m.openReject = sleepingLimit('old-quiz');
+    const gated = gateToolSet(m.chat!.tools as never, {
+      conversationId: 'c',
+      gate: (name, input, context) => m.chat!.beforeToolCall!(name, input, context) as never,
+      onResult: (result) => m.chat!.onToolResult!(result),
+    });
+    await Promise.resolve(
+      gated.create_app.execute!({ name: 'Quiz night' }, {
+        toolCallId: 't-1',
+        messages: [],
+      } as never)
+    ).catch(() => undefined);
+    m.openReject = null;
+    const card = page.getByRole('region', { name: 'Make room for this app' });
+    await expect.element(card).toBeVisible();
+    expect(page.getByRole('region', { name: 'Free up a slot' }).elements()).toHaveLength(0);
+    await card.getByRole('button', { name: 'Delete old-quiz to continue' }).click();
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+    await page.getByRole('button', { name: 'Delete old-quiz', exact: true }).click();
+    await vi.waitFor(() =>
+      expect(hib.deleteMine).toHaveBeenCalledWith({ app: 'old-quiz', why: 'limit' })
+    );
+    // Delete → askAgain is several async hops: the 1s default fails on a loaded runner.
+    await vi.waitFor(() => expect(m.reasked).toEqual(['Make a quiz night app']), {
+      timeout: 5_000,
+    });
+    await expect.element(card).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * 🔴 D4 — A STALE LIST MUST NEVER DELETE A SLEEPING APP. The page still lists app-bbbb as paused,
+ * but it was put to sleep meanwhile (retention, or the cap from another device). Export or Submit
+ * starts it; the service makes a NEW, EMPTY app-bbbb, which the page discards. That discard is
+ * internal cleanup: the sleeping record and its archive (the ONLY copy) must survive it.
+ */
+describe('AppAssistantWorkspace app hibernate: a discarded empty app keeps the sleeping record', () => {
+  const sleepingBbbb = () => [
+    {
+      app: 'app-bbbb',
+      sha256: 'd'.repeat(64),
+      bytes: 2_048,
+      lastActivityAt: ago(9),
+      hibernatedAt: ago(1),
+    },
+  ];
+  beforeEach(() => {
+    hib.sleeping = sleepingBbbb();
+    hib.deleteMine.mockClear();
+    hib.listMineQuery.mockClear();
+    hib.getWakeSeed.mockClear();
+    hib.wakes = [];
+    hib.wakeRejects = [];
+  });
+  /** The service has no app-bbbb any more: its start makes a new, empty one. */
+  const goneFromService = (app: string) =>
+    m.open.mockImplementation((asked: string) => {
+      if (asked === app) m.list = m.list.filter((s) => s.name !== 'sbx-bbbbbbbbbbbb');
+    });
+
+  test('Export of an app put to sleep meanwhile: it is WOKEN (never made empty), and the record is not deleted', async () => {
+    const restore = stubExport();
+    onTestFinished(restore);
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    goneFromService('app-bbbb');
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
+    await settle(200);
+    // The listed app resumes with a plain open; that open had to CREATE (it slept meanwhile), so
+    // only the EMPTY sandbox it made is deleted, the app is woken, and the record is kept.
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(hib.listMineQuery).toHaveBeenCalledTimes(1);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+  test('Submit of an app put to sleep meanwhile: it is WOKEN (never made empty), and the record is not deleted', async () => {
+    const restore = stubExport();
+    onTestFinished(restore);
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    // No record yet: app-bbbb is opened as the plain paused app it is.
+    hib.sleeping = [];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await switcher().click();
+    await page
+      .getByRole('dialog', { name: 'Apps' })
+      .getByRole('button', { name: /^app-bbbb/ })
+      .click();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    // Put to sleep meanwhile: the record appears; the list still shows the paused sandbox.
+    hib.sleeping = sleepingBbbb();
+    // A render reads it (the list's query answers on every render).
+    await switcher().click();
+    await switcher().click();
+    m.remove.mockClear();
+    m.open.mockClear();
+    goneFromService('app-bbbb');
+    const offer = { awaitsUser: true, submit: 'runner-submit-d4', note: 'x' };
+    m.chat!.onToolResult!({ name: 'submit_for_review', input: {}, output: offer, isError: false });
+    const shown = m.chat!.tools.submit_for_review.render!({
+      name: 'submit_for_review',
+      input: {},
+      state: 'done',
+      output: offer,
+    }) as HTMLElement;
+    document.body.append(shown);
+    onTestFinished(() => shown.remove());
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toContain('app-bbbb'));
+    await settle(200);
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+  test('Start of a stale paused app that now sleeps WAKES it; deleting that one then takes its own record only', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    goneFromService('app-bbbb');
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /^Start/ }).click();
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    // The empty sandbox the plain open made is gone; the woken one is what the user has.
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(m.list.filter((s) => s.app === 'app-bbbb').map((s) => s.name)).toEqual([
+      'sbx-woken-app-bbbb',
+    ]);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('R2-3: a paused LISTED app with a sleeping record resumes with a PLAIN open: no seed, no wake', async () => {
+    m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
+    await mountHibernateFor();
+    await switcher().click();
+    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
+    await page.getByRole('menuitem', { name: /^Start/ }).click();
+    await vi.waitFor(() => expect(m.open.mock.calls).toEqual([['app-bbbb']]));
+    await settle(200);
+    expect(hib.wakes).toEqual([]);
+    expect(hib.getWakeSeed).not.toHaveBeenCalled();
+    expect(hib.listMineQuery).not.toHaveBeenCalled();
+    expect(m.remove).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🟡 R2-1 — A MESSAGE SENT TO, OR A REPLY ASKED FOR ON, A PAUSED APP that was put to sleep since
+   * the page listed it: the page's one start wakes it, never leaves it NEW and EMPTY.
+   */
+  test('R2-1: a message sent to a stale paused app that now sleeps WAKES it (never left empty)', async () => {
+    // A visit opens the one app without starting it: paused, as listed.
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: ago(1) })];
+    await mountHibernateFor();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    // Put to sleep since the page listed it: the record is there, the sandbox is not.
+    goneFromService('app-bbbb');
+    m.chat!.onBeforeSend!('Add a dark mode', (waiting) => ({
+      text: 'Add a dark mode',
+      waiting: waiting ?? '',
+      release: () => undefined,
+      cancel: () => undefined,
+    }));
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(m.list.filter((s) => s.app === 'app-bbbb').map((s) => s.name)).toEqual([
+      'sbx-woken-app-bbbb',
+    ]);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  test('R2-1: Retry on a stale paused app that now sleeps WAKES it (never left empty)', async () => {
+    m.list = [sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended', lastActivityAt: ago(1) })];
+    await mountHibernateFor();
+    await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
+    goneFromService('app-bbbb');
+    expect(m.chat!.onReplyResume!('retry')).toBe(true);
+    await vi.waitFor(() => expect(hib.wakes.map((w) => w.app)).toEqual(['app-bbbb']));
+    expect(m.open.mock.calls).toEqual([['app-bbbb']]);
+    expect(m.remove.mock.calls).toEqual([['sbx-new-app-bbbb']]);
+    expect(hib.deleteMine).not.toHaveBeenCalled();
+  });
+
+  async function mountHibernateFor() {
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} hibernate />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+  }
 });

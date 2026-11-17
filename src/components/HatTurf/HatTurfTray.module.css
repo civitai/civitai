@@ -1,0 +1,53 @@
+.sheet {
+  flex: 0 0 auto;
+  height: auto;
+  max-height: 70dvh;
+  border-radius: 16px 16px 0 0;
+}
+
+.tools {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 10px 8px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+
+  & > span:first-child {
+    outline: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+    outline-offset: 0;
+  }
+}
+
+.active > span:first-child {
+  outline: 2px solid var(--tile-ring);
+  outline-offset: 1px;
+}
+
+.name {
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--mantine-color-dimmed);
+}
+
+.active .name {
+  color: var(--mantine-color-text);
+  font-weight: 700;
+}

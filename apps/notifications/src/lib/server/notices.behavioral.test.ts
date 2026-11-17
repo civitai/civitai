@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -128,7 +129,7 @@ async function pending() {
     await h.notif.query<{
       key: string;
       users: number[];
-      details: { message: string; url?: string };
+      details: { message: string; url?: string; title?: string };
       dedupeKey: string;
       category: string;
     }>(`SELECT key, users, details, "dedupeKey", category FROM "PendingNotification" ORDER BY key`)
@@ -234,6 +235,54 @@ describe('idempotency', () => {
     expect((await pending())[0].users.length).toBe(before[0].users.length + 1);
   });
 
+  describe('through the fan-out worker', () => {
+    const teamNotice = {
+      ...base,
+      type: 'system-announcement',
+      message: 'Team {team}',
+      mode: 'send',
+      recipients: [{ userId: 1, params: { team: 'Pink' } }],
+    };
+
+    // The worker's own per-row handler, run against the same PGlite (whose query() returns { rows }
+    // like a pg client) for every queued row.
+    async function fanOut() {
+      const { handleNormal } = await import('../../worker/poll-loop');
+      const rows = (await h.notif.query(`SELECT * FROM "PendingNotification" ORDER BY id`)).rows;
+      for (const row of rows) await handleNormal(row as never, h.notif as never);
+      return rows;
+    }
+    async function userNotifications() {
+      return (
+        await h.notif.query<{ userId: number; viewed: boolean }>(
+          `SELECT "userId", viewed FROM "UserNotification" ORDER BY id`
+        )
+      ).rows;
+    }
+
+    it('a second send after delivery leaves one UserNotification, still read', async () => {
+      expect((await post(teamNotice)).json().counts).toMatchObject({ queued: 1 });
+      await fanOut();
+      await h.notif.exec(`UPDATE "UserNotification" SET viewed = true`);
+
+      expect((await post(teamNotice)).json().counts).toMatchObject({ queued: 0, alreadySent: 1 });
+      await fanOut();
+
+      expect(await userNotifications()).toEqual([{ userId: 1, viewed: true }]);
+    });
+
+    it('the worker replaying the same queued row adds no second row and keeps it read', async () => {
+      await post(teamNotice);
+      const [row] = await fanOut();
+      await h.notif.exec(`UPDATE "UserNotification" SET viewed = true`);
+
+      const { handleNormal } = await import('../../worker/poll-loop');
+      await handleNormal(row as never, h.notif as never);
+
+      expect(await userNotifications()).toEqual([{ userId: 1, viewed: true }]);
+    });
+  });
+
   it('counts a delivered UserNotification carrying the dedupeKey as alreadySent', async () => {
     await h.notif.exec(`
       INSERT INTO "Notification" (id, type, key, category, details)
@@ -269,6 +318,32 @@ describe('idempotency', () => {
       409
     );
     expect(await pending()).toEqual([]);
+  });
+
+  it('refuses the same sendId with a different type (409), in both modes', async () => {
+    await post({ ...base, userIds: [1] });
+    expect((await post({ ...base, type: 'event-reminder', userIds: [1] })).statusCode).toBe(409);
+    expect(
+      (await post({ ...base, type: 'event-reminder', mode: 'send', userIds: [1] })).statusCode
+    ).toBe(409);
+    expect(await pending()).toEqual([]);
+  });
+
+  it('refuses the same sendId with a title added (409)', async () => {
+    await post({ ...base, userIds: [1] });
+    expect((await post({ ...base, title: 'Heads up', userIds: [1] })).statusCode).toBe(409);
+  });
+
+  it('accepts an untitled call on a sendId recorded before titles existed', async () => {
+    const oldHash = createHash('sha256')
+      .update(JSON.stringify([base.type, base.message, base.url]))
+      .digest('hex');
+    await h.notif.query(
+      `INSERT INTO "NoticeSend" ("sendId", type, message, url, "contentHash", "sentBy", reason, credential)
+       VALUES ($1, $2, $3, $4, $5, 'test', 'hq:test', 'notices-token')`,
+      [base.sendId, base.type, base.message, base.url, oldHash]
+    );
+    expect((await post({ ...base, userIds: [1] })).statusCode).toBe(200);
   });
 
   it('refuses a concurrent call on the same sendId (409), dry runs included', async () => {
@@ -315,6 +390,75 @@ describe('idempotency', () => {
     await post({ ...base, mode: 'send', userIds: [1] });
     const left = await h.notif.query<{ name: string }>(`SELECT name FROM "NoticeSendLease"`);
     expect(left.rows).toEqual([{ name: 'global-send' }]);
+  });
+});
+
+describe('excludeSendIds', () => {
+  const next = { ...base, sendId: 'test-send-2', type: 'event-reminder' };
+
+  it('counts users an excluded earlier send reached as alreadySent, in both modes', async () => {
+    await post({ ...base, mode: 'send', userIds: [1, 2] });
+    // Control: without the exclusion the new sendId reaches them again.
+    expect((await post({ ...next, userIds: [1, 2, 3] })).json().counts.queued).toBe(3);
+
+    const dry = await post({ ...next, excludeSendIds: [base.sendId], userIds: [1, 2, 3] });
+    expect(dry.json().counts).toMatchObject({ queued: 1, alreadySent: 2 });
+    const res = await post({
+      ...next,
+      mode: 'send',
+      excludeSendIds: [base.sendId],
+      userIds: [1, 2, 3],
+    });
+    expect(res.json().dropped.alreadySent).toEqual([1, 2]);
+    const queued = (await pending()).filter((r) => r.dedupeKey === 'notice:test-send-2');
+    expect(queued.map((r) => r.users)).toEqual([[3]]);
+  });
+
+  it('sees an excluded per-user send even when this call uses plain userIds', async () => {
+    await h.notif.exec(`
+      INSERT INTO "Notification" (id, type, key, category, details)
+        VALUES (1, 'system-announcement', 'notice:test-send-1:4', 'System', '{}');
+    `);
+    const res = await post({ ...next, excludeSendIds: [base.sendId], userIds: [3, 4] });
+    expect(res.json().counts).toMatchObject({ queued: 1, alreadySent: 1 });
+    expect(res.json().dropped.alreadySent).toEqual([4]);
+  });
+
+  it('drops a user who turned event reminders off', async () => {
+    await h.main.exec(
+      `INSERT INTO "UserNotificationSettings" ("userId", type) VALUES (6, 'event-reminder')`
+    );
+    try {
+      const res = await post({ ...next, userIds: [6, 7] });
+      expect(res.json().counts).toMatchObject({ queued: 1, optedOut: 1 });
+    } finally {
+      await h.main.exec(`DELETE FROM "UserNotificationSettings" WHERE type = 'event-reminder'`);
+    }
+  });
+
+  it('rejects more than five excluded sendIds, or a malformed one', async () => {
+    const six = ['a-1', 'a-2', 'a-3', 'a-4', 'a-5', 'a-6'];
+    expect((await post({ ...next, excludeSendIds: six, userIds: [1] })).statusCode).toBe(400);
+    expect((await post({ ...next, excludeSendIds: ['Bad Id'], userIds: [1] })).statusCode).toBe(
+      400
+    );
+  });
+});
+
+describe('title', () => {
+  it('rides on each queued row for the push to use', async () => {
+    await post({
+      ...base,
+      type: 'event-reminder',
+      title: 'Birthday hats',
+      mode: 'send',
+      userIds: [1],
+    });
+    expect((await pending())[0].details).toEqual({
+      message: 'Hello there',
+      url: '/user/buzz-dashboard',
+      title: 'Birthday hats',
+    });
   });
 });
 

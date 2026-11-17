@@ -121,7 +121,11 @@ const { mockEnv, mockDevOauth } = vi.hoisted(() => ({
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('~/server/services/blocks/dev-tunnel-oauth.service', () => mockDevOauth);
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
+vi.mock('~/server/db/client', () => ({
+  dbWrite: mockDbWrite,
+  // The minter's own level narrows the dev token; an all-levels author leaves the ceiling as is.
+  dbRead: { user: { findUnique: async () => ({ showNsfw: true, browsingLevel: 31 }) } },
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -252,6 +256,15 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
     expect(res._status).toBe(200);
     expect((mockTokenService.sign.mock.calls[0][0] as any).buzzBudget).toBe(minted);
     expect(res._body.buzzBudget).toBe(minted);
+  });
+
+  it('a restricted owner mints without the spend scope or a budget', async () => {
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null, muted: true });
+    const res = await invoke(DEV_BODY());
+    expect(res._status).toBe(200);
+    const arg = mockTokenService.sign.mock.calls[0][0] as any;
+    expect(arg.scopes).toEqual(['user:read:self']);
+    expect(arg.buzzBudget).toBeUndefined();
   });
 
   it('owner + SUSPENDED app + active tunnel + flags → mints a self-bound token (real ids, dev:true, forced-SFW)', async () => {

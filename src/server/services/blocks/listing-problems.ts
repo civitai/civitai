@@ -109,6 +109,18 @@ export type ListingProblemInput = {
    * listing has no separate declaration.
    */
   declaredContentRating: string | null;
+  /**
+   * The listing's public source-repository link. `undefined` = UNKNOWN (the column could not be
+   * read, or the caller has no read for it) ⇒ no `no-source-repo` nudge; `null` = none set.
+   * Optional so a direct caller that knows nothing about links reports nothing about them.
+   */
+  sourceRepoUrl?: string | null;
+  /**
+   * The listing's issue-tracker / support link, on the same tri-state terms. 🔴 `undefined`
+   * while the manual-apply column is unavailable, so an author is never nudged to set a link the
+   * environment cannot store yet.
+   */
+  issueTrackerUrl?: string | null;
 };
 
 export type ListingProblemCode =
@@ -121,7 +133,9 @@ export type ListingProblemCode =
   | 'blocked-media'
   | 'scanning-media'
   | 'hidden-mature-rating'
-  | 'sfw-slot-mature';
+  | 'sfw-slot-mature'
+  | 'no-source-repo'
+  | 'no-issue-tracker';
 
 /**
  * A problem's severity relative to the publish FLOOR (icon + cover):
@@ -197,6 +211,12 @@ export function listingProblemInput(
     /** The rating the app declares (on-site: the app row, or the submitted manifest). */
     appRating: string | null | undefined;
     assetScans: ListingAssetScan[];
+    /**
+     * The trust links, from a GUARDED read (see {@link ListingProblemLinks}). REQUIRED so every
+     * surface that reports problems says what it knows about them; `{}` means "unknown" and
+     * reports no link nudge.
+     */
+    links: ListingProblemLinks;
   }
 ): ListingProblemInput {
   return {
@@ -215,6 +235,40 @@ export function listingProblemInput(
       appRating: ctx.appRating,
       listingRating: row.contentRating,
     }),
+    sourceRepoUrl: ctx.links.sourceRepoUrl,
+    issueTrackerUrl: ctx.links.issueTrackerUrl,
+  };
+}
+
+/**
+ * What a problems surface knows about a listing's two trust links. Each is `undefined` when
+ * UNKNOWN (column absent, read failed, listing missing from a batch read) — which reports no
+ * nudge — and `null` when known to be unset.
+ */
+export type ListingProblemLinks = {
+  sourceRepoUrl?: string | null;
+  issueTrackerUrl?: string | null;
+};
+
+/**
+ * Build {@link ListingProblemLinks} for one listing from the two guarded batch reads. A listing
+ * ABSENT from a map stays `undefined` (unknown), never `null` — an empty map is how both reads
+ * report a missing column.
+ */
+export function listingProblemLinksFrom(
+  listingId: string,
+  maps: {
+    sourceRepoUrls: ReadonlyMap<string, string | null>;
+    issueTrackerUrls: ReadonlyMap<string, string | null>;
+  }
+): ListingProblemLinks {
+  return {
+    sourceRepoUrl: maps.sourceRepoUrls.has(listingId)
+      ? maps.sourceRepoUrls.get(listingId) ?? null
+      : undefined,
+    issueTrackerUrl: maps.issueTrackerUrls.has(listingId)
+      ? maps.issueTrackerUrls.get(listingId) ?? null
+      : undefined,
   };
 }
 
@@ -273,6 +327,31 @@ export function listingProblemInput(
  * `block-registry.marketplace-meta.test.ts` (that `setMarketplaceMeta` writes only the
  * block) — if that ever changes, this wording should be revisited.
  */
+/**
+ * The two TRUST-LINK nudges, per kind. ADVISORY ONLY — a listing publishes without either; the
+ * nudge exists because a public source repo and a place to report problems make a listing more
+ * trustworthy. Kind-aware for the reason {@link TEXT_PROBLEM} gives: an on-site listing's links
+ * are manifest-governed (`repository` / `bugs` in `block.manifest.json`, synced on approve),
+ * an off-site one's are the listing form's fields.
+ */
+const LINK_PROBLEM: Record<
+  ListingProblemKind,
+  Record<'no-source-repo' | 'no-issue-tracker', string>
+> = {
+  offsite: {
+    'no-source-repo':
+      'No source repository link (recommended, optional) — add one under Source repository in your listing details',
+    'no-issue-tracker':
+      'No issue tracker link (recommended, optional) — add one under Issue tracker in your listing details',
+  },
+  onsite: {
+    'no-source-repo':
+      'No source repository link (recommended, optional) — set "repository" in block.manifest.json and resubmit',
+    'no-issue-tracker':
+      'No issue tracker link (recommended, optional) — set "bugs" in block.manifest.json and resubmit',
+  },
+};
+
 const TEXT_PROBLEM: Record<
   ListingProblemKind,
   Record<'empty-description' | 'empty-tagline' | 'empty-category', string>
@@ -379,6 +458,25 @@ export function computeListingProblems(listing: ListingProblemInput): ListingPro
   if (hidden) problems.push({ code: 'hidden-mature-rating', label: hidden, severity: 'advisory' });
 
   problems.push(...comMediaProblems(listing, scans));
+
+  // Trust-link nudges, LAST and always advisory. Only for a link KNOWN to be unset (`null`);
+  // `undefined` means the surface could not read it (e.g. the manual-apply column is absent),
+  // and an unknown is never reported as missing.
+  const links = listing.kind === 'onsite' ? LINK_PROBLEM.onsite : LINK_PROBLEM.offsite;
+  if (
+    listing.sourceRepoUrl === null ||
+    (typeof listing.sourceRepoUrl === 'string' && isEmpty(listing.sourceRepoUrl))
+  )
+    problems.push({ code: 'no-source-repo', label: links['no-source-repo'], severity: 'advisory' });
+  if (
+    listing.issueTrackerUrl === null ||
+    (typeof listing.issueTrackerUrl === 'string' && isEmpty(listing.issueTrackerUrl))
+  )
+    problems.push({
+      code: 'no-issue-tracker',
+      label: links['no-issue-tracker'],
+      severity: 'advisory',
+    });
 
   return { problems };
 }

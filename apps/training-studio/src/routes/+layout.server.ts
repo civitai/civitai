@@ -13,6 +13,8 @@ export const load: LayoutServerLoad = async ({ locals }) => ({
   signalsEnabled: !locals.devPreview,
   // Same predicate as the main app's `isPaidMember`; the dev-login stub has no tier, so it's unknown.
   isPaidMember: locals.devPreview ? undefined : !!locals.user.tier && locals.user.tier !== 'free',
+  // Auto-label runs on the main app as this user; the dev-login stub has no session to send.
+  canAutoLabel: !locals.devPreview,
   // Main-app origin for the /generate hand-off links — resolved here so CIVITAI_URL stays the one
   // knob for every main-app deep link.
   civitaiUrl: mainAppOrigin(),

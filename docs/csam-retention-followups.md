@@ -45,6 +45,11 @@ leaves `reportSentAt` (or `archivedAt`) NULL and retries hourly, with the except
   which is retried with no limit; a full-URL file that stays unreadable is recorded `missing` in the
   manifest after a bounded time. The images archive bounds the source bytes it holds at once
   (`MAX_ARCHIVE_SOURCE_BYTES`).
+- `data.json` carries the reported user's record and `reportId`, their `models`, `modelVersions` and
+  `images`, then one section per entry of `userContentSections` in `csam.service-new.ts` (today
+  `comments`, every `CommentV3` row by the user, keyset-paged). Comments carry no legal hold; this
+  archive is their evidence copy. To archive more of a user's content, add an entry there (`name`
+  plus a paged `rows(userId)`).
 
 Other causes of a stranded report (these also retry hourly with no limit):
 
@@ -60,7 +65,10 @@ max 7,802h (325 days). **119 reports (26%) took longer than 7 days to archive.**
 - [x] Log unsent reports. After each run the send job logs `send-blocked` for every report it fetched
       that is still unsent past `CSAM_SEND_BLOCKED_AFTER_HOURS`, whatever held it. A report with no
       readable file logs `send-all-unreadable` on every run and `send-decision-needed` from
-      `CSAM_SEND_DECISION_AFTER_HOURS`.
+      `CSAM_SEND_DECISION_AFTER_HOURS`. A preserved-evidence report the job skips while it waits for
+      approval logs `send-blocked` (with `awaiting: 'evidence-approval'`) once it is older than
+      `CSAM_EVIDENCE_APPROVAL_OVERDUE_HOURS`. A report whose XML NCMEC would refuse opens no
+      CyberTip and logs `send-xml` and `send-decision-needed` on every run.
 - [ ] Route those lines to an alert, and alert when a report is unarchived for >7d (the
       `archive-data` error line carries `reportId` and `hoursSinceSent`).
 - [ ] Consider a report-level dead-letter so a permanently-failing report is visible rather than

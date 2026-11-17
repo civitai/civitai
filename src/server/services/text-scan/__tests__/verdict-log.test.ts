@@ -37,7 +37,7 @@ describe('xguardVerdict', () => {
 });
 
 describe('clavataVerdict', () => {
-  const base = { entityType: 'Comment', entityId: 2, matches: ['Spam'] };
+  const base = { entityType: 'CommentV3', entityId: 2, matches: ['Spam'] };
 
   it('logs a clean result as unflagged and not acted', () => {
     expect(clavataVerdict({ ...base, userId: 5, result: 'FALSE', skipped: true })).toMatchObject({
@@ -92,18 +92,5 @@ describe('logScanVerdict', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'scan-verdict', system: 'xguard', tags: 'A,B' })
     );
-  });
-
-  it('never throws when the log write fails', async () => {
-    vi.mocked(loggingMock.logToAxiom).mockRejectedValueOnce(new Error('axiom down'));
-    await expect(
-      logScanVerdict({
-        system: 'text-scan',
-        entityType: 'Post',
-        entityId: 1,
-        flagged: false,
-        acted: false,
-      })
-    ).resolves.toBeUndefined();
   });
 });
