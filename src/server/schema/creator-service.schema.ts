@@ -82,8 +82,8 @@ export const getServiceOfferingFeedSchema = z.object({
   query: z
     .string()
     .max(500) // what the bar may put in `?query=`
-    .optional()
-    .transform((value) => value?.trim().slice(0, 100) || undefined),
+    .transform((value) => value.trim().slice(0, 100) || undefined)
+    .optional(),
   cursor: z.number().int().positive().optional(),
   limit: z.number().int().min(1).max(50).default(24),
 });
