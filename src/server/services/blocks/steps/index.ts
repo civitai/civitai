@@ -545,6 +545,7 @@ export type {
   TrainingStepType,
 } from './output';
 export {
+  canonicalTrainingStepType,
   isTrainingStepType,
   mediaFromBlobs,
   mediaSlotsFromBlobs,
