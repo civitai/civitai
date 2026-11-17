@@ -263,10 +263,10 @@ type PrimaryCoverImage = {
 /**
  * The ids of the collections whose own cover image can be served: it has a url, may be shown
  * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, is not
- * refused by `getAllImages`' restricted base model condition, and, on a minor or SFW-only model's
- * post, is within that model's gallery level. The restricted condition only refuses an image whose
- * own level has a mature bit, so only those candidates are looked up. A collection whose cover
- * fails any of these falls back to `getFallbackCoverImages`.
+ * restricted by its base model (`getModelRestrictedImageIds`), and, on a minor or SFW-only model's
+ * post, is within that model's gallery level. Only an image whose own level has a mature bit can be
+ * restricted, so only those candidates are looked up. A collection whose cover fails any of these
+ * falls back to `getFallbackCoverImages`.
  */
 async function getUsablePrimaryCovers(
   collections: { id: number; userId: number; image?: PrimaryCoverImage | null }[],

@@ -33,6 +33,7 @@ import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
 import { UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { isRestrictedImage, RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 import { getDbWithoutLag, kyselyMatching, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
@@ -2101,7 +2102,7 @@ export const getCollectionItemsByCollectionId = async ({
   coverage,
   requireRead = false,
   asModerator,
-  asOwner = true,
+  asOwner = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2119,9 +2120,9 @@ export const getCollectionItemsByCollectionId = async ({
    * leave it off must check read themselves.
    */
   requireRead?: boolean;
-  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  /** Whether the request reads with a moderator's view; default false (`credentialViews`). */
   asModerator?: boolean;
-  /** Whether the request may see the user's own unpublished and private items; default true. */
+  /** Whether the request may see the user's own unpublished and private items; default false. */
   asOwner?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
@@ -2137,7 +2138,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
-  const isModerator = asModerator ?? user?.isModerator ?? false;
+  const isModerator = asModerator === true && !!user?.isModerator;
   // Ownership and contributor rights follow the user even on a scoped key: it is their own
   // collection. The item reads inside still get no owner or moderator view.
   const itemsViewer = !asOwner
@@ -3325,6 +3326,19 @@ export const validateContestCollectionEntry = async ({
       confirmOnPrimary: true,
     });
     if (blocked) throw throwBadRequestError('This challenge is not available.');
+  }
+
+  // No moderator exception: no one but the uploader would see the entry in the contest.
+  if (imageIds.length > 0) {
+    const entryImages = await dbRead.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { nsfwLevel: true, modelRestricted: true },
+    });
+    if (entryImages.some(isRestrictedImage)) {
+      throw throwBadRequestError(
+        `This image can't be entered: ${RESTRICTED_IMAGE_REASON}. Please enter a different image.`
+      );
+    }
   }
 
   // Block re-submitting an image a challenge judge has already scored. Removal

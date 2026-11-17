@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import {
   collectPage,
+  MAX_CANDIDATE_LIMIT,
   MAX_CANDIDATE_OFFSET,
   searchServiceSource,
   type CandidateFilter,
@@ -144,6 +145,13 @@ describe('collectPage', () => {
     expect(page.items).toEqual([]);
     expect(calls.length).toBe(3);
     expect(page.nextCursor).toBe(90);
+  });
+
+  it("never asks for more candidates than the service's page maximum", async () => {
+    const { candidates, calls } = ranked(5000);
+    await collectPage({ candidates, hydrate: async () => [], offset: 0, limit: 50 });
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call.limit).toBeLessThanOrEqual(MAX_CANDIDATE_LIMIT);
   });
 
   it('keeps an id once when a later round repeats it', async () => {

@@ -1912,6 +1912,10 @@ describe('getMyStickerPlacements', () => {
       poi: false,
       needsReview: null,
       acceptableMinor: false,
+      OR: [
+        { nsfwLevel: { notIn: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX, NsfwLevel.Blocked] } },
+        { modelRestricted: false },
+      ],
     });
   });
 

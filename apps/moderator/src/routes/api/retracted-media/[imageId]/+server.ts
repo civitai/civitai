@@ -14,10 +14,11 @@ import {
 const MAX_INT = 2_147_483_647;
 
 /**
- * A blocked image or video for any moderator, from storage rather than the public CDN, for the image
- * queues. The browser names an image id and nothing else: the key comes from this app's own read of
- * the row, and only for an image `getRetractedMedia` allows this moderator. One with a CSAM or minor
- * signal needs the CSAM page's grant; held media is `/api/held-media`'s.
+ * A blocked image or video for any moderator, from storage rather than the public CDN, for the
+ * moderator pages that show images. The browser names an image id and nothing else: the key comes
+ * from this app's own read of the row, and only for an image `getRetractedMedia` allows this
+ * moderator. One with a CSAM or minor signal needs the CSAM page's grant; held media is
+ * `/api/held-media`'s.
  */
 const NO_STORE = { 'cache-control': 'private, no-store' };
 
