@@ -8,6 +8,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { verifyReactTicket } from '~/server/services/blocks/react-ticket.service';
 
 /**
@@ -92,7 +93,13 @@ vi.mock('~/server/utils/request-bulkhead', () => ({
   HEAVY_REQUEST_CONCURRENCY: 10,
 }));
 
+/**
+ * A minted token carries BOTH maturity claims. Unless a test names the viewer's
+ * own level, the viewer sits at the full domain ceiling, so a case about the
+ * DOMAIN clamp reads the domain alone; the viewer-level cases below set it.
+ */
 function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
+  const viewer = 'viewerBrowsingLevel' in over ? {} : { viewerBrowsingLevel: over.maxBrowsingLevel };
   return {
     iss: 'civitai',
     aud: 'civitai-app-block',
@@ -109,6 +116,7 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     // (withBlockScope with no requiredScope). The handler never reads `scopes` —
     // its only authority is the maturity clamp on claims.maxBrowsingLevel.
     scopes: [],
+    ...viewer,
     ...over,
   };
 }
@@ -203,11 +211,11 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(ctx.browsingLevel & (4 | 8 | 16)).toBe(0);
   });
 
-  it('MISSING claim (legacy/pre-#2670 token) → fails closed to SFW', async () => {
-    claimsBox.claims = fakeClaims({}); // no maxBrowsingLevel
+  it('MISSING claims (legacy/pre-#2670 token) → fails closed to PG', async () => {
+    claimsBox.claims = fakeClaims({}); // no maxBrowsingLevel, no viewerBrowsingLevel
     await invoke({ nsfw: 'true', browsingLevel: '31' });
     const [, ctx] = mockRunImageSearch.mock.calls[0];
-    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.browsingLevel).toBe(NsfwLevel.PG);
   });
 
   it('client maturity fields are NEVER forwarded to the search input', async () => {
@@ -382,6 +390,92 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body).toEqual({ error: 'Invalid cursor: out of range "-5"', code: 'BAD_REQUEST' });
+  });
+});
+
+// The route's clamp is the VIEWER's level (domain ∩ viewer), not the domain alone:
+// on a mature domain, a viewer whose own settings are PG must not be served R/X/XXX
+// catalog images — the gated image read already hides those from them.
+describe('/api/v1/blocks/images — the viewer level narrows the domain ceiling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunImageSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockWithoutHeld.mockImplementation(async (items: unknown[]) => items);
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('RED domain + a PG-only viewer → searched at PG, ids included', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      domain: 'red',
+    });
+    const res = await invoke({ ids: '11,22' });
+
+    expect(res.statusCode).toBe(200);
+    const [input, ctx] = mockRunImageSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(NsfwLevel.PG);
+    expect(input.data.ids).toEqual([11, 22]);
+  });
+
+  it('RED domain + a PG/PG13/R viewer → searched at exactly those three levels', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(
+      NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R
+    );
+  });
+
+  it('a viewer level wider than the domain never widens it', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: sfwBrowsingLevelsFlag,
+      viewerBrowsingLevel: allBrowsingLevelsFlag,
+      domain: 'green',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('a RED token with no viewer level (minted before the claim) fails closed to PG', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: undefined,
+      domain: 'red',
+    });
+    await invoke({});
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(NsfwLevel.PG);
+  });
+
+  it('a viewer level of exactly 0 gets an empty page and searches nothing', async () => {
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: 0,
+      domain: 'red',
+    });
+    const res = await invoke({ ids: '11' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ items: [], metadata: {} });
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('a restricted region over an R-and-above viewer leaves no level: empty page, nothing searched', async () => {
+    regionBox.restricted = true;
+    claimsBox.claims = fakeClaims({
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX,
+      domain: 'red',
+    });
+    const res = await invoke({});
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
   });
 });
 
