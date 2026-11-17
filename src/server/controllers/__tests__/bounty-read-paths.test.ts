@@ -9,6 +9,7 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as UserService from '~/server/services/user.service';
 import { TRPCError } from '@trpc/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { filterPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { NsfwLevel } from '~/server/common/enums';
 
 const {
@@ -432,6 +433,108 @@ describe('bounty images on a capped site', () => {
     mockImagesByEntity.mockResolvedValue([image(30, NsfwLevel.PG, 3), image(31, NsfwLevel.X, 3)]);
     const entry = await getBountyEntryHandler({ input: { id: 3 }, ctx: stranger });
     expect(ids(entry.images)).toEqual([30, 31]);
+  });
+});
+
+describe('an nsfw-flagged bounty in the feed', () => {
+  // A queued answer a test does not consume would otherwise reach the next one.
+  beforeEach(() => dbMock.dbRead.$queryRaw.mockReset().mockResolvedValue([]));
+  const feedInput = { limit: 10, period: 'AllTime', sort: 'Newest' } as never;
+  const flagged = (moderatorNsfwLevel: number | null = null) => ({
+    id: 1,
+    name: 'B',
+    nsfw: true,
+    nsfwLevel: 60,
+    moderatorNsfwLevel,
+    tags: [],
+    user: { id: 5 },
+  });
+  const scanRow = (scanLevel: number | null, byScan = true) => [
+    { id: 1, byScan, scanLevel, scanVersion: '1', content: NsfwLevel.PG },
+  ];
+  const feed = async (bounty: object, rows: object[]) => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([bounty]);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(rows);
+    mockImagesForBounties.mockResolvedValue({
+      1: [{ id: 10, userId: 5, nsfwLevel: NsfwLevel.PG, nsfwLefel: NsfwLevel.PG, tags: [] }],
+    });
+    return (await getInfiniteBountiesHandler({ input: feedInput, ctx: stranger })).items;
+  };
+  // What a browser at `browsingLevel` is shown of the feed.
+  const visibleAt = (items: unknown[], browsingLevel: number) =>
+    filterPreferences({
+      type: 'bounties',
+      data: items as never,
+      hiddenPreferences: {
+        hiddenUsers: new Map(),
+        hiddenTags: new Map(),
+        hiddenModels: new Map(),
+        hiddenModel3Ds: new Map(),
+        hiddenImages: new Map(),
+        hiddenLoading: false,
+        moderatedTags: [],
+        systemHiddenTags: new Map(),
+      },
+      browsingLevel,
+      currentUser: { id: 6 } as never,
+      canViewNsfw: true,
+    }).items.length > 0;
+
+  it('lists a bounty its text rated R to an R browser, and hides it at PG-13', async () => {
+    const items = await feed(flagged(), scanRow(NsfwLevel.R));
+    expect(items[0]).toMatchObject({
+      nsfwLevel: NsfwLevel.R,
+      images: [{ nsfwLevel: NsfwLevel.R }],
+    });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R)).toBe(true);
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13)).toBe(false);
+  });
+
+  it('keeps a flag with no recorded rating XXX-only', async () => {
+    const notRated = [
+      [],
+      scanRow(NsfwLevel.R, false),
+      scanRow(NsfwLevel.PG13),
+      scanRow(NsfwLevel.Blocked),
+      [{ ...scanRow(NsfwLevel.R)[0], scanVersion: null }],
+      [{ ...scanRow(NsfwLevel.R)[0], scanLevel: null }],
+    ];
+    for (const rows of notRated) {
+      const items = await feed(flagged(), rows);
+      expect(items[0]).toMatchObject({
+        nsfwLevel: NsfwLevel.XXX,
+        images: [{ nsfwLevel: NsfwLevel.XXX }],
+      });
+      expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X)).toBe(
+        false
+      );
+      expect(visibleAt(items, NsfwLevel.XXX)).toBe(true);
+    }
+  });
+
+  it('lets a moderator rating beat the text rating, up or down', async () => {
+    let items = await feed(flagged(NsfwLevel.X), scanRow(NsfwLevel.R));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.X });
+    expect(visibleAt(items, NsfwLevel.R)).toBe(false);
+    expect(visibleAt(items, NsfwLevel.X)).toBe(true);
+    items = await feed(flagged(NsfwLevel.PG13), scanRow(NsfwLevel.X));
+    expect(items[0]).toMatchObject({ nsfwLevel: NsfwLevel.PG13 });
+    expect(visibleAt(items, NsfwLevel.PG | NsfwLevel.PG13)).toBe(true);
+  });
+
+  it('never shows an image below its own level', async () => {
+    dbMock.dbRead.bounty.findMany.mockResolvedValue([flagged()]);
+    dbMock.dbRead.$queryRaw.mockResolvedValueOnce(scanRow(NsfwLevel.R));
+    mockImagesForBounties.mockResolvedValue({
+      1: [{ id: 10, userId: 5, nsfwLevel: NsfwLevel.X, nsfwLefel: NsfwLevel.X, tags: [] }],
+    });
+    const { items } = await getInfiniteBountiesHandler({ input: feedInput, ctx: stranger });
+    expect(items[0].images[0].nsfwLevel).toBe(NsfwLevel.X);
+  });
+
+  it('never sends the moderator rating field to the client', async () => {
+    const items = await feed(flagged(NsfwLevel.X), []);
+    expect(items[0]).not.toHaveProperty('moderatorNsfwLevel');
   });
 });
 

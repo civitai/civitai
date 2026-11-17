@@ -43,6 +43,11 @@ import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { assertBountyVisible, canViewBounty } from '~/server/services/bounty-visibility';
 import { capNestedImages } from '~/server/utils/browsing-level';
+import {
+  bountyNsfwFlagLevel,
+  getTextRatedBountyLevels,
+  mayBeTextRated,
+} from '~/server/services/bounty-rated-level';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -69,6 +74,7 @@ export const getInfiniteBountiesHandler = async ({
         user: { select: userWithCosmeticsSelect },
         nsfw: true,
         nsfwLevel: true,
+        moderatorNsfwLevel: true,
         tags: {
           select: {
             tagId: true,
@@ -97,24 +103,37 @@ export const getInfiniteBountiesHandler = async ({
     }
 
     const bountIds = items.map((bounty) => bounty.id);
-    const images = await getImagesForBounties({
-      bountyIds: bountIds,
-      userId: user?.id,
-      isModerator: user?.isModerator,
-    });
+    const [images, textRated] = await Promise.all([
+      getImagesForBounties({
+        bountyIds: bountIds,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      }),
+      getTextRatedBountyLevels(items.filter(mayBeTextRated).map((bounty) => bounty.id)),
+    ]);
 
     return {
       nextCursor,
       items: items
-        .map((item) => {
+        .map(({ moderatorNsfwLevel, ...item }) => {
           const tags = item.tags;
           const user = item.user;
+          // An nsfw flag outranks the images' own scans: they show at no less than the bounty's level.
+          const flagLevel = bountyNsfwFlagLevel(
+            { ...item, moderatorNsfwLevel },
+            textRated.get(item.id)
+          );
+          const unrated = moderatorNsfwLevel == null && !textRated.has(item.id);
           const itemImages = capNestedImages(
             (images[item.id] ?? []).map((image) => ({
               ...image,
               tagIds: image.tags.map((x) => x.id),
-              // !important - for feed queries, when `bounty.nsfw === true`, we set all image `nsfwLevel` values to `NsfwLevel.XXX`
-              nsfwLevel: item.nsfw ? NsfwLevel.XXX : image.nsfwLefel,
+              nsfwLevel:
+                flagLevel == null
+                  ? image.nsfwLefel
+                  : unrated
+                  ? NsfwLevel.XXX
+                  : Math.max(image.nsfwLefel, flagLevel),
             })),
             ctx,
             { ownerId: user?.id }
@@ -124,7 +143,7 @@ export const getInfiniteBountiesHandler = async ({
 
           return {
             ...item,
-            nsfwLevel: item.nsfw ? NsfwLevel.XXX : item.nsfwLevel,
+            nsfwLevel: flagLevel ?? item.nsfwLevel,
             user,
             images: itemImages,
             tags: tags.map(({ tagId }) => tagId),
