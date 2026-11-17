@@ -27,6 +27,11 @@ export async function ticketTriageLoad(
     selectedMissing,
     canReply: !!locals.grants['tickets.reply'],
     canEscalate: view === 'moderation' && !!locals.grants['tickets.escalate'],
+    canPrivacy:
+      view === 'moderation' &&
+      !!locals.grants['tickets.privacy'] &&
+      !!locals.grants['tickets.escalate'] &&
+      !!locals.grants['tickets.reply'],
     // Grants as User Lookup requires them: the `/users` page for mutes and restrictions, `user.ban` for an unban.
     canAccountAct: view === 'moderation' && canAccess(locals.user, '/users'),
     canUnban: view === 'moderation' && !!locals.grants['user.ban'],

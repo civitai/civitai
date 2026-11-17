@@ -61,12 +61,12 @@ export const FILTER_MAX_BYTES = 8 * 1024;
 export const FILTER_MAX_DEPTH = 32;
 
 /**
- * Keys refused wherever they appear in a filter. `$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`
- * and `definitions` make its evaluation cost unbounded by its size. `$async` makes ajv compile an
- * async validator, which the synchronous predicate does not support (it would answer a promise for
- * every body); ajv honours it only at the root of a schema, but it is refused anywhere, like the
- * others, so the rule stays one walk. A reference lets a small filter
- * reuse a subschema, so definitions that each hold two references to the next form a DAG whose
+ * Keys refused wherever they appear in a filter. `$async` makes ajv compile an async validator,
+ * and the predicate is synchronous (it would answer a promise for every body); ajv honours it only
+ * at the root of a schema, but it is refused anywhere, like the others, so the rule stays one
+ * walk. The reference keys (`$ref`, `$dynamicRef`, `$recursiveRef`, `$defs`, `definitions`) make
+ * evaluation cost unbounded by the filter's size: a reference lets a small filter reuse a
+ * subschema, so definitions that each hold two references to the next form a DAG whose
  * evaluation doubles at every level. Without them every subschema is evaluated once per value it
  * applies to, so the work outside patterns is bounded by the filter's size times the body's.
  *
@@ -167,7 +167,9 @@ export function filterRefusal(filter: unknown): string | null {
  * source will not evaluate — longer than {@link FILTER_MAX_BYTES} as JSON, one
  * {@link filterRefusal} refuses, or one with a pattern the linear-time engine refuses
  * ({@link FilterPatternError}) — is `bad_request`, as is one that is not a JSON Schema: a
- * registry that accepts a filter applies it in full, and never ignores one (spec rule 6).
+ * registry that accepts a filter applies it in full, and never ignores one (spec rule 6), except
+ * that a `pattern` is best-effort on very long values and bodies (see
+ * `FILTER_PATTERN_MAX_INPUT_LENGTH` and `FILTER_PATTERN_BODY_BUDGET` in `filter-pattern.ts`).
  *
  * Compiled filters are cached by their text, at most `maxCached` of them holding at most
  * `maxCachedPatterns` patterns in all (the cache is emptied when either is full), so many distinct
@@ -215,7 +217,6 @@ export function createFilterCompiler(maxCached = 100, maxCachedPatterns = 16) {
       if (err instanceof FilterPatternError) throw new ProtocolError('bad_request', err.message);
       throw new ProtocolError('bad_request', 'filter is not a valid JSON Schema');
     }
-    // The one call of `validate`: each body is validated with a full pattern budget.
     const predicate = (body: unknown) => regExp.metered(() => validate(body)) === true;
     const patterns = regExp.distinct();
     if (cache.size >= maxCached || cachedPatterns + patterns > maxCachedPatterns) {

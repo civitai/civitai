@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { fakeVersionedBucket } from '~/__tests__/mocks/fake-versioned-bucket';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -561,6 +562,7 @@ describe('an image whose key shop artwork uses', () => {
     expect(invalidateCalls()).toHaveLength(0);
   });
 
+  // None of these is a moderator's delete, so each is one delete by key, whatever marks the row.
   it.each([
     ['a moderator deletes it', { deletedById: 99 }, {}],
     ['the deleter is unknown', {}, {}],
@@ -570,12 +572,18 @@ describe('an image whose key shop artwork uses', () => {
     ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }],
     ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }],
     ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
+    [
+      'it is blocked for CSAM',
+      { deletedById: OWNER },
+      { ingestion: 'Blocked', blockedFor: 'CSAM' },
+    ],
   ])('deletes and purges its object when %s', async (_case, args, over) => {
     deleted(over);
 
     await deleteImageById({ id: 4242, ...args });
 
-    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    const sent = mockB2Send.mock.calls.map(([command]) => command.constructor.name);
+    expect(sent).toEqual(['DeleteObjectCommand']);
     expect(invalidateCalls()).toHaveLength(1);
   });
 
@@ -644,5 +652,68 @@ describe('imagesWithOpenReports', () => {
     `);
 
     expect([...reported].sort()).toEqual([1, 2, 3]);
+  });
+});
+
+describe('a moderator delete', () => {
+  const OWNER = 7;
+  const MOD = 99;
+  let bucket: ReturnType<typeof fakeVersionedBucket>;
+  // `kept`: a hold marker's trigger kept the row, so the DELETE returns nothing.
+  const deleted = ({ kept = false, over = {} as Record<string, unknown> } = {}) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (!text.includes('DELETE FROM "Image"') || kept) return [];
+      return [
+        {
+          url: KEY,
+          postId: null,
+          nsfwLevel: 1,
+          userId: OWNER,
+          metadata: null,
+          ingestion: 'Scanned',
+          needsReview: null,
+          blockedFor: null,
+          ...over,
+        },
+      ];
+    }) as never);
+  beforeEach(() => {
+    bucket = fakeVersionedBucket();
+    bucket.putVersion(KEY);
+    bucket.putVersion(KEY);
+    bucket.putDeleteMarker(KEY);
+    mockGetB2ImageS3Client.mockReturnValue({ send: bucket.send });
+  });
+
+  it('removes every version of an unblocked image', async () => {
+    deleted();
+    await deleteImageById({ id: 4242, deletedById: MOD, moderatorDelete: true });
+    expect(bucket.entriesFor(KEY)).toHaveLength(0);
+  });
+
+  it("leaves the versions of an owner's delete of the same image", async () => {
+    deleted();
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+    expect(bucket.calls).toEqual(['delete-key']);
+    expect(bucket.entriesFor(KEY)).toHaveLength(4);
+  });
+
+  // Its earlier versions stay until a hold can cover the image; the current one still goes.
+  it.each([
+    ['under CSAM review', { needsReview: 'csam' }],
+    ['blocked for CSAM', { ingestion: 'Blocked', blockedFor: 'CSAM' }],
+  ])('deletes an image %s by key alone', async (_case, over) => {
+    deleted({ over });
+    await deleteImageById({ id: 4242, deletedById: MOD, moderatorDelete: true });
+    expect(bucket.calls).toEqual(['delete-key']);
+    expect(bucket.entriesFor(KEY)).toHaveLength(4);
+  });
+
+  it('removes nothing of an image a hold kept', async () => {
+    deleted({ kept: true });
+    await deleteImageById({ id: 4242, deletedById: MOD, moderatorDelete: true });
+    expect(bucket.calls).toEqual([]);
+    expect(bucket.entriesFor(KEY)).toHaveLength(3);
   });
 });

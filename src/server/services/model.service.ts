@@ -293,6 +293,7 @@ import {
 } from '~/server/utils/pagination-helpers';
 import {
   allBrowsingLevelsFlag,
+  heldGalleryLevel,
   modelBrowsingLevelLimit,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -6757,18 +6758,7 @@ export async function holdShowcaseImages<E extends { images: { nsfwLevel: number
   return result;
 }
 
-/**
- * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
- * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
- * gallery reads 0 as no cap.
- */
-export function heldGalleryLevel(
-  stored: number | undefined,
-  model: { minor: boolean; sfwOnly: boolean }
-) {
-  const limit = modelBrowsingLevelLimit(model);
-  return Flags.intersection(stored ?? 0, limit) || limit;
-}
+export { heldGalleryLevel };
 
 export const getGalleryHiddenPreferences = async ({
   settings,

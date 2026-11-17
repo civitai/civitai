@@ -1165,6 +1165,7 @@ export const removeBlockedImages = createJob(
         retractPublicBlobs: true,
         onlyWhere,
         retractionGate,
+        moderatorDelete: true,
       });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
@@ -1216,7 +1217,10 @@ export const removeBlockedImages = createJob(
         count: retractionDeferred.length,
       });
     if (deletedWithoutRetraction.length > 0) {
-      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      const rows = await deleteImages(deletedWithoutRetraction, true, {
+        onlyWhere,
+        moderatorDelete: true,
+      });
       deleted.push(...rows.map((x) => x.id));
     }
     const deletedSet = new Set(deleted);
