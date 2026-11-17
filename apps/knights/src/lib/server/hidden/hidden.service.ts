@@ -14,13 +14,14 @@ import {
   type QuestionOption,
   type QueueDeps,
 } from '../queue/queue.service';
+import { BLOCKED_ANSWER } from '../../block-reasons';
 import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
 import { servableReferences } from '../reference';
 import { resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
 import { gradeHiddenVotes, type CheckOutcome } from './settle';
-import { SMITE_NOTICE, WARNING_NOTICE, type Notice } from './notices';
+import { CLOSE_NOTICE, SMITE_NOTICE, WARNING_NOTICE, type Notice } from './notices';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -187,6 +188,16 @@ export async function pickHiddenCheck(
 /** Levels are bit flags, so the distance is the gap between their bit positions. */
 export const levelDistance = (a: number, b: number) => Math.abs(Math.log2(a) - Math.log2(b));
 
+/**
+ * A rating one level from the known answer, on either side: graded inconclusive for the player (no payout, no penalty) but
+ * still a miss on the reference image. Blocked is not a level here, so Blocked against the top level is a plain miss.
+ */
+export const isCloseAnswer = (given: string, known: string) => {
+  const [g, k] = [Number(given), Number(known)];
+  const blocked = Number(BLOCKED_ANSWER);
+  return g > 0 && k > 0 && g < blocked && k < blocked && levelDistance(g, k) === 1;
+};
+
 export const isSevereUnderRating = (given: string, known: string, distance: number) => {
   const [g, k] = [Number(given), Number(known)];
   return g > 0 && k > 0 && g < k && levelDistance(g, k) >= distance;
@@ -295,7 +306,7 @@ export async function answerHiddenCheck(
 export type CheckNotice = Notice & {
   /** Unique per check: the vote's item id and time. */
   key: string;
-  consequence: 'warning' | 'smite';
+  consequence: 'warning' | 'smite' | 'close';
   /** Null when the image is no longer one the public feeds would show. */
   imageKey: string | null;
   answerLabel: string;
@@ -338,9 +349,14 @@ export async function readHiddenNotices(db: Executor, playerId: number): Promise
   return rows.map((row) => {
     const options = (row.options ?? []) as QuestionOption[];
     const labelOf = (value: string) => options.find((o) => o.value === value)?.label ?? value;
-    const consequence = row.consequence === 'smite' ? 'smite' : 'warning';
+    const consequence =
+      row.consequence === 'smite' ? 'smite' : row.consequence === 'close' ? 'close' : 'warning';
     return {
-      ...(consequence === 'smite' ? SMITE_NOTICE : WARNING_NOTICE),
+      ...(consequence === 'smite'
+        ? SMITE_NOTICE
+        : consequence === 'close'
+        ? CLOSE_NOTICE
+        : WARNING_NOTICE),
       key: `${row.itemId}:${new Date(row.createdAt).getTime()}`,
       consequence,
       imageKey: row.servable && row.imageKey ? row.imageKey : null,

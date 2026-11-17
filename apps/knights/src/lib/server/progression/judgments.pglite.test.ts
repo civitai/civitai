@@ -272,6 +272,24 @@ describe('listJudgments', () => {
       expect(row.verdictLabel).not.toBe(row.answerLabel);
     });
 
+    it('says a skill check one level off was close and names the known answer', async () => {
+      await seedImage(pg, 41);
+      await pg.exec(
+        `INSERT INTO "KnightsReferenceImage" ("id","imageId","pool","answer","source","questionKey")
+         VALUES (8,41,'hiddenCheck','8','harvested','knights.image.nsfwLevel')`
+      );
+      await pg.exec(
+        `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","gold","xp","verdict","settledAt","consequence")
+         VALUES (-8,1,now(),'knights.image.nsfwLevel',41,'Knight','4',1,100,10,'inconclusive',now(),'close')`
+      );
+
+      const [row] = (await listJudgments(db, 1, { page: 1 })).judgments;
+
+      expect(row).toMatchObject({ status: 'inconclusive', close: true });
+      expect(row.verdictLabel).toBeTruthy();
+      expect(row.verdictLabel).not.toBe(row.answerLabel);
+    });
+
     it('names the level a moderator ruled on a closed item', async () => {
       const id = await judge(13, new Date('2026-12-15T09:00:00Z'));
       await pg.exec(

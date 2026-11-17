@@ -668,7 +668,7 @@
       <Icon name="triangle-alert" size={18} />
       <div class="toast-body">
         {#each data.notices as notice (notice.key)}
-          <div class="check-notice">
+          <div class="check-notice" class:close={notice.consequence === 'close'}>
             {#if notice.imageSrc}
               <img class="check-thumb" src={notice.imageSrc} alt="The skill check image" loading="lazy" />
             {/if}
@@ -945,6 +945,9 @@
   }
   .check-notice + .check-notice {
     margin-top: 8px;
+  }
+  .check-notice.close strong {
+    color: var(--io-gold);
   }
   .check-thumb {
     flex: none;

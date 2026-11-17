@@ -30,12 +30,18 @@ ordinary vote in every way a player can see.
   `settleHiddenChecks` (run by the tick) is now only the sweep for checks still pending after `settleDelayMinutes`, such as ones
   answered before inline grading shipped. Grading on the spot shows which images were checks; that is accepted because a player is
   never served a check on an image they already voted on, and the harvest keeps renewing the pool.
-- Grading counts the answer on its reference image (`answers`, `failures`). A harvested check failed by more than
+- An exact match is correct. A rating one level from the known answer, on either side (`isCloseAnswer`, `levelDistance` = 1;
+  Blocked is not a level, so Blocked against the top level is a miss) is **close**: graded `inconclusive` for the player (no
+  payout, no warning, no smite, not in accuracy, not an earlier failure for the warning rule) and marked `consequence = 'close'`,
+  so the notice ("Close call") and `/judgments` say it was close and name the known answer. Two or more levels off is failed as
+  before. Tick and inline grading share this through `gradeHiddenVotes`.
+- Grading counts the answer on its reference image (`answers`, `failures`); a close answer counts as a miss there, so a
+  borderline reference still retires. A harvested check failed by more than
   `KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE` (default 0.5) of at least `KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS` (default 20)
   answers is retired in the same transaction: its known answer is more likely wrong or unclear than its players in bad faith.
   The harvest never re-adds a retired image (`imageId` is unique).
-- A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure in
-  `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the
+- A wrong answer can cost the player a warning or a smite, decided when the check is graded: the first failure (a `warning`
+  or `smite` consequence, never `close`) in `failureWindowHours` is a warning, each later one (or a severe under-rating) a smite, one check at a time. It is stored on the
   vote (`consequence`) and shown as a notice that the player dismisses (only a notice from the current career, since `startAt`; a
   career reset leaves the old one behind) (`readHiddenNotices`, `dismissHiddenNotices`). There is one notice per check, newest
   first (at most 5), with the image's thumbnail (when still servable), the answer given and the answer the check wanted; reading

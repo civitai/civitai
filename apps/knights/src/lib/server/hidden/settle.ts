@@ -8,7 +8,7 @@ import { metrics } from '../metrics';
 import { SMITES } from '../smites/config';
 import { activeSmiteCount, issueSmite, resetNow, type ResetDeps } from '../smites/smites.service';
 import type { HiddenCheckSettings } from './config';
-import { isSevereUnderRating } from './hidden.service';
+import { isCloseAnswer, isSevereUnderRating } from './hidden.service';
 import { SMITE_REASON } from './notices';
 
 type Executor = Kysely<DB> | Transaction<DB>;
@@ -18,7 +18,8 @@ type Due = GradedVote & { answer: string };
 export type CheckOutcome = {
   playerId: number;
   verdict: 'correct' | 'failed' | 'inconclusive';
-  consequence: 'warning' | 'smite' | null;
+  /** `close`: one level off the known answer, graded inconclusive (`isCloseAnswer`). */
+  consequence: 'warning' | 'smite' | 'close' | null;
   smites: number;
 };
 
@@ -49,9 +50,11 @@ export async function gradeHiddenVotes(
   );
   const gradedVotes = due.map((v) => {
     const answer = known.get(-v.itemId);
+    const close = answer !== undefined && isCloseAnswer(v.answer, answer);
     return {
       ...v,
-      verdict: (answer === undefined
+      close,
+      verdict: (answer === undefined || close
         ? 'inconclusive'
         : v.answer === answer
         ? 'correct'
@@ -66,12 +69,13 @@ export async function gradeHiddenVotes(
       .where('playerId', '=', v.playerId)
       .where('createdAt', '=', utc(v.createdAt))
       .execute();
-    if (v.verdict !== 'inconclusive') {
+    // A close answer is no failure for the player but still a miss on the reference, so borderline checks keep retiring.
+    if (v.verdict !== 'inconclusive' || v.close) {
       await trx
         .updateTable('KnightsReferenceImage')
         .set({
           answers: sql<number>`"answers" + 1`,
-          failures: sql<number>`"failures" + ${v.verdict === 'failed' ? 1 : 0}`,
+          failures: sql<number>`"failures" + ${v.verdict === 'failed' || v.close ? 1 : 0}`,
         })
         .where('id', '=', -v.itemId)
         .execute();
@@ -80,7 +84,9 @@ export async function gradeHiddenVotes(
 
   // A check most players get wrong more likely has a wrong or unclear known answer than bad-faith players: stop serving it.
   const counted = [
-    ...new Set(gradedVotes.filter((v) => v.verdict !== 'inconclusive').map((v) => -v.itemId)),
+    ...new Set(
+      gradedVotes.filter((v) => v.verdict !== 'inconclusive' || v.close).map((v) => -v.itemId)
+    ),
   ];
   if (counted.length > 0) {
     await trx
@@ -109,6 +115,23 @@ export async function gradeHiddenVotes(
   const outcomes: CheckOutcome[] = [];
   for (const v of gradedVotes) {
     const since = startAt.get(v.playerId);
+    if (v.close) {
+      // Marked so the notice and the judgment history can say it was close.
+      await trx
+        .updateTable('KnightsVote')
+        .set({ consequence: 'close' })
+        .where('itemId', '=', v.itemId)
+        .where('playerId', '=', v.playerId)
+        .where('createdAt', '=', utc(v.createdAt))
+        .execute();
+      outcomes.push({
+        playerId: v.playerId,
+        verdict: v.verdict,
+        consequence: 'close',
+        smites: await activeSmiteCount(trx, v.playerId),
+      });
+      continue;
+    }
     // A wrong answer from before the last career reset was wiped with it.
     if (v.verdict !== 'failed' || !since || v.createdAt < since) {
       outcomes.push({
@@ -128,7 +151,7 @@ export async function gradeHiddenVotes(
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('playerId', '=', v.playerId)
       .where('itemId', '<', 0)
-      .where('consequence', 'is not', null)
+      .where('consequence', 'in', ['warning', 'smite'])
       .where('settledAt', '>=', utc(windowStart))
       .executeTakeFirstOrThrow();
     const known_ = known.get(-v.itemId) as string;

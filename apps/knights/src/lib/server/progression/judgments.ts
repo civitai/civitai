@@ -40,8 +40,10 @@ export type Judgment = {
   imageKey: string | null;
   prompt: string;
   answerLabel: string;
-  /** The settled answer, only for a vote that turned out wrong. */
+  /** The settled answer, for a vote that turned out wrong or a skill check that was close. */
   verdictLabel: string | null;
+  /** A skill check answered one level off its known answer: inconclusive, no reward and no penalty. */
+  close: boolean;
   status: JudgmentStatus;
   xp: number;
   gold: number;
@@ -113,6 +115,7 @@ export async function listJudgments(
       'v.xp',
       sql<number>`COALESCE(v.gold, 0)`.as('gold'),
       'v.createdAt',
+      sql<boolean>`v."consequence" IS NOT DISTINCT FROM 'close'`.as('close'),
       'pl.startAt',
       'q.prompt',
       'it.prompt as itemPrompt',
@@ -148,6 +151,7 @@ export async function listJudgments(
       'a.xp',
       sql<number>`0`.as('gold'),
       'a.createdAt',
+      sql<boolean>`false`.as('close'),
       sql<Date | null>`NULL`.as('startAt'),
       'q.prompt',
       ownPairPrompt.as('itemPrompt'),
@@ -188,7 +192,8 @@ export async function listJudgments(
         // A yes/no question carries its own words; the question row only holds the generic ones.
         prompt: r.itemPrompt ?? r.prompt,
         answerLabel: labelOf(r.answer),
-        verdictLabel: status === 'wrong' && r.resolved ? labelOf(r.resolved) : null,
+        verdictLabel: (status === 'wrong' || r.close) && r.resolved ? labelOf(r.resolved) : null,
+        close: r.close,
         status: forfeited ? 'forfeited' : status,
         xp: r.xp,
         gold: forfeited ? 0 : r.gold,

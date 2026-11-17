@@ -12,7 +12,7 @@ import { SMITES } from '../smites/config';
 import { activeSmiteCount } from '../smites/smites.service';
 import { DEFAULT_HIDDEN_CHECKS } from './config';
 import { answerHiddenCheck, readHiddenNotices } from './hidden.service';
-import { SMITE_NOTICE, SMITE_REASON, WARNING_NOTICE } from './notices';
+import { CLOSE_NOTICE, SMITE_NOTICE, SMITE_REASON, WARNING_NOTICE } from './notices';
 import { settleHiddenChecks } from './settle';
 
 const Q = 'knights.image.nsfwLevel';
@@ -159,7 +159,7 @@ describe('grading hidden checks', () => {
 
   it('drops the gold of a wrong answer and warns the first time', async () => {
     await seedPlayer(pg, 1);
-    await answer(1, await reference(10, '4'), '8');
+    await answer(1, await reference(10, '4'), '16');
     const before = await player(1);
     await settle(minutes(31));
     const after = await player(1);
@@ -173,7 +173,7 @@ describe('grading hidden checks', () => {
 
   it('does not show a notice from before a career reset to the new career', async () => {
     await seedPlayer(pg, 1);
-    await answer(1, await reference(10, '4'), '8');
+    await answer(1, await reference(10, '4'), '16');
     await settle(minutes(31));
     expect(await readHiddenNotices(db, 1)).toMatchObject([WARNING_NOTICE]);
     await pg.query(
@@ -184,8 +184,8 @@ describe('grading hidden checks', () => {
 
   it('smites on a repeat failure inside the window, with the original sizing and a neutral reason', async () => {
     await seedPlayer(pg, 1);
-    await answer(1, await reference(10, '4'), '8');
-    await answer(1, await reference(11, '4'), '8', minutes(1));
+    await answer(1, await reference(10, '4'), '16');
+    await answer(1, await reference(11, '4'), '16', minutes(1));
     await settle(minutes(40));
     expect(await smites(1)).toEqual([
       { size: SMITES.size, givenById: SMITES.systemGiverId, reason: SMITE_REASON },
@@ -207,18 +207,18 @@ describe('grading hidden checks', () => {
   it('treats failures outside the window, or before a career reset, as no earlier failure', async () => {
     await seedPlayer(pg, 1);
     await seedPlayer(pg, 2);
-    await answer(1, await reference(10, '4'), '8');
+    await answer(1, await reference(10, '4'), '16');
     await settle(minutes(31));
-    await answer(1, await reference(11, '4'), '8', minutes(60 * 30));
+    await answer(1, await reference(11, '4'), '16', minutes(60 * 30));
     await settle(minutes(60 * 31));
     expect(await smites(1)).toHaveLength(0);
 
-    await answer(2, await reference(12, '4'), '8', minutes(60 * 40));
+    await answer(2, await reference(12, '4'), '16', minutes(60 * 40));
     await settle(minutes(60 * 41));
     await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$1 WHERE "userId"=2`, [
       minutes(60 * 41 + 1),
     ]);
-    await answer(2, await reference(13, '4'), '8', minutes(60 * 42));
+    await answer(2, await reference(13, '4'), '16', minutes(60 * 42));
     await settle(minutes(60 * 43));
     expect(await smites(2)).toHaveLength(0);
   });
@@ -291,7 +291,7 @@ describe('grading hidden checks', () => {
   it('counts the check on its reference image when it is graded', async () => {
     await seedPlayer(pg, 1);
     const ref = await reference(10, '4');
-    await answer(1, ref, '8');
+    await answer(1, ref, '16');
     await settle(minutes(31));
     const row = (
       await pg.query<{ answers: number; failures: number }>(
@@ -315,7 +315,7 @@ describe('retiring checks players keep failing', () => {
     for (const u of [1, 2]) await seedPlayer(pg, u);
     const ref = await reference(10, '4');
     await pg.query(`UPDATE "KnightsReferenceImage" SET answers=19, failures=10 WHERE id=$1`, [ref]);
-    await answer(1, ref, '8');
+    await answer(1, ref, '16');
     await settle(minutes(31));
     expect(await statusOf(ref)).toBe('retired');
   });
@@ -328,7 +328,7 @@ describe('retiring checks players keep failing', () => {
     await pg.query(`UPDATE "KnightsReferenceImage" SET answers=39, failures=20 WHERE id=$1`, [
       fair,
     ]);
-    await answer(1, young, '8');
+    await answer(1, young, '16');
     await answer(2, fair, '4');
     await settle(minutes(31));
     expect(await statusOf(young)).toBe('active');
@@ -339,7 +339,7 @@ describe('retiring checks players keep failing', () => {
 describe('naming the check behind a notice', () => {
   it('names the image, the answer given and the answer it wanted', async () => {
     await seedPlayer(pg, 1);
-    await answer(1, await reference(10, '4'), '8');
+    await answer(1, await reference(10, '4'), '16');
     await settle(minutes(31));
     const [notice] = await readHiddenNotices(db, 1);
     expect(notice).toMatchObject({ consequence: 'warning', imageKey: expect.any(String) });
@@ -350,7 +350,7 @@ describe('naming the check behind a notice', () => {
   it('hides the image of a check that is no longer servable but still names the answers', async () => {
     await seedPlayer(pg, 1);
     const ref = await reference(10, '4');
-    await answer(1, ref, '8');
+    await answer(1, ref, '16');
     await settle(minutes(31));
     await pg.query(`UPDATE "Image" SET "nsfwLevel" = 32 WHERE id = 10`);
     const [notice] = await readHiddenNotices(db, 1);
@@ -380,12 +380,12 @@ describe('grading a hidden check as it is answered', () => {
 
   it('warns at once on a first wrong answer and smites the next one, one answer at a time', async () => {
     await seedPlayer(pg, 1);
-    expect(await answerNow(1, await reference(10, '4'), '8')).toEqual({
+    expect(await answerNow(1, await reference(10, '4'), '16')).toEqual({
       status: 'recorded',
       check: { verdict: 'failed', consequence: 'warning', smites: 0, reset: false },
     });
     expect(await readHiddenNotices(db, 1)).toHaveLength(1);
-    expect(await answerNow(1, await reference(11, '4'), '8', minutes(1))).toEqual({
+    expect(await answerNow(1, await reference(11, '4'), '16', minutes(1))).toEqual({
       status: 'recorded',
       check: { verdict: 'failed', consequence: 'smite', smites: 1, reset: false },
     });
@@ -404,5 +404,79 @@ describe('grading a hidden check as it is answered', () => {
     await seedPlayer(pg, 1);
     await answerNow(1, await reference(10, '4'), '4');
     expect(await settle(minutes(60))).toMatchObject({ graded: 0 });
+  });
+});
+
+describe('an answer one level off the reference', () => {
+  const answerNow = (userId: number, referenceId: number, value: string, at = NOW) =>
+    answerHiddenCheck(
+      db,
+      { userId, referenceId, answer: value },
+      { now: () => at, mirrorXp: mirror as never, grade: { settings, resetPlayer } }
+    );
+  const counts = async (id: number) =>
+    (
+      await pg.query<{ answers: number; failures: number }>(
+        `SELECT answers, failures FROM "KnightsReferenceImage" WHERE id=$1`,
+        [id]
+      )
+    ).rows[0];
+
+  it('is close, not failed: no payout, no warning, no smite, not in accuracy', async () => {
+    await seedPlayer(pg, 1);
+    const before = await player(1);
+    const result = await answerNow(1, await reference(10, '4'), '8');
+    expect(result).toEqual({
+      status: 'recorded',
+      check: { verdict: 'inconclusive', consequence: 'close', smites: 0, reset: false },
+    });
+    const after = await player(1);
+    expect(after.goldPending).toBe(0);
+    expect(after.goldEarned).toBe(before.goldEarned);
+    expect(await smites(1)).toHaveLength(0);
+    expect(await ledgerOf(db, 1)).toEqual({ correct: 0, graded: 0 });
+  });
+
+  it('is close one level under the reference too, and the tick grades it the same way', async () => {
+    await seedPlayer(pg, 1);
+    await answer(1, await reference(10, '8'), '4');
+    await settle(minutes(31));
+    expect(await vote(1)).toMatchObject([{ verdict: 'inconclusive', consequence: 'close' }]);
+  });
+
+  it('still counts as a miss on the reference, so a borderline check keeps retiring', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '4');
+    await answerNow(1, ref, '8');
+    expect(await counts(ref)).toEqual({ answers: 1, failures: 1 });
+  });
+
+  it('is not an earlier failure: the next real miss is a warning, not a smite', async () => {
+    await seedPlayer(pg, 1);
+    await answerNow(1, await reference(10, '4'), '8');
+    expect(await answerNow(1, await reference(11, '4'), '16', minutes(1))).toMatchObject({
+      check: { verdict: 'failed', consequence: 'warning' },
+    });
+  });
+
+  it('says it was close in the notice and names the reference answer', async () => {
+    await seedPlayer(pg, 1);
+    await answerNow(1, await reference(10, '4'), '8');
+    const [notice] = await readHiddenNotices(db, 1);
+    expect(notice).toMatchObject({ ...CLOSE_NOTICE, consequence: 'close' });
+    expect(notice.correctLabel).toBeTruthy();
+    expect(notice.correctLabel).not.toBe(notice.answerLabel);
+  });
+
+  it('treats Blocked next to the top level as a failure, not a close call', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10, '16');
+    expect(
+      await answerHiddenCheck(
+        db,
+        { userId: 1, referenceId: ref, answer: '32', blockReason: 'Bestiality' },
+        { now: () => NOW, mirrorXp: mirror as never, grade: { settings, resetPlayer } }
+      )
+    ).toMatchObject({ check: { verdict: 'failed' } });
   });
 });

@@ -17,3 +17,9 @@ export const SMITE_NOTICE: Notice = {
 /** Stored as the smite's reason. */
 export const SMITE_REASON =
   'You failed a skill check. A smite penalty has been applied and cost you a heart.';
+
+/** A skill-check answer one level off the known answer: neither failed nor rewarded. */
+export const CLOSE_NOTICE: Notice = {
+  title: '≈ Close call',
+  message: 'Your skill check answer was one level off. No penalty and no reward.',
+};
