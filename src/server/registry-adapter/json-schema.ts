@@ -25,11 +25,12 @@ export function newValidator() {
  * size ({@link FILTER_PATTERN_MAX_SIZE}).
  *
  * Measured through ajv against random `a`/`b` text, which keeps a pattern's DFA from fitting its
- * budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`), best of 3, `^x` 0 ms throughout:
- * `[ab]{0,125}b[ab]{125}c` (size 253), the worst shape found, ~70 ms in one place and ~130 ms in
- * two per 20 000 characters, ~1.3 s in two per 200 000; the same shape at size 63, 123 and 183 in
- * two places ~31, ~61 and ~93 ms per 20 000. Before the DFA budget, a place whose input defeated
- * re2js's 8 MiB DFA cost tens of milliseconds whatever its size, and 8 places took ~610 ms.
+ * budget (`FILTER_PATTERN_DFA_BYTES` in `filter-pattern.ts`), best of 3 to 6, `^x` 0 ms
+ * throughout: the worst found is `.{0,254}[cx]` with `not` `.{0,253}[dy]` (sizes 255 and 254, two
+ * places, both run to the end), ~190-200 ms per 20 000 characters and ~1.9-2.1 s per 200 000;
+ * `.{0,254}[cx]` alone ~120 ms and ~1.0 s; `[ab]{0,125}b[ab]{125}c` in two places ~130-150 ms
+ * and ~1.3 s. Before the DFA budget, a place whose input defeated re2js's 8 MiB DFA cost tens of
+ * milliseconds whatever its size, and 8 places took ~610 ms per 20 000.
  *
  * Distinct patterns are at most the places, so this also bounds the compiled patterns a filter
  * keeps.
@@ -75,12 +76,13 @@ export const FILTER_MAX_DEPTH = 32;
  *
  * `pattern` and `patternProperties` are applied, not refused: they run on a linear-time engine
  * (`filter-pattern.ts`), whose cost per character grows with the pattern's size (its counted
- * repetitions multiplied out), not its length, plus a cost per place the pattern is applied when
- * the input keeps its DFA from fitting. So a pattern's size is bounded
- * ({@link FILTER_PATTERN_MAX_SIZE}), and so are the places a filter applies one
- * ({@link FILTER_MAX_PATTERN_PLACES}) and their sizes' sum ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE});
- * the pattern work per body is then a few hundred milliseconds per 20 000 characters of string
- * at worst (measured at {@link FILTER_MAX_PATTERN_PLACES}). A pattern it cannot run
+ * repetitions multiplied out), not its length; with each pattern's DFA bounded
+ * (`FILTER_PATTERN_DFA_BYTES`), a match is linear in the input with that factor, whatever the
+ * input. So a pattern's size is bounded ({@link FILTER_PATTERN_MAX_SIZE}), and so are the places a
+ * filter applies one ({@link FILTER_MAX_PATTERN_PLACES}) and their sizes' sum
+ * ({@link FILTER_PATTERNS_MAX_TOTAL_SIZE}); the pattern work per body is then at most ~200 ms per
+ * 20 000 characters of string (the worst measured, at {@link FILTER_MAX_PATTERN_PLACES}). A
+ * pattern it cannot run
  * with ECMA-262's meaning (a lookaround, a backreference), one over its length or size bound, or a
  * filter over {@link FILTER_MAX_PATTERN_PLACES} or the total, is `bad_request` when it is compiled.
  */

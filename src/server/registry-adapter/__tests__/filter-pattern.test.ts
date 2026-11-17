@@ -1,3 +1,4 @@
+import { RE2JS } from 're2js';
 import { describe, expect, it } from 'vitest';
 import {
   FILTER_PATTERN_DFA_BYTES,
@@ -5,6 +6,7 @@ import {
   FILTER_PATTERN_MAX_SIZE,
   FilterPatternError,
   compileFilterPattern,
+  dfaSelfTest,
   filterRegExpEngine,
 } from '~/server/registry-adapter/filter-pattern';
 import {
@@ -292,6 +294,76 @@ describe('🔴 a compiled pattern keeps a bounded DFA', () => {
     expect(inputs.map((s) => rx.test(s))).toEqual(inputs.map((s) => native.test(s)));
     // Positive control: both verdicts occur, so the comparison is not vacuous.
     expect(new Set(inputs.map((s) => native.test(s)))).toEqual(new Set([true, false]));
+  });
+});
+
+/**
+ * re2js internals, reached the way `filter-pattern.ts` reaches them, to simulate a re2js whose DFA
+ * does not keep the bound: each patch returns its undo.
+ */
+type Internals = { re2Input: { prog: unknown; dfa: { constructor: unknown } } };
+const sample = (RE2JS.compile('a') as unknown as Internals).re2Input;
+const Dfa = sample.dfa.constructor as { prototype: object } & (new (prog: unknown) => unknown);
+const Re2Prototype = Object.getPrototypeOf(sample) as object;
+
+/** The DFA's enforced budget fields read `value` and ignore every write (re2js's own included). */
+const budgetFieldsStuckAt = (value: number) => () => {
+  for (const field of ['stateBudget', 'memBudget']) {
+    Object.defineProperty(Dfa.prototype, field, {
+      configurable: true,
+      get: () => value,
+      set: () => undefined,
+    });
+  }
+  return () => {
+    for (const field of ['stateBudget', 'memBudget']) {
+      delete (Dfa.prototype as Record<string, unknown>)[field];
+    }
+  };
+};
+
+/** re2js matches with a default DFA of its own, leaving the one in `lazyDFA` unused. */
+const matcherUsesItsOwnDfa = () => {
+  const original = Object.getOwnPropertyDescriptor(Re2Prototype, 'dfa')!;
+  const own = new WeakMap<object, unknown>();
+  Object.defineProperty(Re2Prototype, 'dfa', {
+    configurable: true,
+    get(this: { prog: unknown }) {
+      if (!own.has(this)) own.set(this, new Dfa(this.prog));
+      return own.get(this);
+    },
+  });
+  return () => Object.defineProperty(Re2Prototype, 'dfa', original);
+};
+
+describe('🔴 a re2js that does not keep the DFA bound makes every pattern bad_request', () => {
+  it('the self-test passes on this re2js, and a pattern compiles', () => {
+    expect(dfaSelfTest()).toBe(true);
+    expect(compileFilterPattern('[ab]*a[ab]{20}$').test(`a${'b'.repeat(20)}`)).toBe(true);
+  });
+
+  it.each([
+    // maxMem says 32 KiB but the fields re2js enforces stay at its 8 MiB default.
+    ['budget fields at the 8 MiB default', budgetFieldsStuckAt(8 * 1024 * 1024)],
+    // The fields read 32 KiB, so a field check passes, but the budget is never spent.
+    ['budget fields at 32 KiB that are never spent', budgetFieldsStuckAt(32 * 1024)],
+    // The installed DFA is never the one that runs.
+    ['a matcher that uses its own default DFA', matcherUsesItsOwnDfa],
+  ])('%s: refused, saying why', (_name, patch) => {
+    const undo = patch();
+    try {
+      expect(dfaSelfTest()).toBe(false);
+      expect(() => compileFilterPattern('^urn:schema:civitai.com:')).toThrow(FilterPatternError);
+      expect(() => compileFilterPattern('^urn:schema:civitai.com:')).toThrow(
+        "its regular expression engine's internals changed"
+      );
+    } finally {
+      undo();
+    }
+    // Positive control: with re2js as shipped again, the same pattern compiles.
+    expect(compileFilterPattern('^urn:schema:civitai.com:').test('urn:schema:civitai.com:x')).toBe(
+      true
+    );
   });
 });
 

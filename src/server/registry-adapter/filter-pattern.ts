@@ -383,28 +383,102 @@ function translate(pattern: string): { re2: string; size: number } {
  */
 export const FILTER_PATTERN_DFA_BYTES = 32 * 1024;
 
+/** The DFA fields of re2js 2.9.1 that {@link boundDfa} reads: the budget, and what enforces it. */
+type Re2jsDfa = {
+  maxMem?: number;
+  stateBudget?: number;
+  memBudget?: number;
+  clearCache?: (...args: unknown[]) => unknown;
+};
+
 /** The parts of re2js 2.9.1's internal state that {@link boundDfa} reads and writes. */
 type Re2jsInternals = {
   re2Input?: {
     prog?: unknown;
-    lazyDFA?: { maxMem?: number } | null;
-    readonly dfa?: { constructor: new (prog: unknown, maxMem: number) => { maxMem?: number } };
+    lazyDFA?: Re2jsDfa | null;
+    readonly dfa?: { constructor: new (prog: unknown, maxMem: number) => Re2jsDfa };
   };
 };
 
 /**
- * Gives `compiled` a DFA of {@link FILTER_PATTERN_DFA_BYTES}. re2js has no public option for it
- * (`RE2JS#reset()` clears only its matcher pool), so this builds one with re2js's own DFA class
- * (its constructor takes the program and the budget) and puts it where re2js keeps the lazy one,
- * which it then uses for every match. re2js is pinned exactly (`package.json`); if its internals
- * are not as expected the pattern is refused ({@link FilterPatternError}, so `bad_request`),
- * rather than applied with an unbounded DFA.
+ * Puts a DFA of {@link FILTER_PATTERN_DFA_BYTES} where re2js keeps a pattern's lazy one, built
+ * with re2js's own DFA class (its constructor takes the program and the budget); the DFA, or null
+ * when re2js's internals are not where 2.9.1 has them.
  */
-function boundDfa(compiled: RE2JS): void {
+function installBoundedDfa(compiled: RE2JS): Re2jsDfa | null {
   const re2 = (compiled as unknown as Re2jsInternals).re2Input;
   const Dfa = re2 && 'lazyDFA' in re2 && re2.prog ? re2.dfa?.constructor : undefined;
-  if (re2 && Dfa) re2.lazyDFA = new Dfa(re2.prog, FILTER_PATTERN_DFA_BYTES);
-  if (re2?.lazyDFA?.maxMem !== FILTER_PATTERN_DFA_BYTES) {
+  if (!re2 || !Dfa) return null;
+  re2.lazyDFA = new Dfa(re2.prog, FILTER_PATTERN_DFA_BYTES);
+  return re2.lazyDFA;
+}
+
+/**
+ * Whether `dfa` holds the bound in the fields re2js enforces it with: `stateBudget` (what a
+ * cleared cache gets back) and `memBudget` (what is left), not only `maxMem`, which re2js keeps
+ * but does not check a state against.
+ */
+function enforcesBound(dfa: Re2jsDfa | null | undefined): boolean {
+  const fields = [dfa?.maxMem, dfa?.stateBudget, dfa?.memBudget];
+  return (
+    dfa?.maxMem === FILTER_PATTERN_DFA_BYTES &&
+    fields.every((v) => typeof v === 'number' && v >= 0 && v <= FILTER_PATTERN_DFA_BYTES)
+  );
+}
+
+/** {@link dfaSelfTest}'s pattern: its DFA has up to 2^21 states, so a short input overflows. */
+const SELF_TEST_PATTERN = '[ab]*a[ab]{20}$';
+
+/**
+ * 256 code points of `a` and `b` from a fixed seed. Measured: it makes a 32 KiB DFA for
+ * {@link SELF_TEST_PATTERN} clear its cache once (128 do too, 64 do not), in ~0.2 ms with the
+ * compile; its 21st code point from the end is `b`, so the pattern does not match.
+ */
+const SELF_TEST_INPUT = (() => {
+  let x = 1;
+  let out = '';
+  for (let k = 0; k < 256; k++) {
+    x = (x * 1103515245 + 12345) & 0x7fffffff;
+    out += x & 0x10000 ? 'a' : 'b';
+  }
+  return out;
+})();
+
+/**
+ * Whether re2js really runs a pattern on the bounded DFA {@link installBoundedDfa} gives it, and
+ * enforces its budget. Reading the fields cannot show that: a re2js that kept the budget fields at
+ * its default, or that matched with a DFA of its own and left the installed one unused, would pass
+ * a field check and keep megabytes per pattern. So this matches {@link SELF_TEST_PATTERN} against
+ * {@link SELF_TEST_INPUT}, which overflows the bound, and asks for the observable effects: the
+ * installed DFA is still the one in place, it cleared its cache at least once (it ran, and hit the
+ * bound), it is still within the bound, and the verdict is the right one.
+ */
+export function dfaSelfTest(): boolean {
+  const probe = RE2JS.compile(SELF_TEST_PATTERN);
+  const dfa = installBoundedDfa(probe);
+  if (!enforcesBound(dfa) || typeof dfa?.clearCache !== 'function') return false;
+  const clear = dfa.clearCache;
+  let cleared = 0;
+  dfa.clearCache = function (this: unknown, ...args: unknown[]) {
+    cleared += 1;
+    return clear.apply(this, args);
+  };
+  const verdict = probe.test(SELF_TEST_INPUT);
+  const installed = (probe as unknown as Re2jsInternals).re2Input?.lazyDFA;
+  return verdict === false && cleared >= 1 && installed === dfa && enforcesBound(dfa);
+}
+
+/**
+ * Gives `compiled` a DFA of {@link FILTER_PATTERN_DFA_BYTES}. re2js has no public option for it
+ * (`RE2JS#reset()` clears only its matcher pool), so {@link installBoundedDfa} puts one where re2js
+ * keeps the lazy one, which it then uses for every match. re2js is pinned exactly (`package.json`).
+ * The pattern is refused ({@link FilterPatternError}, so `bad_request`) rather than applied with an
+ * unbounded DFA when the installed DFA does not hold the bound in its enforced fields
+ * ({@link enforcesBound}), or when {@link dfaSelfTest} fails; the self-test runs on every compile
+ * (~0.2 ms), so nothing about it is cached or depends on which pattern was compiled first.
+ */
+function boundDfa(compiled: RE2JS): void {
+  if (!enforcesBound(installBoundedDfa(compiled)) || !dfaSelfTest()) {
     throw new FilterPatternError(
       "this registry cannot apply filter patterns: its regular expression engine's internals changed"
     );
