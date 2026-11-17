@@ -646,7 +646,7 @@ type ResourceValidationResult = {
  * Validates and enriches resources from generation graph output.
  *
  * Performs:
- * - Subscription validation for private/epoch resources
+ * - Subscription validation for private resources
  * - Expired epoch check
  * - canGenerate validation
  * - POI resource detection
@@ -696,14 +696,14 @@ async function validateAndEnrichResources(
       : Promise.resolve(),
   ]);
 
-  // Check for private/epoch resources requiring subscription. Raw-AIR resources
-  // ARE epoch resources — same subscription gate as the ModelVersion-backed kind.
+  // Private models need a subscription; epochs (raw-AIR included) only need ownership,
+  // which getResourceData and validateRawAirResources have already enforced.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
   const hasPrivateOrEpoch =
-    rawAirResources.length > 0 ||
-    resources.some((r) => r.availability === Availability.Private || !!r.epochDetails);
+    hasPrivate || rawAirResources.length > 0 || resources.some((r) => !!r.epochDetails);
 
-  if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
-    // Span localizes the gen-path park: subscription lookup for private/epoch use.
+  if (hasPrivate && user?.id && !user?.isModerator) {
+    // Span localizes the gen-path park: subscription lookup for private use.
     const subscription = await withSpan('gen:validateResources:subscription', () =>
       getHighestTierSubscription(user.id!)
     );
