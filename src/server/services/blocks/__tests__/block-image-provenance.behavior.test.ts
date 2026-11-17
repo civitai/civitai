@@ -273,8 +273,11 @@ describe('gated cross-user read: published rows, plus this app’s own SCANNED u
   it('🔴 never returns an upload made through ANOTHER app, whoever the viewer is', async () => {
     const { images } = await gatedRead([UPLOADED_OTHER_APP, UPLOADED_OTHER_APP_OTHER_USER]);
     expect(images).toEqual([]);
-    // And the reverse: the other app cannot read THIS app's uploads.
-    const other = await gatedReadAs([UPLOADED_OWN, UPLOADED_OTHER_USER], { appId: OTHER_APP });
+    // And the reverse: the other app cannot read THIS app's uploads. Its own upload, asked for
+    // in the same call, is the positive control that the read ran for OTHER_APP at all.
+    const other = await gatedReadAs([UPLOADED_OWN, UPLOADED_OTHER_USER, UPLOADED_OTHER_APP], {
+      appId: OTHER_APP,
+    });
     expect(other.images.map((i) => i.imageId)).toEqual([UPLOADED_OTHER_APP]);
   });
 
