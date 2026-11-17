@@ -118,6 +118,64 @@ func TestRecentLookupsExpire(t *testing.T) {
 	}
 }
 
+// A caller arriving the moment the first lookup's flight has ended is answered without a query.
+// singleflight drops a flight from its map before Do returns, so the answer must already be kept by
+// then: the second caller runs inside the first one's afterFlight hook, after its flight is gone and
+// before it reads the answer. Kept only after Do returned, the answer is not there yet and the second
+// caller queries again (the intermittent two queries of TestPageConcurrentMissesOneQuery).
+func TestLookupKeptBeforeFlightEnds(t *testing.T) {
+	c := &MissCompute{Now: func() time.Time { return pageNow }}
+	l := &countingLookup{}
+	ctx := context.Background()
+	var hooks atomic.Int32
+	var second map[int]jspack.Obj
+	var secondErr error
+	c.afterFlight = func() {
+		if hooks.Add(1) == 1 {
+			second, secondErr = c.lookupShared(ctx, MissUserCosmetics, []int{2, 1}, l.lookup)
+		}
+	}
+	first, err := c.lookupShared(ctx, MissUserCosmetics, []int{1, 2}, l.lookup)
+	want := map[int]jspack.Obj{1: jspack.O("id", 1)}
+	if err != nil || secondErr != nil || !reflect.DeepEqual(first, want) || !reflect.DeepEqual(second, want) {
+		t.Fatalf("answers %v (%v) and %v (%v), want %v", first, err, second, secondErr, want)
+	}
+	if got := l.calls.Load(); got != 1 {
+		t.Fatalf("%d lookups, want 1: the caller arriving as the flight ended queried again", got)
+	}
+}
+
+// A caller that missed the kept answers, and reaches its flight only after an earlier flight for the
+// same ids has ended, is answered from what that flight kept: the flight rechecks before it queries.
+// The second caller is held in beforeFlight (past its first check, before Do) while the first one
+// runs to the end. The image meta is never kept, so there both callers query.
+func TestLookupRecheckedInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		cache string
+		want  int32
+	}{{MissUserCosmetics, 1}, {MissImageFrames, 1}, {MissImageMeta, 2}} {
+		c := &MissCompute{Now: func() time.Time { return pageNow }}
+		l := &countingLookup{}
+		ctx := context.Background()
+		var hooks atomic.Int32
+		var first map[int]jspack.Obj
+		var firstErr error
+		c.beforeFlight = func() {
+			if hooks.Add(1) == 1 {
+				first, firstErr = c.lookupShared(ctx, tc.cache, []int{1, 2}, l.lookup)
+			}
+		}
+		second, err := c.lookupShared(ctx, tc.cache, []int{2, 1}, l.lookup)
+		want := map[int]jspack.Obj{1: jspack.O("id", 1)}
+		if err != nil || firstErr != nil || !reflect.DeepEqual(first, want) || !reflect.DeepEqual(second, want) {
+			t.Fatalf("%s: answers %v (%v) and %v (%v), want %v", tc.cache, first, firstErr, second, err, want)
+		}
+		if got := l.calls.Load(); got != tc.want {
+			t.Fatalf("%s: %d lookups, want %d", tc.cache, got, tc.want)
+		}
+	}
+}
+
 // A failed lookup is not kept: the next miss queries again.
 func TestRecentLookupsKeepNoFailure(t *testing.T) {
 	c := &MissCompute{Now: func() time.Time { return pageNow }}
