@@ -22,7 +22,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     const { imageIds, userId, batchSize, force } = schema.parse(req.body);
 
-    // The primary: the replica can lag a CSAM block, and this split is what the response and Tracker report.
+    // primary: the replica can lag a CSAM block, and this split decides what is skipped.
     const found = await dbWrite.image.findMany({
       where: { id: { in: imageIds } },
       select: {
