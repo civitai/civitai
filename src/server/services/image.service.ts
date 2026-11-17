@@ -1221,7 +1221,7 @@ export async function handleUnblockImages({
   moderatorId,
   removeMinorFlag,
 }: ImageModerationUnblockSchema) {
-  const images = await dbRead.image.findMany({
+  const found = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: {
       id: true,
@@ -1233,6 +1233,23 @@ export async function handleUnblockImages({
       needsReview: true,
     },
   });
+  // A CSAM block is lifted only through the moderator CSAM review. Re-read on the primary, since the
+  // replica can lag a block: the follow-ups below act on every image left here. The UPDATE also
+  // re-checks it per row.
+  const csamIds = found.length
+    ? new Set(
+        (
+          await dbWrite.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image"
+            WHERE id IN (${Prisma.join(found.map((image) => image.id))})
+              AND "blockedFor" = ${BlockedReason.CSAM}
+          `
+        ).map((row) => row.id)
+      )
+    : new Set<number>();
+  const images = found.filter(
+    (image) => image.blockedFor !== BlockedReason.CSAM && !csamIds.has(image.id)
+  );
   await Limiter().process(images, async (images) => {
     const ids = images.map((x) => x.id);
     const grouped = images.reduce<Record<string, number[]>>((acc, image) => {
@@ -1266,7 +1283,8 @@ export async function handleUnblockImages({
                 : Prisma.sql``
             }
             "ingestion" = 'Scanned'
-          WHERE id IN (${Prisma.join(groupedIds)});
+          WHERE id IN (${Prisma.join(groupedIds)})
+            AND "blockedFor" IS DISTINCT FROM ${BlockedReason.CSAM};
         `
       ),
       upsertTagsOnImageNew(

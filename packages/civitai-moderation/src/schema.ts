@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
-import { hqTaskFromUrl } from '@civitai/shared/clickup-url';
+import { HQ_TASK_URL_PREFIX, hqTaskFromUrl } from '@civitai/shared/clickup-url';
 import {
   FEEDBACK_STATUSES,
   FEEDBACK_TRIAGE_NOTE_APPEND_MAX_LENGTH,
@@ -277,7 +277,7 @@ export function relabelBuildShortfall(response: unknown): RelabelBuildShortfall 
   return summary ? relabelSummaryShortfall(summary) : 'no summary';
 }
 
-// feedback.triage — set ONE feedback report's moderator triage status through the queue's own write
+// feedback-triage (`MOD_ACTION.feedbackTriage`) — set ONE feedback report's moderator triage status through the queue's own write
 // (`triageFeedback` in the moderator app), optionally appending to its internal triage note and
 // recording the HQ task that tracks it as `context.hq`. Scoped on `expectedStatus`: a row that moved
 // since the caller read it is not changed. `ownerStatus` (the app developer's vocabulary) is not in
@@ -302,7 +302,7 @@ export const feedbackTriageRequest = z.object({
   hqTaskUrl: z
     .string()
     .refine((url) => hqTaskFromUrl(url) !== null, {
-      message: 'Expected an HQ task link: https://hq.civitai.com/t/<id>',
+      message: `Expected an HQ task link: ${HQ_TASK_URL_PREFIX}<id>`,
     })
     .optional()
     .describe('The HQ task tracking this report, recorded as context.hq.'),

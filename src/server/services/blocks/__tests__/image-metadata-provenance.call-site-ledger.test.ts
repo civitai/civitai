@@ -712,7 +712,8 @@ function checkUpdateDecision(decision: UpdateDecision, site: Site): string | nul
       const expr = (rawMetadataAssignment(region) ?? '').replace(/\s+/g, ' ');
       if (
         expr !==
-        `CASE WHEN \${metadataJson}::jsonb IS NULL THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
+        // A stored CSAM block keeps the stored value: the rule did not decide it.
+        `CASE WHEN \${metadataJson}::jsonb IS NULL OR \${csamBlocked} THEN "metadata" ELSE COALESCE("metadata", '{}'::jsonb) || \${metadataJson}::jsonb END`
       )
         return 'metadata is no longer the moderation-rule result or the stored value';
       if (
