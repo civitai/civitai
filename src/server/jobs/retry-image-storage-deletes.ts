@@ -82,10 +82,11 @@ export const retryImageStorageDeletes = createJob(
             done.push(id);
             return;
           }
-          const { url } = payload.data;
+          const { url, allVersions } = payload.data;
           const outcome = await deleteImageFromS3({
             id,
             url,
+            allVersions,
             purgeOnFailure: false,
             abortSignal: deadline,
           }).catch(() => 'failed' as const);
