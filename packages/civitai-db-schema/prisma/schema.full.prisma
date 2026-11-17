@@ -4995,6 +4995,11 @@ model AppUserScopeGrant {
   /// apply and the tighter one binds. Meaningful only alongside the
   /// `ai:write:budgeted` scope (nothing else in a grant can spend).
   buzzBudgetPerDay Int?    @map("buzz_budget_per_day")
+  /// Highest job price, in Buzz, the viewer lets this app run without a per-job confirm
+  /// (within `buzzBudgetPerDay`); NULL = not opted in. MANUALLY APPLIED (migration
+  /// 20271116180000). Read only through `readConfirmWithinLimit`, never in a shared grant
+  /// select, so a database without it breaks no other grant read.
+  confirmWithinLimitMaxJob Int? @map("confirm_within_limit_max_job")
 
   @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
   @@map("app_user_scope_grants")

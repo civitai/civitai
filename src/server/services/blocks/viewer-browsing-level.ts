@@ -24,3 +24,16 @@ export function viewerEffectiveBrowsingLevel(args: {
   const { req, sessionUser, maxBrowsingLevel } = args;
   return effectiveBrowsingCeiling(maxBrowsingLevel, viewerOwnBrowsingLevel(req, sessionUser));
 }
+
+/**
+ * A user's own saved level when there is no request to read it from (a dev or hub-token mint
+ * holds only a user id), read as an NSFW-capable domain reads it. PG when the user is missing.
+ */
+export async function userOwnBrowsingLevel(userId: number): Promise<number> {
+  const { dbRead } = await import('~/server/db/client');
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { showNsfw: true, browsingLevel: true },
+  });
+  return getServerBrowsingLevel({ canViewNsfw: true, user });
+}

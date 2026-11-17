@@ -2943,6 +2943,7 @@ export interface AppUserScopeGrant {
   revokedScopes: string[];
   revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
+  confirmWithinLimitMaxJob: number | null;
 }
 
 export interface AppBlockUploadBatch {

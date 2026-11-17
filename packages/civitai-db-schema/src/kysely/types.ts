@@ -844,6 +844,13 @@ export type AppUserScopeGrant = {
    * `ai:write:budgeted` scope (nothing else in a grant can spend).
    */
   buzz_budget_per_day: number | null;
+  /**
+   * Highest job price, in Buzz, the viewer lets this app run without a per-job confirm
+   * (within `buzzBudgetPerDay`); NULL = not opted in. MANUALLY APPLIED (migration
+   * 20271116180000). Read only through `readConfirmWithinLimit`, never in a shared grant
+   * select, so a database without it breaks no other grant read.
+   */
+  confirm_within_limit_max_job: number | null;
 };
 export type Article = {
   id: Generated<number>;
