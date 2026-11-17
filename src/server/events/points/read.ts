@@ -6,6 +6,7 @@ import {
   hatField,
   liveBucket,
   LIVE_BUCKET_MS,
+  LIVE_BUCKET_TTL_S,
   type TotalScope,
 } from '~/server/events/points/keys';
 import type { EventHat, EventPointType } from '~/server/events/points/types';
@@ -13,9 +14,8 @@ import { sysRedis } from '~/server/redis/client';
 
 type PointsEvent = { name: string; startDate: Date };
 
-// Live buckets are kept 3 hours; the referee settles hourly, so a cut older than this means it has
-// stopped, and the totals shown are the base plus the buckets that still exist.
-const MAX_LIVE_BUCKETS = (3 * 60 * 60 * 1000) / LIVE_BUCKET_MS;
+// No further back than a bucket lives; only while settles fail does a read reach this.
+const MAX_LIVE_BUCKETS = (LIVE_BUCKET_TTL_S * 1000) / LIVE_BUCKET_MS;
 
 // The live buckets a read adds on top of the base: from the referee's cut to now.
 export function liveBucketRange(cut: number, now: Date) {

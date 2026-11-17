@@ -8,11 +8,13 @@ import { trpc } from '~/utils/trpc';
  * the shared definitions; whether this viewer is in (flag, preview, launch) is the server's call, so
  * nothing here re-derives it. Asks nothing before a decoration is released.
  */
-export function usePlayableEventDecoration(entityType: CosmeticEntity) {
+export function usePlayableEventDecoration(entityType: CosmeticEntity, enabled = true) {
   const definition = getReleasedEventDecoration(entityType);
   const { data: access } = trpc.event.getAccess.useQuery(
     { event: definition?.event ?? '' },
-    { enabled: !!definition, staleTime: 5 * 60 * 1000 }
+    { enabled: enabled && !!definition, staleTime: 5 * 60 * 1000 }
   );
-  return definition && access && canWearEventDecorations(access) ? definition : undefined;
+  return enabled && definition && access && canWearEventDecorations(access)
+    ? definition
+    : undefined;
 }

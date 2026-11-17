@@ -108,7 +108,7 @@ export function createLimiter({
     // Fail-open: a sysRedis error/timeout (silent half-open, failover) must NOT
     // 429/500 every request for the pod's wedged lifetime. A wedge is rare and
     // transient; letting a few requests through unlimited is strictly better than
-    // blocking all of them. Mirrors middleware.trpc.recordAttempt (PR #2332) and
+    // blocking all of them. Mirrors rate-limit-bucket.claimRateLimitAttempt (PR #2332) and
     // refreshToken (token-refresh.ts) — log via logSysRedisFailOpen so a SUSTAINED
     // fail-open (= abuse protection effectively disabled) is dashboardable, then
     // return false (= not exceeded = serve).

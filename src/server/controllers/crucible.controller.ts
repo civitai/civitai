@@ -2,6 +2,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import type {
   CheckCrucibleEntryEligibilitySchema,
+  DismissJudgingPairSchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
@@ -39,6 +40,7 @@ import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
   checkCrucibleEntryEligibility,
   createCrucibleEntryPost,
+  dismissJudgingPair,
   cancelCrucible,
   removeCrucibleEntry,
   removeCrucibleEntryAsOwner,
@@ -108,7 +110,25 @@ export const getInfiniteCruciblesHandler = async ({
   return { items: await withEntryCounts(items), nextCursor };
 };
 
-export const getCrucibleByIdHandler = async ({
+/** The cover's review fields decide visibility on the server; they never reach the client. */
+const withoutCoverReview = <
+  I extends { needsReview?: unknown; tosViolation?: unknown },
+  T extends { image: I | null }
+>(
+  crucible: T | null
+) => {
+  if (!crucible) return crucible;
+  if (!crucible.image) return crucible as T & { image: null };
+  const { needsReview: _review, tosViolation: _tos, ...image } = crucible.image;
+  return { ...crucible, image };
+};
+
+export const getCrucibleByIdHandler = async (args: {
+  input: GetCrucibleByIdSchema;
+  ctx: Context;
+}) => withoutCoverReview(await crucibleForViewer(args));
+
+const crucibleForViewer = async ({
   input,
   ctx,
 }: {
@@ -325,6 +345,17 @@ export const submitVoteHandler = async ({
     userId: ctx.user.id,
     blockedCreatorIds: await getAllBlockedCreatorIds(ctx.user),
   });
+};
+
+export const dismissJudgingPairHandler = async ({
+  input,
+  ctx,
+}: {
+  input: DismissJudgingPairSchema;
+  ctx: ProtectedContext;
+}) => {
+  await assertCanJudgeCrucible({ userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  return dismissJudgingPair({ ...input, userId: ctx.user.id });
 };
 
 export const cancelCrucibleHandler = async ({

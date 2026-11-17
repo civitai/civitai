@@ -89,6 +89,7 @@ const fullBootstrap = {
   browsingSettingsAddons: [],
   liveNow: true,
   navBanners: [],
+  eventSeeds: [{ event: 'fixture', access: 'open' }],
 };
 
 /**
@@ -100,6 +101,7 @@ const SEED_PROPS = [
   'tosMeta',
   'announcements',
   'navBanners',
+  'eventSeeds',
   'following',
   'liveNow',
   'browsingSettingsAddons',

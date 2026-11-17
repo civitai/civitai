@@ -15,6 +15,12 @@
     word-break: break-word;
   }
 
+  // Stored mention spans carry the build-hashed class of the editor that saved them, which stops
+  // matching after a deploy. Style them by the attribute that never changes, with the link token.
+  span[data-type="mention"] {
+    color: var(--mantine-color-anchor);
+  }
+
   // Remove border from iframes
   iframe {
     border: none;

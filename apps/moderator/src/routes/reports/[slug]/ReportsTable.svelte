@@ -1,6 +1,9 @@
 <script lang="ts">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
+  import AgentReportFilter from '$lib/components/AgentReportFilter.svelte';
+  import { setAgentReportParam } from '$lib/agent-reports';
   import { dateTime } from '$lib/format';
-  import { entityUrl } from '$lib/entity-url';
+  import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { page } from '$app/state';
@@ -236,6 +239,21 @@
     </div>
     <Button type="submit" size="sm" variant="outline">Search</Button>
   </form>
+
+  {#if data.agentFilter}
+    <div class="flex flex-col gap-1">
+      <span class="text-xs font-medium text-muted-foreground">Agent reports</span>
+      <AgentReportFilter
+        value={data.agentFilter}
+        onselect={(filter) => {
+          const url = new URL(page.url);
+          setAgentReportParam(url.searchParams, filter);
+          url.searchParams.set('page', '1');
+          navigate(url.pathname + url.search);
+        }}
+      />
+    </div>
+  {/if}
 </div>
 
 {#if data.hidingAutomated}
@@ -309,6 +327,7 @@
                 {:else}
                   <span class="text-muted-foreground">—</span>
                 {/if}
+                {#if report.agentFiled}<AgentBadge />{/if}
                 <!-- Everyone else who filed the same report, folded into the filer's cell rather than
                      a column of its own that sat empty on most rows. -->
                 {#if report.alsoReportedByCount}
@@ -392,7 +411,7 @@
           <dt class="text-muted-foreground">Reason</dt>
           <dd>{selected.reason}</dd>
           <dt class="text-muted-foreground">Reported by</dt>
-          <dd>{selected.reportedByUsername ?? '—'}{selected.reason === 'Ownership' && selected.reportedByEmail ? ` (${selected.reportedByEmail})` : ''}{selected.alsoReportedByCount ? `, and ${selected.alsoReportedByCount} more` : ''}</dd>
+          <dd>{selected.reportedByUsername ?? '—'}{#if selected.agentFiled}{' '}<AgentBadge />{/if}{selected.reason === 'Ownership' && selected.reportedByEmail ? ` (${selected.reportedByEmail})` : ''}{selected.alsoReportedByCount ? `, and ${selected.alsoReportedByCount} more` : ''}</dd>
           <dt class="text-muted-foreground">Reported</dt>
           <dd>{fmtDate(selected.createdAt)}</dd>
         </dl>
@@ -481,7 +500,21 @@
                 {/if}
               </p>
             {:else}
-              <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+              {@const deleted = data.deletedStorylines.find((d) => d.reportId === selected.id)}
+              {#if deleted?.held}
+                <p class="mb-2 text-sm" title={fmtDate(deleted.held.deletedAt)}>
+                  <span class="font-medium">{deleted.title}</span> was deleted by
+                  {deleted.held.deletedByOwner ? 'its owner' : 'a moderator'}. A copy of it and its
+                  {deleted.held.chapters} chapters is kept for records.
+                  <a href={userLookupUrl(deleted.held.userId, 'reports')} class="underline">Owner</a>
+                </p>
+              {:else if deleted?.title}
+                <p class="mb-2 text-sm text-muted-foreground">
+                  <span class="font-medium">{deleted.title}</span> was deleted.
+                </p>
+              {:else}
+                <p class="mb-2 text-sm text-muted-foreground">This storyline no longer exists.</p>
+              {/if}
             {/if}
             {#if storyline && !storyline.tosViolationByModerator}
               <p class="mb-2 text-sm">
@@ -561,6 +594,8 @@
                 </Badge>
                 {#if offering.removedReason}
                   <Badge variant="outline">taken down by a moderator</Badge>
+                {:else if offering.ingestion === 'Blocked'}
+                  <Badge variant="outline">held by its content check</Badge>
                 {/if}
               </p>
               <p class="mb-1 text-sm text-dark-2">
@@ -647,6 +682,19 @@
                   Take down service
                 </Button>
               {/if}
+            {/if}
+            {#if offering && !offering.removedReason && offering.ingestion === 'Blocked'}
+              <p class="mt-3 mb-2 text-sm">
+                Its content check is holding this service off the site. Releasing shows it again and sets this report
+                Unactioned. Read the title and description first.
+              </p>
+              <form method="POST" action="?/releaseServiceOffering" use:enhance={offeringForm.enhance}>
+                <input type="hidden" name="id" value={selected.id} />
+                <input type="hidden" name="seenUpdatedAt" value={new Date(offering.updatedAt).toISOString()} />
+                <Button type="submit" size="sm" variant="outline" disabled={offeringForm.submitting}>
+                  Release service
+                </Button>
+              </form>
             {/if}
             {#if offeringForm.error}
               <p class="mt-2 text-sm text-red-300" role="alert">{offeringForm.error}</p>

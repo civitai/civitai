@@ -17,8 +17,8 @@
 // impossible for a synchronous callee, i.e. biased at least 3x high.
 //
 // 🔴 WHY A SIBLING FAMILY, not a `submit` op on `orchestrator_read_duration_seconds`. The submit is a
-// WRITE, it is unbounded (no per-attempt timeout on the generate path) and its observed ceiling recurs
-// around 95 s, whereas both reads are hard-capped at 20 s by the #2883 backstop. Carrying it on the read
+// WRITE, it was unbounded on the generate path (now 30 s per attempt, 60 s overall) and its observed
+// ceiling recurred around 95 s, whereas both reads are hard-capped at 20 s by the #2883 backstop. Carrying it on the read
 // family would have meant:
 //   - prom-client applies ONE bucket array family-wide, so the >30 s boundaries the submit needs would also
 //     be minted for `getWorkflow`/`queryWorkflows`, which the backstop cuts at 20 s — above `le=30` those
@@ -114,14 +114,14 @@ export function submitSourceForSurface(
 
 /**
  * `ok` = the final attempt returned data. `timeout` = the final attempt's per-attempt
- * `AbortSignal.timeout` fired (whatIf / image ingest only — the generate path sets no per-attempt
- * deadline, so a parked generate submit is an `ok` or `error` with a large duration, never a `timeout`).
+ * timeout or overall deadline fired (whatIf, image ingest, and every real submit through
+ * `submitWorkflow`).
  * `error` = any other failure of the final attempt.
  */
 export type OrchestratorSubmitOutcome = 'ok' | 'error' | 'timeout';
 
 // 50 ms → 120 s. The low end resolves the healthy population (a warm submit is tens of ms); the top end
-// exists because the generate submit has NO per-attempt timeout and its observed ceiling recurs at ~95 s
+// exists because the generate submit had NO per-attempt timeout and its observed ceiling recurred at ~95 s
 // (Loki max 94,800 ms), arithmetically consistent with 3 attempts x the Orleans 30 s default response
 // timeout plus 0.5 s + 1.5 s of backoff. Without a boundary above 30 the entire population this metric was
 // added to see would collapse into a single `+Inf` bucket, and a 32 s submit would be indistinguishable
@@ -152,13 +152,10 @@ const submitTimeoutsCounter = registerCounterWithLabels({
   name: 'orchestrator_submit_timeouts_total',
   help:
     'Count of orchestrator submits whose FINAL attempt ended in a fired abort deadline (a TimeoutError / ' +
-    'AbortError). Labeled by source (generate|preset|whatIf|imageIngest|other). NOTE the generate path ' +
-    'sets no per-attempt timeout AND passes no signal of its own today, so source="generate" is not ' +
-    'expected here — a parked generate submit is visible only as a large observation on ' +
-    'orchestrator_submit_duration_seconds. Both halves of that matter: a caller-supplied options.signal ' +
-    'is composed with the per-attempt deadline, so adding one to the generate path WOULD make this ' +
-    'series appear. This is the leading indicator for the capped funnels (whatIf, image ingestion) ' +
-    'parking against the orchestrator.',
+    'AbortError). Labeled by source (generate|preset|whatIf|imageIngest|other). A real (non-whatIf) ' +
+    'submit is capped at 30s per attempt and 60s overall, so source="generate" counts generate submits ' +
+    'that ran out of time (the user was told the request may already be queued). This is the leading ' +
+    'indicator for any capped funnel parking against the orchestrator.',
   labelNames: ['source'] as const,
 });
 

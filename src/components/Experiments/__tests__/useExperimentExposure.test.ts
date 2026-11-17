@@ -8,7 +8,7 @@ import type * as IntersectionModule from 'react-intersection-observer';
 const state = vi.hoisted(() => ({
   user: { id: 501 } as { id: number } | null,
   inView: false,
-  experiment: { ready: true, variant: 'count-button', assignment: 'rule' } as {
+  experiment: { ready: true, variant: 'badge-popover', assignment: 'rule' } as {
     ready: boolean;
     variant?: string;
     assignment?: string;
@@ -55,7 +55,7 @@ describe('useExperimentExposure', () => {
     localStorage.clear();
     state.user = { id: 501 };
     state.inView = false;
-    state.experiment = { ready: true, variant: 'count-button', assignment: 'rule' };
+    state.experiment = { ready: true, variant: 'badge-popover', assignment: 'rule' };
     state.sent = [];
   });
 
@@ -69,7 +69,7 @@ describe('useExperimentExposure', () => {
         type: 'Experiment_Exposure',
         details: {
           exp: 'hatTurfFeedCard',
-          variant: 'count-button',
+          variant: 'badge-popover',
           assignment: 'rule',
           surface: 'feed-card',
         },

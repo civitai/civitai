@@ -1,6 +1,7 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { isSystemAccountMeta } from '@civitai/auth';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { getSessionFromBearerToken } from '~/server/auth/bearer-token';
@@ -381,6 +382,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     return;
   }
   const user = session.user as SessionUser;
+  // System accounts are service identities, not app developers.
+  if (isSystemAccountMeta(user.meta)) {
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
+    return;
+  }
 
   // 1b. Token-type gate — accept EITHER a personal API key OR a scoped OAuth
   // token, MIRRORING EXACTLY the submit-version route's OAuth gate
@@ -463,7 +469,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // critical path. On a SILENT half-open the written command parks in node-redis's
     // reply queue until OS TCP keepalive (~11min) — a HANG, not a throw, so the
     // try/catch alone can't unpark it. Racing the `.exec()` against the sys read
-    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=2000) turns that open-ended hang
+    // deadline (default REDIS_SYS_READ_TIMEOUT_MS=1000) turns that open-ended hang
     // into a clean rejection caught here → fail closed (503) instead of parking.
     const multiResult = await withSysReadDeadline(
       sysRedis

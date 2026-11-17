@@ -39,6 +39,13 @@ vi.mock('~/env/server', () => ({
 }));
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
+const { onStorySparkLost } = vi.hoisted(() => ({
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  onStorySparkLost,
+}));
 
 const { mockQueueImageSearchIndexUpdate, mockInvalidateManyImageExistence, mockDeleteImageFromS3 } =
   vi.hoisted(() => ({
@@ -52,6 +59,14 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   queueImageSearchIndexUpdate: mockQueueImageSearchIndexUpdate,
   invalidateManyImageExistence: mockInvalidateManyImageExistence,
   deleteImageFromS3: mockDeleteImageFromS3,
+}));
+
+const { announceReviewsInBackground } = vi.hoisted(() => ({
+  announceReviewsInBackground: vi.fn(),
+}));
+vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  announceReviewsInBackground,
 }));
 
 import { deletePost } from '../post.service';
@@ -126,6 +141,44 @@ describe('deletePost orphan de-indexing', () => {
     vi.clearAllMocks();
     dbMock.dbWrite.$transaction.mockImplementation(async (fn: any) => fn(dbMock.dbWrite));
     vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
+  });
+
+  it('takes back the event points of a story started from an image, when the post was its chapter 1', async () => {
+    primeQueries([OWNER_IMAGE]);
+    dbMock.dbWrite.storylineChapter.findFirst.mockResolvedValueOnce({ storylineId: 9 } as never);
+    await deletePost({ id: POST_ID });
+    expect(dbMock.dbWrite.storylineChapter.findFirst).toHaveBeenCalledWith({
+      where: { postId: POST_ID, depth: 0, storyline: { sparkImageId: { not: null } } },
+      select: { storylineId: true },
+    });
+    expect(onStorySparkLost).toHaveBeenCalledWith(9);
+  });
+
+  it('announces the unreleased reviews written from the post, read before the post goes', async () => {
+    primeQueries([OWNER_IMAGE]);
+    const base = dbMock.dbWrite.$queryRaw.getMockImplementation()!;
+    dbMock.dbWrite.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+      sqlTextOf(strings).includes('"releasedAt" IS NULL')
+        ? Promise.resolve([{ id: 77 }])
+        : base(strings)) as never);
+
+    await deletePost({ id: POST_ID });
+
+    expect(announceReviewsInBackground).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reviewIds: [77] })
+    );
+    const { calls, invocationCallOrder } = dbMock.dbWrite.$queryRaw.mock;
+    const order = (needle: string) =>
+      invocationCallOrder[
+        calls.findIndex((call) => sqlTextOf(call[0] as string[]).includes(needle))
+      ];
+    expect(order('"releasedAt" IS NULL')).toBeLessThan(order('DELETE FROM "Post"'));
+  });
+
+  it('touches no event points for a post that starts no story', async () => {
+    primeQueries([OWNER_IMAGE]);
+    await deletePost({ id: POST_ID });
+    expect(onStorySparkLost).not.toHaveBeenCalled();
   });
 
   it('scopes the delete to poster-owned images in SQL', async () => {

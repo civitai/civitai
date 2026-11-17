@@ -160,6 +160,14 @@ const tosHashOverrideMap: Record<string, string> = {
   // tos.green.md
   '2b505d7d9b293fd03785fa1c59911c4c54c0028ff075ac1312d86da7d7b29b99':
     'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
+  // 2026-11-11 §8.9 MiniMax-H3-Image flow-through terms. Legal classed it as a change that binds
+  // existing users 30 days after posting (§13), not one that needs a site-wide re-accept.
+  // tos.md (blue/red)
+  '64769ab650cab19bfe86ccfa1df4afdb492dc4b31ba8e97ccade8e7c5936ce7f':
+    '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  // tos.green.md
+  '65b5c8f0292d2b967eaf8e02082acb8bb874b8ac5ceebaa6b02506d7e46f9047':
+    'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 /**

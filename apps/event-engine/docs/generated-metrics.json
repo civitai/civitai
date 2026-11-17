@@ -1,8 +1,8 @@
 {
   "metrics": {
-    "handlers": 25,
-    "handlersWithDebug": 20,
-    "metrics": 80
+    "handlers": 23,
+    "handlersWithDebug": 18,
+    "metrics": 78
   },
   "entityTypes": {
     "Article": {
@@ -18,7 +18,7 @@
     },
     "Bounty": {
       "benefactorCount": "bountyBenefactorHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "entryCount": "bountyEntryHandler",
       "favoriteCount": "bountyEngagementHandler",
       "trackCount": "bountyEngagementHandler",
@@ -58,13 +58,13 @@
       "ReactionHeart": "(not emitted by this app)",
       "ReactionLaugh": "(not emitted by this app)",
       "ReactionLike": "(not emitted by this app)",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
     },
     "Model": {
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentHandler",
+      "commentCount": "commentV3Handler",
       "downloadCount": "(not emitted by this app)",
       "earnedAmount": "updateCompensation",
       "generationCount": "(not emitted by this app)",
@@ -91,7 +91,7 @@
       "Laugh": "imageReactionHandler",
       "Like": "imageReactionHandler",
       "collectedCount": "collectionItemHandler",
-      "commentCount": "commentV2Handler",
+      "commentCount": "commentV3Handler",
       "reactionCount": "imageReactionHandler",
       "tippedAmount": "buzzTipHandler",
       "tippedCount": "buzzTipHandler"
@@ -172,18 +172,12 @@
       "Collection.contributorCount",
       "Collection.followerCount"
     ],
-    "Comment": [
-      "Model.commentCount",
-      "User.commentCount"
-    ],
-    "CommentV2": [
-      "Bounty.commentCount",
-      "Image.commentCount",
-      "Post.commentCount",
-      "User.commentCount"
-    ],
     "CommentV3": [
       "Article.commentCount",
+      "Bounty.commentCount",
+      "Image.commentCount",
+      "Model.commentCount",
+      "Post.commentCount",
       "User.commentCount"
     ],
     "ImageResourceNew": [

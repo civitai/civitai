@@ -3,6 +3,7 @@ import { SheetSelect } from './SheetSelect';
 import { Group, Input } from '@mantine/core';
 import { useId } from '@mantine/hooks';
 import clsx from 'clsx';
+import { choiceIdleClass } from '~/libs/form/components/choice-styles';
 
 // =============================================================================
 // Types
@@ -44,9 +45,7 @@ function PresetOptions({ options, value, onChange, disabled }: PresetOptionsProp
           disabled={disabled}
           className={clsx(
             'rounded px-2 py-0.5 text-xs transition-colors',
-            value === option.value
-              ? 'bg-blue-6 text-white'
-              : 'bg-gray-1 text-gray-7 hover:bg-gray-2 dark:bg-dark-5 dark:text-gray-4 dark:hover:bg-dark-4'
+            value === option.value ? 'bg-blue-6 text-white' : choiceIdleClass
           )}
         >
           {option.label}

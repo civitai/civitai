@@ -8,13 +8,16 @@ import {
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 
-const { mockClickhouseQuery, mockCreateBuzzTransactionMany } = vi.hoisted(() => ({
-  mockClickhouseQuery: vi.fn(),
-  mockCreateBuzzTransactionMany: vi.fn(),
-}));
+const { mockClickhouseQuery, mockClickhouseExec, mockCreateBuzzTransactionMany } = vi.hoisted(
+  () => ({
+    mockClickhouseQuery: vi.fn(),
+    mockClickhouseExec: vi.fn(),
+    mockCreateBuzzTransactionMany: vi.fn(),
+  })
+);
 
 vi.mock('~/server/clickhouse/client', () => ({
-  clickhouse: { $query: mockClickhouseQuery },
+  clickhouse: { $query: mockClickhouseQuery, $exec: mockClickhouseExec },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: mockCreateBuzzTransactionMany,
@@ -276,6 +279,45 @@ describe('runPayout', () => {
       { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 2 },
     ]);
   });
+
+  it('pays no compensation or license fee for a version on a non-commercial base model, but pays its tips', async () => {
+    mockClickhouseQuery.mockResolvedValue([
+      row('compensation', 'Yellow', 50, 11),
+      row('compensation', 'Yellow', 7, 12),
+      row('compensation', 'Yellow', 4, 13),
+      row('tip', 'Yellow', 6, 11),
+      row('licenseFee', 'Yellow', 5, 11),
+      row('licenseFee', 'Yellow', 3, 12),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      {
+        userId: CREATOR,
+        modelVersionIds: [11, 12, 13],
+        baseModels: ['Flux.2 Klein 9B', 'Flux.2 Klein 4B', 'Flux.3 Klein'],
+      },
+    ]);
+
+    await runPayout(START);
+
+    // The filter pairs baseModels[i] with modelVersionIds[i], so both aggregates must share an order.
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as string[]).join('?');
+    expect(sql).toContain('array_agg(mv.id::int ORDER BY mv.id) as "modelVersionIds"');
+    expect(sql).toContain('array_agg(mv."baseModel" ORDER BY mv.id) as "baseModels"');
+
+    expect(
+      sentTransactions().map(({ externalTransactionId, amount }) => ({
+        externalTransactionId,
+        amount,
+      }))
+    ).toEqual(
+      expect.arrayContaining([
+        { externalTransactionId: 'creator-tip-comp-2026-10-13-7-Yellow', amount: 7 },
+        { externalTransactionId: 'generation-tip-2026-10-13-7-Yellow', amount: 6 },
+        { externalTransactionId: 'license-fee-2026-10-13-7-Yellow', amount: 3 },
+      ])
+    );
+    expect(sentTransactions()).toHaveLength(3);
+  });
 });
 
 describe('the daily job after a failed run', () => {
@@ -317,15 +359,18 @@ describe('the daily job after a failed run', () => {
     });
     mockClickhouseQuery.mockReset();
     mockClickhouseQuery.mockImplementation(async (strings: TemplateStringsArray, ...values) => {
-      if (strings.join('').includes('manual_events')) {
-        updateEvents.push(String(values[0]));
-        return [];
-      }
+      // The real $query appends FORMAT JSONEachRow, and ClickHouse then accepts an INSERT ... VALUES
+      // but writes 0 rows (prod, 2026-11-04): an event sent this way never reaches Kafka.
+      if (strings.join('').includes('manual_events')) return [];
       if (!strings.join('').includes('resourceCompensations')) return [];
       const date = (values[0] as Date).toISOString().slice(0, 10);
       queriedDates.push(date);
       if (failDates.has(date)) throw new Error(`ClickHouse timed out reading ${date}`);
       return [row('compensation', 'Yellow', 50, 11), row('tip', 'Yellow', 6, 11)];
+    });
+    mockClickhouseExec.mockReset();
+    mockClickhouseExec.mockImplementation(async (strings: TemplateStringsArray, ...values) => {
+      if (strings.join('').includes('manual_events')) updateEvents.push(String(values[0]));
     });
     dbMock.dbRead.$queryRaw.mockReset();
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ userId: CREATOR, modelVersionIds: [11] }]);

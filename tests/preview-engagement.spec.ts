@@ -6,14 +6,14 @@ import { trpcMutation, uniqueToken } from './preview-trpc';
  * Mutation smoke: the core ENGAGEMENT write path — reactions + comments — which is
  * by far the highest-frequency user mutation on the platform and is otherwise
  * untested by the preview suite. A PR that broke `reaction.toggle` or
- * `commentv2.upsert` passes every other preview spec today; this closes that gap.
+ * `commentv3.create` passes every other preview spec today; this closes that gap.
  *
  * Fully API-driven via tRPC so the flow is isolated per run by a unique token (no
  * collision on the shared dev DB across concurrent previews, no flaky UI menu) —
  * same self-seed-then-act pattern as preview-report.spec.ts.
  *
  * Runs as `tester` (free member that PASSES the preview gate). post.create,
- * reaction.toggle and commentv2.upsert are all guardedProcedures; the ci-smoke
+ * reaction.toggle and commentv3.create are all guardedProcedures; the ci-smoke
  * `tester` fixture is seeded with onboarding=15 so it clears guardedProcedure.
  *
  * Verified input/return shapes (against origin/main schema + controller files):
@@ -35,21 +35,18 @@ import { trpcMutation, uniqueToken } from './preview-trpc';
  *    reverted that because detaching the write from the request lifecycle dropped
  *    reactions on pod drain. `src/server/routers/__tests__/reaction.router.awaited.test.ts`
  *    is the unit-level contract test for the restored shape — keep the two in step.
- *  - commentv2.upsert (commentv2.router.ts:62 guardedProcedure .input(upsertCommentv2Schema))
- *    — upsertCommentv2Schema (commentv2.schema.ts) extends commentConnectorSchema
- *    ({ entityId: number; entityType: enum incl. 'post' }) with a non-empty sanitized
- *    `content` (allowed tags incl. 'p'). The isOwnerOrModerator middleware skips its
- *    ownership check when `id` is absent (`!!id` is false for a new comment), so a
- *    fresh comment is allowed. upsertCommentV2Handler returns the created comment via
- *    commentV2Select → `.id` (number) + `.content` (sanitized HTML carrying the token).
- *  - commentv2.delete (commentv2.router.ts:68 protectedProcedure .input(getByIdSchema))
- *    — { id: number }; owner may delete (isOwnerOrModerator). Used for cleanup.
+ *  - commentv3.create (commentv3.router.ts guardedProcedure .input(createCommentV3Schema))
+ *    — { entityType: CommentEntityType incl. 'post'; entityId: number; content } with a
+ *    non-empty sanitized `content` (allowed tags incl. 'p'). createCommentV3Handler returns
+ *    the created comment → `.id` (number) + `.content` (sanitized HTML carrying the token).
+ *  - commentv3.delete (commentv3.router.ts protectedProcedure .input(commentV3IdSchema))
+ *    — { id: number }; the author may delete. Used for cleanup.
  */
 
 test.describe('tester self-seeds a post, reacts to it, and comments on it (mutation flow)', () => {
   test.use({ storageState: storageStatePath('tester') });
 
-  test('reaction.toggle and commentv2.upsert round-trip on a self-seeded post', async ({
+  test('reaction.toggle and commentv3.create round-trip on a self-seeded post', async ({
     page,
   }) => {
     // Warm the request context against the preview origin so page.request shares the
@@ -86,14 +83,14 @@ test.describe('tester self-seeds a post, reacts to it, and comments on it (mutat
     // into its content (proves the write actually persisted, not just 200-OK'd).
     const comment = await trpcMutation<{ id: number; content: string } | null>(
       page.request,
-      'commentv2.upsert',
+      'commentv3.create',
       {
         entityType: 'post',
         entityId: post!.id,
         content: `<p>${token}</p>`,
       }
     );
-    expect(typeof comment?.id, 'commentv2.upsert should return a numeric comment id').toBe(
+    expect(typeof comment?.id, 'commentv3.create should return a numeric comment id').toBe(
       'number'
     );
     expect(comment?.content, 'the seeded token should survive into the stored comment').toContain(
@@ -104,7 +101,7 @@ test.describe('tester self-seeds a post, reacts to it, and comments on it (mutat
     // shared dev clone. Best-effort: a delete failure must not fail the engagement
     // assertions above, which are the point of this spec.
     try {
-      await trpcMutation(page.request, 'commentv2.delete', { id: comment!.id });
+      await trpcMutation(page.request, 'commentv3.delete', { id: comment!.id });
     } catch {
       // The reaction + comment writes already passed; leftover-row cleanup is
       // non-critical and intentionally swallowed.

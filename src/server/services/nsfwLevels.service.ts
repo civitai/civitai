@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { chunk, uniq } from 'lodash-es';
-import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  ImageConnectionType,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onStorySparkPostsHidden, onStorySparkPostsRestored } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { articlesSearchIndex } from '~/server/search-index/articles.search-index';
@@ -13,6 +18,7 @@ import {
   articleModerationFloorSql,
   collectionTextFloorBucketSql,
   ratedEntityDerivedNsfwLevelSql,
+  serviceOfferingTextFloorSql,
 } from '~/server/services/text-scan/scan-floor';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -31,38 +37,45 @@ const idQueryLimiter = () => Limiter({ batchSize: ID_QUERY_BATCH_SIZE, limit: 2 
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems, model3ds] = await Promise.all([
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.image.findMany({
-        where: { id: { in: ids } },
-        select: { postId: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.imageConnection.findMany({
-        where: { imageId: { in: ids } },
-        select: { entityType: true, entityId: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.article.findMany({
-        where: { coverId: { in: ids } },
-        select: { id: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.collectionItem.findMany({
-        where: { imageId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
-        select: { collectionId: true },
-      })
-    ),
-    idQueryLimiter().process(imageIds, (ids) =>
-      dbRead.model3D.findMany({
-        where: { thumbnailImageId: { in: ids } },
-        select: { id: true },
-      })
-    ),
-  ]);
+  const [images, connections, articles, collectionItems, model3ds, serviceOfferings] =
+    await Promise.all([
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.image.findMany({
+          where: { id: { in: ids } },
+          select: { postId: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.imageConnection.findMany({
+          where: { imageId: { in: ids } },
+          select: { entityType: true, entityId: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.article.findMany({
+          where: { OR: [{ coverId: { in: ids } }, { bannerId: { in: ids } }] },
+          select: { id: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.collectionItem.findMany({
+          where: { imageId: { in: ids }, status: CollectionItemStatus.ACCEPTED },
+          select: { collectionId: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.model3D.findMany({
+          where: { thumbnailImageId: { in: ids } },
+          select: { id: true },
+        })
+      ),
+      idQueryLimiter().process(imageIds, (ids) =>
+        dbRead.serviceOffering.findMany({
+          where: { coverImageId: { in: ids } },
+          select: { id: true },
+        })
+      ),
+    ]);
 
   const comicProjectIds = await getComicProjectIdsForImages(imageIds);
 
@@ -85,6 +98,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     comicProjectIds,
     collectionIds: collectionItems.map((x) => x.collectionId),
     model3dIds: model3ds.map((x) => x.id),
+    serviceOfferingIds: serviceOfferings.map((x) => x.id),
   };
 }
 
@@ -169,6 +183,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let modelVersionIds: number[] = [];
   let comicProjectIds: number[] = [];
   let model3dIds: number[] = [];
+  let serviceOfferingIds: number[] = [];
 
   function mergeRelated(
     data: Partial<{
@@ -181,6 +196,7 @@ export async function getNsfwLevelRelatedEntities(source: {
       modelVersionIds: number[];
       comicProjectIds: number[];
       model3dIds: number[];
+      serviceOfferingIds: number[];
     }>
   ) {
     if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
@@ -192,6 +208,8 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
     if (data.comicProjectIds) comicProjectIds = uniq(comicProjectIds.concat(data.comicProjectIds));
     if (data.model3dIds) model3dIds = uniq(model3dIds.concat(data.model3dIds));
+    if (data.serviceOfferingIds)
+      serviceOfferingIds = uniq(serviceOfferingIds.concat(data.serviceOfferingIds));
   }
 
   if (source.imageIds?.length) {
@@ -238,6 +256,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     modelVersionIds,
     comicProjectIds: uniq([...(source.comicProjectIds ?? []), ...comicProjectIds]),
     model3dIds,
+    serviceOfferingIds,
   };
 }
 
@@ -266,6 +285,7 @@ export async function updateNsfwLevels({
   modelVersionIds,
   comicProjectIds = [],
   model3dIds = [],
+  serviceOfferingIds = [],
 }: {
   postIds: number[];
   articleIds: number[];
@@ -276,6 +296,7 @@ export async function updateNsfwLevels({
   modelVersionIds: number[];
   comicProjectIds?: number[];
   model3dIds?: number[];
+  serviceOfferingIds?: number[];
 }) {
   const updatePosts = batcher(postIds, async (ids) =>
     notifyPostFloorRaises(await updatePostNsfwLevels(ids))
@@ -291,6 +312,7 @@ export async function updateNsfwLevels({
   // across child entities, so it can run in the leaf batch alongside Posts /
   // Articles / Bounties (none of those depend on Model3D either).
   const updateModel3Ds = batcher(model3dIds, updateModel3DNsfwLevels);
+  const updateServiceOfferings = batcher(serviceOfferingIds, updateServiceOfferingNsfwLevels);
   // Collections are processed by separate optimized job
   // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
@@ -302,6 +324,7 @@ export async function updateNsfwLevels({
       updateBountyEntries,
       updateComicChapters,
       updateModel3Ds,
+      updateServiceOfferings,
     ],
     [updateModelVersions, updateComicProjects],
     [updateModels],
@@ -320,7 +343,7 @@ export type PostNsfwLevelChange = { id: number; before: number; after: number };
 /** Returns the posts whose level changed. */
 export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwLevelChange[]> {
   if (!postIds.length) return [];
-  return dbWrite.$queryRaw<PostNsfwLevelChange[]>(Prisma.sql`
+  const changes = await dbWrite.$queryRaw<PostNsfwLevelChange[]>(Prisma.sql`
     WITH next AS (
       SELECT
         p.id,
@@ -336,6 +359,13 @@ export async function updatePostNsfwLevels(postIds: number[]): Promise<PostNsfwL
     WHERE next.id = p.id AND next."nsfwLevel" != p."nsfwLevel"
     RETURNING p.id, next."before", p."nsfwLevel" "after";
   `);
+  // A story's chapter 1 is not shown while its post is Blocked or unrated.
+  const unshown = (level: number) => level === 0 || level === NsfwLevel.Blocked;
+  const hidden = changes.filter((c) => unshown(c.after));
+  const shown = changes.filter((c) => unshown(c.before) && !unshown(c.after));
+  if (hidden.length) void onStorySparkPostsHidden({ postIds: hidden.map((c) => c.id) });
+  if (shown.length) void onStorySparkPostsRestored({ postIds: shown.map((c) => c.id) });
+  return changes;
 }
 
 export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.TransactionClient) {
@@ -350,8 +380,9 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         SELECT
           a.id,
           GREATEST(
-            -- Cover is a single row per article, so max() is effectively identity.
+            -- Cover and banner are a single row per article, so max() is effectively identity.
             COALESCE(max(cover."nsfwLevel"), 0),
+            COALESCE(max(banner."nsfwLevel"), 0),
             -- Content images can be many-per-article. Take the highest rating
             -- rather than bit_or'ing them: image nsfwLevel values are powers of
             -- 2 (PG=1, PG13=2, R=4, X=8, XXX=16), so integer max == highest
@@ -371,6 +402,11 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         LEFT JOIN "Image" cover
           ON a."coverId" = cover.id
           AND cover."ingestion" IN ('Scanned', 'Blocked')
+
+        -- Banner image: same rule as the cover.
+        LEFT JOIN "Image" banner
+          ON a."bannerId" = banner.id
+          AND banner."ingestion" IN ('Scanned', 'Blocked')
 
         -- Content images (left join - may not exist)
         LEFT JOIN "ImageConnection" ic
@@ -412,8 +448,43 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(
-    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    articles.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+    { reason: 'nsfw-level' }
   );
+}
+
+/**
+ * A service offering's rating: the highest of the seller's declared level, its text floor and its
+ * cover's level once the cover is scanned, capped at XXX. A row with no declared level yet (last
+ * written before that column existed) takes its stored rating as the seller's pick, and keeps it.
+ */
+export async function updateServiceOfferingNsfwLevels(offeringIds: number[]) {
+  if (!offeringIds.length) return;
+  await dbWrite.$executeRaw(Prisma.sql`
+    WITH level AS (
+      SELECT
+        o.id,
+        LEAST(
+          GREATEST(
+            COALESCE(o."declaredNsfwLevel", o."maxNsfwLevel"),
+            ${serviceOfferingTextFloorSql('o.id')},
+            COALESCE(cover."nsfwLevel", 0)
+          ),
+          ${NsfwLevel.XXX}
+        ) AS "nsfwLevel",
+        COALESCE(o."declaredNsfwLevel", o."maxNsfwLevel") AS "declaredNsfwLevel"
+      FROM "ServiceOffering" o
+      LEFT JOIN "Image" cover
+        ON cover.id = o."coverImageId"
+        AND cover."ingestion" = 'Scanned'
+      WHERE o.id IN (${Prisma.join(offeringIds)})
+    )
+    UPDATE "ServiceOffering" o
+    SET "maxNsfwLevel" = level."nsfwLevel", "declaredNsfwLevel" = level."declaredNsfwLevel"
+    FROM level
+    WHERE level.id = o.id
+      AND (o."maxNsfwLevel" IS DISTINCT FROM level."nsfwLevel" OR o."declaredNsfwLevel" IS NULL)
+  `);
 }
 
 export async function updateBountyNsfwLevels(bountyIds: number[]) {
@@ -628,6 +699,38 @@ export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<voi
   // indexes, so there's no fan-out to do here.
 }
 
+/**
+ * The level a version's own images give it, for a version `mv` of model `m`: the bit_or of the
+ * owner's first 20 published images on it, leaving out unrated (0) and Blocked (32) images. The
+ * version rollup stores this for a non-mature model; anything that needs to know what that rollup
+ * would compute reads it from here.
+ */
+export const imageDerivedVersionLevelSql = Prisma.sql`(
+  SELECT COALESCE(bit_or(i."nsfwLevel"), 0)
+  FROM (
+    SELECT i."nsfwLevel"
+    FROM "Post" p
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE p."modelVersionId" = mv.id
+      AND p."userId" = m."userId"
+      AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
+    ORDER BY p."id", i."index"
+    LIMIT 20
+  ) AS i
+)`;
+
+/** Read-only: each version's image-derived level (see `imageDerivedVersionLevelSql`), by id. */
+export async function imageDerivedVersionLevels(versionIds: number[]) {
+  if (!versionIds.length) return new Map<number, number>();
+  const rows = await dbRead.$queryRaw<{ id: number; nsfwLevel: number }[]>(Prisma.sql`
+    SELECT mv.id, ${imageDerivedVersionLevelSql} AS "nsfwLevel"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mv.id IN (${Prisma.join(versionIds)})
+  `);
+  return new Map(rows.map((row) => [row.id, row.nsfwLevel]));
+}
+
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
   // sysRedis.hGet is typed string but the HA/Sentinel client returns a
@@ -663,20 +766,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
           --     LIMIT 20
           --   ) AS ranked
           -- )
-          WHEN m."userId" != -1 THEN (
-            SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-            FROM (
-              SELECT
-                i."nsfwLevel"
-              FROM "Post" p
-              JOIN "Image" i ON i."postId" = p.id
-              WHERE p."modelVersionId" = mv.id
-              AND p."userId" = m."userId"
-              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
-              ORDER BY p."id", i."index"
-              LIMIT 20
-            ) AS i
-          )
+          WHEN m."userId" != -1 THEN ${imageDerivedVersionLevelSql}
         END AS "nsfwLevel"
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
@@ -796,7 +886,8 @@ export async function queueComicsForPanelImages(imageIds: number[]) {
   const projectIds = await getComicProjectIdsForImages(imageIds);
   if (!projectIds.length) return;
   await comicsSearchIndex.queueUpdate(
-    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    projectIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+    { reason: 'nsfw-level' }
   );
 }
 

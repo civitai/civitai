@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { UploadType } from '~/server/common/enums';
@@ -59,6 +60,8 @@ let abortShouldReject: boolean;
 let hangPartNumbers: number[];
 /** File names (see `makeMultiFileFetch`) whose part PUTs stay in-flight until aborted. */
 let hangFiles: string[];
+/** Part numbers whose PUT goes silent: no progress, no response, no error — a half-open connection. */
+let silentPartNumbers: number[];
 /** Fires when `/api/upload/complete` is requested, to mutate state mid-flight. */
 let onCompleteRequest: (() => void) | null;
 /** Fires when `/api/upload/abort` is requested, so a test can order it against other effects. */
@@ -103,11 +106,19 @@ class FakeXHR {
     setTimeout(() => {
       if (this.settled) return;
       const partNumber = Number(new URL(this.url, 'https://b2.test').searchParams.get('part'));
+      if (silentPartNumbers.includes(partNumber)) return;
       if (
         hangPartNumbers.includes(partNumber) ||
         hangFiles.some((f) => this.url.includes(`f=${f}`))
-      )
-        return; // in-flight forever until aborted
+      ) {
+        // A live transfer that never finishes until aborted: it keeps reporting progress, so the
+        // part stall watchdog leaves it alone as it would a slow real upload.
+        const tick = setInterval(() => {
+          if (this.settled) return clearInterval(tick);
+          this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: 0 }));
+        }, 10_000);
+        return;
+      }
       this.settled = true;
       const res = partHandler(this.url, partNumber);
       this.readyState = 4;
@@ -240,6 +251,7 @@ beforeEach(() => {
   abortShouldReject = false;
   hangPartNumbers = [];
   hangFiles = [];
+  silentPartNumbers = [];
   onCompleteRequest = null;
   onAbortRequest = null;
   partHandler = () => ({ status: 200, etag: 'etag' });
@@ -583,12 +595,12 @@ describe('useS3UploadStore.upload teardown ordering', () => {
  * A USER CANCEL AND THE STORE'S OWN TEARDOWN ARE DIFFERENT EVENTS, and only the first is
  * something the person did.
  *
- * Both end up tripping the same `cancelController` and aborting the same in-flight part
- * xhrs, so neither the signal nor the xhrs can tell them apart. `userAborted` records the
- * intent at the one place it exists — the `abort` the store hands out on the tracked row.
+ * Both end up aborting the same in-flight part xhrs, so the `{ aborted: true }` part errors
+ * cannot tell them apart. The person's signal can: `transferParts` tears itself down on its own
+ * controller and leaves the signal behind the row's `abort` alone, so its `aborted` is the intent.
  *
  * 🔴 The sibling client `useS3Upload` had the same confusion with much worse consequences:
- * its relay fallback was gated on that shared signal and could therefore never run. This
+ * its relay fallback was gated on the teardown's signal and could therefore never run. This
  * client has no relay (it serves model/training uploads, which the relay route does not
  * write), so what was at stake here is only the row's terminal status — but it is the same
  * defect, and keeping the two clients' answer to "did the user cancel?" identical is what
@@ -659,6 +671,17 @@ describe('useS3UploadStore.upload abort failure reason', () => {
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
     expect(abortCalls).toHaveLength(1);
     expect(abortCalls[0].failure).toEqual({ kind: 'network-error', partNumber: 1 });
+  });
+
+  it('gives up on a part that goes silent, instead of parking the upload forever', async () => {
+    vi.stubGlobal('fetch', makeFetch(2));
+    silentPartNumbers = [2];
+
+    await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
+
+    expect(useS3UploadStore.getState().items[0].status).toBe('error');
+    expect(abortCalls).toHaveLength(1);
+    expect(abortCalls[0].failure).toEqual({ kind: 'stalled', partNumber: 2 });
   });
 
   it('reports client-aborted — not a failure — when the user cancels mid-upload', async () => {

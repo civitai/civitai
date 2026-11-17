@@ -45,7 +45,6 @@ vi.mock('~/server/search-index', () => ({
   articlesSearchIndex: { queueUpdate: vi.fn() },
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   modelsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
@@ -64,7 +63,7 @@ import {
   LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
-import { imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 import * as postService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
@@ -161,16 +160,11 @@ const BASE_SCHEMA = `
       ingestion "ImageIngestionStatus" NOT NULL,
       "needsReview" text,
       "blockedFor" text,
+      minor boolean NOT NULL DEFAULT false,
       metadata jsonb,
       "updatedAt" timestamp(3),
       "cascadeParentId" int
     );
-    -- The image's comment threads, which an image delete detaches when a held author is in one.
-    CREATE TABLE "Thread" (
-      id serial PRIMARY KEY, "imageId" int, "parentThreadId" int, "rootThreadId" int,
-      "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
-    );
-    CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Post" (
       id int PRIMARY KEY,
@@ -345,7 +339,7 @@ describe('purgeHoldGuard on the delete', () => {
     expect(await remaining()).toEqual(KEPT);
     // A kept image's own side effects must not run: it is still live in the database.
     const deindexed = vi
-      .mocked(imagesSearchIndex.queueUpdate)
+      .mocked(imagesMetricsSearchIndex.queueUpdate)
       .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
     expect(sorted(deindexed)).toEqual(DELETED);
   });
@@ -480,7 +474,7 @@ describe('purgeHoldGuard on the delete', () => {
         EXTENDED,
       ]);
       const deindexed = vi
-        .mocked(imagesSearchIndex.queueUpdate)
+        .mocked(imagesMetricsSearchIndex.queueUpdate)
         .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
       expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, ...MARKED].sort((a, b) => a - b));
     });
@@ -493,7 +487,7 @@ describe('purgeHoldGuard on the delete', () => {
 
       expect(await remaining()).toEqual(expect.arrayContaining([MANUAL, REPORTED]));
       const deindexed = vi
-        .mocked(imagesSearchIndex.queueUpdate)
+        .mocked(imagesMetricsSearchIndex.queueUpdate)
         .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
       // REPORTED is the control: excluded by the guard, so still live and still indexed.
       expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, MANUAL]);
@@ -769,7 +763,7 @@ describe('purgeHoldGuard on the delete', () => {
     });
 
     it.each([
-      ['its id', `id = 999999`],
+      ['its id', `id = 990999999`],
       ['its owner', `"userId" = 999`],
       ['its report', `"csamReportId" = 999`],
       ['its role', `role = 'secondary'`],
@@ -1424,9 +1418,9 @@ describe('the migration backfill with a keep list', () => {
 // variables, so each set must travel as one array parameter whatever its size.
 describe('the blocked-image queue reads, with a held set past the bind-variable limit', () => {
   const BIND_LIMIT = 32767;
-  const HELD = Array.from({ length: 40_000 }, (_, i) => 1_000_000 + i);
+  const HELD = Array.from({ length: 40_000 }, (_, i) => 990_000_000 + i);
   const cutoff = new Date(Date.now() - 7 * 86_400_000);
-  const ON_CUTOFF = 1040001; // queued at exactly the cutoff, so its retention has run out
+  const ON_CUTOFF = 990040001; // queued at exactly the cutoff, so its retention has run out
   const run = (sql: Prisma.Sql) => {
     expect(sql.values.length).toBeLessThanOrEqual(BIND_LIMIT);
     return holder.db.query<{ entityId: number; createdAt: Date }>(sql.text, sql.values as never[]);
@@ -1444,15 +1438,15 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
         PRIMARY KEY ("entityType", "entityId", type)
       );
       INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt")
-        SELECT 'BlockedImageDelete', 'Image', id, now() - interval '30 days' + (id - 1000000) * interval '1 second'
-        FROM generate_series(1000000, 1039999) id;
+        SELECT 'BlockedImageDelete', 'Image', id, now() - interval '30 days' + (id - 990000000) * interval '1 second'
+        FROM generate_series(990000000, 990039999) id;
       INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt") VALUES
         ('BlockedImageDelete', 'Image', 1, now() - interval '20 days'),
         ('BlockedImageDelete', 'Image', 2, now() - interval '10 days'),
         ('BlockedImageDelete', 'Image', 3, now() - interval '40 days'),
-        ('BlockedImageDelete', 'Image', 1040000, now()),
-        ('ImageScan', 'Image', 1000001, now() - interval '30 days'),
-        ('BlockedImageDelete', 'Post', 1000002, now() - interval '30 days');
+        ('BlockedImageDelete', 'Image', 990040000, now()),
+        ('ImageScan', 'Image', 990000001, now() - interval '30 days'),
+        ('BlockedImageDelete', 'Post', 990000002, now() - interval '30 days');
     `);
     await holder.db.query(
       `INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt")
@@ -1464,9 +1458,11 @@ describe('the blocked-image queue reads, with a held set past the bind-variable 
   });
 
   it('finds only the held ids queued for blocked-image delete and past retention', async () => {
-    const { rows } = await run(blockedQueueExpiredAmongSql([...HELD, 1040000, ON_CUTOFF], cutoff));
+    const { rows } = await run(
+      blockedQueueExpiredAmongSql([...HELD, 990040000, ON_CUTOFF], cutoff)
+    );
 
-    // 1040000 is held but queued inside retention; 1, 2 and 3 are not held.
+    // 990040000 is held but queued inside retention; 1, 2 and 3 are not held.
     expect(rows.map((r) => r.entityId).sort((a, b) => a - b)).toEqual([...HELD, ON_CUTOFF]);
   });
 

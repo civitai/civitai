@@ -42,7 +42,7 @@ type Decision =
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/services/model.service.ts': {
-    lockWrites: 17,
+    lockWrites: 18,
     decision: {
       kind: 'clears',
       except:
@@ -50,15 +50,24 @@ const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
     },
   },
   'src/server/services/auto-nsfw.ts': { lockWrites: 2, decision: { kind: 'sets' } },
+  'src/server/services/lock-review.service.ts': { lockWrites: 1, decision: { kind: 'clears' } },
   'src/server/services/poi-hash.service.ts': { lockWrites: 2, decision: { kind: 'clears' } },
   'src/server/services/minor-hash.service.ts': { lockWrites: 2, decision: { kind: 'clears' } },
   'apps/moderator/src/lib/server/rating-reviews.service.ts': {
     lockWrites: 6,
     decision: { kind: 'clears' },
   },
+  'src/server/services/model-com-face-intent.service.ts': {
+    lockWrites: 1,
+    decision: { kind: 'sets' },
+  },
   'src/server/services/text-scan/actions/model-nsfw.ts': {
     lockWrites: 4,
     decision: { kind: 'sets' },
+  },
+  'src/server/services/text-scan/actions/restricted-nsfw-verdict.ts': {
+    lockWrites: 8,
+    decision: { kind: 'clears' },
   },
   'src/server/services/text-scan/actions/model-poi-minor.ts': {
     lockWrites: 9,

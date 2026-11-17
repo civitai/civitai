@@ -78,6 +78,8 @@ const EDIT_IMG_IDS = [
   ECO.Krea2,
   ECO.Krea3,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
+  ECO.Fibo2,
 ];
 
 /** Image ecosystems that support image:create */
@@ -129,6 +131,8 @@ const TXT2IMG_IDS = [
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Ming,
+  ECO.MiniMaxH3Image,
+  ECO.Fibo2,
 ];
 
 /** Video ecosystems that support video:create */
@@ -144,6 +148,7 @@ const TXT2VID_IDS = [
   ECO.WanVideo27,
   ECO.WanVideo30,
   ECO.Veo3,
+  ECO.GeminiOmni,
   ECO.Vidu,
   ECO.MiniMaxH3,
   ECO.Kling,
@@ -315,6 +320,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Extract Metadata',
     description: 'Extract generation parameters from an image',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
   },
@@ -358,6 +364,7 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.WanVideo30,
       ECO.MiniMaxH3,
       ECO.Flux3Video,
+      ECO.GeminiOmni,
     ],
     excludeModelVersionIds: [
       klingVersionIds.v1_6,
@@ -378,6 +385,7 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [
       ECO.Vidu,
       ECO.Veo3,
+      ECO.GeminiOmni,
       ECO.Kling,
       ECO.LTXV23,
       ECO.LTXV25,
@@ -526,6 +534,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Enhance Prompt',
     description: 'Improve your prompt with AI suggestions',
     category: 'image',
+    showBackButton: true,
     ecosystemIds: [],
     noSubmit: true,
     hidden: true,

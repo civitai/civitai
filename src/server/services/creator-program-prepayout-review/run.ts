@@ -46,8 +46,6 @@ export type RunOutcome = {
 export type PrepayoutReviewDeps = {
   ch: ReviewClickhouse | null;
   readLimits: () => Promise<PrepayoutLimits | null>;
-  readCounterpartyMinimum: () => Promise<number | null>;
-  getWarnedAt: (userIds: number[]) => Promise<Map<number, string>>;
   loadAccounts: (userIds: number[]) => Promise<Map<number, AccountState>>;
   /** Creators whose latest review before `period` was withheld: each comes up for a new decision. */
   getCarriedUserIds: (period: string) => Promise<number[]>;
@@ -73,7 +71,6 @@ function buildEvidence(
   ctx: {
     accounts: Map<number, AccountState>;
     account: AccountState | undefined;
-    warnedAt: string | null;
     batchCreatorIds: ReadonlySet<number>;
     youngSince: Date;
   }
@@ -93,7 +90,7 @@ function buildEvidence(
     payoutCents: metrics.payoutCents,
     bankable: metrics.bankable,
     priorPayoutsCents: metrics.priorPayoutsCents,
-    account: { ...ctx.account, warnedAt: ctx.warnedAt },
+    account: { ...ctx.account },
     signals: Object.fromEntries(fired),
     exchanges: counterparties
       .filter((c) => c.sent > 0)
@@ -161,18 +158,15 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
         .map((userId) => ({ userId, payoutCents: 0 })),
     ];
     const userIds = batch.map((b) => b.userId);
-    const [prior, earnings, counterpartyMinimum, warnedAt] = await Promise.all([
+    const [prior, earnings] = await Promise.all([
       loadPriorPayouts(deps.ch, userIds, period, limits.historyPeriods),
       loadEarnings(deps.ch, userIds, period),
-      deps.readCounterpartyMinimum(),
-      deps.getWarnedAt(userIds),
     ]);
     const payerIds = [...earnings.counterparties.values()].flat().map((c) => c.userId);
     const accounts = await deps.loadAccounts([...new Set([...userIds, ...payerIds])]);
 
     const ctx = {
       limits,
-      counterpartyMinimum,
       payoutCutoffCents: payoutCutoffCents(
         credited.map((b) => b.payoutCents),
         limits.payoutJumpPercentile
@@ -198,7 +192,6 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
           muted: account?.muted ?? false,
           pendingRestriction: account?.pendingRestriction ?? false,
         },
-        warnedAt: warnedAt.get(userId) ?? null,
       };
       outcome.evaluatedCount++;
 
@@ -216,7 +209,6 @@ export async function runPrepayoutReview(deps: PrepayoutReviewDeps): Promise<Run
         evidence: buildEvidence(metrics, counterparties, fired, {
           accounts,
           account,
-          warnedAt: metrics.warnedAt,
           batchCreatorIds: ctx.batchCreatorIds,
           youngSince,
         }),

@@ -6,6 +6,9 @@ import type { Prisma } from '@prisma/client';
  * The single source of truth for "is this announcement showing". `activeAnnouncementWhere`
  * is the degenerate `from === to === now` case used by the read path; the media health
  * check widens only the upper bound so it can see a banner before it goes live.
+ *
+ * The result carries its own `AND` key: put it inside a caller's `AND` array, never spread it
+ * into a where that has another `AND`, where one key silently replaces the other.
  */
 export function announcementWindowOverlapsWhere(
   from: Date,

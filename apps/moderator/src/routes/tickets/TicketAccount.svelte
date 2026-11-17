@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page } from '$app/state';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
@@ -30,6 +31,12 @@
 
   const NEEDS_USERS = 'This action requires access to the Users page.';
   const unbanWhy = denied('user.ban');
+  const canExport = $derived(!!page.data.grants?.['user.personalDataExport.queue']);
+  // The database refuses a second queue too; this only spares the click.
+  const exportInFlight = $derived(
+    account.status === 'ok' &&
+      (account.dataExport?.status === 'queued' || account.dataExport?.status === 'building')
+  );
 
   // Approving an Account appeal lifts the ban and the mute through the same service as the queue.
   const approvalText = $derived.by(() => {
@@ -181,6 +188,34 @@
             {ondone}
           />
         {/each}
+      </div>
+    {/if}
+
+    {#if account.dataExport !== undefined}
+      <div class="mt-2 flex flex-col gap-1.5 border-t border-dark-4 pt-2">
+        <p class="m-0 text-xs text-dark-2">
+          Personal data export:
+          {#if account.dataExport}
+            #{account.dataExport.id} {account.dataExport.status}, queued {relativeTime(
+              account.dataExport.createdAt
+            )}
+          {:else}
+            none
+          {/if}
+        </p>
+        <TicketAccountAction
+          {ticketId}
+          userId={account.userId}
+          action="accountQueueDataExport"
+          label="Export personal data"
+          confirmText="Builds an archive of this account's data and emails you a link. Nothing is sent to the account owner."
+          doneLabel="Personal data export queued"
+          enabled={canExport && !exportInFlight}
+          why={exportInFlight
+            ? 'An export for this account is already queued or building.'
+            : denied('user.personalDataExport.queue')}
+          {ondone}
+        />
       </div>
     {/if}
   {/if}

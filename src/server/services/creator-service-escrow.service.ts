@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { isSafeToRetry } from '@civitai/buzz';
 import { dbWrite } from '~/server/db/client';
+import { liveFile } from '~/server/services/creator-service-deal-file-sql';
 import { logToAxiom } from '~/server/logging/client';
 import {
   serviceDealExhaustedLegsGauge,
@@ -136,12 +137,12 @@ export const dealFinalsClear = (deal: Prisma.Sql = Prisma.sql`"ServiceDeal"`) =>
   EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
   )
   AND NOT EXISTS (
     SELECT 1 FROM "ServiceDealFile" f
     WHERE f."dealId" = ${deal}."id" AND f."round" = ${deal}."revisionsUsed"
-      AND f."kind" = 'Final'::"ServiceDealFileKind"
+      AND f."kind" = 'Final'::"ServiceDealFileKind" AND ${liveFile(Prisma.sql`f`)}
       AND (f."scanStatus" <> 'Passed'::"ServiceDealFileScanStatus"
         OR f."status" <> 'Ready'::"ServiceDealFileStatus")
   )
@@ -334,7 +335,7 @@ export async function runDealLeg(
           dealId,
           leg,
           amount: claimed.amount,
-        }).catch(() => null);
+        });
 
       let transactionId: string;
       try {
@@ -450,7 +451,7 @@ export async function holdDeal({
       message: 'hold outcome unknown; reconcile will settle it',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null);
+    });
     return 'unknown';
   }
 }
@@ -503,7 +504,7 @@ export async function refundDeal(dealId: number) {
             message: 'refund answered 409 with the hold not fully refunded',
             dealId,
             shortfall,
-          }).catch(() => null);
+          });
           throw new Error(
             `creator service escrow: deal ${dealId} is not fully refunded: ${shortfall}`
           );
@@ -602,7 +603,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
           dealId: hold.dealId,
           charged,
           amount: hold.amount,
-        }).catch(() => null);
+        });
       }
     } catch (error) {
       logToAxiom({
@@ -611,7 +612,7 @@ export async function reconcileUnconfirmedHolds({ limit = 100 }: { limit?: numbe
         message: 'hold reconcile failed',
         dealId: hold.dealId,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -653,7 +654,7 @@ export async function sweepServiceDealRefunds({ limit = 100 }: { limit?: number 
         message: 'refund could not be completed',
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
 
@@ -692,7 +693,7 @@ export async function releaseDeal(dealId: number) {
           message: 'claimed release paying a seller who is now banned or deleted',
           dealId,
           sellerId,
-        }).catch(() => null);
+        });
       let transactionId: string | null = null;
       try {
         ({ transactionId } = await createBuzzTransaction(
@@ -766,7 +767,7 @@ export async function sweepServiceDealReleases({ limit = 100 }: { limit?: number
         message: 'release could not be completed',
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
   return { considered: due.length, released };

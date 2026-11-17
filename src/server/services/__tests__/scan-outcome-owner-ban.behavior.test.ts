@@ -4,6 +4,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Audit from '~/utils/metadata/audit';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type * as ImageService from '~/server/services/image.service';
+import type * as ModRules from '~/server/utils/mod-rules';
+import type * as NotificationService from '~/server/services/notification.service';
 
 /**
  * A block on a banned owner's image is the ban's decision, so a clean scan result that lands
@@ -14,7 +16,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditMetaData: vi.fn(() => ({ success: true })),
+  auditPostImageMeta: vi.fn(() => ({ success: true })),
   includesInappropriate: vi.fn(() => false),
   includesPoi: vi.fn(() => false),
 }));
@@ -26,6 +28,14 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getImagesModRules: vi.fn(async () => []),
 }));
+vi.mock('~/server/utils/mod-rules', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModRules>()),
+  evaluateRules: vi.fn(() => undefined),
+}));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: vi.fn(async () => undefined),
+}));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -36,11 +46,26 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { FEEDBACK_CAPTURE_OWNER_ID } from '@civitai/shared/feedback-capture';
+import { includesInappropriate } from '~/utils/metadata/audit';
+import { getImagesModRules } from '~/server/services/image.service';
+import { evaluateRules } from '~/server/utils/mod-rules';
+import { createNotification } from '~/server/services/notification.service';
+import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const holder = vi.hoisted(() => ({
+  db: null as unknown as PGlite,
+  holdReadFails: false,
+  tagNsfwLevel: 1,
+  newUser: false,
+  newUserAsked: [] as unknown[],
+}));
 
 const BANNED = 7;
 const ACTIVE = 8;
+const HELD = 12;
+const REPORTED = 13;
+const CAPTURE = FEEDBACK_CAPTURE_OWNER_ID;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -61,6 +86,16 @@ beforeAll(async () => {
       "scannedAt" timestamp(3),
       metadata jsonb,
       "scanJobs" jsonb
+    );
+    CREATE TABLE "EvidenceHeldUser" ("userId" int PRIMARY KEY);
+    CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (
+      id serial PRIMARY KEY,
+      "userId" int,
+      details jsonb NOT NULL DEFAULT '{}',
+      images jsonb NOT NULL DEFAULT '[]',
+      "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3)
     );
   `);
 });
@@ -83,14 +118,32 @@ beforeEach(async () => {
   ) => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
-      return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: 1, confidence: 90 }];
-    if (text.includes('is_new_user')) return [{ isNewUser: false }];
+      return [
+        { id: 10, name: 'tag', type: 'Label', nsfwLevel: holder.tagNsfwLevel, confidence: 90 },
+      ];
+    if (text.includes('is_new_user')) {
+      holder.newUserAsked.push(values[0]);
+      return [{ isNewUser: holder.newUser }];
+    }
+    // ownerHeld's statement: its hold SQL arrives as a nested value, not in `strings`.
+    if (text.includes(' AS held ')) {
+      if (holder.holdReadFails) throw new Error('hold read failed');
+      return (await runOnPglite(strings, values)).rows;
+    }
     if (text.includes('"User"')) return (await runOnPglite(strings, values)).rows;
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
+  holder.holdReadFails = false;
+  holder.tagNsfwLevel = 1;
+  holder.newUser = false;
+  holder.newUserAsked = [];
   await holder.db.exec(`
-    TRUNCATE "Image", "User";
-    INSERT INTO "User" (id, "bannedAt") VALUES (${BANNED}, now()), (${ACTIVE}, NULL);
+    TRUNCATE "Image", "User", "EvidenceHeldUser", "EvidenceHoldImage", "CsamReport";
+    INSERT INTO "User" (id, "bannedAt")
+      VALUES (${BANNED}, now()), (${ACTIVE}, NULL), (${HELD}, NULL), (${REPORTED}, NULL),
+        (${CAPTURE}, NULL);
+    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${HELD});
+    INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
   `);
 });
 
@@ -210,6 +263,51 @@ describe("a clean scan landing on a banned owner's blocked image", () => {
   });
 });
 
+describe("a clean scan landing on a held owner's or a kept blocked image", () => {
+  const BLOCKED = { ingestion: 'Blocked', blockedFor: 'moderated', nsfwLevel: 32 };
+
+  it.each([
+    ['its owner is under a hold marker', HELD],
+    ['a holding report names its owner', REPORTED],
+  ] as const)('keeps the image blocked when %s', async (_, owner) => {
+    await insertImage(20, owner, 'Blocked', 'moderated');
+
+    const outcome = await scan(loaded(20, owner, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(20)).toEqual(BLOCKED);
+  });
+
+  it("keeps an image a hold kept, though its owner's hold has ended", async () => {
+    await insertImage(21, ACTIVE, 'Blocked', 'moderated');
+    await holder.db.exec(`INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (21)`);
+
+    const outcome = await scan(loaded(21, ACTIVE, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(21)).toEqual(BLOCKED);
+  });
+
+  it('keeps the image blocked when the hold cannot be read', async () => {
+    await insertImage(22, ACTIVE, 'Blocked', 'moderated');
+    holder.holdReadFails = true;
+
+    const outcome = await scan(loaded(22, ACTIVE, 'Blocked', 'moderated'));
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(22)).toEqual(BLOCKED);
+  });
+
+  it("publishes a held owner's image that was never blocked", async () => {
+    await insertImage(23, HELD, 'Pending', null);
+
+    const outcome = await scan(loaded(23, HELD, 'Pending', null));
+
+    expect(outcome.ingestion).toBe('Scanned');
+    expect(await imageRow(23)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
+  });
+});
+
 describe('a clean scan that should still lift or leave the image visible', () => {
   it("clears a blocked image's block when its owner is not banned (moderator rescan)", async () => {
     // Another owner's banned, blocked image, stored first: the check reads the scanned image.
@@ -229,5 +327,77 @@ describe('a clean scan that should still lift or leave the image visible', () =>
 
     expect(outcome.ingestion).toBe('Scanned');
     expect(await imageRow(5)).toEqual({ ingestion: 'Scanned', blockedFor: null, nsfwLevel: 1 });
+  });
+});
+
+describe('a feedback page capture', () => {
+  it('keeps a prior block its own state holds across a clean scan', async () => {
+    await insertImage(30, CAPTURE, 'Blocked', 'CSAM');
+    const outcome = await scan(loaded(30, CAPTURE, 'Blocked', 'CSAM'));
+    expect(outcome.ingestion).toBe('Blocked');
+    expect((await imageRow(30)).ingestion).toBe('Blocked');
+  });
+
+  it('lets a clean scan lift a prior block nothing holds (control)', async () => {
+    await insertImage(31, CAPTURE, 'Blocked', 'moderated');
+    const outcome = await scan(loaded(31, CAPTURE, 'Blocked', 'moderated'));
+    expect(outcome.ingestion).toBe('Scanned');
+  });
+
+  it('gets the content review key an ordinary owner would', async () => {
+    vi.mocked(includesInappropriate).mockImplementation(() => 'poi' as never);
+    await insertImage(32, CAPTURE, 'Pending', null);
+    await insertImage(33, ACTIVE, 'Pending', null);
+
+    let capture, ordinary;
+    try {
+      capture = await scan(loaded(32, CAPTURE, 'Pending', null));
+      ordinary = await scan(loaded(33, ACTIVE, 'Pending', null));
+    } finally {
+      vi.mocked(includesInappropriate).mockImplementation(() => false);
+    }
+
+    expect(ordinary.reviewKey).toBe('poi');
+    expect(capture.reviewKey).toBe('poi');
+    const row = (
+      await holder.db.query<{ needsReview: string | null }>(
+        `SELECT "needsReview" FROM "Image" WHERE id = 32`
+      )
+    ).rows[0];
+    expect(row).toEqual({ needsReview: 'poi' });
+  });
+
+  it('is never queued as a new user, where a new owner is (control)', async () => {
+    holder.tagNsfwLevel = 4;
+    holder.newUser = true;
+    await insertImage(34, CAPTURE, 'Pending', null);
+    await insertImage(35, ACTIVE, 'Pending', null);
+
+    const capture = await scan(loaded(34, CAPTURE, 'Pending', null));
+    const ordinary = await scan(loaded(35, ACTIVE, 'Pending', null));
+
+    expect(ordinary.reviewKey).toBe('newUser');
+    expect(capture.reviewKey).toBeNull();
+    expect(holder.newUserAsked).toEqual([ACTIVE]);
+  });
+
+  it('blocked by a moderation rule notifies no one, where an owner is told (control)', async () => {
+    vi.mocked(getImagesModRules).mockResolvedValue([{ id: 1 }] as never);
+    vi.mocked(evaluateRules).mockReturnValue({
+      id: 1,
+      action: ModerationRuleAction.Block,
+      reason: 'rule',
+    } as never);
+    await insertImage(36, CAPTURE, 'Pending', null);
+    await insertImage(37, ACTIVE, 'Pending', null);
+    try {
+      expect((await scan(loaded(36, CAPTURE, 'Pending', null))).ingestion).toBe('Blocked');
+      expect((await scan(loaded(37, ACTIVE, 'Pending', null))).ingestion).toBe('Blocked');
+    } finally {
+      vi.mocked(getImagesModRules).mockResolvedValue([]);
+      vi.mocked(evaluateRules).mockReturnValue(undefined);
+    }
+
+    expect(vi.mocked(createNotification).mock.calls.map(([n]) => n.userId)).toEqual([ACTIVE]);
   });
 });

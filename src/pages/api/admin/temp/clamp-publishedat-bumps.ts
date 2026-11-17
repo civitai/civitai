@@ -72,11 +72,7 @@ import { chunk } from 'lodash-es';
 import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbWrite } from '~/server/db/client';
-import {
-  imagesSearchIndex,
-  imagesMetricsSearchIndex,
-  modelsSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -149,17 +145,13 @@ function buildScope(modelIds: number[]) {
   return {
     hasScope,
     // ModelVersion temp tables (op1a, op4_versions) — direct column.
-    versionScope: hasScope
-      ? Prisma.sql`AND "modelId" = ANY(${modelIds}::int[])`
-      : Prisma.empty,
+    versionScope: hasScope ? Prisma.sql`AND "modelId" = ANY(${modelIds}::int[])` : Prisma.empty,
     // op1b uses the `mv` alias.
     versionScopeMv: hasScope
       ? Prisma.sql`AND mv."modelId" = ANY(${modelIds}::int[])`
       : Prisma.empty,
     // Model temp tables (op4_models, rb_models) — direct column.
-    modelScope: hasScope
-      ? Prisma.sql`AND id = ANY(${modelIds}::int[])`
-      : Prisma.empty,
+    modelScope: hasScope ? Prisma.sql`AND id = ANY(${modelIds}::int[])` : Prisma.empty,
     // Post temp tables need a join to ModelVersion to reach modelId.
     // LEFT JOIN keeps the global path identical (no row drops when
     // unscoped); when scoped, the filter `mv."modelId" = ANY(...)` drops
@@ -401,9 +393,7 @@ async function runApply(
         SELECT id FROM op3_posts
       `;
 
-      const modelIds = Array.from(
-        new Set([...versionModelIds, ...op4ModelRows.map((r) => r.id)])
-      );
+      const modelIds = Array.from(new Set([...versionModelIds, ...op4ModelRows.map((r) => r.id)]));
       const postIds = postRows.map((r) => r.id);
 
       const result = {
@@ -595,7 +585,6 @@ async function queueSearchIndexUpdates(affected: AffectedIds) {
         id: i.id,
         action: SearchIndexUpdateQueueAction.Update,
       }));
-      await imagesSearchIndex.queueUpdate(updates);
       await imagesMetricsSearchIndex.queueUpdate(updates);
       imagesReindexed += images.length;
     }
@@ -641,18 +630,14 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
   const { dryRun, action, modelIds } = parsed.data;
 
   const scopeDesc = modelIds.length > 0 ? `modelIds=[${modelIds.join(',')}]` : 'scope=global';
-  console.log(
-    `[clamp-publishedat-bumps] action=${action} dryRun=${dryRun} ${scopeDesc} starting`
-  );
+  console.log(`[clamp-publishedat-bumps] action=${action} dryRun=${dryRun} ${scopeDesc} starting`);
   const startTime = Date.now();
 
   let ops: Ops | RollbackOps;
   let affected: AffectedIds;
   try {
     const result =
-      action === 'apply'
-        ? await runApply(dryRun, modelIds)
-        : await runRollback(dryRun, modelIds);
+      action === 'apply' ? await runApply(dryRun, modelIds) : await runRollback(dryRun, modelIds);
     ops = result.ops;
     affected = result.affected;
   } catch (error) {

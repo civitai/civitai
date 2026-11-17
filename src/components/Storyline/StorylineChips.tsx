@@ -1,4 +1,5 @@
-import { Badge, Text, Tooltip } from '@mantine/core';
+import { Badge, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { BadgeProps } from '@mantine/core';
 import {
   IconBolt,

@@ -12,9 +12,9 @@ import {
   Stack,
   Text,
   TextInput,
-  Tooltip,
   Modal,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
   IconCloudOff,

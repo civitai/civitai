@@ -9,7 +9,8 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import { ActionIcon, Alert, Menu, Text } from '@mantine/core';
+import { ActionIcon, Alert, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconDotsVertical,
   IconGitFork,
@@ -533,6 +534,7 @@ function CanonStop({
                   takenDown={takenDown}
                   hasChildren={(canon?.childCount ?? 0) > 0}
                   byAuthor={post.userId === currentUser?.id}
+                  paid={canon?.paid ?? node.chapter.paid}
                 />
               )}
             </Menu.Dropdown>

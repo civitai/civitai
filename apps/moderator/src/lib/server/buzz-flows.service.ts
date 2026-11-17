@@ -23,6 +23,26 @@ export type AccountBuzz = {
   trainings: number;
   /** Training charges paid from blue (reward) Buzz rather than bought Buzz. */
   trainingsOnBlue: number;
+  /**
+   * Buzz paid to the platform (generation, training, purchases, bids, fees), by transaction type and
+   * the account type it was paid from, largest first. Past `PLATFORM_SPEND_SHOWN` rows the rest fold
+   * into one `type: 'other'` row.
+   */
+  platformSpend: PlatformSpend[];
+  /** Buzz the platform gave back as a refund, by the account type it landed in. */
+  platformRefunds: Record<string, number>;
+  /**
+   * Buzz the platform paid this account as `compensation` (creator compensation and generation tips
+   * from other users), by account type. Income, not a refund: never net it against spend.
+   */
+  platformEarnings: Record<string, number>;
+};
+
+export type PlatformSpend = {
+  type: string;
+  accountType: string;
+  transactions: number;
+  amount: number;
 };
 
 export type BuzzFlow = {
@@ -46,6 +66,7 @@ export type BuzzFlows = {
 };
 
 const FLOW_LIMIT = 200;
+export const PLATFORM_SPEND_SHOWN = 15;
 
 /**
  * `includeBank`: whether `bank` transactions are shown. User Lookup withholds them without the
@@ -74,6 +95,9 @@ export async function getBuzzFlows(
       received: [string[], string[]];
       trainings: string;
       trainingsOnBlue: string;
+      spend: [string[], string[], string[]];
+      refunds: [string[], string[]];
+      earnings: [string[], string[]];
     }>(`
       SELECT uid,
              sumIf(amount, dir = 'in' AND type = 'reward' AND toAccountType = 'blue' AND other = 0) AS blueRewarded,
@@ -84,7 +108,10 @@ export async function getBuzzFlows(
                'fromAccountType'
              )}) AS received,
              countIf(dir = 'out' AND type = 'training') AS trainings,
-             countIf(dir = 'out' AND type = 'training' AND fromAccountType = 'blue') AS trainingsOnBlue
+             countIf(dir = 'out' AND type = 'training' AND fromAccountType = 'blue') AS trainingsOnBlue,
+             sumMapIf([concat(type, ':', fromAccountType)], [toInt64(amount)], [toInt64(1)], dir = 'out' AND other = 0) AS spend,
+             sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type = 'refund') AS refunds,
+             sumMapIf([toAccountType], [toInt64(amount)], dir = 'in' AND other = 0 AND type = 'compensation') AS earnings
       FROM (
         SELECT toAccountId AS uid, 'in' AS dir, fromAccountId AS other, type, amount, fromAccountType, toAccountType
         FROM default.buzzTransactions PREWHERE toAccountId IN (${set})
@@ -141,6 +168,9 @@ export async function getBuzzFlows(
       receivedFromAccounts: byAccountType(s?.received),
       trainings: Number(s?.trainings ?? 0),
       trainingsOnBlue: Number(s?.trainingsOnBlue ?? 0),
+      platformSpend: platformSpend(s?.spend),
+      platformRefunds: byAccountType(s?.refunds),
+      platformEarnings: byAccountType(s?.earnings),
     };
   });
 
@@ -149,3 +179,30 @@ export async function getBuzzFlows(
 
 const byAccountType = (map: [string[], string[]] | undefined): Record<string, number> =>
   Object.fromEntries((map?.[0] ?? []).map((type, i) => [type, Number(map?.[1][i] ?? 0)]));
+
+function platformSpend(map: [string[], string[], string[]] | undefined): PlatformSpend[] {
+  const [keys = [], amounts = [], counts = []] = map ?? [];
+  const rows = keys
+    .map((key, i) => {
+      const at = key.lastIndexOf(':');
+      return {
+        type: key.slice(0, at),
+        accountType: key.slice(at + 1),
+        transactions: Number(counts[i] ?? 0),
+        amount: Number(amounts[i] ?? 0),
+      };
+    })
+    .sort((a, b) => b.amount - a.amount);
+  if (rows.length <= PLATFORM_SPEND_SHOWN) return rows;
+  const rest = rows.slice(PLATFORM_SPEND_SHOWN - 1);
+  return [
+    ...rows.slice(0, PLATFORM_SPEND_SHOWN - 1),
+    {
+      type: 'other',
+      accountType:
+        new Set(rest.map((r) => r.accountType)).size === 1 ? rest[0].accountType : 'mixed',
+      transactions: rest.reduce((n, r) => n + r.transactions, 0),
+      amount: rest.reduce((n, r) => n + r.amount, 0),
+    },
+  ];
+}

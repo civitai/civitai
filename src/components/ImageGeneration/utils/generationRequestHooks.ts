@@ -23,6 +23,7 @@ type ClientStepMetadata = Omit<GeneratedImageStepMetadata, 'images'> & {
   output?: GeneratedImageStepMetadata['images'];
 };
 import type {
+  GeneratedImagesQuerySchema,
   PatchWorkflowParams,
   PatchWorkflowStepParams,
   TagsPatchSchema,
@@ -68,8 +69,13 @@ export function useInvalidateWhatIf() {
   };
 }
 
+/** The generator Queue's own input: Queue, Feed, their lightbox and the queue counter share it. */
+export const GENERATOR_QUEUE_INPUT = {
+  excludeAppWorkflows: true,
+} satisfies GeneratedImagesQuerySchema;
+
 export function useGetTextToImageRequests(
-  input?: z.input<typeof workflowQuerySchema>,
+  input?: GeneratedImagesQuerySchema,
   options?: { enabled?: boolean; includeTags?: boolean; ignoreFilters?: boolean }
 ) {
   registerSignalGroup('generation');
@@ -157,7 +163,7 @@ export function useGetTextToImageRequests(
   return { data: flatData, markerTags, ...rest };
 }
 
-export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
+export function useGetTextToImageRequestsImages(input?: GeneratedImagesQuerySchema) {
   const { data, markerTags, ...rest } = useGetTextToImageRequests(input);
 
   return { requests: data, markerTags, ...rest };
@@ -218,6 +224,14 @@ function updateCachedWorkflow(
         }
       }
     },
+  });
+}
+
+/** Adds or removes a tag on a workflow in every cached queue list, as a tag patch would. */
+export function setCachedWorkflowTag(workflowId: string, tag: string, op: 'add' | 'remove') {
+  updateCachedWorkflow(workflowId, (items, index) => {
+    const tags = items[index].tags ?? [];
+    items[index].tags = op === 'add' ? [...new Set([...tags, tag])] : tags.filter((t) => t !== tag);
   });
 }
 
@@ -438,7 +452,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         }
 
         const clone = cloneDeep(metadata) as Record<string, unknown>;
-        applyPatch(clone, jsonPatch.operations);
+        applyPatch(clone, jsonPatch.operations as Parameters<typeof applyPatch>[1]);
         const patchedOutput =
           (clone.output as Record<string, TextToImageStepImageMetadata> | undefined) ?? {};
         // Per-id merge of legacy and patched state. Used for tag-sync checks and the

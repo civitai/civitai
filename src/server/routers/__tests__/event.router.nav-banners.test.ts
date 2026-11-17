@@ -36,11 +36,11 @@ describe('event.getNavBanners', () => {
   it('resolves from the session user alone, never the request', async () => {
     const user = { id: 42, isModerator: true };
     await expect(callerFor(user).getNavBanners()).resolves.toEqual([{ id: 'event:e1' }]);
-    expect(getNavBanners.mock.calls).toStrictEqual([[{ viewer: user }]]);
+    expect(getNavBanners.mock.calls).toStrictEqual([[{ viewer: { id: 42, isModerator: true } }]]);
   });
 
   it('resolves as signed out with no session', async () => {
     await callerFor(undefined).getNavBanners();
-    expect(getNavBanners.mock.calls).toStrictEqual([[{ viewer: undefined }]]);
+    expect(getNavBanners.mock.calls).toEqual([[{ viewer: { isModerator: false } }]]);
   });
 });

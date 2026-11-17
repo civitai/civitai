@@ -1,35 +1,84 @@
-import type { BrowsingLevelAttribute } from '~/components/Search/search-index-filters';
-import type { SearchIndexKey } from '~/components/Search/search.types';
+import type {
+  BrowsingLevelAttribute,
+  BrowsingLevelMatch,
+} from '~/components/Search/search-index-filters';
+import {
+  BROWSING_LEVEL_ATTRIBUTE,
+  BROWSING_LEVEL_MATCH,
+} from '~/components/Search/search-index-filters';
+import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
+import { reverseSearchIndexMap } from '~/components/Search/search.types';
+import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils/flags';
 import { isDefined } from '~/utils/type-guards';
 
 // Meilisearch rejects a bare `()` with invalid_search_filter, so a clause with nothing to say has
 // to disappear rather than become an empty string that still gets parenthesized downstream.
 
+// Every bit an item's level can carry, Blocked included.
+const LEVEL_BITS = Object.values(NsfwLevel).filter((v): v is number => typeof v === 'number');
+
 export function buildBrowsingLevelClause(
   attribute: BrowsingLevelAttribute | undefined,
-  browsingLevel: number
+  browsingLevel: number,
+  match: BrowsingLevelMatch = 'any'
 ) {
   if (!attribute) return null;
 
   const levels = Flags.instanceToArray(browsingLevel);
   if (!levels.length) return null;
 
+  if (match === 'subset') {
+    const outside = LEVEL_BITS.filter((bit) => !(bit & browsingLevel));
+    // An unrated item stays out, as before: its cover has no level to check.
+    return [
+      `${attribute} IS NOT EMPTY`,
+      ...(outside.length ? [`${attribute} NOT IN [${outside.join(', ')}]`] : []),
+    ].join(' AND ');
+  }
+
   return levels.map((value) => `${attribute}=${value}`).join(' OR ');
+}
+
+/**
+ * The browsing level a 'subset' clause from buildBrowsingLevelClause allows, read back out of a
+ * filter string: every bit not listed after NOT IN; undefined when the filter has no such clause.
+ */
+export function readSubsetBrowsingLevel(filters: string | undefined, attribute = 'nsfwLevel') {
+  if (!filters?.includes(`${attribute} IS NOT EMPTY`)) return undefined;
+  const notIn = filters.match(new RegExp(`\\b${attribute} NOT IN \\[([\\d,\\s]*)\\]`));
+  const outside = (notIn?.[1] ?? '').split(',').reduce((acc, v) => acc | (Number(v) || 0), 0);
+  return (
+    LEVEL_BITS.filter((bit) => !(bit & outside)).reduce((acc, bit) => acc | bit, 0) || undefined
+  );
+}
+
+/** The browsing-level clause for a Meilisearch index uid; `null` for an index with no level. */
+export function indexBrowsingLevelClause(indexUid: string, browsingLevel: number) {
+  const indexKey = reverseSearchIndexMap[indexUid as ReverseSearchIndexKey];
+  return buildBrowsingLevelClause(
+    indexKey ? BROWSING_LEVEL_ATTRIBUTE[indexKey] : undefined,
+    browsingLevel,
+    indexKey ? BROWSING_LEVEL_MATCH[indexKey] : undefined
+  );
 }
 
 export function buildBrowsingLevelFilters({
   attribute,
   browsingLevel,
+  match,
   filters,
 }: {
   attribute: BrowsingLevelAttribute | undefined;
   browsingLevel: number;
+  match?: BrowsingLevelMatch;
   filters?: string[] | string;
 }) {
   const filterList = Array.isArray(filters) ? filters : [filters];
 
-  return [...filterList, buildBrowsingLevelClause(attribute, browsingLevel)].filter(isDefined);
+  return [...filterList, buildBrowsingLevelClause(attribute, browsingLevel, match)].filter(
+    isDefined
+  );
 }
 
 export function joinFilterClauses(filters?: string[] | string) {

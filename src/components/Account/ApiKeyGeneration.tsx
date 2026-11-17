@@ -1,4 +1,5 @@
-import { Badge, Text, Tooltip } from '@mantine/core';
+import { Badge, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { TokenScope, tokenScopePresetLabels } from '~/shared/constants/token-scope.constants';
 
 const { AIServices, Full, Creator, ReadOnly } = tokenScopePresetLabels;

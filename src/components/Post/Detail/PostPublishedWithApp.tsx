@@ -57,6 +57,9 @@ function MadeWithLabel({ app }: { app: PostAppChip }) {
   );
 }
 
+/** The "Made with <app>" card's acquisition surface (`AppStore_Action`, `App_Open`, `App_Visit`). */
+const MADE_WITH_TELEMETRY = { surface: 'made_with' } as const;
+
 function LinkedApp({ app, slug }: { app: PostAppChip; slug: string }) {
   const features = useFeatureFlags();
   const { data: card } = trpc.appListings.getAppCard.useQuery(
@@ -79,6 +82,7 @@ function LinkedApp({ app, slug }: { app: PostAppChip; slug: string }) {
         card={card}
         canOpenPage={features.appBlocksPages}
         embedded
+        telemetry={MADE_WITH_TELEMETRY}
         coverBadge={
           <Badge
             variant="filled"

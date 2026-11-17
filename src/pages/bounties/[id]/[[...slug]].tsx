@@ -8,7 +8,6 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
   Accordion,
   Center,
   SimpleGrid,
@@ -21,6 +20,7 @@ import {
   useMantineTheme,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
@@ -381,7 +381,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                 <Stack gap={4}>
                   {bounty.description && (
                     <ContentClamp maxHeight={200}>
-                      <RenderHtml html={bounty.description} />
+                      <RenderHtml html={bounty.description} withMentions />
                     </ContentClamp>
                   )}
                 </Stack>

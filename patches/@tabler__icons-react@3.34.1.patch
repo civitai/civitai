@@ -1,0 +1,56 @@
+diff --git a/dist/cjs/tabler-icons-react.cjs b/dist/cjs/tabler-icons-react.cjs
+index a2a2ddb619e9eba980521eea12d83cf0902e12f8..c2a4b93698c991bdefc141db02a9429761efee4b 100644
+--- a/dist/cjs/tabler-icons-react.cjs
++++ b/dist/cjs/tabler-icons-react.cjs
+@@ -32,6 +32,14 @@ var defaultAttributes = {
+ };
+ 
+ const createReactComponent = (type, iconName, iconNamePascal, iconNode) => {
++  // civitai patch (patches/@tabler__icons-react@3.34.1.patch): the icon's own <path>/<circle>
++  // elements depend only on iconNode, so in production build them once (on first render) and
++  // reuse them on every render after, instead of allocating a fresh element per shape per render.
++  // React elements are immutable, so reusing them renders the same markup. Development builds
++  // keep building them per render: a dev element records the fiber that created it (_owner), and
++  // a module-cached one would pin the first icon's fiber for the life of the page.
++  let iconChildren;
++  const buildIconChildren = () => iconNode.map(([tag, attrs]) => react.createElement(tag, attrs));
+   const Component = react.forwardRef(
+     ({ color = "currentColor", size = 24, stroke = 2, title, className, children, ...rest }, ref) => react.createElement(
+       "svg",
+@@ -51,7 +59,7 @@ const createReactComponent = (type, iconName, iconNamePascal, iconNode) => {
+       },
+       [
+         title && react.createElement("title", { key: "svg-title" }, title),
+-        ...iconNode.map(([tag, attrs]) => react.createElement(tag, attrs)),
++        ...process.env.NODE_ENV === "production" ? iconChildren || (iconChildren = buildIconChildren()) : buildIconChildren(),
+         ...Array.isArray(children) ? children : [children]
+       ]
+     )
+diff --git a/dist/esm/createReactComponent.mjs b/dist/esm/createReactComponent.mjs
+index a35c13ccc90d6c30f4956f663585c2dc1a5692fe..9f3c5ed5fa59992568e660c26008960c836cc0f6 100644
+--- a/dist/esm/createReactComponent.mjs
++++ b/dist/esm/createReactComponent.mjs
+@@ -9,6 +9,14 @@ import { forwardRef, createElement } from 'react';
+ import defaultAttributes from './defaultAttributes.mjs';
+ 
+ const createReactComponent = (type, iconName, iconNamePascal, iconNode) => {
++  // civitai patch (patches/@tabler__icons-react@3.34.1.patch): the icon's own <path>/<circle>
++  // elements depend only on iconNode, so in production build them once (on first render) and
++  // reuse them on every render after, instead of allocating a fresh element per shape per render.
++  // React elements are immutable, so reusing them renders the same markup. Development builds
++  // keep building them per render: a dev element records the fiber that created it (_owner), and
++  // a module-cached one would pin the first icon's fiber for the life of the page.
++  let iconChildren;
++  const buildIconChildren = () => iconNode.map(([tag, attrs]) => createElement(tag, attrs));
+   const Component = forwardRef(
+     ({ color = "currentColor", size = 24, stroke = 2, title, className, children, ...rest }, ref) => createElement(
+       "svg",
+@@ -28,7 +36,7 @@ const createReactComponent = (type, iconName, iconNamePascal, iconNode) => {
+       },
+       [
+         title && createElement("title", { key: "svg-title" }, title),
+-        ...iconNode.map(([tag, attrs]) => createElement(tag, attrs)),
++        ...process.env.NODE_ENV === "production" ? iconChildren || (iconChildren = buildIconChildren()) : buildIconChildren(),
+         ...Array.isArray(children) ? children : [children]
+       ]
+     )

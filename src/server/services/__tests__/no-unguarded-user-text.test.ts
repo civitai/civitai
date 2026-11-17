@@ -70,7 +70,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/cosmetic-shop.service.ts': 3,
   'src/server/services/creator-announcement.service.ts': 1,
   'src/server/services/creator-mystery-pack.service.ts': 1,
-  'src/server/services/creator-service-deal-file.service.ts': 1,
+  'src/server/services/creator-service-deal-file.service.ts': 2,
   'src/server/services/creator-service-deal.service.ts': 2,
   'src/server/services/creator-service.service.ts': 1,
   'src/server/services/creator-shop-pack.service.ts': 2,
@@ -86,6 +86,7 @@ const SURFACES: Record<string, number> = {
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
   'src/server/services/post.service.ts': 3,
+  'src/server/services/post-text.service.ts': 1,
   'src/server/services/rating-review.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 3,
   'src/server/services/sticker-placement.service.ts': 1,
@@ -96,7 +97,7 @@ const SURFACES: Record<string, number> = {
   // a per-alias one, which runs only to find which alias the batch refused.
   'src/server/services/user-hub.service.ts': 4,
   'src/server/services/user-link.service.ts': 2,
-  'src/server/services/user-profile.service.ts': 1,
+  'src/server/services/user-profile.service.ts': 2,
 };
 
 /**
@@ -168,7 +169,10 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   },
   'src/server/services/creator-announcement.service.ts': { upsertCreatorAnnouncement: 1 },
   'src/server/services/creator-mystery-pack.service.ts': { submitMysteryPack: 1 },
-  'src/server/services/creator-service-deal-file.service.ts': { requestServiceDealUpload: 1 },
+  'src/server/services/creator-service-deal-file.service.ts': {
+    requestServiceDealAttachment: 1,
+    requestServiceDealUpload: 1,
+  },
   // `assertDealText` is the shared check every deal-event comment writer calls.
   'src/server/services/creator-service-deal.service.ts': {
     assertDealText: 1,
@@ -196,6 +200,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
   'src/server/services/post.service.ts': { addPostTag: 1, createPost: 1, updatePost: 1 },
+  'src/server/services/post-text.service.ts': { setPostText: 1 },
   'src/server/services/rating-review.service.ts': { createRatingReview: 1 },
   'src/server/services/resourceReview.service.ts': {
     createResourceReview: 1,
@@ -212,7 +217,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     withoutBlockedAliases: 2,
   },
   'src/server/services/user-link.service.ts': { upsertManyUserLinks: 1, upsertUserLink: 1 },
-  'src/server/services/user-profile.service.ts': { updateUserProfile: 1 },
+  'src/server/services/user-profile.service.ts': { updateUserProfile: 1, setShowcaseSections: 1 },
 };
 
 function read(rel: string) {

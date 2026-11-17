@@ -1,6 +1,6 @@
 ---
 name: add-trainer-model
-description: Add a new trainable base model to BOTH trainers end-to-end — the in-app trainer (main Next.js app, src/) and the Training Studio (apps/training-studio). Orchestrates add-ecosystem (if the base model is missing) and add-training-support (main-app wiring), then mirrors the model into the Training Studio catalog, which nothing else covers. AI-Toolkit only (Kohya is discontinued). Use when onboarding a new model family for training, or a new version of one — e.g. ZImage, MiniMax H3, a new Flux/Wan variant. Always checks whether @civitai/orchestration-client ships the ecosystem's training input type first.
+description: Add a new trainable base model to BOTH trainers end-to-end — the in-app trainer (main Next.js app, src/) and the Training Studio (apps/training-studio). Orchestrates add-ecosystem (if the base model is missing) and add-training-support (main-app wiring), then mirrors the model into the Training Studio catalog, which nothing else covers. New model families default to AI-Toolkit; preserve the Studio engines documented in apps/training-studio/CLAUDE.md. Use when onboarding a new model family for training, or a new version of one — e.g. ZImage, MiniMax H3, a new Flux/Wan variant. Always checks whether @civitai/orchestration-client ships the ecosystem's training input type first.
 ---
 
 # Add a Trainer Model
@@ -10,8 +10,9 @@ There are **two** trainers, and a new trainable model has to land in both or it 
 1. **In-app trainer** — the "Train a LoRA" flow in the main Next.js app (`src/components/Training/**`,
    `src/utils/training.ts`, `src/server/...`). Kohya + AI-Toolkit. New models are gated behind a
    per-model **Flipt flag** (mod-only until launch).
-2. **Training Studio** — the SvelteKit replacement at `apps/training-studio`. **AI-Toolkit only.** Its
-   model catalog is a **vendored mirror** of the in-app trainer's list, and it has its own per-model gate:
+2. **Training Studio** — the SvelteKit replacement at `apps/training-studio`; see its
+   [engine support](../../../apps/training-studio/CLAUDE.md). Its model catalog is a **vendored mirror**
+   of the in-app trainer's list, and it has its own per-model gate:
    a `ModelCard.flagKey` (Flipt, fail-closed) hides a new model from everyone but the segmented cohort
    until launch — the mirror of the main app's `<name>Training` flag. Whichever host mounts the Studio
    resolves it: the standalone shell's server, or the main app for the `/training-studio` embed (through
@@ -21,11 +22,11 @@ This skill is the umbrella that keeps the two in step. It owns the **decision la
 below), delegates the pieces that already have skills, and owns the Training Studio mirror step, which
 no other skill covers.
 
-> **AI-Toolkit only.** Kohya has been discontinued; every new model trains via AI-Toolkit. The one
-> exception you may meet is a Flux.2-style model that has no AI-Toolkit ecosystem and trains through
-> the older `imageResourceTraining` path with an explicit base AIR and its own `engine`
-> (`flux2-dev`, `flux-dev-fast`, `musubi`). It takes **no** AI-Toolkit hyperparameters. Treat it as the
-> rare case and confirm with the user before going down it.
+> **AI-Toolkit by default for new model families.** Preserve Studio's Kohya support as described in
+> [`apps/training-studio/CLAUDE.md`](../../../apps/training-studio/CLAUDE.md).
+> A Flux.2-style model that has no AI-Toolkit ecosystem uses `imageResourceTraining` with an
+> explicit base AIR and its own `engine` (`flux2-dev`, `flux-dev-fast`, `musubi`). It takes
+> **no** AI-Toolkit hyperparameters. Confirm the engine contract before wiring it.
 
 ## The three facts to establish first (Step 0)
 
@@ -63,8 +64,10 @@ three are answered — each one changes what you do:
    - **Present** → note the exact `ecosystem` literal, whether `modelVariant` is required, any fixed
      fields (e.g. Boogu `batchSize` fixed at 1), and the server-computed `readonly` outputs (never send
      those).
-   - **Absent** → check `npm view @civitai/orchestration-client versions --json | tail` and bump with
-     `pnpm add @civitai/orchestration-client@<v>`. The current pin is in `package.json` (`@civitai/orchestration-client`). If the
+   - **Absent** → check `npm view @civitai/orchestration-client version` and bump to it in every
+     `package.json` that lists the client (`git grep -l '"@civitai/orchestration-client"' -- '*package.json'`),
+     then `pnpm install`; `src/__tests__/orchestration-client-single-version.test.ts` fails on a
+     partial bump. If the
      type is still absent after bumping, the AI-Toolkit dispatch casts `ecosystem as any` so it works
      untyped — but say so to the user and prefer a typed SDK. **The `@civitai/orchestration-client` bump, when needed,
      is the answer to the brief's "does the client need updating?" — surface it explicitly.**
@@ -225,10 +228,10 @@ both are clean.
 | Concern | In-app trainer | Training Studio |
 |---|---|---|
 | Model catalog | `src/utils/training.ts` `trainingModelInfo` | `trainingModels.ts` `MODEL_CARDS` (mirror) |
-| Advanced param defaults | `TrainingParams.tsx` `trainingSettings` | `trainingModels.ts` `PARAM_DEFAULTS` |
-| Submission validation | `training.schema.ts` union | (server uses main-app orchestrator schema) |
+| Advanced param defaults | `TrainingParams.tsx` `trainingSettings` | `trainingModels.ts` `PARAM_DEFAULTS` (AI Toolkit); `data/kohya.ts` `kohyaDefaults` (Kohya) |
+| Submission validation | `training.schema.ts` union | `train-core.ts` `validateRun`; `kohya-training.ts` `buildKohyaInput` |
 | Feature flag gate | `<name>Training` (Flipt, mod-only) | `ModelCard.flagKey` (Flipt, fail-closed; omit to launch to all) + its `studioModelFlagFeatures` entry for the embed |
-| Engine | ai-toolkit / imageResourceTraining | ai-toolkit only |
+| Engine | ai-toolkit / imageResourceTraining | See [Studio engine support](../../../apps/training-studio/CLAUDE.md) |
 
 ## Notes
 

@@ -1,4 +1,5 @@
-import { Anchor, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Anchor, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import clsx from 'clsx';
 import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { achievementTracks, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';

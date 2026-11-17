@@ -25,6 +25,7 @@ export const MODEL_UNPUBLISH_REASONS = [
   { value: 'insufficient-description', label: 'Insufficient description' },
   { value: 'duplicate', label: 'Duplicate upload' },
   { value: 'spam', label: 'Spam or advertorial content' },
+  { value: 'failed-scan', label: 'Failed security scan' },
   { value: 'other', label: 'Other' },
 ] as const;
 

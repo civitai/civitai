@@ -13,6 +13,7 @@ import {
   READ_SCOPE_LABELS,
   type BlockActionDetail,
 } from '~/shared/constants/block-action-detail';
+import { APPS_STORE_HREF } from '~/shared/constants/apps-routes.constants';
 import classes from '~/components/Apps/AppActivityPanel.module.scss';
 
 /**
@@ -696,7 +697,12 @@ function EmptyActivity() {
           scope-gated Civitai API, or sources a Buzz purchase on your behalf.
         </Text>
         {canSeeStore && (
-          <Anchor component={Link} href="/apps" size="sm" data-testid="apps-empty-marketplace-link">
+          <Anchor
+            component={Link}
+            href={APPS_STORE_HREF}
+            size="sm"
+            data-testid="apps-empty-marketplace-link"
+          >
             Browse the marketplace
           </Anchor>
         )}

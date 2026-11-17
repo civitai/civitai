@@ -132,7 +132,7 @@ Once flipped on for everyone:
 - Delete `autoTag` / `autoCaption` tRPC procedures and their service handlers in `training.service.ts`.
 - Delete the legacy orchestrator types (`Orchestrator.Training.ImageAutoTagJobPayload` etc.) if unused elsewhere.
 - Delete the auto-label branch of the `useOrchestratorUpdateSignal` handler in `TrainingCommon.ts`.
-- Delete the `TrainingImagesTemp` S3 upload code path if it's only used for auto-label zips.
+- With the procedures above gone, delete `UploadType.TrainingImagesTemp`; the legacy auto-label zip is its only writer. That removes its branch in `/api/upload`, `assertOwnTrainingTempUpload` in `training.service.ts` and their tests. Remove the B2 lifecycle rule on the `training-images-temp/` prefix (a bucket console change, not code) only once the prefix is empty — the rule only deletes files while it exists, so dropping it at deploy strands the last zips. Then delete every doc or comment that mentions the prefix (`grep -rn training-images-temp`).
 
 ## Open questions
 

@@ -35,6 +35,7 @@ const METHODS = [
   'queryNotifications',
   'countNotifications',
   'markNotificationsRead',
+  'markNotificationsReadByKeys',
   'notificationExists',
   'cleanupNotifications',
   'sendSystemNotices',

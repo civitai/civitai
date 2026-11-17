@@ -14,20 +14,16 @@ Contest metadata in prod currently runs ~204 bytes average, 708 max — there is
 
 ## Design
 
-The prompt itself is **not in this repository** — it spells out which signals reject versus
-escalate, and this repo is public. It lives in `KeyValue` under `collection-ai-review:default`
+The prompt itself is **not in this repository**. It lives in `KeyValue` under `collection-ai-review:default`
 (the seed the moderation dialog offers) and per collection under `collection-ai-review:<id>`,
 readable only through the moderator-gated `collection.getAiReview*` procedures.
 
-The model reports **observations only** — `sexualContent`, `depictsMinor`, `hasBuzzReference` and
-friends. `decideFromObservations()` in `src/server/services/ai/collection-review.service.ts` turns
+The model reports **observations only**. `decideFromObservations()` in `src/server/services/ai/collection-review.service.ts` turns
 those into `approve | reject | escalate`. Keeping the rules out of the model means the policy is
 auditable, can be retuned without reclassifying, and a hedging model cannot approve something the
 rules forbid.
 
-Violations are a **closed enum**. During calibration every free-text category the model invented was
-a false positive, so anything outside the enum escalates instead of rejecting. Rejection copy is
-resolved from that enum (overridable per collection via `reasonCopy`) and never from model output,
+Violations are a **closed enum**. Rejection copy is resolved from that enum (overridable per collection via `reasonCopy`) and never from model output,
 so no submitter is shown generated text.
 
 ## Audit table
@@ -53,7 +49,7 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   collectionItemId  Int64,
   entityId          Int64,                  -- the reviewed image
   userId            Int32,                  -- always -1 (system); kept for Tracker parity
-  model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.5'
+  model             LowCardinality(String), -- e.g. 'xiaomi/mimo-v2.6-flash'
   decision          LowCardinality(String), -- what the rules concluded
   appliedAction     LowCardinality(String), -- what was actually done: accept | reject | stamp | none
   violations        Array(LowCardinality(String)),
@@ -61,7 +57,14 @@ CREATE TABLE IF NOT EXISTS default.collectionAiReviewEvents (
   reason            String CODEC(ZSTD(3)),  -- the model's own wording, for auditing only
   applied           UInt8,                  -- 0 when the collection is in dry run
   promptTokens      UInt32,
-  completionTokens  UInt32
+  completionTokens  UInt32,
+  -- added by src/server/clickhouse/migrations/2026-11-11-collection-ai-review-observations.sql
+  nsfwLevel         UInt8 DEFAULT 0,        -- the image's level at decision time; 0 on older rows
+  minorUncertain    Int8 DEFAULT -1,        -- model observations: 1 / 0, -1 = no readable answer
+  depictsMinor      Int8 DEFAULT -1,
+  isPhotorealistic  Int8 DEFAULT -1,
+  suggestiveStyling Int8 DEFAULT -1,
+  sexualContent     Int8 DEFAULT -1
 ) ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(createdAt)
 ORDER BY (collectionId, collectionItemId, createdAt);
@@ -135,18 +138,14 @@ collection. Lifting that restriction means fixing the notification path first.
   rejected, and picked up on a later run.
 - **`allowedNsfwLevels`** is a bitmask of `NsfwLevel` flags. Anything outside it is rejected with no
   vision call.
-- **Our own uncertainty never rejects a submission.** A response the rules cannot parse, and a
-  subject whose age the model could not determine, are both left for a human regardless of
-  `escalationAction` — a provider outage must not reject submissions and tell the submitters they
-  broke a rule.
-- **`minorUncertain` alone does not escalate.** The prompt invites that hedge on exactly the
-  stylized art these collections are made of, so on its own it would sweep up a large share of
-  ordinary submissions. It escalates alongside a sexualized presentation, or when the image is
-  photorealistic — `rules/minors.md` makes photorealism the bright line for minors in any context,
-  so an ambiguous age matters there even where the image is otherwise wholesome.
+- **A failed or unparseable model call never rejects a submission.** A failed call is retried on later
+  runs until its attempts run out; then, or at once for a response that cannot be parsed, the item
+  is stamped with its status unchanged, so a moderator decides it.
 - **Items a moderator has already decided are left alone.** The job claims rows only while they are
   still `REVIEW` with no reviewer, so a human decision made mid-run keeps both its outcome and its
-  attribution.
+  attribution. An accept, or a rejection for a level outside `allowedNsfwLevels`, is claimed only
+  while the image still has the level it was decided on; a re-rated image is reviewed again on the
+  next run.
 - **`escalationAction: 'leaveForHuman'`** stamps `reviewedById` without changing status, so the job
   does not reclassify (and re-bill) the item on the next run.
 - The job acts as system user `-1` via an in-process `isSystem` flag on

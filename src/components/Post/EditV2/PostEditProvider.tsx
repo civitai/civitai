@@ -9,7 +9,11 @@ import { shallow } from 'zustand/shallow';
 import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import type { PostEditQuerySchema } from '~/server/schema/post.schema';
-import type { PostDetailEditable, PostEditImageDetail } from '~/server/services/post.service';
+import type {
+  PostDetailEditable,
+  PostEditImageDetail,
+  PostEditTextDetail,
+} from '~/server/services/post.service';
 import type { Debouncer } from '~/utils/debouncer';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -57,6 +61,8 @@ type PostParams = Omit<PostDetailEditable, 'images'>;
 type State = {
   post?: PostDetailEditable;
   images: ControlledImage[];
+  /** Storyline text items, at their server `index` (shared with the images'). */
+  texts: PostEditTextDetail[];
   isReordering: boolean;
   /** A title from Apply preset, for the post form to take only if its field is still empty. */
   presetTitle: string | null;
@@ -68,6 +74,7 @@ type State = {
   updatePost: (cb: (data: PostParams) => void) => void;
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
+  setTexts: (cb: (texts: PostEditTextDetail[]) => PostEditTextDetail[]) => void;
   toggleReordering: () => void;
   /** Returns its own unregister, so callers can use it as an effect cleanup. */
   registerPendingSave: (key: string, flush: () => void) => () => void;
@@ -96,8 +103,9 @@ const createContextStore = (post?: PostDetailEditable) => {
         images:
           post?.images.map((data, index) => ({
             type: 'added',
-            data: { ...data, index },
+            data: { ...data, index: data.index ?? index },
           })) ?? [],
+        texts: post?.texts ?? [],
         isReordering: false,
         presetTitle: null,
         setPresetTitle: (presetTitle) => set({ presetTitle }),
@@ -121,6 +129,10 @@ const createContextStore = (post?: PostDetailEditable) => {
           set((state) => {
             const index = state.images.findIndex((x) => x.type === 'added' && x.data.id === id);
             if (index > -1) cb(state.images[index].data as PostEditImageDetail);
+          }),
+        setTexts: (cb) =>
+          set((state) => {
+            state.texts = cb(state.texts);
           }),
         toggleReordering: () =>
           set((state) => {
@@ -171,10 +183,7 @@ export function usePostEditStore<T>(selector: (state: State) => T) {
  */
 export function usePendingSave(key: string, debouncer: Debouncer) {
   const registerPendingSave = usePostEditStore((state) => state.registerPendingSave);
-  useEffect(
-    () => registerPendingSave(key, debouncer.flush),
-    [registerPendingSave, key, debouncer]
-  );
+  useEffect(() => registerPendingSave(key, debouncer.flush), [registerPendingSave, key, debouncer]);
 }
 // #endregion
 
@@ -217,8 +226,9 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
         post,
         images: images.map((data, index) => ({
           type: 'added',
-          data: { ...data, index },
+          data: { ...data, index: data.index ?? index },
         })),
+        texts: post?.texts ?? [],
       };
     });
   }, [post]);
@@ -235,12 +245,13 @@ export function PostEditProvider({ post, params = {}, children, ...extendedParam
         await queryUtils.post.get.invalidate({ id: postId });
         // await queryUtils.post.getEdit.invalidate({ id: postId });
         await queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-          const { post, images } = store.getState();
+          const { post, images, texts } = store.getState();
           if (!post) return old;
           return {
             ...post,
             detail: post.detail ?? null,
             images: images.map((x) => (x.type === 'added' ? x.data : undefined)).filter(isDefined),
+            texts,
           };
         });
         await queryUtils.post.getInfinite.invalidate();

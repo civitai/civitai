@@ -8,12 +8,12 @@ import {
   Container,
   Group,
   Loader,
-  Menu,
   Modal,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import { IconCalendarEvent, IconDots, IconPencil, IconPlus, IconTrash } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';

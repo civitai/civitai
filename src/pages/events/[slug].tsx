@@ -10,13 +10,13 @@ import {
   Loader,
   NumberInput,
   Paper,
-  Popover,
   Stack,
   Text,
   ThemeIcon,
   Title,
   useMantineTheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useMarkEventVisited } from '~/components/AppLayout/AppHeader/useEventMenuItems';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';

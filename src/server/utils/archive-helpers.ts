@@ -178,6 +178,12 @@ export const ESTIMATED_BYTES_PER_ARCHIVED_IMAGE = 8 * 1024 * 1024;
  */
 export const MAX_ARCHIVE_SOURCE_BYTES = 256 * 1024 * 1024;
 
+/**
+ * How long a failed archive waits for its stopped reads before it fails anyway. Reads stop within
+ * one request; the bound is for an entry the archiver never takes.
+ */
+export const FAILED_ARCHIVE_SETTLE_MS = 30_000;
+
 export type ByteBudget = {
   /** Resolves once `bytes` fit, with the function that gives them back (safe to call twice). */
   reserve: (bytes: number) => Promise<() => void>;

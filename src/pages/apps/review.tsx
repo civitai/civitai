@@ -1,4 +1,4 @@
-import { Badge, Tabs } from '@mantine/core';
+import { Badge, Divider, Tabs, Text } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
 import {
   IconCheck,
@@ -45,6 +45,7 @@ import {
   type PriorVersionsSelection,
 } from '~/components/Apps/PriorVersionsModal';
 import { UnifiedReviewList, type VersionHistoryTarget } from '~/components/Apps/UnifiedReviewList';
+import { usePendingApprovalIds } from '~/components/Apps/reviewApprovalToasts';
 import type {
   CombinedReviewPayload,
   OffsiteReviewRequest,
@@ -52,7 +53,6 @@ import type {
 } from '~/components/Apps/unifiedReviewRow';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
-import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -252,6 +252,29 @@ export function SubListingPendingBadge() {
   );
 }
 
+/**
+ * Submissions waiting for review (on-site publish requests + listing requests), shown on the
+ * Pending tab label. A count proc, like its siblings, so the poll fetches two numbers rather
+ * than two pages of rows. Hidden at zero, like `SubListingPendingBadge`.
+ */
+export function ReviewQueuePendingBadge() {
+  const { data } = trpc.blocks.countReviewQueue.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  // Approvals still in their undo window are hidden from the Pending list (`hideIds` below), so
+  // they are not counted here either: the badge and the rows it labels agree. Clamped, since a
+  // poll can land after the server approved one but before the queue marks it committed.
+  const pendingApprovalIds = usePendingApprovalIds();
+  const total = Math.max(0, (data?.total ?? 0) - pendingApprovalIds.size);
+  if (!total) return null;
+  return (
+    <Badge size="xs" color="blue" variant="filled" data-testid="apps-review-pending-count">
+      {total}
+    </Badge>
+  );
+}
+
 /** Reports a developer flagged that no moderator has hidden yet, shown on the tab label. */
 export function AppFeedbackFlaggedBadge() {
   const { data } = trpc.appFeedback.modCountFlagged.useQuery(undefined, {
@@ -381,7 +404,7 @@ export default function ReviewQueuePage() {
       */}
       <AppsPageLayout
         title="App publish-request queue"
-        subtitle={`Moderator review for Apps. ${EMBEDDED_KIND_LABEL} + ${STANDALONE_KIND_LABEL} submissions share one queue per tab; Pending is oldest-first, history is newest-first.`}
+        subtitle="Review new apps, listings and reports. Oldest first."
       >
         <ActivePreviewsPanel />
 
@@ -392,21 +415,40 @@ export default function ReviewQueuePage() {
           }}
           keepMounted={false}
         >
-          <Tabs.List>
-            <Tabs.Tab value="pending" leftSection={<IconClock size={14} />}>
+          {/*
+            🔴 ONE ROW AT EVERY WIDTH. The list used to wrap onto four lines on a phone,
+            pushing the queue below the fold; it now scrolls sideways within itself (never
+            the page) — `review-queue-tabs` is what the mobile e2e measures.
+
+            Grouped: what is WAITING ON a moderator (with counts) first, then history and
+            admin. The group labels are decoration for sighted users (`aria-hidden`); the
+            tablist's own order carries the grouping for everyone else.
+          */}
+          <Tabs.List
+            data-testid="review-queue-tabs"
+            // Survives the production build (testids do not) — the preview e2e finds the bar by it.
+            aria-label="Review queues"
+            style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}
+          >
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={600}
+              tt="uppercase"
+              aria-hidden
+              style={{ alignSelf: 'center', whiteSpace: 'nowrap', paddingInline: 8 }}
+            >
+              To review
+            </Text>
+            <Tabs.Tab
+              value="pending"
+              leftSection={<IconClock size={14} />}
+              rightSection={<ReviewQueuePendingBadge />}
+            >
               Pending
-            </Tabs.Tab>
-            <Tabs.Tab value="approved" leftSection={<IconCheck size={14} />}>
-              Approved
-            </Tabs.Tab>
-            <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
-              Rejected
             </Tabs.Tab>
             <Tabs.Tab value="reports" leftSection={<IconFlag size={14} />}>
               Reports
-            </Tabs.Tab>
-            <Tabs.Tab value="manage" leftSection={<IconClipboardList size={14} />}>
-              Manage listings
             </Tabs.Tab>
             <Tabs.Tab
               value="sub-listings"
@@ -431,6 +473,26 @@ export default function ReviewQueuePage() {
               rightSection={<AppAccessRequestsPendingBadge />}
             >
               Access requests
+            </Tabs.Tab>
+            <Divider orientation="vertical" mx="xs" my={6} aria-hidden />
+            <Text
+              size="xs"
+              c="dimmed"
+              fw={600}
+              tt="uppercase"
+              aria-hidden
+              style={{ alignSelf: 'center', whiteSpace: 'nowrap', paddingInline: 8 }}
+            >
+              History &amp; admin
+            </Text>
+            <Tabs.Tab value="approved" leftSection={<IconCheck size={14} />}>
+              Approved
+            </Tabs.Tab>
+            <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
+              Rejected
+            </Tabs.Tab>
+            <Tabs.Tab value="manage" leftSection={<IconClipboardList size={14} />}>
+              Manage listings
             </Tabs.Tab>
           </Tabs.List>
 
@@ -749,11 +811,17 @@ export function UnifiedPendingTab({
    * since been deleted. `review-queue-poll.browser.test.tsx` asserts that this tab
    * contributes no controls of its own, so the chrome cannot creep back unnoticed.
    */
+  // Approvals still in their 10-second undo window are decided: they leave the list now,
+  // and come back only if the moderator presses Undo.
+  const pendingApprovalIds = usePendingApprovalIds();
+
   return (
     <UnifiedReviewList
       onsiteItems={onsiteItems}
       offsiteItems={offsiteItems}
       direction="asc"
+      showSignals
+      hideIds={pendingApprovalIds}
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
       openCombinedReview={boundCombined}

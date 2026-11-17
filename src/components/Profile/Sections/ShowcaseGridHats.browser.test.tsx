@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import homeClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
@@ -212,5 +213,123 @@ describe('a hat on a shelf card sits on its corner', () => {
     // The veil dims and catches clicks on the cards, though the shelf lets them through otherwise.
     const card = rect(cards()[0]);
     expect(document.elementFromPoint(card.left + 40, card.top + 80)).toBe(grid);
+  });
+});
+
+describe('a card in a collapsed row shows none of its hat', () => {
+  // 3 columns at 900px: two rows show 6 cards, the rest sit in 0px rows whose hats would
+  // otherwise poke up into the clip below row 2.
+  const shown = (wrapper: Element) => {
+    const h = wrapper.querySelector('button[data-event-decoration="hat"]')!;
+    return getComputedStyle(h).visibility === 'visible';
+  };
+  const wrappers = () => cards().map((c) => c.parentElement!);
+  const collapsed = () => wrappers().filter((w) => rect(w).height === 0);
+
+  let setIds: (ids: number[]) => void = () => undefined;
+  function Shelf({ initial }: { initial: number[] }) {
+    const [ids, set] = useState(initial);
+    setIds = set;
+    return (
+      <ShowcaseGrid itemCount={ids.length} rows={2} minWidth={280}>
+        {ids.map((i) => (
+          <Card key={i} i={i} />
+        ))}
+      </ShowcaseGrid>
+    );
+  }
+
+  const first = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+  test('at mount', async () => {
+    await shelf(900, <Shelf initial={first} />);
+    await vi.waitFor(() => {
+      expect(collapsed()).toHaveLength(3);
+      expect(collapsed().filter(shown)).toHaveLength(0);
+    });
+    expect(wrappers().filter(shown)).toHaveLength(6);
+  });
+
+  async function change(ids: number[], collapsedCount: number) {
+    await shelf(900, <Shelf initial={first} />);
+    await vi.waitFor(() => {
+      expect(collapsed()).toHaveLength(3);
+      expect(collapsed().filter(shown)).toHaveLength(0);
+    });
+    setIds(ids);
+    await vi.waitFor(() => {
+      expect(collapsed()).toHaveLength(collapsedCount);
+      expect(collapsed().filter(shown)).toHaveLength(0);
+      expect(wrappers().filter(shown)).toHaveLength(6);
+    });
+  }
+
+  test('after a new card pushes a shown one into a collapsed row', () => change([1, ...first], 4));
+  test('after a card is added straight into a collapsed row', () => change([...first, 99], 4));
+  test('a card that leaves a collapsed row shows again', () => change(first.slice(1), 2));
+});
+
+describe('a card sized by its aspect ratio, in a collapsed row, shows none of its hat', () => {
+  // An image card sets aspect-ratio on its grid item, so a 0px row does not shrink it: it keeps its
+  // height under the clip, and its hat reaches up into the gap below row 2.
+  function RatioCard({ i }: { i: number }) {
+    return (
+      <TwCosmeticWrapper
+        eventDecoration={hat}
+        eventDecorationOn={{ entityType: 'Image', entityId: i }}
+        style={{ aspectRatio: '7 / 9' }}
+      >
+        <div data-testid="card" className="h-full rounded-md bg-slate-600" />
+      </TwCosmeticWrapper>
+    );
+  }
+  const grid = () => document.querySelector('[data-testid="root"]')!.firstElementChild!;
+  const wrappers = () => cards().map((c) => c.parentElement!);
+  const underClip = () => wrappers().filter((w) => rect(w).top >= rect(grid()).bottom);
+  const shown = (wrapper: Element) =>
+    getComputedStyle(wrapper.querySelector('button[data-event-decoration="hat"]')!).visibility ===
+    'visible';
+
+  let setIds: (ids: number[]) => void = () => undefined;
+  function Shelf({ initial }: { initial: number[] }) {
+    const [ids, set] = useState(initial);
+    setIds = set;
+    return (
+      <ShowcaseGrid itemCount={ids.length} rows={2} minWidth={280}>
+        {ids.map((i) => (
+          <RatioCard key={i} i={i} />
+        ))}
+      </ShowcaseGrid>
+    );
+  }
+  const first = [10, 11, 12, 13, 14, 15, 16, 17, 18];
+
+  async function settle(under: number) {
+    await vi.waitFor(() => {
+      expect(underClip()).toHaveLength(under);
+      expect(underClip().filter(shown)).toHaveLength(0);
+      expect(wrappers().filter(shown)).toHaveLength(6);
+    });
+  }
+
+  test('at mount', async () => {
+    await shelf(900, <Shelf initial={first} />);
+    // Not collapsed to 0px, which is what the height check alone missed.
+    expect(underClip().every((w) => rect(w).height > 0)).toBe(true);
+    await settle(3);
+  });
+
+  test('after a new card pushes a shown one under the clip', async () => {
+    await shelf(900, <Shelf initial={first} />);
+    await settle(3);
+    setIds([1, ...first]);
+    await settle(4);
+  });
+
+  test('a card that rises out from under the clip shows again', async () => {
+    await shelf(900, <Shelf initial={first} />);
+    await settle(3);
+    setIds(first.slice(1));
+    await settle(2);
   });
 });

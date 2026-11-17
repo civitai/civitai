@@ -128,14 +128,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
 const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+const { FiltersProvider } = await import('~/providers/FiltersProvider');
 
 /** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
 function StoreWithControls() {
   return (
-    <>
+    <FiltersProvider>
       <AppsStoreFeedFilters />
       <AppListingsMarketplaceBody />
-    </>
+    </FiltersProvider>
   );
 }
 const { clearRecentlyOpenedApps } = await import('./recentlyOpenedAppsStore');
@@ -144,12 +145,11 @@ const { clearRecentlyOpenedApps } = await import('./recentlyOpenedAppsStore');
  * ⚠️ SCOPE LIMIT, stated rather than papered over. `mocks.isClient = false`
  * models the pre-mount render for anything gated on `useIsClient()`, but it
  * CANNOT suppress React effects — browser mode always mounts, so a
- * `useEffect`-based mitigation (the recents rail's "seed empty, load after
- * mount") has already run by the time an assertion can look. An attempt to
- * assert the rail's absence pre-mount here failed for exactly that reason and
- * was removed rather than weakened into a guard that proves nothing. The rail's
- * ordering + hide-when-empty behaviour is covered in
- * `AppListingsMarketplaceBody.browser.test.tsx` and `RecentlyOpenedApps.browser.test.tsx`.
+ * `useEffect`-based mitigation (a "seed empty, load after mount" read, as the
+ * recents merge on the `/apps` home does) has already run by the time an
+ * assertion can look. The store no longer renders a recents rail at all; the
+ * home's recents ordering is covered in `appsHomeMerge.test.ts` and
+ * `AppsHomeBody.browser.test.tsx`.
  */
 
 /** The scaffold's shared router singleton — a per-file mock loses to the setup file. */
@@ -167,6 +167,7 @@ const router = useRouter();
 const SEEDED = { kind: 'offsite', category: 'generation', sort: 'newest', query: 'matrix' };
 
 beforeEach(() => {
+  localStorage.removeItem('apps-store-filters');
   mocks.isClient = false;
   mocks.lastArgs = null;
   mocks.items = [makeCard('a', 'Alpha App'), makeCard('b', 'Bravo App', 'offsite')];
@@ -212,7 +213,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
 
     // If the filters were deferred behind `useIsClient()`, this would be the
-    // DEFAULT `{kind:'all', category:undefined, sort:'top-rated'}` on the first
+    // DEFAULT `{kind:'all', category:undefined, sort:'popular'}` on the first
     // render and only become the seeded value after mount — a visible flash and a
     // wasted round-trip on every shared link.
     expect(mocks.lastArgs).toMatchObject({
@@ -227,7 +228,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     mocks.isClient = false;
     renderWithProviders(<StoreWithControls />);
 
-    // The sort control renders the seeded sort, not the default "Top rated".
+    // The sort control renders the seeded sort, not the default "Most popular".
     await expect.element(page.getByRole('button', { name: 'Newest' })).toBeInTheDocument();
     // The search box is seeded from `?query=` on its very first render.
     await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
@@ -236,8 +237,11 @@ describe('/apps store — the first client paint already reflects the URL', () =
     // so a name query is a strict-mode violation whenever both are on screen.)
     await userEvent.click(page.getByTestId('apps-store-filters-dropdown'));
     await expect
-      .element(page.getByRole('button', { name: 'Standalone' }))
-      .toHaveAttribute('aria-pressed', 'true');
+      .element(page.getByRole('checkbox', { name: 'Standalone', exact: true }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole('checkbox', { name: 'Embedded', exact: true }))
+      .not.toBeChecked();
   });
 
   test('🔴 the control row is IDENTICAL pre-mount and post-mount (the hydration invariant)', async () => {
@@ -293,8 +297,8 @@ describe('/apps store — no client-only source leaks into the first render', ()
     router.query = { kind: 'sideways', category: 'hats', sort: 'chaos' };
     mocks.isClient = false;
     renderWithProviders(<StoreWithControls />);
-    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
-    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated' });
+    await expect.element(page.getByRole('button', { name: 'Most popular' })).toBeInTheDocument();
+    expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'popular' });
     expect(mocks.lastArgs?.category).toBeUndefined();
     // …and the grid still renders — never an empty result set.
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();

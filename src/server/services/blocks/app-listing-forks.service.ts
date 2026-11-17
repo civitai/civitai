@@ -6,8 +6,9 @@
  * grid's own predicate (`storeEligibilityWhere` + `listingLevelVisibilityFilter`) rather than a
  * second spelling of it. So a fork is counted and listed exactly when this viewer could find it in
  * the `/apps` store: approved (or admitted by its visibility level), not a revision draft, an
- * on-site fork only once it has deployed, not mature on a SFW host, and within the viewer's store
- * scope. A pending, rejected, removed, private or never-deployed fork is in neither the count nor
+ * on-site fork only once it has deployed, not mature on a SFW host, an R/X fork only to a viewer
+ * whose browsing level includes that rating, owned by an account that is neither banned nor
+ * deleted, and within the viewer's store scope. A pending, rejected, removed, private or never-deployed fork is in neither the count nor
  * the list — and the count and the list can never disagree, because they share the WHERE clause.
  *
  * 🔴 MANUAL-APPLY COLUMNS. `fork_of_listing_id` (and the store predicate's `visibility`) may not
@@ -26,6 +27,7 @@ import type {
   ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { matureRatingsAllowed } from '~/server/services/blocks/app-listing-store-gate';
 import {
   listingLevelVisibilityFilter,
   storeEligibilityWhere,
@@ -55,6 +57,11 @@ export async function listListingForks(
     scope: StoreVisibilityScope;
     floor: ListingAudienceFloor;
     redCapable: boolean;
+    /**
+     * The viewer's browsing level: an r/x fork is listed only when it includes that rating.
+     * Required (nullable; `null`/`undefined` read as PG).
+     */
+    viewerBrowsingLevel: number | null | undefined;
   }
 ): Promise<ListingForksPage> {
   const cursor = args.cursor ?? null;
@@ -63,7 +70,7 @@ export async function listListingForks(
       levelFilter,
       kind: null,
       category: null,
-      redCapable: args.redCapable,
+      mature: matureRatingsAllowed(args.redCapable, args.viewerBrowsingLevel),
       scope: args.scope,
     });
     const where = Prisma.sql`al.fork_of_listing_id = ${args.parentListingId} AND ${eligible}`;

@@ -19,10 +19,6 @@ import { dbMock, resetSharedMocks } from '~/__tests__/mocks';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 import { readImageTagsForImages } from '~/server/redis/caches';
-import {
-  getCommentsInfinite,
-  getCommentsThreadDetails2,
-} from '~/server/services/commentsv2.service';
 
 const flag = vi.mocked(isFlipt);
 const q = vi.mocked(queries);
@@ -30,8 +26,6 @@ const q = vi.mocked(queries);
 // Pairwise distinct.
 const IMAGE = 9401;
 const OTHER_IMAGE = 9402;
-const THREAD = 9503;
-const MODEL = 9604;
 
 const tagRow = {
   imageId: IMAGE,
@@ -78,66 +72,5 @@ describe('readImageTagsForImages (imageTagsCache)', () => {
     expect(dbMock.dbRead.imageTag.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.imageTag.findMany).not.toHaveBeenCalled();
     expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
-  });
-});
-
-describe('getCommentsThreadDetails2 (an image thread)', () => {
-  const imageThread = () => getCommentsThreadDetails2({ entityType: 'image', entityId: IMAGE });
-
-  it('reads the thread through Kysely only, on the replica (invariant: no flag check remains)', async () => {
-    q.getImageThread.mockResolvedValue({ id: THREAD, locked: true } as never);
-    await expect(imageThread()).resolves.toEqual({ id: THREAD, locked: true });
-    expect(q.getImageThread.mock.calls).toEqual([[kyselyRead, IMAGE]]);
-    expect(q.getImageThread.mock.calls[0][0]).toBe(kyselyRead);
-    expect(flag, 'invariant: no flag check remains').not.toHaveBeenCalled();
-    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('no thread is null, as findUnique returned', async () => {
-    q.getImageThread.mockResolvedValue(undefined);
-    await expect(imageThread()).resolves.toBeNull();
-    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('any other entity type stays on Prisma', async () => {
-    dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: THREAD, locked: false });
-    await expect(
-      getCommentsThreadDetails2({ entityType: 'model', entityId: MODEL })
-    ).resolves.toEqual({ id: THREAD, locked: false });
-    expect(dbMock.dbRead.thread.findUnique).toHaveBeenCalledWith({
-      where: { modelId: MODEL },
-      select: { id: true, locked: true },
-    });
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
-  });
-});
-
-describe('getCommentsInfinite (the main-thread lookup of an image)', () => {
-  // No thread ends the read right after the lookup, so these pin the lookup alone.
-  const imageComments = () => getCommentsInfinite({ entityType: 'image', entityId: IMAGE });
-
-  it('looks the thread up through Kysely only, on the replica', async () => {
-    q.getImageThread.mockResolvedValue(undefined);
-    await expect(imageComments()).resolves.toBeNull();
-    expect(q.getImageThread.mock.calls).toEqual([[kyselyRead, IMAGE]]);
-    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('the found thread id is what the comment reads use', async () => {
-    q.getImageThread.mockResolvedValue({ id: THREAD, locked: false } as never);
-    dbMock.dbRead.commentV2.findMany.mockRejectedValue(new Error('reached the comment read'));
-    await expect(imageComments()).rejects.toThrow('reached the comment read');
-    expect(dbMock.dbRead.commentV2.findMany.mock.calls[0][0].where.threadId).toBe(THREAD);
-    expect(dbMock.dbRead.thread.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('a model thread is looked up through Prisma', async () => {
-    dbMock.dbRead.thread.findUnique.mockResolvedValue(null);
-    await expect(getCommentsInfinite({ entityType: 'model', entityId: MODEL })).resolves.toBeNull();
-    expect(dbMock.dbRead.thread.findUnique).toHaveBeenCalledWith({
-      where: { modelId: MODEL },
-      select: { id: true },
-    });
-    for (const read of kyselyReads()) expect(read).not.toHaveBeenCalled();
   });
 });

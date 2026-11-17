@@ -9,8 +9,12 @@ import { ConnectedAppsCard } from '~/components/Account/ConnectedAppsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { DeleteCard } from '~/components/Account/DeleteCard';
 import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
+import { MembershipHistoryCard } from '~/components/Account/MembershipHistoryCard';
 import { OAuthAppsCard } from '~/components/Account/OAuthAppsCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
+import { ShowcaseHatSetting } from '~/components/Events/ScoredEvent/ShowcaseHatToggle';
+import { HatTurfSetting } from '~/components/Account/HatTurfSetting';
+import { HatTurfOwnerSetting } from '~/components/Account/HatTurfOwnerSetting';
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { SocialProfileCard } from '~/components/Account/SocialProfileCard';
@@ -24,6 +28,9 @@ import { PreferencesPane } from '~/components/Account/PreferencesPane';
 import { SettingsStack } from '~/components/Account/SettingsLayout';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
+const UsageLimitsPane = dynamic(() =>
+  import('~/components/Account/usage/UsageLimitsPane').then((mod) => mod.UsageLimitsPane)
+);
 const NotificationsPane = dynamic(() =>
   import('~/components/Account/NotificationsPane').then((mod) => mod.NotificationsPane)
 );
@@ -36,6 +43,7 @@ export const accountPaneCopy: Record<string, { title: string }> = {
   content: { title: 'Content & Browsing' },
   creator: { title: 'Creator' },
   billing: { title: 'Membership & Billing' },
+  usage: { title: 'Usage limits' },
   security: { title: 'Security & Apps' },
 };
 
@@ -50,6 +58,8 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
       return (
         <SettingsStack>
           <ProfileCard flat />
+          <ShowcaseHatSetting />
+          <HatTurfSetting />
           <SocialProfileCard flat />
           {features.strikes && <StrikesCard flat />}
           <div className="flex flex-col gap-3">
@@ -74,6 +84,7 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
           {/* Ungated on purpose: the card self-gates, and still owes the sticker pointer with
               every flag off. */}
           <CreatorControlsCard flat stickerFooter={<StickerInventoryCard flat />} />
+          <HatTurfOwnerSetting />
         </SettingsStack>
       );
 
@@ -81,11 +92,15 @@ export function AccountPane({ sectionId }: { sectionId: string }) {
       return (
         <SettingsStack>
           <SubscriptionCard flat />
+          <MembershipHistoryCard flat />
           <PaymentMethodsCard flat />
           <UserPaymentConfigurationCard flat />
           <MembershipGiftsCard pointer />
         </SettingsStack>
       );
+
+    case 'usage':
+      return <UsageLimitsPane />;
 
     case 'security':
       return (

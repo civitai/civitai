@@ -1,4 +1,5 @@
-import { Button, Card, Center, Group, Loader, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { Button, Card, Center, Group, Loader, Stack, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { keepPreviousData } from '@tanstack/react-query';
 import { IconPlus, IconUsers } from '@tabler/icons-react';
 import { useRouter } from 'next/router';

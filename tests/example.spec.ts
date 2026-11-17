@@ -72,7 +72,7 @@ test.describe('comments', () => {
       // avoid race condition for clicking and awaiting response
       const [response] = await Promise.all([
         page.waitForResponse(
-          (resp) => resp.url().includes('/api/trpc/commentv2.upsert') && resp.status() === 200
+          (resp) => resp.url().includes('/api/trpc/commentv3.create') && resp.status() === 200
         ),
         loc.getByRole('button', { name: 'Comment' }).click(),
       ]);

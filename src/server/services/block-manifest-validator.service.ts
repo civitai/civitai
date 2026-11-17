@@ -19,7 +19,7 @@ import {
   collectionSchemaPatterns,
   parseManifestStorage,
 } from '~/shared/constants/block-storage.constants';
-import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
+import { isKnownSlotId, isPageSlot, MODEL_SLOT_IDS } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
   isMarketplaceCategory,
@@ -36,13 +36,27 @@ import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import {
   MAX_REPOSITORY_URL_LENGTH,
   REPOSITORY_HOST_ALLOWLIST,
+  validateIssueTrackerUrl,
   validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 // Single source for the per-scope justification length bound — shared with the
 // OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
 import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
-type ValidationResult = { valid: true } | { valid: false; errors: string[] };
+/** The refusal for a non-string manifest `bugs` (an object included). */
+export const MANIFEST_BUGS_NOT_A_STRING =
+  'bugs must be a URL string (an object such as { "url": ... } is not supported)';
+
+/**
+ * `warnings` is present only when non-empty: a non-blocking finding (today only a non-conforming
+ * `bugs` outside a new submission — see `strictIssueTrackerLink`).
+ */
+type ValidationResult =
+  | { valid: true; warnings?: string[] }
+  | { valid: false; errors: string[]; warnings?: string[] };
+
+/** Suffix of the warning a lenient re-validation emits for a non-conforming `bugs`. */
+export const MANIFEST_BUGS_IGNORED_SUFFIX = ' — ignored: the store shows no Support link';
 
 /**
  * Options controlling WHICH validation rules run. Defaults to full enforcement
@@ -63,6 +77,15 @@ export type ManifestValidationOptions = {
    * validation still runs on approve.
    */
   enforceSensitiveScopeJustification?: boolean;
+  /**
+   * Refuse a non-conforming `bugs` (not a string, or not a valid issue-tracker URL). Default
+   * `true` — a NEW submission (submit-version, the developer manifest API). The RE-VALIDATIONS of
+   * a manifest that may have been stored before the `bugs` rule existed — moderator approve, the
+   * in-app manifest editor, git-push — pass `false`: the finding becomes a WARNING and the
+   * mapper (`resolveListingIssueTracker`) publishes no link for it, so such a manifest stays
+   * approvable and editable. Every other rule still refuses.
+   */
+  strictIssueTrackerLink?: boolean;
 };
 
 interface RawManifest {
@@ -108,6 +131,13 @@ interface RawManifest {
    * never be conflated in either direction.
    */
   repository?: unknown;
+  /**
+   * OPTIONAL public issue-tracker / support link: a URL STRING only (the npm `{ url, email }`
+   * object form is refused — {@link MANIFEST_BUGS_NOT_A_STRING}). Shown as a `Support` row on the store DETAIL page and re-synced from
+   * the manifest on every approved version, like `repository`. The URL must pass
+   * `validateIssueTrackerUrl`: https, no credentials, no port, ≤200 chars, any host.
+   */
+  bugs?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -425,6 +455,27 @@ function normalizeOriginLoose(raw: string): string | null {
   }
 }
 
+/**
+ * The error a manifest that declares NO surface gets, or `null` when it declares one. A surface is a
+ * non-empty `targets` array (model-page slots) or a `page` object (a full-page app). This is the
+ * same test the build pipeline's manifest check runs on every build, review and production: a
+ * manifest it refuses fails its build only after a moderator approved it, so the submission gate
+ * ({@link BlockManifestValidator.validateSubmission}) refuses it first. Only presence and type are
+ * tested here; the entries themselves are validated by `validate`.
+ */
+export function manifestSurfaceError(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return null;
+  const m = manifest as RawManifest;
+  const hasTargets = Array.isArray(m.targets) && m.targets.length > 0;
+  const hasPage = !!m.page && typeof m.page === 'object' && !Array.isArray(m.page);
+  if (hasTargets || hasPage) return null;
+  return (
+    'manifest must declare at least one surface: add a "page" object for a full-page app ' +
+    '(e.g. "page": { "path": "/", "title": "My App" }), or a non-empty "targets" array for a ' +
+    `model-page slot app (e.g. "targets": [{ "slotId": "${MODEL_SLOT_IDS[0]}" }])`
+  );
+}
+
 function urlOriginIfPublic(raw: string): string | null {
   const r = isPublicHttpsUrl(raw);
   if (!r.ok) return null;
@@ -549,6 +600,28 @@ export class BlockManifestValidator {
     if (m.repository !== undefined) {
       const repo = validateRepositoryUrl(m.repository);
       if (!repo.ok) errors.push(repo.error.replace('sourceRepoUrl', 'repository'));
+    }
+
+    // Optional `bugs` (the public issue-tracker / support link): a URL STRING only, like
+    // `repository`. The npm `{ url, email }` object form is REFUSED with a message rather than
+    // ignored, so an author who wrote it learns why no Support link appears. The URL goes through
+    // the SHARED `validateIssueTrackerUrl`, re-labelled to the manifest key.
+    const warnings: string[] = [];
+    if (m.bugs !== undefined) {
+      let bugsError: string | null = null;
+      if (typeof m.bugs !== 'string') {
+        bugsError = MANIFEST_BUGS_NOT_A_STRING;
+      } else {
+        const tracker = validateIssueTrackerUrl(m.bugs);
+        if (!tracker.ok) bugsError = tracker.error.replace('issueTrackerUrl', 'bugs');
+      }
+      if (bugsError !== null) {
+        if (opts?.strictIssueTrackerLink === false) {
+          warnings.push(bugsError + MANIFEST_BUGS_IGNORED_SUFFIX);
+        } else {
+          errors.push(bugsError);
+        }
+      }
     }
 
     if (!Array.isArray(m.scopes)) {
@@ -934,11 +1007,13 @@ export class BlockManifestValidator {
       }
     }
 
-    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+    const warned = warnings.length > 0 ? { warnings } : {};
+    return errors.length === 0 ? { valid: true, ...warned } : { valid: false, errors, ...warned };
   }
 
   /**
-   * SUBMISSION gate. Runs the synchronous shape/security `validate` above AND the
+   * SUBMISSION gate. Runs the synchronous shape/security `validate` above, the
+   * build pipeline's surface rule ({@link manifestSurfaceError}), AND the
    * accurate ReDoS + input-bound check on `settings` field patterns, merging the
    * errors. This is the method every manifest SUBMISSION path must call (git-push
    * webhook, developer manifest API, `blocks.updateManifest`, publish-request
@@ -959,6 +1034,9 @@ export class BlockManifestValidator {
   ): Promise<ValidationResult> {
     const base = this.validate(manifest, app, opts);
     const errors: string[] = base.valid ? [] : [...base.errors];
+
+    const surfaceError = manifestSurfaceError(manifest);
+    if (surfaceError) errors.push(surfaceError);
 
     const settings =
       manifest && typeof manifest === 'object' && !Array.isArray(manifest)
@@ -1011,6 +1089,7 @@ export class BlockManifestValidator {
       }
     }
 
-    return errors.length === 0 ? { valid: true } : { valid: false, errors };
+    const warned = base.warnings && base.warnings.length > 0 ? { warnings: base.warnings } : {};
+    return errors.length === 0 ? { valid: true, ...warned } : { valid: false, errors, ...warned };
   }
 }

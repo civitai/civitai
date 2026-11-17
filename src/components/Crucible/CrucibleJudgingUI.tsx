@@ -1,17 +1,9 @@
-import {
-  ActionIcon,
-  Button,
-  Kbd,
-  Paper,
-  Text,
-  Loader,
-  Box,
-  Skeleton,
-  Tooltip,
-} from '@mantine/core';
+import { ActionIcon, Button, Kbd, Paper, Text, Loader, Box, Skeleton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { readLocalStorageValue, useHotkeys, useReducedMotion } from '@mantine/hooks';
 import type { HotkeyItem } from '@mantine/hooks';
 import {
+  IconEyeOff,
   IconMaximize,
   IconPlayerSkipForward,
   IconPhotoOff,
@@ -99,6 +91,8 @@ export type CrucibleJudgingUIProps = {
   onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
   /** `unavailable`: an entry in the pair didn't load, so skipping wasn't the judge's choice. */
   onSkip: (skip: { unavailable: boolean }) => void;
+  /** "Don't show again": the judge never wants this pair served again. No button without it. */
+  onDismiss?: () => void;
   /** Fires the moment a side is chosen, before the feedback delay that precedes `onVote`. */
   onVoteCast?: (side: Side) => void;
   /** Bottom-row content either side of the vote controls. */
@@ -119,6 +113,7 @@ export function CrucibleJudgingUI({
   minViewSeconds,
   onVote,
   onSkip,
+  onDismiss,
   onVoteCast,
   footerStart,
   footerEnd,
@@ -264,6 +259,13 @@ export function CrucibleJudgingUI({
     setSelectedSide(null);
     onSkip({ unavailable: anyUnavailable });
   }, [isDisabled, onSkip, anyUnavailable]);
+
+  const handleDismiss = useCallback(() => {
+    // A side already chosen is a vote on its way; the dismissal would only race it.
+    if (isDisabled || !onDismiss || voteQueued.current) return;
+    setSelectedSide(null);
+    onDismiss();
+  }, [isDisabled, onDismiss]);
 
   // Mantine would preventDefault before the handler runs, which also cancels a focused button's own
   // Space activation, so this one prevents only when it acts.
@@ -429,6 +431,29 @@ export function CrucibleJudgingUI({
                   </span>
                 </Button>
               </Tooltip>
+              {onDismiss && (
+                <Tooltip
+                  label="Never shows you this pair again. It doesn't count as a vote."
+                  position="top"
+                  withArrow
+                >
+                  <Button
+                    variant="default"
+                    radius="xl"
+                    h={40}
+                    data-testid="judge-dismiss"
+                    onClick={handleDismiss}
+                    disabled={isDisabled}
+                    aria-label="Don't show again"
+                    className="shrink-0 border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057] max-md:px-3"
+                  >
+                    <span className="flex items-center gap-2">
+                      <IconEyeOff size={16} />
+                      <span className="max-md:hidden">Don&apos;t show again</span>
+                    </span>
+                  </Button>
+                </Tooltip>
+              )}
               {voteButton('right')}
             </div>
           </div>
@@ -512,6 +537,8 @@ function ImageCard({
     if (disabled || e.repeat) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
+      // The document-level Space hotkey would otherwise also skip the pair this vote just ended.
+      e.stopPropagation();
       onVote();
     }
   };

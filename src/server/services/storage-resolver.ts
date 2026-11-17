@@ -20,7 +20,7 @@ export async function registerMediaLocation(
         Authorization: `Bearer ${STORAGE_RESOLVER_TOKEN}`,
       },
       body: JSON.stringify({ uuid, backend, sizeBytes }),
-      signal: fetchTimeoutSignal(60_000),
+      signal: fetchTimeoutSignal(10_000),
     });
   } catch (e) {
     // Fire-and-forget — don't block uploads on registry failure
@@ -39,7 +39,7 @@ export async function resolveMediaLocation(
         ...(STORAGE_RESOLVER_TOKEN && { Authorization: `Bearer ${STORAGE_RESOLVER_TOKEN}` }),
       },
       body: JSON.stringify({ uuid }),
-      signal: fetchTimeoutSignal(60_000),
+      signal: fetchTimeoutSignal(10_000),
     });
     if (!res.ok) return null;
     // `await` is load-bearing, not style. `return res.json()` inside a try returns the promise and

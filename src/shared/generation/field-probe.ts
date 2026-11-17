@@ -60,14 +60,53 @@ export function probeFieldMeta(
   pin: { workflow: string; ecosystem: string },
   ext: GenerationCtx
 ): unknown {
+  const probe = probeField(field, pin, ext);
+  return probe.kind === 'present' ? probe.meta : undefined;
+}
+
+/**
+ * The three answers a pinned probe can give. `probeFieldMeta` folds the first two into one
+ * `undefined`, which is right for its callers (each fails closed either way) and wrong for a
+ * caller that must tell "this route has no such field" apart from "the probe could not answer":
+ * the sampler catalog reports the first as a family with no sampler control, and must never
+ * report the second that way.
+ */
+export type FieldProbe =
+  /** The hub re-routed the pin, or threw. Nothing is known about the field. */
+  | { kind: 'undetermined' }
+  /** The pin survived and the field is not active on that route. */
+  | { kind: 'absent' }
+  /** The pin survived and the field is active. `value` is its resolved value on a fresh store. */
+  | { kind: 'present'; value: unknown; meta: unknown };
+
+/**
+ * `probeFieldMeta` with the absent/undetermined distinction kept — the SAME guard, in one
+ * place (see the note on `probeFieldMeta` for why it is this shape). The pin may also carry a
+ * `model`, to probe one version of a model-locked ecosystem; that version must survive too, or
+ * the answer describes whichever version the hub swapped in.
+ */
+export function probeField(
+  field: string,
+  pin: { workflow: string; ecosystem: string; model?: { id: number } },
+  ext: GenerationCtx
+): FieldProbe {
   try {
     const store = generationHub.createStore({ ext, defaults: pin } as never);
-    const state = store.getState() as { workflow?: string; ecosystem?: string };
-    if (state.workflow !== pin.workflow) return undefined;
-    if (state.ecosystem !== undefined && state.ecosystem !== pin.ecosystem) return undefined;
-    return store.getField(field)?.meta;
+    const state = store.getState() as {
+      workflow?: string;
+      ecosystem?: string;
+      model?: { id?: number };
+    };
+    if (state.workflow !== pin.workflow) return { kind: 'undetermined' };
+    if (state.ecosystem !== undefined && state.ecosystem !== pin.ecosystem) {
+      return { kind: 'undetermined' };
+    }
+    if (pin.model && state.model?.id !== pin.model.id) return { kind: 'undetermined' };
+    const snapshot = store.getField(field);
+    if (snapshot == null) return { kind: 'absent' };
+    return { kind: 'present', value: snapshot.value, meta: snapshot.meta };
   } catch {
-    return undefined;
+    return { kind: 'undetermined' };
   }
 }
 

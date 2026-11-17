@@ -33,9 +33,8 @@ import {
  * rows in the same order (every Prisma read here was ordered, and every fixture below keeps the
  * order key distinct so no case compares a tie).
  *
- * Those values are fixtures/hot-reads-3-golden.json, printed by the Prisma readers the services ran
- * (hot-reads-3.reads.ts) against these same fixture rows in CI, before they were deleted. A change to
- * the fixture rows needs the golden re-derived by hand.
+ * Those values are fixtures/hot-reads-3-golden.json, the Prisma reads' output for these same fixture
+ * rows. A change to the fixture rows needs the golden re-derived by hand.
  *
  * Runs in CI: the `unit` job points KYSELY_HOT_READS_3_PARITY_DATABASE_URL at its throwaway
  * Postgres service, and a test below fails if that wiring is lost, so the suite cannot skip itself

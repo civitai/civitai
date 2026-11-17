@@ -159,7 +159,8 @@ describe('fork shares straight after a choice', () => {
       'write-degraded',
       'setFetchThroughCache set (cache cluster)',
       expect.any(Error),
-      { key: 'packed:caches:storyline-fork-counts:1' }
+      // The cluster-cache guard adds which client and why; the key is what this test pins.
+      expect.objectContaining({ key: 'packed:caches:storyline-fork-counts:1' })
     );
   });
 

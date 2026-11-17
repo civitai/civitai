@@ -1,13 +1,12 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
+import { useShowEventCosmetics } from '~/providers/BrowserSettingsProvider';
 import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { forcedMinorModelBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -41,7 +40,7 @@ import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
   const forceMinorLevel = props.minor && !currentUser?.isModerator;
-  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+  const minorBrowsingLevel = forcedMinorModelBrowsingLevel(!!currentUser);
 
   return (
     <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>
@@ -58,8 +57,15 @@ export function ModelCarousel(props: Props) {
   );
 }
 
-function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
+function ModelCarouselContent({
+  modelId,
+  modelVersionId,
+  modelUserId,
+  limit = 10,
+  initialMobile,
+}: Props) {
   const features = useFeatureFlags();
+  const showEventCosmetics = useShowEventCosmetics();
   const { running, helpers } = useTourContext();
   // Both model-page tours spend two steps here — one on the button, one on the
   // options it opens — so the open and the choice each move on by one.
@@ -78,7 +84,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
   });
 
   const hiddenExplained = useExplainHiddenImages(flatData);
-  const mobile = useContainerSmallerThan('md');
+  const mobile = useContainerSmallerThan('md', initialMobile);
 
   if (isLoading)
     return (
@@ -121,13 +127,14 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                     style={
                       {
                         aspectRatio: `${image.width ?? 1} / ${image.height ?? 1}`,
-                        ...(image.eventDecoration && {
-                          '--event-decoration-clear-left': getEventDecorationClearLeftCss(
-                            image.eventDecoration.data,
-                            'corner',
-                            HAT_PLAIN_CARD_NUDGE
-                          ),
-                        }),
+                        ...(showEventCosmetics &&
+                          image.eventDecoration && {
+                            '--event-decoration-clear-left': getEventDecorationClearLeftCss(
+                              image.eventDecoration.data,
+                              'corner',
+                              HAT_PLAIN_CARD_NUDGE
+                            ),
+                          }),
                       } as React.CSSProperties
                     }
                   >
@@ -213,13 +220,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               entityType="image"
                               reactions={image.reactions}
                               metricsUnknown={image.stats?.statsUnknown}
-                              metrics={{
-                                likeCount: image.stats?.likeCountAllTime,
-                                dislikeCount: image.stats?.dislikeCountAllTime,
-                                heartCount: image.stats?.heartCountAllTime,
-                                laughCount: image.stats?.laughCountAllTime,
-                                cryCount: image.stats?.cryCountAllTime,
-                              }}
+                              metrics={imageStatsToReactionMetrics(image.stats)}
                               readonly={!safe}
                               className={classes.reactions}
                               targetUserId={image.user.id}
@@ -268,4 +269,5 @@ type Props = {
   modelUserId: number;
   limit?: number;
   minor?: boolean;
+  initialMobile?: boolean;
 };

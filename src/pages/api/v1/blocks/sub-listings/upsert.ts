@@ -58,6 +58,8 @@ export const baseHandler = withAxiom(async function handler(
     }
     const result = await upsertSubListing({
       appBlockId: claims.appBlockId,
+      // Dev tokens are counted as `dev` on the refusal counter, like every other surface.
+      dev: claims.dev === true,
       subjectUser,
       hasLinkedOAuth,
       body: req.body,

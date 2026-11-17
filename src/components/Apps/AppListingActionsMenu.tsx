@@ -1,4 +1,5 @@
-import { ActionIcon, Box, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon, Box } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconDotsVertical,
@@ -152,6 +153,11 @@ export type AppListingActionsMenuProps = {
    * viewer did not ask for, fired by opening a menu.
    */
   stopPropagation?: boolean;
+  /**
+   * Opens the review modal the CALLER owns; the menu then mounts none. The caller must
+   * mount it behind the same `useCanReviewListing` gate.
+   */
+  onOpenReview?: () => void;
 };
 
 /** Everything the menu's visibility and item set depend on, resolved once. */
@@ -296,6 +302,7 @@ export function AppListingActionsMenu({
   triggerLabel = 'App options',
   triggerTooltip = false,
   stopPropagation = false,
+  onOpenReview,
 }: AppListingActionsMenuProps) {
   const { showEdit, editHref, showOwnerVisibility, canReview, canReport, modActions, showMenu } =
     useAppListingMenuGates(listing, surface, preview);
@@ -405,7 +412,7 @@ export function AppListingActionsMenu({
             {canReview && (
               <Menu.Item
                 leftSection={<IconThumbUp size={14} stroke={1.5} />}
-                onClick={reviewModal.open}
+                onClick={onOpenReview ?? reviewModal.open}
                 data-testid="apps-listing-review-action"
               >
                 Leave a review
@@ -514,7 +521,7 @@ export function AppListingActionsMenu({
           `showMenu` carries `!preview`. */}
       {everOpened && (
         <>
-          {canReview && (
+          {canReview && !onOpenReview && (
             <ReviewListingModal
               appListingId={listing.id}
               opened={reviewOpened}

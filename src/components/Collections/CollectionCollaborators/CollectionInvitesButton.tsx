@@ -1,4 +1,5 @@
-import { Indicator, Tooltip } from '@mantine/core';
+import { Indicator } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconMail } from '@tabler/icons-react';
 import { openCollectionInvitesModal } from '~/components/Collections/CollectionCollaborators/openCollectionInvitesModal';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

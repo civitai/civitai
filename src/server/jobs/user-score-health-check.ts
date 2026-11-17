@@ -47,12 +47,12 @@ export async function checkUserScoreHealth(now = new Date()) {
     `category means those scores are frozen; a stale \`tierGrants\` means tier badges are not being ` +
     `granted. Check \`update-user-score\` (55 23 * * *).\n\n${lines.join('\n')}`;
 
-  await logToAxiom({
+  logToAxiom({
     type: 'warning',
     name: 'user-score-health-check',
     details: { stale: stale.map(({ key, lastSuccess }) => ({ key, lastSuccess })) },
     message,
-  }).catch(() => null);
+  });
   const alert = await notifyModAlert(`🚨 Creator Score job stalled`, message);
 
   return { healthy: false as const, stale: stale.length, alert };

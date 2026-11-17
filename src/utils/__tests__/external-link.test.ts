@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collectInternalHosts,
   externalLinkInterstitialHref,
   isExternalHref,
   parseExternalDestination,
@@ -121,5 +122,41 @@ describe('externalLinkInterstitialHref', () => {
     expect(externalLinkInterstitialHref('https://t.me/SomeGroup')).toBe(
       '/leaving?url=https://t.me/SomeGroup'
     );
+  });
+});
+
+describe('collectInternalHosts', () => {
+  const serverDomains = {
+    blue: { primary: 'civitai.com', aliases: ['www.civitai.com'] },
+    red: { primary: 'civitai.red', aliases: [] },
+    green: undefined,
+  };
+
+  it('does not warn on a link to the status page, with or without server domains', () => {
+    for (const internal of [
+      collectInternalHosts('civitai.com', serverDomains),
+      collectInternalHosts(undefined, undefined),
+    ]) {
+      expect(isExternalHref('https://status.civitai.com/', internal)).toBe(false);
+    }
+  });
+
+  it('keeps hosts that merely contain a first-party host external', () => {
+    const internal = collectInternalHosts('civitai.com', serverDomains);
+    expect(isExternalHref('https://evil-civitai.com/', internal)).toBe(true);
+    expect(isExternalHref('https://civitai.com.evil.test/', internal)).toBe(true);
+    expect(isExternalHref('https://evil-status.civitai.com/', internal)).toBe(true);
+    expect(isExternalHref('https://status.civitai.com.evil.test/', internal)).toBe(true);
+  });
+
+  it('still treats the current host and every server domain and alias as internal', () => {
+    const internal = collectInternalHosts('localhost:3000', serverDomains);
+    for (const href of [
+      'http://localhost:3000/x',
+      'https://civitai.com/x',
+      'https://www.civitai.com/x',
+      'https://civitai.red/x',
+    ])
+      expect(isExternalHref(href, internal)).toBe(false);
   });
 });

@@ -25,6 +25,7 @@ import { isHubPageRequest } from '$lib/server/auth/same-origin';
 import { getClientIp } from '$lib/server/auth/request';
 import { logAxiomError } from '$lib/server/axiom';
 import { parsePrompt } from '$lib/server/oauth/prompt';
+import { IMPERSONATION_REFUSED } from '$lib/server/auth/impersonation-refusal';
 
 // GET /api/auth/oauth/authorize — return-after-consent + issue the authorization code.
 // Ported from the main app's src/pages/api/auth/oauth/authorize.ts. The session gate uses the hub's
@@ -238,6 +239,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   // but only for an https, non-loopback redirect_uri exactly as registered, and never when the request asks
   // for the consent screen (prompt=consent or select_account). Otherwise it gets the usual consent flow.
   const isFirstParty = client.isFirstParty;
+  // A grant to a registered app carries no impersonation marker and would outlive the impersonation.
+  if (!isFirstParty && locals.impersonatedBy != null) {
+    return failToClient('access_denied', IMPERSONATION_REFUSED, 403);
+  }
   const skipsConsent = isFirstParty
     ? client.skipConsent
     : client.skipConsent &&
@@ -291,6 +296,11 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
 
   // Issue the authorization code via the library (PKCE challenge stored, code hashed in Redis). The
   // library reads `scope` as the decimal bitmask, so it gets the parsed value, not the raw names.
+  // A first-party code minted for the hub session's own user carries its impersonation.
+  const impersonation =
+    isFirstParty &&
+    locals.session?.impersonatedBy != null &&
+    Number(locals.session.sub) === user.id;
   let code;
   try {
     const oauthReq = toOAuthRequest({
@@ -303,7 +313,9 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     // through AsyncLocalStorage so getClient can fall back to it for this in-flight call.
     code = await authorizeRedirectUriStore.run(redirectUri, () =>
       oauthServer.authorize(oauthReq, newOAuthResponse(), {
-        authenticateHandler: { handle: () => ({ id: user.id }) },
+        authenticateHandler: {
+          handle: () => ({ id: user.id, ...(impersonation && { impersonation }) }),
+        },
       })
     );
   } catch (err) {
@@ -343,7 +355,7 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
   if (locals.session && locals.sessionSlot === 'shared') {
     await preUpgradeHubSession(cookies, locals.session, locals.user).catch(() => undefined);
   }
-  await storeOidcContext(code.authorizationCode, {
+  const stored = await storeOidcContext(code.authorizationCode, {
     nonce: typeof params.nonce === 'string' ? params.nonce : undefined,
     openid: scopeRequest.openid || undefined,
     authTime: Math.floor(Date.now() / 1000),
@@ -354,6 +366,10 @@ async function handle(event: Parameters<RequestHandler>[0]): Promise<Response> {
     impExp: hubSession?.impExp,
     proofFamily: isFirstParty && locals.session ? familyId(locals.session) : undefined,
   });
+  // An impersonation code is redeemed only with its context, so none is sent without it.
+  if (!stored && impersonation) {
+    return failToClient('temporarily_unavailable', 'Try again', 503);
+  }
 
   logOAuthEvent({
     type: 'authorization.granted',

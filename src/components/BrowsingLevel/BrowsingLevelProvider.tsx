@@ -5,6 +5,7 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BROWSING_LEVEL_FALLBACK,
+  domainForcedBrowsingLevel,
   intersectBrowsingCaps,
   resolvePageBrowsingLevel,
   resolveViewerBrowsingLevel,
@@ -71,18 +72,12 @@ export function BrowsingLevelProvider({
   // below instead.
   const [imperativeForcedBrowsingLevel, setForcedBrowsingLevel] = useState<number | undefined>();
 
-  // Cap rules mirror the server middleware (src/server/trpc.ts applyDomainFeature):
-  //   anonymous (any domain)     → publicBrowsingLevelsFlag (PG)
-  //   logged-in on green domain  → sfwBrowsingLevelsFlag    (PG + PG-13)
-  //   logged-in on blue/red      → no forced cap, use saved preference
-  // Verified bots aren't a special case here — on green they're treated as
-  // any public user (PG only); on blue/red their session settings express
-  // allBrowsingLevelsFlag and pass through unchecked.
-  const domainForcedLevel = !features.canViewNsfw
-    ? currentUser
-      ? sfwBrowsingLevelsFlag
-      : publicBrowsingLevelsFlag
-    : undefined;
+  // Verified bots aren't special-cased: on green they're treated as any public user, and on
+  // blue/red their session settings pass through unchecked.
+  const domainForcedLevel = domainForcedBrowsingLevel({
+    canViewNsfw: !!features.canViewNsfw,
+    loggedIn: !!currentUser,
+  });
 
   return (
     <BrowsingModeOverrideCtx.Provider

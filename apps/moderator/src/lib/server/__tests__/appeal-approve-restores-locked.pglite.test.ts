@@ -1,5 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
@@ -49,6 +53,8 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
@@ -176,14 +182,14 @@ describe('rejecting an appeal on a rating-locked Blocked image', () => {
 });
 
 describe('approving when the moderator-only review flag holds the image', () => {
-  it('leaves it Blocked and locked', async () => {
+  it('is refused, and leaves it Blocked and locked', async () => {
     const { FLAG_KEPT_THROUGH_BLOCK } = await import('$lib/image-review');
     await db.query(`UPDATE "Image" SET "needsReview" = $2 WHERE "id" = $1`, [
       IMAGE_ID,
       FLAG_KEPT_THROUGH_BLOCK,
     ]);
 
-    await approve();
+    await expect(approve()).rejects.toThrow(/cannot put it back/);
 
     expect(await imageRow()).toEqual({
       ingestion: 'Blocked',

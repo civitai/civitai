@@ -1,6 +1,5 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
-import { isGeneratorReady } from '~/shared/generation/generator-readiness';
-import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
+import { toCoverageUpdateDocument } from '~/server/search-index/models-index-versions';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -55,38 +54,7 @@ const updateGenerationCoverage = (idOffset: number) =>
     }
 
     const updateIndexReadyRecords = records
-      .map(({ id, type, modelVersions }) => {
-        const [{ files, generationCoverage: _gc, ...version }] = modelVersions;
-        const eligibility = modelVersions.map((x) => indexedVersionEligibility(x, type));
-        const canGenerate = eligibility.some((x) => x.canGenerate);
-        const canGenerateNext = eligibility.some((x) => x.canGenerateNext);
-
-        if (!version) {
-          return null;
-        }
-
-        return {
-          id,
-          version: {
-            ...version,
-            hashes: version.hashes.map((hash) => hash.hash),
-          },
-          versions: modelVersions.map(
-            ({ generationCoverage: _coverage, files, hashes, usageControl, ...x }, i) => ({
-              ...x,
-              // Keeps the column's name but holds readiness — see models.search-index.
-              generatorLoaded: isGeneratorReady({
-                generatorLoaded: x.generatorLoaded,
-                usageControl,
-              }),
-              hashes: hashes.map((hash) => hash.hash),
-              ...eligibility[i],
-            })
-          ),
-          canGenerate,
-          canGenerateNext,
-        };
-      })
+      .map((record) => toCoverageUpdateDocument(record))
       .filter(isDefined);
 
     if (updateIndexReadyRecords.length === 0) {

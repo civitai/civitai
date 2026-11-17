@@ -94,8 +94,17 @@ const GATE_LEDGER: Record<string, string> = {
     'getMyForgejoCloneInfo) now route through the shared assertAppEditAccess → ' +
     'resolveAppAccess, so an ACCEPTED collaborator reaches them and a pending/rejected ' +
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
-    'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
+    'widened to owned+seated via getMyAppRoles; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
+  'src/server/services/blocks/app-source-repo.service.ts':
+    'resolveSourceRepoAccess is THE gate on a SOURCE repo (civitai-apps-src/<slug>): a row ' +
+    'bound to an app block defers ENTIRELY to assertAppEditAccess (owner | ACCEPTED ' +
+    'collaborator, NO mod bypass — the same cell as the build repo), so a transfer or a ' +
+    'seat removal moves access with it; an unbound row (no block yet: a fork or an App ' +
+    'Assistant app before approval) admits its own owner only. A block under the slug the ' +
+    "repo's owner never had is NOT bound, so a squatter's block owner cannot reach it. " +
+    'creationGate uses the same assertAppEditAccess before a repo may be created for a ' +
+    'slug that has a block. Pinned in app-source-repo.service.test.ts.',
   'src/server/services/blocks/app-listing-visibility-write.service.ts':
     'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
     'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
@@ -357,6 +366,10 @@ const GATE_LEDGER: Record<string, string> = {
     'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
     'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
     'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/app-developer-terms.service.ts':
+    'assertListingOwnerAcceptedAppDeveloperTerms — reads ONLY the canonical ownerUserId ' +
+    '(called with userId null, so the role is never consulted) to check that the listing ' +
+    'owner accepted the App Developer Terms. It grants nothing: it can only refuse.',
   'src/server/services/blocks/app-feedback.service.ts':
     'Private per-app feedback, TWO gates in opposite directions. (1) The owner INBOX ' +
     '(resolveInboxListingId: list, set owner status, flag as abusive) admits owner | ' +

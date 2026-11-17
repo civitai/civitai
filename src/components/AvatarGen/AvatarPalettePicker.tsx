@@ -1,4 +1,5 @@
-import { Input, Tooltip, UnstyledButton } from '@mantine/core';
+import { Input, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconCheck } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { avatarPalettes } from '~/shared/constants/avatar-styles.constants';

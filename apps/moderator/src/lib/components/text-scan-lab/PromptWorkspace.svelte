@@ -6,7 +6,7 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import ConfirmButton from '$lib/components/ConfirmButton.svelte';
+  import { ConfirmButton } from '@civitai/ui/components/confirm/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { dateTime } from '$lib/format';
   import type { LabPrompts } from '$lib/server/text-scan-lab/harness-client';

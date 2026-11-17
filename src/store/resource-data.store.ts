@@ -87,7 +87,7 @@ export function requestResourceIds(ids: number[]): void {
   if (!uncached.length) return;
 
   const promise = trpcVanilla.generation.getResourceDataByIds
-    .query({ ids: uncached })
+    .query({ ids: uncached, acceptBoostRequired: true })
     .then((data) => {
       useResourceDataStore.getState()._setFetched(data as ResourceData[]);
 

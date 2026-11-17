@@ -99,6 +99,7 @@ describe('recentlyOpenedApps helper', () => {
         id: 'rich',
         blockId: 'block-rich',
         name: 'Background Remover',
+        // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- a store INPUT, never rendered: the test asserts this url is dropped, not loaded
         iconUrl: 'https://cdn.example/icon.png',
       },
       OWNER
@@ -108,6 +109,8 @@ describe('recentlyOpenedApps helper', () => {
         id: 'rich',
         blockId: 'block-rich',
         name: 'Background Remover',
+        // Stamped by the store on every write (the My apps home's re-appear rule reads it).
+        openedAt: expect.any(Number),
       },
     ]);
   });
@@ -136,7 +139,12 @@ describe('recentlyOpenedApps helper', () => {
     );
     const list = getRecentlyOpenedApps(OWNER);
     expect(list).toHaveLength(1);
-    expect(list[0]).toEqual({ id: 'up', blockId: 'block-up', name: 'Upgraded' });
+    expect(list[0]).toEqual({
+      id: 'up',
+      blockId: 'block-up',
+      name: 'Upgraded',
+      openedAt: expect.any(Number),
+    });
   });
 
   // ── v3 shape: slug / kind / hasPage / externalUrl ───────────────────────────
@@ -162,6 +170,7 @@ describe('recentlyOpenedApps helper', () => {
         kind: 'offsite',
         externalUrl: 'https://ext.example/app',
         name: 'Ext App',
+        openedAt: expect.any(Number),
       },
     ]);
   });
@@ -185,6 +194,7 @@ describe('recentlyOpenedApps helper', () => {
       kind: 'onsite',
       hasPage: true,
       name: 'Gen Matrix',
+      openedAt: expect.any(Number),
     });
   });
 

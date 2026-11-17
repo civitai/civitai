@@ -1,3 +1,4 @@
+import { Air } from '@civitai/orchestration-client';
 import type {
   ImageResourceTrainingOutput,
   ImageResouceTrainingModerationStatus,
@@ -14,7 +15,7 @@ import { upsertModel } from '~/server/services/model.service';
 import { upsertModelVersion } from '~/server/services/model-version.service';
 import { createFile } from '~/server/services/model-file.service';
 import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/workflows';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -22,9 +23,11 @@ import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
+import { studioWithheldWorkflowIds } from '~/server/services/orchestrator/training/studio-withheld';
 import type * as z from 'zod';
 import {
   aiToolkitTrainingDetailsParams,
+  studioKohyaTrainingDetailsParams,
   type TrainingDetailsBaseModelList,
   type TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
@@ -34,7 +37,7 @@ import {
   trainingModelInfo,
   type TrainingBaseModelType,
 } from '~/utils/training';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { type BaseModel, isHiddenBaseModel } from '~/shared/constants/basemodel.constants';
 import { truncateModelName } from '~/shared/constants/model-name.constants';
 import {
   ModelFileVisibility,
@@ -72,7 +75,7 @@ type TrainingStepInputLike = {
   epochs?: number;
   steps?: number;
   triggerWord?: string;
-  samples?: { prompts?: string[] };
+  samples?: { prompts?: string[]; negativePrompt?: string | null };
 } & Record<string, unknown>;
 
 type AiToolkitParams = z.infer<typeof aiToolkitTrainingDetailsParams>;
@@ -189,10 +192,19 @@ function refuse(message: string): never {
  * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
  */
 export function assertTrainingModerationApproved(workflow: Workflow): void {
-  const { step } = getTrainingStep(workflow);
-  const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
-  if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
-    refuse(TRAINING_NOT_APPROVED_MESSAGE);
+  if (!isTrainingModerationApproved(workflow)) refuse(TRAINING_NOT_APPROVED_MESSAGE);
+}
+
+/** The test `assertTrainingModerationApproved` applies, as a boolean: false for a run with no
+ *  readable training step. */
+export function isTrainingModerationApproved(workflow: Workflow): boolean {
+  let output: TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  try {
+    output = getTrainingStep(workflow).step.output as typeof output;
+  } catch {
+    return false;
+  }
+  return output?.moderationStatus === APPROVED_TRAINING_MODERATION_STATUS;
 }
 
 /**
@@ -218,6 +230,17 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
   ][];
 
   let match = input.model ? entries.find(([, info]) => info.air === input.model) : undefined;
+  if (!match && input.engine === 'kohya' && input.model) {
+    const family = Air.parseSafe(input.model)?.ecosystem;
+    const key =
+      family === 'pony'
+        ? 'pony'
+        : family === 'illustrious' || family === 'noobai'
+        ? 'illustrious'
+        : undefined;
+    match = entries.find(([name]) => name === key);
+    if (!match) match = entries.find(([, info]) => info.aiToolkit?.ecosystem === family);
+  }
   if (!match && input.ecosystem) {
     match = entries.find(
       ([, info]) =>
@@ -241,6 +264,28 @@ export function mapTrainingBaseModelToBaseModel(workflow: Workflow): {
     trainingKey,
     info,
   };
+}
+
+async function customKohyaBaseModel(input: TrainingStepInputLike): Promise<BaseModel | undefined> {
+  if (input.engine !== 'kohya' || !input.model) return;
+  if (Object.values(trainingModelInfo).some((info) => info.air === input.model)) return;
+  const air = Air.parseSafe(input.model);
+  if (air?.source !== 'civitai') return;
+  const versionId = Number(air.version);
+  const modelId = Number(air.id);
+  if (
+    !Number.isSafeInteger(versionId) ||
+    versionId <= 0 ||
+    !Number.isSafeInteger(modelId) ||
+    modelId <= 0
+  )
+    throw throwBadRequestError('The custom training checkpoint has an invalid model version.');
+  const checkpoint = await dbWrite.modelVersion.findFirst({
+    where: { id: versionId, modelId },
+    select: { baseModel: true },
+  });
+  if (!checkpoint) throw throwBadRequestError('The custom training checkpoint could not be found.');
+  return checkpoint.baseModel as BaseModel;
 }
 
 function toIso(value?: string | null): string | undefined {
@@ -352,6 +397,8 @@ export async function createDraftModelFromWorkflow({
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
   // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
   assertTrainingModerationApproved(workflow);
+  if (!user.isModerator && (await studioWithheldWorkflowIds(user.id, [workflow.id])).length > 0)
+    throw throwNotFoundError('Training run not found');
 
   const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
   const selectedEpoch =
@@ -398,10 +445,15 @@ export async function createDraftModelFromWorkflow({
     trainingKey,
     info: trainingInfo,
   } = mapTrainingBaseModelToBaseModel(workflow);
+  if (!user.isModerator && isHiddenBaseModel(baseModel)) {
+    const message = `${baseModel} models can't be created from Training Studio yet.`;
+    throw throwBadRequestError(message, new PublishRefusalError('unsupported-base', message));
+  }
   const { step } = getTrainingStep(workflow);
   const input = ((step as { input?: TrainingStepInputLike }).input ?? {}) as TrainingStepInputLike;
   const meta = (workflow.metadata ?? {}) as TrainingStudioMeta;
 
+  const customBaseModel = await customKohyaBaseModel(input);
   const trigger = meta.trigger || input.triggerWord || undefined;
   const modelName = truncateModelName(
     name?.trim() ||
@@ -422,8 +474,17 @@ export async function createDraftModelFromWorkflow({
   const trainingModelType = mapLoraTypeToTrainingModelType(meta.loraType);
 
   const hyperparameters = readStepHyperparameters(input);
+  const kohyaParams =
+    input.engine === 'kohya'
+      ? studioKohyaTrainingDetailsParams.parse({
+          ...input,
+          engine: 'kohya',
+          loraType: 'lora',
+          targetSteps: input.steps,
+        })
+      : undefined;
   // A rejected value is stored as its default or dropped, which reads like a real value.
-  if (hyperparameters.rejected.length)
+  if (!kohyaParams && hyperparameters.rejected.length)
     logToAxiom({
       name: 'training-studio-publish-param-rejected',
       type: 'warning',
@@ -434,15 +495,18 @@ export async function createDraftModelFromWorkflow({
   const trainingDetails: TrainingDetailsObj = {
     type: trainingModelType ?? 'Character',
     mediaType,
-    baseModel: trainingKey,
+    baseModel: customBaseModel ? input.model : trainingKey,
     baseModelType: trainingBaseModelType,
-    params: {
+    params: kohyaParams ?? {
       engine: 'ai-toolkit',
       ecosystem: input.ecosystem ?? trainingInfo.aiToolkit?.ecosystem ?? '',
       ...(input.modelVariant && { modelVariant: input.modelVariant }),
       ...hyperparameters.params,
     },
     samplePrompts: input.samples?.prompts ?? [],
+    ...(input.engine === 'kohya' && input.samples?.negativePrompt
+      ? { negativePrompt: input.samples.negativePrompt }
+      : {}),
   };
 
   const model = await upsertModel({
@@ -468,7 +532,7 @@ export async function createDraftModelFromWorkflow({
   const modelVersion = await upsertModelVersion({
     modelId: model.id,
     name: 'v1',
-    baseModel,
+    baseModel: customBaseModel ?? baseModel,
     uploadType: ModelUploadType.Trained,
     status: ModelStatus.Draft,
     trainedWords: trigger ? [trigger] : [],

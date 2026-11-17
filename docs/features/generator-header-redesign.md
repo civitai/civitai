@@ -4,13 +4,12 @@ Implements the ["Above the Prompt"](https://claude.ai/code/artifact/01a73589-85d
 proposal, scoped to the generation forms. Every other `ResourceSelectModal` consumer keeps today's
 behaviour.
 
-> **Header fully reverted (2026-09-23).** Decisions 2 and 3 and phases 01 and 04 are undone — the
-> form-graph header is now `generation_v2`'s `WorkflowInput` beside `BaseModelInput`, with
-> `SelectedWorkflowDisplay` and the `getWorkflowModes` mode strip beneath, the same as the retired
-> data-graph lane's. The old `WorkflowPicker` fork (flat list, "Switches model" badge) and its browser test are
-> deleted; `workflow-visibility.ts` stays, since `WorkflowInput` was moved onto it. The mobile generator has
-> its own, unrelated `WorkflowPicker` in `WorkflowInput.tsx` (a card opening a "Choose a workflow" sheet,
-> `docs/plans/mobile-generator.md`); desktop and the legacy narrow layout still use the icon segments.
+> **Header fully reverted (2026-09-23), then replaced.** Decisions 2 and 3 and phases 01 and 04 are
+> undone. The header is now the mobile generator's two cards on every layout (`WorkflowRow`): the
+> workflow (`generation_v2/inputs/WorkflowPicker.tsx`) with its ecosystem-filtered modes, then the
+> model card headed by `BaseModelInput` (`docs/plans/mobile-generator.md`). The old `WorkflowPicker`
+> fork (a flat list with a "Switches model" badge) is gone; `workflow-visibility.ts` stays, since the
+> picker reads it.
 >
 > The flat list was the reason: it showed every workflow regardless of ecosystem, so `img2img`
 > ("Image Variations", SD-family only) appeared while Qwen 2.1 was selected, badged "Switches model".
@@ -29,7 +28,7 @@ Three kinds of code are involved, and they get different treatment:
 | Layer            | Files                                                         | Treatment                                                                                                                                                                                                                |
 | ---------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Shell / header   | `src/components/form-graph/generation/BaseGenerationForm.tsx` | Already form-graph-local. Edit freely.                                                                                                                                                                                   |
-| Header inputs    | `generation_v2/inputs/WorkflowInput`, `BaseModelInput`        | Both used as-is from `generation_v2` — the old `WorkflowPicker` fork is gone. (On the mobile layout only, `BaseGenerationForm` swaps `WorkflowInput` for the mobile `WorkflowPicker` that lives in `WorkflowInput.tsx`.) |
+| Header inputs    | `generation_v2/inputs/WorkflowPicker`, `BaseModelInput`       | Both used as-is from `generation_v2`, through `WorkflowRow`'s two cards (`WorkflowPicker`, then `BaseModelInput` heading the model card), on every layout. |
 | Picker internals | `ImageGeneration/GenerationForm/ResourceSelect*`              | **Extend additively.** Shared with App Blocks, Challenge, Apps settings, wildcards, `Resource/Files`. New props default to today's behaviour.                                                                            |
 
 The picker internals are the expensive half to rebuild and the ones the proposal explicitly wants to

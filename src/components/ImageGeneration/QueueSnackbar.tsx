@@ -18,11 +18,15 @@ import React from 'react';
 import classes from './QueueSnackbar.module.scss';
 import clsx from 'clsx';
 
-export function QueueSnackbar() {
+/**
+ * The queue's state above Generate: status, a bar per slot and a line of text. `mobile` is the
+ * mobile generator's footer: the slots share the width, and "queue" closes the form onto it.
+ */
+export function QueueSnackbar({ mobile }: { mobile?: boolean }) {
   const router = useRouter();
   const { queued, queueStatus, requestLimit, requestsRemaining, requestsLoading } =
     useGenerationContext((state) => state);
-  const includeQueueLink = !router.pathname.includes('/generate');
+  const includeQueueLink = mobile || !router.pathname.includes('/generate');
 
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {
@@ -81,8 +85,8 @@ export function QueueSnackbar() {
               quantity={quantity}
             />
           )}
-          <QueueSlots />
-          <Text size="xs" c="dimmed">
+          <QueueSlots fill={mobile} className={mobile ? 'min-w-0 flex-1' : undefined} />
+          <Text size="xs" c="dimmed" className={mobile ? 'shrink-0' : undefined}>
             {!!queued.length && queueStatus ? (
               dictionary[queueStatus]()
             ) : includeQueueLink ? (

@@ -321,6 +321,25 @@ describe('manageInvoicePaid — membership bonus needs a billed month', () => {
     expect(mockRecordMembershipPaymentReward).toHaveBeenCalledTimes(1);
   });
 
+  // The Buzz service dedupes on externalTransactionId; this pins that the key is the invoice, so a
+  // redelivered invoice repeats it and a re-minted residual's first invoice does not.
+  it('uses the invoice id as the bonus idempotency key', async () => {
+    const gifted = (id: string, subscription: string) =>
+      fakeInvoice({
+        id,
+        subscription,
+        billing_reason: 'subscription_create',
+        amount_paid: 0,
+        total: 0,
+      } as unknown as Partial<Stripe.Invoice>);
+    await manageInvoicePaid(gifted('in_month_1', 'sub_first'));
+    await manageInvoicePaid(gifted('in_month_1', 'sub_first'));
+    await manageInvoicePaid(gifted('in_remint_month_2', 'sub_remint'));
+
+    const keys = mockCreateBuzzTransaction.mock.calls.map(([tx]) => tx.externalTransactionId);
+    expect(keys).toEqual(['in_month_1', 'in_month_1', 'in_remint_month_2']);
+  });
+
   it('a renewal paid from customer balance (amount_paid 0, total > 0) keeps the bonus', async () => {
     await manageInvoicePaid(fakeInvoice({ amount_paid: 0, total: 1000 }));
     expect(mockCreateBuzzTransaction).toHaveBeenCalledTimes(1);

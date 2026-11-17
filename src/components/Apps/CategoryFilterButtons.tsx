@@ -1,4 +1,5 @@
-import { ActionIcon, Group, Tooltip } from '@mantine/core';
+import { ActionIcon, Group } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconLayoutGrid } from '@tabler/icons-react';
 import {
   MARKETPLACE_CATEGORIES,

@@ -74,6 +74,7 @@ async function prefetchesFor(features: Record<string, boolean>) {
     ctx: {
       params: { id: String(F.MODEL_ID), slug: ['lantern-glow-portrait-lora'] },
       query: { id: String(F.MODEL_ID), slug: ['lantern-glow-portrait-lora'] },
+      req: { headers: {} },
     },
     session: SESSION,
     features,

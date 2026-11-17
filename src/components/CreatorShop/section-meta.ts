@@ -2,6 +2,7 @@ import type { Icon, IconProps } from '@tabler/icons-react';
 import {
   IconBox,
   IconBriefcase,
+  IconGift,
   IconShirt,
   IconSparkles,
   IconStar,
@@ -23,10 +24,12 @@ export const sectionIcons: Record<CreatorShopSectionKey, TablerIcon> = {
   services: IconBriefcase,
   merch: IconShirt,
   models: IconBox,
+  mysteryPacks: IconGift,
 };
 
 const sectionFlags: Partial<Record<CreatorShopSectionKey, keyof FeatureAccess>> = {
   services: 'creatorServices',
+  mysteryPacks: 'creatorMysteryPacks',
 };
 
 export const isSectionAvailable = (key: CreatorShopSectionKey, features: FeatureAccess) => {
@@ -55,3 +58,10 @@ export const storefrontSectionKeys = (
 
 /** The storefront section's element id, so a link can jump to it. */
 export const storefrontSectionId = (key: CreatorShopSectionKey) => `shop-${key}`;
+
+/** A service card's element id; the moderator reports link to it as `/shop#service-<id>`. */
+export const serviceCardId = (offeringId: number) => `service-${offeringId}`;
+
+/** An offering's card on its seller's storefront. */
+export const serviceStorefrontHref = (username: string, offeringId: number) =>
+  `/user/${username}/shop#${serviceCardId(offeringId)}`;

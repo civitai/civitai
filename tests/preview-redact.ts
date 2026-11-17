@@ -1,22 +1,15 @@
 /**
  * Keep session credentials out of the preview smoke log.
  *
- * The smoke suite authenticates with a minted session cookie (preview-auth.setup.ts),
- * and Playwright's own error output prints it: when an APIRequestContext call or a
- * `route.fetch()` fails, the error carries a "Call log" that lists every REQUEST
- * HEADER, `cookie:` included (playwright-core `server/fetch.js`). The list reporter
- * prints that error verbatim, so a single failing request put a live session token in
- * the CI log. Nothing in this repo ever called `console.log(token)` — the print is the
- * test runner's, which is why a lint over our own source could not have caught it.
+ * The leak path is Playwright's own error output: a failed APIRequestContext call or
+ * `route.fetch()` carries a "Call log" listing every request header, `cookie:` included
+ * (playwright-core `server/fetch.js`), and the list reporter prints it verbatim.
  *
- * So the fix is at the OUTPUT boundary, not at a call site: `installOutputRedaction()`
- * wraps `process.stdout.write` / `process.stderr.write` of whatever process loads
- * playwright.preview.config.ts. That covers the runner process, where every reporter
- * writes — including reporters chosen on the command line (`--reporter=list,json`),
- * which REPLACE the config's `reporter` list and so would bypass a redacting reporter.
- *
- * Out of scope (not stdout/stderr): the JSON report file, the HTML report, traces and
- * `error-context.md` on disk. They stay wherever the runner writes them.
+ * Redaction sits at the OUTPUT boundary: `installOutputRedaction()` wraps
+ * `process.stdout.write` / `process.stderr.write` of whatever process loads
+ * playwright.preview.config.ts, where every reporter writes. A redacting reporter would
+ * not do: `--reporter` on the command line REPLACES the config's `reporter` list.
+ * Files on disk are not covered (see the NOTE in playwright.preview.config.ts).
  *
  * A redacted value keeps its first 4 characters and its length, e.g. `eyJh***(len=412)`,
  * enough to tell two tokens apart in a log without making either usable.
@@ -78,10 +71,9 @@ type Write = NodeJS.WriteStream['write'];
  * Redact everything written through `stream.write`. Exported for the unit test; use
  * `installOutputRedaction()` in the harness.
  *
- * The `Uint8Array` branch is live, not defensive: a test's own output is relayed from the
- * worker as a Buffer whenever the test wrote one (`process.stdout.write(buf)`), and the
- * list reporter writes that Buffer straight to stdout. Both tiers of
- * scripts/__tests__/preview-smoke-log-redaction.test.ts exercise it.
+ * A test's own output is relayed from the worker as a Buffer whenever the test wrote one
+ * (`process.stdout.write(buf)`), and the list reporter writes that Buffer straight to
+ * stdout, hence the `Uint8Array` branch.
  */
 export function wrapWrite(stream: Pick<NodeJS.WriteStream, 'write'>) {
   const original = stream.write.bind(stream) as unknown as (...args: unknown[]) => boolean;

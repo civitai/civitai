@@ -123,5 +123,13 @@ for (const outcome of [
 ] as const)
   pushDeliveryTotal.inc({ outcome, type: 'none' }, 0); // baseline only; no send is typed 'none'
 for (const outcome of ['dispatched', 'failure'] as const) emailDispatchTotal.inc({ outcome }, 0);
-for (const operation of ['get', 'set', 'increment', 'has', 'clearCategory', 'bustUser'] as const)
+for (const operation of [
+  'get',
+  'set',
+  'increment',
+  'has',
+  'clearCategory',
+  'bustUser',
+  'lag',
+] as const)
   redisErrorsTotal.inc({ operation }, 0);

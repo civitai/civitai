@@ -171,8 +171,11 @@ describe('the profile shows event hats only to viewers the event is open to', ()
     dbMock.dbRead.userStat.findFirst.mockResolvedValue(null as never);
   });
 
-  const profileHats = async (viewer: { sessionUserId?: number; isModerator?: boolean }) =>
-    hatsIn((await getUserWithProfile({ id: OWNER, ...viewer })).cosmetics);
+  const profileHats = async (viewer: {
+    sessionUserId?: number;
+    isModerator?: boolean;
+    eventViewer?: { id?: number; isModerator?: boolean };
+  }) => hatsIn((await getUserWithProfile({ id: OWNER, ...viewer })).cosmetics);
 
   it('hides them before launch from a signed-out viewer and a viewer the flag is off for', async () => {
     expect(await profileHats({})).toHaveLength(0);
@@ -186,7 +189,15 @@ describe('the profile shows event hats only to viewers the event is open to', ()
 
   it('shows them to a tester and a moderator', async () => {
     expect(await profileHats({ sessionUserId: TESTER })).toHaveLength(2);
-    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(2);
+    expect(
+      await profileHats({ sessionUserId: 99, eventViewer: { id: 99, isModerator: true } })
+    ).toHaveLength(2);
+  });
+
+  // `isModerator` decides only what the profile itself shows; whether a moderator counts for the
+  // event is the caller's eventViewerOf, which a scoped token can lose.
+  it('does not take the profile moderator flag as the event viewer', async () => {
+    expect(await profileHats({ sessionUserId: 99, isModerator: true })).toHaveLength(0);
   });
 
   it("gives the owner no exception: their own hats follow the flag like anyone else's", async () => {

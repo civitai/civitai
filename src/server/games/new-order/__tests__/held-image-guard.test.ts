@@ -23,6 +23,8 @@ const { counterStub, poolStub, mockQuery } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/games/new-order/utils', () => ({
+  // The branch reads this to map a Paladin onto the Templar pools; the real mapping is one line.
+  legacyRank: (rank: string) => (rank === 'Paladin' ? 'Templar' : rank),
   acolyteFailedJudgments: counterStub,
   allJudgmentsCounter: counterStub,
   blessedBuzzCounter: counterStub,
@@ -69,6 +71,7 @@ import {
   getImagesQueue,
   getPlayerHistory,
   getSanityCheckImage,
+  RATED_SET_COMPLETE,
 } from '~/server/services/games/new-order.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -80,13 +83,23 @@ const HELD = 2;
 const HELD_OTHER = 3;
 const SANITY_CLEAN = 10;
 const SANITY_HELD = 11;
+// Blocked by each of the three markers in turn, none of them held for review.
+const BLOCKED = 4;
+const BLOCKED_LEVEL = 5;
+const BLOCKED_REASON = 6;
 
-const rows: Record<number, { needsReview: string | null }> = {
+const rows: Record<
+  number,
+  { needsReview: string | null; ingestion?: string; nsfwLevel?: number; blockedFor?: string }
+> = {
   [CLEAN]: { needsReview: null },
   [HELD]: { needsReview: 'csam' },
   [HELD_OTHER]: { needsReview: 'minor' },
   [SANITY_CLEAN]: { needsReview: null },
   [SANITY_HELD]: { needsReview: 'csam' },
+  [BLOCKED]: { needsReview: null, ingestion: 'Blocked' },
+  [BLOCKED_LEVEL]: { needsReview: null, nsfwLevel: 32 },
+  [BLOCKED_REASON]: { needsReview: null, ingestion: 'Rescan', blockedFor: 'CSAM' },
 };
 // Ids from 100 up are clean filler for the pool-offset case.
 const lookup = (id: number) => rows[id] ?? (id >= 100 ? { needsReview: null } : undefined);
@@ -96,6 +109,8 @@ const row = (id: number, select: Record<string, boolean>) => {
     url: `https://example.test/${id}.jpg`,
     nsfwLevel: 1,
     metadata: {},
+    ingestion: 'Scanned',
+    blockedFor: null,
     ...lookup(id),
   };
   return Object.fromEntries(Object.keys(select).map((key) => [key, full[key]]));
@@ -114,7 +129,9 @@ beforeEach(() => {
     rankType: NewOrderRankType.Knight,
     startAt: new Date('2026-01-01T00:00:00Z'),
   });
-  redisMock.redis.exists.mockResolvedValue(1);
+  redisMock.redis.sIsMember.mockImplementation(
+    async (_key: string, id: string) => id === RATED_SET_COMPLETE
+  ); // set is built
   redisMock.redis.smIsMember.mockImplementation(async (_key: string, ids: string[]) =>
     ids.map(() => false)
   );
@@ -133,6 +150,17 @@ describe('New Order held-image guard', () => {
 
     const enqueued = poolStub.getCount.mock.calls.map(([id]) => id);
     expect(enqueued).toEqual([CLEAN]);
+  });
+
+  it('(a1) addImageToQueue never enqueues a blocked image, whatever marks it', async () => {
+    const result = await addImageToQueue({
+      imageIds: [CLEAN, BLOCKED, BLOCKED_LEVEL, BLOCKED_REASON],
+      rankType: NewOrderRankType.Knight,
+      priority: 1,
+    });
+
+    expect(poolStub.getCount.mock.calls.map(([id]) => id)).toEqual([CLEAN]);
+    expect(result.heldIds).toEqual([BLOCKED, BLOCKED_LEVEL, BLOCKED_REASON]);
   });
 
   it('(a2) addImageToQueue reports nothing added when every image is held', async () => {

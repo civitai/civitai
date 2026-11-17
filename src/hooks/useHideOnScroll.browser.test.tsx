@@ -30,6 +30,26 @@ function PaneHeader() {
   );
 }
 
+function PaneWithOptOutList() {
+  const ref = useRef<HTMLDivElement>(null);
+  const hidden = useHideOnScroll(ref);
+  return (
+    <div ref={ref} data-testid="pane" style={{ height: 300, overflowY: 'auto' }}>
+      <p>{hidden ? 'hidden' : 'shown'}</p>
+      <div
+        data-ignore-hide-on-scroll=""
+        data-testid="sidebar"
+        style={{ height: 200, overflowY: 'auto' }}
+      >
+        <div>
+          <div style={{ height: 5000 }} />
+        </div>
+      </div>
+      <div style={{ height: 5000 }} />
+    </div>
+  );
+}
+
 const scroll = (el: HTMLElement | Window, y: number, x = 0) => {
   if (el === window) window.scrollTo(0, y);
   else {
@@ -70,6 +90,20 @@ describe('useHideOnScroll', () => {
     await expect.element(page.getByText('hidden')).toBeInTheDocument();
     scroll(chips, 0, 300);
     await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect.element(page.getByText('hidden')).toBeInTheDocument();
+  });
+
+  test('a scroller marked data-ignore-hide-on-scroll does not hide it, the pane around it still does', async () => {
+    renderWithProviders(<PaneWithOptOutList />);
+    await expect.element(page.getByText('shown')).toBeInTheDocument();
+    const sidebar = page.getByTestId('sidebar').element() as HTMLElement;
+    const pane = page.getByTestId('pane').element() as HTMLElement;
+
+    scroll(sidebar, 400);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect.element(page.getByText('shown')).toBeInTheDocument();
+
+    scroll(pane, 400);
     await expect.element(page.getByText('hidden')).toBeInTheDocument();
   });
 });

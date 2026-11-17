@@ -81,6 +81,9 @@ beforeAll(async () => {
     CREATE TABLE "User" ("id" integer PRIMARY KEY);
     CREATE TABLE "Post" ("id" integer PRIMARY KEY);
     CREATE TABLE "Report" ("id" integer PRIMARY KEY);
+    -- What marks a chapter paid for, read for its owner.
+    CREATE TABLE "Placement" ("id" integer PRIMARY KEY, "free" boolean NOT NULL DEFAULT false,
+      "amount" integer NOT NULL DEFAULT 0);
   `);
   for (const name of [
     '20261023120000_storylines',

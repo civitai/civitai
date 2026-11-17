@@ -11,6 +11,8 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
 export const promptKeyName = (key: PromptKey): string =>
   key === 'base'
     ? 'General instructions'
+    : key === 'label:model-com-face-intent'
+    ? 'civitai.com face definition'
     : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
 export const blankPromptKeys = (prompts: Partial<Record<PromptKey, unknown>>): PromptKey[] =>
@@ -34,8 +36,7 @@ export const ENTITY_TYPE_NAMES: Record<LabEntityType, string> = {
   Crucible: 'Crucible',
   Collection: 'Collection',
   ChatMessage: 'Chat messages',
-  Comment: 'Model comment (old)',
-  CommentV2: 'Comment',
+  CommentV3: 'Comment',
   ResourceReview: 'Review',
   User: 'Username',
   UserProfile: 'Profile',

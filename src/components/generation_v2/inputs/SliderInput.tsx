@@ -2,12 +2,14 @@ import type { InputWrapperProps, NumberInputProps } from '@mantine/core';
 import { Group, Input, NumberInput, Text } from '@mantine/core';
 import { IconAlertTriangle, IconMinus, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { choiceIdleClass } from '~/libs/form/components/choice-styles';
 import { isValidElement, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { TouchSlider } from '~/components/generation_v2/inputs/TouchSlider';
 import { snapToStep } from '~/components/generation_v2/inputs/touch-slider.utils';
 import { useHoldRepeat } from '~/hooks/useHoldRepeat';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import classes from './SliderInput.module.scss';
 
 // =============================================================================
@@ -60,9 +62,7 @@ function PresetOptions({ options, value, onChange, disabled }: PresetOptionsProp
           disabled={disabled}
           className={clsx(
             'rounded px-2 py-0.5 text-xs transition-colors',
-            value === option.value
-              ? 'bg-blue-6 text-white'
-              : 'bg-gray-1 text-gray-7 hover:bg-gray-2 dark:bg-dark-5 dark:text-gray-4 dark:hover:bg-dark-4'
+            value === option.value ? 'bg-blue-6 text-white' : choiceIdleClass
           )}
         >
           {option.label}
@@ -289,21 +289,21 @@ export function SliderInput({
         </p>
       )}
       {hasPresets && (
-        <div className={classes.presets}>
-          {presets.map((preset) => (
-            <button
-              key={preset.value}
-              type="button"
-              disabled={disabled}
-              onClick={() => commit(preset.value)}
-              aria-pressed={current === preset.value}
-              className={classes.preset}
-            >
-              <span className={classes.presetLabel}>{preset.label}</span>
-              <span className={classes.presetValue}>{format(preset.value)}</span>
-            </button>
-          ))}
-        </div>
+        <ChoiceGroup
+          aria-label={name ? `${name} presets` : undefined}
+          value={current}
+          onChange={commit}
+          disabled={disabled}
+          data={presets.map((preset) => ({
+            value: preset.value,
+            label: (
+              <span className="flex flex-col items-center leading-tight">
+                <span>{preset.label}</span>
+                <span className="text-xs font-normal opacity-70">{format(preset.value)}</span>
+              </span>
+            ),
+          }))}
+        />
       )}
       {warningText}
     </div>

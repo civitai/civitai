@@ -91,7 +91,8 @@ export const articleMetrics = createMetricProcessor({
       affectedArticleIds.map((id) => ({
         id,
         action: SearchIndexUpdateQueueAction.Update,
-      }))
+      })),
+      { reason: 'metrics' }
     );
 
     // Bust article stat cache for all affected articles

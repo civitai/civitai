@@ -1,3 +1,7 @@
+import {
+  FEEDBACK_CAPTURE_OWNER_REFUSAL,
+  isFeedbackCaptureOwner,
+} from '@civitai/shared/feedback-capture';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { getModerationAccountId } from '~/server/auth/moderation-account';
@@ -128,6 +132,7 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
   const moderationId = requireModerationAccountId();
   if (userId === moderationId || actorId === moderationId)
     throw throwBadRequestError('The Civitai Moderation account cannot message itself.');
+  if (isFeedbackCaptureOwner(userId)) throw throwBadRequestError(FEEDBACK_CAPTURE_OWNER_REFUSAL);
 
   const target = await dbWrite.user.findFirst({
     where: { id: userId, deletedAt: null },
@@ -208,7 +213,7 @@ async function sendLocked({
         entityType,
         entityId,
         message: e.message,
-      }).catch(() => undefined)
+      })
     );
   await audit('chatMessage', sent.id);
   if (context?.reportId) {
@@ -216,7 +221,7 @@ async function sendLocked({
     const concerns = await reportConcernsUser(reportId, userId).catch((e: Error) => e);
     if (concerns === true) await audit('report', reportId);
     else
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'message-as-civitai-report-link-dropped',
         reason: concerns === false ? 'not-about-recipient' : 'check-failed',
@@ -225,7 +230,7 @@ async function sendLocked({
         userId,
         reportId,
         chatMessageId: sent.id,
-      }).catch(() => undefined);
+      });
   }
   // Delivered already; a failed tray notice must not free the idempotency key for a second send.
   await nudge({ userId, chatId, messageId: sent.id }).catch(() => undefined);

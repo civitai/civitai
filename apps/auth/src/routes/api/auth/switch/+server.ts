@@ -23,6 +23,7 @@ export const POST: RequestHandler = async ({ request, cookies, locals }) => {
 
   const user = await getOrProduceSessionUser(userId);
   if (!user) error(404, 'no such user');
+  if (user.bannedAt || user.deletedAt) error(403, 'account is not active');
 
   const token = await mintUserSession(user, { parent: locals.session, clearImpersonation: true });
   await touchAccount(deviceId, userId); // slide the 30-day idle clock

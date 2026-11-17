@@ -40,14 +40,16 @@ keeps today's layout.
 - **Feed becomes a density toggle** in the header (Batches or Grid). Same outputs, filters,
   selection, bulk actions and lightbox as today's Feed.
 - **The form is a bottom sheet** with two states:
-  - _Closed:_ its title row over the queue (workflow name, up chevron), without the
-    form's own actions (a product decision).
+  - _Closed:_ off screen. The queue has the whole screen and a floating Create button sits over its
+    bottom-right corner; a tap on it opens the form.
   - _Open:_ full screen, the form under the same title row (workflow name, Presets, Reset,
     collapse chevron), scrolling inside the sheet, with the footer docked at its bottom.
-  - No drag handle (a product decision): the whole title row drags, and the chevron shows which way. The
-    title has the row's width up to its buttons, so the longest workflow names fit at 360px.
-  - It never fully hides, so the way back to the form is always on screen.
-  - It drags only from its title row, never from the form body.
+  - No drag handle (a product decision): the open form's title row drags down to close it, and the
+    chevron shows which way. Dragging never opens it. The title has the row's width up to its
+    buttons, so the longest workflow names fit at 360px.
+  - The Create button is always on screen while the form is closed, so the way back to the form
+    never hides.
+  - It closes by drag only from its title row, never from the form body.
   - After Generate it stays open, for the next tweak, and the queue keeps its scroll position.
     While jobs run, a ring spins around the open form's down chevron and a badge counts them, so
     the form shows that work is in flight; the chevron closes onto the queue.
@@ -105,17 +107,21 @@ Consequence, accepted: changes to shared components reach every user, desktop in
 PR merges, and the flag cannot switch them off. The slider's new engine is the main one; it also fixes
 the scroll-grabbing slider for phone users still on the legacy generator.
 
-**One phone rule, defined once.** A window gets the phone layout when its primary input is touch and
-it is narrower than 768px, or shorter than 500px (a phone held sideways is wider than 768px but
-short). As one media query:
+**One phone rule, defined once** (`src/utils/phone-layout.ts`). A window gets the phone layout when
+its primary input is touch and either it is narrower than 768px (`PHONE_MEDIA_QUERY`), or the device
+itself is a phone: the short side of its screen is under 500px (`isPhoneScreen`), which catches a
+phone held sideways. The device check reads `screen`, not the window, so an on-screen keyboard
+can't turn a landscape tablet into a phone, and it skips a browser asking for the desktop site (a
+phone's "Desktop mode" sends a desktop user agent and a wide window, so it gets the desktop layout).
 
 ```css
-(pointer: coarse) and (max-width: 767px), (pointer: coarse) and (max-height: 499px)
+(pointer: coarse) and (max-width: 767px)
 ```
 
 What it includes and leaves out:
 
 - **In:** phones upright and sideways; a tablet app in a narrow split-view slice.
+- **Out on purpose:** a phone in its browser's "Desktop mode".
 - **Out:** narrow desktop windows (no touch), touch-screen laptops with a narrowed window (their
   primary input is the trackpad, which is why the rule uses `pointer` and not `any-pointer`), and
   full-size tablets. These keep today's layout.
@@ -220,17 +226,15 @@ finds nothing outside test files, and the only layout decision is `useGeneratorL
 - Queue as the screen and its one-row header (challenges, count, Batches/Grid toggle, sort, filters,
   Close); the grid is today's Feed.
 - The form sheet: closed and open states, title-row drag, title row with the
-  workflow name, Reset (phase 4) and collapse.
+  workflow name, Reset (phase 4) and collapse. Closed, the sheet is off screen and the form is a
+  floating Create button over the results' bottom-right corner (`MobileGenerator`); the results get
+  the whole screen and end clear of it. The button only opens the form, on a tap, and never
+  generates. A sideways edge tab was considered and dropped: Android's gesture navigation takes a
+  swipe in from either edge as Back. The swipe up to open, and the first-run swipe coach that taught
+  it, went with the bottom bar: a labelled button needs neither.
 - Generate leaves the sheet open, its chevron spinning while jobs run. Remix and "Generate with
   this resource" open it pre-filled.
 - The footer docks to the visual viewport so the iOS keyboard does not cover it.
-- **Make the pull-up obvious.** Pulling the form up from the bottom is a new interaction, so the
-  closed bar has to invite it:
-  - the whole closed bar is a tap target;
-  - on first visit the sheet starts closed, and a swipe coach holds the screen: a scrim over
-    everything above the bar, a looping finger swiping up, and "Swipe up to open the form". Only
-    opening the form ends it, by a swipe up anywhere on it or a tap on the bar (for anyone who
-    can't swipe); it never shows again.
 - **No tour on phones.** The generator tour does not start in the mobile container, and its Help
   entry is not shown there. Desktop keeps it.
 - **On a phone the panel is always full screen and always the phone layout**, whatever the sidebar
@@ -272,15 +276,15 @@ Built (`src/components/ImageGeneration/MobileGenerator.tsx`):
   (picker, sort and filter sheets) while the mobile generator is showing, and to every
   `dialogStore` dialog likewise. Next sees those pops through `RoutedDialogProvider`'s `beforePopState`,
   which returns false for them.
-- The open sheet fills the screen below the status bar (the first-run swipe coach teaches the pull-up, so
-  it no longer leaves a strip of header showing); the chevron, a drag down and Back close it. The
+- The open sheet fills the screen below the status bar (it no longer leaves a strip of header
+  showing); the chevron, a drag down and Back close it. The
   generator pays its own top safe-area inset, being fixed.
 - The header has desktop's `ChallengeIndicator`; presets (`PresetHeaderButton`, a sheet here) sit
   in the open form's title row beside Reset, both icons so they fit at 360px. The tour does not
   start, and moderator tools
   and Maximize are not shown. Pull-to-refresh is off in the form, so a downward drag there scrolls
   instead of reloading the page.
-- The sheet starts closed on a first visit (nothing saved), under the swipe coach, and opens on
+- The sheet starts closed on a first visit (nothing saved), and opens on
   every entry that brings input, such as Remix. A plain reopen, such as
   Create, keeps the sheet as it was left.
 - Not yet checked: generating while signed in, the lightbox and image editors over the sheet, the
@@ -306,8 +310,8 @@ Chrome; and a first-time tester opens the form without being told how.
 - Footer alerts as single-line strips above the footer row.
 - The output format and priority menus open as sheets in the mobile generator. The VAE and
   upscaler pickers stay the resource search (decided).
-- A resource's version picker (`ButtonGroupInput` in `ResourceSelectInput.tsx`) stays buttons up to
-  three versions and becomes a select above that (a sheet in the mobile generator), keeping the
+- A resource's version picker (`ResourceSelectInput.tsx`) stays tiles up to three versions and
+  becomes a select above that, and always on a phone (a sheet in the mobile generator), keeping the
   experimental marker on each option.
 - Queue and grid tiles: four actions in the tile footer, the rest in the tile's ⋮ menu.
 
@@ -328,8 +332,8 @@ Built:
   first opened. Training keeps `BuzzTypeSelector`.
 - Queue slots: a line of their own along the bottom of the mobile header (`QueueSlots fill`), one
   bar per slot sharing the width, so up to 12 slots fit; the header's count badge stays. The phone
-  footer drops the queue line and keeps only the free tier's full-queue banner
-  (`QueueLimitBanner`). The mobile generator provides `GenerationProvider` around its header and
+  footer shows the queue line above Generate too, as desktop does (`QueueSnackbar mobile`: slots
+  sharing the width, and "queue" closes the form onto it), since the open form covers the header. The mobile generator provides `GenerationProvider` around its header and
   form, and the form's provider defers to it, so both read one queue state.
 - Queue cards: "Additional Details" is a Details button in the card header (`QueueItemDetails`),
   a popover on desktop and a sheet on a phone, holding the parameters. The prompt and every resource
@@ -359,8 +363,9 @@ Built:
   picker's cards no longer show the auction bid button. `useHideOnScroll` (`src/hooks/`) is the one hide-on-scroll rule: the
   generator header, the picker toolbar, the site's `SubNav` and the comics reader header all use
   it (shown near the top; hidden after 100px down since the last turn, back after 100px up).
-- While a text field in the form has focus (the keyboard is up), the footer hides so the field
-  has the room; it returns when the field loses focus. The prompt editor is 16px in the mobile
+- While a text field in the form has focus and an on-screen keyboard is up (`useKeyboardOpen`),
+  the footer hides so the field has the room; it returns when the field loses focus or the
+  keyboard goes down (dismissed with the field still focused, or a hardware keyboard). The prompt editor is 16px in the mobile
   generator, as the Mantine inputs are, so iOS does not zoom the page on focus.
 - Strips fold only what informs. What stops Generate stays in full (`data-strip-full`): the terms,
   the generation status and self-hosted blocks, and the footer's blocking alerts (missing field,
@@ -374,12 +379,35 @@ Built:
   keeps its full height.
 - Output format and priority open their choices as a sheet (`SheetOption` rows, shared with
   `SheetSelect`); a member-only priority still offers the membership to a non-member.
-- Version picker: past three versions, a `SheetSelect` (a select on desktop too).
-- The workflow is one card above the ecosystem (`WorkflowPicker`): its category, name and
-  description, and a Change pill. It opens a "Choose a workflow" sheet with a tab per category,
-  open on the current one. The category icons alone didn't read as a picker on a phone, and the
-  name beside them read as a label. Desktop and the legacy narrow layout keep the icons; which one
-  renders is `WorkflowRow` and `WorkflowModes` (`form-graph/generation/WorkflowRow.tsx`).
+- From the design pass (a tester's review; the entrance is still open):
+  - The top of the form is two cards, on a phone and on desktop alike. The workflow card holds the
+    workflow row (icon, name, category, Change) and its modes. The model card is headed by the
+    ecosystem, which decides the model, and holds the form's model and its version groups
+    (`ModelCardInput`'s children), drawn into it unlabelled through the `setupModel` slot. Wan's
+    version joins it as another of `ModelCardInput`'s children, and 3D's engine version, which has
+    no model, through `ModelCardSection`. Version tiles fill one row, up to six, while every label
+    fits, and wrap into even rows when one would not (`dynamicColumns`).
+  - Most pick-ones in the generator are now a `ChoiceGroup`
+    (`src/libs/form/components/ChoiceGroup.tsx`): equal-width tiles, one selected style, four to a
+    row unless `columns` or `dynamicColumns` says otherwise. It replaced `ButtonGroupInput` and the
+    generator's segmented controls; the custom-size presets share its style through
+    `choice-styles.ts`. Not yet moved: the upscale, interpolation and scale-factor radio tiles
+    (`RadioGroup`), and the preset rows in `SelectInput` and `SliderInput`, which keep their own
+    selected style.
+  - Contrast, generator form only, both themes (`GenerationLayout.module.scss`): three steps, a
+    ground a step back from the page, white / dark-6 cards on it, and fields a step up with a firmer
+    border; darker secondary text. Portalled sheets and modals keep the site's.
+  - A resource's remove is a red trash icon, not a grey ✕.
+- A footer alert about a missing field has a Show link that scrolls to the field, for fields marked
+  `data-generation-field` (source images so far, which also show as required). On a touch screen
+  the image box says "Tap to choose an image". Small text buttons (Recent, Clear all, Add set) get
+  a 44px tap area without changing their look (`data-tap-area`).
+- The workflow row (`WorkflowPicker`): its icon, name and category, and Change. It opens a
+  "Choose a workflow" picker with a tab per category, open on the current one: a sheet on a phone,
+  a popover on desktop, full screen in the legacy narrow layout. The category icons alone didn't
+  read as a picker on a phone, and the name beside them read as a label. Desktop used the icons
+  until it took the phone's cards too (`WorkflowRow`, `form-graph/generation/WorkflowRow.tsx`),
+  dropping its separate workflow description strip and the Model label over the model.
 - The queue filters' Ecosystem and Workflow selects are `SheetSelect`s: a full-height sheet with a
   search box that waits for a tap, so the keyboard stays down until wanted. A clearable
   `SheetSelect` lists its placeholder ("All Models") first, which clears it, and its field has an ✕.
@@ -395,7 +423,7 @@ Built:
   separate transactions icon shows only for a run with no cost; the cost and workflow badges wrap
   together.
 - The mobile generator reopens as it was left (form open or closed, Batches or Grid), restored once
-  per page load from local storage; a first visit starts closed, under the swipe coach.
+  per page load from local storage; a first visit starts closed.
 - The VAE and upscaler pickers stay the resource search, which opens full screen on a phone and
   closes on Back.
 - Known gap: "balance after" in the cost sheet leaves out a download-boost fee accepted at submit;

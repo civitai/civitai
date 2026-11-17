@@ -5,9 +5,10 @@ import { TRPCError } from '@trpc/server';
  * training.service.toOrchestratorError fault classification (mirrors orchestrator
  * PR #2978, commit df625feef0).
  *
- * `toOrchestratorError` is the shared error mapper for the THREE training
- * orchestrator-submit points (getAutoLabelUploadUrl / submitAutoLabelWorkflow /
- * getAutoLabelWorkflow); it is only reached on a `!data` result from an
+ * `toOrchestratorError` is the shared error mapper for the training auto-label
+ * orchestrator round-trips (submitAutoLabelWorkflow / getAutoLabelWorkflow; the
+ * upload URL goes through getConsumerBlobUploadUrlService and its own mapping);
+ * it is only reached on a `!data` result from an
  * orchestrator round-trip. Its old `default` case threw a plain `Error`, so a
  * transient orchestrator 5xx (500/502/503/504) OR a status-less network/timeout
  * failure surfaced as a NON-retryable generic tRPC INTERNAL_SERVER_ERROR (500)

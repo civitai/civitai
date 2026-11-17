@@ -2,6 +2,10 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import {
+  blockScopePermissions,
+  groupListingPermissions,
+} from '~/components/Apps/listingPermissions';
 
 /**
  * BlockConsentModal — the lazy-consent surface a logged-in viewer sees when a
@@ -56,6 +60,7 @@ vi.mock('~/utils/trpc', () => ({
 const { default: BlockConsentModal } = await import('./BlockConsentModal');
 
 const SPEND = 'ai:write:budgeted';
+const APP_STORAGE_IMPORT = 'apps:storage:import';
 
 describe('BlockConsentModal — sensitive scope emphasis for the end user', () => {
   test('a sensitive requested scope shows the "Sensitive" indicator; a normal one does not', async () => {
@@ -405,5 +410,85 @@ describe('BlockConsentModal — publish consent in a source app', () => {
     await expect.element(dialog).toHaveTextContent('Notes Fork needs permission in another app');
     await expect.element(dialog).not.toHaveTextContent('notes-app');
     await expect.element(page.getByRole('button', { name: 'Allow' })).toBeDisabled();
+  });
+});
+
+/**
+ * The launch prompt lists the requested scopes in the same groups and order as the store listing
+ * (`groupListingPermissions`) and every other permissions surface. Input order differs from the
+ * grouped order at every position, so a flat render in input order cannot pass.
+ */
+describe('BlockConsentModal — scopes grouped and ordered like the store listing', () => {
+  const UNKNOWN = 'zz:not-a-real:scope';
+  const INPUT = ['models:read:self', UNKNOWN, APP_STORAGE_IMPORT, 'user:read:self', SPEND];
+  const SENSITIVE = [SPEND, APP_STORAGE_IMPORT];
+  const OTHER = ['user:read:self', 'models:read:self', UNKNOWN];
+
+  /** The plain-language title each scope must show — never its id. */
+  const TITLE: Record<string, string> = {
+    'models:read:self': 'See the model it sits on',
+    [UNKNOWN]: 'Zz not a real scope',
+    [APP_STORAGE_IMPORT]: 'Use your data from another app',
+    'user:read:self': 'See your username and account status',
+    [SPEND]: 'Run AI work with your Buzz',
+  };
+
+  /** Where a scope's title first appears in the dialog. */
+  const positionIn = (text: string, scope: string) => text.indexOf(TITLE[scope]);
+
+  const renderPrompt = async () => {
+    renderWithProviders(
+      <BlockConsentModal
+        appBlockId="app-groups"
+        blockName="Grouped"
+        missingScopes={INPUT}
+        onGranted={vi.fn()}
+      />
+    );
+    await expect.element(page.getByTestId('block-consent-storage-imports')).toBeInTheDocument();
+    return document.querySelector('[role="dialog"]')?.textContent ?? '';
+  };
+
+  test('lists sensitive scopes first, each group in OAuth-bit order, and drops none', async () => {
+    const text = await renderPrompt();
+    for (const scope of INPUT) {
+      expect(positionIn(text, scope), `${scope} is not shown`).toBeGreaterThanOrEqual(0);
+    }
+    const shown = [...INPUT].sort((a, b) => positionIn(text, a) - positionIn(text, b));
+    expect(shown).toEqual([...SENSITIVE, ...OTHER]);
+    const grouped = groupListingPermissions(blockScopePermissions(INPUT));
+    expect(shown).toEqual([...grouped.sensitive, ...grouped.other].map((p) => p.id));
+  });
+
+  test('shows each scope as a plain-language title, never its id', async () => {
+    const text = await renderPrompt();
+    for (const scope of INPUT) {
+      expect(text, `${scope}'s title`).toContain(TITLE[scope]);
+      expect(text, `the raw id ${scope} reached the end user`).not.toContain(scope);
+    }
+    // An undescribed scope gets the humanised fallback, not a placeholder.
+    expect(text).not.toContain('(no description)');
+  });
+
+  test('names the two groups', async () => {
+    const text = await renderPrompt();
+    expect(text).toContain('Sensitive permissions (2)');
+    expect(text).toContain('Other permissions (3)');
+  });
+
+  // INVARIANT GUARD (green before and after the grouping change): the per-scope extras stay
+  // under their own scope.
+  test('the import detail stays under its own scope, and the spend limit still renders', async () => {
+    const text = await renderPrompt();
+    const detail = document.querySelector('[data-testid="block-consent-storage-imports"]');
+    const at = text.indexOf(detail?.textContent ?? '\u0000');
+    expect(at).toBeGreaterThan(positionIn(text, APP_STORAGE_IMPORT));
+    // Before whichever scope follows it on screen.
+    const after = INPUT.map((s) => positionIn(text, s)).filter(
+      (p) => p > positionIn(text, APP_STORAGE_IMPORT)
+    );
+    expect(after.length, 'nothing follows the import scope').toBeGreaterThan(0);
+    expect(at).toBeLessThan(Math.min(...after));
+    await expect.element(page.getByTestId('block-consent-budget-toggle')).toBeInTheDocument();
   });
 });

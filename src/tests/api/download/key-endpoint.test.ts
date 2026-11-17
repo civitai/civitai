@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 // The catch-all `/api/download/[...key]` handler resolves a download key via the
@@ -52,14 +52,15 @@ vi.mock('~/server/logging/client', () => ({
 // real abort classification runs.
 
 import handler from '~/pages/api/download/[...key]';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
-// Default to a key under the authed user's own `<type>/<userId>/` prefix so the branch tests below
-// pass the ownership gate (added below) and still reach the delivery worker. The
-// gate itself is covered by its own describe block at the end.
+// The branch tests below sign in as a moderator, so they pass the gate and reach the delivery
+// worker. The gate itself is covered by its own describe block at the end.
 function createMocks({
-  key = ['model', '42', 'file.safetensors'],
+  key = ['training-images-temp', '42', 'file.zip'],
   headers = {},
   remoteAddress,
 }: {
@@ -118,7 +119,7 @@ function createMocks({
   return { req, res };
 }
 
-const authedSession = { user: { id: 42 } };
+const authedSession = { user: { id: 42, isModerator: true } };
 
 describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () => {
   beforeEach(() => {
@@ -134,13 +135,13 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
       url: 'https://cdn.example.com/signed-url',
       urlExpiryDate: new Date(),
     });
-    // Own-prefix key for the authed user (id 42) so it passes the ownership gate and the redirect
-    // path is what we assert; the gate is covered in its own describe block below.
-    const { req, res } = createMocks({ key: ['model', '42', 'file.safetensors'] });
+    // The authed user is a moderator, so the redirect path is what we assert; the gate is covered in
+    // its own describe block below.
+    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'file.zip'] });
 
     await handler(req, res);
 
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/file.safetensors');
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/file.zip');
     expect(res._getRedirect()).toBe('https://cdn.example.com/signed-url');
     expect(res._getStatusCode()).toBe(200); // status() never called on the redirect path
     // The route now emits one info-level audit log per request; a client-fault must still never
@@ -152,17 +153,15 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     // The dominant dp-prod 500: `/api/download/images/127209598` → key
     // "images/127209598" → worker 404. Pre-fix this threw an unguarded 500.
     mockGetDownloadUrl.mockRejectedValue(new MockDeliveryWorkerError(404, 'Not Found'));
-    // Own-prefix key so it passes the ownership gate and the worker's own 404 is what we assert.
-    const { req, res } = createMocks({ key: ['model', '42', 'missing.safetensors'] });
+    const { req, res } = createMocks({ key: ['training-images-temp', '42', 'missing.zip'] });
 
     await expect(handler(req, res)).resolves.toBe(res); // resolves (no throw)
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('training-images-temp/42/missing.zip');
     expect(res._getStatusCode()).toBe(404);
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
     expect(res._getRedirect()).toBeUndefined();
     expect(res._getHeader('retry-after')).toBeUndefined();
     // Client-fault: MUST NOT error-log to Axiom (an unresolvable key is expected).
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -172,9 +171,8 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 
     await handler(req, res);
 
+    expect(mockGetDownloadUrl).toHaveBeenCalled();
     expect(res._getStatusCode()).toBe(404);
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -187,8 +185,6 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData()).toEqual({ error: 'Invalid download key' });
     // Client-fault: no Axiom error log.
-    // The route now emits one info-level audit log per request; a client-fault must still never
-    // ERROR-log to Axiom (an unresolvable key is expected).
     expect(mockLogToAxiom).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 
@@ -322,11 +318,10 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
 });
 
 /**
- * Ownership scope: a signed-in caller may resolve only keys under their own `<type>/<userId>/`
- * prefix (buildUploadKey), plus moderators. Any other key is 404, so the response does not confirm
- * whether the object exists and the delivery worker is never asked to resolve it.
+ * Moderators only: everyone else gets the same 404 whatever the key, so the response does not
+ * confirm whether the object exists, and the delivery worker is never asked to resolve it.
  */
-describe('/api/download/[...key] — ownership scope', () => {
+describe('/api/download/[...key] — moderators only', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFindUnique.mockResolvedValue({ value: '' });
@@ -336,20 +331,12 @@ describe('/api/download/[...key] — ownership scope', () => {
     });
   });
 
-  it("resolves the caller's own-prefix key", async () => {
-    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
-    const { req, res } = createMocks({ key: ['model', '42', 'mine.safetensors'] });
-
-    await handler(req, res);
-
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/42/mine.safetensors');
-    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
-  });
-
   it.each([
-    ["another user's upload key", ['model', '99', 'other-user.safetensors']],
-    ['a version-prefixed key', ['modelVersion', '123', 'other-user.safetensors']],
-  ])('refuses %s with 404 and never resolves it', async (_label, key) => {
+    [['image', '42', 'mine.png']],
+    [['model', '42', 'mine.safetensors']],
+    [['modelVersion', '42', 'e.bin']],
+    [['training-images-temp', '99', 'other-user.zip']],
+  ])('refuses a non-moderator any key with 404 and never resolves it (case %#)', async (key) => {
     mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
     const { req, res } = createMocks({ key });
 
@@ -358,44 +345,83 @@ describe('/api/download/[...key] — ownership scope', () => {
     expect(res._getStatusCode()).toBe(404);
     expect(res._getJSONData()).toEqual({ error: 'Not found' });
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'download-key-route', key: key.join('/'), allowed: false })
+    );
+  });
+
+  it('serves a moderator any key, and logs it as allowed', async () => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+    const { req, res } = createMocks({ key: ['model', '99', 'any.safetensors'] });
+
+    await handler(req, res);
+
+    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/99/any.safetensors');
+    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'model/99/any.safetensors', allowed: true })
+    );
+  });
+
+  // `req.context` as getServerAuthSession leaves it for a bearer credential.
+  const bearerRequest = (user: { id: number; isModerator: boolean }, context: object) => {
+    mockGetServerAuthSession.mockResolvedValue({ user });
+    const mocks = createMocks({
+      key: ['model', '99', 'any.safetensors'],
+      headers: { authorization: 'Bearer token' },
+    });
+    Object.assign(mocks.req, { context });
+    return mocks;
+  };
+  const fullKey = {
+    apiKeyType: ApiKeyType.User,
+    subject: { type: 'apiKey', id: 1 },
+    tokenScope: TokenScope.Full,
+  };
+
+  it('serves a moderator using a full-access personal API key', async () => {
+    const { req, res } = bearerRequest({ id: 1, isModerator: true }, fullKey);
+
+    await handler(req, res);
+
+    expect(res._getRedirect()).toBe('https://cdn.example.com/signed');
   });
 
   it.each([
-    [
-      'a .. traversal segment past the owned prefix',
-      ['model', '42', '..', '..', 'model', '99', 'f.safetensors'],
-    ],
-    [
-      'an encoded separator inside a segment',
-      ['model', '42', '..%2f..%2fmodel%2f99%2ff.safetensors'],
-    ],
-  ])('refuses %s with 404, even though segment 1 is the caller', async (_label, key) => {
-    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: false } });
+    ['a scoped API key', { ...fullKey, tokenScope: TokenScope.Full - 1 }],
+    ['an OAuth token', { ...fullKey, subject: { type: 'oauth', id: 'client' } }],
+  ])('refuses a moderator using %s with 403 and never resolves it', async (_label, context) => {
+    const { req, res } = bearerRequest({ id: 1, isModerator: true }, context);
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ allowed: false }));
+  });
+
+  it('refuses a non-moderator using a scoped API key with the same 404 as any other', async () => {
+    const { req, res } = bearerRequest(
+      { id: 42, isModerator: false },
+      { ...fullKey, tokenScope: TokenScope.Full - 1 }
+    );
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(404);
+  });
+
+  it.each([
+    ['a .. traversal segment', ['model', '42', '..', 'secrets', 'f.bin']],
+    ['an encoded separator inside a segment', ['model', '42', '..%2f..%2fsecrets%2ff.bin']],
+    ['an empty segment', ['model', '', 'f.bin']],
+  ])('refuses even a moderator %s', async (_label, key) => {
+    mockGetServerAuthSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
     const { req, res } = createMocks({ key });
 
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(404);
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
-  });
-
-  it('refuses a .. traversal even for a moderator', async () => {
-    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
-    const { req, res } = createMocks({ key: ['model', '42', '..', 'secrets', 'f.bin'] });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(404);
-    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
-  });
-
-  it('CONTROL: a moderator resolves any key', async () => {
-    // Without this arm a mutant that refused everyone but the key-owner would pass the cases above.
-    mockGetServerAuthSession.mockResolvedValue({ user: { id: 42, isModerator: true } });
-    const { req, res } = createMocks({ key: ['model', '99', 'any.safetensors'] });
-
-    await handler(req, res);
-
-    expect(mockGetDownloadUrl).toHaveBeenCalledWith('model/99/any.safetensors');
   });
 });

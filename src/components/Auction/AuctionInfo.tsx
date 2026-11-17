@@ -6,7 +6,6 @@ import {
   Checkbox,
   Divider,
   Group,
-  HoverCard,
   Loader,
   Overlay,
   Paper,
@@ -15,10 +14,10 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { HoverCard, Tooltip } from '~/components/MantineOverlays';
 import { DatePickerInput } from '@mantine/dates';
 import {
   IconAlertCircle,

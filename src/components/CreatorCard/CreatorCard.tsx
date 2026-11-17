@@ -1,12 +1,6 @@
 import type { CardProps } from '@mantine/core';
-import {
-  Card,
-  Group,
-  Stack,
-  Tooltip,
-  useMantineTheme,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Card, Group, Stack, useMantineTheme, useComputedColorScheme } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconShoppingBag } from '@tabler/icons-react';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { NextLink } from '~/components/NextLink/NextLink';

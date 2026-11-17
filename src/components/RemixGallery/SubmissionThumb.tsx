@@ -1,4 +1,4 @@
-import { Tooltip } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconExternalLink } from '@tabler/icons-react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import type { RouterOutput } from '~/types/router';

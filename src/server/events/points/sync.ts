@@ -22,6 +22,7 @@ import type { EventHat, EventPointEntityType } from '~/server/events/points/type
 import { logToAxiom } from '~/server/logging/client';
 import { delIfValue } from '~/server/redis/atomic';
 import { sysRedis } from '~/server/redis/client';
+import { UserFlag } from '~/shared/constants/user-flags.constants';
 
 // Enough log for an app server that missed a few refreshes; one further behind reloads the hash.
 const HATS_LOG_MAX = 50_000;
@@ -50,7 +51,7 @@ type ScoredEvent = GatedEvent & { endDate: Date; scoring: EventScoring };
 type HatEntity = { entityType: string; entityId: number };
 
 // The open placements of an event, each marked whether it may earn: on its owner's own content, an
-// entity type the event scores, its owner not banned, deleted or excluded from leaderboards. Oldest
+// entity type the event scores, its owner not banned, deleted or excluded from event points. Oldest
 // first. `ownerId` narrows it to one owner's, which is the whole answer for their content: only an
 // entity's owner can score on it.
 async function openEventPlacements(
@@ -62,7 +63,9 @@ async function openEventPlacements(
       COALESCE(
         p."entityOwnerId" = p."userId"
           AND p."entityType"::text = ANY(${[...event.entityTypes]}::text[])
-          AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND NOT u."excludeFromLeaderboards",
+          AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL AND (u.flags & ${
+            UserFlag.ExcludeFromEventPoints
+          }::int) = 0,
         false
       ) AS eligible
     FROM "EventCosmeticPlacement" p
@@ -150,7 +153,7 @@ async function hatSyncEvents(now: Date) {
 }
 
 const logSyncError = (fn: string, error: unknown, extra: object) =>
-  logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra }).catch(() => undefined);
+  logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra });
 
 // The safety net under the write-through: rebuilds which content wears which hat from the
 // placements, and seeds the live weights from the event config where none are set. Runs hourly; the
@@ -194,7 +197,7 @@ async function syncOneEvent(eventDef: ScoredEvent, now: Date) {
       removedCount: changes.remove.length,
       set: changes.set.slice(0, LOGGED_KEYS_MAX).map(([key]) => key),
       removed: changes.remove.slice(0, LOGGED_KEYS_MAX),
-    }).catch(() => undefined);
+    });
   }
 
   for (const [type, rule] of Object.entries(scoring.types))
@@ -333,7 +336,7 @@ async function runOwnerHatSync(
     fn: 'runOwnerHatSync',
     message: 'gave up after max passes; the reconcile finishes it',
     ownerId,
-  }).catch(() => undefined);
+  });
 }
 
 const entityKeysOf = (pending: string[]) => pending.filter((key) => key !== PENDING_ALL);

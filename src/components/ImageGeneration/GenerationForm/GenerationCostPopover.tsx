@@ -1,6 +1,7 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
 import type { PopoverProps } from '@mantine/core';
-import { Anchor, Group, Loader, NumberInput, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Anchor, Group, Loader, NumberInput, Text, UnstyledButton } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';

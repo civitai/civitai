@@ -58,10 +58,10 @@ describe('getPaginatedCosmeticShopItems archived filter', () => {
     expect(where.status).toBeUndefined();
   });
 
-  it('resellable + archived:false keeps the stricter Published status and still excludes archived', async () => {
+  it('publishedCreatorOnly + archived:false keeps the stricter Published status and still excludes archived', async () => {
     await getPaginatedCosmeticShopItems({
       archived: false,
-      resellable: true,
+      publishedCreatorOnly: true,
       page: 1,
       limit: 60,
     });

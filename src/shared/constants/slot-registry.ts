@@ -163,7 +163,7 @@ export function isKnownSlotId(id: string): id is SlotId {
  * categorically forbidden:
  *   - `ai:write:budgeted` (generation): bounded by the per-gen `buzzBudget` claim
  *     (from the approved manifest's `page.buzzBudgetPerGen`, server-read + clamped
- *     to BUZZ_BUDGET_CAP) AND the per-user daily cap (BLOCK_BUZZ_CAP_PER_DAY).
+ *     to BUZZ_BUDGET_CAP) AND the per-user daily cap (resolveUserAppCaps).
  *   - `social:tip:self` (tipping): bounded by a per-tip cap (BLOCK_TIP_MAX_PER_TIP)
  *     AND a per-user daily cap (BLOCK_TIP_CAP_PER_DAY, reserve-and-refund) enforced
  *     in `/api/v1/blocks/tip` BEFORE any money moves — the exact analogue of the

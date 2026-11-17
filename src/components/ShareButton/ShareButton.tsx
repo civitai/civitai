@@ -1,4 +1,5 @@
-import { Button, Popover, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Button, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useClipboard } from '@mantine/hooks';
 import { IconBrandX } from '@tabler/icons-react';
 import React from 'react';

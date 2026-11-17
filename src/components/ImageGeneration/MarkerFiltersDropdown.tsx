@@ -1,5 +1,6 @@
 import type { ButtonProps, ComboboxItem, PopoverProps } from '@mantine/core';
-import { Button, Divider, Group, Indicator, Popover, ScrollArea, Stack, Text } from '@mantine/core';
+import { Button, Divider, Group, Indicator, ScrollArea, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter, IconX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';

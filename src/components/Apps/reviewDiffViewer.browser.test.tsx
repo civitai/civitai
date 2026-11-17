@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { FileDiffEntry, SKIP_LABEL, type FileLineDiff } from '~/components/Apps/reviewDiffPanels';
@@ -407,5 +407,39 @@ describe('a file with no textual change', () => {
     await expect
       .element(page.getByText('No textual change (whitespace/metadata only).'))
       .toBeInTheDocument();
+  });
+});
+
+describe('🔴 the file header is a REAL BUTTON (keyboard + screen reader)', () => {
+  /**
+   * The header toggled on a mouse click only — a `<div>` with an `onClick` and a "show"
+   * `<p>`: unreachable by Tab, deaf to Enter/Space, no expanded state announced, and missing
+   * from any enumeration of buttons. Red on the base: there is no `button` here at all.
+   */
+  const toggle = () => page.getByRole('button', { name: /src\/App\.tsx/ });
+
+  test('it is a focusable button named for the file, collapsed to start', async () => {
+    renderWithProviders(<FileDiffEntry file={CHANGED} />);
+    await expect.element(toggle()).toBeInTheDocument();
+    await expect.element(toggle()).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('Enter opens it, Space closes it — aria-expanded follows', async () => {
+    renderWithProviders(<FileDiffEntry file={CHANGED} />);
+    await expect.element(toggle()).toBeInTheDocument();
+    (toggle().element() as HTMLElement).focus();
+    await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByTestId('apps-review-diff-unified')).toBeInTheDocument();
+    await expect.element(toggle()).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.keyboard(' ');
+    await expect.element(toggle()).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelectorAll('[data-testid="apps-review-diff-unified"]')).toHaveLength(0);
+  });
+
+  test('one mouse click on the button is ONE toggle (the header handler does not double it)', async () => {
+    renderWithProviders(<FileDiffEntry file={CHANGED} />);
+    await toggle().click();
+    await expect.element(page.getByTestId('apps-review-diff-unified')).toBeInTheDocument();
+    await expect.element(toggle()).toHaveAttribute('aria-expanded', 'true');
   });
 });

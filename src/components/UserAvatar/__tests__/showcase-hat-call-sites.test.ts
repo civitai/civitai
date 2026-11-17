@@ -12,7 +12,6 @@ import { describe, expect, it } from 'vitest';
  * the Team Hats lead's and product's call. Add it here only with that sign-off.
  */
 const ALLOWED = [
-  'src/components/CommentsV2/Comment/Comment.tsx',
   'src/components/CommentsV3/CommentItem.tsx',
   'src/components/CreatorCard/CreatorCard.tsx',
   'src/components/CreatorCard/CreatorCardSimple.tsx',

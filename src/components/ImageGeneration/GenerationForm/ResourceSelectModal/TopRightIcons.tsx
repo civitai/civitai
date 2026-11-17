@@ -1,4 +1,4 @@
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { IconDotsVertical, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
 import React from 'react';
 import { useMenuSheet } from '~/components/Drawer/useMenuSheet';

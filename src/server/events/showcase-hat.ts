@@ -13,18 +13,22 @@ import { isEventDecorationData } from '~/shared/constants/event-decoration.const
 // The showcase hat: one of a player's event hats, drawn on their avatar on the surfaces that opt in
 // (UserAvatar `withShowcaseHat`). Showing it makes no copy and earns nothing. The player's pick lives
 // in User.settings beside the roster opt-in; with no pick (or a pick they no longer own) it is the hat
-// the roster card leads with: placed first, then dearest, then newest.
+// the roster card leads with: placed first, then dearest, then newest. SHOWCASE_OFF there shows none.
+// With no pick, the default shows only for a player who has placed one of the event's hats at least
+// once, now or before; a joiner who never placed or picked shows none.
 
 export { isShowcaseLive, SHOWCASE_EVENT };
 
 export const SHOWCASE_SETTING = 'eventShowcaseHat';
+export const SHOWCASE_OFF = 'off';
 
 type QueryDb = Pick<typeof dbRead, '$queryRaw'>;
 
 /**
  * Each user's showcase hat id, for one event. One statement for the whole batch: per user, an index
  * range on UserCosmetic (userId leads its key) over their own rows only, joined to the event's hats.
- * Users who own none of the event's hats get no entry.
+ * Users who own none of the event's hats, turned it off, or neither picked nor ever placed one get no
+ * entry.
  */
 export async function resolveShowcaseHatIds(
   event: string,
@@ -54,6 +58,15 @@ export async function resolveShowcaseHatIds(
       LIMIT 1
     ) h ON true
     WHERE u.id = ANY(${userIds}::int[])
+      AND (u.settings -> ${SHOWCASE_SETTING} ->> ${event}) IS DISTINCT FROM ${SHOWCASE_OFF}
+      AND (
+        (u.settings -> ${SHOWCASE_SETTING} ->> ${event}) IS NOT NULL
+        -- Ended placements count too, so only EventCosmeticPlacement_userId_event_idx answers this.
+        OR EXISTS (
+          SELECT 1 FROM "EventCosmeticPlacement" p
+          WHERE p."userId" = u.id AND p.event = ${event}
+        )
+      )
   `;
   return new Map(rows.map((r) => [r.userId, r.cosmeticId]));
 }

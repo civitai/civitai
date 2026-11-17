@@ -77,15 +77,25 @@ export function getListingBadge(card: Pick<ListingCard, 'kind' | 'kindData'>): L
 }
 
 /**
- * Recommend rollup → display label. `recommendPct` is `null` when there are no
- * reviews yet (metric row absent OR zero counts) — render "No reviews yet"
- * rather than a misleading "0% recommend". Otherwise a Steam-style
- * "N% recommend (M)" with the review count.
+ * Recommend rollup → display label, in three cases:
+ *   - zero reviews → "No reviews yet" (never a misleading "0% recommend");
+ *   - reviews but `recommendPct == null` → the counts, "3 reviews · 2 recommend". The
+ *     server withholds the percentage below a minimum review count (`recommendRollup`
+ *     owns that number; nothing here compares against it);
+ *   - otherwise a Steam-style "N% recommend (M)" with the review count.
  */
 export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
-  if (recommend.recommendPct == null) return 'No reviews yet';
+  if (reviewCount === 0) return 'No reviews yet';
+  if (recommend.recommendPct == null) return getRecommendCountsLabel(recommend, reviewCount);
   const pct = Math.round(recommend.recommendPct * 100);
   return `${pct}% recommend (${reviewCount.toLocaleString()})`;
+}
+
+/** "1 review · 1 recommends", "3 reviews · 2 recommend" — the below-threshold label. */
+function getRecommendCountsLabel(recommend: ListingRecommendRollup, reviewCount: number): string {
+  const up = recommend.recommendedCount;
+  const reviews = `${reviewCount.toLocaleString()} ${reviewCount === 1 ? 'review' : 'reviews'}`;
+  return `${reviews} · ${up.toLocaleString()} ${up === 1 ? 'recommends' : 'recommend'}`;
 }
 
 /**
@@ -154,8 +164,48 @@ export function getRecommendLabel(recommend: ListingRecommendRollup, reviewCount
  */
 export function getPlayCountLabel(openCount: number | null): string | null {
   // Both arms are absence-on-screen; they are NOT the same fact. See above.
-  if (openCount == null || openCount === 0) return null;
+  if (!hasShownPlayCount(openCount)) return null;
   return `${abbreviateNumber(openCount)} ${openCount === 1 ? 'play' : 'plays'}`;
+}
+
+/**
+ * Does a listing show a play count at all? The ONE rule for every surface that shows plays
+ * (the store card here, the detail page's "Plays" row and stat chip), so they cannot
+ * disagree about the same listing: `null` (off-site, unmeasurable) and `0` show nothing.
+ * A `typeof` test rather than `!= null`, because some `ListingDetail`-shaped producers
+ * reach the detail builders through a cast and can carry `undefined`.
+ */
+export function hasShownPlayCount(openCount: number | null | undefined): openCount is number {
+  return typeof openCount === 'number' && openCount > 0;
+}
+
+/** The one usage number the app page shows for a listing, and its word. */
+export type ListingUsageStat = { key: 'plays' | 'installs'; label: string; count: number };
+
+/**
+ * Which usage number the app page shows: PLAYS for an on-site listing (the store card's
+ * number, by {@link hasShownPlayCount}), INSTALLS for any other kind, since an off-site
+ * listing has no play count — the same fallback the `popular` sort makes
+ * (`listingPopularSortKey`). Either is shown only when it is above zero, and `null` means
+ * show nothing.
+ *
+ * The positive `=== 'onsite'` test matches `cardOpenCount`. The `typeof` guards cover the
+ * `ListingDetail`-shaped producers that arrive through a cast.
+ */
+export function listingUsageStat(detail: {
+  kindData?: { kind?: string } | null;
+  openCount?: number | null;
+  installCount?: number | null;
+}): ListingUsageStat | null {
+  if (detail.kindData?.kind === 'onsite') {
+    return hasShownPlayCount(detail.openCount)
+      ? { key: 'plays', label: 'Plays', count: detail.openCount }
+      : null;
+  }
+  const installs = detail.installCount;
+  return typeof installs === 'number' && installs > 0
+    ? { key: 'installs', label: 'Installs', count: installs }
+    : null;
 }
 
 /**

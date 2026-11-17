@@ -50,6 +50,12 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; username: string; isModerator?: boolean },
 }));
 
+// Runs as a developer who has accepted the App Developer Terms.
+vi.mock('~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox', () => ({
+  AppDeveloperTermsCheckbox: () => null,
+  useAppDeveloperTermsAccepted: () => true,
+}));
+
 // Only the `trpc` client itself is overridden — every other `~/utils/trpc` export
 // (trpcVanilla, queryClient, setTrpcBatchingEnabled, ...) is kept real via
 // importOriginal. A wholesale factory silently breaks this whole FILE (0 tests

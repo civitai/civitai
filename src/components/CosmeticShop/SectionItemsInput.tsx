@@ -1,15 +1,19 @@
 import type { InputWrapperProps } from '@mantine/core';
 import {
+  Badge,
   Box,
   Button,
   Center,
   Checkbox,
   Group,
   Input,
+  Loader,
+  Pagination,
   Paper,
-  Select,
+  ScrollArea,
   Stack,
   Text,
+  TextInput,
   Grid,
 } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
@@ -28,6 +32,9 @@ import type { GetPaginatedCosmeticShopItemInput } from '~/server/schema/cosmetic
 import { isDefined } from '~/utils/type-guards';
 import { withController } from '~/libs/form/hoc/withController';
 import { getDisplayName } from '~/utils/string-helpers';
+import { formatDate } from '~/utils/date-helpers';
+import { trpc } from '~/utils/trpc';
+import type { ShopItemFeaturedHistory } from '~/server/services/cosmetic-shop-featured-log.service';
 
 type ShopItemSchema = { title: string; description?: string; id: number };
 
@@ -57,72 +64,128 @@ const CosmeticShopItemOption = ({ item }: { item: CosmeticShopItemGetById }) => 
   );
 };
 
+const PICKER_PAGE_SIZE = 20;
+
+export const FeaturedHistoryBadge = ({ history }: { history?: ShopItemFeaturedHistory }) => {
+  if (!history) return null;
+  if (history.currentSections.length)
+    return (
+      <Badge
+        size="xs"
+        color="green"
+        variant="light"
+        title={history.currentSections.map((s) => s.title).join(', ')}
+      >
+        Featured now
+      </Badge>
+    );
+  if (history.lastFeaturedAt)
+    return (
+      <Badge size="xs" color="gray" variant="light">
+        Featured before ({formatDate(history.lastFeaturedAt)})
+      </Badge>
+    );
+  return null;
+};
+
 const CosmeticShopItemSearch = ({
+  selectedIds,
   onItemSelected,
 }: {
+  selectedIds: number[];
   onItemSelected: (item: CosmeticShopItemGetById) => void;
 }) => {
-  const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
+  const [filters, setFilters] = useState<GetPaginatedCosmeticShopItemInput>({
     page: 1,
+    limit: PICKER_PAGE_SIZE,
     // Archived cosmetics can't be sold, so they must not be featurable.
     archived: false,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
-  const { cosmeticShopItems = [], isFetching: isFetchingCosmetics } =
-    useQueryCosmeticShopItemsPaged(debouncedFilters);
-  // Covers both the in-flight query and the debounce gap after typing.
-  const searching = isFetchingCosmetics || !isEqual(filters, debouncedFilters);
-  const data = useMemo(
-    () =>
-      cosmeticShopItems.filter(isDefined).map((c) => ({
-        value: c.id.toString(),
-        label: c.title,
-        title: c.title,
-        description: c.description,
-      })),
-    [cosmeticShopItems]
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
+  const {
+    cosmeticShopItems = [],
+    pagination,
+    isFetching,
+  } = useQueryCosmeticShopItemsPaged(debouncedFilters, { keepPreviousData: true });
+  const searching = isFetching || !isEqual(filters, debouncedFilters);
+  const items = cosmeticShopItems.filter(isDefined);
+  const pageIds = items.map((i) => i.id);
+  const { data: history } = trpc.cosmeticShop.getShopItemsFeaturedHistory.useQuery(
+    { ids: pageIds },
+    { enabled: pageIds.length > 0 }
   );
 
   return (
     <Stack gap={6}>
-      <Select
+      <TextInput
         label="Search products"
-        description="Search by title, cosmetic name, or creator username / id — select items to add to this section"
-        onChange={(cosmeticId) => {
-          const item = cosmeticShopItems.find((c) => c.id === Number(cosmeticId ?? 0));
-          if (item) {
-            onItemSelected(item);
-          }
+        description="Search by title, cosmetic name, or creator username / id, then add items to this section"
+        value={filters.name ?? ''}
+        onChange={(e) => {
+          const name = e.currentTarget.value;
+          setFilters((f) => ({ ...f, name, page: 1 }));
         }}
-        onSearchChange={(query) => setFilters({ ...filters, name: query })}
-        searchValue={filters.name}
-        nothingFoundMessage={searching ? 'Searching…' : 'No options'}
-        // Options come pre-filtered from the server — Mantine's built-in label
-        // filter would hide creator-search matches whose titles don't contain
-        // the search term.
-        filter={({ options }) => options}
-        renderOption={(item) => {
-          const data = cosmeticShopItems.find((c) => c.id === Number(item.option.value));
-          if (!data) {
-            return null;
-          }
-
-          return <CosmeticShopItemOption item={data} />;
-        }}
-        data={data}
-        searchable
+        rightSection={searching ? <Loader size="xs" /> : null}
         withAsterisk
-        value={''}
       />
       <Checkbox
         size="xs"
-        label="Resellable creator cosmetics only"
-        description="Published creator-shop items marked sellable by others — for featuring in official sections."
-        checked={!!filters.resellable}
-        onChange={(e) =>
-          setFilters({ ...filters, resellable: e.currentTarget.checked || undefined })
-        }
+        label="Published creator cosmetics only"
+        description="Published creator-shop items, newest approved first."
+        checked={!!filters.publishedCreatorOnly}
+        onChange={(e) => {
+          const publishedCreatorOnly = e.currentTarget.checked || undefined;
+          setFilters((f) => ({ ...f, publishedCreatorOnly, page: 1 }));
+        }}
       />
+      <Paper withBorder radius="md">
+        <ScrollArea.Autosize mah={360}>
+          {items.length ? (
+            <Stack gap={0}>
+              {items.map((item) => {
+                const added = selectedIds.includes(item.id);
+                return (
+                  <Group
+                    key={item.id}
+                    gap="xs"
+                    wrap="nowrap"
+                    px="sm"
+                    py={6}
+                    data-testid="section-picker-row"
+                  >
+                    <Box style={{ flex: 1, minWidth: 0 }}>
+                      <CosmeticShopItemOption item={item} />
+                    </Box>
+                    <FeaturedHistoryBadge history={history?.[item.id]} />
+                    <Button
+                      size="compact-xs"
+                      variant={added ? 'default' : 'light'}
+                      disabled={added}
+                      onClick={() => onItemSelected(item)}
+                    >
+                      {added ? 'Added' : 'Add'}
+                    </Button>
+                  </Group>
+                );
+              })}
+            </Stack>
+          ) : (
+            <Center p="sm">
+              <Text size="sm" c="dimmed">
+                {searching ? 'Searching…' : 'No items match'}
+              </Text>
+            </Center>
+          )}
+        </ScrollArea.Autosize>
+      </Paper>
+      {!!pagination && pagination.totalPages > 1 && (
+        <Pagination
+          size="sm"
+          total={pagination.totalPages}
+          value={filters.page ?? 1}
+          onChange={(page) => setFilters((f) => ({ ...f, page }))}
+        />
+      )}
     </Stack>
   );
 };
@@ -191,7 +254,10 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
   return (
     <Input.Wrapper {...props} error={props.error ?? error}>
       <Stack gap="xs" mt="sm">
-        <CosmeticShopItemSearch onItemSelected={onItemSelected} />
+        <CosmeticShopItemSearch
+          selectedIds={shopItems.map((i) => i.id)}
+          onItemSelected={onItemSelected}
+        />
         <Paper mt="md">
           <DndContext
             sensors={sensors}

@@ -1,4 +1,4 @@
-import { Menu, Tooltip } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconBell, IconBellOff } from '@tabler/icons-react';
 import React from 'react';
 import {

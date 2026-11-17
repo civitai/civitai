@@ -65,6 +65,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
   {
@@ -74,8 +75,6 @@ const reports = [
     Element: TosViolationForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Comment,
-      ReportEntity.CommentV2,
       ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
@@ -93,6 +92,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
   {
@@ -102,8 +102,6 @@ const reports = [
     Element: AdminAttentionForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Comment,
-      ReportEntity.CommentV2,
       ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
@@ -122,6 +120,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
   {
@@ -163,8 +162,6 @@ const reports = [
     Element: SpamForm,
     availableFor: [
       ReportEntity.Model,
-      ReportEntity.Comment,
-      ReportEntity.CommentV2,
       ReportEntity.CommentV3,
       ReportEntity.Image,
       ReportEntity.ResourceReview,
@@ -183,6 +180,7 @@ const reports = [
       ReportEntity.Crucible,
       ReportEntity.Storyline,
       ReportEntity.ServiceOffering,
+      ReportEntity.PostText,
     ],
   },
 ];
@@ -349,8 +347,6 @@ export default function ReportModal({
             await queryUtils.model3d.reviews.getInfinite.invalidate();
             break;
           // Nothing changes here so nothing to invalidate...
-          case ReportEntity.Comment:
-          case ReportEntity.CommentV2:
           case ReportEntity.CommentV3:
           default:
             break;

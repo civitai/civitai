@@ -1,6 +1,25 @@
+import type { NsfwLevel } from '@civitai/orchestration-client';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+
+/** `.GLB ` → `glb`: formats arrive from the orchestrator and file names un-normalised. */
+export function normalizeModel3DFormat(format: string | null | undefined) {
+  return (format ?? '').trim().toLowerCase().replace(/^\./, '');
+}
+
 /** GLB is the only format the inline viewer and the `model3DPreview` render can load. */
 export function isGlbFormat(format: string | null | undefined) {
-  return (format ?? '').trim().toLowerCase().replace(/^\./, '') === 'glb';
+  return normalizeModel3DFormat(format) === 'glb';
+}
+
+/**
+ * Files the inline three.js viewer can show: GLB only (GLTFLoader doesn't read FBX), minus
+ * armature-only meshes, which have no visible geometry.
+ */
+export function isInlineViewableModel3DFile(file: {
+  format: string | null | undefined;
+  variant?: string | null;
+}) {
+  return isGlbFormat(file.format) && !(file.variant ?? 'primary').endsWith('-armature');
 }
 
 type Model3DStepLike = {
@@ -22,5 +41,45 @@ export function isFbxOnlyDelivered(steps: Model3DStepLike[]) {
       step.output.some(
         (blob) => blob.type === 'model3d' && blob.available && !isGlbFormat(blob.format)
       )
+  );
+}
+
+type Model3DFileLike = { format: string; variant: string | null; isPrimary: boolean };
+
+/**
+ * The file a single-file preview should mount: the primary when it's viewable, else the first viewable
+ * file (an FBX-primary model can still ship a GLB variant). With nothing viewable it returns the
+ * primary, so the viewer shows its download fallback.
+ */
+export function pickModel3DPreviewFile<T extends Model3DFileLike>(files: T[]): T | null {
+  return (
+    files.find((f) => f.isPrimary && isInlineViewableModel3DFile(f)) ??
+    files.find(isInlineViewableModel3DFile) ??
+    files.find((f) => f.isPrimary) ??
+    files[0] ??
+    null
+  );
+}
+
+/**
+ * Max rating across a workflow's `model3DPreview` render images. The
+ * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
+ * chained 2D preview render carries the result's effective rating, so it must
+ * be propagated onto the `model3d` output for the NSFW gates to apply. Used by
+ * the on-site formatter (`formatStepOutputs`) and the App Blocks producers
+ * (`services/blocks/workflow.service`).
+ */
+export function getModel3DPreviewNsfwLevel(
+  steps: ReadonlyArray<{ $type: string; output?: unknown } | null | undefined> | null | undefined
+): NsfwLevel | undefined {
+  const previews = (steps ?? []).filter((s) => s?.$type === 'model3DPreview');
+  if (!previews.length) return undefined;
+  return maxNsfwLevel(
+    previews.flatMap((s) =>
+      (
+        (s?.output as { images?: Array<{ nsfwLevel?: NsfwLevel | null } | null> } | undefined)
+          ?.images ?? []
+      ).map((i) => i?.nsfwLevel)
+    )
   );
 }

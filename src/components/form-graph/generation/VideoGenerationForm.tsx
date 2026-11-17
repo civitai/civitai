@@ -1,4 +1,5 @@
 import { Checkbox, Input, Stack } from '@mantine/core';
+import { ChoiceGroup } from '~/libs/form/components/ChoiceGroup';
 import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
@@ -9,7 +10,6 @@ import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
-import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { InterpolationFactorInput } from '~/components/generation_v2/inputs/InterpolationFactorInput';
@@ -27,8 +27,6 @@ import {
   ControlVideoInput,
   type ControlVideoInputProps,
 } from '~/components/generation_v2/inputs/ControlVideoInput';
-import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
-import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
@@ -39,6 +37,7 @@ import {
   PromptLabel,
   VersionGroupSelector,
   useWildcardHandlers,
+  ModelCardInput,
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { Flux3KeyframesInput } from './inputs/Flux3KeyframesInput';
@@ -56,64 +55,63 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
 
   return (
     <Stack gap="sm">
-      <div className="flex flex-col gap-1">
-        <Controller
-          graph={videoHub}
-          name="model"
-          render={({ value, meta, onChange }) => {
-            const defaultModelId = meta?.defaultModelId;
-            return (
-              <>
-                <ResourceSelectInput
-                  value={value}
+      <Controller
+        graph={videoHub}
+        name="model"
+        render={({ value, meta, onChange }) => {
+          const defaultModelId = meta?.defaultModelId;
+          return (
+            <ModelCardInput
+              value={value}
+              onChange={onChange}
+              buttonLabel="Select Model"
+              modalTitle="Select Model"
+              options={meta?.options}
+              allowRemove={false}
+              allowSwap={!meta?.modelLocked}
+              onRevertToDefault={
+                defaultModelId
+                  ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                  : undefined
+              }
+            >
+              {meta?.versions ? (
+                <VersionGroupSelector
+                  versions={meta.versions}
+                  modelId={value?.id}
                   onChange={onChange}
-                  label={<ControllerLabel label="Model" />}
-                  buttonLabel="Select Model"
-                  modalTitle="Select Model"
-                  options={meta?.options}
-                  allowRemove={false}
-                  allowSwap={!meta?.modelLocked}
-                  onRevertToDefault={
-                    defaultModelId
-                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
-                      : undefined
-                  }
                 />
-                {meta?.versions ? (
-                  <VersionGroupSelector
-                    versions={meta.versions}
-                    modelId={value?.id}
-                    onChange={onChange}
+              ) : null}
+              <Controller
+                graph={videoHub}
+                name="wanVersion"
+                render={({ value }) => (
+                  <ChoiceGroup
+                    // the tag types | undefined across arms; when this renders, a wan
+                    // arm is active and the tag is set
+                    value={value ?? ''}
+                    onChange={(v: string) => {
+                      const def = wanVersionDefs.find((d) => d.version === v);
+                      if (!def) return;
+                      const snap = store.getSnapshot().state as { workflow?: string };
+                      const isImg2vid = snap.workflow === 'img2vid';
+                      // Set ecosystem directly — wanVersion is computed from it.
+                      // v2.1: always T2V; the graph derives the resolution-dependent I2V backend.
+                      const eco =
+                        isImg2vid && def.version !== 'v2.1'
+                          ? def.ecosystems.i2v
+                          : def.ecosystems.t2v;
+                      store.set({ ecosystem: eco });
+                    }}
+                    data={wanVersionOptions}
+                    dynamicColumns={6}
                   />
-                ) : null}
-              </>
-            );
-          }}
-        />
-        <Controller
-          graph={videoHub}
-          name="wanVersion"
-          render={({ value }) => (
-            <ButtonGroupInput
-              // the tag types | undefined across arms; when this renders, a wan
-              // arm is active and the tag is set
-              value={value ?? ''}
-              onChange={(v: string) => {
-                const def = wanVersionDefs.find((d) => d.version === v);
-                if (!def) return;
-                const snap = store.getSnapshot().state as { workflow?: string };
-                const isImg2vid = snap.workflow === 'img2vid';
-                // Set ecosystem directly — wanVersion is computed from it.
-                // v2.1: always T2V; the graph derives the resolution-dependent I2V backend.
-                const eco =
-                  isImg2vid && def.version !== 'v2.1' ? def.ecosystems.i2v : def.ecosystems.t2v;
-                store.set({ ecosystem: eco });
-              }}
-              data={wanVersionOptions}
-            />
-          )}
-        />
-      </div>
+                )}
+              />
+            </ModelCardInput>
+          );
+        }}
+      />
       <GateRuleWarnings />
       <Controller
         graph={videoHub}
@@ -144,7 +142,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <ControllerLabel label="Mode" info={meta?.info} />
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
@@ -349,7 +347,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           return (
             <div className="flex flex-col gap-1">
               <Input.Label>Duration</Input.Label>
-              <SegmentedControlWrapper
+              <ChoiceGroup
                 value={String(value)}
                 onChange={(v) => {
                   const opt = (meta?.options ?? []).find((o) => String(o.value) === v);
@@ -382,7 +380,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Audio</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
@@ -396,7 +394,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Style</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
@@ -410,7 +408,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
             <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: String(o.value) }))}
@@ -427,7 +425,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               label="Reasoning"
               info="High reasoning follows the prompt more closely but takes longer to generate."
             />
-            <SegmentedControlWrapper
+            <ChoiceGroup
               value={value}
               onChange={(v) => onChange(v as typeof value)}
               data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
@@ -605,7 +603,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
                 label="Movement Amplitude"
                 info="Control the scale of camera movements and subject actions. Default: Auto (fits most use cases)."
               />
-              <SegmentedControlWrapper
+              <ChoiceGroup
                 value={value}
                 onChange={(v) => onChange(v as typeof value)}
                 data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}

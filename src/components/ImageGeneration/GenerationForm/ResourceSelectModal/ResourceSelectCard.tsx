@@ -4,10 +4,10 @@ import {
   Group,
   Stack,
   Text,
-  Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconBrush,
   IconCheck,
@@ -74,6 +74,7 @@ import {
   ResourceResidencyStatus,
 } from '~/components/ResourceLoad/ResourceResidency';
 import { VersionPricingBadge } from './VersionPricingBadge';
+import { PartnerDisclosureIcons } from '~/components/generation_v2/PartnerDisclosureIcons';
 
 const IMAGE_CARD_WIDTH = 450;
 const COMPACT_IMAGE_WIDTH = 160;
@@ -268,6 +269,13 @@ export function ResourceSelectCard({
     </Text>
   );
 
+  const selectedPartnerIcons = (
+    <PartnerDisclosureIcons
+      partnerService={selectedVersion?.partnerService}
+      partnerTrains={selectedVersion?.partnerTrains}
+    />
+  );
+
   const versionSelect = (
     <SheetSelect
       className="min-w-0 flex-1"
@@ -298,6 +306,11 @@ export function ResourceSelectCard({
               <LoadedMark readiness="ready" />
             )}
             <span className="truncate">{option.label}</span>
+            <PartnerDisclosureIcons
+              partnerService={version?.partnerService}
+              partnerTrains={version?.partnerTrains}
+              size={14}
+            />
           </Group>
         );
       }}
@@ -417,6 +430,7 @@ export function ResourceSelectCard({
             </div>
             <div className="mt-auto flex items-center gap-2">
               {versionSelect}
+              {selectedPartnerIcons}
               {stageButton}
               {selectButton}
             </div>
@@ -533,6 +547,7 @@ export function ResourceSelectCard({
             {nameLink}
             <div className="flex items-center justify-between gap-2">
               {versionSelect}
+              {selectedPartnerIcons}
               {compatibilityBadge}
               {stageButton}
               {selectButton}

@@ -20,6 +20,12 @@ export const workflowQuerySchema = z.object({
   excludeFailed: z.boolean().optional(),
 });
 
+export type GeneratedImagesQuerySchema = z.input<typeof generatedImagesQuerySchema>;
+export const generatedImagesQuerySchema = workflowQuerySchema.extend({
+  /** Leave out workflows an App Block ran: the generator Queue, Feed and queue counter set it. */
+  excludeAppWorkflows: z.boolean().optional(),
+});
+
 export const workflowResourceSchema = z.object({
   id: z.number(),
   strength: z.number().default(1),

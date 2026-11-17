@@ -82,7 +82,10 @@ const BASE_SCHEMA = `
     "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
     name text NOT NULL DEFAULT 'v',
     status text NOT NULL DEFAULT 'Published',
-    "trainingStatus" text
+    "trainingStatus" text,
+    "baseModel" text NOT NULL DEFAULT 'SDXL 1.0',
+    "publishedAt" timestamp,
+    "initialPublishedAt" timestamp
   );
   CREATE TABLE "ModelFile" (
     id int PRIMARY KEY,
@@ -172,8 +175,7 @@ export const accessRowsOf = async (db: PGlite) =>
 
 // The statements that decide what is deleted, run as written. Anything else the services issue
 // touches tables this stand-in does not have, and gets the db mock's empty answer.
-const ON_DB =
-  /DELETE FROM "(Model(Version|File)|ResourceReview)"|UPDATE "Thread"|AS held\b|FOR UPDATE/;
+const ON_DB = /DELETE FROM "(Model(Version|File)|ResourceReview)"|AS held\b|FOR UPDATE/;
 
 const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
   Array.isArray(first)

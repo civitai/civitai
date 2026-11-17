@@ -7,8 +7,6 @@ import type {
   EditGenerationItem,
   EditImageOption,
   StudioBackend,
-  SubmittedBatch,
-  TrainingRunPayload,
 } from '$lib/backend';
 import type {
   DatasetItem,
@@ -17,31 +15,23 @@ import type {
   TrainingRow,
 } from '$lib/data/trainingRows';
 import type { EpochArchive } from '$lib/orchestrator-core';
-import type { TrainingServiceStatus } from '$lib/service-status-core';
-import { MatureAckRequiredError } from '$lib/mature-charge';
+import { parseServiceStatus } from '$lib/service-status-core';
+import type { ReadinessCheck, ReadinessProbe } from '$lib/upload-readiness';
+import { messageOf, studioServerCalls } from '$lib/studio-server-calls';
 import { UploadError, uploadProblem } from '$lib/upload';
+import { AUTO_LABEL_UNAVAILABLE_CODE, AutoLabelRefusedError } from '$lib/autolabel-errors';
 
-/** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
-async function messageOf(res: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await res.json()) as { message?: string };
-    if (body.message) return body.message;
-  } catch {
-    // non-JSON body
-  }
-  return fallback;
-}
-
-/** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
- *  so the caller can show the confirm. */
-async function startFailure(res: Response, fallback: string): Promise<Error> {
-  const body = (await res.json().catch(() => null)) as {
-    message?: string;
-    matureCount?: unknown;
-  } | null;
-  if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
-    return new MatureAckRequiredError(body.matureCount);
-  return new Error(body?.message || fallback);
+/** Why an auto-label submit failed. Our route answers 4xx only for a refusal made before any workflow
+ *  existed (its own, or the main app's gates, validation and limits), and its marked 503 when
+ *  auto-label is unavailable: those return the image's cap slot. Every other failure (a 502, a gateway
+ *  503) may have come after a workflow was created and stays counted. */
+async function autoLabelSubmitFailure(res: Response): Promise<Error> {
+  const fallback = `auto-label submit failed (${res.status})`;
+  const body = (await res.json().catch(() => null)) as { message?: string; code?: string } | null;
+  const refused =
+    (res.status >= 400 && res.status < 500) ||
+    (res.status === 503 && body?.code === AUTO_LABEL_UNAVAILABLE_CODE);
+  return refused ? new AutoLabelRefusedError(body?.message || fallback) : new Error(fallback);
 }
 
 /** GET `path` as JSON; a failure throws the route's message, else `fallback (status)`. */
@@ -67,7 +57,23 @@ async function postFor(path: string, body: unknown, fallback: string) {
   return (await res.json()) as { workflowId: string };
 }
 
+const READINESS_REQUEST_TIMEOUT_MS = 60_000;
+
+async function postReadiness<T>(body: unknown): Promise<T> {
+  const res = await fetch('/api/dataset-readiness', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    // A hung request would hold Start with no way out; failing releases it.
+    signal: AbortSignal.timeout(READINESS_REQUEST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Dataset readiness failed (${res.status})`);
+  return (await res.json()) as T;
+}
+
 export const shellBackend: StudioBackend = {
+  ...studioServerCalls((path, init) => fetch(path, init)),
+
   listTrainings: () => getFor<TrainingRow[]>('/api/trainings', 'Failed to load trainings'),
 
   // The /[id] page's own detail still comes from its server load (refresh() re-runs it); this seam
@@ -125,7 +131,7 @@ export const shellBackend: StudioBackend = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode, media, items }),
     });
-    if (!res.ok) throw new Error(`auto-label submit failed (${res.status})`);
+    if (!res.ok) throw await autoLabelSubmitFailure(res);
     return (await res.json()) as { workflowId: string };
   },
 
@@ -135,16 +141,8 @@ export const shellBackend: StudioBackend = {
     return (await res.json()) as { done: boolean; results: AutoLabelResult[] };
   },
 
-  submitTraining: async (runs: TrainingRunPayload[]) => {
-    const res = await fetch('/api/train', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ runs }),
-    });
-    if (!res.ok) throw await startFailure(res, `Training could not start (${res.status})`);
-    const { workflowIds, failure } = (await res.json()) as SubmittedBatch;
-    return { workflowIds, failure };
-  },
+  datasetReadiness: (blobIds) => postReadiness<ReadinessProbe>({ blobIds }),
+  datasetReadyToTrain: (run) => postReadiness<ReadinessCheck>({ run }),
 
   listEditGenerations: async () =>
     (
@@ -203,28 +201,6 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
   },
 
-  continueQuote: async (workflowId, fromEpoch, addEpochs, currencies) => {
-    const params = new URLSearchParams({
-      id: workflowId,
-      fromEpoch: String(fromEpoch),
-      addEpochs: String(addEpochs),
-    });
-    for (const currency of currencies) params.append('currencies', currency);
-    const res = await fetch(`/api/continue-training?${params}`);
-    if (!res.ok) throw new Error(await messageOf(res, 'Could not price the continuation.'));
-    return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
-  },
-
-  continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
-    const res = await fetch('/api/continue-training', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflowId, fromEpoch, addEpochs, currencies, matureAck }),
-    });
-    if (!res.ok) throw await startFailure(res, 'Could not start training.');
-    return ((await res.json()) as { workflowId: string }).workflowId;
-  },
-
   // The shell's flow gets prices streamed from the /new server load (redis-cached, shared across
   // users) — only the web-component host quotes browser-side.
   getFromPrices: () =>
@@ -249,6 +225,6 @@ export const shellBackend: StudioBackend = {
   getServiceStatus: async () => {
     const res = await fetch('/api/training-status');
     if (!res.ok) return null;
-    return (await res.json()) as TrainingServiceStatus;
+    return parseServiceStatus(await res.json());
   },
 };

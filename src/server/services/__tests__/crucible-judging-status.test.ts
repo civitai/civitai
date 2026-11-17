@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import {
   countJudgingPairs,
   getJudgingStatuses,
@@ -136,7 +137,10 @@ describe('countJudgingPairs', () => {
     const counts = await countJudgingPairs({ crucibleIds: [1, 1], userId: JUDGE, viewerLevel: 1 });
 
     expect(counts.size).toBe(1);
-    expect(redisMock.sysRedis.sMembers).toHaveBeenCalledTimes(1);
+    const votedPairReads = redisMock.sysRedis.sMembers.mock.calls.filter(([key]) =>
+      String(key).startsWith(`${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:`)
+    );
+    expect(votedPairReads).toHaveLength(1);
   });
 
   it('skips the entries query when judgedOnly and nothing is judged', async () => {
@@ -168,6 +172,24 @@ describe('countJudgingPairs', () => {
     expect(values).not.toContain(202);
     expect([...counts.keys()]).toEqual([101]);
     expect(counts.get(101)).toMatchObject({ judged: true, remainingPairs: 2 });
+  });
+
+  it('counts, when judgedOnly, a crucible the judge has only dismissed pairs in', async () => {
+    queryRaw.mockResolvedValue(entries({ 101: [10, 11, 12] }));
+    redisMock.sysRedis.sMembers.mockImplementation(async (key: string) =>
+      key === `${REDIS_SYS_KEYS.CRUCIBLE.DISMISSED_PAIRS}:101:${JUDGE}` ? ['10:11'] : []
+    );
+
+    const counts = await countJudgingPairs({
+      crucibleIds: [101, 202],
+      userId: JUDGE,
+      viewerLevel: 1,
+      judgedOnly: true,
+    });
+
+    expect([...counts.keys()]).toEqual([101]);
+    // Not judged (no vote), but the dismissed pair is off what is left.
+    expect(counts.get(101)).toMatchObject({ judged: false, remainingPairs: 2 });
   });
 
   it('makes no queries for no crucibles', async () => {

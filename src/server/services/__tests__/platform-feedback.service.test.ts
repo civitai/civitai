@@ -1,6 +1,6 @@
-import type { PGlite, Transaction } from '@electric-sql/pglite';
+import { PGlite, type Transaction } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FeedbackService from '~/server/services/feedback.service';
 import type { CreatePlatformFeedbackInput } from '~/server/schema/platform-feedback.schema';
@@ -84,6 +84,8 @@ type StoredRow = {
 };
 
 let pg: PGlite;
+/** The migrated, seeded database, copied into every test so the migrations run once per file. */
+let snapshot: File | Blob;
 /** Every statement the service sent, in order, as [text, values]. */
 let statements: Array<[string, unknown[]]>;
 /** The rows each of those statements returned, in the same order. */
@@ -153,13 +155,21 @@ const send = (userId: number, message = FIRST_MESSAGE, version?: string) =>
 const status = (...refs: string[]) =>
   getPlatformFeedbackStatus({ user: userOf(alice), input: { refs } });
 
+beforeAll(async () => {
+  const template = await freshAppFeedbackDb();
+  alice = await seedUser(template, 'alice');
+  bob = await seedUser(template, 'bob');
+  // Without it the dump replays WAL on load, and each sequence resumes up to 32 values ahead.
+  await template.exec('CHECKPOINT');
+  snapshot = await template.dumpDataDir('none');
+  await template.close();
+});
+
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(T0));
   resetLog();
-  pg = await freshAppFeedbackDb();
-  alice = await seedUser(pg, 'alice');
-  bob = await seedUser(pg, 'bob');
+  pg = await PGlite.create({ loadDataDir: snapshot });
   mocks.isFeedbackAreaEnabled.mockReset().mockResolvedValue(true);
   dbMock.dbWrite.$transaction.mockClear();
   dbMock.dbRead.$queryRaw.mockClear();
@@ -176,6 +186,19 @@ afterEach(async () => {
 describe('the fixtures', () => {
   it('seeds users 1 and 2, which the per-user fingerprints below are computed for', () => {
     expect([alice, bob]).toEqual([1, 2]);
+  });
+
+  it('gives each copy of the snapshot its own rows and sequences', async () => {
+    await seedFeedback(pg, { userId: alice, message: 'left behind' });
+    await seedUser(pg, 'carol');
+
+    const copy = await PGlite.create({ loadDataDir: snapshot });
+    try {
+      expect(await countRows(copy, 'Feedback')).toBe(0);
+      expect(await seedUser(copy, 'carol')).toBe(3);
+    } finally {
+      await copy.close();
+    }
   });
 });
 
@@ -461,12 +484,20 @@ describe('createPlatformFeedback — a repeat of a closed report', () => {
     expect(await countRows(pg, 'Feedback')).toBe(1);
   });
 
-  it('clips an over-long public note to 300 characters, on both procedures', async () => {
+  it('returns a 1000-character public note whole, on both procedures', async () => {
     const { ref } = await send(alice);
     await setStatus(1, 'dismissed');
-    await setResolution(1, { publicNote: `${'N'.repeat(300)}OVER` });
-    expect((await send(bob)).note).toBe('N'.repeat(300));
-    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(300) });
+    await setResolution(1, { publicNote: 'N'.repeat(1000) });
+    expect((await send(bob)).note).toBe('N'.repeat(1000));
+    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(1000) });
+  });
+
+  it('clips an over-long public note to 1000 characters, on both procedures', async () => {
+    const { ref } = await send(alice);
+    await setStatus(1, 'dismissed');
+    await setResolution(1, { publicNote: `${'N'.repeat(1000)}OVER` });
+    expect((await send(bob)).note).toBe('N'.repeat(1000));
+    expect((await status(ref))[0]).toMatchObject({ note: 'N'.repeat(1000) });
   });
 
   it('reads an empty public note as no note', async () => {

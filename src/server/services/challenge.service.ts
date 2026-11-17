@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
+import { ilikeContains } from '~/server/utils/ilike';
 import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -16,9 +18,16 @@ import {
   getExistingWinnersForRetry,
   resolveEventContext,
 } from '~/server/games/daily-challenge/challenge-helpers';
+import { REVIEW_JOB_NAME } from '~/server/games/daily-challenge/challenge-ladder';
+import { acquireJobLock } from '~/server/jobs/job-lock';
+import { sysRedis } from '~/server/redis/client';
 import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challenge/challenge-collection-owner';
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  distributeParticipationPrizes,
+  refundBannedEntrantReviews,
+} from '~/server/games/daily-challenge/challenge-rewards';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import {
@@ -88,6 +97,7 @@ import {
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { challengeScanGates } from '~/server/services/challenge-visibility.sql';
 import { resolveJudgingCategories } from '~/server/services/challenge-category.service';
 import {
   challengeJudgingEngineForCreate,
@@ -168,6 +178,7 @@ import {
   getJudgedEntries,
   getShowcaseImagesOfModel,
 } from '~/server/jobs/daily-challenge-processing';
+import { rejudgeEntries } from '~/server/services/challenge-judge-review.service';
 import {
   buildJudgingEngineContext,
   resolveJudgingEngine,
@@ -585,42 +596,14 @@ async function challengeVisibilityConditions({
   const conditions: Prisma.Sql[] = [];
 
   // Only show challenges past their visibility window — except to their own creator, so a creator
-  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan/POI gates below.
+  // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan gates below.
   conditions.push(
     viewerId
       ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${viewerId})`
       : Prisma.sql`c."visibleAt" <= now()`
   );
 
-  // Scan gate: hide challenges that haven't passed the moderation scan, except from their
-  // own creator (so a creator can preview their pending challenge). System/mod challenges
-  // default to Scanned, so they're unaffected.
-  conditions.push(
-    viewerId
-      ? Prisma.sql`(c."ingestion" = 'Scanned'::"ChallengeIngestionStatus" OR c."createdById" = ${viewerId})`
-      : Prisma.sql`c."ingestion" = 'Scanned'::"ChallengeIngestionStatus"`
-  );
-
-  // A challenge with no cover image is incomplete — never surface it in the feed.
-  conditions.push(Prisma.sql`c."coverImageId" IS NOT NULL`);
-
-  // POI gate: keep challenges whose cover depicts a real person out of public feeds (the image
-  // scanner sets Image.poi). Creator can still see their own, mirroring the scan gate above.
-  conditions.push(
-    viewerId
-      ? Prisma.sql`(NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true) OR c."createdById" = ${viewerId})`
-      : Prisma.sql`NOT EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."poi" = true)`
-  );
-
-  // Cover-scan gate: the cover image itself must have finished moderation scanning before the
-  // challenge is publicly visible — separate from the challenge text-scan gate above. Scoped to
-  // user challenges only, mirroring the detail path (getChallengeDetail): System/mod covers are
-  // trusted and default to Scanned, so they're exempt. Creator exempt, mirroring the POI gate.
-  conditions.push(
-    viewerId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus") OR c."createdById" = ${viewerId})`
-      : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND i."ingestion" = 'Scanned'::"ImageIngestionStatus"))`
-  );
+  conditions.push(...challengeScanGates(viewerId));
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
   // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
@@ -669,9 +652,12 @@ export async function getInfiniteChallenges(
     currentUserId?: number;
     isGreen: boolean;
     canAccessUserChallenges?: boolean;
+    /** Server-only: only these challenges, e.g. the semantic search's candidates. */
+    ids?: number[];
   }
 ) {
   const {
+    ids,
     query,
     status,
     source,
@@ -702,6 +688,11 @@ export async function getInfiniteChallenges(
     }))
   );
 
+  if (ids) {
+    if (!ids.length) return { items: [], nextCursor: undefined };
+    conditions.push(Prisma.sql`c.id IN (${Prisma.join(ids)})`);
+  }
+
   // Status filter (parameterized)
   if (status && status.length > 0) {
     const statusValues = status.map((s) => Prisma.sql`${s}::"ChallengeStatus"`);
@@ -720,7 +711,7 @@ export async function getInfiniteChallenges(
 
   // Text search (parameterized - safe from SQL injection)
   if (query) {
-    const searchPattern = `%${query}%`;
+    const searchPattern = ilikeContains(query);
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 
@@ -1520,18 +1511,20 @@ export async function upsertChallenge({
           // KNOWN, MEASURED, AND DELIBERATELY NOT FIXED: this is a stale full-column replace.
           // `existingMetadata` comes from the REPLICA read above, so a SAME-status write committing
           // between that read and this one is dropped. The status predicate on this updateMany does
-          // not cover that; only a jsonb `||` merge (as backfill-theme-elements.ts uses) would.
+          // not cover that; only a jsonb `||` merge would.
           //
           // It is not worth the second raw-SQL write inside this transaction, because both the
           // probability and the consequence are near zero:
-          //   - The only concurrent writer of this column is the `reviewedAt` watermark in
-          //     daily-challenge-processing.ts (`*/10 * * * *`, and only for the ONE current
-          //     challenge). To lose it, a save of that specific challenge must straddle a
-          //     600-second-cadence instantaneous UPDATE. On the common path (the edit form
+          //   - The concurrent writers of this column are the review job (`reviewedAt` and
+          //     `pendingReview`, every 10 minutes) and a moderator re-judge (`pendingReview`). To
+          //     lose a write, a save of that specific challenge must straddle one of those
+          //     instantaneous UPDATEs. On the common path (the edit form
           //     pre-fills themeElements, so no LLM call runs) the window is replica lag plus the
           //     request — sub-second. The auto-generate branch's multi-second LLM window is wider
           //     but only fires when a theme is set and no elements are stored.
-          //   - Losing it costs a WIDER SCAN, not re-judging. 🔴 An earlier version of this note
+          //   - Losing `reviewedAt` costs a WIDER SCAN, not re-judging. Losing a `pendingReview`
+          //     key a re-judge wrote is worse: that entry's tag and comment are already gone, so
+          //     it is left unscored. 🔴 An earlier version of this note
           //     claimed it "re-judges the whole backlog at LLM cost" — that is WRONG. The same
           //     WHERE clause carries `notYetReviewedByJudge` (a NOT EXISTS on the judge's comment
           //     for that image), which excludes every already-scored entry regardless of the
@@ -1556,7 +1549,7 @@ export async function upsertChallenge({
           challengeId: id,
           message: `upsertChallenge aborted: challenge ${id} was no longer '${challenge.status}' at write time`,
           readStatus: challenge.status,
-        }).catch(() => undefined);
+        });
         // Deliberately NOT "reload and try again": `challenge.status` came from the read REPLICA,
         // so this also fires when a transition already committed on the primary and has not
         // replicated yet — a reload re-reads the same lagging replica and cannot clear it. It also
@@ -2187,14 +2180,14 @@ export async function rescanChallenge({
       }),
   });
 
-  await logToAxiom({
+  logToAxiom({
     type: 'info',
     name: 'challenge-rescan',
     challengeId: id,
     moderatorId,
     coverRequeued,
     workflowId: workflow?.id ?? null,
-  }).catch(() => undefined);
+  });
 
   // A submit failure resolves to `undefined` rather than throwing (it persists a Failed
   // EntityModeration row for the retry cron instead), so without this the moderator gets a
@@ -2205,6 +2198,68 @@ export async function rescanChallenge({
       message: 'Failed to queue the content rescan. It will be retried automatically.',
     });
 }
+
+/**
+ * Moderator re-judge: undoes the judge's work on every judged entry and owes each a new review.
+ * Only while the challenge is Active and open: a completed one has paid out.
+ */
+export async function rejudgeChallenge({
+  id,
+  moderatorId,
+}: {
+  id: number;
+  moderatorId: number;
+}): Promise<{ entries: number }> {
+  const challenge = await dbWrite.challenge.findUnique({
+    where: { id },
+    select: { status: true, endsAt: true, collectionId: true, judgeId: true },
+  });
+  if (!challenge) throw new TRPCError({ code: 'NOT_FOUND', message: 'Challenge not found' });
+  if (challenge.status !== ChallengeStatus.Active || challenge.endsAt <= new Date())
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Only an active challenge can be re-judged',
+    });
+  if (!challenge.collectionId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no entries collection' });
+
+  const config = await getChallengeConfig();
+  const judgeId = challenge.judgeId ?? config.defaultJudgeId;
+  if (!judgeId) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Challenge has no judge' });
+  const { userId: judgeUserId } = await getJudgingConfigForChallenge(judgeId, config.defaultJudge);
+
+  // The review job's lock, so no tick reads the list or writes a review in the middle of the reset.
+  const lock = await acquireJobLock(REVIEW_JOB_NAME, REJUDGE_LOCK_SECONDS, sysRedis, {
+    failOpen: false,
+  });
+  if (!lock)
+    throw new TRPCError({
+      code: 'CONFLICT',
+      message: 'The review job is running. Try again in a few minutes.',
+    });
+  let reset: Awaited<ReturnType<typeof rejudgeEntries>>;
+  try {
+    reset = await rejudgeEntries({
+      challengeId: id,
+      collectionId: challenge.collectionId,
+      judgeUserId,
+      judgedTagId: config.judgedTagId,
+    });
+  } finally {
+    await lock.release();
+  }
+
+  logToAxiom({
+    type: 'info',
+    name: 'challenge-rejudge',
+    challengeId: id,
+    moderatorId,
+    ...reset,
+  });
+  return { entries: reset.entries };
+}
+
+const REJUDGE_LOCK_SECONDS = 2 * 60;
 
 export async function updateChallengeStatus(id: number, status: ChallengeStatus) {
   const challenge = await dbWrite.challenge.update({
@@ -2516,6 +2571,7 @@ export async function requestReview(
       WHERE "collectionId" = ${challenge.collectionId}
         AND "imageId" = ANY(ARRAY[${Prisma.join(eligibleImageIds)}])
     `;
+    await bustContestCollectionItemsCache(eligibleImageIds);
   }
 
   recordChallengeReviewRequested({ source: challenge.source });
@@ -2695,6 +2751,16 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     let process: string | undefined;
     let outcome: string | undefined;
 
+    // Before any early return: a challenge left with no judged entries still owes these.
+    if (challenge.collectionId) {
+      const refundedReviews = await refundBannedEntrantReviews({
+        challengeId,
+        collectionId: challenge.collectionId,
+        reviewMeTagId: config.reviewMeTagId,
+      });
+      log('Paid reviews refunded to banned entrants:', refundedReviews.length);
+    }
+
     if (existingWinners.length > 0) {
       log('Reusing existing winners from previous run (retry-safe):', existingWinners.length);
       winningEntries = existingWinners.map((w) => ({
@@ -2826,7 +2892,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         }));
 
         if (unmatchedPicks.length) {
-          await logToAxiom({
+          logToAxiom({
             type: 'warning',
             name: 'challenge-winner-unmatched-pick',
             message: `Winner pick named a creatorId matching no judged entry; that placement was not awarded: challenge=${challengeId}`,
@@ -2837,7 +2903,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
             // path.)
             resolvedPlaces: winningEntries.length,
             pickedPlaces: generated.winners.length,
-          }).catch(() => undefined);
+          });
           recordChallengeWinnerUnmatchedPick({
             source: challenge.source,
             count: unmatchedPicks.length,
@@ -2856,14 +2922,14 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
         dedupeWinnersForPayout(winningEntries);
       if (droppedWinners.length) {
         winningEntries = dedupedWinners;
-        await logToAxiom({
+        logToAxiom({
           type: 'warning',
           name: 'challenge-winner-duplicate-pick',
           message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${challengeId}`,
           challengeId,
           droppedUserIds: droppedWinners.map((entry) => entry.userId),
           droppedPlaces: droppedWinners.map((entry) => entry.position),
-        }).catch(() => undefined);
+        });
         recordChallengeWinnerDuplicatePick({
           source: challenge.source,
           count: droppedWinners.length,
@@ -2912,56 +2978,18 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
     // even though it's only populated inside the conditional (participation prizes are optional).
     const participationUserIds: number[] = [];
-    if (challenge.entryPrize && challenge.entryPrize.buzz > 0 && challenge.collectionId) {
-      const earnedEntryPrizes = await dbRead.$queryRaw<{ userId: number }[]>`
-        SELECT DISTINCT i."userId"
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        WHERE ci."collectionId" = ${challenge.collectionId}
-          AND ci.status = 'ACCEPTED'
-        GROUP BY i."userId"
-        HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
-      `;
-
-      if (earnedEntryPrizes.length > 0) {
-        const winnerUserIds = winningEntries.map((e) => e.userId);
-        // Exclude winners from entry prizes (they get winner prizes instead)
-        const entryPrizeUsers = earnedEntryPrizes.filter((e) => !winnerUserIds.includes(e.userId));
-        participationUserIds.push(...entryPrizeUsers.map((e) => e.userId));
-
-        if (entryPrizeUsers.length > 0) {
-          // Note: externalTransactionId uses challengeId-userId pattern for idempotency
-          // This ensures retries don't create duplicate payments
-          await withRetries(() =>
-            createBuzzTransactionMany(
-              entryPrizeUsers.map(({ userId }) => ({
-                type: TransactionType.Reward,
-                toAccountId: userId,
-                fromAccountId: 0, // central bank
-                amount: challenge.entryPrize!.buzz,
-                description: `Challenge Entry Prize: ${challenge.title}`,
-                externalTransactionId: `challenge-entry-prize-${challengeId}-${userId}`,
-                toAccountType: 'blue',
-              }))
-            )
-          );
-          log('Entry participation prizes sent:', entryPrizeUsers.length);
-
-          // Notify entry prize recipients
-          await createNotification({
-            type: 'challenge-participation',
-            category: NotificationCategory.System,
-            key: `challenge-participation:${challengeId}:final`,
-            userIds: entryPrizeUsers.map((e) => e.userId),
-            details: {
-              challengeId,
-              challengeName: challenge.title,
-              prize: challenge.entryPrize!.buzz,
-            },
-          });
-          log('Entry prize users notified');
-        }
-      }
+    if (challenge.entryPrize && challenge.collectionId) {
+      const paid = await distributeParticipationPrizes({
+        challengeId,
+        collectionId: challenge.collectionId,
+        title: challenge.title,
+        entryPrize: challenge.entryPrize,
+        entryPrizeRequirement: challenge.entryPrizeRequirement,
+        excludeUserIds: winningEntries.map((e) => e.userId),
+        notificationKey: `challenge-participation:${challengeId}:final`,
+      });
+      participationUserIds.push(...paid);
+      log('Entry participation prizes sent:', paid.length);
     }
 
     // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
@@ -2971,7 +2999,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
       if (residualBuzz > 0) {
-        await logToAxiom({
+        logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
           message: 'Challenge completed with fewer winners than prize places; buzz not paid out',
@@ -3121,7 +3149,7 @@ async function notifyEntrantsOfCancellation(challenge: {
     });
     log(`Notified ${entrantUserIds.length} entrants of challenge cancellation`);
   } catch (err) {
-    await logToAxiom({
+    logToAxiom({
       type: 'error',
       name: 'challenge-cancelled-notification',
       challengeId: challenge.id,
@@ -4100,17 +4128,83 @@ export async function playgroundPickWinners(input: PlaygroundPickWinnersInput) {
 
 // ─── Previous Winners Page ───────────────────────────────────────────────────
 
+/**
+ * A challenge's winners, only when the viewer may see the challenge in a public list
+ * (challengeVisibilityConditions); otherwise the same empty list as an unknown id. Moderators keep
+ * the detail page's exemptions (getChallengeDetail): every gate but the userChallenges flag.
+ */
+export async function getVisibleChallengeWinners({
+  challengeId,
+  isGreen,
+  viewerId,
+  isModerator = false,
+  canAccessUserChallenges = false,
+  browsingLevel,
+}: {
+  challengeId: number;
+  isGreen: boolean;
+  viewerId?: number;
+  isModerator?: boolean;
+  canAccessUserChallenges?: boolean;
+  browsingLevel?: number;
+}) {
+  const conditions: Prisma.Sql[] = [Prisma.sql`c.id = ${challengeId}`];
+  if (isModerator) {
+    if (!canAccessUserChallenges)
+      conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
+  } else {
+    // Cancelled stays hidden from all but its creator, as on the detail page.
+    conditions.push(
+      viewerId
+        ? Prisma.sql`(c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus" OR c."createdById" = ${viewerId})`
+        : Prisma.sql`c.status <> ${ChallengeStatus.Cancelled}::"ChallengeStatus"`
+    );
+    conditions.push(
+      ...(await challengeVisibilityConditions({
+        isGreen,
+        viewerId,
+        canAccessUserChallenges,
+        browsingLevel,
+      }))
+    );
+  }
+  const visible = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id FROM "Challenge" c WHERE ${Prisma.join(conditions, ' AND ')}
+  `;
+  if (!visible.length) return [];
+  return getChallengeWinners(challengeId, { isGreen, viewerId });
+}
+
 export async function getCompletedChallengesWithWinners(
-  input: GetCompletedChallengesWithWinnersInput & { isGreen: boolean; currentUserId?: number }
+  input: GetCompletedChallengesWithWinnersInput & {
+    isGreen: boolean;
+    currentUserId?: number;
+    canAccessUserChallenges?: boolean;
+  }
 ) {
-  const { cursor, limit, eventId, browsingLevel, query, source, isGreen, currentUserId } = input;
+  const {
+    cursor,
+    limit,
+    eventId,
+    browsingLevel,
+    query,
+    source,
+    isGreen,
+    currentUserId,
+    canAccessUserChallenges = false,
+  } = input;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
+    ...challengeScanGates(currentUserId),
   ];
+
+  // User challenges stay behind the `userChallenges` flag, as on the feed and the detail page.
+  if (!canAccessUserChallenges)
+    conditions.push(Prisma.sql`c.source <> ${ChallengeSource.User}::"ChallengeSource"`);
 
   if (eventId) {
     conditions.push(Prisma.sql`c."eventId" = ${eventId}`);
@@ -4153,7 +4247,7 @@ export async function getCompletedChallengesWithWinners(
   }
 
   if (query) {
-    const searchPattern = `%${String(query)}%`;
+    const searchPattern = ilikeContains(String(query));
     conditions.push(Prisma.sql`(c.title ILIKE ${searchPattern} OR c.theme ILIKE ${searchPattern})`);
   }
 

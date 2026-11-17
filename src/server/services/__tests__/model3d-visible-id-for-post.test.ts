@@ -1,18 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 
 // getVisibleModel3DIdForPost backs the new `image.get` -> `model3dId`
 // enrichment. It must (a) return the linked Model3D id when the viewer can see
 // it, and (b) return null when the post has no link OR the model is hidden,
 // applying the SAME visibility rule as the chip lookup. We mock only the DB
-// read; the visibility predicate (`canViewModel3d`) is exercised through it.
+// read (the post's Model3D, one Kysely statement whose rows, against a real
+// database, are pinned in hot-reads-5.kysely-parity.test.ts); the visibility
+// predicate (`canViewModel3d`) is exercised through it.
 
 const h = vi.hoisted(() => ({
-  findUnique: vi.fn(),
+  getPostModel3d: vi.fn(),
+}));
+
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getPostModel3d: h.getPostModel3d,
 }));
 
 vi.mock('~/server/db/client', () => ({
-  dbRead: { post: { findUnique: h.findUnique } },
+  dbRead: {},
   dbWrite: {},
 }));
 
@@ -20,7 +28,7 @@ vi.mock('~/server/db/client', () => ({
 // selector files at module-eval time. `Prisma.validator` isn't present in the
 // SSR test transform of `@prisma/client`, so provide a pass-through. This
 // unblocks the import chain without faking any logic the test exercises (we
-// only call the cheap post→model3d lookup, which uses the mocked dbRead).
+// only call the cheap post→model3d lookup, which uses the mocked read).
 vi.mock('@prisma/client', () => ({
   Prisma: {
     validator: () => (x: unknown) => x,
@@ -31,12 +39,21 @@ vi.mock('@prisma/client', () => ({
 }));
 
 const { getVisibleModel3DIdForPost } = await import('~/server/services/model3d.service');
+const { kyselyRead } = await import('~/server/db/kyselyDb');
 
+/** The post's row from the Kysely read: the Model3D columns are null when nothing is linked. */
 const setPostModel3d = (
   model3d: { id: number; userId: number; status: Model3DStatus; deletedAt: Date | null } | null
-) => h.findUnique.mockResolvedValueOnce({ model3d });
+) =>
+  h.getPostModel3d.mockResolvedValueOnce({
+    postId: 9,
+    model3dRowId: model3d?.id ?? null,
+    model3dUserId: model3d?.userId ?? null,
+    model3dStatus: model3d?.status ?? null,
+    model3dDeletedAt: model3d?.deletedAt ?? null,
+  });
 
-beforeEach(() => h.findUnique.mockReset());
+beforeEach(() => h.getPostModel3d.mockReset());
 
 describe('getVisibleModel3DIdForPost', () => {
   it('returns the id for a Published, not-deleted model (public viewer)', async () => {
@@ -66,16 +83,15 @@ describe('getVisibleModel3DIdForPost', () => {
     ).resolves.toBe(321);
   });
 
-  it('selects only the minimal model3d fields (no thumbnail/name) for the cheap lookup', async () => {
+  it('returns null for a missing post', async () => {
+    h.getPostModel3d.mockResolvedValueOnce(undefined);
+    await expect(getVisibleModel3DIdForPost({ postId: 9, userId: 99 })).resolves.toBeNull();
+  });
+
+  it('reads the post by its id, once, through Kysely on the replica', async () => {
     setPostModel3d({ id: 321, userId: 1, status: Model3DStatus.Published, deletedAt: null });
     await getVisibleModel3DIdForPost({ postId: 9 });
-    const arg = h.findUnique.mock.calls[0][0];
-    expect(arg.where).toEqual({ id: 9 });
-    expect(arg.select.model3d.select).toEqual({
-      id: true,
-      userId: true,
-      status: true,
-      deletedAt: true,
-    });
+    expect(h.getPostModel3d.mock.calls).toEqual([[kyselyRead, 9]]);
+    expect(h.getPostModel3d.mock.calls[0][0]).toBe(kyselyRead);
   });
 });

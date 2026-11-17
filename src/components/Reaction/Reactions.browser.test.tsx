@@ -28,10 +28,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcUtils>()),
-  trpc: {
-    reaction: { toggle: { useMutation: () => ({ mutate: mocks.toggle, isPending: false }) } },
-    useUtils: () => ({}),
-  },
+  trpc: makeTrpcProxy({
+    'reaction.toggleWithPoints': {
+      useMutation: () => ({ mutate: mocks.toggle, isPending: false }),
+    },
+  }),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -53,6 +54,7 @@ vi.mock('~/components/Buzz/InteractiveTipBuzzButton', async (importOriginal) => 
 }));
 
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import { Reactions } from '~/components/Reaction/Reactions';
 
 // Every case uses its own `entityId`. The reaction and buzz-tipping stores are module

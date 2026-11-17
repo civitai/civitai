@@ -31,6 +31,7 @@ export type ArticleRow = {
   coverId: number | null;
   /** The pre-`coverId` cover, held as a URL string. A few articles have only this one. */
   cover: string | null;
+  bannerId: number | null;
   moderatorNsfwLevelBasis: number | null;
   userId: number;
   username: string | null;
@@ -73,6 +74,7 @@ export async function getArticle(articleId: number): Promise<ArticleRow | null> 
       // so "which image is the cover" is a question the page invites and could not answer.
       'a.coverId',
       'a.cover',
+      'a.bannerId',
       'a.nsfwLevel',
       'a.userNsfwLevel',
       'a.moderatorNsfwLevel',

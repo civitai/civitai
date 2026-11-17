@@ -6,7 +6,7 @@ import type * as ImageService from '~/server/services/image.service';
 
 vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
   ...(await importOriginal<typeof Audit>()),
-  auditMetaData: vi.fn(() => ({ success: false, blockedFor: ['prompt'] })),
+  auditPostImageMeta: vi.fn(() => ({ success: false, blockedFor: ['prompt'] })),
   includesInappropriate: vi.fn(() => false),
   includesPoi: vi.fn(() => 'a person'),
 }));
@@ -61,6 +61,15 @@ function writtenColumns() {
   for (const [, column, n] of stmt.text.matchAll(/"(\w+)" = \$(\d+)/g)) {
     columns[column] = stmt.values[Number(n) - 1];
   }
+  // The scan's value is the ELSE arm of the stored-CSAM guard.
+  for (const [, column, n] of stmt.text.matchAll(
+    /"(\w+)" = CASE WHEN "blockedFor" = 'CSAM' THEN [^$]*?ELSE \$(\d+)/g
+  )) {
+    columns[column] = stmt.values[Number(n) - 1];
+  }
+  // The verdict is the ELSE arm of the NotFound guard (ingestionAfterVerdictSql) inside it.
+  const verdict = stmt.text.match(/"ingestion" = CASE[\s\S]*?ELSE \(CASE[\s\S]*?ELSE \$(\d+)::/);
+  if (verdict) columns.ingestion = stmt.values[Number(verdict[1]) - 1];
   return columns;
 }
 

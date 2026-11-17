@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest } from 'next';
 import type * as Caches from '~/server/redis/caches';
+import type * as FeatureFlags from '~/server/services/feature-flags.service';
 
-vi.mock('~/server/services/feature-flags.service', () => ({
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlags>()),
   getFeatureFlags: vi.fn(() => ({ canViewNsfw: true, datapacketRead: false })),
   buildFliptContext: vi.fn(() => ({})),
 }));
@@ -25,7 +27,7 @@ const feedSearch = vi.fn(async () => ({ items: [] as unknown[], nextCursor: unde
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: vi.fn(async () => ({ items: [], nextCursor: undefined })),
   getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  getImagesFromFeedSearch: (...args: unknown[]) => feedSearch(...(args as [])),
+  getImagesFromFeedServiceForRest: (...args: unknown[]) => feedSearch(...(args as [])),
 }));
 
 import { runImageSearch } from '../image-search.service';

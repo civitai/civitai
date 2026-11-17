@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import { OrchestratorEndpoint } from '~/server/utils/endpoint-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // The client retries only 429/5xx, so an upstream outage must not arrive as a 403 denial.
 function presignErrorStatus(e: unknown) {
@@ -89,5 +90,6 @@ export default OrchestratorEndpoint(
         .send(status === 502 ? 'Failed to get upload URL' : (e as Error).message);
     }
   },
-  ['GET']
+  ['GET'],
+  TokenScope.AIServicesWrite
 );

@@ -1,6 +1,8 @@
-import { generateJSON } from '@tiptap/html/server';
+import { generateHTML, generateJSON } from '@tiptap/html/server';
 import { describe, expect, it } from 'vitest';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { articleContentJson } from '~/server/utils/article-content-json';
+import { sanitizeHtml } from '~/utils/html-sanitize-helpers';
 
 // `upsertArticleInput.content` runs through sanitize-html, which only strips markup — a JSON
 // body carries no tags and survives byte-identical. So anything here is storable in
@@ -41,5 +43,29 @@ describe('article content is interpreted as HTML, never as JSON', () => {
     const doc = generateJSON('<p>hello <strong>world</strong></p>', tiptapExtensions);
 
     expect(nodeTypes(doc)).toContain('paragraph');
+  });
+
+  // The article page renders contentJson, not the stored HTML, so alignment that the sanitizer
+  // keeps is still lost here unless the shared extensions carry it.
+  it.each(['p', 'h2'])('keeps text-align on <%s> through generateJSON and back', (tag) => {
+    const doc = generateJSON(`<${tag} style="text-align:center">hi</${tag}>`, tiptapExtensions);
+
+    expect(doc.content?.[0].attrs?.textAlign).toBe('center');
+    expect(generateHTML(doc, tiptapExtensions)).toContain('text-align: center');
+  });
+
+  it('keeps an unaligned block unstyled', () => {
+    const doc = generateJSON('<p>hi</p>', tiptapExtensions);
+
+    expect(generateHTML(doc, tiptapExtensions)).not.toContain('text-align');
+  });
+
+  it('keeps a centered paragraph through the save sanitizer, generateJSON and back', () => {
+    const saved = sanitizeHtml('<p style="text-align: center; position: fixed">hi</p>');
+    // The article service's own entry point, so a later step on that path cannot drop the alignment.
+    const html = generateHTML(articleContentJson(saved), tiptapExtensions);
+
+    expect(html).toContain('text-align: center');
+    expect(html).not.toContain('position');
   });
 });

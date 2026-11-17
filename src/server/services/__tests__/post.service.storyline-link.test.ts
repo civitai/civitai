@@ -7,6 +7,10 @@ import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 // post.service.text-scan.test.ts.
 
 const { linkPendingChapter } = vi.hoisted(() => ({ linkPendingChapter: vi.fn() }));
+vi.mock('~/server/events/points/hooks', () => ({
+  onStorySparkLost: vi.fn(),
+  onStorySparkPostsHidden: vi.fn(),
+}));
 vi.mock('~/server/services/storyline.service', () => ({ linkPendingChapter }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
@@ -48,6 +52,8 @@ vi.mock('~/server/redis/caches', () => {
   };
 });
 
+vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
+
 // The heavy image.service graph — replaced wholesale with the named exports post.service
 // imports. `purgeResizeCache` is spied so we can assert the hide-only path independently.
 vi.mock('~/server/services/image.service', () => ({
@@ -59,7 +65,6 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: { refresh: vi.fn() },
   enqueueImageIngestion: vi.fn(),
   invalidateManyImageExistence: vi.fn(),
-  purgeImageGenerationDataCache: vi.fn(),
   purgeResizeCache: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
 }));

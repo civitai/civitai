@@ -4,6 +4,7 @@ import { webhookProcessors } from '~/server/webhooks/utils.webhooks';
 import { createLogger } from '~/utils/logging';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 const log = createLogger('jobs', 'green');
 
@@ -42,7 +43,8 @@ export const sendWebhooksJob = createJob('send-webhooks', '*/1 * * * *', async (
         for (const item of data) {
           tasks.push(async () => {
             const sendStart = Date.now();
-            await fetch(requestUrl, {
+            await outboundFetch(requestUrl, {
+              timeoutMs: 15_000,
               method: 'POST',
               body: JSON.stringify({
                 event: type,

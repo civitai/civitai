@@ -32,13 +32,13 @@ describe('buildReadout', () => {
       'hatTurfFeedCard',
       [
         ...users('control', 1000, { placedFromFeed: 100 }),
-        ...users('count-button', 1000, { placedFromFeed: 150 }),
+        ...users('badge-popover', 1000, { placedFromFeed: 150 }),
       ],
       AFTER_READ
     );
     expect(r.arms.map((a) => [a.variant, a.users])).toEqual([
       ['control', 1000],
-      ['count-button', 1000],
+      ['badge-popover', 1000],
     ]);
     const primary = r.comparisons.find((c) => c.role === 'primary')!;
     expect(primary.metric).toBe('placedFromFeed');
@@ -52,7 +52,7 @@ describe('buildReadout', () => {
   it('splits α across secondary metrics', () => {
     const r = buildReadout('hatTurfFeedCard', [
       ...users('control', 10),
-      ...users('count-button', 10),
+      ...users('badge-popover', 10),
     ]);
     const secondary = r.comparisons.filter((c) => c.role === 'secondary');
     expect(secondary).toHaveLength(4);
@@ -61,8 +61,8 @@ describe('buildReadout', () => {
 
   it('POSITIVE CONTROL: flags a sample-ratio mismatch and says not to read', () => {
     const r = buildReadout(
-      'hatTurfImageDetail',
-      [...users('control', 5000), ...users('invite-inline', 5400)],
+      'hatTurfFeedCard',
+      [...users('control', 5000), ...users('badge-popover', 5400)],
       AFTER_READ
     );
     expect(r.srm.mismatch).toBe(true);
@@ -71,17 +71,17 @@ describe('buildReadout', () => {
 
   it('excludes users seen in more than one arm and counts them', () => {
     const mixed = users('control', 3).map((u) => ({ ...u, nVariants: 2 }));
-    const r = buildReadout('hatTurfImageDetail', [
+    const r = buildReadout('hatTurfFeedCard', [
       ...mixed,
       ...users('control', 10),
-      ...users('invite-inline', 10),
+      ...users('badge-popover', 10),
     ]);
     expect(r.contaminatedUsers).toBe(3);
     expect(r.arms.find((a) => a.variant === 'control')!.users).toBe(10);
   });
 
   it('marks a read before the pre-registered date as interim', () => {
-    const r = buildReadout('hatTurfImageDetail', users('control', 2), BEFORE_READ);
+    const r = buildReadout('hatTurfFeedCard', users('control', 2), BEFORE_READ);
     expect(r.interim).toBe(true);
     expect(formatReadout(r)).toContain('INTERIM');
   });
@@ -91,7 +91,7 @@ describe('toExposedUsers', () => {
   const firstSeen = Date.UTC(2026, 10, 10, 23, 0, 0) / 1000;
   const row: ExposureRow = {
     userId: 9,
-    variant: 'count-button',
+    variant: 'badge-popover',
     firstSeen,
     nVariants: 1,
     joined: 1,

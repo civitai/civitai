@@ -18,6 +18,7 @@ const {
   mockAddShopItemToSection,
   mockRemoveShopItemFromSection,
   mockGetShopItemEventTags,
+  mockGetEventTagSuggestions,
   mockSetShopItemEventTags,
 } = vi.hoisted(() => ({
   mockGetShopItemById: vi.fn(async () => ({ id: 1 })),
@@ -26,6 +27,7 @@ const {
   mockAddShopItemToSection: vi.fn(async () => [{ id: 2 }]),
   mockRemoveShopItemFromSection: vi.fn(async () => [{ id: 2 }]),
   mockGetShopItemEventTags: vi.fn(async () => ['halloween']),
+  mockGetEventTagSuggestions: vi.fn(async () => ['halloween']),
   mockSetShopItemEventTags: vi.fn(async () => ['halloween']),
 }));
 
@@ -36,6 +38,7 @@ vi.mock('~/server/services/cosmetic-shop.service', () => ({
   addShopItemToSection: mockAddShopItemToSection,
   removeShopItemFromSection: mockRemoveShopItemFromSection,
   getShopItemEventTags: mockGetShopItemEventTags,
+  getEventTagSuggestions: mockGetEventTagSuggestions,
   setShopItemEventTags: mockSetShopItemEventTags,
   getPaginatedCosmeticShopItems: vi.fn(),
   getShopSections: vi.fn(),
@@ -109,6 +112,11 @@ const READS = [
     mock: mockGetShopItemEventTags,
     call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) =>
       c.getShopItemEventTags({ shopItemId: 1 }),
+  },
+  {
+    name: 'getEventTagSuggestions',
+    mock: mockGetEventTagSuggestions,
+    call: (c: ReturnType<typeof cosmeticShopRouter.createCaller>) => c.getEventTagSuggestions(),
   },
   {
     name: 'setShopItemEventTags',

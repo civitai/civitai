@@ -863,6 +863,7 @@ clickhouse client -n <<-EOSQL
         userAgent    String   default '',
         createdDate  Date materialized toDate(time),
         landingPage  String,
+        source       String   default '',
         deviceId     String   default ''
     )
         engine = MergeTree()

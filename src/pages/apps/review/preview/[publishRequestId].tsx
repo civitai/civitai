@@ -1,8 +1,14 @@
 import { Alert, Box, Button, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconArrowLeft, IconWindow, IconX } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import type { AnyRequest, OnsiteReviewMode } from '~/components/Apps/OnsiteReviewModal';
+import { ReviewActionBar } from '~/components/Apps/ReviewActionBar';
+import { AllCaughtUp } from '~/components/Apps/ReviewDetailView';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
+import { useNextPendingReview } from '~/components/Apps/useNextPendingReview';
+import { trpc } from '~/utils/trpc';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -74,6 +80,30 @@ export default function ReviewPreviewPage({ publishRequestId, slug }: ReviewPrev
   const { detail, isLive, inProgress, isFailed, stableIframeSrc, error } =
     useReviewPreview(publishRequestId);
 
+  /*
+    The DECISION BAR, so a moderator who opened the app full-page can approve or reject it
+    from here. Only with the per-submission review page (`appReviewPage`): that is where
+    "Back to review" leads and where "next" opens. The request is the same payload the review
+    page reads.
+  */
+  const reviewPage = !!features?.appBlocks && !!features?.appReviewPage;
+  const requestQuery = trpc.blocks.getPublishRequest.useQuery(
+    { publishRequestId },
+    { enabled: reviewPage, retry: false }
+  );
+  const selection = useMemo(
+    () =>
+      requestQuery.data != null
+        ? {
+            request: requestQuery.data.request as unknown as AnyRequest,
+            mode: requestQuery.data.mode as OnsiteReviewMode,
+          }
+        : null,
+    [requestQuery.data]
+  );
+  const { openNext, caughtUp } = useNextPendingReview(publishRequestId);
+  const backHref = reviewPage ? `/apps/review/${publishRequestId}` : '/apps/review';
+
   // Belt-and-suspenders client gate (the SSR resolver already fail-closed).
   if (!features?.appBlocks) return <NotFound />;
 
@@ -99,7 +129,28 @@ export default function ReviewPreviewPage({ publishRequestId, slug }: ReviewPrev
           flexDirection: 'column',
         }}
       >
-        {isLive && stableIframeSrc ? (
+        {/* "Back to review" in EVERY state, the live one included — before, the live
+            preview filled the viewport with no way back but the browser's own. */}
+        <Group justify="space-between" px="md" py={6} wrap="nowrap">
+          <Button
+            component={Link}
+            href={backHref}
+            variant="default"
+            size="xs"
+            leftSection={<IconArrowLeft size={14} />}
+            data-testid="apps-review-preview-back"
+          >
+            {reviewPage ? 'Back to review' : 'Back to review queue'}
+          </Button>
+          <Text size="xs" c="dimmed" truncate>
+            Review preview — {slug}
+          </Text>
+        </Group>
+        {caughtUp ? (
+          <Box p="xl" style={{ flex: 1 }}>
+            <AllCaughtUp />
+          </Box>
+        ) : isLive && stableIframeSrc ? (
           <ReviewBlockPreviewHost
             publishRequestId={publishRequestId}
             slug={slug}
@@ -114,6 +165,21 @@ export default function ReviewPreviewPage({ publishRequestId, slug }: ReviewPrev
             buildingSha={detail?.sha}
             errorMessage={error?.message}
           />
+        )}
+        {selection && !caughtUp && (
+          <Box
+            px="md"
+            pt="xs"
+            pb="xs"
+            style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
+          >
+            <ReviewActionBar
+              key={`actions-${selection.request.id}`}
+              selection={selection}
+              onClose={openNext}
+              approveAndNext
+            />
+          </Box>
         )}
       </Box>
     </>

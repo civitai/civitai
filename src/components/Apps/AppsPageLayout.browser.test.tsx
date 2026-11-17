@@ -123,7 +123,8 @@ describe('AppsPageLayout — exactly ONE rule under the tabs', () => {
     await expect.element(page.getByTestId('body')).toBeInTheDocument();
 
     const band = headerBand();
-    const outer = band.parentElement as HTMLElement;
+    // The band sits in a plain wrapper (hidden on a no-header page); the root Stack is its parent.
+    const outer = band.parentElement!.parentElement as HTMLElement;
     expect(band.style.getPropertyValue('--stack-gap')).toBe('var(--mantine-spacing-md)');
     expect(outer.style.getPropertyValue('--stack-gap')).toBe('var(--mantine-spacing-xl)');
 

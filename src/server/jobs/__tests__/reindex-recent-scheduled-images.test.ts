@@ -1,13 +1,11 @@
 import type { NextApiRequest } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockSearchSync, mockMetricsSync } = vi.hoisted(() => ({
-  mockSearchSync: vi.fn(),
+const { mockMetricsSync } = vi.hoisted(() => ({
   mockMetricsSync: vi.fn(),
 }));
 
 vi.mock('~/server/search-index', () => ({
-  imagesSearchIndex: { updateSync: mockSearchSync },
   imagesMetricsSearchIndex: { updateSync: mockMetricsSync },
 }));
 vi.mock('~/server/jobs/job', () => ({
@@ -84,29 +82,13 @@ beforeEach(() => {
 });
 
 describe('reindexRecentScheduledImages', () => {
-  // images_v6 is the half that was never covered: the metrics index takes every image and
-  // filters at query time, so a stale doc is merely mis-sorted there, while images_v6
-  // rejects a future-dated post outright and the image is absent from site search.
-  it('syncs both image indexes by default', async () => {
+  it("syncs the page's images into the metrics index", async () => {
     await runJob();
     const data = imageRows(100, 101).map(({ id }) => ({
       id,
       action: SearchIndexUpdateQueueAction.Update,
     }));
-    expect(mockSearchSync).toHaveBeenCalledWith(data, expect.anything());
     expect(mockMetricsSync).toHaveBeenCalledWith(data, expect.anything());
-  });
-
-  it('syncs only the index named in `indexes`', async () => {
-    await runJob({ indexes: 'search' });
-    expect(mockSearchSync).toHaveBeenCalled();
-    expect(mockMetricsSync).not.toHaveBeenCalled();
-  });
-
-  it('rejects an unknown index rather than silently syncing both', async () => {
-    await expect(runJob({ indexes: 'bogus' })).rejects.toThrow();
-    expect(mockSearchSync).not.toHaveBeenCalled();
-    expect(mockMetricsSync).not.toHaveBeenCalled();
   });
 
   it('returns the last post as the resume cursor', async () => {
@@ -134,7 +116,6 @@ describe('reindexRecentScheduledImages', () => {
   it('syncs nothing and stops when the page is empty', async () => {
     stubReads({ posts: [], images: [] });
     const result = await runJob();
-    expect(mockSearchSync).not.toHaveBeenCalled();
     expect(mockMetricsSync).not.toHaveBeenCalled();
     expect(result).toMatchObject({ posts: 0, images: 0, done: true });
   });
@@ -142,7 +123,6 @@ describe('reindexRecentScheduledImages', () => {
   it('does not sync when the page of posts carries no images', async () => {
     stubReads({ posts: postRows([10, AT]), images: [] });
     await runJob();
-    expect(mockSearchSync).not.toHaveBeenCalled();
     expect(mockMetricsSync).not.toHaveBeenCalled();
   });
 
@@ -151,7 +131,7 @@ describe('reindexRecentScheduledImages', () => {
   it('rejects half a cursor rather than silently restarting', async () => {
     await expect(runJob({ beforeId: '77' })).rejects.toThrow();
     await expect(runJob({ beforeAt: AT.toISOString() })).rejects.toThrow();
-    expect(mockSearchSync).not.toHaveBeenCalled();
+    expect(mockMetricsSync).not.toHaveBeenCalled();
   });
 });
 

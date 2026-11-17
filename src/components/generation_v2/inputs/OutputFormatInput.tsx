@@ -5,7 +5,9 @@
  * Receives its options from the field meta.
  */
 
-import { Menu, Tooltip, UnstyledButton } from '@mantine/core';
+import { UnstyledButton } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
+import { choiceIdleClass } from '~/libs/form/components/choice-styles';
 import { IconBolt, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { cloneElement, useState } from 'react';
@@ -82,11 +84,7 @@ export function OutputFormatInput<V extends string = string>({
       // "Output Format" would drop it.
       aria-label={`Output Format: ${selected?.label ?? 'JPEG'}`}
       data-tap-target
-      className={clsx(
-        'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
-        'bg-gray-1 hover:bg-gray-2',
-        'dark:bg-dark-5 dark:hover:bg-dark-4'
-      )}
+      className={clsx('flex items-center gap-1.5 rounded-md px-2 py-1 text-sm', choiceIdleClass)}
     >
       <IconPhoto size={16} className="text-gray-6 dark:text-dark-2" />
       <span className="font-medium">{selected?.label ?? 'JPEG'}</span>

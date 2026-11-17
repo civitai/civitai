@@ -172,7 +172,6 @@ const snapshotRows = (): Rows =>
 /** `locked.rows` is what the transaction saw once it held the row lock, to roll back to. */
 function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
   return {
-    // The comment-thread detach ahead of a delete; nothing here has threads.
     $executeRaw: async () => 0,
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');
@@ -724,6 +723,34 @@ describe('awardBountyEntry', () => {
           supporterIds: [5, 5],
           supporterAmounts: [30, 70],
           supporterChargedAt: [1792454400, 1793836800],
+        },
+      }),
+    ]);
+  });
+
+  // An invariant guard (green before keyed creation existed too): a keyed creation's prefix
+  // (`bounty-k-<user>-<key>-<time>`) is priced like any other, by the time its last segment carries.
+  it('prices a keyed creation charge by the time its prefix carries last', async () => {
+    benefactors[0].buzzTransactionId = [
+      'bounty-k-5-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-1792454400000',
+    ];
+    buzz.getMultiAccountTransactionsByPrefix.mockResolvedValue([
+      { accountType: 'yellow', amount: 100 },
+    ]);
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(buzz.getMultiAccountTransactionsByPrefix).toHaveBeenCalledWith(
+      'bounty-k-5-6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b-1792454400000'
+    );
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledExactlyOnceWith([
+      expect.objectContaining({
+        amount: 100,
+        externalTransactionId: 'bounty-award-b4-u5-yellow',
+        details: {
+          entityId: 4,
+          entityType: 'Bounty',
+          supporterIds: [5],
+          supporterAmounts: [100],
+          supporterChargedAt: [1792454400],
         },
       }),
     ]);

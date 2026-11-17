@@ -11,13 +11,12 @@ import {
   Image,
   Indicator,
   Loader,
-  Menu,
   SegmentedControl,
   Stack,
   Text,
   TextInput,
-  Tooltip,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import {
   IconCirclePlus,
   IconCloudOff,

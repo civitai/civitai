@@ -12,6 +12,7 @@ import * as z from 'zod';
 
 export const STORYLINE_FEED_SORTS = [
   { value: 'newest', label: 'Newest' },
+  { value: 'recentlyUpdated', label: 'Recently updated' },
   { value: 'mostChapters', label: 'Most chapters' },
 ] as const;
 

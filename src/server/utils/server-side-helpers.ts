@@ -22,6 +22,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRequestCredential } from '~/server/auth/request-credential';
+import { trpcViewer } from '~/server/auth/api-auth-session';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { isFullScopeSession } from '~/server/utils/require-full-scope-session';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
@@ -33,8 +34,17 @@ import {
 } from '~/server/shell/shell-response';
 import { isCanonicalShellPath, shellBounceLocation } from '~/server/shell/shell-canonical';
 import { SHELL_RENDERED_REQ_KEY, SHELL_REQ_KEY } from '~/shared/constants/shell.constants';
+import {
+  BOT_CACHE_PREFETCH_FAILED_REQ_KEY,
+  BOT_CACHE_REQ_KEY,
+} from '~/shared/constants/bot-cache.constants';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { freezeRenderState, shouldFreezeRenderState } from '~/server/utils/freeze-render-state';
+import {
+  isSsrPrefetchCohort,
+  SSR_PREFETCH_COHORT_REQ_KEY,
+  SSR_PREFETCH_ROUTE_REQ_KEY,
+} from '~/shared/constants/ssr-prefetch-cohort.constants';
 
 /**
  * The page-props key the patched `withTRPC` (patches/@trpc__next@11.17.0.patch) reads the
@@ -98,7 +108,7 @@ export const getServerProxySSGHelpers = async (
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
-      user: session?.user,
+      ...trpcViewer(session?.user),
       acceptableOrigin: true,
       features,
       track: new Tracker(),
@@ -165,6 +175,41 @@ export function dehydrateSsgState(ssg: SsgHelpers, url: string | undefined) {
   );
 }
 
+function cpuUsageNow(): NodeJS.CpuUsage | undefined {
+  try {
+    return process.cpuUsage();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `ssrSignedInSkipPrefetch*` A/Bs' getServerSideProps CPU: process CPU since `start` (just before
+ * the resolver), for a request `resolveSsrPrefetchCohort` marked. The delta is taken now; the metric
+ * module is loaded lazily, so this file — imported by every page — never pulls prom-client into a
+ * page's client test graph. Never throws, never delays the response.
+ */
+function recordPrefetchCohortGsspCpu(req: object, start: NodeJS.CpuUsage | undefined) {
+  if (!start) return;
+  const marks = req as {
+    [SSR_PREFETCH_COHORT_REQ_KEY]?: unknown;
+    [SSR_PREFETCH_ROUTE_REQ_KEY]?: unknown;
+  };
+  const cohort = marks[SSR_PREFETCH_COHORT_REQ_KEY];
+  const route = marks[SSR_PREFETCH_ROUTE_REQ_KEY];
+  if (!isSsrPrefetchCohort(cohort) || typeof route !== 'string') return;
+  let seconds: number;
+  try {
+    const { user, system } = process.cpuUsage(start);
+    seconds = (user + system) / 1e6;
+  } catch {
+    return;
+  }
+  void import('~/server/prom/ssr-cpu.metrics')
+    .then((metrics) => metrics.recordSsrPrefetchGsspCpu(route, cohort, seconds))
+    .catch(() => undefined);
+}
+
 export function createServerSideProps<P>({
   resolver,
   useSSG,
@@ -229,7 +274,17 @@ export function createServerSideProps<P>({
       };
     }
 
-    const features = await getFeatureFlagsAsync({ user: session?.user, req: context.req });
+    // A bot-cache candidate (`_app` marked it) is evaluated as in `_app`: the host (part of the
+    // cache key) but not the request, so its region cannot reach a render the cache may store.
+    // 🔴 Never drop `host` too: with no host the domain restrictions are skipped.
+    const botCacheCandidate = !!(context.req as { [BOT_CACHE_REQ_KEY]?: string })[
+      BOT_CACHE_REQ_KEY
+    ];
+    const features = await getFeatureFlagsAsync(
+      botCacheCandidate
+        ? { user: session?.user, host: context.req.headers.host, req: undefined }
+        : { user: session?.user, req: context.req }
+    );
     // This response is private, so it is where the viewer's shell rollout is read: the route cookie
     // follows the flag, and only a request carrying it is ever considered for the shell.
     if (shell) {
@@ -245,6 +300,8 @@ export function createServerSideProps<P>({
         ? await getServerProxySSGHelpers(context, session, features, capture)
         : undefined;
 
+    // The trial's getServerSideProps CPU runs from here (its prefetches) through dehydrate.
+    const gsspCpuStart = cpuUsageNow();
     const result = ((await resolver?.({
       ctx: context,
       isClient,
@@ -262,6 +319,22 @@ export function createServerSideProps<P>({
         ? await result.props
         : result.props;
 
+    // A fail-soft prefetch renders the page without that data; a cached copy would keep it so.
+    const botCacheReq = context.req as {
+      [BOT_CACHE_REQ_KEY]?: string;
+      [BOT_CACHE_PREFETCH_FAILED_REQ_KEY]?: boolean;
+    };
+    if (
+      ssg &&
+      botCacheReq[BOT_CACHE_REQ_KEY] &&
+      ssg.queryClient
+        .getQueryCache()
+        .getAll()
+        .some((query) => query.state.status === 'error')
+    ) {
+      botCacheReq[BOT_CACHE_PREFETCH_FAILED_REQ_KEY] = true;
+    }
+
     const adsGated = resolveAdsGated(result, features);
 
     const pageProps = {
@@ -271,6 +344,7 @@ export function createServerSideProps<P>({
       session: jsonSafeSession(session),
     } as NonNullable<P>;
     attachSsrDehydratedState(pageProps, capture);
+    recordPrefetchCohortGsspCpu(context.req, gsspCpuStart);
     return { props: pageProps };
   };
 }

@@ -1,6 +1,6 @@
 -- Minimal schema for hot-reads-5.kysely-parity.test.ts.
 --
--- Only the tables the reads behind kysely-hot-reads-5 touch (and the user columns the collaborator
+-- Only the tables the hot-reads-5 reads touch (and the user columns the collaborator
 -- read's Prisma user select reads), and only the columns those reads select, filter, join or order
 -- on. Types, nullability and primary keys follow schema.full.prisma, except that the CITEXT columns
 -- ("User"."username", "Model"."name") are TEXT here, as in the other parity fixtures, so the
@@ -151,7 +151,8 @@ CREATE TABLE "hot_reads_5_parity"."ModelVersion" (
   "createdAt"    TIMESTAMP(3)                                 NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "status"       "hot_reads_5_parity"."ModelStatus"           NOT NULL DEFAULT 'Draft',
   "requireAuth"  BOOLEAN                                      NOT NULL DEFAULT false,
-  "usageControl" "hot_reads_5_parity"."ModelUsageControl"     NOT NULL DEFAULT 'Download'
+  "usageControl" "hot_reads_5_parity"."ModelUsageControl"     NOT NULL DEFAULT 'Download',
+  "baseModel"    TEXT                                         NOT NULL
 );
 
 CREATE TABLE "hot_reads_5_parity"."ResourceReview" (

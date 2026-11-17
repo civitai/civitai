@@ -225,10 +225,8 @@ export const processUserContentRemovalQueue = async () => {
   // One combined filter per index instead of one per user per index
   const mainIndexConfigs = [
     { name: MODELS_SEARCH_INDEX, filter: `user.id IN [${userIdList}]` },
-    // IMAGES_SEARCH_INDEX is omitted deliberately: while it is retired no reset runs, so it has
-    // no filterable attributes and a `user.username` filter errors. Re-add it only in the change
-    // that resets the index — and it can hold documents before then, because
-    // `pages/api/mod/search/images-update.ts` writes to it without consulting `retired`.
+    // The retired images index (`images_v6`) is not here: image search moved to the vector index,
+    // and nothing writes to it any more.
     { name: ARTICLES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: BOUNTIES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
@@ -241,7 +239,7 @@ export const processUserContentRemovalQueue = async () => {
   ];
 
   // METRICS_IMAGES_SEARCH_INDEX (the feeds index) is omitted: it is retired with the feeds
-  // Meilisearch, and its readers answer without it (see search-index/retired-index-read.ts).
+  // Meilisearch and nothing reads it (see search-index/retired-indexes.ts).
 
   const processIndex = async (indexName: string, filter: string, client: MeiliSearch | null) => {
     if (!client) return;
@@ -256,14 +254,14 @@ export const processUserContentRemovalQueue = async () => {
       await index.deleteDocuments({ filter });
     } catch (error) {
       console.error(`processUserContentRemovalQueue :: Error on ${indexName}:`, error);
-      await logToAxiom({
+      logToAxiom({
         name: 'process-user-content-removal-error',
         type: 'error',
         indexName,
         filter,
         userIds,
         error: error instanceof Error ? error.message : String(error),
-      }).catch();
+      });
     }
   };
 
@@ -271,12 +269,12 @@ export const processUserContentRemovalQueue = async () => {
     ...mainIndexConfigs.map(({ name, filter }) => processIndex(name, filter, searchClient)),
   ]);
 
-  await logToAxiom({
+  logToAxiom({
     name: 'process-user-content-removal-summary',
     type: 'info',
     userCount: entries.length,
     userIds,
-  }).catch();
+  });
 
   console.log(
     `processUserContentRemovalQueue :: Completed batch removal for ${entries.length} users`

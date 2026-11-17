@@ -45,6 +45,9 @@ vi.mock('~/components/CreatorShop/Services/deals/DealActionsPanel', () => ({
 vi.mock('~/components/CreatorShop/Services/deals/DealEscrowPanel', () => ({
   DealEscrowPanel: () => null,
 }));
+vi.mock('~/components/CreatorShop/Services/deals/DealAttachmentsPanel', () => ({
+  DealAttachmentsPanel: () => null,
+}));
 vi.mock('~/components/CreatorShop/Services/deals/DealFilesPanel', () => ({
   DealFilesPanel: () => null,
 }));

@@ -1,4 +1,16 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
+// Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
+// refusal overrides the stub.
+vi.mock('~/server/services/blocks/app-developer-terms.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppDeveloperTermsService>()),
+  hasAcceptedAppDeveloperTerms: vi.fn(async () => true),
+  assertAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertAcceptedAppDeveloperTermsTrpc: vi.fn(async () => undefined),
+  assertOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+  assertListingOwnerAcceptedAppDeveloperTerms: vi.fn(async () => undefined),
+}));
 
 /**
  * 🔴 THE DRIFTED ON-SITE LISTING — one fixture, five gates, both directions.
@@ -397,6 +409,30 @@ describe('offsite-listing::submitListingRevision', () => {
       code: 'NOT_OWNED',
       message: 'you can only submit your own revision',
     });
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("an editor's revision is refused while the listing's owner has not accepted the App Developer Terms", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const ownerGate = vi.mocked(terms.assertListingOwnerAcceptedAppDeveloperTerms);
+    ownerGate.mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN', message: 'owner' }));
+    seatFor(EDITOR);
+    await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
+      { code: 'FORBIDDEN' }
+    );
+    expect(ownerGate).toHaveBeenCalledWith(SHADOW, EDITOR);
+    expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("an editor's revision is refused while the editor has not accepted the App Developer Terms", async () => {
+    const terms = await import('~/server/services/blocks/app-developer-terms.service');
+    const actorGate = vi.mocked(terms.assertAcceptedAppDeveloperTermsTrpc);
+    actorGate.mockRejectedValueOnce(new TRPCError({ code: 'FORBIDDEN', message: 'actor' }));
+    seatFor(EDITOR);
+    await expect(submitListingRevision({ shadowId: SHADOW, userId: EDITOR })).rejects.toMatchObject(
+      { code: 'FORBIDDEN', message: 'actor' }
+    );
+    expect(actorGate).toHaveBeenCalledWith(EDITOR);
     expect(mockWrite.appListingPublishRequest.create).not.toHaveBeenCalled();
   });
 

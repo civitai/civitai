@@ -33,7 +33,6 @@ vi.mock('$lib/server/auth/session', () => ({
 
 import { GET, POST } from '../../../../routes/api/auth/identity/+server';
 import { POST as DEV_LOGIN } from '../../../../routes/api/auth/dev/login/+server';
-import { POST as LEGACY_EXCHANGE } from '../../../../routes/api/auth/oauth/legacy-exchange/+server';
 
 // Loosely typed (`any`): the same mock event is fed to handlers with different route generics.
 const ev = (
@@ -165,67 +164,6 @@ describe('POST /api/auth/identity (invalidate / refresh)', () => {
     const res = await POST(ev({ auth: 'Bearer wrong', body: { scope: 'all' } }));
     expect(res.status).toBe(401);
     expect(h.invalidateAll).not.toHaveBeenCalled();
-  });
-});
-
-// A compact-JWE-shaped legacy cookie (the route only accepts that format; the verifier is mocked).
-const LEGACY_JWE = `${Buffer.from(JSON.stringify({ alg: 'dir', enc: 'A256GCM' })).toString(
-  'base64url'
-)}..iv.ct.tag`;
-
-describe('POST /api/auth/oauth/legacy-exchange (upgrade-on-read)', () => {
-  it('401 without a valid internal token (never re-decodes or mints)', async () => {
-    const res = await LEGACY_EXCHANGE(
-      ev({ auth: 'Bearer wrong', body: { legacyToken: LEGACY_JWE } })
-    );
-    expect(res.status).toBe(401);
-    expect(h.verifyToken).not.toHaveBeenCalled();
-    expect(h.mintSession).not.toHaveBeenCalled();
-  });
-
-  it('400 when no legacyToken is supplied', async () => {
-    expect((await LEGACY_EXCHANGE(ev({ auth: 'Bearer secret-123', body: {} }))).status).toBe(400);
-    expect(h.verifyToken).not.toHaveBeenCalled();
-  });
-
-  it('re-decodes the legacy cookie and mints a civ-token for the SAME user', async () => {
-    const res = await LEGACY_EXCHANGE(
-      ev({ auth: 'Bearer secret-123', body: { legacyToken: LEGACY_JWE } })
-    );
-    expect(res.status).toBe(200);
-    // Returns the minted civ-token PLUS a deviceId (no civ-device cookie in this request → the handler mints
-    // one via randomUUID) so the spoke can set civ-device on the upgraded session, matching establishSession.
-    expect(await res.json()).toEqual({ token: 'civ.minted.jwt', deviceId: expect.any(String) });
-    expect(h.verifyToken).toHaveBeenCalledWith(LEGACY_JWE);
-    expect(h.getOrProduce).toHaveBeenCalledWith(5);
-    expect(h.mintSession).toHaveBeenCalledWith({ id: 5, username: 'alice' });
-  });
-
-  it('NEVER trusts a caller-supplied userId — only the decoded cookie identity', async () => {
-    await LEGACY_EXCHANGE(
-      ev({ auth: 'Bearer secret-123', body: { legacyToken: LEGACY_JWE, userId: 999 } })
-    );
-    // 5 comes from verifyToken (the cookie), not the 999 in the body.
-    expect(h.getOrProduce).toHaveBeenCalledWith(5);
-    expect(h.getOrProduce).not.toHaveBeenCalledWith(999);
-  });
-
-  it('401 when the legacy cookie fails to decode (never mints)', async () => {
-    h.verifyToken.mockResolvedValue(null);
-    const res = await LEGACY_EXCHANGE(
-      ev({ auth: 'Bearer secret-123', body: { legacyToken: 'bad' } })
-    );
-    expect(res.status).toBe(401);
-    expect(h.mintSession).not.toHaveBeenCalled();
-  });
-
-  it('404 when the decoded user no longer exists', async () => {
-    h.getOrProduce.mockResolvedValue(null);
-    const res = await LEGACY_EXCHANGE(
-      ev({ auth: 'Bearer secret-123', body: { legacyToken: LEGACY_JWE } })
-    );
-    expect(res.status).toBe(404);
-    expect(h.mintSession).not.toHaveBeenCalled();
   });
 });
 

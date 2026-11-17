@@ -1,22 +1,32 @@
 import {
   getMyStickerHats,
+  getReactionEarns,
   getTurfStickers,
   getTurfStickersForImages,
   getTurfStock,
+  getFlagRaceEventForCollection,
+  getFlagSummary,
+  getOpenFlagCrucible,
   getTurfSummaries,
+  placeFlagHats,
   placeTurfSticker,
   removeTurfSticker,
   setTurfOptIn,
+  setTurfOwnerOff,
   watchTurfImages,
 } from '~/server/events/turf/turf.service';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
+  placeFlagHatsSchema,
   placeTurfStickerSchema,
   removeTurfStickerSchema,
   setTurfOptInSchema,
+  setTurfOwnerOffSchema,
   turfEventSchema,
+  flagRaceCollectionSchema,
   turfImageSchema,
+  turfReactionEarnsSchema,
   turfStickersForImagesSchema,
   turfSummariesSchema,
   watchTurfImagesSchema,
@@ -42,11 +52,13 @@ export const hatTurfRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfSummariesSchema)
     .query(({ ctx, input }) => getTurfSummaries(input.event, input.imageIds, ctx.user?.id)),
-  // One image's stickers to draw, capped, plus the viewer's own.
+  // One image's stickers to draw, a page at a time, plus the viewer's own.
   getImageStickers: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(turfImageSchema)
-    .query(({ ctx, input }) => getTurfStickers(input.event, input.imageId, ctx.user?.id)),
+    .query(({ ctx, input }) =>
+      getTurfStickers(input.event, input.imageId, ctx.user?.id, input.before)
+    ),
   // Stickers to draw on a page of feed cards, a few per image.
   getStickersForImages: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
@@ -55,7 +67,7 @@ export const hatTurfRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(({ input }) => getTurfStickersForImages(input.event, input.imageIds, input.perImage)),
   // Marks images as on screen so their count changes are pushed (turf-watch.ts). Called on view and
-  // every 30s while in view; no Postgres on this path.
+  // re-marked while in view; no Postgres on this path.
   watch: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(watchTurfImagesSchema)
@@ -72,6 +84,36 @@ export const hatTurfRouter = router({
     .input(placeTurfStickerSchema)
     .use(rateLimit({ limit: 60, period: 60 }))
     .mutation(({ ctx, input }) => placeTurfSticker({ ...input, userId: ctx.user.id })),
+  // Hats on one of today's flags, 1, 5 or 10 at a time. guarded, as place.
+  placeFlagHats: guardedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(placeFlagHatsSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .mutation(({ ctx, input }) =>
+      placeFlagHats({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+  // Today's flags and their live counts for the home row. The same for every viewer.
+  getFlags: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: 10 }))
+    .query(({ input }) => getFlagSummary(input.event)),
+  // The flag Crucible taking entries now, for the row's "Enter the race" button.
+  getOpenFlagCrucible: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: 30 }))
+    .query(({ input }) => getOpenFlagCrucible(input.event)),
+  // Which event's Flag Race a Collection holds, so its page can show the flags' badges.
+  getFlagRaceForCollection: publicProcedure
+    .input(flagRaceCollectionSchema)
+    .use(edgeCacheIt({ ttl: 60 }))
+    .query(({ input }) => getFlagRaceEventForCollection(input.collectionId)),
+  // Whether the viewer reacting to an image would pay their team: asked for the reaction nudge after a
+  // placement, so the placement itself never waits on it.
+  reactionEarns: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(turfReactionEarnsSchema)
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .query(({ ctx, input }) => getReactionEarns({ ...input, userId: ctx.user.id })),
   setOptIn: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(setTurfOptInSchema)
@@ -90,6 +132,12 @@ export const hatTurfRouter = router({
         );
       return result;
     }),
+  // The owner's "keep Hat Turf off my images"; refused while the user is in Hat Turf.
+  setOwnerOff: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .input(setTurfOwnerOffSchema)
+    .use(rateLimit({ limit: 20, period: 60 }))
+    .mutation(({ ctx, input }) => setTurfOwnerOff(input.event, ctx.user.id, input.off)),
   remove: moderatorProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(removeTurfStickerSchema)

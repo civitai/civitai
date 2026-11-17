@@ -2,101 +2,99 @@ import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 
-// Which workflow control renders where is this file's question; the controls themselves are
-// WorkflowInput's tests, so they are stand-ins here.
-vi.mock('~/components/generation_v2/inputs/WorkflowInput', () => ({
-  WorkflowInput: () => <div>Category icons</div>,
+// Where the cards' parts go is this file's question; the workflow control itself is
+// WorkflowPicker's tests, so it is a stand-in here.
+vi.mock('~/components/generation_v2/inputs/WorkflowPicker', () => ({
   WorkflowPicker: ({ onBack }: { onBack?: () => void }) => (
     <div>
       Workflow card
       {onBack && <button onClick={onBack}>Back</button>}
     </div>
   ),
-  SelectedWorkflowDisplay: () => <div>Workflow display</div>,
 }));
 
-import { WorkflowModes, WorkflowRow } from '~/components/form-graph/generation/WorkflowRow';
+import { WorkflowRow } from '~/components/form-graph/generation/WorkflowRow';
+import {
+  GenerationSetupModel,
+  GenerationSlotProvider,
+} from '~/components/generation_v2/GenerationLayout';
 
-const renderRow = (mobile: boolean, workflow = 'txt2img', onBack?: () => void) =>
+const modes = [
+  { label: 'Standard', value: 'img2vid' },
+  { label: 'First/Last', value: 'img2vid:first-last' },
+];
+
+// The form after the row, as each output form draws it: its model and the model's versions, into
+// the model card.
+const renderRow = (
+  workflow = 'img2vid',
+  { onBack, onChange = vi.fn() }: { onBack?: () => void; onChange?: (key: string) => void } = {}
+) =>
   renderWithProviders(
-    <WorkflowRow
-      mobile={mobile}
-      workflow={workflow}
-      onChange={vi.fn()}
-      onBack={onBack}
-      ecosystemInput={<div>Ecosystem</div>}
-    />
+    <GenerationSlotProvider>
+      <WorkflowRow
+        workflow={workflow}
+        onChange={onChange}
+        onBack={onBack}
+        modes={modes}
+        ecosystemInput={<div>Ecosystem</div>}
+      />
+      <GenerationSetupModel>
+        <div>Model card</div>
+      </GenerationSetupModel>
+    </GenerationSlotProvider>
   );
 
 describe('WorkflowRow', () => {
-  test('on a phone the workflow card sits above the ecosystem, with no category icons', async () => {
+  test("the form's model lands in the model card under the ecosystem; a mode and Back report", async () => {
     const onBack = vi.fn();
-    renderRow(true, 'txt2img', onBack);
+    const onChange = vi.fn();
+    renderRow('img2vid', { onBack, onChange });
 
-    await expect.element(page.getByText('Ecosystem')).toBeInTheDocument();
-    await expect.element(page.getByText('Category icons')).not.toBeInTheDocument();
-    const card = page.getByText('Workflow card').element();
-    const ecosystem = page.getByText('Ecosystem').element();
-    expect(card.compareDocumentPosition(ecosystem) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The model is drawn by the form after the row, through the slot, into the ecosystem's card.
+    await expect.element(page.getByText('Model card')).toBeInTheDocument();
+    const modelCard = page.getByText('Ecosystem').element().parentElement!;
+    expect(modelCard.contains(page.getByText('Model card').element())).toBe(true);
 
+    await page.getByRole('radio', { name: 'First/Last' }).click();
+    expect(onChange).toHaveBeenCalledWith('img2vid:first-last');
     await page.getByRole('button', { name: 'Back' }).click();
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
-  test('elsewhere it is the category icons beside the ecosystem, with no card', async () => {
-    renderRow(false);
+  test('a variant of a workflow selects the mode it is a variant of', async () => {
+    // img2vid:first-last is not a mode of its own: it is img2vid with a last frame.
+    renderWithProviders(
+      <WorkflowRow
+        workflow="img2vid:first-last"
+        onChange={vi.fn()}
+        modes={[
+          { label: 'Text', value: 'txt2vid' },
+          { label: 'Image', value: 'img2vid' },
+        ]}
+        ecosystemInput={<div>Ecosystem</div>}
+      />
+    );
 
-    await expect.element(page.getByText('Category icons')).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('radio', { name: 'Image' }))
+      .toHaveAttribute('aria-checked', 'true');
+    await expect
+      .element(page.getByRole('radio', { name: 'Text' }))
+      .toHaveAttribute('aria-checked', 'false');
+  });
+
+  test('a workflow with no modes draws no mode row', async () => {
+    renderWithProviders(
+      <WorkflowRow
+        workflow="img2img"
+        onChange={vi.fn()}
+        modes={[]}
+        ecosystemInput={<div>Ecosystem</div>}
+      />
+    );
+
     await expect.element(page.getByText('Ecosystem')).toBeInTheDocument();
-    await expect.element(page.getByText('Workflow card')).not.toBeInTheDocument();
-  });
-
-  test.each(['img2meta', 'prompt:enhance'])(
-    'on a phone %s keeps its own display, so the row has no card',
-    async (workflow) => {
-      renderRow(true, workflow);
-
-      await expect.element(page.getByText('Ecosystem')).toBeInTheDocument();
-      await expect.element(page.getByText('Workflow card')).not.toBeInTheDocument();
-    }
-  );
-});
-
-describe('WorkflowModes', () => {
-  const modes = [
-    { label: 'Standard', value: 'img2vid' },
-    { label: 'First/Last', value: 'img2vid:first-last' },
-  ];
-
-  test('on desktop it shows the selected workflow, then its modes', async () => {
-    renderWithProviders(
-      <WorkflowModes mobile={false} workflow="img2vid" modes={modes} onChange={vi.fn()} />
-    );
-
-    await expect.element(page.getByText('Workflow display')).toBeInTheDocument();
-    await expect.element(page.getByText('First/Last')).toBeInTheDocument();
-  });
-
-  test('on a phone the card shows the workflow, so only the modes remain', async () => {
-    const onChange = vi.fn();
-    renderWithProviders(
-      <WorkflowModes mobile workflow="img2vid" modes={modes} onChange={onChange} />
-    );
-
-    await page.getByText('First/Last').click();
-    expect(onChange).toHaveBeenCalledWith('img2vid:first-last');
-    await expect.element(page.getByText('Workflow display')).not.toBeInTheDocument();
-  });
-
-  test('on a phone with no modes it renders nothing, leaving no gap', async () => {
-    renderWithProviders(
-      <div data-testid="slot">
-        <span>ready</span>
-        <WorkflowModes mobile workflow="txt2img" modes={[]} onChange={vi.fn()} />
-      </div>
-    );
-
-    await expect.element(page.getByText('ready')).toBeInTheDocument();
-    expect(page.getByTestId('slot').element().children).toHaveLength(1);
+    await expect.element(page.getByRole('radiogroup', { name: 'Mode' })).not.toBeInTheDocument();
   });
 });

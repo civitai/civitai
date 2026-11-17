@@ -10,13 +10,21 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
-import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
+import { assertCommentActionable } from '~/server/controllers/commentv3.controller';
+import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
+import {
+  assertLockReviewAllowed,
+  latestModelAppealOfKind,
+  pendingModelAppeal,
+  takeOverLockReview,
+} from '~/server/services/lock-review.service';
+import type { LockReviewContext } from '@civitai/shared/lock-review';
 import {
   createEntityAppeal,
   createReport,
   getAppealCount,
-  isAppealBlockedByHoldMarker,
+  isImageAppealRefused,
   getLatestAppeal,
   reopenAppeal,
 } from '~/server/services/report.service';
@@ -50,12 +58,10 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
-    if (
-      input.type === ReportEntity.CommentV2 &&
-      !ctx.user.isModerator &&
-      (await isCommentGoneForMembers(input.id))
-    )
-      throw throwNotFoundError('The content you are trying to report no longer exists');
+    // Gated like reacting.
+    if (input.type === ReportEntity.CommentV3) await assertCommentActionable(input.id, ctx);
+    // Only a text the reporter is shown can be reported: the flag, its post's gate and its rating.
+    if (input.type === ReportEntity.PostText) await assertPostTextVisible(input.id, ctx);
     const result = await createReport({
       ...input,
       userId: ctx.user.id,
@@ -110,6 +116,7 @@ export async function createEntityAppealHandler({
 }) {
   const { id: userId } = ctx.user;
   let skipFee = false;
+  let context: LockReviewContext | undefined;
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
@@ -119,9 +126,9 @@ export async function createEntityAppealHandler({
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
         if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
-        // A hold marker's kept image reads as a moderator block. Refused in the same words, so the
-        // refusal says no more than that.
-        if (await isAppealBlockedByHoldMarker({ imageId: image.id, userId }))
+        // A refused image still reads as a moderator block, so it gets the same words as an image
+        // that is not one.
+        if (await isImageAppealRefused({ imageId: image.id, userId }))
           throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }
@@ -144,15 +151,34 @@ export async function createEntityAppealHandler({
         if (!model) throw throwNotFoundError('Model not found');
         if (model.userId !== userId) throw throwAuthorizationError();
 
-        // Legacy flags carry no snapshot and are deliberately excluded.
-        if (!isModelFlagAppealable(model))
+        if (input.locks) {
+          context = await assertLockReviewAllowed({
+            modelId: input.entityId,
+            userId,
+            isModerator: ctx.user.isModerator,
+            locks: input.locks,
+          });
+        } else if (!isModelFlagAppealable(model))
+          // Legacy flags carry no snapshot and are deliberately excluded.
           throw throwBadRequestError('This model has no automated flag to review');
 
-        // Asking again after a denial is intended for an automated flag, so reuse the row.
-        const existing = await getLatestAppeal({ ...input, userId });
-        if (existing?.status === AppealStatus.Pending)
+        const pending = await pendingModelAppeal({ modelId: input.entityId, userId });
+        if (pending) {
+          // A flag that landed on a model with a lock review open takes the row over: the review can
+          // only be rejected now, and the flag must not go undisputed while it waits.
+          if (!context && pending.lockReview)
+            return await takeOverLockReview({ id: pending.id, message: input.message });
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+        }
+
+        // Each kind reopens only its own row, so neither erases the other's record (lock review
+        // cooldown, flag appeal fee count).
+        const own = await latestModelAppealOfKind({
+          modelId: input.entityId,
+          userId,
+          lockReview: !!context,
+        });
+        if (own) return await reopenAppeal({ id: own.id, message: input.message, context });
 
         skipFee = true;
         break;
@@ -198,10 +224,14 @@ export async function createEntityAppealHandler({
     }
 
     const appeal = await createEntityAppeal({
-      ...input,
+      entityId: input.entityId,
+      entityType: input.entityType,
+      message: input.message,
+      context,
       userId,
       buzzType: getAllowedAccountTypes(ctx.features)[0],
       skipFee,
+      idempotencyKey: input.idempotencyKey,
     });
 
     return appeal;

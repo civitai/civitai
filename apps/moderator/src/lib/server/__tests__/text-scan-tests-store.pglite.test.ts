@@ -35,7 +35,7 @@ beforeEach(async () => {
 
 const input = (setId: number, over: Partial<CaseInput> = {}): CaseInput => ({
   setId,
-  entityType: 'CommentV2',
+  entityType: 'CommentV3',
   entityId: 71,
   authorId: 5,
   sourceRef: null,
@@ -59,7 +59,7 @@ describe('the schema', () => {
     await expect(
       pg.query(
         `INSERT INTO text_scan_test_case (set_id, entity_type, text_hash, origin, added_by, updated_by)
-         VALUES ($1, 'CommentV2', 'h', 'try', 1, 1)`,
+         VALUES ($1, 'CommentV3', 'h', 'try', 1, 1)`,
         [set.id]
       )
     ).rejects.toMatchObject({ code: '23514' });
@@ -131,7 +131,7 @@ describe('upsertCase', () => {
       upsertCase(db, input(set.id, { expected: { nsfw: { min: 'r', max: 'r' } } }), MOD)
     ).rejects.toMatchObject({
       status: 400,
-      message: 'CommentV2 cases score scam, not nsfw.',
+      message: 'CommentV3 cases score scam, not nsfw.',
     });
   });
 
@@ -243,7 +243,7 @@ describe('upsertCase uniqueness', () => {
     const insert = () =>
       pg.query(
         `INSERT INTO text_scan_test_case (set_id, entity_type, fields, text_hash, origin, added_by, updated_by)
-         VALUES ($1, 'CommentV2', '[]', 'h', 'try', 1, 1)`,
+         VALUES ($1, 'CommentV3', '[]', 'h', 'try', 1, 1)`,
         [set.id]
       );
     await insert();

@@ -38,14 +38,12 @@ async function purgeCachedCopies(image: HiddenMetaImage) {
     });
     await purgeCache({ urls: getImageEdgePurgeUrls(image) });
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'hidden-meta-invalidation',
       message: 'hidden-meta cache invalidation failed',
       imageKey: image.url,
       error: safeError(error),
-    }).catch(() => {
-      // swallow — best effort logging
     });
   }
 }

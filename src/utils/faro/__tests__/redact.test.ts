@@ -45,6 +45,27 @@ describe('isSensitiveParam', () => {
 });
 
 describe('redactUrl', () => {
+  it('redacts a gift code carried in the path, page or Next data fetch alike', () => {
+    const code = 'cvg_0123456789ABCDEFGHJKMNPQRS';
+    expect(redactUrl(`https://civitai.com/gift/${code}`)).toBe(
+      `https://civitai.com/gift/${REDACTED}`
+    );
+    expect(redactUrl(`/_next/data/build-1/gift/${code}.json`)).toBe(
+      `/_next/data/build-1/gift/${REDACTED}`
+    );
+    expect(redactUrl('https://civitai.com/gift-cards/abc')).toBe(
+      'https://civitai.com/gift-cards/abc'
+    );
+  });
+
+  it('redacts a gift code in an OTel span attribute', () => {
+    const code = 'cvg_0123456789ABCDEFGHJKMNPQRS';
+    const span = {
+      attributes: [{ key: 'http.url', value: { stringValue: `/_next/data/b/gift/${code}.json` } }],
+    };
+    expect(JSON.stringify(deepRedact(span))).not.toContain(code);
+  });
+
   it('redacts an OAuth authorization callback (code) but keeps state', () => {
     const out = redactUrl('https://civitai.com/api/auth/callback?code=abc123SECRET&state=xyz789');
     expect(out).not.toContain('abc123SECRET');
@@ -54,7 +75,9 @@ describe('redactUrl', () => {
   });
 
   it('redacts a password-reset / verify token URL (token + email)', () => {
-    const out = redactUrl('/reset-password?token=super-secret-token&email=user%40example.com&next=/models');
+    const out = redactUrl(
+      '/reset-password?token=super-secret-token&email=user%40example.com&next=/models'
+    );
     expect(out).not.toContain('super-secret-token');
     expect(out).not.toContain('user@example.com');
     expect(out).not.toContain('user%40example.com');
@@ -78,7 +101,9 @@ describe('redactUrl', () => {
   });
 
   it('redacts tokens carried in the URL fragment (OAuth implicit flow)', () => {
-    const out = redactUrl('https://civitai.com/auth#access_token=xyzTOKEN123&token_type=bearer&state=ok');
+    const out = redactUrl(
+      'https://civitai.com/auth#access_token=xyzTOKEN123&token_type=bearer&state=ok'
+    );
     expect(out).not.toContain('xyzTOKEN123');
     expect(out).toContain('access_token=' + REDACTED);
     expect(out).toContain('state=ok');
@@ -102,7 +127,9 @@ describe('redactUrl', () => {
 
 describe('redactText', () => {
   it('redacts an email embedded in an error message', () => {
-    const out = redactText('Failed to send invite to alice.smith+promo@example.co.uk after 3 tries');
+    const out = redactText(
+      'Failed to send invite to alice.smith+promo@example.co.uk after 3 tries'
+    );
     expect(out).not.toContain('alice.smith+promo@example.co.uk');
     expect(out).toContain(REDACTED_EMAIL);
     // surrounding context preserved
@@ -120,7 +147,9 @@ describe('redactText', () => {
   });
 
   it('redacts sensitive query params inside a URL embedded in text', () => {
-    const out = redactText('navigation to https://civitai.com/verify?code=SHORTCODE&ref=email failed');
+    const out = redactText(
+      'navigation to https://civitai.com/verify?code=SHORTCODE&ref=email failed'
+    );
     expect(out).not.toContain('SHORTCODE');
     expect(out).toContain('code=' + REDACTED);
     expect(out).toContain('ref=email');

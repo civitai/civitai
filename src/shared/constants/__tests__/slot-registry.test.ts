@@ -69,7 +69,7 @@ describe('slot-registry (Phase 0 foundation)', () => {
   });
 
   // PAGE_FORBIDDEN_SCOPES is now EMPTY — every money/spend scope a page can
-  // request is BOUNDED (gen: per-gen buzzBudget + BLOCK_BUZZ_CAP_PER_DAY; tip:
+  // request is BOUNDED (gen: per-gen buzzBudget + the per-user daily cap; tip:
   // BLOCK_TIP_MAX_PER_TIP + BLOCK_TIP_CAP_PER_DAY; buzz:read:self is a
   // self-balance read with no spend authority). Tipping came off the list once it
   // gained explicit caps (bounded, no longer effectively-unbounded spend).

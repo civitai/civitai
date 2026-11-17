@@ -1,9 +1,6 @@
 // The generator on a phone. Its bottom edge rises with the on-screen keyboard (set by
 // MobileGenerator), so the open form's footer sits above it instead of under it.
 .root {
-  // The closed sheet shows its title row: 48px tall, plus its top border.
-  --sheet-peek: calc(49px + var(--safe-area-inset-bottom, 0px));
-
   position: fixed;
   inset: 0;
   bottom: var(--generator-keyboard, 0px);
@@ -45,19 +42,19 @@
   border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
-// The closed sheet covers the bottom of the results, so they end above it.
 .results {
   isolation: isolate;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-bottom: var(--sheet-peek);
 }
 
 .resultsScroll {
   // The header's measured height, set by MobileGenerator.
   padding-top: var(--generator-header, 57px);
+  // The last results scroll clear of the Create button.
+  padding-bottom: calc(72px + var(--safe-area-inset-bottom, 0px));
 }
 
 // Dims the results behind the open sheet; visible through the status-bar inset and when the sheet is
@@ -89,7 +86,7 @@
   border-top: 1px solid var(--mantine-color-default-border);
   background: var(--mantine-color-body);
   box-shadow: 0 -10px 30px rgb(0 0 0 / 0.35);
-  transform: translateY(calc(100% - var(--sheet-peek) + var(--sheet-drag, 0px)));
+  transform: translateY(calc(100% + var(--sheet-drag, 0px)));
   transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
   will-change: transform;
 
@@ -103,15 +100,9 @@
     transition: none;
   }
 
-  // Closed, the top edge glows, so the bar reads as something to pull up.
-  &:not([data-expanded]) {
-    border-top-color: var(--mantine-color-blue-filled);
-    box-shadow: 0 -2px 14px color-mix(in srgb, var(--mantine-color-blue-filled) 55%, transparent),
-      0 -10px 30px rgb(0 0 0 / 0.35);
-  }
-
-  &:not([data-expanded]) .head {
-    padding-bottom: var(--safe-area-inset-bottom, 0px);
+  // Its shadow would show above the screen's bottom edge.
+  &:not([data-expanded], [data-dragging]) {
+    box-shadow: none;
   }
 }
 
@@ -173,95 +164,30 @@
   }
 }
 
+// Closed, the form is this button, floating over the results' bottom corner.
+.create {
+  position: absolute;
+  right: 8px;
+  bottom: calc(8px + var(--safe-area-inset-bottom, 0px));
+  z-index: 25;
+  border-radius: 28px;
+  padding-inline: 18px 22px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+  animation: create-in 0.2s ease-out;
+}
+
+@keyframes create-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+}
+
 .body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-.coach {
-  position: absolute;
-  inset-inline: 0;
-  bottom: 100%;
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-bottom: 24px;
-  color: var(--mantine-color-white);
-  background: rgb(0 0 0 / 0.7);
-  touch-action: none;
-}
-
-.coachCue {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  height: 120px;
-}
-
-.coachArrow {
-  animation: coach-arrow 1.6s ease-in-out infinite;
-}
-
-.coachFinger {
-  animation: coach-swipe 1.6s ease-in-out infinite;
-}
-
-.coachText {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-@keyframes coach-swipe {
-  0% {
-    transform: translateY(40px);
-    opacity: 0;
-  }
-  15% {
-    transform: translateY(40px);
-    opacity: 1;
-  }
-  70% {
-    transform: translateY(-8px);
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(-8px);
-    opacity: 0;
-  }
-}
-
-@keyframes coach-arrow {
-  0%,
-  30% {
-    opacity: 0.3;
-  }
-  70% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.3;
-  }
-}
-
-.nudge {
-  animation: nudge 0.9s ease-in-out 0.4s;
-}
-
-@keyframes nudge {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  40% {
-    transform: translateY(-6px);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -270,9 +196,7 @@
     transition: none;
   }
 
-  .nudge,
-  .coachArrow,
-  .coachFinger {
+  .create {
     animation: none;
   }
 }

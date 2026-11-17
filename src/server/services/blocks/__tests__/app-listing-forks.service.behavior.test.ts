@@ -38,7 +38,16 @@ const MIGRATION = path.resolve(
   '../../../../../packages/civitai-db-schema/prisma/migrations/20261126120000_app_fork_provenance/migration.sql'
 );
 
+const ACTIVE_OWNER = 9101;
+const BANNED_OWNER = 9202;
+const DELETED_OWNER = 9303;
+
 const BASE_SCHEMA = `
+  CREATE TABLE "User" (
+    "id" INTEGER PRIMARY KEY,
+    "bannedAt" TIMESTAMPTZ,
+    "deletedAt" TIMESTAMPTZ
+  );
   CREATE TABLE "app_blocks" (
     "id" TEXT PRIMARY KEY,
     "block_id" TEXT NOT NULL UNIQUE,
@@ -61,6 +70,8 @@ const BASE_SCHEMA = `
     "content_rating" TEXT,
     "app_block_id" TEXT UNIQUE REFERENCES "app_blocks"("id") ON DELETE SET NULL,
     "revision_of_id" TEXT REFERENCES "app_listings"("id") ON DELETE CASCADE,
+    -- Every fixture is owned by the active user unless it says otherwise.
+    "user_id" INTEGER NOT NULL DEFAULT ${ACTIVE_OWNER} REFERENCES "User"("id"),
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now()
   );
 `;
@@ -80,10 +91,19 @@ function rawClient(pg: PGlite): ForkRawClient {
   return { $queryRaw: raw.queryRaw, $executeRaw: raw.executeRaw };
 }
 
-const sfwPublic = { scope: 'full', floor: 'public', redCapable: false } as const;
+const sfwPublic = {
+  scope: 'full',
+  floor: 'public',
+  redCapable: false,
+  viewerBrowsingLevel: 1,
+} as const;
 
 async function seed(pg: PGlite) {
   await pg.exec(`
+    INSERT INTO "User" ("id", "bannedAt", "deletedAt") VALUES
+      (${ACTIVE_OWNER}, NULL, NULL),
+      (${BANNED_OWNER}, now(), NULL),
+      (${DELETED_OWNER}, NULL, now());
     INSERT INTO "app_blocks" ("id", "block_id", "current_version_deployed_at") VALUES
       ('ab_parent_1100', 'parent-app', now()),
       ('ab_parent_1200', 'other-parent-app', now()),
@@ -96,7 +116,9 @@ async function seed(pg: PGlite) {
       ('ab_mature_1404', 'fork-mature', now()),
       ('ab_removed_1405', 'fork-removed', now()),
       ('ab_rejected_1406', 'fork-rejected', now()),
-      ('ab_elsewhere_1407', 'fork-of-other', now());
+      ('ab_elsewhere_1407', 'fork-of-other', now()),
+      ('ab_banned_1408', 'fork-banned-owner', now()),
+      ('ab_deleted_1409', 'fork-deleted-owner', now());
     INSERT INTO "app_listings"
       ("id", "slug", "name", "kind", "status", "visibility", "content_rating", "app_block_id", "revision_of_id")
     VALUES
@@ -116,6 +138,12 @@ async function seed(pg: PGlite) {
       ('apl_fork_x7_0407', 'rev-fork-v1', 'Fork One (revision)', 'onsite', 'draft', 'public', 'g', NULL, 'apl_fork_v1_0301'),
       -- A visible fork of a DIFFERENT parent.
       ('apl_fork_x8_0408', 'fork-of-other', 'Other Parent Fork', 'onsite', 'approved', NULL, 'g', 'ab_elsewhere_1407', NULL);
+    -- Store-eligible in every column but the owner: a banned owner, then a deleted one.
+    INSERT INTO "app_listings"
+      ("id", "slug", "name", "kind", "status", "visibility", "content_rating", "app_block_id", "user_id")
+    VALUES
+      ('apl_fork_x9_0409', 'fork-banned-owner', 'Banned Owner Fork', 'onsite', 'approved', NULL, 'g', 'ab_banned_1408', ${BANNED_OWNER}),
+      ('apl_fork_xa_0410', 'fork-deleted-owner', 'Deleted Owner Fork', 'onsite', 'approved', NULL, 'g', 'ab_deleted_1409', ${DELETED_OWNER});
   `);
 }
 
@@ -124,7 +152,8 @@ async function linkForks(pg: PGlite) {
     UPDATE "app_listings" SET "fork_of_listing_id" = '${PARENT}'
       WHERE "id" LIKE 'apl_fork_v%' OR "id" IN (
         'apl_fork_x1_0401', 'apl_fork_x2_0402', 'apl_fork_x3_0403', 'apl_fork_x4_0404',
-        'apl_fork_x5_0405', 'apl_fork_x6_0406', 'apl_fork_x7_0407');
+        'apl_fork_x5_0405', 'apl_fork_x6_0406', 'apl_fork_x7_0407',
+        'apl_fork_x9_0409', 'apl_fork_xa_0410');
     UPDATE "app_listings" SET "fork_of_listing_id" = '${OTHER_PARENT}' WHERE "id" = 'apl_fork_x8_0408';
   `);
 }
@@ -199,6 +228,8 @@ describe('with the migration applied', () => {
       scope: 'full',
       floor: 'public',
       redCapable: true,
+      // A viewer with X enabled (PG|PG13|R|X): an X fork also needs X in the browsing level.
+      viewerBrowsingLevel: 15,
     });
     expect(red.totalCount).toBe(4);
     expect(red.items.map((f) => f.id)).toContain('apl_fork_x4_0404');
@@ -212,6 +243,7 @@ describe('with the migration applied', () => {
         scope: 'public-external',
         floor: 'public',
         redCapable: false,
+        viewerBrowsingLevel: 1,
       })
     ).resolves.toEqual({ totalCount: 0, items: [], nextCursor: null });
   });
@@ -227,5 +259,51 @@ describe('with the migration applied', () => {
       items: [{ id: 'apl_fork_x8_0408', slug: 'fork-of-other', name: 'Other Parent Fork' }],
       nextCursor: null,
     });
+  });
+});
+
+/**
+ * 🔴 The public fork list follows the viewer's browsing level for R/X forks, with the same rule as
+ * the store grid: on a red-capable host an R fork is listed only to a viewer with R, an X fork
+ * only to one with X, and a missing level is PG. G/PG/PG-13 forks are listed as before.
+ */
+describe("the fork list — R/X forks follow the viewer's browsing level", () => {
+  const pg = new PGlite();
+  const db = rawClient(pg);
+  const R_FORK = 'apl_fork_x4_0404';
+  const red = { scope: 'full', floor: 'public', redCapable: true } as const;
+
+  beforeAll(async () => {
+    await pg.exec(BASE_SCHEMA);
+    await pg.exec(readFileSync(MIGRATION, 'utf8'));
+    await seed(pg);
+    await linkForks(pg);
+    // The mature fork, rated R here (it is X in the shared seed).
+    await pg.exec(`UPDATE "app_listings" SET "content_rating" = 'r' WHERE "id" = '${R_FORK}'`);
+  });
+  afterAll(async () => {
+    await pg.close();
+  });
+
+  const forks = (viewerBrowsingLevel: number | null | undefined) =>
+    listListingForks(db, { parentListingId: PARENT, limit: 10, ...red, viewerBrowsingLevel });
+
+  it.each([
+    ['PG only', 1],
+    ['PG + PG-13', 3],
+    ['X but not R', 9],
+    ['signed out (no level)', undefined],
+  ])('🔴 %s: the R fork is neither counted nor listed', async (_label, level) => {
+    const page = await forks(level);
+    expect(page.totalCount).toBe(3);
+    expect(page.items.map((f) => f.id)).not.toContain(R_FORK);
+    // The PG forks are still there: the list did not just go empty.
+    expect(page.items.map((f) => f.id).sort()).toEqual([...VISIBLE].sort());
+  });
+
+  it('an R-enabled viewer gets the R fork too', async () => {
+    const page = await forks(7);
+    expect(page.totalCount).toBe(4);
+    expect(page.items.map((f) => f.id)).toContain(R_FORK);
   });
 });

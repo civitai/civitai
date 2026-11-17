@@ -1,3 +1,4 @@
+import { EventCosmeticsPreview } from '~/providers/BrowserSettingsProvider';
 import type { MantineSize } from '@mantine/core';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
@@ -195,17 +196,19 @@ function EventDecorationSample({
       }
       data-testid="hat-sample"
     >
-      <div style={{ width }}>
-        <TwCosmeticWrapper
-          eventDecoration={decoration}
-          cardWidth={size === 'lg' ? undefined : width}
-        >
-          <div className="flex aspect-square w-full flex-col justify-end gap-1.5 rounded-md bg-gray-2 p-[8%] dark:bg-dark-4">
-            <div className="h-2 w-3/4 rounded-full bg-gray-3 dark:bg-dark-3" />
-            <div className="h-2 w-1/2 rounded-full bg-gray-3 dark:bg-dark-3" />
-          </div>
-        </TwCosmeticWrapper>
-      </div>
+      <EventCosmeticsPreview>
+        <div style={{ width }}>
+          <TwCosmeticWrapper
+            eventDecoration={decoration}
+            cardWidth={size === 'lg' ? undefined : width}
+          >
+            <div className="flex aspect-square w-full flex-col justify-end gap-1.5 rounded-md bg-gray-2 p-[8%] dark:bg-dark-4">
+              <div className="h-2 w-3/4 rounded-full bg-gray-3 dark:bg-dark-3" />
+              <div className="h-2 w-1/2 rounded-full bg-gray-3 dark:bg-dark-3" />
+            </div>
+          </TwCosmeticWrapper>
+        </div>
+      </EventCosmeticsPreview>
     </div>
   );
 }

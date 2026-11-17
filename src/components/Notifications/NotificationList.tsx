@@ -1,6 +1,6 @@
 import type { MantineSize } from '@mantine/core';
 import { Center, Group, Paper, SimpleGrid, Stack, Text, ThemeIcon } from '@mantine/core';
-import { IconAlertOctagon, IconAward, IconBell } from '@tabler/icons-react';
+import { IconAward, IconBell, IconSpeakerphone } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { MouseEvent } from 'react';
 import React, { useMemo } from 'react';
@@ -101,7 +101,7 @@ export function NotificationList({
         // looked up with another, silently, with no test red.
         const imageId = notificationImageId(notificationDetails);
         const thumbnail = imageId ? thumbnails.get(imageId) : undefined;
-        const systemNotification = notification.type === 'system-announcement';
+        const announcementNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
 
         const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
@@ -152,9 +152,9 @@ export function NotificationList({
           >
             <Group gap="xl" justify="space-between" align="start" wrap="nowrap">
               <Group gap="md" align="start" wrap="nowrap">
-                {systemNotification ? (
-                  <ThemeIcon variant="light" size="xl" radius="xl" color="red">
-                    <IconAlertOctagon stroke={1.5} />
+                {announcementNotification ? (
+                  <ThemeIcon variant="light" size="xl" radius="xl" color="blue">
+                    <IconSpeakerphone stroke={1.5} />
                   </ThemeIcon>
                 ) : milestoneNotification ? (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="green">

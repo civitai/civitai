@@ -27,8 +27,8 @@ deploys. No cache, no timeout. Could hang every preview-build navigation.
 `AbortSignal.timeout`, env vars hoisted to module init. Eliminates ~99% of
 redundant Flipt round-trips for the same user across navigations.
 
-Edge-runtime safe (uses a plain `Map`, not `~/server/utils/ttl-cache.ts` —
-the latter pulls in `prom-client` and DB modules that don't run on Edge).
+Edge-runtime safe: it uses a plain `Map`, so it pulls in no `prom-client` or DB
+modules, which don't run on Edge.
 
 ### `regionRestrictionMiddleware` — env-var hoisting
 

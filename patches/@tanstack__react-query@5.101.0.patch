@@ -1,0 +1,94 @@
+diff --git a/build/modern/useMutation.cjs b/build/modern/useMutation.cjs
+index 2ae4221b959cc79a551cd959c1303aef167ad671..320115c001eb0379fdb2a207734618e21efe574d 100644
+--- a/build/modern/useMutation.cjs
++++ b/build/modern/useMutation.cjs
+@@ -37,8 +37,39 @@ module.exports = __toCommonJS(useMutation_exports);
+ var React = __toESM(require("react"), 1);
+ var import_query_core = require("@tanstack/query-core");
+ var import_QueryClientProvider = require("./QueryClientProvider.cjs");
++// civitai patch (patches/@tanstack__react-query@5.101.0.patch): a server render never mutates
++// and never re-renders, so on the server return the idle result a fresh MutationObserver would
++// report, without building the observer, its subscription and its callbacks. The client's first
++// render reads the same idle result, so hydration matches. Calling mutate/mutateAsync during a
++// server render (no known caller) still runs a real observer, as before.
++// "On the server" is environmentManager.isServer() -- the same overridable check useBaseQuery
++// uses -- not the fixed isServer constant, so queries and mutations always agree on it.
++function serverIdleMutationResult(client, options) {
++  const run = (variables, mutateOptions) => new import_query_core.MutationObserver(client, options).mutate(variables, mutateOptions);
++  return {
++    context: void 0,
++    data: void 0,
++    error: null,
++    failureCount: 0,
++    failureReason: null,
++    isPaused: false,
++    status: "idle",
++    variables: void 0,
++    submittedAt: 0,
++    isPending: false,
++    isSuccess: false,
++    isError: false,
++    isIdle: true,
++    mutate: (variables, mutateOptions) => {
++      run(variables, mutateOptions).catch(import_query_core.noop);
++    },
++    reset: import_query_core.noop,
++    mutateAsync: run
++  };
++}
+ function useMutation(options, queryClient) {
+   const client = (0, import_QueryClientProvider.useQueryClient)(queryClient);
++  if (import_query_core.environmentManager.isServer()) return serverIdleMutationResult(client, options);
+   const [observer] = React.useState(
+     () => new import_query_core.MutationObserver(
+       client,
+diff --git a/build/modern/useMutation.js b/build/modern/useMutation.js
+index 8e089c44b0c6918663c6b449a8b5cd696f88819f..c9931728559fe293b2c7e9c43d2b14be2337590c 100644
+--- a/build/modern/useMutation.js
++++ b/build/modern/useMutation.js
+@@ -4,13 +4,45 @@
+ import * as React from "react";
+ import {
+   MutationObserver,
++  environmentManager,
+   noop,
+   notifyManager,
+   shouldThrowError
+ } from "@tanstack/query-core";
+ import { useQueryClient } from "./QueryClientProvider.js";
++// civitai patch (patches/@tanstack__react-query@5.101.0.patch): a server render never mutates
++// and never re-renders, so on the server return the idle result a fresh MutationObserver would
++// report, without building the observer, its subscription and its callbacks. The client's first
++// render reads the same idle result, so hydration matches. Calling mutate/mutateAsync during a
++// server render (no known caller) still runs a real observer, as before.
++// "On the server" is environmentManager.isServer() -- the same overridable check useBaseQuery
++// uses -- not the fixed isServer constant, so queries and mutations always agree on it.
++function serverIdleMutationResult(client, options) {
++  const run = (variables, mutateOptions) => new MutationObserver(client, options).mutate(variables, mutateOptions);
++  return {
++    context: void 0,
++    data: void 0,
++    error: null,
++    failureCount: 0,
++    failureReason: null,
++    isPaused: false,
++    status: "idle",
++    variables: void 0,
++    submittedAt: 0,
++    isPending: false,
++    isSuccess: false,
++    isError: false,
++    isIdle: true,
++    mutate: (variables, mutateOptions) => {
++      run(variables, mutateOptions).catch(noop);
++    },
++    reset: noop,
++    mutateAsync: run
++  };
++}
+ function useMutation(options, queryClient) {
+   const client = useQueryClient(queryClient);
++  if (environmentManager.isServer()) return serverIdleMutationResult(client, options);
+   const [observer] = React.useState(
+     () => new MutationObserver(
+       client,

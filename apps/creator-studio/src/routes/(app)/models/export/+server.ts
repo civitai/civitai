@@ -1,6 +1,7 @@
 import type { RequestHandler } from './$types';
 import { getCreatorVersionsForCsv } from '$lib/server/models';
 import { buildFeeCsv } from '$lib/server/monetization/fee-csv';
+import { parseSiteFilter } from '$lib/site-listing';
 
 // CSV export of the creator's monetization config — licensing fee, paid-access gate and donation goal per
 // version — filtered to match the current /models view.
@@ -21,6 +22,7 @@ export const GET: RequestHandler = async ({ locals, url }) => {
         ? (status as 'all' | 'published' | 'draft')
         : undefined,
     access: p.get('access') === '1',
+    site: parseSiteFilter(p.get('site')),
   });
   return new Response(buildFeeCsv(rows), {
     headers: {

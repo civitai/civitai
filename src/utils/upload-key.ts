@@ -1,5 +1,6 @@
+import { randomBytes } from 'node:crypto';
 import { extname } from 'node:path';
-import { filenamize, generateToken } from '~/utils/string-helpers';
+import { filenamize } from '~/utils/string-helpers';
 
 /**
  * The one place an upload key is built. Every uploaded object — browser or server — is
@@ -18,5 +19,5 @@ import { filenamize, generateToken } from '~/utils/string-helpers';
 export function buildUploadKey(type: string, userId: number, fullFilename: string) {
   const ext = extname(fullFilename);
   const name = filenamize(fullFilename.replace(ext, ''));
-  return `${type}/${userId}/${name}.${generateToken(4)}${ext}`;
+  return `${type}/${userId}/${name}.${randomBytes(16).toString('hex')}${ext}`;
 }

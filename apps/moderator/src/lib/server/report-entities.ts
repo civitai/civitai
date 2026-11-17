@@ -1,5 +1,5 @@
-import { sql, type RawBuilder } from '@civitai/db/kysely';
-import { reportEntityLabels, type ReportEntity } from '$lib/reports';
+import { sql } from '@civitai/db/kysely';
+import { reportEntityLabels, reportQueueOf, type ReportEntity } from '$lib/reports';
 
 /**
  * Where each report type's rows live, and who owns the thing being reported.
@@ -21,51 +21,30 @@ export type ReportEntityMeta = {
    *  that: `reportedUser` (the reported thing IS an account) and `chat`, whose subject is inferred by
    *  `chatReportSubject` and added back at both `OWNED_REPORT_ENTITIES` call sites. */
   ownerColumn: 'userId' | 'ownerId' | 'createdById' | 'sellerId' | null;
-  /** Which of `reportTable`'s rows this type lists, as a predicate over a row's `reportId`. Absent
-   *  means all of them. Read it through `reportLinkFilter` wherever `reportTable` is queried. */
-  linkFilter?: (reportId: RawBuilder<unknown>) => RawBuilder<boolean>;
   label: string;
 };
-
-/**
- * DB triggers mirror every `CommentReport` and `CommentV2Report` row into `CommentV3Report`, and those
- * reports stay listed under their old type. A report is listed once, so `commentV3` lists only the
- * reports with no old link: those on a comment written to `CommentV3` directly.
- */
-const withoutOldCommentLink = (reportId: RawBuilder<unknown>) => sql<boolean>`(
-  NOT EXISTS (SELECT 1 FROM "CommentReport" old_c WHERE old_c."reportId" = ${reportId})
-  AND NOT EXISTS (SELECT 1 FROM "CommentV2Report" old_c2 WHERE old_c2."reportId" = ${reportId})
-)`;
 
 // Declaration order is display order wherever reports are grouped by type.
 const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
   image: { reportTable: 'ImageReport', fk: 'imageId', table: 'Image', ownerColumn: 'userId' },
   model: { reportTable: 'ModelReport', fk: 'modelId', table: 'Model', ownerColumn: 'userId' },
   post: { reportTable: 'PostReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
+  // A storyline text's report, keyed by the text's post: it is worked in the post queue
+  // (`REPORT_QUEUE_OF`) and outlives the text. The text itself is `PostTextReport.postTextId`.
+  postText: { reportTable: 'PostTextReport', fk: 'postId', table: 'Post', ownerColumn: 'userId' },
   article: {
     reportTable: 'ArticleReport',
     fk: 'articleId',
     table: 'Article',
     ownerColumn: 'userId',
   },
-  comment: {
-    reportTable: 'CommentReport',
-    fk: 'commentId',
-    table: 'Comment',
-    ownerColumn: 'userId',
-  },
-  commentV2: {
-    reportTable: 'CommentV2Report',
-    fk: 'commentV2Id',
-    table: 'CommentV2',
-    ownerColumn: 'userId',
-  },
+  // Every comment report, including those filed on the old tables whose comment reached CommentV3: one
+  // row per report (`reportId` is unique).
   commentV3: {
     reportTable: 'CommentV3Report',
     fk: 'commentId',
     table: 'CommentV3',
     ownerColumn: 'userId',
-    linkFilter: withoutOldCommentLink,
   },
   bounty: { reportTable: 'BountyReport', fk: 'bountyId', table: 'Bounty', ownerColumn: 'userId' },
   bountyEntry: {
@@ -157,9 +136,12 @@ const BY_TYPE = new Map(REPORT_ENTITIES.map((e) => [e.type, e]));
 
 export const reportEntity = (type: ReportEntity): ReportEntityMeta => BY_TYPE.get(type)!;
 
-/** `meta.linkFilter` over a `reportId` column such as `'er.reportId'`; `true` for a type without one. */
-export const reportLinkFilter = (meta: ReportEntityMeta, reportIdColumn: string) =>
-  meta.linkFilter?.(sql.ref(reportIdColumn)) ?? sql<boolean>`true`;
+/**
+ * Every report type worked in `queue`: its own, and those `REPORT_QUEUE_OF` files there. Each one's
+ * `fk` names the queue's entity (the post queue's types both key by `postId`).
+ */
+export const reportQueueMembers = (queue: ReportEntity): ReportEntityMeta[] =>
+  REPORT_ENTITIES.filter((e) => reportQueueOf(e.type) === queue);
 
 /**
  * Which account a chat report is ABOUT, as a predicate over a joined `Chat` and its `Report`.

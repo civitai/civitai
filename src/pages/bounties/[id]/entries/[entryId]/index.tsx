@@ -20,16 +20,15 @@ import {
   Group,
   Loader,
   MantineProvider,
-  Menu,
   Paper,
   ScrollArea,
   SimpleGrid,
   Stack,
   Text,
   ThemeIcon,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -457,7 +456,7 @@ export default function BountyEntryDetailsPage({
       </Text>
       <Card.Section pl="md" pb="md">
         <ScrollArea.Autosize mah={200} offsetScrollbars>
-          <RenderHtml html={bountyEntry.description} />
+          <RenderHtml html={bountyEntry.description} withMentions />
         </ScrollArea.Autosize>
       </Card.Section>
     </Card>

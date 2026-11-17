@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as TesterSegment from '~/server/flipt/tester-segment';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import {
   buildCreatorScoreUnlocks,
@@ -17,6 +18,13 @@ import {
   SERVICES_MIN_CREATOR_SCORE_KEY,
 } from '~/shared/constants/creator-service.constants';
 
+// `getCreatorScoreUnlocks` reads the announcement and placement configs' KeyValue rows through
+// Kysely: no row, so their compiled defaults apply (the other KeyValue rows stay on Prisma).
+const { configRow } = vi.hoisted(() => ({ configRow: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: configRow,
+}));
 vi.mock('~/server/flipt/tester-segment', async (importOriginal) => ({
   ...(await importOriginal<typeof TesterSegment>()),
   isFliptPublic: vi.fn(),
@@ -27,6 +35,7 @@ const keys = (unlocks: { key: string }[]) => unlocks.map((u) => u.key);
 
 beforeEach(() => {
   dbMock.dbRead.keyValue.findUnique.mockResolvedValue(null as never);
+  configRow.mockReset().mockResolvedValue(undefined);
   vi.mocked(isFliptPublic).mockReset();
   clearServicesMinCreatorScoreCache();
 });

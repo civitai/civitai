@@ -14,7 +14,7 @@ const S = ModelVersionPricingSignal;
  * "Hide paid" matches zero models and the picker returns an empty grid.
  */
 const indexSource = fs.readFileSync(
-  path.join(process.cwd(), 'src/server/search-index/models.search-index.ts'),
+  path.join(process.cwd(), 'src/server/search-index/models-index-versions.ts'),
   'utf8'
 );
 
@@ -27,7 +27,12 @@ describe('models search index writes versions[].pricing', () => {
     // The model-level rollup beside it in `transformData` cannot answer this — it keeps only a
     // deadline, so wiring it here would price every version of a model identically.
     expect(indexSource).toMatch(/paidAccessTerms\.get\(x\.id\)/);
-    expect(indexSource).toMatch(/getModelVersionPaidAccessTerms\(versionIds\)/);
+    expect(
+      fs.readFileSync(
+        path.join(process.cwd(), 'src/server/search-index/models.search-index.ts'),
+        'utf8'
+      )
+    ).toMatch(/getModelVersionPaidAccessTerms\(versionIds\)/);
   });
 
   it('the gate query shares the live-gate predicate rather than restating it', () => {

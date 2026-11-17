@@ -182,7 +182,8 @@ Open, with the evidence each audit produced:
 - [x] **Filter rows missing on five list panels** (2026-08-11 completes this). Reviews, Bounties and
       Reports were done by the 2026-08-10 filter work; **Comments** now has Retool's search on both
       lists, matched against the plain text rather than the stored HTML — searching the markup meant
-      "p" hit every row.
+      "p" hit every row. Since 2026-11 Comments pages 50 at a time (`/api/user-comments`), so its
+      search covers the loaded page only; the card states the account-wide total.
       Fixing it exposed a defect in the **existing** filter work, not just the new bar: `ListCard`
       renders its empty state *instead of* `children`, and every filter bar lived in `children` with a
       **filtered** count passed as `total`. So filtering down to zero matches hid the filter bar — the
@@ -282,7 +283,7 @@ Open, with the evidence each audit produced:
       "+N more" pointing at the Chat section. Collapsed by default — the chip is the signal, the ids are
       what you want once it has fired.
       🔴 **Found while wiring it: every existing chat link on this page 404'd.** `ChatContactPanel`
-      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not one of the four tabs — the tab
+      linked to `/retool/chat-audit/search?q=<id>`, and `search` is not a tab route (the Search tab's route is `chats`) — the tab
       param is validated with `error(404)`, so following the ids the ticket asked for landed on Unknown
       tab. Both places now use `/retool/chat-audit/chats?chat=<id>`, the form `$lib/reports` already
       used. Verified on 43555: seven chat links, all resolving.
@@ -616,8 +617,7 @@ in the same screen instead of having to click around a bunch."*
 - [x] 🔴 **It could WRITE, and our code says otherwise.** A screenshot shows **Toggle Minor ON** and
       **Toggle Poi ON** beside the image data. The export has no mutation query, so it is stale against
       that screen — and `+page.server.ts` asserted "Read-only. Every action … lived in other apps",
-      which would have stopped anyone noticing. Comment corrected 2026-08-09; the two actions are still
-      unported.
+      which would have stopped anyone noticing. Comment corrected 2026-08-09; both actions are now ported as Set minor / Set POI.
 - [x] Report `details` fetched and never rendered (Retool's reports table has an explicit **Details**
       column).
 - [x] `hasImageEvents` is an unguarded ClickHouse call in `load`, so ClickHouse being down turns "no

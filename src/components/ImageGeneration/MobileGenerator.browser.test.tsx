@@ -1,3 +1,4 @@
+import type * as VisualViewportModule from '~/hooks/useVisualViewportBottomInset';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
@@ -25,6 +26,12 @@ vi.mock('~/components/ImageGeneration/GenerationResults', () => ({
 vi.mock('~/components/ImageGeneration/GeneratedImageActions', () => ({
   GeneratedImageActions: () => <span>Image actions</span>,
 }));
+// The test browser has no on-screen keyboard; whether one is up is this flag.
+let keyboardOpen = false;
+vi.mock('~/hooks/useVisualViewportBottomInset', async (orig) => ({
+  ...(await orig<typeof VisualViewportModule>()),
+  useKeyboardOpen: () => keyboardOpen,
+}));
 let selectedCount = 0;
 vi.mock('~/components/ImageGeneration/utils/generationImage.select', () => ({
   useSelectedCount: () => selectedCount,
@@ -37,6 +44,7 @@ vi.mock('~/components/ImageGeneration/GenerationForm/generation.utils', () => ({
   useGenerationStatus: () => ({ limits: { queue: queueLimit }, available: true, tier }),
 }));
 vi.mock('~/components/ImageGeneration/utils/generationRequestHooks', () => ({
+  GENERATOR_QUEUE_INPUT: { excludeAppWorkflows: true },
   useGetTextToImageRequests: () => ({ data: requests, isLoading: false }),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -61,16 +69,13 @@ function renderGenerator() {
   );
 }
 
-const COACH_KEY = 'mobile-generator-sheet-hint';
-
 describe('MobileGenerator', () => {
   beforeEach(async () => {
     // A sheet left open by the last test goes back over its entry once unmounted; let it land.
     await historyLayersSettled();
     resetHistoryLayers();
+    keyboardOpen = false;
     localStorage.clear();
-    // The first-run swipe coach covers the screen; its own tests clear this.
-    localStorage.setItem(COACH_KEY, JSON.stringify('done'));
     useGenerationPanelStore.setState({ view: 'generate' });
     queueLimit = 4;
     tier = 'gold';
@@ -80,30 +85,15 @@ describe('MobileGenerator', () => {
   test("the panel's 'generate' view is the open sheet, and its chevron returns to the results", async () => {
     useGenerationPanelStore.setState({ view: 'feed' });
     renderGenerator();
-    await page.getByRole('button', { name: 'Open the form' }).click();
+    await page.getByRole('button', { name: 'Create', exact: true }).click();
     expect(view()).toBe('generate');
+    await expect
+      .element(page.getByRole('button', { name: 'Create', exact: true }))
+      .not.toBeInTheDocument();
 
     await page.getByRole('button', { name: 'Close the form' }).click();
     // Back to the density that was showing, not to a default.
     expect(view()).toBe('feed');
-  });
-
-  test('dragging the closed bar up opens the form', async () => {
-    useGenerationPanelStore.setState({ view: 'queue' });
-    renderGenerator();
-    const barLocator = page.getByRole('button', { name: 'Open the form' });
-    await expect.element(barLocator).toBeInTheDocument();
-    const bar = barLocator.element();
-    const { x, y } = bar.getBoundingClientRect();
-    const pointer = (type: string, clientY: number) =>
-      bar.dispatchEvent(
-        new PointerEvent(type, { bubbles: true, pointerId: 7, clientX: x + 20, clientY })
-      );
-    pointer('pointerdown', y + 20);
-    pointer('pointermove', y - 20);
-    pointer('pointerup', y - 40);
-
-    expect(view()).toBe('generate');
   });
 
   test('Back closes the open sheet and keeps the generator', async () => {
@@ -113,8 +103,25 @@ describe('MobileGenerator', () => {
     renderGenerator();
     await expect.element(page.getByRole('button', { name: 'Close the form' })).toBeInTheDocument();
     history.back();
-    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole('button', { name: 'Create', exact: true }))
+      .toBeInTheDocument();
     expect(view()).toBe('queue');
+  });
+
+  test('dragging the open form down by its title row closes it', async () => {
+    useGenerationPanelStore.setState({ view: 'generate' });
+    renderGenerator();
+    const close = page.getByRole('button', { name: 'Close the form' });
+    await expect.element(close).toBeInTheDocument();
+    const head = close.element().closest('section')!.firstElementChild as HTMLElement;
+    const pointer = (type: string, clientY: number) =>
+      head.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 5, clientY }));
+    pointer('pointerdown', 20);
+    pointer('pointermove', 100);
+    pointer('pointerup', 100);
+
+    expect(view()).not.toBe('generate');
   });
 
   test('the density toggle switches the results between batches and grid', async () => {
@@ -181,55 +188,6 @@ describe('MobileGenerator', () => {
     } finally {
       selectedCount = 0;
     }
-  });
-
-  test('the first closed sheet is held behind the swipe coach until a swipe up opens the form', async () => {
-    localStorage.removeItem(COACH_KEY);
-    useGenerationPanelStore.setState({ view: 'queue' });
-    renderGenerator();
-    const text = page.getByText('Swipe up to open the form');
-    await expect.element(text).toBeVisible();
-    const coach = text.element().parentElement as HTMLElement;
-
-    // It covers the results, so a tap there lands on the coach, and a tap opens nothing.
-    const results = page.getByTestId('results').element().getBoundingClientRect();
-    const hit = document.elementFromPoint(results.x + 20, results.y + 20);
-    expect(coach.contains(hit)).toBe(true);
-    const pointer = (type: string, clientY: number) =>
-      coach.dispatchEvent(new PointerEvent(type, { bubbles: true, pointerId: 9, clientY }));
-    pointer('pointerdown', 300);
-    pointer('pointerup', 300);
-    expect(view()).toBe('queue');
-
-    pointer('pointerdown', 300);
-    pointer('pointermove', 260);
-    pointer('pointerup', 240);
-    expect(view()).toBe('generate');
-
-    await page.getByRole('button', { name: 'Close the form' }).click();
-    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
-    await expect.element(text).not.toBeInTheDocument();
-  });
-
-  test('a form first opened another way (Remix) leaves no coach behind when it closes', async () => {
-    localStorage.removeItem(COACH_KEY);
-    renderGenerator();
-    await page.getByRole('button', { name: 'Close the form' }).click();
-    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
-    await expect.element(page.getByText('Swipe up to open the form')).not.toBeInTheDocument();
-  });
-
-  test('tapping the bar also completes the swipe coach', async () => {
-    localStorage.removeItem(COACH_KEY);
-    useGenerationPanelStore.setState({ view: 'queue' });
-    renderGenerator();
-    const text = page.getByText('Swipe up to open the form');
-    await expect.element(text).toBeVisible();
-
-    await page.getByRole('button', { name: 'Open the form' }).click();
-    await page.getByRole('button', { name: 'Close the form' }).click();
-    await expect.element(page.getByRole('button', { name: 'Open the form' })).toBeInTheDocument();
-    await expect.element(text).not.toBeInTheDocument();
   });
 
   test('the closed sheet keeps the form mounted but out of reach', async () => {
@@ -331,7 +289,7 @@ describe('MobileGenerator', () => {
     await expect.element(page.getByRole('link', { name: 'Increase' })).toBeInTheDocument();
   });
 
-  test("the closed form's bar is its title row, without the form's own actions", async () => {
+  test('closed, the form is a Create button, and its own actions wait for the open sheet', async () => {
     useGenerationPanelStore.setState({ view: 'queue' });
     renderWithProviders(
       <MobileGenerator
@@ -340,21 +298,22 @@ describe('MobileGenerator', () => {
         closeLabel="Go back"
       />
     );
-    const bar = page.getByRole('button', { name: 'Open the form' });
-    await expect.element(bar).toHaveTextContent('Generate');
+    const create = page.getByRole('button', { name: 'Create', exact: true });
+    await expect.element(create).toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Presets' })).not.toBeInTheDocument();
     await expect
       .element(page.getByRole('button', { name: 'Reset', exact: true }))
       .not.toBeInTheDocument();
 
-    await bar.click();
+    await create.click();
     await expect.element(page.getByRole('button', { name: 'Presets' })).toBeInTheDocument();
     await expect
       .element(page.getByRole('button', { name: 'Reset', exact: true }))
       .toBeInTheDocument();
   });
 
-  test('while a field is typed in, the footer steps aside for the keyboard', async () => {
+  test('while a field is typed in with the keyboard up, the footer steps aside for it', async () => {
+    keyboardOpen = true;
     renderWithProviders(
       <MobileGenerator
         form={
@@ -378,6 +337,59 @@ describe('MobileGenerator', () => {
 
     // A control that brings up no keyboard leaves the footer where it is.
     (page.getByRole('checkbox', { name: 'Raw mode' }).element() as HTMLElement).focus();
+    await expect.element(footer).toBeVisible();
+  });
+
+  test('the footer waits for the tap that left the field before coming back', async () => {
+    keyboardOpen = true;
+    renderWithProviders(
+      <MobileGenerator
+        form={
+          <>
+            <textarea aria-label="Prompt" />
+            <button type="button">Seed</button>
+            <div data-generator-footer style={{ display: 'flex' }}>
+              Generate row
+            </div>
+          </>
+        }
+        onClose={vi.fn()}
+        closeLabel="Go back"
+      />
+    );
+    const footer = page.getByText('Generate row');
+    await expect.element(footer).toBeVisible();
+    (page.getByRole('textbox', { name: 'Prompt' }).element() as HTMLElement).focus();
+    await expect.element(footer).not.toBeVisible();
+
+    // A tap blurs the field on its mousedown; a footer back by then would take the tap's click.
+    (page.getByRole('button', { name: 'Seed' }).element() as HTMLElement).focus();
+    // Well after a footer with no wait would be back, and well before the wait ends.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(getComputedStyle(footer.element()).display).toBe('none');
+    await expect.element(footer).toBeVisible();
+  });
+
+  test('a focused field with the keyboard down (dismissed, or a hardware one) keeps the footer', async () => {
+    keyboardOpen = false;
+    renderWithProviders(
+      <MobileGenerator
+        form={
+          <>
+            <textarea aria-label="Prompt" />
+            <div data-generator-footer style={{ display: 'flex' }}>
+              Generate row
+            </div>
+          </>
+        }
+        onClose={vi.fn()}
+        closeLabel="Go back"
+      />
+    );
+    const footer = page.getByText('Generate row');
+    await expect.element(footer).toBeVisible();
+    (page.getByRole('textbox', { name: 'Prompt' }).element() as HTMLElement).focus();
+    await expect.element(page.getByRole('textbox', { name: 'Prompt' })).toHaveFocus();
     await expect.element(footer).toBeVisible();
   });
 });

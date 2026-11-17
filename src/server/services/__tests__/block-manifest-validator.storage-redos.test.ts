@@ -36,6 +36,7 @@ const manifest = (collections: Record<string, unknown>) => ({
     sandbox: 'allow-scripts',
   },
   scopes: ['models:read:self', 'apps:storage'],
+  page: { path: '/', title: 'Test Block' },
   storage: { collections },
 });
 const field = (pattern: string) => ({ type: 'string', pattern, maxLength: 40 });

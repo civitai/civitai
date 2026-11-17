@@ -40,7 +40,7 @@ vi.mock('~/utils/media-preprocessors', () => ({
     metadata: { width: 1, height: 1, hash: 'h' },
   })),
 }));
-vi.mock('~/utils/metadata/audit', () => ({ auditMetaData: vi.fn() }));
+vi.mock('~/utils/metadata/audit', () => ({ auditPostImageMeta: vi.fn() }));
 
 import type { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { useMediaUpload } from '~/hooks/useMediaUpload';

@@ -1,4 +1,5 @@
-import { Badge, Button, Group, Popover, Skeleton, Stack, Text } from '@mantine/core';
+import { Badge, Button, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowsMove } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import type { ReactNode } from 'react';

@@ -34,8 +34,6 @@ vi.mock('~/env/server', () => ({
   env: {
     SEARCH_HOST: 'http://meili-search.example',
     SEARCH_API_KEY: 'test-search-key',
-    METRICS_SEARCH_HOST: 'http://meili-metrics.example',
-    METRICS_SEARCH_API_KEY: 'test-metrics-key',
     IS_BUILD: false,
     MEILI_CALL_TIMEOUT_MS: 1000,
     // Small enough that 3 calls give active=2 and queued=1. Those values differ from each
@@ -46,16 +44,7 @@ vi.mock('~/env/server', () => ({
     MEILI_CIRCUIT_TRIP_THRESHOLD: 1,
     MEILI_CIRCUIT_WINDOW_SECONDS: 30,
     MEILI_CIRCUIT_COOLDOWN_SECONDS: 30,
-    MEILI_FETCH_TIMEOUT_MS: 5000,
   },
-}));
-
-vi.mock('~/server/utils/otel-helpers', () => ({
-  withSpan: <T>(_name: string, _attrsOrFn: unknown, maybeFn?: () => T): T => {
-    const fn = (typeof _attrsOrFn === 'function' ? _attrsOrFn : maybeFn) as () => T;
-    return fn();
-  },
-  safeUrl: (u: string) => u,
 }));
 
 vi.mock('~/utils/logging', () => ({
@@ -199,7 +188,7 @@ describe('meili wrapper gauges with two module copies (the production load shape
     expect(await gaugeValue('meili_call_queue_depth', 'search')).toBe(1);
     // The idle backend stays at 0, so the reading is per backend, not one number copied to
     // every label.
-    expect(await gaugeValue('meili_call_active', 'metricsSearch')).toBe(0);
+    expect(await gaugeValue('meili_call_active', 'resourceSelect')).toBe(0);
 
     // Drain, and check the gauges follow the live state back down. A value latched at its
     // first reading fails here.
@@ -243,7 +232,6 @@ describe('meili wrapper gauges with two module copies (the production load shape
     expect(await settled).toBeInstanceOf(apiCopy.MeiliCallTimeoutError);
 
     expect(await gaugeValue('meili_circuit_state', 'search')).toBe(2);
-    expect(await gaugeValue('meili_circuit_state', 'metricsSearch')).toBe(0);
   });
 
   it('both copies admit against ONE circuit: a trip seen through one copy fails fast in the other', async () => {

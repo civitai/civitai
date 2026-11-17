@@ -480,6 +480,9 @@ describe('BlockRegistry.listForModel content-rating filter (audit I15)', () => {
       // host gate, so run as if on a red-capable host (mature apps allowed). The
       // host gate has its own dedicated tests in listForModel.behavior.test.ts.
       redCapable: true,
+      // …and with every browsing level enabled, for the same reason (the R/X level gate has its
+      // own tests there too).
+      viewerBrowsingLevel: 31,
     });
     expect(result.map((r) => r.blockId).sort()).toEqual(['blk_g', 'blk_x']);
   });

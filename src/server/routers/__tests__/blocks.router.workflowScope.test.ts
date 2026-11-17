@@ -804,8 +804,8 @@ describe('blocks.publishGenerationOutputs — bound to the signed-in session', (
           $type: 'customComfy',
           output: {
             blobs: [
-              { url: 'https://blobs.example.test/a.png', available: true },
-              { url: 'https://blobs.example.test/b.png', available: true },
+              { url: 'https://blobs.example.test/a.png', available: true, nsfwLevel: 'pg' },
+              { url: 'https://blobs.example.test/b.png', available: true, nsfwLevel: 'pg' },
             ],
           },
         },
@@ -936,7 +936,11 @@ describe('blocks.publishGenerationOutputs — dev-token ownership proof', () => 
       steps: [
         {
           $type: 'customComfy',
-          output: { blobs: [{ url: 'https://blobs.example.test/dev.png', available: true }] },
+          output: {
+            blobs: [
+              { url: 'https://blobs.example.test/dev.png', available: true, nsfwLevel: 'pg' },
+            ],
+          },
         },
       ],
       ...over,

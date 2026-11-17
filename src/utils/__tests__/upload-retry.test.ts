@@ -21,6 +21,8 @@ import {
  */
 describe('isTerminalCompleteStatus', () => {
   it.each([
+    // The completion body itself is malformed (e.g. no uploadId).
+    [400, true],
     // The multipart session is already finalized or aborted.
     [409, true],
     // The upload STATE is bad: an unacceptable parts manifest, or a completion whose
@@ -39,7 +41,6 @@ describe('isTerminalCompleteStatus', () => {
     [429, false],
     [408, false],
     [401, false],
-    [400, false],
     // Success is not "terminal failure"; the callers gate on !res.ok first, but the
     // predicate must not claim a 2xx is terminal if that order ever changes.
     [200, false],
@@ -50,11 +51,11 @@ describe('isTerminalCompleteStatus', () => {
   // 🔴 An enumerated ledger, not a spot check: if a status is ADDED to or REMOVED from
   // the terminal set, this fails and forces both clients' behaviour to be reconsidered
   // together — which is the whole point of the predicate living in one module.
-  it('the terminal set is exactly {409, 422}', () => {
+  it('the terminal set is exactly {400, 409, 422}', () => {
     const terminal = Array.from({ length: 600 }, (_, i) => i)
       .filter((s) => s >= 100)
       .filter(isTerminalCompleteStatus);
-    expect(terminal).toEqual([409, 422]);
+    expect(terminal).toEqual([400, 409, 422]);
   });
 });
 

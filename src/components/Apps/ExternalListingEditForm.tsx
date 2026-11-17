@@ -56,6 +56,10 @@ import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listin
 import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import {
+  AppDeveloperTermsCheckbox,
+  useAppDeveloperTermsAccepted,
+} from '~/components/Apps/AppDeveloperTerms/AppDeveloperTermsCheckbox';
 
 /**
  * /apps/submit?edit=<listingId> — the EDIT wizard (W13). Reuses the create wizard's
@@ -169,6 +173,7 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
   const updateListingMutation = trpc.appListings.updateListing.useMutation();
   const updateRevisionMutation = trpc.appListings.updateRevisionDraft.useMutation();
   const submitRevisionMutation = trpc.appListings.submitListingRevision.useMutation();
+  const termsAccepted = useAppDeveloperTermsAccepted();
 
   const saving =
     updateListingMutation.isPending ||
@@ -560,6 +565,21 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
                 disabled={materialBlocked}
               />
 
+              {/* Public issue-tracker / support link. MATERIAL like the source link, and the
+                copy says so for the same reason. */}
+              <TextInput
+                label="Issue tracker"
+                description="Where users can report a problem or get help, shown as Support on your app's store page (optional). Any https:// link. Changing this needs moderator re-review before it goes live."
+                placeholder="https://github.com/your-org/your-app/issues"
+                value={values.issueTrackerUrl}
+                onChange={(e) => setField('issueTrackerUrl', e.currentTarget.value)}
+                error={errors.issueTrackerUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.issueTrackerUrlMax}
+                data-testid="apps-offsite-edit-issue-tracker"
+                data-material-field="issueTrackerUrl"
+                disabled={materialBlocked}
+              />
+
               {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
                 🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.
                 Both omissions are decisions, not oversights. That attribute is walked by a
@@ -738,6 +758,8 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         </Stepper.Step>
       </Stepper>
 
+      {(approved || moderatorLiveEdit) && <AppDeveloperTermsCheckbox />}
+
       <Group justify="space-between">
         <Button variant="default" component={Link} href={MY_APPS_HREF} disabled={saving}>
           Cancel
@@ -745,7 +767,10 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
         <Button
           onClick={() => void handleSave()}
           loading={saving}
-          disabled={approved && !shadowId && !moderatorLiveEdit}
+          disabled={
+            (approved && !shadowId && !moderatorLiveEdit) ||
+            ((approved || moderatorLiveEdit) && !termsAccepted)
+          }
           leftSection={<IconDeviceFloppy size={16} />}
           data-testid="apps-offsite-edit-save"
         >

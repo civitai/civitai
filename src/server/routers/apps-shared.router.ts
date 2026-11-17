@@ -78,6 +78,8 @@ import {
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
+  describeSharedRefusalField,
+  sharedRefusalField,
   type SharedDataModerationMode,
   type SharedDataSurface,
   type SharedTextHit,
@@ -806,8 +808,9 @@ type SharedWriteContext = SharedContext & { uid: number };
  * 🔴 A failure that did not land is refunded FREE only if it is marked as our server fault
  * (`escalateToServerFault`); every other failure, 4xx or not, is also charged to the rejection
  * bucket. The marked set is:
- *   - the `data` scan failing (`enforceScan`) and the title/body belt's blocklist read failing
- *     (`assertSharedTextSafe`) — both refused as a 400 but escalated;
+ *   - the `data` scan failing (`enforceScan`), and the title/body belt's blocklist read or its
+ *     prompt audit failing to run (`assertSharedTextSafe`; the audit's 503 only while
+ *     PROMPT_CHECK_FAIL_CLOSED is on) — all refused as a 400 but escalated;
  *   - transaction plumbing (`asTransactionFault`): acquiring the connection, BEGIN, the
  *     `SET LOCAL` of the server-derived app id, and COMMIT.
  * It is an allow-list because a refund is only safe for a failure the caller cannot cause.
@@ -1438,7 +1441,7 @@ async function reportSharedRowUnmetered(
       key,
     },
     'block-audit'
-  ).catch(() => {});
+  );
 
   return { ok: true as const };
 }
@@ -1909,11 +1912,14 @@ async function assertSharedValueSafeAndSerialize(params: {
         { schema, slug, appBlockId, uid },
         { policy: e.category, category: e.category, reason: `auto:${e.category}` }
       );
-      const refusal = new TRPCError({ code: 'BAD_REQUEST', message: e.message, cause: e });
+      // The field the belt refused (never the term or the text), when it could be placed.
+      const message = e.field ? `${e.message} (field: ${e.field})` : e.message;
+      const refusal = new TRPCError({ code: 'BAD_REQUEST', message, cause: e });
       // `unchecked`, not escalation, picks the outcome: a scan that threw is unchecked but charged.
       const outcome = e.unchecked ? 'moderation_unavailable' : 'moderation_blocked';
-      // An outage the belt refused on (its blocklist read failing) stays our fault on the
-      // refusal too, so the write budget refunds it instead of charging the caller.
+      // An outage the belt refused on (its blocklist read failing, or its prompt audit unable to
+      // run) stays our fault on the refusal too, so the write budget refunds it instead of
+      // charging the caller.
       if (isEscalatedServerFault(e)) {
         throw tagSharedStorageOutcome(escalateToServerFault(refusal), outcome);
       }
@@ -2038,7 +2044,7 @@ async function enforceScan(
         error: error instanceof Error ? error.name : typeof error,
       },
       'block-audit'
-    ).catch(() => undefined);
+    );
     throw tagSharedStorageOutcome(
       escalateToServerFault(
         new TRPCError({
@@ -2055,7 +2061,8 @@ async function enforceScan(
  * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then,
  * when `hit` is set, reject it with the SAME consequences a title/body hit has
  * (`fileSharedBlockConsequences`, attributed to the caller — the writer of the text) and a
- * BAD_REQUEST carrying only a generic message (never the matched term). An overflow (a blob too
+ * BAD_REQUEST carrying a generic message plus the field the hit sits in (`sharedRefusalField`,
+ * e.g. `(field: data.actions[2].text)`) — never the matched term or text. An overflow (a blob too
  * deep, too wide or too long to read in full) is rejected too: an unread leaf must not pass by being
  * past a cap. With `hit` null it only records.
  *
@@ -2092,12 +2099,16 @@ async function refuseSharedTextHit(
     field,
   });
 
-  const message =
+  const reason =
     hit.category === 'link'
       ? 'Content contains a blocked link'
       : hit.category === 'overflow'
       ? 'Data is too large or too deeply nested to review'
       : 'Content flagged for review';
+  const named = describeSharedRefusalField(
+    sharedRefusalField(scan, hit, ctx.surface === 'counter' ? 'key' : 'data')
+  );
+  const message = `${reason} (${named})`;
   throw tagSharedStorageOutcome(
     new TRPCError({ code: 'BAD_REQUEST', message }),
     'moderation_blocked'

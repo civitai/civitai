@@ -295,6 +295,133 @@ describe('trpc-serialize-log', () => {
     });
   });
 
+  // The kill-switch is memoised (read once per process), not re-read from process.env on every
+  // serialize / request. Reads are counted through a Proxy over process.env.
+  describe('kill-switch memo (env read once)', () => {
+    let realEnv: NodeJS.ProcessEnv;
+    let killSwitchReads: number;
+
+    beforeEach(() => {
+      realEnv = process.env;
+      killSwitchReads = 0;
+      process.env = new Proxy(realEnv, {
+        get(target, key, receiver) {
+          if (key === 'TRPC_SERIALIZE_LOG_ENABLED') killSwitchReads++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    });
+
+    afterEach(() => {
+      process.env = realEnv;
+    });
+
+    it('reads the kill-switch once across many disabled calls', () => {
+      realEnv.TRPC_SERIALIZE_LOG_ENABLED = 'false';
+      for (let i = 0; i < 500; i++) {
+        runWithSerializeCtx({ path: `p.${i}` }, () => instrumentSerialize(() => i));
+      }
+      expect(killSwitchReads).toBe(1);
+    });
+
+    it('does not re-read the kill-switch per call when enabled', () => {
+      realEnv.TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS = '999999'; // sub-floor: no log tail
+      vi.spyOn(Date, 'now').mockReturnValue(1_000_000); // one config-cache window
+      runWithSerializeCtx({ path: 'p.first' }, () => instrumentSerialize(() => 0));
+      const readsAfterOne = killSwitchReads;
+      expect(readsAfterOne).toBeGreaterThan(0);
+      for (let i = 0; i < 499; i++) {
+        runWithSerializeCtx({ path: `p.${i}` }, () => instrumentSerialize(() => i));
+      }
+      // 500 calls read the kill-switch exactly as often as 1 did: the count does not grow with N.
+      expect(killSwitchReads).toBe(readsAfterOne);
+    });
+  });
+
+  // The `trpc-response-oversized` line must fire under exactly the conditions it always did,
+  // with the same fields. performance.now is driven so each row measures a fixed duration.
+  describe('instrumentSerialize fires under the same conditions, with the same fields', () => {
+    const payload = { json: { data: 'x'.repeat(20) }, meta: undefined }; // 40 bytes serialized
+    type Row = {
+      label: string;
+      enabled: boolean;
+      ms: number;
+      oversizedBytes: number;
+      expected: SerializeLogPayload | null;
+    };
+    const rows: Row[] = [
+      { label: 'sub-floor, oversized', enabled: true, ms: 10, oversizedBytes: 10, expected: null },
+      {
+        label: 'moderate band, oversized',
+        enabled: true,
+        ms: 100,
+        oversizedBytes: 10,
+        expected: {
+          path: 'image.getInfinite',
+          bytes: 40,
+          serializeMs: 100,
+          procedureType: 'query',
+          slowMs: 250,
+          oversizedBytes: 10,
+          droppedSinceLastLog: 0,
+        },
+      },
+      {
+        label: 'moderate band, under size',
+        enabled: true,
+        ms: 100,
+        oversizedBytes: 1_000_000,
+        expected: null,
+      },
+      {
+        label: 'slow, under size',
+        enabled: true,
+        ms: 1000.123,
+        oversizedBytes: 1_000_000,
+        expected: {
+          path: 'image.getInfinite',
+          bytes: 40,
+          serializeMs: 1000.12,
+          procedureType: 'query',
+          slowMs: 250,
+          oversizedBytes: 1_000_000,
+          droppedSinceLastLog: 0,
+        },
+      },
+      {
+        label: 'disabled, slow and oversized',
+        enabled: false,
+        ms: 1000.123,
+        oversizedBytes: 10,
+        expected: null,
+      },
+    ];
+
+    it.each(rows)('$label', async ({ enabled, ms, oversizedBytes, expected }) => {
+      if (!enabled) process.env.TRPC_SERIALIZE_LOG_ENABLED = 'false';
+      process.env.TRPC_SERIALIZE_SIZE_CHECK_FLOOR_MS = '50';
+      process.env.TRPC_SERIALIZE_SLOW_MS = '250';
+      process.env.TRPC_SERIALIZE_OVERSIZED_BYTES = String(oversizedBytes);
+      const captured: SerializeLogPayload[] = [];
+      __setEmitSinkForTests((p) => captured.push(p));
+      let nowVal = 5000;
+      const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowVal);
+
+      const out = runWithSerializeCtx({ path: 'image.getInfinite', type: 'query' }, () =>
+        instrumentSerialize(() => {
+          nowVal += ms;
+          return payload;
+        })
+      );
+      await __flushPendingEmitsForTest();
+
+      expect(out).toBe(payload);
+      expect(captured).toEqual(expected === null ? [] : [expected]);
+      // Timing is taken only when logging is enabled.
+      expect(nowSpy).toHaveBeenCalledTimes(enabled ? 2 : 0);
+    });
+  });
+
   // FIX 2 (PR #3186 audit): SSR dehydrate writes through the fallback serializer,
   // but the attribution ALS was seeded ONLY at the tRPC HTTP boundary — so an SSR
   // offender (e.g. /changelog) logged `path: 'unknown'`. The SSR path now seeds

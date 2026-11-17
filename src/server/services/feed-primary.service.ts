@@ -1,11 +1,15 @@
 import { env } from '~/env/server';
-import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
+import {
+  admitFeedCall,
+  feedDegradeEnabled,
+  lastGoodKey,
+  readLastGood,
+  recordFeedCall,
+  writeLastGood,
+} from '~/server/services/feed-primary-degrade';
 import type { CapturableSearchInput } from '~/server/services/feed-request-capture.service';
-import { withSpan } from '~/server/utils/otel-helpers';
 import {
   CURSOR_UNPARSED,
   DEEP_OFFSET,
@@ -15,26 +19,36 @@ import {
   type FeedAnswer,
 } from '~/server/services/feed-shadow.service';
 
+// The feed-service call's budget. A 2.5s budget was tried (2026-11) and turned slow but healthy
+// pages into 503s: timeouts rose about threefold while the feed service's own query time stayed
+// flat, so the extra time is spent on the caller's side of the call, not in the feed's query.
+// feed_primary_fetch_duration_seconds measures that caller-side time.
+// The trade-off: image.getInfinite holds a shared heavy-image bulkhead slot (default 20 per pod)
+// for the whole call, so with the breaker dark (feed-service-degrade off) a hung feed holds each
+// slot for 5s, halving heavy-route throughput in an outage compared with 2.5s. The breaker is the
+// intended cover for that.
 export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
 const HUB_ROUTES = new Set(['union-walk', 'union-gather', 'empty']);
 
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
-  help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
+  help: 'Image-feed page requests on the feed service, by outcome',
   labelNames: ['outcome', 'reason', 'route'] as const,
 });
 
-const meiliOffCounter = registerCounterWithLabels({
+// Named when this answer replaced a Meilisearch fallback behind a flag; the name is kept so the
+// dashboards reading it keep their history.
+const unservedAnswerCounter = registerCounterWithLabels({
   name: 'feed_primary_meili_off_total',
-  help: 'Image-feed requests the feed service did not serve, answered without Meilisearch',
+  help: 'Image-feed requests the feed service did not serve, by the answer they got instead',
   labelNames: ['answer', 'reason', 'route'] as const,
 });
 /** `answer`: empty (an empty page), unavailable (a retryable 503) or refused (a 400). */
-export const countMeiliOff = (
+export const countUnservedAnswer = (
   answer: 'empty' | 'unavailable' | 'refused',
   reason: string,
   route: FeedPrimaryRoute
-) => meiliOffCounter.inc({ answer, reason: reasonLabel(reason), route });
+) => unservedAnswerCounter.inc({ answer, reason: reasonLabel(reason), route });
 
 /** Which caller asked: the site's image feed or the public REST images endpoint. */
 export type FeedPrimaryRoute = 'website' | 'rest';
@@ -85,8 +99,20 @@ function logUnmapped(reason: string, input: CapturableSearchInput) {
       cursor: reason === 'cursor:unparsed' ? String(input.cursor).slice(0, 80) : undefined,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
+
+// The caller's wall-clock time for the feed call, from just before the request to the parsed answer
+// (or the error). The feed's answer carries no server time of its own, so this is the whole call as
+// this process sees it; compare it with the feed service's own query-time metric to find the
+// caller-side share. `outcome` is ok (any answer below 500), timeout or error (thrown or 5xx).
+const fetchDuration = registerHistogram({
+  name: 'feed_primary_fetch_duration_seconds',
+  help: 'Caller wall-clock time of the image feed call to the feed service, by route and outcome',
+  labelNames: ['route', 'outcome'] as const,
+  // Past the 5s budget too, so a timeout whose timer fired late (event-loop lag) is still seen.
+  buckets: [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10],
+});
 
 const hydrateDuration = registerHistogram({
   name: 'feed_primary_hydrate_duration_seconds',
@@ -99,6 +125,8 @@ export type FeedPrimaryPage<T> = {
   nextCursor: string | undefined;
   feedMs: number;
   route?: string;
+  /** The feed failed and this is the pod's last good copy of the page (feed-primary-degrade). */
+  stale?: true;
 };
 export type FeedPrimaryResult<T> =
   | { ok: true; page: FeedPrimaryPage<T> }
@@ -193,20 +221,6 @@ export function feedHydrateQuery<
   return { ...rest, ids, limit: ids.length, period: 'AllTime', throwOnStatementTimeout: true };
 }
 
-/** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built
- *  from what the search input carries, so segments on userId/isModerator can match. */
-export function feedFliptContext(input: {
-  currentUserId?: number;
-  isModerator?: boolean;
-}): Record<string, string> {
-  if (!input.currentUserId) return { isLoggedIn: 'false' };
-  return {
-    userId: String(input.currentUserId),
-    isModerator: String(!!input.isModerator),
-    isLoggedIn: 'true',
-  };
-}
-
 export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
@@ -236,17 +250,59 @@ export async function serveFromFeed<T extends { id: number }>(
     if (mapping.reason !== DEEP_OFFSET) logUnmapped(reasonLabel(mapping.reason), input);
     return { ok: false, reason: mapping.reason };
   }
+  // Behind feed-service-degrade: a circuit breaker on the call, and an anonymous first page the
+  // feed fails to answer is served from the last good copy (see feed-primary-degrade).
+  const degrade = feedDegradeEnabled();
+  const lastGoodRoute = deps.route ?? 'website';
+  const cacheKey = degrade ? lastGoodKey(input, mapping.query) : undefined;
+  let stale = false;
   let answer: FeedAnswer;
-  try {
-    answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
-  } catch (e) {
-    const name = (e as Error)?.name;
-    const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
-    count(reason, reason === 'error' ? 'fetch' : '');
-    return { ok: false, reason };
+  const admission = degrade ? admitFeedCall() : undefined;
+  // feed_primary_requests_total counts what the feed did (served, timeout, error, breaker, ...);
+  // a stale page served in its place is counted in feed_primary_last_good_total instead.
+  if (admission && !admission.admitted) {
+    count('breaker');
+    const cached = readLastGood(lastGoodRoute, cacheKey, 'breaker');
+    if (!cached) return { ok: false, reason: 'breaker' };
+    answer = cached;
+    stale = true;
+  } else {
+    let failure: string | undefined;
+    // Date.now rather than an hrtime timer, so a test with a faked clock can pin the value.
+    const fetchStarted = Date.now();
+    try {
+      answer = await deps.fetchFeed(mapping.query, deps.timeoutMs ?? FEED_PRIMARY_TIMEOUT_MS);
+      if (answer.status >= 500) failure = `status:${answer.status}`;
+    } catch (e) {
+      const name = (e as Error)?.name;
+      const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'error';
+      failure = reason;
+      answer = { status: 0, ms: 0, ids: [] };
+    }
+    const fetchOutcome = !failure ? 'ok' : failure === 'timeout' ? 'timeout' : 'error';
+    fetchDuration.observe(
+      { route: lastGoodRoute, outcome: fetchOutcome },
+      (Date.now() - fetchStarted) / 1000
+    );
+    if (admission) recordFeedCall(admission, failure !== undefined);
+    // Counted whether or not a stale page then answers, so the timeout and error rates stay the
+    // feed's own.
+    if (failure === 'timeout') count('timeout');
+    else if (failure === 'error') count('error', 'fetch');
+    else if (failure) count('error', failure);
+    const cached =
+      failure && degrade ? readLastGood(lastGoodRoute, cacheKey, reasonLabel(failure)) : undefined;
+    if (cached) {
+      answer = cached;
+      stale = true;
+    } else if (failure) {
+      return { ok: false, reason: failure };
+    } else if (cacheKey && answer.status === 200) {
+      writeLastGood(lastGoodRoute, cacheKey, answer);
+    }
   }
   if (answer.status !== 200) {
-    count('error', `status:${answer.status}`);
+    if (answer.status < 500) count('error', `status:${answer.status}`);
     if (answer.status === 400) logRefused(mapping.query, answer.error, deps.route);
     return { ok: false, reason: `status:${answer.status}` };
   }
@@ -257,10 +313,12 @@ export async function serveFromFeed<T extends { id: number }>(
     return { ok: false, reason: 'hub:route' };
   }
   const nextCursor = answer.nextCursor ? encodeFeedCursor(answer.nextCursor) : undefined;
-  if (!answer.ids.length) {
-    count('served');
-    return { ok: true, page: { data: [], nextCursor, feedMs: answer.ms, route: answer.route } };
-  }
+  const served = (data: T[]): FeedPrimaryResult<T> => {
+    if (!stale) count('served');
+    const page: FeedPrimaryPage<T> = { data, nextCursor, feedMs: answer.ms, route: answer.route };
+    return { ok: true, page: stale ? { ...page, stale: true } : page };
+  };
+  if (!answer.ids.length) return served([]);
   let rows: T[];
   const endHydrate = hydrateDuration.startTimer();
   try {
@@ -282,32 +340,11 @@ export async function serveFromFeed<T extends { id: number }>(
     const row = byId.get(id);
     return row ? [row] : [];
   });
-  count('served');
-  return { ok: true, page: { data, nextCursor, feedMs: answer.ms, route: answer.route } };
+  return served(data);
 }
 
 export function feedPrimaryAvailable() {
   return !!env.FEED_SERVICE_URL;
-}
-
-/**
- * FEED_SERVICE_MEILI_OFF for this viewer: the image feed never reads Meilisearch. Only with a feed
- * service configured, since without one there is nothing else to answer from.
- *
- * Once the feeds index is retired this is true without reading the flag: a flag read that fails
- * returns false, and false would send the request to an index nothing writes any more. Without a
- * feed service the readers of that index answer empty instead (see refuseRetiredIndexRead).
- */
-export async function isMeiliOff(input: { currentUserId?: number; isModerator?: boolean }) {
-  if (!feedPrimaryAvailable()) return false;
-  if (isRetiredSearchIndex(METRICS_IMAGES_SEARCH_INDEX)) return true;
-  return withSpan('image:flipt:meiliOff', () =>
-    getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_SERVICE_MEILI_OFF,
-      input.currentUserId?.toString() || 'anonymous',
-      feedFliptContext(input)
-    )
-  );
 }
 
 export function fetchFeedPrimary(query: string, timeoutMs: number) {

@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { CopyButton, Tooltip, Badge, Group } from '@mantine/core';
+import { CopyButton, Badge, Group } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconCheck, IconCopy } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';

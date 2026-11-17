@@ -4,6 +4,7 @@ import {
   refreshBlobsService,
 } from '~/server/services/orchestrator/refreshBlobs';
 import { OrchestratorEndpoint } from '~/server/utils/endpoint-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   // Same charset the blob-url matcher accepts, so a path param can't be anything else.
@@ -25,5 +26,6 @@ export default OrchestratorEndpoint(
       return res.status(500).json({ error: (e as Error).message });
     }
   },
-  ['POST']
+  ['POST'],
+  TokenScope.AIServicesRead
 );

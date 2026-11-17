@@ -24,7 +24,7 @@ vi.mock('../db', () => ({
 }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ insert }) }));
 
-const { searchChats, getUserMessages, getUserMessagesById } = await import('../chat-audit.service');
+const { searchChats, getUserMessagesById } = await import('../chat-audit.service');
 const { getNewestMessages, getSpamGroups } = await import('../chat-insights.service');
 const { recordChatMessageReads } = await import('../chat-read-audit');
 
@@ -75,12 +75,13 @@ describe('read trail', () => {
     expect(reads()).toEqual([read(1, 10), read(2, 10)]);
   });
 
-  it("records each chat an account's messages came from, looked up by id or by name", async () => {
+  it("records each chat an account's messages came from", async () => {
     await getUserMessagesById(READER, 11);
     expect(reads()).toEqual([read(1, 11), read(2, 11)]);
+  });
 
-    insert.mockClear();
-    await getUserMessages(READER, 'spammer');
+  it('records each chat whose excerpt a username search showed, as a read of that account', async () => {
+    await searchChats(READER, 'spammer');
     expect(reads()).toEqual([read(1, 10), read(2, 10)]);
   });
 
@@ -108,5 +109,45 @@ describe('read trail', () => {
   it('records nothing for a search that showed nothing', async () => {
     await searchChats(READER, 'nothing like this anywhere');
     expect(insert).not.toHaveBeenCalled();
+  });
+});
+
+describe('chat search, a page at a time', () => {
+  beforeEach(async () => {
+    // 26 more chats the account wrote in, each newer than the last, for 28 in all.
+    await db.exec(`
+      INSERT INTO "ChatMember" SELECT g, 10, true FROM generate_series(100, 125) g;
+      INSERT INTO "ChatMessage" ("id","chatId","userId","content")
+        SELECT g + 1000, g, 10, 'hello ' || g FROM generate_series(100, 125) g;
+      INSERT INTO "ChatMessage" ("id","chatId","userId","content") VALUES (999, 100, 10, 'earlier');
+    `);
+  });
+
+  it('lists the chats with the newest match first, the same order on every page', async () => {
+    const first = await searchChats(READER, 'spammer');
+    expect(first!.chats.map((c) => c.chatId).slice(0, 3)).toEqual([125, 124, 123]);
+    expect([first!.chats.length, first!.total, first!.hasMore]).toEqual([25, 28, true]);
+
+    const second = await searchChats(READER, 'spammer', 2);
+    expect(second!.chats.map((c) => c.chatId)).toEqual([100, 2, 1]);
+    expect(second!.hasMore).toBe(false);
+  });
+
+  it('finds no chats for the system account, whose rows the transcript never shows', async () => {
+    await db.exec(
+      `INSERT INTO "ChatMessage" ("id","chatId","userId","content") VALUES (50, 1, -1, 'joined')`
+    );
+    const page = await searchChats(READER, 'system');
+    expect([page!.chats, page!.total]).toEqual([[], 0]);
+  });
+
+  it("counts each chat's matching messages", async () => {
+    const page = await searchChats(READER, 'spammer', 2);
+    expect(page!.chats.map((c) => c.hits)).toEqual([2, 1, 1]);
+    const text = await searchChats(READER, 'discord.gg');
+    expect(text!.chats.map((c) => [c.chatId, c.hits])).toEqual([
+      [2, 1],
+      [1, 1],
+    ]);
   });
 });

@@ -71,6 +71,7 @@
     resetReasonPicker,
     submitAwaitingNote,
   } from '$lib/triage/reason-picker.svelte';
+  import ComFaceCard from '$lib/components/ComFaceCard.svelte';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import WhyFlaggedCard from '$lib/components/minor-flags/WhyFlaggedCard.svelte';
   import type { RulingDraft } from '$lib/components/RulingForm.svelte';
@@ -300,6 +301,7 @@
       appealedAt={row.appealCreatedAt}
       nthThisYear={row.appealNthThisYear}
     />
+    <ComFaceCard face={row.comFace} />
     {#each hashLabels as label (label)}
       <SharedFileCard {row} {civitaiUrl} {label} status={{ label: 'under appeal', tone: 'blue' }} />
     {/each}

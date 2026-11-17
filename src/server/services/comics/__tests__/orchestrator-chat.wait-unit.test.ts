@@ -23,13 +23,12 @@ import type * as WorkflowsMod from '~/server/services/orchestrator/workflows';
  *
  * Derived, not arbitrary: HALF the measured undici headers timeout.
  *
- * `submitWorkflow` only bounds an attempt with an `AbortSignal.timeout` on the
- * whatIf path, so a real submit has no client-side abort — the practical
- * ceiling is undici's default headers timeout, measured at 300.7s against a
- * server that accepts and never responds. A `wait` at or above that never gets
- * to return its graceful 202: the fetch throws first, and
- * `submitWorkflowWithRetry` re-submits (it retries on ANY throw — it is not
- * gated on an error allow-list). Since these bodies carry no `externalId` the
+ * `submitWorkflow` bounds every real submit, but raises an attempt's budget to
+ * cover the requested `wait` plus a margin, so its own abort never undercuts a
+ * wait. The practical ceiling is still undici's default headers timeout,
+ * measured at 300.7s against a server that accepts and never responds. A `wait`
+ * at or above that never gets to return its graceful 202: the fetch throws
+ * first, and `submitWorkflowWithRetry` re-submits a network error. Since these bodies carry no `externalId` the
  * orchestrator cannot dedupe, so exceeding the timeout converts one billable
  * job into up to three.
  *

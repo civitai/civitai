@@ -35,6 +35,7 @@
   import type { NeedsReviewRow } from '$lib/server/minor-hash.service';
   import { urlWith } from '$lib/url';
   import NeedsReviewDetail from './NeedsReviewDetail.svelte';
+  import RestrictedVerdicts from './RestrictedVerdicts.svelte';
 
   type QueueForm = { error?: string; subject?: string } | null;
 
@@ -123,6 +124,11 @@
   <div class="flex flex-col gap-2.5">
     <ModelFlagTabs />
     <TriageFilterChips groups={chipGroups} sort={sortGroup} selectionParam="item" />
+    <RestrictedVerdicts
+      rows={data.restrictedVerdicts}
+      total={data.restrictedVerdictTotal}
+      civitaiUrl={data.civitaiUrl}
+    />
   </div>
 {/snippet}
 

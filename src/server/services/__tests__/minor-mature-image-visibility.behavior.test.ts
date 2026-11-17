@@ -31,6 +31,15 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserService>()),
   amIBlockedByUser: vi.fn().mockResolvedValue(false),
 }));
+// assertImageVisibleToViewer reads through Kysely; its statements get the PGlite answers below.
+vi.mock('~/server/db/kyselyDb.lazy', async () => {
+  const { fakeKyselyDbLazy, answerLike } = await import('~/test-utils/kysely-raw-fake');
+  const { dbMock } = await import('~/__tests__/mocks/db.mock');
+  return fakeKyselyDbLazy(
+    answerLike(dbMock.dbRead.$queryRaw),
+    answerLike(dbMock.dbWrite.$queryRaw)
+  );
+});
 
 import {
   getImagesForModelVersion,
@@ -80,7 +89,8 @@ beforeAll(async () => {
       minor boolean DEFAULT false, poi boolean DEFAULT false, index int,
       "needsReview" text, "acceptableMinor" boolean DEFAULT false,
       ingestion "ImageIngestionStatus" DEFAULT 'Scanned', "nsfwLevelLocked" boolean DEFAULT false,
-      "scanJobs" jsonb, "modelRestricted" boolean DEFAULT false, "blockedFor" text
+      "scanJobs" jsonb, "modelRestricted" boolean DEFAULT false, "blockedFor" text,
+      "tosViolation" boolean DEFAULT false
     );
     CREATE TABLE "Post" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int, "publishedAt" timestamp,
@@ -89,7 +99,7 @@ beforeAll(async () => {
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Article" (
-      id int PRIMARY KEY, "coverId" int, status text, "publishedAt" timestamp, ingestion text
+      id int PRIMARY KEY, "coverId" int, "bannerId" int, status text, "publishedAt" timestamp, ingestion text
     );
     CREATE TABLE "CollectionContributor" (
       "collectionId" int, "userId" int, permissions "CollectionContributorPermission"[]

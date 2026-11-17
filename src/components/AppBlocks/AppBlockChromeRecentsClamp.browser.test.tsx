@@ -156,9 +156,13 @@ describe('the desktop "Recently run" row does not wrap', () => {
       dropdown,
       'the platform-nav dropdown must be in the document once opened'
     ).not.toBeNull();
+    // The bound was 215 for the original item set. The platform nav has since gained ONE
+    // host-authored row ("My apps" → `/apps`, the viewer's launcher home), so it grows by
+    // exactly one one-line row — measured here as the sibling reference row, not retyped.
+    // A wrapped publisher name still adds ~23px on top and fails this.
     expect(
       Math.round(rect(dropdown as HTMLElement).height),
       'the dropdown must not be taller than the sum of one-line rows plus its two labels'
-    ).toBeLessThan(215);
+    ).toBeLessThan(215 + referenceHeight);
   });
 });

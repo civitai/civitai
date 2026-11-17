@@ -1,5 +1,6 @@
 import type { MantineSize, TextProps } from '@mantine/core';
-import { Group, Loader, Text, Tooltip } from '@mantine/core';
+import { Group, Loader, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { BuzzDeltaPop } from '~/components/Buzz/BuzzDeltaPop';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';

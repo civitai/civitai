@@ -400,6 +400,8 @@ export async function acceptTransfer(opts: {
   now?: Date;
 }): Promise<{ transferId: string; appListingId: string; fromUserId: number; toUserId: number }> {
   const now = opts.now ?? new Date();
+  const { assertAcceptedAppDeveloperTermsTrpc } = await import('./app-developer-terms.service');
+  await assertAcceptedAppDeveloperTermsTrpc(opts.userId);
 
   const result = await dbWrite.$transaction(async (tx) => {
     const transfer = (await tx.appOwnershipTransfer.findUnique({

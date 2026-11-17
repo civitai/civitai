@@ -108,7 +108,30 @@ describe('throwOnBlockedUserContent', () => {
 
       const logs = patternLogs();
       expect(logs).toHaveLength(1);
-      expect(logs[0][0].details).toMatchObject({ surface: 'model', matched: PHISH });
+      expect(logs[0][0].details).toMatchObject({ surface: 'model', enforced: false });
+    });
+
+    /** `patternId` is the entry's position in the stored list, empty entries included. */
+    it('records ids and the pattern position, never the matched text', async () => {
+      setLists({ patterns: ['', 'unrelated phrase', PHISH] });
+
+      await throwOnBlockedUserContent(`<p>${PHISH}</p>`, {
+        surface: 'article',
+        entityType: 'Article',
+        entityId: 41,
+        userId: 7,
+      });
+
+      const [[entry]] = patternLogs();
+      expect(entry.details).toEqual({
+        surface: 'article',
+        entityType: 'Article',
+        entityId: 41,
+        userId: 7,
+        patternId: 2,
+        enforced: false,
+      });
+      expect(JSON.stringify(entry)).not.toContain(PHISH);
     });
 
     it('throws on a pattern hit when enforcement is on', async () => {
@@ -154,6 +177,17 @@ describe('throwOnBlockedUserContent', () => {
       setLists({ patterns: [PHISH] });
       await throwOnBlockedUserContent(`<p>${PHISH}</p><p>${PHISH}</p>`);
       expect(patternLogs()).toHaveLength(1);
+    });
+
+    // A whitespace-only entry is as dangerous as an empty one: ' ' is in nearly every sentence.
+    it('ignores a whitespace-only entry', async () => {
+      setLists({ patterns: [' ', PHISH] });
+
+      await throwOnBlockedUserContent('<p>A LoRA trained on my own photos.</p>');
+      expect(patternLogs()).toHaveLength(0);
+
+      await throwOnBlockedUserContent(`<p>${PHISH}</p>`);
+      expect(patternLogs()[0][0].details).toMatchObject({ patternId: 1 });
     });
   });
 

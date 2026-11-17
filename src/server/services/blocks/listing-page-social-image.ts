@@ -1,6 +1,7 @@
 import type { SessionUser } from '~/types/session';
 import type { ListingSocialImage } from '~/server/services/blocks/listing-media-audience';
 import { isRedCapableHost } from '~/server/utils/server-domain';
+import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
 
 /**
  * The subset of a `createServerSideProps` resolver's arguments this reads — the page hands its
@@ -13,6 +14,8 @@ export type ListingPageSsrArgs = {
     req: { headers: { host?: string | null } };
   };
   session?: { user?: SessionUser } | null;
+  /** The request's feature flags; `canViewNsfw` decides the requester's browsing level. */
+  features?: { canViewNsfw?: boolean };
   isClient: boolean;
 };
 
@@ -29,6 +32,7 @@ export type ListingPageSsrArgs = {
 export async function resolveListingPageSocialImage({
   ctx,
   session,
+  features,
   isClient,
 }: ListingPageSsrArgs): Promise<ListingSocialImage | null> {
   const slug = ctx.params?.slug;
@@ -42,7 +46,17 @@ export async function resolveListingPageSocialImage({
     if (scope === 'none') return null;
     return await getListingSocialImage(
       { slug },
-      { redCapable: isRedCapableHost(ctx.req.headers.host), scope, floor: 'public' }
+      {
+        redCapable: isRedCapableHost(ctx.req.headers.host),
+        scope,
+        floor: 'public',
+        // The detail gate's browsing level: a listing this requester's detail page would 404
+        // yields no image. A link unfurler is signed out, so this is PG for it.
+        viewerBrowsingLevel: getServerBrowsingLevel({
+          canViewNsfw: !!features?.canViewNsfw,
+          user: session?.user,
+        }),
+      }
     );
   } catch {
     return null;

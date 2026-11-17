@@ -1,10 +1,10 @@
 // Example of a restricted endpoint that only authenticated users can access.
 
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getApiAuthSession } from '~/server/auth/api-auth-session';
 
 const restricted = async (req: NextApiRequest, res: NextApiResponse) => {
-  const session = await getServerAuthSession({ req, res });
+  const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
 
   if (session) {
     res.send({

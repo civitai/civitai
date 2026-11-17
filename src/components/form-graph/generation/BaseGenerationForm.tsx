@@ -29,9 +29,7 @@ import {
 import { useCompatibilityInfo } from '~/components/generation_v2/hooks/useCompatibilityInfo';
 import { useGenerationTour } from '~/components/generation_v2/hooks/useGenerationTour';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
-import { SelectedWorkflowDisplay } from '~/components/generation_v2/inputs/WorkflowInput';
-import { WorkflowModes, WorkflowRow } from './WorkflowRow';
-import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
+import { WorkflowRow } from './WorkflowRow';
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ExperimentalRulesSync } from '~/components/generation_v2/Experimental';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
@@ -60,8 +58,8 @@ import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 /**
  * The BASE generation form: the entry component. Owns the store over the
  * composed root (`generationHub`) and mirrors GenerationFormV2's shell —
- * GenerationLayout chrome, preset strip, the workflow + ecosystem row,
- * the workflow display (or mobile card) with back-nav and workflow modes, the img2meta /
+ * GenerationLayout chrome, preset strip, the workflow and model cards
+ * (with back-nav and workflow modes), the img2meta /
  * prompt:enhance self-contained panels, and the footer slot. The per-output
  * bodies below all receive the SAME store — the graph is one form; only the
  * rendering splits.
@@ -207,8 +205,6 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
   const ecosystem = useField<string>(store, 'ecosystem')?.value;
   const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
   const compatibility = useCompatibilityInfo({ workflow, ecosystem });
-  const mobile = useGeneratorLayout() === 'mobile';
-
   // Track workflow/ecosystem history for enhancement-workflow back-nav —
   // skipping the entries created by Back itself.
   const workflowHistory = useWorkflowHistoryStore();
@@ -229,6 +225,15 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
     });
   }, [store, workflowHistory]);
 
+  const modesFor = (value: string) =>
+    ecosystem
+      ? getWorkflowModes(
+          value,
+          ecosystem,
+          (store.getSnapshot().state as { model?: { id?: number } }).model?.id
+        )
+      : [];
+
   return (
     <GenerationLayout>
       <PresetControl />
@@ -237,13 +242,13 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
         name="workflow"
         render={({ value, onChange }) => (
           <WorkflowRow
-            mobile={mobile}
             workflow={value}
             ecosystemId={ecosystemId}
             onChange={onChange}
             isCompatible={compatibility.isWorkflowCompatible}
             isMember={isMember}
             onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
+            modes={modesFor(value)}
             ecosystemInput={
               <Controller
                 graph={generationHub}
@@ -271,7 +276,6 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
       {/* img2meta: self-contained panel, no graph controllers */}
       {workflow === 'img2meta' && (
         <>
-          <SelectedWorkflowDisplay workflowId="img2meta" onBack={handleNavigationBack} />
           <MetadataExtractionPanel />
           <GenerationFooter>
             <MetadataExtractionFooter />
@@ -282,35 +286,12 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
       {/* prompt:enhance: self-contained panel, reads captured data from store */}
       {workflow === 'prompt:enhance' && (
         <>
-          <SelectedWorkflowDisplay workflowId="prompt:enhance" onBack={handleNavigationBack} />
           <PromptEnhancePanelWrapper store={store} onBack={handleNavigationBack} />
         </>
       )}
 
       {workflow !== 'img2meta' && workflow !== 'prompt:enhance' && (
         <>
-          <Controller
-            graph={generationHub}
-            name="workflow"
-            render={({ value, onChange }) => (
-              <WorkflowModes
-                mobile={mobile}
-                workflow={value}
-                ecosystemId={ecosystemId}
-                onBack={shouldShowBackButton(value) ? handleNavigationBack : undefined}
-                modes={
-                  ecosystem
-                    ? getWorkflowModes(
-                        value,
-                        ecosystem,
-                        (store.getSnapshot().state as { model?: { id?: number } }).model?.id
-                      )
-                    : []
-                }
-                onChange={onChange}
-              />
-            )}
-          />
           <GrokEcosystemAlert ecosystem={ecosystem} />
           <SeedanceImg2VidAlert ecosystem={ecosystem} workflow={workflow} />
           {output === 'image' ? (

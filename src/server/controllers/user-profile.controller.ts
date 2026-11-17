@@ -3,13 +3,16 @@ import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandl
 import {
   getUserContentOverview,
   getUserWithProfile,
+  setShowcaseSections,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import type {
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
+  SetShowcaseSectionsSchema,
   ShowcaseItemSchema,
+  ShowcaseSectionSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -94,6 +97,7 @@ export const getUserProfileHandler = async ({
             location: null,
             nsfw: false,
             showcaseItems: [] as ShowcaseItemSchema[],
+            showcaseSections: [] as ShowcaseSectionSchema[],
             profileSectionsSettings: [] as ProfileSectionSchema[],
             privacySettings: {} as PrivacySettingsSchema,
           },
@@ -138,6 +142,22 @@ export const updateUserProfileHandler = async ({
     throw throwDbError(error);
   }
 };
+export const setShowcaseSectionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetShowcaseSectionsSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (ctx.user.muted) throw throwAuthorizationError();
+  try {
+    return await setShowcaseSections({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
 export const addEntityToShowcaseHandler = async ({
   input,
   ctx,

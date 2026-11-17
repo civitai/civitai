@@ -158,7 +158,7 @@ describe.each(EDGE_CACHED)('event.%s caching', (name) => {
     Object.assign(access, { viewer: 'preview', signedOut: 'closed' });
     await runChain(name);
     expect(service.getViewerEventAccess.mock.calls.map(([a]) => a)).toEqual([
-      { event: 'birthday2026', viewer: VIEWER },
+      { event: 'birthday2026', viewer: { ...VIEWER, isModerator: false } },
       { event: 'birthday2026', viewer: undefined },
     ]);
   });
@@ -188,7 +188,7 @@ it('event.getWornHat asks the service about this content, for this viewer', asyn
       event: 'birthday2026',
       entityType: 'Image',
       entityId: 1,
-      viewer: VIEWER,
+      viewer: { ...VIEWER, isModerator: false },
     })
   );
 });

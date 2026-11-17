@@ -109,6 +109,16 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  // The drain asks it whether a post holds held text.
+  await holder.db.exec(
+    readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20270108093000_post_text/migration.sql'
+      ),
+      'utf8'
+    )
+  );
   // Off, so what stays is the drain's doing: the delete triggers would keep a held owner's rows
   // whatever the drain asked for, and the report trigger would add markers to the report cases.
   await holder.db.exec(`
@@ -268,20 +278,17 @@ describe('remove-deleted-user-images under a legal hold', () => {
 });
 
 describe("a held author's comment on a drained user's post", () => {
-  it.each([
-    ['keeps', MARKED, [1]],
-    ['takes, as a control,', UNHELD, []],
-  ])('%s a comment by an author on its thread', async (_, author, left) => {
+  it('takes the comment with the post', async () => {
     await holder.db.exec(`
       INSERT INTO "Thread" (id, "postId") VALUES (100, 902);
-      INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
+      INSERT INTO "CommentV2" VALUES (1, ${MARKED}, 100);
     `);
 
     await run();
 
     expect(await postsOf(UNHELD)).toBe(0);
     const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
-    expect(rows.map((r) => r.id)).toEqual(left);
+    expect(rows).toEqual([]);
   });
 });
 

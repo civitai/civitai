@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { readKeyValueViaKysely, readKeyValueViaPrisma } from '~/server/services/hot-reads-5.reads';
+import { readKeyValueViaKysely } from '~/server/services/hot-reads-5.reads';
 import { getCreatorRequirements } from '~/server/services/creator-program.service';
 import { getCapTier } from '~/server/services/subscriptions.service';
 
@@ -63,9 +62,8 @@ export type AnnouncementAllowance = {
 async function getConfig() {
   let value: Record<string, unknown> = {};
   try {
-    const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-      ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, ANNOUNCEMENTS_CONFIG_KEY)
-      : await readKeyValueViaPrisma(dbRead, ANNOUNCEMENTS_CONFIG_KEY);
+    const { kyselyRead } = await loadKyselyDb();
+    const row = await readKeyValueViaKysely(kyselyRead, ANNOUNCEMENTS_CONFIG_KEY);
     if (row?.value && typeof row.value === 'object') value = row.value as Record<string, unknown>;
   } catch {
     // Fall through to defaults.

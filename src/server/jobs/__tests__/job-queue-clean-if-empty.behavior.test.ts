@@ -53,13 +53,17 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY,
       "postId" integer UNIQUE REFERENCES "Post"(id) ON DELETE SET NULL
     );
+    CREATE TABLE "PostText" (
+      "id" integer PRIMARY KEY,
+      "postId" integer NOT NULL REFERENCES "Post"(id) ON DELETE CASCADE
+    );
   `);
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await holder.db.exec(
-    `TRUNCATE "StorylineChapter", "Image", "Thread", "Post", "ModelVersion", "Model" CASCADE`
+    `TRUNCATE "StorylineChapter", "PostText", "Image", "Thread", "Post", "ModelVersion", "Model" CASCADE`
   );
 });
 
@@ -104,6 +108,18 @@ describe('job-queue-clean-if-empty', () => {
     expect(await remainingPostIds()).toEqual([1]);
   });
 
+  it('keeps a post with text items and no images, such as a chapter draft', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER}), (2, ${OWNER});
+      INSERT INTO "PostText" (id, "postId") VALUES (60, 1);
+    `);
+    queuePosts(1, 2);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([1]);
+  });
+
   it('keeps the empty anchor post of the owner’s published version', async () => {
     await holder.db.exec(`
       INSERT INTO "Model" (id, "userId") VALUES (3, ${OWNER});
@@ -127,22 +143,21 @@ describe('job-queue-clean-if-empty', () => {
     expect(await remainingPostIds()).toEqual([1]);
   });
 
-  it.each([
-    ['keeps', HELD, [1]],
-    ['keeps', MARKED, [1]],
-    ['takes, as a control,', OWNER, []],
-  ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
-    await holder.db.exec(`
+  it.each([HELD, MARKED, OWNER])(
+    "takes a comment on the deleted post's thread (author %i)",
+    async (author) => {
+      await holder.db.exec(`
       INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER});
       INSERT INTO "Thread" (id, "postId") VALUES (100, 1);
       INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
     `);
-    queuePosts(1);
+      queuePosts(1);
 
-    await runJob();
+      await runJob();
 
-    expect(await remainingPostIds()).toEqual([]);
-    const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
-    expect(rows.map((r) => r.id)).toEqual(left);
-  });
+      expect(await remainingPostIds()).toEqual([]);
+      const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
+      expect(rows).toEqual([]);
+    }
+  );
 });

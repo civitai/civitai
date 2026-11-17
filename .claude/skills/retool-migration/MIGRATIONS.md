@@ -16,7 +16,7 @@ left worth porting) · `dropped` (agreed not to port)
 | User Reports | `868kn78hc` | 34 | 57 | `/reports/user`, one account at `/reports/user/<id>/<tab>` (was `/retool/user-reports?user=&tab=`, moved 2026-10-14; the old path redirects to the new one) | **ported, not verified** — 34/34 classified ([audit](../../../docs/moderator-app/retool-exports/user-reports-audit.md)): 4 ported, 14 already shipped elsewhere, 16 Retool glue. Reviewed by all three agents; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Re-extracted 2026-08-10 with the current extractor (layout + widget options); the raw export is committed at docs/moderator-app/retool-exports/raw/. |
 | Chat Audit | `868kn7m9r` | 20 | 50 | `/retool/chat-audit` | **built** — all 20 queries ported and reviewed, unverified in a browser, Retool still live |
 | Front Page Audit | `868kn82bf` | 16 | 19 | `/retool/front-page-audit` | **ported, not verified** — 16/16 classified ([audit](../../../docs/moderator-app/retool-exports/front-page-audit-audit.md)): 7 port, 4 already shipped, 2 superseded, 3 plumbing. A proactive sweep (pick a rating + ordering + media, re-rate what is wrong), distinct from `/images/ratings` which is reactive. Re-rating reuses `updateImageNsfwLevel`. **Which of its three Retool writes exist is recorded in one place — [Front Page Audit: port state](../../../docs/moderator-app/retool-exports/parity-findings.md#front-page-audit-port-state-canonical). Do not restate it here; this row said something false twice on 2026-08-20 by doing exactly that.** Two schema findings: Retool selects `i."aiNsfwLevel"`, which exists in production but not in `schema.full.prisma`, and `ImageRank` is an unmodelled view — both read through raw `sql`. Retool's `ByReactions` filtered on the deprecated `i.nsfw` enum while its newest views used the `nsfwLevel` bitmask; the port uses the bitmask for both so the orderings agree. |
-| Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, unverified in a browser, Retool still live |
+| Image Lookup | `868kn7q2v` | 10 | 21 | `/retool/image-lookup` | **built** — all 10 queries ported, plus three panels Retool never had (see Image Lookup below); Retool still live |
 | Article Lookup | `868kn7t8d` | 3 | 9 | `/retool/article-lookup` | **ported, not verified** — 3/3 queries classified ([audit](../../../docs/moderator-app/retool-exports/article-lookup-audit.md)): 2 ported, 1 plumbing (`query1` is an `information_schema` scratch query with a literal `'your_table'` placeholder). Reviewed; findings fixed. **Not run against a live page, and needs granting on `/admin`.** Re-extracted 2026-08-10; the raw export is committed under retool-exports/raw/. |
 | Bulk Ban | `868kn87qj` | 15 | 12 | `/retool/bulk-ban` | **ported, not verified** — 15/15 classified ([audit](../../../docs/moderator-app/retool-exports/bulk-ban-audit.md)): 9 port, 2 already shipped, 3 ad-hoc scratch, 1 whose input query is absent from the export (`deleteComments`, which wrote Prod directly) — **covered 2026-08-24** by the ban's opt-in `removeComments`: it flags `tosViolation` on `Comment` and `CommentV2` through `/api/mod/ban-user`, never a delete. The ninth app, missed because the tracker listed 9 of the parent ticket's 13 subtasks. Ban loop keeps Retool's 5-consecutive-failure abort, plus a confirmation checkpoint every 25 bans (the endpoint answers 200 before doing the work, so a wedged one otherwise reports every account banned); the ban-evasion half (registration IPs, email-domain histogram, accounts-per-IP) is ported as shapes with inputs rather than Retool's hardcoded case data. Gated on `isSenior`. **Fidelity review 2026-08-10** found three defects and two absent capabilities, all now fixed: the ban confirmation promised a content purge that only happened for `SexualMinor` (`removeMedia` was never passed — checkbox added); `parseIdList` truncated silently at 1001 so a 2,000-id list reported 1,001 banned (`parseIdListStrict` refuses instead); the reason picker preselected `Other`; **`query15` domain expansion** and **`GetUsers` tip-farm finder** were both absent and are now built. Its audit was wrong in three rows — `query15` is not covered by the domain histogram (that one is scoped to ids already pasted, so it counts a ring but cannot grow one), `GetUsers` is a workflow not plumbing, and `query13` was filed unported when it is covered. The `textArea2` copy-out is now a details block. **15/15 accounted for; nothing left unported.** One deliberate divergence: the 5-failure abort counts **ids** where Retool counted **attempts**, so a single permanently-failing id no longer halts the run. |
 | Workflows (2) | `868kn80u9` | 2 SQL | — | alerting, not a page | **done — deliberately not ported.** Decision and evidence: [`retool-workflows-decision.md`](../../../docs/moderator-app/retool-workflows-decision.md). Both are alerting wrappers, and the Retool implementation is inert four ways over: `crontab` is `null`, `isEnabled` is `false`, the only trigger is a webhook, and the **Discord block is orphaned** — it has no inbound edge of either kind, so only the PagerDuty leg was ever reachable. They also name `daily-challenge-pick-winners`, a job that no longer exists here (it is `challenge-completion`), and carry a stale *"If the leaderboard isn't populated"* comment showing they were cloned from a leaderboard alert. The **condition** was worth keeping: `createJob` reports *thrown* failures to Axiom + `jobErrorsCounter`, but the challenge pipeline fails by silent no-op (three unlogged early returns in `createUpcomingChallenge`, `result.failed` swallowed in `challenge-auto-queue`, both no-op when `CHALLENGE_PLATFORM_ENABLED` is off) — so nothing alerted on it. Reimplemented as `src/server/jobs/challenge-health-check.ts` (`0 */6 * * *`), both predicates in one query, alerting to Axiom + the existing `DISCORD_WEBHOOK_MOD_ALERTS` webhook. **No PagerDuty** — the repo has no integration and adding one is an infra decision. Raw exports committed under retool-exports/raw/, **sanitized before their only commit** — re-verified 2026-08-11: the Discord webhook, the PagerDuty routing key, the `run-jobs` token and the job-scheduler host are all placeholders in every version in history, so **nothing here needs rotating**. Re-sanitize the same four if the exports are ever refreshed. |
@@ -379,7 +379,8 @@ landed, and every pass paid the cost of re-reading the same service. Ship a page
       a colour failing renders `—` beside a yellow figure that is still true.
       Not ported: `SubTierStatus` (a site-wide roll-up, not per-user), `CreatorClub`/`CreatorClubBuzz`
       (Stripe-Connect payouts — a different domain from moderation).
-- [x] **Reviews / comments** — `ComboComments` as a list in `/api/user-account/[userId]`. `ReviewList`
+- [x] **Reviews / comments** — `ComboComments` as a keyset-paged list on its own endpoint,
+      `/api/user-comments/[userId]` (50 a page plus the account total). `ReviewList`
       moved to its own paged endpoint (2026-10-26), `/api/user-reviews/[userId]`: Written / Received
       tabs, 50 rows a page, filters (owner, rating, flags, text) applied in the query, with
       ToS/excluded/nsfw flags and links to the model.
@@ -566,6 +567,10 @@ app as lowest-risk with no verification item.
       path that renders the log alone. Gated on the log actually having events: an id is just digits,
       and a transposed one would otherwise be reported as a confirmed ToS removal. Reaction clustering
       is skipped there — no `createdAt` means no bound.
+- [x] **Beyond the export** — a "Why it's in review" note (`reviewReasonText`, plus the stored
+      `ruleReason` for `modRule`), flagged prompt terms beside the stored prompt
+      (`reviewHighlightCategories`, shared with the image queues), and flagged remix attempts: rows of
+      `default.prohibitedRequests` naming the image as `remixOfId`, bounded below by its `createdAt`.
 
 Not ported: `Reactions` listed every row (capped at 100 with the cap disclosed).
 
@@ -580,7 +585,9 @@ on /admin — keep that deliberate.
       **Every branch orders before it limits.** `SELECT DISTINCT chatId ... LIMIT 50` with no ORDER BY
       is satisfied by a sort/unique, so it returned the 50 LOWEST ids — the OLDEST chats — which the
       summary step then re-sorted by recency, so the list READ as newest-first. `discord.gg` matches
-      4,620 chats.
+      4,620 chats. Now paged rather than capped: 25 chats a page (`spage`), ordered by each chat's
+      newest matching message, with each chat's match count; message-text search has no total, since
+      counting would scan again. The search box sits on the Search tab (route `chats`) only.
       **All-digit terms above int4 are usernames, not chat ids.** `Chat.id` is `integer`, so a larger
       value ERRORS the query and 500s the page; 978 users with a 10+ digit numeric username have chat
       messages. `@` forces username mode, and an all-digit term that is also a real username surfaces
@@ -593,8 +600,14 @@ on /admin — keep that deliberate.
       citext[], and the driver returns the raw literal as a STRING that the panel's `.join()` throws on.
       `coalesce` keeps purged accounts visible: 8,589 users with a NULL username hold 34,147 membership
       rows, and dropping them made the list and the member panel disagree about who was in a chat.
-- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Newest 300, reversed for reading
-      order, cap disclosed. System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
+- [x] **Transcript + members** — `FindChatById`, `FindChatMembers`. Pages of 300 in reading order,
+      opening on the newest; `msgBefore` / `msgAfter` in the URL (`chat-transcript-cursor.ts`) walk
+      older and newer, so no message is unreachable, and `msgAround` opens the page centred on one
+      message, which is where a search result opens. The open chat (`?chat=`) is the right-hand pane on
+      every tab, with a "Messages X–Y of N" line, and marks the search that found it: the searched
+      account's messages outlined, or the term highlighted. Ordered by `(createdAt, id)`, not `id`: by id the
+      planner walks the primary key backwards (2.2s against ~40ms for the oldest page of a 17k-message
+      chat). System rows excluded: 274,106 are `Embed` type whose content is raw JSON,
       rendered verbatim attributed to "civitai".
 - [x] **Chat reports** — `ChatReport`, served by the SHARED `reports.service.ts` rather than a third
       hand-written join. That also settles a policy split: this page and `/reports` previously

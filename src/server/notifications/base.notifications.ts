@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { NotificationCategory } from '~/server/common/enums';
 
@@ -30,12 +31,10 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * any comment above it.
  *
  * The section mute arrives as a `CommentTopicMute` row on the entity, the per-comment mute as a
- * `CommentMute` row on the comment whose replies it silences (both mirrored from `ThreadMute` until
- * the toggles move to v3). Ancestry is `path`, so "any comment above it" is one containment test; a
+ * `CommentMute` row on the comment whose replies it silences. Ancestry is `path`, so "any comment above it" is one containment test; a
  * depth-clamped reply answers through `replyToId` a comment off its path, so that is checked too.
  *
- * Applied to every processor that can emit for a comment EXCEPT `new-mention` and the three
- * model-page processors (`MODEL_ONLY` in `no-unmuteable-comment-processor`). Being named is not
+ * Applied to every processor that can emit for a comment EXCEPT `new-mention`. Being named is not
  * "somebody responded in a thread you're in" — Justin's call, 2026-08-27. That exemption is safe
  * against the batching rather than in spite of it: the family dedupes by `commentDedupeKey` and runs
  * in priority order, Mention first, so a mention in a muted thread claims the key and the suppressed
@@ -76,6 +75,12 @@ export type NotificationProcessor = {
    * meant as "off" would subscribe the user instead.
    */
   optIn?: boolean;
+  /** Type sent by another app (today `apps/knights`, `/api/jobs/notify`) through the notifications client's bulk path, which does no settings lookup: that sender applies the settings rows itself, with the polarity `optIn` gives. The processor has no `prepareQuery`, and nothing here may call `createNotification` for it. */
+  externalProducer?: boolean;
+  /** Groups this type under its own heading in notification settings. The notification itself keeps `category`. */
+  section?: string;
+  /** Lists this type in notification settings only for viewers who have this feature. */
+  feature?: FeatureFlagKey;
   showCategory?: boolean;
   /** Push on for a user who never chose; see DEFAULT_PUSH_TYPES. */
   defaultPush?: boolean;

@@ -1,4 +1,5 @@
-import { Popover } from '@mantine/core';
+import { mentionHref, mentionUserId } from '~/components/RenderHtml/mention-href';
+import { Popover } from '~/components/MantineOverlays';
 import type { RefObject } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -17,6 +18,7 @@ type Mention = {
   userId: number | null;
   username: string | null;
   linked: boolean;
+  linkedById: boolean;
   rect: DOMRect;
 };
 
@@ -43,33 +45,33 @@ function readMention(el: HTMLElement): Omit<Mention, 'rect'> | null {
   if (el.querySelector('a')) return null;
 
   const anchor = el.closest('a');
-  // The profile the renderer would have linked to. `data-label` is what it uses
-  // when present, falling back to the raw id attribute — so a mention stored
-  // without a label still validates instead of silently losing its card.
-  if (anchor && !linksToProfile(anchor, label ?? idAttr)) return null;
+  // The profiles the renderer can link to: `/user/<data-label>` (falling back to the raw id
+  // attribute, so a mention stored without a label still validates) and, for a stored
+  // `mention:<id>`, `/user-link/<id>`.
+  const idPath = mentionUserId(idAttr) ? mentionHref({ id: idAttr }) : null;
+  const matched = anchor ? linksToProfile(anchor, [`/user/${label ?? idAttr}`, idPath]) : null;
+  if (anchor && !matched) return null;
 
-  return { userId, username, linked: !!anchor };
+  return { userId, username, linked: !!anchor, linkedById: !!idPath && matched === idPath };
 }
 
 /**
  * Same-origin and same profile. Comparing only the path would accept
  * `https://evil.example/user/Justin`, which is the whole attack.
  */
-function linksToProfile(anchor: HTMLAnchorElement, expected: string) {
+function linksToProfile(anchor: HTMLAnchorElement, expected: (string | null)[]) {
   const href = anchor.getAttribute('href');
   // An empty href resolves to the current page, which would pass the check for
   // any reader who happened to be standing on that profile.
-  if (!href) return false;
+  if (!href) return null;
   try {
     const url = new URL(href, window.location.href);
-    if (url.origin !== window.location.origin) return false;
+    if (url.origin !== window.location.origin) return null;
     // Usernames resolve case-insensitively, so a link that works must pass.
-    return (
-      decodeURIComponent(url.pathname).replace(/\/$/, '').toLowerCase() ===
-      `/user/${expected}`.toLowerCase()
-    );
+    const path = decodeURIComponent(url.pathname).replace(/\/$/, '').toLowerCase();
+    return expected.find((e) => e?.toLowerCase() === path) ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -190,11 +192,11 @@ export function MentionHoverCard({
         <HoverCreatorCard
           userId={mention.userId}
           username={mention.username}
-          // The href was validated against the label, but the card is keyed on
-          // the id — independent attributes, so they can disagree. A link and a
-          // card that name different people is the same borrowed identity in a
-          // quieter form.
-          expectUsername={mention.linked ? mention.username : undefined}
+          // A label link was validated against the label, but the card is keyed on the id;
+          // independent attributes can disagree, and a link and a card naming different people
+          // is a borrowed identity. An id link already points at the card's own id, and its
+          // label is a pre-rename snapshot that would wrongly fail the check.
+          expectUsername={mention.linked && !mention.linkedById ? mention.username : undefined}
         />
       </CreatorHoverDropdown>
     </Popover>

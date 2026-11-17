@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import client from 'prom-client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -10,6 +11,7 @@ import type * as AttributionModule from '~/server/services/blocks/buzz-attributi
 import type * as AuthorFeeChargeModule from '~/server/services/blocks/author-fee-charge.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
 import type * as MetricsModule from '~/server/metrics/app-block-runtime.metrics';
+import type * as ScopeGrantModule from '~/server/services/blocks/scope-grant.service';
 
 /**
  * The CONFIRMED pass-through step end-to-end through `blocksRouter`: estimate (grant)
@@ -28,6 +30,8 @@ const h = vi.hoisted(() => ({
   authorize: vi.fn(),
   assertEnabled: vi.fn(async () => undefined),
   confirmedStepFlag: vi.fn(async () => true),
+  withinLimitFlag: vi.fn(async () => false),
+  optedIn: vi.fn(async (): Promise<number | null> => null),
   getOrchestratorToken: vi.fn(async () => 'orch-token'),
   submitWorkflow: vi.fn(),
   getUserById: vi.fn(async (): Promise<unknown> => ({ id: 42, isModerator: false })),
@@ -56,6 +60,11 @@ vi.mock('~/server/services/blocks/block-token-access.service', async (importOrig
 vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof FlagModule>()),
   isAppBlocksConfirmedStepEnabled: (...a: unknown[]) => h.confirmedStepFlag(...(a as [])),
+  isAppConfirmedStepWithinLimitEnabled: (...a: unknown[]) => h.withinLimitFlag(...(a as [])),
+}));
+vi.mock('~/server/services/blocks/scope-grant.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ScopeGrantModule>()),
+  readConfirmWithinLimit: (...a: unknown[]) => h.optedIn(...(a as [])),
 }));
 vi.mock('~/server/metrics/app-block-runtime.metrics', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricsModule>()),
@@ -70,6 +79,10 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
   cancelWorkflow: vi.fn(),
   queryWorkflows: vi.fn(),
   deleteWorkflow: vi.fn(),
+}));
+// The per-user caps resolver reads the session user; unmocked, it reaches the real redis client.
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
 vi.mock('~/server/services/user.service', () => ({
   getUserById: () => h.getUserById(),
@@ -166,6 +179,26 @@ function installRedis() {
   });
   r.expire.mockImplementation(async () => true);
   r.ttl.mockImplementation(async () => 3600);
+  // The cache client's MULTI, for the standing-consent burst bucket: run in order, like Redis.
+  redisMock.redis.multi.mockImplementation((() => {
+    const ops: Array<() => unknown> = [];
+    const chain = {
+      set: (k: string, v: string, o?: { NX?: boolean }) => {
+        ops.push(() => (o?.NX && store.has(k) ? null : (store.set(k, v), 'OK')));
+        return chain;
+      },
+      incr: (k: string) => {
+        ops.push(() => {
+          const n = Number(store.get(k) ?? 0) + 1;
+          store.set(k, String(n));
+          return n;
+        });
+        return chain;
+      },
+      exec: async () => ops.map((op) => op()),
+    };
+    return chain;
+  }) as never);
 }
 const ENOUGH_BUZZ = { blue: 100, green: 20_000, yellow: 0 };
 const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
@@ -327,6 +360,8 @@ beforeEach(() => {
   h.getUserById.mockImplementation(async () => ({ id: VIEWER, isModerator: false }));
   h.authorize.mockImplementation(async () => claims());
   h.confirmedStepFlag.mockImplementation(async () => true);
+  h.withinLimitFlag.mockImplementation(async () => false);
+  h.optedIn.mockImplementation(async () => null);
   h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: 'app-daily' }));
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   h.getActiveDevTunnel.mockImplementation(async () => null);
@@ -386,6 +421,76 @@ describe('REGRESSION — a ~1040 fixed-price pass-through step above the 1000 bu
       expect.objectContaining({ generationType: 'step:polyGen', workflowId, privateRun: false })
     );
     expect(h.chargeAuthorFee).not.toHaveBeenCalled();
+  });
+});
+
+describe('the resources a pass-through step names', () => {
+  const NAMED = {
+    engine: 'meshy',
+    prompt: 'a teapot',
+    model: 'urn:air:sdxl:checkpoint:civitai:1@11',
+  };
+  const HUGGING_FACE = {
+    ...NAMED,
+    model: 'urn:air:sdxl:checkpoint:huggingface:org/repo@main/x.safetensors',
+  };
+
+  beforeEach(() => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    // A mature ceiling spends yellow Buzz.
+    h.buzzAccounts.mockImplementation(async () => ({ ...ENOUGH_BUZZ, yellow: 20_000 }));
+    dbMock.dbRead.modelVersion.findMany.mockImplementation((async (args: {
+      where: { id: { in: number[] } };
+    }) =>
+      args.where.id.in.map((id) => ({
+        id,
+        baseModel: id === 11 ? 'SDXL Turbo' : 'SDXL 1.0',
+      }))) as never);
+  });
+  const UNRESTRICTED = { ...NAMED, model: 'urn:air:sdxl:checkpoint:civitai:1@10' };
+
+  const sentBody = () => (realSubmits()[0][0] as { body: Record<string, unknown> }).body;
+
+  const unconfirmed = async (input: Record<string, unknown>) => {
+    whatifPrice = { total: 100 };
+    chargedPrice = 100;
+    await submit(body({ input }));
+  };
+  const confirmed = async (input: Record<string, unknown>) => {
+    const { snapshot } = await estimate(body({ input }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    await submit(body({ input, quoteId }));
+  };
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])(
+    'holds %s submit to PG-13 when one is on a base model that restricts mature generation',
+    async (_, run) => {
+      await run(NAMED);
+      expect(realSubmits()).toHaveLength(1);
+      expect(sentBody()).toMatchObject({ nsfwLevel: 'pg13', allowMatureContent: false });
+    }
+  );
+
+  it.each([
+    ['an unconfirmed', unconfirmed],
+    ['a confirmed', confirmed],
+  ])('leaves %s submit on an unrestricted base model uncapped', async (_, run) => {
+    await run(UNRESTRICTED);
+    expect(realSubmits()).toHaveLength(1);
+    expect(sentBody().nsfwLevel).toBeUndefined();
+  });
+
+  it.each([
+    ['estimate', () => estimate(body({ input: HUGGING_FACE }))],
+    ['submit', () => submit(body({ input: HUGGING_FACE }))],
+    ['confirmed submit', () => submit(body({ input: HUGGING_FACE, quoteId: SEEDED }))],
+  ])('%s refuses a Hugging Face resource before any orchestrator call', async (_, run) => {
+    await expect(run()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
   });
 });
 
@@ -1328,7 +1433,17 @@ describe('the generation input gate runs on a CONFIRMED submit too', () => {
   function givenImage(owner: number, visible: boolean) {
     dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
       strings.join('').includes('FROM "Image" i')
-        ? [{ url: KEY, userId: owner, visible, blocked: false }]
+        ? [
+            {
+              url: KEY,
+              userId: owner,
+              visible,
+              blocked: false,
+              scanComplete: true,
+              scanPending: false,
+              held: false,
+            },
+          ]
         : []) as never);
   }
   beforeEach(() =>
@@ -1354,5 +1469,343 @@ describe('the generation input gate runs on a CONFIRMED submit too', () => {
     const r = await submit(imageBody({ quoteId: SEEDED }));
     expect(r.snapshot.workflowId).toBe(workflowId);
     expect(realSubmits()).toHaveLength(1);
+  });
+});
+
+describe('account Limits section: the Apps Buzz row is what the per-user cap enforces', () => {
+  it('reads the counter a real submit reserved', async () => {
+    const flag = await import('~/server/services/app-blocks-flag');
+    vi.spyOn(flag, 'isAppBlocksEnabled').mockResolvedValue(true);
+    const quoteId = await confirmedQuote();
+    await submit(body({ quoteId }));
+    const { getMyAppBuzzToday } = await import('~/server/services/blocks/app-buzz-usage.service');
+    const row = await getMyAppBuzzToday({ id: VIEWER } as never);
+    expect(row?.used).toBe(PRICE);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('accountType — a confirmed quote is bound to the pool it was priced with', () => {
+  const currenciesOf = (whatif: boolean) =>
+    h.submitWorkflow.mock.calls
+      .map((c) => c[0] as { body: { currencies?: unknown }; query?: { whatif?: boolean } })
+      .filter((a) => (a.query?.whatif === true) === whatif)
+      .map((a) => a.body.currencies);
+  async function confirmedQuoteFor(b: Record<string, unknown>) {
+    const { snapshot } = await estimate(b);
+    const quoteId = snapshot.stepQuote!.quoteId;
+    await consent(quoteId);
+    return quoteId;
+  }
+
+  // The fixture token is SFW (`maxBrowsingLevel: 1`): blue and green are allowed.
+  it('runs with the SAME pool, which goes first on the estimate, the re-quote and the submit', async () => {
+    const quoteId = await confirmedQuoteFor(body({ accountType: 'green' }));
+    const r = await submit(body({ accountType: 'green', quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+    // Estimate whatif, then the submit's re-quote: both priced green-first.
+    expect(currenciesOf(true)).toEqual([
+      ['green', 'blue'],
+      ['green', 'blue'],
+    ]);
+    expect(currenciesOf(false)).toEqual([['green', 'blue']]);
+  });
+
+  it.each([
+    ['a different pool', { accountType: 'green' }, { accountType: 'blue' }],
+    ['a pool added after the quote', {}, { accountType: 'green' }],
+    ['the pool dropped after the quote', { accountType: 'green' }, {}],
+  ] as const)('refuses %s as a changed body, charging nothing', async (_l, quoted, submitted) => {
+    const quoteId = await confirmedQuoteFor(body(quoted));
+    await expect(submit(body({ ...submitted, quoteId }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'the step body differs from the one that was quoted — estimate again',
+    });
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+  });
+
+  // The record the consent dialog reads. Kills: a grant that drops the pick (the
+  // dialog could then never say which pool pays first).
+  it('the stored quote record carries the pick, and the preview its order', async () => {
+    const { snapshot } = await estimate(body({ accountType: 'green' }));
+    const quoteId = snapshot.stepQuote!.quoteId;
+    const record = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`) as string);
+    expect(record.accountType).toBe('green');
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
+    // SFW token: green first, then blue — not the default blue-first order.
+    expect((preview as { fundingOrder?: unknown }).fundingOrder).toEqual(['green', 'blue']);
+  });
+
+  it('with no pick the record has no accountType and the preview no order', async () => {
+    const { snapshot } = await estimate(body());
+    const quoteId = snapshot.stepQuote!.quoteId;
+    const record = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`) as string);
+    expect('accountType' in record).toBe(false);
+    const preview = await caller(VIEWER).previewQuoteGrant({
+      kind: 'step',
+      blockToken: 't',
+      quoteId,
+    });
+    expect((preview as { fundingOrder?: unknown }).fundingOrder).toBeNull();
+  });
+
+  it('a disallowed pool is refused BEFORE the quote is consumed, so the quote still runs', async () => {
+    const quoteId = await confirmedQuoteFor(body());
+    await expect(submit(body({ accountType: 'yellow', quoteId }))).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: "buzz account 'yellow' is not spendable for this app's content rating",
+    });
+    expect(realSubmits()).toHaveLength(0);
+    // Not spent: the original body still submits against it.
+    const r = await submit(body({ quoteId }));
+    expect(r.snapshot.workflowId).toBe(workflowId);
+  });
+});
+
+describe('STANDING consent — an opted-in viewer, within their daily limit', () => {
+  async function unconfirmedQuote() {
+    const { snapshot } = await estimate();
+    return snapshot.stepQuote!.quoteId;
+  }
+  const preview = (quoteId: string) =>
+    caller(VIEWER).previewQuoteGrant({ kind: 'step', blockToken: 't', quoteId }) as Promise<{
+      standing: boolean;
+      standingOffer: boolean;
+    }>;
+  const standingConsent = (quoteId: string) =>
+    caller(VIEWER).consentQuoteGrantStanding({ blockToken: 't', quoteId });
+
+  beforeEach(() => {
+    h.withinLimitFlag.mockImplementation(async () => true);
+    h.optedIn.mockImplementation(async () => PRICE);
+    setDailyLimit(10_000);
+  });
+
+  it('runs with no click: the preview says standing, the consent records it, the submit runs', async () => {
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: true, standingOffer: false });
+    await standingConsent(quoteId);
+    const stored = JSON.parse(store.get(`system:blocks:step-quote:${quoteId}`)!);
+    expect(stored).toMatchObject({ consentedBy: null, standingConsentBy: VIEWER });
+
+    const res = await submit({ ...body(), quoteId });
+    expect(res.snapshot.workflowId).toBe(workflowId);
+    expect(realSubmits()).toHaveLength(1);
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalled());
+    expect((h.recordScopeInvocation.mock.calls[0] as unknown[])[0]).toMatchObject({
+      detail: { consentKind: 'standing' },
+    });
+  });
+
+  it('control: a clicked consent is recorded as a click', async () => {
+    const quoteId = await confirmedQuote();
+    await submit({ ...body(), quoteId });
+    await vi.waitFor(() => expect(h.recordScopeInvocation).toHaveBeenCalled());
+    expect((h.recordScopeInvocation.mock.calls[0] as unknown[])[0]).toMatchObject({
+      detail: { consentKind: 'click' },
+    });
+  });
+
+  it('not opted in: the preview offers the opt-in, and a standing consent is refused', async () => {
+    h.optedIn.mockImplementation(async () => null);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: true });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const res = submit({ ...body(), quoteId });
+    await expect(res).rejects.toMatchObject({ message: /not been confirmed/ });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('a job priced above the one the viewer opted in on asks again, and is offered the opt-in', async () => {
+    h.optedIn.mockImplementation(async () => PRICE - 1);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: true });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('switched off after the consent: the next submit refuses the standing quote', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    h.optedIn.mockImplementation(async () => null);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('re-opted in at a lower price after the consent: the submit refuses the pricier quote', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    h.optedIn.mockImplementation(async () => PRICE - 1);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('quotes consented earlier and submitted together: five run, the sixth is refused at submit', async () => {
+    // Consented before this window (seeded: no consent-time slot is taken here), so only a slot
+    // taken at submit can bound how many of them run now.
+    const quoteIds = [3, 4, 5, 6, 7, 8].map((d) => `sq_${String(d).repeat(32)}`);
+    for (const quoteId of quoteIds) {
+      seedQuote(quoteId, {
+        consentedBy: null,
+        consentedAt: new Date().toISOString(),
+        standingConsentBy: VIEWER,
+      });
+    }
+    const outcomes: string[] = [];
+    for (let i = 0; i < quoteIds.length; i++) {
+      workflowId = `${VIEWER}-bunched-${i}`;
+      outcomes.push(
+        await submit({ ...body(), quoteId: quoteIds[i] }).then(
+          () => 'ok',
+          (e: TRPCError) => `${e.code}: ${e.message}`
+        )
+      );
+    }
+    expect(outcomes).toEqual([
+      'ok',
+      'ok',
+      'ok',
+      'ok',
+      'ok',
+      'TOO_MANY_REQUESTS: too many jobs without asking in the last minute',
+    ]);
+    expect(realSubmits()).toHaveLength(5);
+  });
+
+  it('the submit-time burst store unreachable: a standing quote is refused, nothing submitted', async () => {
+    const quoteId = `sq_${'9'.repeat(32)}`;
+    seedQuote(quoteId, {
+      consentedBy: null,
+      consentedAt: new Date().toISOString(),
+      standingConsentBy: VIEWER,
+    });
+    redisMock.redis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'too many jobs without asking in the last minute',
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('control: a CLICKED quote takes no standing slot, so the burst store being down does not touch it', async () => {
+    const quoteId = await confirmedQuote();
+    redisMock.redis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    await submit({ ...body(), quoteId });
+    expect(realSubmits()).toHaveLength(1);
+  });
+
+  it('the submit counter carries the app: app_block_id and consent on every confirmed step', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ appBlockId: 'apb_metric_label', blockInstanceId: 'page_apb_metric_label' })
+    );
+    const read = async () => {
+      const metric = client.register.getSingleMetric(
+        'civitai_app_block_confirmed_step_submit_total'
+      ) as unknown as {
+        get: () => Promise<{ values: { value: number; labels: Record<string, string> }[] }>;
+      };
+      return metric ? (await metric.get()).values : [];
+    };
+    const valueFor = (rows: { value: number; labels: Record<string, string> }[], consent: string) =>
+      rows.find((r) => r.labels.app_block_id === 'apb_metric_label' && r.labels.consent === consent)
+        ?.value ?? 0;
+    const before = await read();
+
+    const standingQuote = await unconfirmedQuote();
+    await standingConsent(standingQuote);
+    await submit({ ...body(), quoteId: standingQuote });
+    workflowId = `${VIEWER}-metric-click`;
+    const clickQuote = await confirmedQuote();
+    await submit({ ...body(), quoteId: clickQuote });
+
+    const after = await read();
+    expect(valueFor(after, 'standing') - valueFor(before, 'standing')).toBe(1);
+    expect(valueFor(after, 'click') - valueFor(before, 'click')).toBe(1);
+    const row = after.find((r) => r.labels.app_block_id === 'apb_metric_label');
+    expect(Object.keys(row!.labels).sort()).toEqual(['app_block_id', 'consent']);
+  });
+
+  it('the flag off: no standing, no offer, and the consent is refused', async () => {
+    h.withinLimitFlag.mockImplementation(async () => false);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: false });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('a job over what is left of the limit is refused', async () => {
+    setDailyLimit(PRICE - 1);
+    const quoteId = await unconfirmedQuote();
+    expect(await preview(quoteId)).toMatchObject({ standing: false });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('a private run always asks', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ privateRun: true, privateRunAudience: 'owner' })
+    );
+    const quoteId = `sq_${'2'.repeat(32)}`;
+    seedQuote(quoteId, { consentedBy: null, consentedAt: null });
+    expect(await preview(quoteId)).toMatchObject({ standing: false, standingOffer: false });
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('five run inside a minute; the sixth is refused, and the host then asks', async () => {
+    const outcomes: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const quoteId = `sq_${String(i).repeat(32)}`;
+      seedQuote(quoteId, { consentedBy: null, consentedAt: null });
+      outcomes.push(
+        await standingConsent(quoteId).then(
+          () => 'ok',
+          (e: TRPCError) => e.code
+        )
+      );
+    }
+    expect(outcomes).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'TOO_MANY_REQUESTS']);
+  });
+
+  it('the burst store unreachable: refused', async () => {
+    redisMock.redis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    const quoteId = await unconfirmedQuote();
+    await expect(standingConsent(quoteId)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  });
+
+  it('the flag turned off after the consent: the submit refuses the standing quote, nothing charged', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    h.withinLimitFlag.mockImplementation(async () => false);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('the limit removed after the consent: refused with no limit to bound it, and refunded', async () => {
+    const quoteId = await unconfirmedQuote();
+    await standingConsent(quoteId);
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: null,
+      revokedAt: null,
+    });
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      message: /not been confirmed/,
+    });
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap:')).toBe(0);
   });
 });

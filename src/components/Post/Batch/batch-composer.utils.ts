@@ -281,23 +281,11 @@ export function buildPlan(input: {
   });
 }
 
-type CivitaiResourceMeta = { modelVersionId: number };
-
 /** One `scheduleBatch` image: the upload result reshaped to `addPostImageSchema` minus the post
- *  fields, with the shared extra resources merged into `meta.civitaiResources` so the resource
- *  detection picks them up like generator metadata. */
-export function toBatchImage(media: UploadedMedia, extraResourceIds: number[]) {
-  const meta = (media.meta ?? {}) as Record<string, unknown> & {
-    civitaiResources?: CivitaiResourceMeta[];
-  };
-  const existingResources = Array.isArray(meta.civitaiResources) ? meta.civitaiResources : [];
-  const additions = extraResourceIds
-    .filter((id) => !existingResources.some((resource) => resource.modelVersionId === id))
-    .map((modelVersionId) => ({ modelVersionId }));
-  const mergedMeta =
-    additions.length || existingResources.length
-      ? { ...meta, civitaiResources: [...existingResources, ...additions] }
-      : meta;
+ *  fields. Its `meta` is the file's own metadata, unchanged: the shared resources travel as the
+ *  batch's `resourceIds` and are credited as uploader-asserted, not as detected. */
+export function toBatchImage(media: UploadedMedia) {
+  const meta = media.meta as Record<string, unknown> | undefined;
   const { width, height, hash } = media.metadata as {
     width?: number;
     height?: number;
@@ -310,7 +298,7 @@ export function toBatchImage(media: UploadedMedia, extraResourceIds: number[]) {
     height,
     width,
     mimeType: media.mimeType,
-    meta: Object.keys(mergedMeta).length ? mergedMeta : undefined,
+    meta: meta && Object.keys(meta).length ? meta : undefined,
     type: media.type,
     metadata: media.metadata,
     generationWorkflowId: media.generationWorkflowId,

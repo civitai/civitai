@@ -22,6 +22,7 @@ const { applyRatingFloor } = await import('~/server/services/text-scan/rated-ent
 const { submitTextModeration } = await import('~/server/services/text-moderation.service');
 const { recomputeArticleIngestion } = await import('~/server/services/article.service');
 const { TEXT_SCAN_ENTITY_NOT_PUBLIC } = await import('~/server/services/text-scan/route');
+const { createNotification } = await import('~/server/services/notification.service');
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -61,6 +62,26 @@ describe('articleModerationAdapter — text scan', () => {
   });
 
   it.each([
+    ['submits', 'an active', { id: 'wf' }],
+    ['parks', 'an expired', null],
+  ])('%s a draft with %s share link on retry', async (_verb, state, expected) => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue({ status: 'Draft', scheduledAt: null });
+    dbMock.dbWrite.accessToken.findMany.mockResolvedValueOnce([
+      {
+        resourceId: 4,
+        resourceType: 'Article',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + (state === 'an active' ? 60_000 : -60_000)),
+      },
+    ] as never);
+    vi.mocked(submitTextModerationOrScan).mockResolvedValue({ id: 'wf' });
+
+    const result = await articleModerationAdapter.submit({ entityId: 4, content: 'T body' });
+    if (expected) expect(result).toEqual(expected);
+    else expect(result).toBe(TEXT_SCAN_ENTITY_NOT_PUBLIC);
+  });
+
+  it.each([
     ['processing', { status: 'Processing', scheduledAt: null }],
     ['scheduled', { status: 'Draft', scheduledAt: new Date('2099-01-01') }],
     // A deleted article is left to the route, which reports it gone so the cron drops the row.
@@ -91,4 +112,83 @@ describe('articleModerationAdapter — text scan', () => {
       vi.mocked(recomputeArticleIngestion).mock.invocationCallOrder[0]
     );
   });
+});
+
+describe('articleModerationAdapter — a block', () => {
+  type Row = { status: string; userId: number; scheduledAt?: Date | null; metadata: object | null };
+  // A transaction client distinct from dbWrite, so a call made outside the transaction cannot
+  // pass for one made inside it.
+  const block = async (row: Row) => {
+    const tx = {
+      $executeRaw: vi.fn(async () => 0),
+      $queryRaw: vi.fn(async () => [{ scheduledAt: null, ...row }]),
+      article: { update: vi.fn(async () => ({})) },
+      accessToken: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    };
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (fn: (c: unknown) => unknown) =>
+      fn(tx)) as never);
+    await articleModerationAdapter.applyResult!({
+      entityId: 4,
+      blocked: true,
+      triggeredLabels: [],
+    } as never);
+    return tx;
+  };
+  const revoked = {
+    where: { resourceType: 'Article', resourceId: 4, revokedAt: null },
+    data: { revokedAt: expect.any(Date) },
+  };
+  const written = (tx: Awaited<ReturnType<typeof block>>) =>
+    (tx.article.update.mock.calls[0] as unknown as [{ data: unknown }])[0].data;
+
+  // A shared draft is scanned, so it can be blocked. The status it had lets a moderator's restore
+  // return it to its author instead of publishing it, and its links end with the block.
+  it('takes a shared draft down with its links in one transaction, recording its status', async () => {
+    const tx = await block({ status: 'Draft', userId: 9, metadata: { theme: 'x' } });
+    expect(tx.$executeRaw.mock.calls[0].slice(1)).toEqual([0x41544b, 4]);
+    // The row is read under the share-link lock, and locked for the write.
+    expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$queryRaw.mock.invocationCallOrder[0]
+    );
+    expect((tx.$queryRaw.mock.calls[0] as unknown as [string[]])[0].join('?')).toMatch(
+      /FOR UPDATE$/
+    );
+    expect(tx.article.update).toHaveBeenCalledWith({
+      where: { id: 4 },
+      data: {
+        status: 'UnpublishedViolation',
+        metadata: { theme: 'x', statusBeforeViolation: 'Draft' },
+      },
+    });
+    expect(tx.accessToken.updateMany).toHaveBeenCalledWith(revoked);
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.accessToken.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('tells no author of an article they had not sent live that it was unpublished', async () => {
+    await block({ status: 'Draft', userId: 9, metadata: null });
+    await block({ status: 'Unpublished', userId: 9, metadata: null });
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  // Scheduling is the author asking for it to go live, so it is a publish taken down, as before
+  // share links: the author is told, and a restore publishes it.
+  // A published one restores by its publishedAt. A scheduled one returns to Draft, keeping its
+  // schedule, so the go-live job publishes it.
+  it.each([
+    ['published', { status: 'Published' }, {}],
+    [
+      'scheduled',
+      { status: 'Draft', scheduledAt: new Date('2027-01-01') },
+      { statusBeforeViolation: 'Draft' },
+    ],
+  ])(
+    'tells the author of a %s article, and records where a restore returns it',
+    async (_, row, metadata) => {
+      const tx = await block({ userId: 9, metadata: { statusBeforeViolation: 'Draft' }, ...row });
+      // A status an earlier block left goes too, or the next restore would unpublish it.
+      expect(written(tx)).toEqual({ status: 'UnpublishedViolation', metadata });
+      expect(createNotification).toHaveBeenCalledWith(expect.objectContaining({ userId: 9 }));
+    }
+  );
 });

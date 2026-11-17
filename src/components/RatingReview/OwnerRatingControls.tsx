@@ -1,4 +1,5 @@
-import { Badge, Button, Group, Stack, Text, Tooltip } from '@mantine/core';
+import { Badge, Button, Group, Stack, Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertCircle } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { getHighestBrowsingLevelBit } from '@civitai/shared';

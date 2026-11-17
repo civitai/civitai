@@ -10,8 +10,8 @@ import {
   Tabs,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useClipboard, useMediaQuery } from '@mantine/hooks';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {

@@ -5,8 +5,7 @@ import {
 } from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { readKeyValueViaKysely, readKeyValueViaPrisma } from '~/server/services/hot-reads-5.reads';
+import { readKeyValueViaKysely } from '~/server/services/hot-reads-5.reads';
 import { getCapTiers, getCapTierViaKysely } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
@@ -82,9 +81,8 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   let stored: z.infer<typeof placementConfigSchema> = {};
 
   try {
-    const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-      ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, PLACEMENT_CONFIG_KEY)
-      : await readKeyValueViaPrisma(dbRead, PLACEMENT_CONFIG_KEY);
+    const { kyselyRead } = await loadKyselyDb();
+    const row = await readKeyValueViaKysely(kyselyRead, PLACEMENT_CONFIG_KEY);
     const parsed = placementConfigSchema.safeParse(row?.value ?? {});
     if (parsed.success) stored = parsed.data;
   } catch {

@@ -1,4 +1,5 @@
-import { Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { Text, ThemeIcon } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import React from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import type { PostsInfiniteModel } from '~/server/services/post.service';

@@ -1,7 +1,11 @@
 import { MeiliSearch } from 'meilisearch';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import {
+  COMICS_SEARCH_INDEX,
+  IMAGES_SEARCH_INDEX,
+  MODELS_SEARCH_INDEX,
+} from '~/server/common/constants';
 import type { SiteSearchViewer } from '~/server/services/site-search.service';
 import {
   SITE_SEARCH_INDEXES,
@@ -96,6 +100,14 @@ const signedInOnCom: SiteSearchViewer = {
   showSfwFace: true,
 };
 
+// A comic's level combines its chapters': SAFE is PG, MIXED is PG + R, UNRATED has none yet.
+const [SAFE, MIXED, UNRATED] = [1, 2, 3];
+const comicDocs = [
+  { id: SAFE, name: 'Safe', nsfwLevel: [PG] },
+  { id: MIXED, name: 'Mixed', nsfwLevel: [PG, R] },
+  { id: UNRATED, name: 'Unrated', nsfwLevel: [] },
+];
+
 const hitsOf = (body: unknown) => (body as { hits: Record<string, unknown>[] }).hits;
 const idsOf = (body: unknown) =>
   hitsOf(body)
@@ -137,6 +149,9 @@ describe.skipIf(!HOST || !MASTER_KEY)('site search on a real Meilisearch', () =>
     );
     await admin.waitForTask((await models.addDocuments(modelDocs)).taskUid);
     await admin.waitForTask((await admin.index(UNLISTED_INDEX).addDocuments(modelDocs)).taskUid);
+    const comics = admin.index(COMICS_SEARCH_INDEX);
+    await admin.waitForTask((await comics.updateFilterableAttributes(['nsfwLevel'])).taskUid);
+    await admin.waitForTask((await comics.addDocuments(comicDocs)).taskUid);
 
     const searchKey = await admin.createKey({
       description: 'integration: site search key',
@@ -231,6 +246,17 @@ describe.skipIf(!HOST || !MASTER_KEY)('site search on a real Meilisearch', () =>
   it('civitai.com never serves a mature-only model, whatever the client filters on', async () => {
     expect(await search(signedInOnCom)).toEqual([CONTROL, FACED]);
     expect(await search(signedInOnCom, `nsfwLevel = ${R}`)).toEqual([FACED]);
+  });
+
+  it('a comic is served only when every level in it is within the cap, an unrated one never', async () => {
+    const comics = async (viewer: SiteSearchViewer) => {
+      const { status, body } = await siteIndexSearch(COMICS_SEARCH_INDEX, { q: '' }, viewer);
+      expect(status, JSON.stringify(body)).toBe(200);
+      return idsOf(body);
+    };
+    expect(await comics({ isModerator: true, showSfwFace: false })).toEqual([SAFE, MIXED, UNRATED]);
+    expect(await comics(signedInOnCom)).toEqual([SAFE]);
+    expect(await comics({ ...signedInOnCom, browsingLevelCap: PG | R })).toEqual([SAFE, MIXED]);
   });
 
   it('a .com hit for a model with a face carries the face title and not the .red one', async () => {

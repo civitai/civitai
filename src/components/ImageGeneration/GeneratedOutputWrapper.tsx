@@ -1,4 +1,5 @@
-import { Checkbox, Loader, Menu, Text } from '@mantine/core';
+import { Checkbox, Loader, Text } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import {
   IconAlertTriangle,
   IconDotsVertical,

@@ -155,6 +155,7 @@ function detailFixture(): ListingDetail {
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
     installCount: 0,
+    openCount: null,
     sourceRepoUrl: null,
     updatedAt: '2026-03-04T05:06:07.000Z',
     screenshots: [],

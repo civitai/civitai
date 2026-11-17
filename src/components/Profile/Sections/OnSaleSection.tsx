@@ -37,7 +37,7 @@ export const OnSaleSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !models.length;
 
-  if (isNullState) return null;
+  if (isNullState && inView) return null;
 
   return (
     <div

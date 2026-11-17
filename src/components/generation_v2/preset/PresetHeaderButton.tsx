@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { useState } from 'react';
-import { Menu, Text, Tooltip } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconBookmark, IconDeviceFloppy, IconEye, IconList } from '@tabler/icons-react';
 import clsx from 'clsx';
 

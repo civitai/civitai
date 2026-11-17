@@ -17,6 +17,7 @@ export const collectionWithoutImageSelect = Prisma.validator<Prisma.CollectionSe
   mode: true,
   metadata: true,
   availability: true,
+  archivedAt: true,
   userId: true,
   tags: {
     select: {

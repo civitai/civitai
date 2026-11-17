@@ -1,5 +1,10 @@
 import type { Handle, HandleServerError, ServerInit } from '@sveltejs/kit';
-import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
+import {
+  isNavigationRequest,
+  parseCookieHeader,
+  spokeReauthResponse,
+  withSetCookies,
+} from '@civitai/auth';
 import { civitaiAppUrl } from '$lib/server/civitai-url';
 import { guard } from '$lib/server/auth';
 import { applyGrants, canAccess, resolvePermissions } from '$lib/server/access';
@@ -7,6 +12,18 @@ import { movedViewTarget } from '$lib/moved-pages';
 import { loadPageAccessGrants } from '$lib/server/page-access';
 import { authenticateWebhookToken, type AcceptedCredential } from '$lib/server/webhook-endpoint';
 import { logAxiomError, logToAxiom } from '$lib/server/axiom';
+import {
+  batchPathTier,
+  reviewBatchesEnabled,
+  clearedReviewCookie,
+  clearedSheetCookie,
+  isSheetImagePath,
+  resolveHeldSession,
+  resolveReviewSession,
+  resolveSheetSession,
+  REVIEW_SHEET_COOKIE,
+  SHEET_COOKIE,
+} from '$lib/server/held-sheet';
 
 // Where authenticated-but-not-a-moderator users get sent. A 403 would be a dead end (re-login can't
 // grant the role); bounce them to the main site instead. Overridable via env for non-prod hosts.
@@ -19,8 +36,59 @@ const NON_MODERATOR_REDIRECT = civitaiAppUrl();
 //   login     → no valid session  → redirect to the hub login, returning here afterward
 //   forbidden → signed in, not mod → redirect to civitai.com (not a 403 — re-login can't help)
 //   ok        → authenticated moderator → populate locals.user and continue
+
+const SHEET_SIGN_IN_OUT_PATHS = new Set([
+  '/api/held-media/auth/exchange',
+  '/api/review-media/auth/exchange',
+  // Sign out carries only the review cookie, which it ends.
+  '/api/review-media/auth/signout',
+]);
+
+const noStore = (status: number, extra: Record<string, string> = {}) =>
+  new Response(null, { status, headers: { 'cache-control': 'no-store', ...extra } });
+
+/**
+ * A review batch route answers to its own tier's sheet cookie and nothing else: never the web session,
+ * which an old app build would carry by opening the link in a browser, and never an API token.
+ */
+async function handleBatchRoute(
+  event: Parameters<Handle>[0]['event'],
+  resolve: Parameters<Handle>[0]['resolve'],
+  tier: 'general' | 'held'
+): Promise<Response> {
+  if (!reviewBatchesEnabled()) return noStore(404);
+  if (event.request.method !== 'GET' && event.request.method !== 'HEAD') return noStore(405);
+  const name = tier === 'held' ? SHEET_COOKIE : REVIEW_SHEET_COOKIE;
+  const cleared = tier === 'held' ? clearedSheetCookie() : clearedReviewCookie();
+  const cookieHeader = event.request.headers.get('cookie') ?? '';
+  const sent = cookieHeader
+    .split(';')
+    .filter((c) => c.includes('=') && c.slice(0, c.indexOf('=')).trim() === name);
+  if (sent.length !== 1) return noStore(401);
+  const token = parseCookieHeader(cookieHeader)[name];
+
+  const session = await (tier === 'held'
+    ? resolveHeldSession(token).then(
+        (s) => s && { user: s.user, batches: s.batch ? [s.batch] : [], join: undefined }
+      )
+    : resolveReviewSession(token)
+  ).catch(() => {
+    console.error('[review-sheet] session lookup failed');
+    return undefined;
+  });
+  if (session === undefined) return noStore(503);
+  if (!session || !session.batches.length) return noStore(401, { 'set-cookie': cleared });
+
+  event.locals.user = session.user;
+  event.locals.heldCredential = 'sheet';
+  event.locals.reviewSheet = { tier, batches: session.batches, join: session.join };
+  applyGrants(await loadPageAccessGrants());
+  event.locals.grants = resolvePermissions(session.user);
+  return resolve(event);
+}
+
 // Public paths that must resolve without a session — the brand favicon (also prerendered at build,
-// where there is no cookie) and the sign-in routes. Everything else is gated.
+// where there is no cookie) and the sign-in and sign-out routes. Everything else is gated.
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
   '/logout',
@@ -61,8 +129,8 @@ export const CREDENTIAL_ATTRIBUTION_EVENT = 'webhook credential presented';
  * credential is still presented but BY WHOM — a count with no way to reach the caller cannot be acted
  * on.
  *
- * Fire-and-forget, and swallows its own failure both ways a promise-returning call can fail —
- * attribution must never be the thing that breaks a request. Same contract as `logAxiomError`.
+ * Fire-and-forget. The `try` covers a logger that throws synchronously, so attribution cannot
+ * break a request.
  */
 function logCredentialAttribution(
   event: Parameters<Handle>[0]['event'],
@@ -76,7 +144,7 @@ function logCredentialAttribution(
       path: event.url.pathname,
       method: event.request.method,
       userAgent: event.request.headers.get('user-agent'),
-    }).catch(() => {});
+    });
   } catch {
     /* see above: a logging fault must not surface as a failed moderation call */
   }
@@ -95,6 +163,13 @@ export const init: ServerInit = async () => {
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  // The sheets' sign-in and sign-out carry no web session. A batch route answers to its tier's sheet
+  // cookie alone. The held cookie also stands in for the web session on the held image route, only
+  // when there is no valid web session. Outside these routes and sign-in/out, both are ignored.
+  if (SHEET_SIGN_IN_OUT_PATHS.has(event.url.pathname) && event.request.method === 'POST')
+    return resolve(event);
+  const batchTier = batchPathTier(event.url.pathname);
+  if (batchTier) return handleBatchRoute(event, resolve, batchTier);
   // An /api/* request presenting a credential of its own is verified HERE and never redirected to the hub
   // login — a script needs a status code, not an HTML login page. Verifying in the hook means an invalid
   // token cannot reach a handler at all; WebhookEndpoint then decides which endpoints accept a verified
@@ -119,9 +194,72 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
-    navigation: isNavigationRequest(event.request),
-  });
+  const cookieHeader = event.request.headers.get('cookie') ?? '';
+  const sheetToken = parseCookieHeader(cookieHeader)[SHEET_COOKIE];
+  let webSession: Awaited<ReturnType<typeof guard.check>> | undefined;
+  if (
+    sheetToken !== undefined &&
+    isSheetImagePath(event.url.pathname) &&
+    (event.request.method === 'GET' || event.request.method === 'HEAD')
+  ) {
+    webSession = await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    });
+  }
+  // A signed-in account that may not use this app never falls back to a sheet cookie.
+  if (webSession?.status === 'forbidden') {
+    console.warn('[held-sheet] sheet cookie refused beside a non-moderator session');
+    void logToAxiom({
+      name: 'held-sheet-refused-beside-session',
+      type: 'warning',
+      userId: webSession.user.id,
+    });
+    return new Response(null, { status: 403, headers: { 'cache-control': 'no-store' } });
+  }
+  if (webSession && webSession.status !== 'ok' && webSession.reason === 'unavailable') {
+    // The web session could not be resolved right now, so whether one exists is unknown: answer from
+    // neither, and keep the sheet cookie for when it can be.
+    return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+  }
+  // Only a missing or invalid web session falls back to the sheet. `host-cookie` is a real web
+  // session, so it takes the usual redirect below.
+  if (
+    webSession &&
+    webSession.status !== 'ok' &&
+    (webSession.reason === 'no-session' || webSession.reason === 'invalid')
+  ) {
+    // Two sheet cookies (one set from elsewhere on the domain) answer as an invalid session.
+    // Counted by the parser's own rule: the name before the first '=', trimmed.
+    const sheetCookies = cookieHeader
+      .split(';')
+      .filter((c) => c.includes('=') && c.slice(0, c.indexOf('=')).trim() === SHEET_COOKIE);
+    if (sheetCookies.length > 1)
+      console.warn('[held-sheet] duplicate sheet cookies refused', { count: sheetCookies.length });
+    const user =
+      sheetCookies.length > 1
+        ? null
+        : await resolveSheetSession(sheetToken).catch(() => {
+            console.error('[held-sheet] session lookup failed');
+            return undefined;
+          });
+    if (user === undefined)
+      return new Response(null, { status: 503, headers: { 'cache-control': 'no-store' } });
+    if (!user)
+      return new Response(null, {
+        status: 401,
+        headers: { 'cache-control': 'no-store', 'set-cookie': clearedSheetCookie() },
+      });
+    event.locals.user = user;
+    event.locals.heldCredential = 'sheet';
+    applyGrants(await loadPageAccessGrants());
+    event.locals.grants = resolvePermissions(user);
+    return resolve(event);
+  }
+  const result =
+    webSession ??
+    (await guard.check(cookieHeader, event.url.href, {
+      navigation: isNavigationRequest(event.request),
+    }));
 
   if (result.status === 'login') {
     return new Response(null, { status: 302, headers: { location: result.redirect } });

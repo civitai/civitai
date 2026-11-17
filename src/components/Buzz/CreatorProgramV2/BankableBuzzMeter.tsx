@@ -1,4 +1,5 @@
-import { ColorSwatch, Progress, Tooltip } from '@mantine/core';
+import { ColorSwatch, Progress } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';

@@ -11,12 +11,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
  * 🔴 NOT the only derivation, and deliberately not unified with the other one yet.
  * `AssistantChat` derives the same triple itself and passes `features.isGreen` to
  * `getAssistantUUID`, which this does not — so on the green domain, a deployment with
- * only `NEXT_PUBLIC_GPTT_UUID_GREEN` set hides the footer button while `/support`'s
- * chat renders fine. That split predates this hook: `AssistantButton` has always
- * called `getAssistantUUID(personality)` with no second argument, and this preserves
- * that exactly rather than silently changing which env var the footer reads.
- * Closing it means changing the button's behaviour on civitai.red, which is its own
- * change with its own testing.
+ * only `NEXT_PUBLIC_GPTT_UUID_GREEN` set hides the footer CivBot item while `/support`'s
+ * chat renders fine. This calls `getAssistantUUID(personality)` without `isGreen`,
+ * unlike `AssistantChat`. Passing `isGreen` would change which env var the footer reads
+ * on civitai.red, which is its own change with its own testing.
  */
 export function useAssistantAvailable() {
   const currentUser = useCurrentUser();

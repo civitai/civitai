@@ -1,4 +1,5 @@
-import { Text, Tooltip } from '@mantine/core';
+import { Text } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconEyeOff } from '@tabler/icons-react';
 
 export const HIDDEN_METRIC_MESSAGE =

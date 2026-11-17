@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PlacementEscrow from '~/server/services/placement-escrow.service';
 import type * as PlacementSpaceService from '~/server/services/placement-space.service';
@@ -12,6 +13,12 @@ const settlePlacement = vi.fn();
 const isPlacementEscrowFunded = vi.fn();
 const assertCanContinueStoryline = vi.fn();
 
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/placement-space.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PlacementSpaceService>()),
   resolvePlacementSpaceFor: resolveSpace,

@@ -63,5 +63,13 @@ export const requestServiceDealUploadSchema = dealFileDealId.extend({
   mimeType: z.string().trim().min(1).max(100),
   size: z.number().int().positive(),
 });
+/** Both attestations must be given in the attach step; the server refuses an upload without them. */
+export const requestServiceDealAttachmentSchema = dealFileDealId.extend({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1).max(100),
+  size: z.number().int().positive(),
+  rightsAttested: z.literal(true),
+  likenessAttested: z.literal(true),
+});
 export const serviceDealFilesSchema = dealFileDealId;
 export const serviceDealFileActionSchema = z.object({ fileId: z.number().int().positive() });

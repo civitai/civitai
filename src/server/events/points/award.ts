@@ -21,6 +21,7 @@ import {
   eventSeasonKeys,
   hatField,
   liveBucket,
+  LIVE_BUCKET_TTL_S,
   seasonHatTopicId,
   type EventPointSeason,
   utcDay,
@@ -48,6 +49,14 @@ import {
 
 const DAY_S = 24 * 60 * 60;
 type SeenKey = ReturnType<ReturnType<typeof eventSeasonKeys>['seen']>;
+// A live grant one action made: the event and team it scored for, and the points it added.
+export type EventPointGrant = { event: string; team: string; points: number };
+type AwardFirst = {
+  row: EventPointLedgerRow;
+  seenKey: SeenKey;
+  actor: string;
+  grant?: EventPointGrant;
+};
 // How often an app server reloads the scored events and their weights.
 const STATE_REFRESH_MS = 30 * 1000;
 // How often it applies the hat change log: a hat placed or moved starts earning within this long.
@@ -55,8 +64,6 @@ export const HATS_FOLLOW_MS = 2 * 1000;
 // After a failed refresh, wait this long before trying again, so a persistent failure is not retried
 // by every request on the hot path.
 const REFRESH_RETRY_MS = 10 * 1000;
-// Live buckets outlive the referee's hourly cut by a wide margin.
-const LIVE_TTL_S = 3 * 60 * 60;
 
 export const EVENT_POINTS_LEDGER_TABLE = 'event_point_events';
 
@@ -390,10 +397,14 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     // Every first is a fact, whether or not the cap let it score: if an earlier action from the same
     // person is later removed, the referee lets this one count instead. Once marked seen it must reach
     // the ledger, so a Redis error in the live accounting below only costs the live display.
-    const first = { row: ledgerRow(def.name, action, 'add', hat, time), seenKey, actor };
+    const first: AwardFirst = {
+      row: ledgerRow(def.name, action, 'add', hat, time),
+      seenKey,
+      actor,
+    };
     try {
       await expireSeen(def, seenKey, rule, time);
-      await liveGrant(event, action, hat, keys, actor, time);
+      first.grant = await liveGrant(event, action, hat, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.liveGrant', error);
     }
@@ -438,7 +449,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       claimKey: TURF_CLAIM_KEY,
       team: entry.team,
     };
-    const first = {
+    const first: AwardFirst = {
       row: ledgerRow(def.name, action, 'add', teamHat, time, { type, players }),
       seenKey,
       actor,
@@ -453,7 +464,8 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     if (!marked) return undefined;
     try {
       await expireSeen(def, seenKey, rule, time);
-      if (live) await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
+      if (live)
+        first.grant = await liveGrantTurf(event, action, teamHat, players, keys, actor, time);
     } catch (error) {
       deps.logError('redis', 'eventPoints.turfLiveGrant', error);
     }
@@ -472,10 +484,10 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     keys: ReturnType<typeof eventSeasonKeys>,
     actor: string,
     time: Date
-  ) {
+  ): Promise<EventPointGrant | undefined> {
     const { def } = event;
     const weight = event.weights[action.type] ?? 0;
-    if (weight <= 0) return;
+    if (weight <= 0) return undefined;
     const day = utcDay(time);
     // Settled one by one: a failed cap increment costs only that player's live grant.
     const totals = await Promise.allSettled(
@@ -506,7 +518,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
         .map((g) => deps.redis.hIncrBy(ownerKey, String(g.ownerId), g.grant)),
       ...(sum > 0 ? [deps.redis.hIncrBy(teamKey, teamHat.team, sum)] : []),
     ]);
-    if (sum <= 0) return;
+    if (sum <= 0) return undefined;
     for (const g of granted)
       if (g.grant > 0)
         try {
@@ -518,8 +530,9 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
       if (bucketTtlSet.has(key)) continue;
       if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
       bucketTtlSet.add(key);
-      await deps.redis.expire(key, LIVE_TTL_S);
+      await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
     }
+    return { event: def.name, team: teamHat.team, points: sum };
   }
 
   async function liveGrant(
@@ -529,7 +542,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     keys: ReturnType<typeof eventSeasonKeys>,
     actor: string,
     time: Date
-  ) {
+  ): Promise<EventPointGrant | undefined> {
     const { def } = event;
     const day = utcDay(time);
 
@@ -585,17 +598,27 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           if (bucketTtlSet.has(key)) continue;
           if (bucketTtlSet.size >= 1000) bucketTtlSet.clear();
           bucketTtlSet.add(key);
-          await deps.redis.expire(key, LIVE_TTL_S);
+          await deps.redis.expire(key, LIVE_BUCKET_TTL_S);
         }
+        return { event: def.name, team: hat.team, points: grant };
       }
     }
+    return undefined;
   }
 
-  async function awardEventPoints(actions: EventPointAction[]) {
-    if (!actions.length) return;
+  /**
+   * Returns how many firsts it recorded: 0 when every action was a repeat or did not score.
+   * `onGrants` hears the live grants before the ledger insert, so a caller can show them without
+   * waiting on ClickHouse. It is not called when nothing was recorded.
+   */
+  async function awardEventPoints(
+    actions: EventPointAction[],
+    onGrants?: (grants: EventPointGrant[]) => void
+  ): Promise<number> {
+    if (!actions.length) return 0;
     try {
       await ensureFresh();
-      if (!loaded.length) return;
+      if (!loaded.length) return 0;
       // Settled one by one: a Redis error on one action must not drop the others' ledger rows.
       const results = await Promise.allSettled(
         loaded.flatMap((event) =>
@@ -608,9 +631,16 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
           deps.logError('redis', 'eventPoints.award', result.reason);
         else if (result.value) firsts.push(result.value);
       }
-      if (!firsts.length) return;
+      if (!firsts.length) return 0;
+      if (onGrants)
+        try {
+          onGrants(firsts.flatMap((f) => (f.grant ? [f.grant] : [])));
+        } catch (error) {
+          deps.logError('push', 'eventPoints.onGrants', error);
+        }
       try {
         await deps.insertLedger(firsts.map((f) => f.row));
+        return firsts.length;
       } catch (error) {
         // The referee scores from the ledger alone. A first it never received would stay marked
         // seen, so the same action could never earn again: take the marks back so the next one
@@ -622,6 +652,7 @@ export function createEventPointsEngine(deps: EventPointsDeps) {
     } catch (error) {
       deps.logError('redis', 'eventPoints.award', error, { count: actions.length });
     }
+    return 0;
   }
 
   async function removeEventPoints(removals: EventPointRemoval[]) {
@@ -803,9 +834,7 @@ function getEngine() {
     now: () => new Date(),
     logError: (kind, fn, error, extra) => {
       if (kind === 'redis') return logSysRedisFailOpen('write-degraded', fn, error, { ...extra });
-      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'event-points', fn, error, ...extra });
     },
     onGrant: markEventPointsDirty,
     selfHeal: healDetached,
@@ -820,9 +849,7 @@ function healDetached(event: string, reason: SelfHealReason) {
   void import('~/server/events/points/self-heal')
     .then(({ healEventPoints }) => healEventPoints(event, reason))
     .catch((error) =>
-      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error }).catch(
-        () => undefined
-      )
+      logToAxiom({ type: 'error', name: 'event-points', fn: 'selfHeal', reason, error })
     );
 }
 
@@ -834,9 +861,12 @@ onEventPointsSwitchOn(async () => {
 // Records actions that may earn event points. Never throws and never needs awaiting for
 // correctness; await it only to keep a test deterministic. With the kill switch off, all four are
 // no-ops that touch neither Redis nor ClickHouse.
-export const awardEventPoints = async (actions: EventPointAction[]) => {
-  if (!(await isEventPointsEnabled().catch(() => false))) return;
-  return getEngine().awardEventPoints(actions);
+export const awardEventPoints = async (
+  actions: EventPointAction[],
+  onGrants?: (grants: EventPointGrant[]) => void
+) => {
+  if (!(await isEventPointsEnabled().catch(() => false))) return 0;
+  return getEngine().awardEventPoints(actions, onGrants);
 };
 export const removeEventPoints = async (removals: EventPointRemoval[]) => {
   if (!(await isEventPointsEnabled().catch(() => false))) return;

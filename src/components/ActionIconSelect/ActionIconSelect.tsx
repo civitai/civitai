@@ -1,5 +1,6 @@
 import type { ActionIconProps, PopoverProps } from '@mantine/core';
-import { ActionIcon, Popover, Box, Stack, Group, Text, TextInput, Divider } from '@mantine/core';
+import { ActionIcon, Box, Stack, Group, Text, TextInput, Divider } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';

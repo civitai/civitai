@@ -14,8 +14,8 @@ import {
   Text,
   TextInput,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconArrowLeft, IconCube, IconPencil } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';

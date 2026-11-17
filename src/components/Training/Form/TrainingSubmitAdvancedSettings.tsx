@@ -11,8 +11,8 @@ import {
   Textarea,
   ThemeIcon,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconCheck, IconChevronDown, IconConfetti } from '@tabler/icons-react';
 import React, { useEffect, useRef, useState } from 'react';
@@ -424,8 +424,13 @@ export const AdvancedSettings = ({
     const baseOverride = ts.overrides?.[runBase];
     const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
 
-    const disabledOverride = override?.disabled;
-    const baseHint = override?.hint ?? ts.hint;
+    // The orchestrator's AI Toolkit input has no resolution, so the step never sends it.
+    const resolutionIgnored =
+      ts.name === 'resolution' && selectedRun.params.engine === 'ai-toolkit';
+    const disabledOverride = resolutionIgnored || override?.disabled;
+    const baseHint = resolutionIgnored
+      ? "AI Toolkit doesn't accept a training resolution, so this setting has no effect."
+      : override?.hint ?? ts.hint;
     const sizeHint =
       ts.name === 'networkDim'
         ? networkDimSizeHint(selectedRun.baseType, selectedRun.params.networkDim)

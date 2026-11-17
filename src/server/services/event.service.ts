@@ -1,3 +1,5 @@
+import { getHatPlacementViews } from '~/server/events/points/placement-stats';
+import { getTurfEvent } from '~/server/events/turf/turf.service';
 import { Prisma } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { pack } from 'msgpackr';
@@ -75,6 +77,7 @@ import {
   refreshShowcaseHats,
   resolveShowcaseHatIds,
   SHOWCASE_EVENT,
+  SHOWCASE_OFF,
   SHOWCASE_SETTING,
 } from '~/server/events/showcase-hat';
 import { bustUserCreator } from '~/server/services/user-creator.service';
@@ -380,16 +383,19 @@ export async function getEventStandings({
 }: EventInput & Viewer & OnDegraded) {
   try {
     const scored = await eventEngine.getReadableScoredEvent(event, viewer);
-    const [settled, live, engineOn] = await Promise.all([
+    const [settled, live, engineOn, turfEvent] = await Promise.all([
       getScoredEventStandings(scored, { onDegraded }),
       liveTeamPoints(scored, onDegraded),
       isEventPointsEnabled().catch(() => false),
+      // The live override applied: the turf board waits for the mode to go live.
+      getTurfEvent(scored.name).catch(() => undefined),
     ]);
     const standings = withLiveTeamPoints(settled, live);
     const userIds = [
       ...new Set([
         ...standings.topCosmetics.map((x) => x.userId),
         ...Object.values(standings.topUsers).flatMap((x) => x.map((u) => u.userId)),
+        ...(standings.topTurfPlayers ?? []).map((x) => x.userId),
       ]),
     ];
     const [basicUsers, profilePictures, userCosmetics, cosmeticDetails, teamHats] =
@@ -436,7 +442,17 @@ export async function getEventStandings({
     // Whether the team totals came from the live engine and it is running, so the page does not call
     // them hourly. With the kill switch off they are still read live but no longer move.
     const liveTotals = live !== null && engineOn;
-    return { ...standings, topCosmetics, teamsTopicId, liveTotals, users, cosmetics, teamHats };
+    const turfLive = turfEvent?.turf.mode === 'live';
+    return {
+      ...standings,
+      topCosmetics,
+      teamsTopicId,
+      liveTotals,
+      turfLive,
+      users,
+      cosmetics,
+      teamHats,
+    };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -630,6 +646,18 @@ export async function getMyEventHats({
         ...hatScore(scored, season, hat, score, live),
       };
     });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export async function getMyEventHatPlacementStats({
+  event,
+  user,
+}: EventInput & { user: { id: number; isModerator?: boolean } }) {
+  try {
+    await eventEngine.getReadableScoredEvent(event, user);
+    return await getHatPlacementViews(event, user.id);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -1038,7 +1066,7 @@ export async function setRosterOptIn({
 }
 
 // The caller's showcase pick and the hat their avatar shows, from the primary: read right after they
-// pick. `pick` is null when they never picked or cleared it.
+// pick. `pick` is null when they never picked, cleared it or turned the hat off.
 export async function getMyShowcaseHat({
   event,
   user,
@@ -1049,9 +1077,12 @@ export async function getMyShowcaseHat({
       getUserSettings(user.id),
       resolveShowcaseHatIds(scored.name, [user.id], dbWrite),
     ]);
+    const stored = settings[SHOWCASE_SETTING]?.[scored.name] ?? null;
+    const off = stored === SHOWCASE_OFF;
     return {
-      pick: settings[SHOWCASE_SETTING]?.[scored.name] ?? null,
+      pick: off ? null : stored,
       showing: resolved.get(user.id) ?? null,
+      off,
     };
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
@@ -1065,17 +1096,18 @@ export async function getMyShowcaseHatArt({ event, user }: EventInput & { user: 
   return getShowcaseHatForUser(user.id);
 }
 
-// Picks (or, with null, clears) the hat the caller's avatar shows during the event. Only a hat of
-// this event they hold now; it is a pointer, so nothing is copied, moved or scored.
+// Picks (or, with null, clears) the hat the caller's avatar shows during the event, or turns it off.
+// Only a hat of this event they hold now; it is a pointer, so nothing is copied, moved or scored.
 export async function setShowcaseHat({
   event,
   cosmeticId,
+  off,
   user,
 }: ShowcaseHatInput & { user: { id: number; isModerator?: boolean } }) {
   try {
     if (event !== SHOWCASE_EVENT.name) throw throwBadRequestError('This event has no showcase hat');
     await eventEngine.assertPlayable(event, user);
-    if (cosmeticId !== null) {
+    if (typeof cosmeticId === 'number') {
       const owned = await dbWrite.$queryRaw<{ ok: number }[]>`
         SELECT 1 AS ok
         FROM "UserCosmetic" uc
@@ -1087,7 +1119,7 @@ export async function setShowcaseHat({
       if (!owned.length) throw throwBadRequestError("You don't have that hat");
     }
     await patchUserSettings(user.id, {
-      mergeInto: { [SHOWCASE_SETTING]: { [event]: cosmeticId } },
+      mergeInto: { [SHOWCASE_SETTING]: { [event]: off ? SHOWCASE_OFF : cosmeticId ?? null } },
       location: 'event.service:setShowcaseHat',
     });
     await refreshShowcaseHats([user.id]);

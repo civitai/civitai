@@ -23,7 +23,7 @@ describe('queueScamScan', () => {
         })
     );
     const queue = createScamScanQueue({ concurrency: 2, maxPending: 10, scan });
-    for (let id = 1; id <= 5; id++) queue({ entityType: 'Comment', entityId: id });
+    for (let id = 1; id <= 5; id++) queue({ entityType: 'CommentV3', entityId: id });
     await flush();
     expect(scan).toHaveBeenCalledTimes(2);
 
@@ -39,7 +39,7 @@ describe('queueScamScan', () => {
     // Never settles on purpose: each is a pending promise the test abandons, not a loop.
     const scan = vi.fn(() => new Promise<never>(() => undefined));
     const queue = createScamScanQueue({ concurrency: 1, maxPending: 2, scan });
-    for (let id = 1; id <= 5; id++) queue({ entityType: 'Comment', entityId: id });
+    for (let id = 1; id <= 5; id++) queue({ entityType: 'CommentV3', entityId: id });
     await flush();
     expect(scan).toHaveBeenCalledTimes(1);
     const dropped = vi
@@ -56,8 +56,8 @@ describe('queueScamScan', () => {
       .mockRejectedValueOnce(new Error('flipt down'))
       .mockResolvedValue({ status: 'failed' });
     const queue = createScamScanQueue({ concurrency: 1, maxPending: 10, scan });
-    queue({ entityType: 'Comment', entityId: 1 });
-    queue({ entityType: 'Comment', entityId: 2 });
+    queue({ entityType: 'CommentV3', entityId: 1 });
+    queue({ entityType: 'CommentV3', entityId: 2 });
     await flush();
     await flush();
     expect(scan).toHaveBeenCalledTimes(2);

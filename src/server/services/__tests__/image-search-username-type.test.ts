@@ -36,7 +36,7 @@ const legacySearch = vi.fn(async () => ({ items: [] as unknown[], nextCursor: un
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: (...args: unknown[]) => legacySearch(...(args as [])),
   getAllImagesIndex: vi.fn(async () => ({ items: [], nextCursor: undefined })),
-  getImagesFromFeedSearch: (...args: unknown[]) => feedSearch(...(args as [])),
+  getImagesFromFeedServiceForRest: (...args: unknown[]) => feedSearch(...(args as [])),
 }));
 
 import { runImageSearch } from '../image-search.service';

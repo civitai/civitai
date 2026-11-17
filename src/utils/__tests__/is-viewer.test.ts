@@ -7,12 +7,7 @@ import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import type * as CommentsProvider from '~/components/CommentsV2/CommentsProvider';
 import type * as UseCurrentUser from '~/hooks/useCurrentUser';
-import {
-  CommentProvider,
-  useCommentV2Context,
-} from '~/components/CommentsV2/Comment/CommentProvider';
 import { ImageProvider, useImageContext } from '~/components/Image/ImageProvider';
 import { isViewingOwnImages } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -28,10 +23,6 @@ let currentUser: { id: number; isModerator: boolean } | null = null;
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof UseCurrentUser>()),
   useCurrentUser: () => currentUser,
-}));
-vi.mock('~/components/CommentsV2/CommentsProvider', async (importOriginal) => ({
-  ...(await importOriginal<typeof CommentsProvider>()),
-  useCommentsContext: () => ({ isLocked: false, isMuted: false, forceLocked: false, badges: [] }),
 }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelProvider>()),
@@ -86,29 +77,6 @@ describe('a signed-out viewer is not the owner of an entity missing its owner id
     currentUser = OWNER;
     expect(imageIsOwner({ id: 1, userId: OWNER.id })).toBe(true);
     expect(imageIsOwner({ id: 1, user: { id: OWNER.id } })).toBe(true);
-  });
-
-  function commentControls(resourceOwnerId?: number) {
-    let ctx: { canHide?: boolean; canPin?: boolean } = {};
-    const Probe = () => {
-      ctx = useCommentV2Context();
-      return null;
-    };
-    const comment = { id: 1, user: { id: 99 }, hidden: false } as never;
-    render(
-      React.createElement(
-        CommentProvider,
-        { comment, resourceOwnerId } as never,
-        React.createElement(Probe)
-      )
-    );
-    return { canHide: ctx.canHide, canPin: ctx.canPin };
-  }
-
-  it('comment hide/pin: a thread rendered without a resource owner', () => {
-    expect(commentControls()).toEqual({ canHide: false, canPin: false });
-    currentUser = OWNER;
-    expect(commentControls(OWNER.id)).toEqual({ canHide: true, canPin: true });
   });
 
   function guardShows(image: { id: number; nsfwLevel: number; userId?: number }) {

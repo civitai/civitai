@@ -1,4 +1,5 @@
-import { Badge, Popover, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Text, UnstyledButton } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import type { MouseEvent } from 'react';
 import clsx from 'clsx';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

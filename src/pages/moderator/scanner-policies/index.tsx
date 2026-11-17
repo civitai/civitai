@@ -38,8 +38,8 @@ import {
   TextInput,
   Textarea,
   Title,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconArchive,

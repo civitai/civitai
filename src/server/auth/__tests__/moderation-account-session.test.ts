@@ -8,7 +8,7 @@ import type * as KeyGenerator from '~/server/utils/key-generator';
 
 /**
  * The shared Civitai Moderation account is sent as server-side and never signs in: a hub token, an
- * API key or a legacy cookie that resolves to it yields no session. Each case has a control showing
+ * API key or a preview sign-in cookie that resolves to it yields no session. Each case has a control showing
  * the same credential for another user still works.
  */
 
@@ -21,19 +21,21 @@ const h = vi.hoisted(() => ({
     username: id === 902 ? 'CivitaiModeration' : 'someone',
     bannedAt: null,
   })),
-  decodeLegacySessionCookie: vi.fn(),
+  decodePreviewSessionCookie: vi.fn(),
 }));
 
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   createAuthVerifier: () => ({}),
-  decodeLegacySessionCookie: h.decodeLegacySessionCookie,
+}));
+vi.mock('~/server/auth/preview-session-cookie', () => ({
+  previewCookieSignInEnabled: () => true,
+  decodePreviewSessionCookie: h.decodePreviewSessionCookie,
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: h.getSessionUserById },
   getHubSession: async () => null,
   maybeRollHubCookie: async () => undefined,
-  maybeUpgradeLegacySession: async () => undefined,
 }));
 vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
   ...(await importOriginal<typeof KeyGenerator>()),
@@ -103,7 +105,7 @@ describe('an API key', () => {
   });
 });
 
-describe('a legacy session cookie', () => {
+describe('a preview sign-in cookie', () => {
   const request = () => ({
     headers: { host: 'civitai.com' },
     cookies: { [legacySessionCookieName()]: 'x' },
@@ -111,14 +113,30 @@ describe('a legacy session cookie', () => {
   });
 
   it('resolves to no session for the moderation account', async () => {
-    h.decodeLegacySessionCookie.mockResolvedValue({ sub: String(MODERATION) });
+    h.decodePreviewSessionCookie.mockResolvedValue({
+      sub: String(MODERATION),
+      user: { id: MODERATION },
+    });
     expect(await getServerAuthSession({ req: request() as never, res: {} as never })).toBeNull();
     expect(h.getSessionUserById).not.toHaveBeenCalled();
     refusalLogged();
   });
 
+  it('resolves to no session for the account by username when no id is configured', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    h.decodePreviewSessionCookie.mockResolvedValue({
+      sub: '902',
+      user: { id: 902, username: 'CivitaiModeration' },
+    });
+    expect(await getServerAuthSession({ req: request() as never, res: {} as never })).toBeNull();
+    refusalLogged();
+  });
+
   it('still resolves for anyone else', async () => {
-    h.decodeLegacySessionCookie.mockResolvedValue({ sub: String(SOMEONE) });
+    h.decodePreviewSessionCookie.mockResolvedValue({
+      sub: String(SOMEONE),
+      user: { id: SOMEONE },
+    });
     expect(
       (await getServerAuthSession({ req: request() as never, res: {} as never }))?.user
     ).toEqual(expect.objectContaining({ id: SOMEONE }));

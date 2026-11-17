@@ -21,6 +21,10 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   revokeCivitaiUserTokens: vi.fn(async () => true),
 }));
 
+vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
+  cancelPendingWorkflows: vi.fn(async () => undefined),
+}));
+
 const { afterAccountStandingChanged } = await import('~/server/services/account-standing.service');
 
 const USER = 42;

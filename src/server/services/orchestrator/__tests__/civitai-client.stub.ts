@@ -54,7 +54,7 @@ export function civitaiClientStub() {
     ImageGenStepTemplate ImageJobControlNet ImageJobNetworkParams
     ImageResourceTrainingOutput ImageResourceTrainingStep ImageResourceTrainingStepTemplate
     ImageTransformer Imagen4ImageGenInput JsonPatchFactory KlingModel KlingV3VideoGenInput
-    KlingVideoGenInput KohyaImageResourceTrainingInput Krea2FalImageGenInput
+    KlingVideoGenInput ImageResourceTrainingInput Krea2FalImageGenInput
     Krea2StyleReference MaiImageCreateFalImageGenInput MaiImageEditFalImageGenInput
     MediaCaptioningStepTemplate MediaHashStep MediaHashStepTemplate MediaRatingOutput
     MeshyImageTo3dFalPolyGenInput MeshyTextTo3dFalPolyGenInput

@@ -79,6 +79,7 @@ const {
   mockListMyAppListings,
   mockUpdateListing,
   mockUpdateRevisionDraft,
+  mockSubmitExternalListing,
   mockGetAppListingAuthoringContext,
   mockListListingHistory,
 } = vi.hoisted(() => ({
@@ -106,6 +107,7 @@ const {
   mockListMyAppListings: vi.fn(async () => [{ appListingId: 'lst_1', problems: [] }]),
   mockUpdateListing: vi.fn(async () => ({ listingId: 'lst_1', requiresReview: false })),
   mockUpdateRevisionDraft: vi.fn(async () => ({ shadowId: 'shd_1' })),
+  mockSubmitExternalListing: vi.fn(async () => ({ appListingId: 'lst_new' })),
   mockGetAppListingAuthoringContext: vi.fn(async () => ({ appListingId: 'lst_1' })),
   mockListListingHistory: vi.fn(async () => []),
 }));
@@ -135,6 +137,7 @@ vi.mock('~/server/services/blocks/offsite-listing.service', () => ({
   persistListingAssetImage: mockPersistListingAssetImage,
   updateListing: mockUpdateListing,
   updateRevisionDraft: mockUpdateRevisionDraft,
+  submitExternalListing: mockSubmitExternalListing,
 }));
 vi.mock('~/server/services/blocks/app-access.service', () => ({
   listMyAppListings: mockListMyAppListings,
@@ -245,12 +248,8 @@ const PROCS: { name: string; input: unknown; mock: ReturnType<typeof vi.fn> }[] 
 /**
  * 🔴 PROCS THAT ARE DELIBERATELY **NOT** ANNOTATED, asserted as such.
  *
- * `getAssets` was annotated during the `civitai app doctor` work and the annotation was
- * WITHDRAWN as a product decision: its service gate
- * (`app-listing-assets::loadOwnedListing`) short-circuits the ownership check for
- * moderators, so admitting a scoped OAuth token would let a third-party app a moderator
- * authorised inherit cross-listing asset reads — and it bought nothing, because every
- * datum `app doctor` wanted is already on procs in PROCS above (`listMine.problems[]`,
+ * `getAssets` is not annotated: it buys nothing, because every datum `app doctor` wanted
+ * is already on procs in PROCS above (`listMine.problems[]`,
  * `getMyListingForEdit` / `getMyListingForApp` per-screenshot rows,
  * `getAssetScanStatuses` per-image scan state).
  *
@@ -479,4 +478,84 @@ describe('moderator listing-edit authority needs a session or a full-access key'
       expect(mock).toHaveBeenCalledWith(expect.objectContaining({ isModerator: false }));
     });
   }
+});
+
+describe('moderator listing-media authority needs a session or a full-access key', () => {
+  const MEDIA_PROCS = [
+    ...PROCS.filter((p) =>
+      [
+        'getAssetScanStatuses',
+        'setIcon',
+        'setCover',
+        'setRedMedia',
+        'addScreenshot',
+        'reorderScreenshots',
+        'updateScreenshotCaption',
+        'removeScreenshot',
+      ].includes(p.name)
+    ),
+    ...UNANNOTATED_PROCS,
+  ];
+  const call = async (ctx: unknown, name: string, input: unknown) => {
+    const caller = appListingsRouter.createCaller(ctx as never);
+    await (caller as never as Record<string, (i: unknown) => Promise<unknown>>)[name](input);
+  };
+  const actor = (isModerator: boolean) => [
+    expect.anything(),
+    expect.objectContaining({ id: 100, isModerator }),
+  ];
+
+  for (const { name, input, mock } of MEDIA_PROCS) {
+    it(`${name}: a moderator's full-scope app token (not a personal key) does not act as a moderator`, async () => {
+      await call(tokenCtx(100, FULL), name, input);
+      expect(mock).toHaveBeenCalledWith(...actor(false));
+    });
+
+    it(`${name}: a moderator's session acts as a moderator`, async () => {
+      await call(authedCtx(100, true), name, input);
+      expect(mock).toHaveBeenCalledWith(...actor(true));
+    });
+
+    it(`${name}: a moderator's full-access personal key acts as a moderator`, async () => {
+      await call(
+        { ...tokenCtx(100, FULL), apiKeyType: 'User', subject: { type: 'apiKey' } },
+        name,
+        input
+      );
+      expect(mock).toHaveBeenCalledWith(...actor(true));
+    });
+  }
+
+  // `getAssets` refuses the CLI token at the scope gate, so only the annotated procs run here.
+  for (const { name, input, mock } of MEDIA_PROCS.filter((p) => p.name !== 'getAssets')) {
+    it(`${name}: a moderator's app-scoped CLI token does not act as a moderator`, async () => {
+      await call(tokenCtx(100, CLI), name, input);
+      expect(mock).toHaveBeenCalledWith(...actor(false));
+    });
+  }
+});
+
+describe('submitExternalListing: linking any OAuth client needs a moderator session or full-access key', () => {
+  const input = {
+    slug: 'my-app',
+    name: 'My App',
+    connectClientId: 'oc_1',
+    scopeJustifications: {},
+  };
+  const submit = (ctx: unknown) =>
+    appListingsRouter.createCaller(ctx as never).submitExternalListing(input);
+
+  it("a moderator's full-scope app token (not a personal key) does not act as a moderator", async () => {
+    await submit(tokenCtx(100, FULL));
+    expect(mockSubmitExternalListing).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 100, isModerator: false })
+    );
+  });
+
+  it("a moderator's session acts as a moderator", async () => {
+    await submit(authedCtx(100, true));
+    expect(mockSubmitExternalListing).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 100, isModerator: true })
+    );
+  });
 });

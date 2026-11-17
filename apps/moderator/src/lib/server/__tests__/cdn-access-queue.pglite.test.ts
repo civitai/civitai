@@ -2,6 +2,10 @@ import type { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { freshPglite } from '../../../test/pglite';
+import {
+  DEFERRED_BLOCK_EFFECT_TABLE_SQL,
+  SET_ASIDE_TABLE_SQL,
+} from '../../../test/held-image-tables';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Effects from '../image-moderation-effects';
@@ -94,6 +98,8 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+${SET_ASIDE_TABLE_SQL}
+${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "CollectionItem" ("imageId" INTEGER);
 CREATE TABLE "CsamReport" (
   "id" SERIAL PRIMARY KEY, "userId" INTEGER, "details" JSONB NOT NULL DEFAULT '{}',
@@ -116,7 +122,7 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
-CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER);
+CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER, "userId" INTEGER, "bannerId" INTEGER);
 CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
@@ -262,6 +268,36 @@ describe('a delete whose follow-up cannot be queued', () => {
       url: uuid(1),
       moderatorDelete: true,
     });
+  });
+
+  it('deletes the banner of a deleted article with it', async () => {
+    await articleWithCover(10, 1);
+    await blockedImage(3);
+    await db.query(`UPDATE "Article" SET "bannerId" = 3 WHERE id = 10`);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await imageExists(3)).toBe(false);
+    expect((await queueRow('CdnAccessSync', 3))?.data).toMatchObject({
+      url: uuid(3),
+      moderatorDelete: true,
+    });
+  });
+
+  it("keeps a deleted article's cover that is still another article's banner", async () => {
+    await articleWithCover(10, 1);
+    await db.query(`INSERT INTO "Article" ("id", "userId", "bannerId") VALUES (12, $1, 1)`, [
+      OWNER,
+    ]);
+
+    expect(await moderateArticle({ action: 'delete', articleId: 10, userId: 2 })).toEqual({
+      ok: true,
+    });
+
+    expect(await articleExists(10)).toBe(false);
+    expect(await imageExists(1)).toBe(true);
   });
 
   it('fails an article delete and keeps the article, its connection and its cover', async () => {

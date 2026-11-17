@@ -8,11 +8,13 @@ import {
   getAllCollectionsInfiniteHandler,
   getAllUserCollectionsHandler,
   getCollectionByIdHandler,
+  getCollectionEntryCountHandler,
   getPermissionDetailsHandler,
   getUserCollectionItemsByItemHandler,
   joinCollectionAsManagerHandler,
   removeCollectionItemHandler,
   saveItemHandler,
+  setCollectionArchivedHandler,
   setCollectionItemNsfwLevelHandler,
   setItemScoreHandler,
   unfollowHandler,
@@ -35,6 +37,7 @@ import {
   getUserCollectionItemsByItemSchema,
   removeCollectionItemInput,
   saveCollectionItemInputSchema,
+  setCollectionArchivedInput,
   setCollectionItemNsfwLevelInput,
   setItemScoreInput,
   updateCollectionCoverImageInput,
@@ -51,7 +54,6 @@ import {
 import {
   getCollectionAiReview,
   getCollectionAiReviewDefaultPrompt,
-  getCollectionEntryCount,
   setCollectionAiReview,
 } from '~/server/services/collection.service';
 import {
@@ -178,6 +180,12 @@ export const collectionRouter = router({
     .use(isFlagProtected('collections'))
     .use(isOwnerOrModerator)
     .mutation(deleteUserCollectionHandler),
+  setArchived: protectedProcedure
+    .meta({ requiredScope: TokenScope.CollectionsWrite })
+    .input(setCollectionArchivedInput)
+    .use(isFlagProtected('collections'))
+    .use(isOwnerOrModerator)
+    .mutation(setCollectionArchivedHandler),
   bulkSaveItems: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(bulkSaveCollectionItemsInput)
@@ -222,9 +230,7 @@ export const collectionRouter = router({
   getEntryCount: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsRead })
     .input(getByIdSchema)
-    .query(({ input, ctx }: { input: GetByIdInput; ctx: { user: { id: number } } }) => {
-      return getCollectionEntryCount({ collectionId: input.id, userId: ctx.user.id });
-    }),
+    .query(getCollectionEntryCountHandler),
   joinCollectionAsManager: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(getByIdSchema)

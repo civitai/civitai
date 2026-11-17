@@ -27,7 +27,6 @@ import type {
 import {
   articlesSearchIndex,
   imagesMetricsSearchIndex,
-  imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
 import { queueWornCosmeticsUpdate } from '~/server/search-index/users.search-index';
@@ -345,9 +344,10 @@ export async function equipCosmeticToEntity({
       action: SearchIndexUpdateQueueAction.Update,
     });
   if (equippedToType === 'Article')
-    await articlesSearchIndex.queueUpdate([
-      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await articlesSearchIndex.queueUpdate(
+      [{ id: equippedToId, action: SearchIndexUpdateQueueAction.Update }],
+      { reason: 'cosmetic' }
+    );
 
   // Clear cache for previous entity if it was equipped
   if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
@@ -390,9 +390,10 @@ export async function unequipCosmetic({
       action: SearchIndexUpdateQueueAction.Update,
     });
   if (equippedToType === 'Article')
-    await articlesSearchIndex.queueUpdate([
-      { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
-    ]);
+    await articlesSearchIndex.queueUpdate(
+      [{ id: equippedToId, action: SearchIndexUpdateQueueAction.Update }],
+      { reason: 'cosmetic' }
+    );
 
   return updated;
 }
@@ -822,7 +823,8 @@ async function afterHoldingsRemoved(userIds: number[], equipped: RemovedEquipped
       await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
     if (type === 'Article')
       await articlesSearchIndex.queueUpdate(
-        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+        { reason: 'cosmetic' }
       );
   }
   return { hatSync };

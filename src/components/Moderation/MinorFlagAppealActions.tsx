@@ -1,4 +1,5 @@
-import { Button, Group, Menu, Text, Tooltip } from '@mantine/core';
+import { Button, Group, Text } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import { appealRowState } from '~/components/Moderation/appeal-row-state';
 import type { AppealLabelDecision, MinorFlagAppealRow } from '~/server/services/minor-hash.service';

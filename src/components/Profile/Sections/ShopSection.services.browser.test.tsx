@@ -9,12 +9,24 @@ const state = vi.hoisted(() => ({
   offerings: [] as any[],
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   useFeatureFlags: () => ({ creatorShop: true, creatorServices: true }),
 }));
-vi.mock('~/components/IntersectionObserver/IntersectionObserverProvider', () => ({
-  useInViewDynamic: () => [() => undefined, true],
+vi.mock(
+  '~/components/IntersectionObserver/IntersectionObserverProvider',
+  async (importOriginal) => ({
+    ...(await importOriginal<object>()),
+    useInViewDynamic: () => [() => undefined, true],
+  })
+);
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: () => null,
 }));
+vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
+  LoginRedirect: ({ children }: { children: React.ReactNode }) => children,
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/CreatorShop/creator-shop.util', () => ({
   useQueryCreatorShop: () => ({ shop: state.shop, isLoading: false }),
 }));
@@ -38,7 +50,15 @@ const shop = (over: Record<string, unknown> = {}) => ({
   featured: [],
   cosmetics: [],
 });
-const offering = { id: 1, title: 'Custom portrait', deliveryDays: 5, revisionsIncluded: 2 };
+const offering = {
+  id: 1,
+  title: 'Custom portrait',
+  description: 'A painted portrait of your character',
+  price: 1500,
+  deliveryDays: 5,
+  revisionsIncluded: 2,
+  maxNsfwLevel: 1,
+};
 
 const renderSection = async () => {
   renderWithProviders(<ShopSection user={user} />);
@@ -52,12 +72,14 @@ describe('ShopSection services', () => {
     state.offerings = [];
   });
 
-  test('a services-only shop with an Active service shows the section, linking to the storefront services', async () => {
+  test('a services-only shop with an Active service shows the section with a Request button', async () => {
     state.offerings = [offering];
     const text = await renderSection();
     expect(text).toContain('Custom portrait');
+    expect(text).toContain('1,500');
+    expect(text).toContain('Delivered in ~5 days');
     expect(document.querySelectorAll('[data-testid="card"]')).toHaveLength(0);
-    expect(document.querySelector('a[href="/user/mira/shop#shop-services"]')).not.toBeNull();
+    expect(text).toContain('Request');
   });
 
   test('cosmetics still show alongside services', async () => {

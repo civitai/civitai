@@ -42,7 +42,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
     // deposit that hasn't settled by then won't.
     const candidates = await dbRead.cryptoDeposit.findMany({
       where: {
-        status: { notIn: ['finished', 'held', ...UNVERIFIED_DEPOSIT_STATUSES] },
+        status: { notIn: ['finished', 'held', 'hand_paid', ...UNVERIFIED_DEPOSIT_STATUSES] },
         stuckNotifiedAt: null,
         createdAt: { gte: dayjs.utc().subtract(14, 'day').toDate() },
       },
@@ -119,7 +119,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
         });
         emailedUser++;
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           name: 'notify-stuck-crypto-deposits-job',
           type: 'error',
           message: 'Failed to email user about stuck deposit',
@@ -145,7 +145,7 @@ export const notifyStuckCryptoDepositsJob = createJob(
         });
         digestSent = digestItems.length;
       } catch (e) {
-        await logToAxiom({
+        logToAxiom({
           name: 'notify-stuck-crypto-deposits-job',
           type: 'error',
           message: 'Failed to send Cat 2 support digest',

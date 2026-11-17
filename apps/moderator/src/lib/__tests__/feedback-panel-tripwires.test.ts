@@ -104,6 +104,7 @@ describe('the instrument itself', () => {
       'FeedbackBrowserErrors.svelte',
       'FeedbackPlatformContext.svelte',
       'FeedbackPlatformResolution.svelte',
+      'FeedbackErrorReport.svelte',
       '+page.svelte',
     ]) {
       expect(source(file).length).toBeGreaterThan(500);
@@ -221,7 +222,7 @@ describe('typed text outlives the reload every write issues', () => {
   it('renders every section unconditionally', () => {
     const detail = source('FeedbackDetail.svelte');
     expect(detail).not.toContain('activeTab');
-    expect(detail).toContain('<FeedbackAttachments {context} />');
+    expect(detail).toContain('<FeedbackAttachments {context} {captureView} />');
     expect(detail).toContain('<FeedbackContextPanel');
     expect(detail).toContain('<FeedbackPromote');
   });
@@ -894,7 +895,11 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
     // An explicit list, deliberately NOT `readdirSync(feedbackDir)` the way the open-param scan
     // does it: `+page.svelte` and `FeedbackDetail.svelte` legitimately carry `href=`, so a
     // directory scan would turn this into noise. Add a file here when the markup moves.
-    const REQUEST_FREE_FILES = ['FeedbackContextPanel.svelte', 'FeedbackBrowserErrors.svelte'];
+    const REQUEST_FREE_FILES = [
+      'FeedbackContextPanel.svelte',
+      'FeedbackBrowserErrors.svelte',
+      'FeedbackErrorReport.svelte',
+    ];
     const combined = REQUEST_FREE_FILES.map(source).join('\n');
 
     // Positive control, PER FILE: the scan CAN match and every file in the list is really read. A
@@ -908,6 +913,7 @@ describe('the browser-error snapshot renders as text, never as a request', () =>
     expect(count(combined, 'href=')).toBe(2);
     expect(count(combined, 'src=')).toBe(0);
     expect(count(combined, 'EdgeImage')).toBe(0);
+    expect(count(combined, '{@html')).toBe(0);
 
     // 🔴 THE STRIPPER, WITNESSED ON THIS FILE. `EdgeImage` is named once in the panel's own 🔴
     // comment explaining why it must not come back. If the raw count ever equals the stripped one,

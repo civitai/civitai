@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 
-import { validateRepositoryUrl } from '~/server/schema/blocks/external-app.schema';
+import {
+  validateIssueTrackerUrl,
+  validateRepositoryUrl,
+} from '~/server/schema/blocks/external-app.schema';
 import { newAppListingId } from '~/server/utils/app-block-ids';
 
 /**
@@ -92,6 +95,42 @@ export function resolveListingSourceRepo(manifest: unknown): string | null {
   if (typeof m.repository !== 'string') return null;
   const validated = validateRepositoryUrl(m.repository);
   return validated.ok ? validated.url : null;
+}
+
+/**
+ * Extract the optional PUBLIC ISSUE-TRACKER / SUPPORT link from the manifest's `bugs` key — a
+ * URL STRING only, like `repository` (the validator refuses any other shape at submit). Null when
+ * absent, blank, not a string, or no longer valid, for the reason {@link resolveListingSourceRepo} gives:
+ * a public store page must never serve a link the current rules would reject.
+ *
+ * Returns the NORMALISED form (`validateIssueTrackerUrl`), so stored values compare stably.
+ *
+ * 🔴 NOT PART OF {@link buildListingScalarSync} / {@link mapAppBlockToListing}'s PRISMA
+ * PAYLOADS. `issue_tracker_url` is a no-type column (absent from the generated client), so it
+ * cannot ride a Prisma `data` object. The callers of those two builders resolve this beside
+ * them and write it by raw SQL (`app-listing-issue-tracker.service.ts`), gated on the column
+ * probe — see {@link buildListingIssueTrackerSync}.
+ */
+export function resolveListingIssueTracker(manifest: unknown): string | null {
+  const m = (manifest ?? {}) as { bugs?: unknown };
+  if (typeof m.bugs !== 'string') return null;
+  const validated = validateIssueTrackerUrl(m.bugs);
+  return validated.ok ? validated.url : null;
+}
+
+/**
+ * The manifest-governed issue-tracker value an on-site listing write carries, as the
+ * companion of {@link buildListingScalarSync} and {@link mapAppBlockToListing}: `{ write: false }`
+ * when the manual-apply column is unavailable (the sync then leaves it alone), otherwise the
+ * value resolved from the manifest — `null` included, so removing `bugs` CLEARS the link,
+ * exactly as removing `repository` clears the source link.
+ */
+export function buildListingIssueTrackerSync(args: {
+  manifest: unknown;
+  issueTrackerAvailable: boolean;
+}): { write: false } | { write: true; value: string | null } {
+  if (!args.issueTrackerAvailable) return { write: false };
+  return { write: true, value: resolveListingIssueTracker(args.manifest) };
 }
 
 /**

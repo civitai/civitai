@@ -1,6 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClientModule from '@civitai/redis/client';
-import type * as StringHelpers from '~/utils/string-helpers';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
@@ -11,7 +10,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
  * 🔴 This file is the one that pins "production keys do not move". `queryCache` / `queryCacheRaw`
  * entries and the `tag:<name>` sets that invalidate them must come out byte-identical to what
  * they were before environment prefixing existed. Expected keys are hand-written literals;
- * `hashifyObject` is stubbed to a constant so the whole key is a literal rather than a value
+ * `queryCacheKeyHash` is stubbed to a constant so the whole key is a literal rather than a value
  * recomputed from the code under test.
  *
  * Note IS_PREVIEW is set to 'true' here on purpose: it pins that the flag ALONE does not move a
@@ -61,10 +60,7 @@ vi.mock('~/server/redis/client', async () => {
   return { ...pkg, redis: fakeRedis, sysRedis: fakeRedis };
 });
 
-vi.mock('~/utils/string-helpers', async () => {
-  const actual = await vi.importActual<typeof StringHelpers>('~/utils/string-helpers');
-  return { ...actual, hashifyObject: () => 'HASH' };
-});
+vi.mock('~/server/utils/query-cache-key', () => ({ queryCacheKeyHash: () => 'HASH' }));
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 vi.mock('~/server/prom/client', () => ({
@@ -76,7 +72,7 @@ vi.mock('~/server/prom/client', () => ({
 }));
 describe('cache-helpers key prefixing — production', () => {
   const rows = [{ id: 1, name: 'anime' }];
-  // `sql` stands in for a Prisma.Sql — hashifyObject is stubbed, so its contents don't matter.
+  // `sql` stands in for a Prisma.Sql — queryCacheKeyHash is stubbed, so its contents don't matter.
   const sql = {} as never;
   let queryRaw: ReturnType<typeof vi.fn>;
   let db: never;

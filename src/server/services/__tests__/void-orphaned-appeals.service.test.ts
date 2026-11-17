@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -121,8 +122,9 @@ const rawCalls = () =>
   }));
 const pick = () => rawCalls().find(({ sql }) => /FROM "Appeal" a/.test(sql))!;
 const updates = () => rawCalls().filter(({ sql }) => /UPDATE "Appeal"/.test(sql));
-// Every claim but the review-deadline close, which picks its own rows.
-const claims = () => updates().filter(({ sql }) => !/"entityRemovedAt" <= now\(\)/.test(sql));
+// Every claim but the two deadline closes, which pick their own rows.
+const claims = () =>
+  updates().filter(({ sql }) => !/"entityRemovedAt" <= now\(\)|"CsamQueueSetAside"/.test(sql));
 const voidUpdates = () => claims().filter(({ sql }) => /'Void'::"AppealStatus"/.test(sql));
 const removedUpdate = () => updates().find(({ sql }) => /"entityRemovedAt" = now\(\)/.test(sql));
 const idsIn = (values: unknown[]) => values.find((v) => Array.isArray(v)) as number[] | undefined;
@@ -160,6 +162,8 @@ beforeEach(() => {
     ...values: unknown[]
   ) => {
     const sql = strings.join('?');
+    // The dismissed-review close has its own suite (void-orphaned-appeals.behavior.test.ts).
+    if (/"CsamQueueSetAside"/.test(sql)) return Promise.resolve([]);
     if (/FROM "Appeal" a/.test(sql)) return Promise.resolve(orphans);
     if (/jsonb_array_elements/.test(sql))
       return Promise.resolve(
@@ -467,13 +471,30 @@ describe('getAppealCount', () => {
     });
 
     expect(dbMock.dbRead.appeal.count).toHaveBeenCalledWith({
-      where: {
+      where: expect.objectContaining({
         userId: 1,
         status: { in: [AppealStatus.Pending, AppealStatus.Rejected] },
         createdAt: { gte: startDate },
         category: null,
         NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
-      },
+      }),
+    });
+  });
+
+  it('does not count a request to unlock a locked setting', async () => {
+    await getAppealCount({ userId: 1, status: [AppealStatus.Rejected] });
+
+    expect(dbMock.dbRead.appeal.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        AND: [
+          {
+            OR: [
+              { context: { equals: Prisma.AnyNull } },
+              { NOT: { context: { path: ['kind'], equals: 'lock-review' } } },
+            ],
+          },
+        ],
+      }),
     });
   });
 });

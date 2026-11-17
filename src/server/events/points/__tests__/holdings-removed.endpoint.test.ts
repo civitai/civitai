@@ -45,7 +45,6 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
   articlesSearchIndex: { queueUpdate: vi.fn() },
-  imagesSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
@@ -101,7 +100,7 @@ beforeAll(async () => {
     CREATE TABLE "Article" ("id" integer PRIMARY KEY, "userId" integer NOT NULL);
     CREATE TABLE "User" (
       "id" integer PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3),
-      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false
+      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, "flags" integer NOT NULL DEFAULT 0
     );
     INSERT INTO "User" ("id") VALUES (${OWNER});
     INSERT INTO "Image" ("id", "userId") VALUES (${IMAGE}, ${OWNER});

@@ -1,4 +1,5 @@
-import { ActionIcon, Group, Stack, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Stack, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconHelp } from '@tabler/icons-react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';

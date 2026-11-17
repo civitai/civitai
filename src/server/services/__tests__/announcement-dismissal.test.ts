@@ -1,5 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
+
+// The dismissed-ids read, one Kysely statement. Its live-window conditions, against a real
+// database, are pinned in hot-reads-5.kysely-parity.test.ts.
+const { dismissalLookup } = vi.hoisted(() => ({ dismissalLookup: vi.fn() }));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  listDismissedAnnouncementIds: dismissalLookup,
+}));
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import {
   activeAnnouncementWhere,
   dismissAnnouncementsForUser,
@@ -11,10 +22,10 @@ const NOW = new Date('2026-09-16T12:00:00.000Z');
 
 const liveLookup = dbMock.dbWrite.announcement.findMany;
 const createMany = dbMock.dbWrite.announcementDismissal.createMany;
-const dismissalLookup = dbMock.dbRead.announcementDismissal.findMany;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dismissalLookup.mockResolvedValue([]);
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
 });
@@ -85,36 +96,25 @@ describe('getDismissedAnnouncementIds', () => {
   });
 
   /**
-   * 🔴 The bound on this response, and the reason the table can grow. Without the join a user
-   * who has dismissed announcements for two years is shipped every id they ever dismissed, on
-   * every session, and the client is left to work out which ones still matter.
+   * 🔴 The bound on this response, and the reason the table can grow. Without the live-window
+   * join a user who has dismissed announcements for two years is shipped every id they ever
+   * dismissed, on every session, and the client is left to work out which ones still matter.
    *
-   * The expectation is built from `activeAnnouncementWhere` rather than restating the predicate,
-   * so this stays true when the predicate changes and fails when the read stops using it — the
-   * repo has a guard family about one rule derived twice. That is only non-circular because the
-   * helper itself is pinned independently in `announcement-media-window.test.ts`; the assertions
-   * below are the local half, and catch it being reduced to an empty or bound-less filter.
+   * The window itself is SQL in the Kysely read (`activeAnnouncementWhere`'s twin), pinned against
+   * a real database in hot-reads-5.kysely-parity.test.ts; the local half is that the read gets this
+   * user and the current clock, on the replica.
    */
   it('scopes the query to announcements that can still be shown', async () => {
     await getDismissedAnnouncementIds({ userId: 3 });
 
-    const where = dismissalLookup.mock.calls[0][0].where;
-    expect(where).toEqual({ userId: 3, announcement: activeAnnouncementWhere(NOW) });
-    expect(activeAnnouncementWhere(NOW)).toEqual({
-      disabled: false,
-      AND: [
-        { OR: [{ startsAt: { lte: NOW } }, { startsAt: { equals: null } }] },
-        { OR: [{ endsAt: { gte: NOW } }, { endsAt: { equals: null } }] },
-      ],
-    });
+    expect(dismissalLookup.mock.calls).toEqual([[kyselyRead, { userId: 3, now: NOW }]]);
+    expect(dismissalLookup.mock.calls[0][0]).toBe(kyselyRead);
+    expect(dbMock.dbRead.announcementDismissal.findMany).not.toHaveBeenCalled();
   });
 
   it('narrows to the requesting domain when one is stamped', async () => {
     await getDismissedAnnouncementIds({ userId: 3, domain: DomainColor.green });
 
-    expect(dismissalLookup.mock.calls[0][0].where.announcement).toEqual({
-      ...activeAnnouncementWhere(NOW),
-      domain: { hasSome: [DomainColor.all, DomainColor.green] },
-    });
+    expect(dismissalLookup.mock.calls[0][1].domains).toEqual([DomainColor.all, DomainColor.green]);
   });
 });

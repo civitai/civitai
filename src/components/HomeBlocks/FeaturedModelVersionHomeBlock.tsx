@@ -4,13 +4,13 @@ import {
   Box,
   Button,
   Group,
-  Popover,
   Skeleton,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconArrowRight, IconCategory, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';

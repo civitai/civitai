@@ -73,10 +73,11 @@ vi.mock('~/components/ImageHash/ImageHash', () => ({ MediaHash: () => null }));
 // The sticker overlay's host, after the hat as in the app; with `cover` it holds a sticker spread
 // over the whole picture, which has to paint and take the pointer above the hat.
 vi.mock('~/components/Sticker/ImageStickerOverlay', () => ({
-  ImageStickerOverlay: () => (
+  ImageStickerOverlay: ({ wearsHat }: { wearsHat?: boolean }) => (
     <div
       data-media-overlay=""
       data-testid="sticker-host"
+      data-wears-hat={wearsHat ? '' : undefined}
       className="pointer-events-none absolute inset-0"
     >
       {mocks.state.cover && (
@@ -468,4 +469,18 @@ describe('the image detail wears the image hat on the picture', () => {
     expect(hat()).toBeNull();
     expect(document.querySelector('[data-testid="drawn-media-hat"]')).toBeNull();
   });
+
+  // The owner's peek toggle keeps out of the corner the hat is worn in only if it is told.
+  test.each([true, false])(
+    'tells the sticker overlay whether the image wears a hat (%s)',
+    async (hatted) => {
+      renderWithProviders(<Viewer image={mocks.image(hatted)} />);
+      await vi.waitFor(() =>
+        expect(document.querySelector('[data-testid="sticker-host"]')).not.toBeNull()
+      );
+      expect(
+        document.querySelector('[data-testid="sticker-host"]')!.hasAttribute('data-wears-hat')
+      ).toBe(hatted);
+    }
+  );
 });

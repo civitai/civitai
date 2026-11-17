@@ -15,7 +15,6 @@ vi.mock('@civitai/auth', async (importOriginal) => {
     createSessionClient: () => ({ getSessionUser: h.getSessionUser }),
     createSessionTokenClient: () => ({
       refresh: h.refresh,
-      exchangeLegacy: vi.fn(),
       revoke: vi.fn(),
     }),
   };

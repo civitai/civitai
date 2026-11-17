@@ -27,8 +27,7 @@ export const goodContentReward = createBuzzEvent({
   getKey: async (input: ReactionEvent, { db }) => {
     if (input.ownerId === input.reactorId) return false;
 
-    // A comment's author is read from CommentV3, which also holds comments on surfaces that no longer
-    // write CommentV2; the transaction keeps the CommentV2 type, as the id is the same.
+    // A comment's author is read from CommentV3; the transaction keeps its CommentV2 type.
     const table = input.type === 'comment' ? 'CommentV3' : typeToTable[input.type];
     if (!table) return false;
     try {
@@ -97,7 +96,6 @@ export const goodContentReward = createBuzzEvent({
 
 const typeToTable: Partial<Record<ReactionEntityType, string>> = {
   comment: 'CommentV2',
-  commentOld: 'Comment',
   image: 'Image',
   article: 'Article',
 };

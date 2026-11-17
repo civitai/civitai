@@ -18,7 +18,7 @@ import { listAppFeedbackForListing } from '~/server/services/blocks/app-feedback
 import { listListingHistory } from '~/server/services/blocks/app-listing-history.service';
 
 /**
- * The open app's feedback as `userId` may read it, through the SAME author reads My apps and the
+ * The open app's feedback as `userId` may read it, through the SAME author reads My builds and the
  * listing editor use: `listMyAppListings` (owned ∪ accepted seats) finds the app by its key, then
  * `listListingHistory` (the review history) and `listAppFeedbackForListing` (the user-feedback
  * inbox, owner and editor only) read it, each re-checking the caller's role on the listing.
@@ -96,7 +96,7 @@ export function runnerAppFeedbackRoute(kind: 'review' | 'user') {
         app: appKey,
         grantId: verified.grantId,
         ...extra,
-      }).catch(() => undefined);
+      });
 
     try {
       // Every gate the runner's token mint checks, then the App Blocks author capability that My

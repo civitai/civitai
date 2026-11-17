@@ -286,6 +286,18 @@ describe('safeFetch — redirects (re-validated + re-pinned per hop)', () => {
     });
   });
 
+  it('refuses a redirect outside allowUrl before resolving or connecting to it', async () => {
+    // The second hop is primed so a missing check fails as a wrong code, not a hang.
+    primeTransport(
+      fakeResponse({ status: 302, headers: { location: 'https://evil.example/x' } }),
+      fakeResponse({ headers: { 'content-type': 'text/html' }, chunks: ['evil'] })
+    );
+    const opts = { ...HTML, allowUrl: (u: URL) => u.hostname === 'example.com' };
+    expect(await code(safeFetch('https://example.com', opts))).toBe('blocked_host');
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(lookupMock).toHaveBeenCalledTimes(1);
+  });
+
   it('caps the redirect chain', async () => {
     primeTransport(
       fakeResponse({ status: 302, headers: { location: 'https://example.com/loop' } }),

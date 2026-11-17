@@ -95,6 +95,12 @@ function seedShellCaches(queryClient: QueryClient, data: ShellPageData) {
       getQueryKey(trpc.event.getNavBanners, undefined, 'query'),
       data.navBanners
     );
+  // What `EventQuerySeeds` seeds on a full render.
+  for (const { event, access, cosmetic } of data.eventSeeds ?? []) {
+    queryClient.setQueryData(getQueryKey(trpc.event.getAccess, { event }, 'query'), access);
+    if (cosmetic !== undefined)
+      queryClient.setQueryData(getQueryKey(trpc.event.getCosmetic, { event }, 'query'), cosmetic);
+  }
   // The shell carries a `liveNow` the edge may have held for a minute; the page data's is current.
   if (data.liveNow !== undefined)
     queryClient.setQueryData(getQueryKey(trpc.system.getLiveNow, undefined, 'query'), data.liveNow);

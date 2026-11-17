@@ -54,7 +54,7 @@ const log = createLogger('stripe', 'blue');
 const MODERATION_CANCELLATION = 'civitai-moderation-cancel';
 // The `canceled_at` of the cancel a ban / restriction flow made. reinstateSubscription resumes only
 // while it matches: a member's own later cancel gets a new `canceled_at`.
-const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
+export const MODERATION_CANCEL_MARK = 'civitai_moderation_cancel';
 // A gift subscription's own `cancel_at` (the end of all its gifted months), saved when a moderation
 // cancel cuts it to the current period so a reinstate can put it back.
 const MODERATION_PREV_CANCEL_AT = 'civitai_moderation_prev_cancel_at';
@@ -879,11 +879,7 @@ export const upsertSubscription = async (
   await invalidateSubscriptionCaches(user.id);
 };
 
-export const toDateTime = (secs: number) => {
-  const t = new Date('1970-01-01T00:30:00Z'); // Unix epoch start.
-  t.setSeconds(secs);
-  return t;
-};
+export const toDateTime = (secs: number) => new Date(secs * 1000);
 
 export const upsertProductRecord = async (product: Stripe.Product) => {
   const productData = {
@@ -1099,7 +1095,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
           source: refCodeSource,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     const stripePaymentIntentId =
@@ -1274,7 +1270,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
               source: attributionSource,
             },
             'webhooks'
-          ).catch(() => null);
+          );
         }
       } catch (attrErr) {
         // Never fail membership provisioning on an attribution write.
@@ -1288,7 +1284,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
             error: (attrErr as Error)?.message,
           },
           'webhooks'
-        ).catch(() => null);
+        );
       }
     }
 
@@ -1588,7 +1584,7 @@ export const getPaymentIntent = async ({
         expectedUnitAmount: metadata.buzzAmount / 10,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
     throw throwBadRequestError(
       'There was an error while creating your order. Please try again later.'
@@ -1626,7 +1622,7 @@ export const getPaymentIntent = async ({
         derivedBuzzType: buzzType,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   const stripe = await getServerStripe();
@@ -1697,7 +1693,7 @@ export const getPaymentIntentsForBuzz = async ({
         stripePaymentIntentId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
   const batches = chunk(
     pendingPayments.filter((intent) => intent.metadata.userId),

@@ -4,13 +4,13 @@ import {
   Button,
   Checkbox,
   Group,
-  Menu,
   Modal,
   Paper,
   Stack,
   Text,
   UnstyledButton,
 } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
@@ -568,6 +568,7 @@ export function Model3DActionsMenu({
                 setNsfwLevelMutation.mutate({
                   id: model3d.id,
                   nsfwLevel: pendingLevel,
+                  thumbnailImageId: model3d.thumbnailImageId ?? null,
                   lock: lockNsfwLevel,
                 })
               }

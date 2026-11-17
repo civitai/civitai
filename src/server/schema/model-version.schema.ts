@@ -226,12 +226,24 @@ export const aiToolkitTrainingDetailsParams = z.object({
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
+export const studioKohyaTrainingDetailsParams = trainingDetailsParams.extend({
+  engine: z.literal('kohya'),
+  optimizerType: z.enum([...optimizerTypes, 'AdamW', 'AdamW8bit', 'Lion', 'Lion8bit']),
+  lrScheduler: z.enum([...lrSchedulerTypes, 'constant_with_warmup', 'polynomial']),
+  seed: z.number().int().optional(),
+  fp8Base: z.boolean().optional(),
+  blocksToSwap: z.number().int().optional(),
+  vParameterization: z.boolean().optional(),
+  zeroTerminalSnr: z.boolean().optional(),
+});
+
 // Union type for database storage - supports both formats
 export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
   trainingDetailsParams.extend({
-    engine: z.enum(['kohya', 'rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
+    engine: z.enum(['rapid', 'flux2-dev', 'flux2-dev-edit', 'musubi'] as const),
   }),
   aiToolkitTrainingDetailsParams,
+  studioKohyaTrainingDetailsParams,
 ]);
 export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
 
@@ -536,10 +548,9 @@ export const modelVersionUpsertSchema2 = z.object({
     // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
     // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
     // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
-    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
-    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
-    // stripped here and nowhere else, which is the silent per-surface divergence this whole
-    // paragraph exists to prevent.
+    // `color` property alone, narrower than the app-wide SPAN_ALLOWED_STYLES. Without it a blurb's
+    // color is stripped here and nowhere else, which is the silent per-surface divergence this
+    // whole paragraph exists to prevent.
     allowedAttributes: {
       ...DEFAULT_ALLOWED_ATTRIBUTES,
       span: ['data-type', 'data-id', 'style'],

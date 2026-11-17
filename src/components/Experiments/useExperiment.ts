@@ -24,16 +24,21 @@ export type UseExperimentResult<K extends ExperimentKey> =
  * The viewer's arm. Signed-out viewers get the default arm and are not in the experiment. For a
  * signed-in viewer it is `ready: false` until the assignment arrives: render nothing experimental
  * until then, rather than the default, so no one sees one arm and then another.
+ * `enabled: false` (the surface is off for this viewer) stays not ready and asks the server nothing.
  */
-export function useExperiment<K extends ExperimentKey>(key: K): UseExperimentResult<K> {
+export function useExperiment<K extends ExperimentKey>(
+  key: K,
+  { enabled = true }: { enabled?: boolean } = {}
+): UseExperimentResult<K> {
   const currentUser = useCurrentUser();
   const { data, isError } = trpc.experiments.getAssignments.useQuery(undefined, {
-    enabled: !!currentUser,
+    enabled: enabled && !!currentUser,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
 
+  if (!enabled) return { ready: false, variant: undefined, assignment: undefined };
   if (!currentUser) {
     return {
       ready: true,

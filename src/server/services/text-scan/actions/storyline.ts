@@ -1,4 +1,6 @@
 import type { Prisma } from '@prisma/client';
+import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
+import { onStorySparked, onStorySparkLost } from '~/server/events/points/hooks';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -30,6 +32,7 @@ export async function liftScanTakedown(
       data: { ...extra.data, tosViolationByScan: false },
     }),
   ]);
+  if (alone.count) void onStorySparked(id);
   return alone.count + underModerator.count;
 }
 
@@ -58,7 +61,7 @@ export async function approveAppealOfLift(
       message: 'takedown lifted, but its open appeal was not closed',
       storylineId: id,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -133,7 +136,7 @@ export async function applyStorylineTextScan({
   const titleLevel = ratings.length ? Math.max(...ratings) : null;
   const minor = !!outcome.minor?.detected;
   const takeDown =
-    !!outcome.poi?.detected || (minor && (titleLevel == null || titleLevel >= NsfwLevel.R));
+    !!outcome.poi?.detected || isMinorContentRestricted({ minor, nsfwLevel: titleLevel });
 
   // Only an answered minor label moves the flag: a missing one leaves it as it was. Written before
   // any lift below, so a storyline coming back up is never shown uncapped, even if a write fails.
@@ -162,6 +165,7 @@ export async function applyStorylineTextScan({
       },
       data: { tosViolation: true, tosViolationByScan: true },
     });
+    if (count) void onStorySparkLost(entityId);
     if (count)
       await notifyStorylineTitleModerated(
         before,

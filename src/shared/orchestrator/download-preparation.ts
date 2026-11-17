@@ -165,6 +165,10 @@ const BASE_WEIGHTS_MODEL_TYPE = 'Checkpoint';
 export const isBaseWeightsType = (modelType?: string | null) =>
   modelType === BASE_WEIGHTS_MODEL_TYPE;
 
+/** Why a free account's boost is not optional: the server's refusal and every surface that sells it. */
+export const BOOST_REQUIRED_MESSAGE =
+  'Free accounts need to boost to load this model for now. Members continue to load for free.';
+
 /** For `preparation` straight off the orchestrator; anything that is not the resource list reads as nothing to download. */
 export function normalizePreparation(raw: unknown): DownloadPreparation | undefined {
   // Every step of every workflow in a queue listing comes through here, and almost none carries a

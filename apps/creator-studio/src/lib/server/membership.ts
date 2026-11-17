@@ -41,22 +41,11 @@ export function resolveMembership(user: SessionUser | undefined, testCookie?: st
 // Monetization is open to every creator who meets the eligibility floor; membership decides only HOW MANY
 // new prices they may set in a month, via monthlyPricingAllowance.
 
-// Usage control is NOT open like monetization is: a non-Download control needs the main app's
-// `generationOnlyModels` feature, whose availability is ['mod', 'granted', 'gold']. Restated here rather
-// than imported because the flag registry lives in the main app and this spoke writes the column directly
-// — if that availability list changes, this has to change with it (CU 868kmy9f3).
-const GENERATION_ONLY_TIERS = ['gold'];
-const GENERATION_ONLY_PERMISSION = 'generationOnlyModels';
-
+// Restates the main app's `generationOnlyModels` registry default, ['user']: any signed-in creator may move
+// a version off Download. It does not read the flag, so an env override that switches it off in the main
+// app has no effect here; if the default availability changes, change this with it.
 export function canSetGenerationOnly(user: SessionUser | undefined): boolean {
-  if (!user) return false;
-  if (user.isModerator) return true;
-  if (user.permissions?.includes(GENERATION_ONLY_PERMISSION)) return true;
-  return GENERATION_ONLY_TIERS.includes(user.tier ?? '');
-}
-
-export function tierGrantsGenerationOnly(tier: string | null | undefined): boolean {
-  return GENERATION_ONLY_TIERS.includes(tier ?? '');
+  return !!user;
 }
 
 // No subscription and the 'free' tier are the same thing everywhere — both resolve to 'free', so neither

@@ -13,7 +13,7 @@ import {
 // nothing from `$lib`/`$env`, so scripts/worker-client.ts can run them outside SvelteKit.
 
 /** civitai-orchestration's `Provider` enum names, spelled exactly. Add a name when the enum gains one. */
-const WORKER_PROVIDERS = [
+export const WORKER_PROVIDERS = [
   'Civitai',
   'OctoML',
   'SaladML',

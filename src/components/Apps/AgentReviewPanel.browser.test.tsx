@@ -84,7 +84,7 @@ vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
 // horizontal-scroll on desktop, stacked cards on narrow). The real viewport is
 // non-deterministic in browser mode, so we importActual @mantine/hooks and
 // override ONLY useMediaQuery — DEFAULT desktop (false); the narrow branch is
-// only reached after forcing it per test (the BaseModelInput/WorkflowInput
+// only reached after forcing it per test (the BaseModelInput/WorkflowPicker
 // media-query pattern).
 vi.mock('@mantine/hooks', async () => {
   const actual = await vi.importActual<typeof import('@mantine/hooks')>('@mantine/hooks');

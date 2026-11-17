@@ -1,3 +1,4 @@
+import { COM_FACE_REFUSED_MESSAGE } from '~/shared/utils/model-sfw-face';
 import type { ChipProps } from '@mantine/core';
 import {
   Alert,
@@ -83,6 +84,10 @@ import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
 import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
+import { RequestLockReviewLink } from '~/components/Model/LockReview/RequestLockReview';
+import { NsfwLockSource } from '~/components/Model/LockReview/ComFaceDisputeAlert';
+import { matureLockReasonSentence } from '~/shared/constants/mature-lock-reason.constants';
+import { requestableLocks } from '@civitai/shared/lock-review';
 
 const schema = modelUpsertSchema
   .extend({
@@ -311,8 +316,11 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
       if (!payload.id) await queryUtils.model.getMyDraftModels.invalidate();
       onSubmit(data);
     },
-    onError: (error) => {
+    onError: (error, payload) => {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
+      // A refused civitai.com version can lock the rating, which brings up the Dispute button.
+      if (typeof payload.id === 'number' && error.message === COM_FACE_REFUSED_MESSAGE)
+        void queryUtils.report.getLockReviewState.invalidate({ id: payload.id });
     },
   });
 
@@ -463,7 +471,22 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   }
 
   function isLockedDescription(key: string, defaultDescription?: string) {
-    return model?.lockedProperties?.includes(key) ? 'Locked by moderator' : defaultDescription;
+    if (!model?.lockedProperties?.includes(key)) return defaultDescription;
+    if (!model.id || !requestableLocks(model).some((lock) => lock === key))
+      return 'Locked by moderator';
+    const reason = key === 'nsfw' && model.matureLockReason;
+    return (
+      <>
+        {reason ? (
+          matureLockReasonSentence(reason)
+        ) : key === 'nsfw' ? (
+          <NsfwLockSource modelId={model.id} />
+        ) : (
+          'Locked by moderator'
+        )}{' '}
+        · <RequestLockReviewLink model={{ ...model, id: model.id }} />
+      </>
+    );
   }
 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
@@ -512,6 +535,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
             {features.modelComFace ? (
               <ModelListingTabs
                 modelId={model?.id}
+                comFaceRemoved={model?.comFaceRemoved}
+                comCoverState={model?.comCoverState}
                 redFields={
                   <>
                     {nameInput}

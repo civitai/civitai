@@ -9,8 +9,9 @@
  * them is edited, and the divergence is invisible — every producer's own suite keeps passing while
  * the BOARD stops reading as one surface. So the parts that must agree live here, once.
  *
- * ⚠️ IT IS SHARED BY THE TWO PRODUCERS BUILT IN THIS REPO — `bot-account-detection` and
- * `new-order-abuse-detection`. `reaction-withdrawal-detection` has not been migrated onto it, and
+ * ⚠️ IT IS SHARED BY THE PRODUCERS BUILT IN THIS REPO THAT IMPORT IT — `bot-account-detection`,
+ * `new-order-abuse-detection`, `creator-program-counterparty-review` and
+ * `blue-buzz-paid-access-detection`. `reaction-withdrawal-detection` has not been migrated onto it, and
  * detectors deployed outside this repo cannot be; this module standardises what it reaches, which is
  * less than the whole board.
  *

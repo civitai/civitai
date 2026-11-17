@@ -15,7 +15,9 @@ const { mockIsFlipt } = vi.hoisted(() => ({ mockIsFlipt: vi.fn() }));
 vi.mock('~/server/flipt/client', () => ({ isFlipt: mockIsFlipt }));
 
 import {
+  isAgentReviewAutomationEnabled,
   isAppBlocksAgenticReviewEnabled,
+  APP_BLOCKS_AGENTIC_REVIEW_AUTOSTART_FLAG,
   APP_BLOCKS_AGENTIC_REVIEW_FLAG,
 } from '../app-blocks-flag';
 
@@ -70,5 +72,23 @@ describe('isAppBlocksAgenticReviewEnabled — fail-closed mod gate', () => {
     await expect(
       isAppBlocksAgenticReviewEnabled({ user: makeUser({ isModerator: true }) })
     ).resolves.toBe(false);
+  });
+});
+
+describe('isAgentReviewAutomationEnabled — the ONE switch pair for automatic agent reviews', () => {
+  it.each([
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+    [false, false, false],
+  ])('autostart %s, agentic-review base %s → %s', async (autostart, base, expected) => {
+    mockIsFlipt.mockImplementation(async (flag: string, entityId?: string) => {
+      // Both are evaluated with NO user: only the base values count.
+      expect(entityId).toBeUndefined();
+      if (flag === APP_BLOCKS_AGENTIC_REVIEW_AUTOSTART_FLAG) return autostart;
+      if (flag === APP_BLOCKS_AGENTIC_REVIEW_FLAG) return base;
+      return false;
+    });
+    await expect(isAgentReviewAutomationEnabled()).resolves.toBe(expected);
   });
 });

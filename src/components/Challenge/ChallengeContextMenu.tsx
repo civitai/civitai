@@ -1,5 +1,5 @@
 import type { ActionIconProps, MenuProps } from '@mantine/core';
-import { Menu } from '@mantine/core';
+import { Menu } from '~/components/MantineOverlays';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { IconBell, IconEdit, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';

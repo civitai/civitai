@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import { chatBucketFor, inboxStatuses } from '~/shared/utils/chat';
@@ -76,8 +74,8 @@ describe('a filtered membership is always actionable', () => {
 });
 
 /**
- * The header badge cannot be exercised here — it is raw SQL — so what is pinned
- * is the list the query interpolates. It selected `Joined` alone while the rail
+ * The header badge query interpolates this list; its behaviour is exercised in
+ * `chat-unread-count.sql.behavior.test.ts`. It selected `Joined` alone while the rail
  * bucketed on `filteredAt`, so an unfiltered invitation lit the badge and then
  * appeared under no tab's count: not Requests (unfiltered), not Inbox
  * (`status <> 'Joined'`), and the row's own indicator was zeroed for `Invited`.
@@ -104,27 +102,5 @@ describe('inboxStatuses', () => {
     ]) {
       expect(inboxStatuses).not.toContain(status);
     }
-  });
-});
-
-describe('🔴 the unread-badge query selects on the shared inbox statuses', () => {
-  const source = readFileSync(
-    path.resolve(__dirname, '../../controllers/chat.controller.ts'),
-    'utf8'
-  );
-
-  const handler = source.slice(source.indexOf('export const getUnreadMessagesForUserHandler'));
-  const body = handler.slice(0, handler.indexOf('\nexport const '));
-
-  it('positive control — the handler body was actually located', () => {
-    // Without this, a slice that came back empty would make the assertions below
-    // vacuously green.
-    expect(body).toContain('$queryRaw');
-    expect(body.length).toBeGreaterThan(200);
-  });
-
-  it('interpolates the shared list rather than naming a status inline', () => {
-    expect(body).toContain('memb.status in (${Prisma.raw(inboxStatusLiterals)})');
-    expect(body).not.toMatch(/memb\.status\s*=\s*'/);
   });
 });

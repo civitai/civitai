@@ -7,6 +7,7 @@ import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import type { BaseDataTypeMap } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -110,6 +111,34 @@ export function isViewingOwnImages(
   return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
 }
 
+/**
+ * An image feed's infinite pages as one list: the duplicates offset paging drift leaves across pages
+ * dropped, then the viewer's hidden preferences applied. Shared by the feed and the feed's search.
+ */
+export function useFeedImageItems<TItem extends BaseDataTypeMap['images'][number]>(
+  pages: ({ items: TItem[] } | undefined)[] | undefined,
+  options: { showHidden?: boolean; disabled?: boolean; isRefetching?: boolean }
+) {
+  const flatData = useMemo(() => {
+    const seenIds = new Set<number>();
+    const deduped: TItem[] = [];
+    for (const item of pages?.flatMap((page) => page?.items ?? []) ?? []) {
+      if (seenIds.has(item.id)) continue;
+      seenIds.add(item.id);
+      deduped.push(item);
+    }
+    return deduped;
+  }, [pages]);
+  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
+    type: 'images',
+    data: flatData,
+    showHidden: options.showHidden,
+    disabled: options.disabled,
+    isRefetching: options.isRefetching,
+  });
+  return { flatData, items, loadingPreferences, hiddenCount };
+}
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
@@ -159,25 +188,7 @@ export const useQueryImages = (
     }
   );
 
-  // Deduplicate items to prevent duplicates from offset pagination drift
-  const flatData = useMemo(() => {
-    const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
-
-    // Track IDs within this render to filter duplicates that appear across pages
-    const seenIds = new Set<number>();
-    const dedupedItems: typeof allItems = [];
-    for (const item of allItems) {
-      if (!seenIds.has(item.id)) {
-        seenIds.add(item.id);
-        dedupedItems.push(item);
-      }
-    }
-
-    return dedupedItems;
-  }, [data]);
-  const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
-    type: 'images',
-    data: flatData,
+  const { flatData, items, loadingPreferences, hiddenCount } = useFeedImageItems(data?.pages, {
     showHidden: !!filters.hidden,
     disabled: !applyHiddenPreferences,
     isRefetching: rest.isRefetching,

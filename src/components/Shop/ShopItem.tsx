@@ -9,9 +9,9 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { MouseEvent } from 'react';
 import { CosmeticType, Currency } from '~/shared/utils/prisma/enums';

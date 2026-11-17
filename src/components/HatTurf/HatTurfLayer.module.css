@@ -1,0 +1,129 @@
+.layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* No z-index here or inside: it would lift resting hats over the card chips (see .raised). */
+}
+
+/*
+ * A feed card paints its chips (reactions, tip, hat button) over the picture as later siblings, so
+ * a resting hat stays under them. A hat being placed, and image detail's layer, sit on top.
+ */
+.raised {
+  z-index: 3;
+}
+
+.box {
+  position: absolute;
+}
+
+/* With Show hats off, the hats a placement revealed leave again. `.placed` carries the transition. */
+.fading .placed {
+  opacity: 0 !important; /* beats .dim and .muted */
+}
+
+/* Above the hats, so they never take its taps. */
+.corner {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.placed {
+  position: absolute;
+  line-height: 0;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  transition: opacity 0.4s ease, filter 0.4s ease;
+}
+
+.landed {
+  animation: land 0.3s ease;
+}
+
+/* Under the viewer's own hat: how long it keeps counting. */
+.timeLeft {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: var(--mantine-color-white);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.dim {
+  opacity: 0.55;
+  filter: saturate(0.25) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
+
+.lead {
+  filter: drop-shadow(0 0 7px var(--hat-glow)) drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}
+
+.muted {
+  opacity: 0.45;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
+
+.more {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 7px 2px 4px;
+  border-radius: 99px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: var(--mantine-color-white);
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* A feed card stacks its menu and Remix buttons down the right edge, above this layer. */
+.moreFeed {
+  right: auto;
+  left: max(8px, var(--event-decoration-clear-left, 0px));
+}
+
+.moreButton {
+  border: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.moreButton:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+@keyframes land {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -190%) scale(0.6);
+  }
+  60% {
+    transform: translate(-50%, -45%) scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landed {
+    animation: none;
+  }
+
+  .placed {
+    transition: none;
+  }
+}

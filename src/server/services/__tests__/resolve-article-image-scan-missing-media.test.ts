@@ -137,7 +137,9 @@ describe('resolveArticleImageScan — the missing-media guard reaches this calle
     await expect(run()).resolves.toBeUndefined();
 
     expect(dbMock.dbWrite.image.updateMany).toHaveBeenCalledTimes(1);
-    expect(queueUpdate).toHaveBeenCalledWith([{ id: ARTICLE_ID, action: expect.anything() }]);
+    expect(queueUpdate).toHaveBeenCalledWith([{ id: ARTICLE_ID, action: expect.anything() }], {
+      reason: 'image-scan',
+    });
   });
 
   it('never consults the bucket for a url that is not a key', async () => {

@@ -36,7 +36,7 @@ const CHUNK = 1024;
 const SLOW_BODY_STEP_MS = 20_000;
 /** 20s x 30 = ten minutes of body, which is what 25 MB on a weak mobile link looks like. */
 const SLOW_BODY_STEPS = 30;
-/** Mirrors `PART_RESPONSE_TIMEOUT_MS` in the hook, which is not exported. */
+/** Mirrors `PART_RESPONSE_TIMEOUT_MS` in `~/utils/multipart-upload`, which is not exported. */
 const RESPONSE_WINDOW_MS = 5 * 60_000;
 const RELAY_ENDPOINT = '/api/v1/image-upload/relay';
 const RELAY_CHUNKED_ENDPOINT = '/api/v1/image-upload/relay-chunked';
@@ -782,7 +782,8 @@ describe('useS3Upload relay fallback', () => {
 
   it('reports aborted when the user cancels while the relay is in flight', async () => {
     // ⚠ HONEST SCOPE, the same qualification the predicate's own cancel case carries: no
-    // image-upload path renders a cancel today (see the note on `abort` in the hook), so
+    // image-upload path renders a cancel today (`MultiFileInputUpload`'s `UploadItem` is the only
+    // rendered cancel UI, and it uploads type 'default', which the image-only relay never serves), so
     // the STATUS half of this asserts a combination production cannot currently produce.
     // It is kept as a forward guard rather than deleted — unlike an unreachable guard in
     // production code, an unreachable assertion costs nothing and arms the day a cancel
@@ -1349,5 +1350,25 @@ describe('useS3Upload part stall watchdog across a backgrounded tab', () => {
     // nothing at all also ends with zero live listeners.
     expect(listenerAdds).toBe(PARTS);
     expect(liveListeners.size).toBe(0);
+  });
+});
+
+describe('useS3Upload completion', () => {
+  it('reports a failed upload, not a thrown one, when completion keeps failing at the network layer', async () => {
+    const fetchStub = makeFetch(1);
+    const answer = fetchStub.getMockImplementation()!;
+    fetchStub.mockImplementation(async (url, init) => {
+      if (url === '/api/upload/complete') throw new TypeError('Failed to fetch');
+      return answer(url, init);
+    });
+    vi.stubGlobal('fetch', fetchStub);
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    expect(result.url).toBeNull();
+    expect(h.statuses()).toEqual(['error']);
+    // The parts are stored but never finalized, so the session must still be torn down.
+    expect(abortCalls).toHaveLength(1);
   });
 });

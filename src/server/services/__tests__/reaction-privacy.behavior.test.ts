@@ -28,8 +28,6 @@ dbMock.dbRead.$queryRaw.mockImplementation((async (
 }) as never);
 
 const { getImageReactors } = await import('~/server/services/image-reactors.service');
-const { maskHiddenReactors } = await import('~/server/services/reaction-privacy.service');
-const { HIDDEN_REACTOR_ID } = await import('~/shared/constants/reaction-privacy.constants');
 
 const OWNER = 100;
 const IMAGE = 555;
@@ -116,62 +114,5 @@ describe('getImageReactors — image reactions from before the lists launched', 
       `UPDATE "User" SET settings = '{"hideFromReactionLists": true}' WHERE id = ${AFTER}`
     );
     expect(await listed()).toEqual([OWNER, OPTED_IN]);
-  });
-});
-
-describe('maskHiddenReactors — comment reaction tooltips', () => {
-  const reactions = () =>
-    [LISTED, HIDDEN, HIDDEN, OPTED_BACK_IN].map((id, i) => ({
-      id: i,
-      reaction: 'Like',
-      user: { id, username: `u${id}` },
-    }));
-
-  it('anonymises an opted-out reactor for someone else, keeping every row so counts are unchanged', async () => {
-    const list = reactions();
-    await maskHiddenReactors([list], { id: OWNER });
-    expect(list.map((r) => r.user)).toEqual([
-      { id: LISTED, username: `u${LISTED}` },
-      { id: HIDDEN_REACTOR_ID, username: null },
-      { id: HIDDEN_REACTOR_ID, username: null },
-      { id: OPTED_BACK_IN, username: `u${OPTED_BACK_IN}` },
-    ]);
-  });
-
-  it('masks for a signed-out viewer too', async () => {
-    const list = reactions();
-    await maskHiddenReactors([list], undefined);
-    expect(list.filter((r) => r.user.id === HIDDEN_REACTOR_ID)).toHaveLength(2);
-  });
-
-  it('shows an opted-out viewer their own reactions', async () => {
-    const list = reactions();
-    await maskHiddenReactors([list], { id: HIDDEN });
-    expect(list.map((r) => r.user.id)).toEqual([LISTED, HIDDEN, HIDDEN, OPTED_BACK_IN]);
-  });
-
-  it('leaves a moderator the full view', async () => {
-    const list = reactions();
-    await maskHiddenReactors([list], { id: OWNER, isModerator: true });
-    expect(list.map((r) => r.user.id)).toEqual([LISTED, HIDDEN, HIDDEN, OPTED_BACK_IN]);
-  });
-});
-
-describe('comment.getReactions — the handler applies the mask', () => {
-  it('anonymises an opted-out reactor and keeps the row', async () => {
-    dbMock.dbRead.commentReaction.findMany.mockResolvedValue([
-      { id: 1, reaction: 'Like', user: { id: LISTED, username: `u${LISTED}` } },
-      { id: 2, reaction: 'Like', user: { id: HIDDEN, username: `u${HIDDEN}` } },
-    ] as never);
-    const { getCommentReactionsHandler } = await import('~/server/controllers/comment.controller');
-
-    const result = await getCommentReactionsHandler({
-      input: { commentId: 1 },
-      ctx: { user: { id: OWNER } } as never,
-    });
-    expect(result.map((r) => r.user)).toEqual([
-      { id: LISTED, username: `u${LISTED}` },
-      { id: HIDDEN_REACTOR_ID, username: null },
-    ]);
   });
 });

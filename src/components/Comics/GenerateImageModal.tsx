@@ -10,8 +10,8 @@ import {
   Stack,
   Text,
   Textarea,
-  Tooltip,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import { IconCheck, IconRefresh, IconUpload, IconX } from '@tabler/icons-react';
 import type { WorkflowStepEvent } from '@civitai/orchestration-client';

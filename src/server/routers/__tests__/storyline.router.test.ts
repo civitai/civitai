@@ -48,7 +48,8 @@ const r = dbMock.dbRead;
 function callerFor(
   userId: number,
   permissions: string[] = ['storylines'],
-  user: Record<string, unknown> = {}
+  user: Record<string, unknown> = {},
+  features: Record<string, boolean> = {}
 ) {
   return storylineRouter.createCaller({
     user: {
@@ -66,7 +67,7 @@ function callerFor(
     req: { headers: {} },
     res: { setHeader: () => undefined },
     cache: { edgeTTL: 0 },
-    features: { canViewNsfw: true, isGreen: false },
+    features: { canViewNsfw: true, isGreen: false, ...features },
     track: { action: vi.fn(() => Promise.resolve(true)) },
   } as never);
 }
@@ -375,6 +376,8 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
 
   beforeEach(() => {
     w.storyline.findUnique.mockResolvedValue(xStory as never);
+    // The spark read: this storyline was not started from an image.
+    r.storyline.findUnique.mockResolvedValue({ sparkImage: null } as never);
     r.$queryRaw.mockResolvedValue([
       { depth: 0, userId: OWNER, nsfwLevel: NsfwLevel.X, ...shownChapter },
       { depth: 1, userId: AUTHOR, nsfwLevel: NsfwLevel.PG, ...shownChapter },
@@ -384,6 +387,7 @@ describe('storyline router: chapter levels and the ceiling floor', () => {
   it('gives the owner the chapter levels', async () => {
     await expect(callerFor(OWNER).getChapterLevels({ id: 10 })).resolves.toEqual({
       rootNsfwLevel: NsfwLevel.X,
+      sparkNsfwLevel: null,
       chapterLevels: [NsfwLevel.PG],
     });
   });
@@ -454,5 +458,27 @@ describe('storyline router: moderating a title', () => {
       code: 'BAD_REQUEST',
     });
     expect(dbMock.dbWrite.storyline.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('storyline router: starting a story from an image', () => {
+  const start = (features: Record<string, boolean>) =>
+    callerFor(OWNER, ['storylines'], {}, features).create({
+      title: 'A story',
+      maxNsfwLevel: NsfwLevel.R,
+      sparkImageId: 77,
+    });
+
+  it('refuses a spark without the remixGallery flag, before reading the image', async () => {
+    await expect(start({ remixGallery: false })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.image.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.storyline.create).not.toHaveBeenCalled();
+  });
+
+  it('passes a spark to the service with the flag', async () => {
+    // No such image, so the service's own check refuses it: the router let it through.
+    dbMock.dbWrite.image.findUnique.mockResolvedValue(null as never);
+    await expect(start({ remixGallery: true })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.image.findUnique).toHaveBeenCalled();
   });
 });

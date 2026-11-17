@@ -3,6 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import { useAssistantPanelStore } from '~/store/assistant-panel.store';
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * SupportMenu — the footer support button after it stopped opening a modal.
@@ -43,20 +44,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      feedback: {
-        getArea: {
-          useQuery: (_input: unknown, options?: { enabled?: boolean }) => {
-            mocks.getAreaOptions(options);
-            // A disabled React Query resolves to `undefined`, not to a value — the
-            // stub has to reproduce that or the logged-out case would read as
-            // "enabled" and the fallback would never be exercised.
-            if (!options?.enabled) return { data: undefined };
-            return { data: { enabled: mocks.areaEnabled.value } };
-          },
+    trpc: makeTrpcProxy({
+      'feedback.getArea': {
+        useQuery: (_input: unknown, options?: { enabled?: boolean }) => {
+          mocks.getAreaOptions(options);
+          // A disabled React Query resolves to `undefined`, not to a value — the
+          // stub has to reproduce that or the logged-out case would read as
+          // "enabled" and the fallback would never be exercised.
+          if (!options?.enabled) return { data: undefined };
+          return { data: { enabled: mocks.areaEnabled.value } };
         },
       },
-    },
+    }),
   };
 });
 
@@ -102,7 +101,7 @@ describe('the destinations that used to live in the support modal', () => {
 /**
  * The chat was the right-hand column of the support modal. The modal is gone, so the
  * menu is how it is reached from here — and it must be ABSENT rather than dead when
- * the chat is unavailable, because `AssistantButton` renders nothing in that case and
+ * the chat is unavailable, because `FloatingHelpMenu` renders no chat in that case and
  * a menu item that opens an invisible panel is worse than no item.
  */
 describe('the CivBot chat the support modal used to hold', () => {

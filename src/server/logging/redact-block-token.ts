@@ -1,11 +1,11 @@
 /**
- * Replace every `blockToken` value in a tRPC input with a fixed marker before the input is
- * logged. A block token is a bearer credential: anyone holding it can act as the viewer it was
- * minted for until it expires, so it must never reach a log line.
+ * Replace every bearer-credential value (`BEARER_KEYS`: `blockToken`, `shareToken`) in a tRPC input
+ * with a fixed marker before the input is logged. Anyone holding one can act on its behalf until
+ * it expires, so it must never reach a log line.
  *
  * The KEY is kept so the log still shows a token was present; only the value is replaced. Keyed
- * on the field name, not on the procedure, because every procedure that carries a block token
- * spells it `blockToken` — mutations included, which the query-only transport set does not cover.
+ * on the field name, not on the procedure, because every procedure that carries one
+ * spells it the same way — mutations included, which the query-only transport set does not cover.
  *
  * Walks nested objects and arrays at any depth (a wrapped input still redacts). Deliberately
  * unbounded: a depth cap would either let a deep token through or truncate legitimately deep
@@ -15,6 +15,9 @@
  * nothing was redacted.
  */
 export const REDACTED_BLOCK_TOKEN = '[redacted]';
+
+/** Input keys that carry a bearer credential: a block token, or an article share token. */
+export const BEARER_KEYS: ReadonlySet<string> = new Set(['blockToken', 'shareToken']);
 
 export function redactBlockTokens<T>(input: T): T {
   return redact(input) as T;
@@ -40,7 +43,7 @@ function redact(value: unknown): unknown {
 
   let out: Record<string, unknown> | undefined;
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    const next = key === 'blockToken' && child != null ? REDACTED_BLOCK_TOKEN : redact(child);
+    const next = BEARER_KEYS.has(key) && child != null ? REDACTED_BLOCK_TOKEN : redact(child);
     if (next !== child) {
       out ??= { ...(value as Record<string, unknown>) };
       out[key] = next;

@@ -136,6 +136,17 @@ vi.mock('~/server/services/blocks/block-collections.service', async () => {
       classifyGatedImageForViewer(image, level).status === 'visible',
   };
 });
+// The held gallery level of a cover's post; by default no post is held.
+const heldCoverPosts = vi.hoisted(() => new Map<number, number>());
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getHeldLevelsByPost: async (postIds: number[]) =>
+    new Map(
+      postIds
+        .filter((id) => heldCoverPosts.has(id))
+        .map((id) => [id, { level: heldCoverPosts.get(id)! }])
+    ),
+}));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: mockRate,
 }));
@@ -234,6 +245,7 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  heldCoverPosts.clear();
   claimsBox.claims = fakeClaims();
   mockRate.mockResolvedValue({ allowed: true });
   mockMaturity.mockReturnValue({ browsingLevel: 3, isSfwCeiling: true });
@@ -1218,6 +1230,39 @@ describe('GET /api/v1/blocks/collections', () => {
     expect(mockFallbackCovers).toHaveBeenCalledWith([21, 20], 3);
   });
 
+  it("mode=mine: a cover flagged minor is not served on the subject's own collection", async () => {
+    claimsBox.claims = fakeClaims({
+      scopes: ['collections:read:self', 'collections:read:private'],
+    });
+    mockUserCollections.mockResolvedValueOnce([
+      {
+        id: 23,
+        name: 'Own minor cover',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { ...SCANNED, minor: true, url: 'own23', type: 'image', nsfwLevel: 1 },
+      },
+      {
+        id: 24,
+        name: 'Own clean cover',
+        description: null,
+        read: 'Public',
+        userId: 42,
+        image: { ...SCANNED, url: 'own24', type: 'image', nsfwLevel: 1 },
+      },
+    ]);
+    mockFallbackCovers.mockResolvedValueOnce(new Map());
+    mockItemCount.mockResolvedValueOnce([]);
+    mockFollowed.mockResolvedValueOnce(new Set<number>());
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(res._status()).toBe(200);
+    const byId = Object.fromEntries((res._json() as any).items.map((i: any) => [i.id, i]));
+    expect(byId[23].coverImageUrl).toBeNull();
+    expect(byId[24].coverImageUrl).toBe('edge:own24');
+  });
+
   it('the item never carries a bare `nsfwLevel` key (that name means the COLLECTION bitmask)', async () => {
     // Invariant guard, not regression coverage — it also held before this change.
     // The collection-level `nsfwLevel` is OR-ed over items and cannot separate a
@@ -1357,8 +1402,32 @@ describe('cover moderation and scan gate', () => {
         acceptableMinor: true,
         tosViolation: true,
         blockedFor: true,
+        postId: true,
       },
     });
+  });
+
+  it("mode=public: a primary cover above its post's held gallery level is replaced by the fallback cover", async () => {
+    heldCoverPosts.set(7, 1);
+    mockGetAll.mockResolvedValueOnce([publicRow({ nsfwLevel: 2, postId: 7 })]);
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[10, { url: 'fallback-10', type: 'image', nsfwLevel: 1 }]])
+    );
+    const { req, res } = createMocks({ query: { mode: 'public', limit: '24' } });
+    await handler(req as never, res as never);
+    expect(mockFallbackCovers).toHaveBeenCalledWith([10], 3);
+    expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-10');
+  });
+
+  it("mode=mine: a primary cover above its post's held gallery level is replaced by the fallback cover", async () => {
+    heldCoverPosts.set(7, 1);
+    mockUserCollections.mockResolvedValueOnce([mineRow({ nsfwLevel: 2, postId: 7 })]);
+    mockFallbackCovers.mockResolvedValueOnce(
+      new Map([[20, { url: 'fallback-20', type: 'image', nsfwLevel: 1 }]])
+    );
+    const { req, res } = createMocks({ query: { mode: 'mine', limit: '24' } });
+    await handler(req as never, res as never);
+    expect((res._json() as any).items[0].coverImageUrl).toBe('edge:fallback-20');
   });
 
   it('mode=public: keeps a primary cover with neither flag', async () => {

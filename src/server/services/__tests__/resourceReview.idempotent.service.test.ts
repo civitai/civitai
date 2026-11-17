@@ -66,6 +66,7 @@ vi.mock('~/server/services/user.service', () => ({
 
 import {
   createResourceReview,
+  getResourceReview,
   updateResourceReview,
   upsertResourceReview,
 } from '~/server/services/resourceReview.service';
@@ -325,5 +326,23 @@ describe('resource review writes — block enforcement', () => {
     // `userId` IS a column on create — the review's author. `isModerator` never is.
     expect(createArgs.data).toHaveProperty('userId', AUTHOR);
     expect(createArgs.data).not.toHaveProperty('isModerator');
+  });
+});
+
+describe('a review read', () => {
+  // The old Thread.commentCount stopped moving when review comments moved to CommentV3.
+  it('counts its comments on CommentV3, as the review list does', async () => {
+    mockDbRead.resourceReview.findFirst.mockResolvedValueOnce({
+      id: 7,
+      user: { id: 2 },
+      model: { status: 'Published' },
+    } as never);
+    mockDbRead.$queryRaw.mockResolvedValueOnce([{ reviewId: 7, count: 3 }] as never);
+    await expect(getResourceReview({ id: 7 })).resolves.toMatchObject({
+      thread: { commentCount: 3 },
+    });
+    expect(mockDbRead.resourceReview.findFirst.mock.calls[0][0].select).not.toHaveProperty(
+      'thread'
+    );
   });
 });

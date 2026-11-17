@@ -129,6 +129,54 @@ export async function getStorylineReportHolds(reportIds: number[]): Promise<Stor
   return rows.map(({ depth, ...h }) => ({ ...h, number: depth + 1 }));
 }
 
+export type DeletedReportStoryline = {
+  reportId: number;
+  /** The title when it was deleted; null for a report from before titles were kept. */
+  title: string | null;
+  /** The copy kept for records ("HeldStoryline"), while it lasts. */
+  held: {
+    id: number;
+    userId: number;
+    deletedAt: Date;
+    deletedByOwner: boolean;
+    chapters: number;
+  } | null;
+};
+
+/**
+ * What these storyline reports knew of their storyline once it was deleted: its title, and the copy
+ * the delete kept for records, if any. Reports whose storyline still exists are left out.
+ */
+export async function getDeletedReportStorylines(
+  reportIds: number[]
+): Promise<DeletedReportStoryline[]> {
+  if (!reportIds.length) return [];
+  const { rows } = await sql<{
+    reportId: number;
+    title: string | null;
+    id: number | null;
+    userId: number | null;
+    deletedAt: Date | null;
+    deletedById: number | null;
+    chapters: number;
+  }>`
+    SELECT sr."reportId", sr."storylineTitle" AS title, hs.id, hs."userId", hs."deletedAt",
+      hs."deletedById",
+      (SELECT count(*) FROM "HeldStorylineChapter" hc WHERE hc."storylineId" = hs.id)::int AS chapters
+    FROM "StorylineReport" sr
+    LEFT JOIN "HeldStoryline" hs ON hs.id = sr."heldStorylineId"
+    WHERE sr."reportId" = ANY(${sql.val(reportIds)}::int[]) AND sr."storylineId" IS NULL
+  `.execute(dbRead);
+  return rows.map(({ reportId, title, id, userId, deletedAt, deletedById, chapters }) => ({
+    reportId,
+    title,
+    held:
+      id != null && userId != null && deletedAt != null
+        ? { id, userId, deletedAt, deletedByOwner: deletedById === userId, chapters }
+        : null,
+  }));
+}
+
 /** The storyline a report is about, read from the primary: the moderator is acting on it. */
 export async function getReportStorylineId(reportId: number): Promise<number | null> {
   const row = await dbWrite

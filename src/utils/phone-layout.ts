@@ -22,7 +22,19 @@ export function isPhoneScreen(): boolean {
   if (typeof window === 'undefined') return false;
   const { width, height } = window.screen;
   return (
+    requestsMobileSite() &&
     window.matchMedia(COARSE_POINTER_QUERY).matches &&
     Math.min(width, height) < PHONE_SCREEN_SHORT_SIDE
   );
+}
+
+/**
+ * False when the browser asks for the desktop site: a phone's "Desktop mode" sends a desktop user
+ * agent but leaves `screen` alone, so the screen size alone would keep it on the phone layout.
+ */
+function requestsMobileSite(): boolean {
+  const { navigator } = window;
+  const hints = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (typeof hints?.mobile === 'boolean') return hints.mobile;
+  return /Mobi|Android|iPhone|iPod/i.test(navigator.userAgent);
 }

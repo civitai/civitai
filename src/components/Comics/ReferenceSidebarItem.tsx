@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge } from '@mantine/core';
+import { Menu, Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconDotsVertical, IconTrash, IconUnlink, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';

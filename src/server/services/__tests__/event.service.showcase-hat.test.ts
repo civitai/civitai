@@ -26,6 +26,7 @@ const { engine, settings, sync, showcase, creator } = vi.hoisted(() => ({
     })),
     SHOWCASE_EVENT: { name: 'birthday2026' },
     SHOWCASE_SETTING: 'eventShowcaseHat',
+    SHOWCASE_OFF: 'off',
   },
   creator: { bustUserCreator: vi.fn() },
 }));
@@ -49,7 +50,9 @@ vi.mock('~/server/services/user.service', () => ({
 vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticDetail: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({ getEntityCoverImage: vi.fn() }));
 
-const { getMyShowcaseHatArt, setShowcaseHat } = await import('~/server/services/event.service');
+const { getMyShowcaseHat, getMyShowcaseHatArt, setShowcaseHat } = await import(
+  '~/server/services/event.service'
+);
 
 const user = { id: 5 };
 const event = 'birthday2026';
@@ -97,6 +100,25 @@ describe('setShowcaseHat', () => {
     });
   });
 
+  it('turns the hat off without an ownership read, and refreshes the surfaces that show it', async () => {
+    await setShowcaseHat({ event, off: true, user });
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(settings.patchUserSettings).toHaveBeenCalledWith(5, {
+      mergeInto: { eventShowcaseHat: { [event]: 'off' } },
+      location: 'event.service:setShowcaseHat',
+    });
+    expect(showcase.refreshShowcaseHats).toHaveBeenCalledWith([5]);
+    expect(creator.bustUserCreator).toHaveBeenCalledWith(5);
+  });
+
+  it('turns it back on as the default hat, not a remembered pick', async () => {
+    await setShowcaseHat({ event, off: false, user });
+    expect(settings.patchUserSettings).toHaveBeenCalledWith(5, {
+      mergeInto: { eventShowcaseHat: { [event]: null } },
+      location: 'event.service:setShowcaseHat',
+    });
+  });
+
   it('refuses an event without a showcase, and one the caller cannot play', async () => {
     await expect(setShowcaseHat({ event: 'holiday2024', cosmeticId: null, user })).rejects.toThrow(
       'This event has no showcase hat'
@@ -117,5 +139,24 @@ describe('getMyShowcaseHatArt', () => {
   it('returns no hat for any other event, without a lookup', async () => {
     expect(await getMyShowcaseHatArt({ event: 'holiday2025', user })).toBeNull();
     expect(showcase.getShowcaseHatForUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMyShowcaseHat', () => {
+  it('reports off with no pick and no hat showing', async () => {
+    settings.getUserSettings.mockResolvedValueOnce({
+      eventShowcaseHat: { [event]: 'off' },
+    } as never);
+    showcase.resolveShowcaseHatIds.mockResolvedValueOnce(new Map());
+    expect(await getMyShowcaseHat({ event, user })).toEqual({
+      pick: null,
+      showing: null,
+      off: true,
+    });
+  });
+
+  it('reports a pick as on', async () => {
+    settings.getUserSettings.mockResolvedValueOnce({ eventShowcaseHat: { [event]: 3 } } as never);
+    expect(await getMyShowcaseHat({ event, user })).toEqual({ pick: 3, showing: 3, off: false });
   });
 });

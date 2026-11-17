@@ -15,7 +15,9 @@ export type OAuthEventType =
   | 'token.refreshed'
   | 'token.revoked'
   | 'origin.rejected'
-  | 'worker.token.issued';
+  | 'worker.token.issued'
+  | 'invite.sent'
+  | 'invite.used';
 
 interface OAuthAuditEvent {
   type: OAuthEventType;
@@ -42,7 +44,7 @@ export function logOAuthEvent(event: OAuthAuditEvent): void {
 
   // Dual-write to Loki (via the @civitai/axiom stderr line) + Axiom. Fire-and-forget — never blocks the
   // request; a logging failure must not affect the audited operation.
-  void logToAxiom({ event: 'oauth-audit', ...entry }).catch(() => {});
+  void logToAxiom({ event: 'oauth-audit', ...entry });
 
   // Mirror to a bounded-cardinality counter. The label is the event type with dots→underscores
   // (e.g. token.issued → token_issued) so it's a valid, stable Prometheus label value. This is the

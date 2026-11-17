@@ -24,3 +24,18 @@ describe('describeSubmitError', () => {
     expect(describeSubmitError({ detail: 'bad input' }, 400)).toBe('bad input');
   });
 });
+
+describe('describeSubmitError on a refused body', () => {
+  it('leaves callback configuration out of the reason it gives', () => {
+    const message = describeSubmitError({
+      title: 'One or more validation errors occurred.',
+      errors: {
+        'callbacks[0].url': ['https://hooks.example/cb?token=cb-marker is invalid'],
+        '$.callbacks': 'cb-marker',
+        'steps[0].input.epochs': ['must be at most 20'],
+      },
+    });
+    expect(message).not.toContain('cb-marker');
+    expect(message).toContain('steps[0].input.epochs: must be at most 20');
+  });
+});

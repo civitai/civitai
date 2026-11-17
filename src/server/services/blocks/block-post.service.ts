@@ -14,7 +14,12 @@ import {
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
-import { projectAppWorkflow } from '~/server/services/blocks/workflow.service';
+import { projectAppWorkflowWithPositions } from '~/server/services/blocks/workflow.service';
+import {
+  pendingOutputMessage,
+  restrictedOutputMessage,
+} from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
 import {
   BLOCK_POST_APP_ID_META_KEY,
   BLOCK_POST_MAX_IMAGES,
@@ -100,6 +105,12 @@ export type BlockPostActor = {
   appBlockId: string;
   /** The viewer's resolved browsing ceiling, for the published-image clamp. */
   browsingLevel: number;
+  /**
+   * The TOKEN's output ceiling (`blockOutputCeilingFromClaims(claims)`). It decides
+   * which output positions are RESTRICTED (and so refused); it does not change the
+   * index space, which is the stable positions of `AppWorkflow.outputs`.
+   */
+  outputCeiling: BlockOutputCeiling;
 };
 
 /** One resolved image, ready to be adopted or materialised. */
@@ -414,9 +425,10 @@ export async function resolveGalleryTarget(input: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Ownership + app-tag proof for ONE workflow, returning a slot array in the SAME
- * ORDER AND OF THE SAME LENGTH as the projection `queryAppWorkflows` hands the
- * block — so the block's `imageIndexes` line up with what it saw.
+ * Ownership + app-tag proof for ONE workflow, returning one slot per OUTPUT POSITION —
+ * the same order and length as `AppWorkflow.outputs`, restricted outputs included as
+ * `{ restricted: true }` — so the block's `imageIndexes` (and persist's `imageIndex`)
+ * name the output it saw at that position, and never move when a rating lands late.
  *
  * 🔴 THE LENGTH IS THE POINT, AND IT IS WHY THIS RETURNS `| null` SLOTS RATHER
  * THAN A FILTERED LIST. `queryAppWorkflows` returns `items.map(projectAppWorkflow)`
@@ -454,7 +466,9 @@ export async function resolveOwnedWorkflowOutputs(input: {
   appBlockId: string;
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-}): Promise<Array<{ url: string; width: number | null; height: number | null } | null>> {
+  /** The token's output ceiling — see `BlockPostActor.outputCeiling`. */
+  ceiling: BlockOutputCeiling;
+}): Promise<OwnedWorkflowOutputSlot[]> {
   const owned = await blockWorkflowOwnedByAppUser({
     userId: input.userId,
     appBlockId: input.appBlockId,
@@ -463,11 +477,14 @@ export async function resolveOwnedWorkflowOutputs(input: {
   if (!owned) forbidden('workflow is not in this app subqueue');
 
   const workflow = (await input.getWorkflow(input.workflowId)) as Parameters<
-    typeof projectAppWorkflow
+    typeof projectAppWorkflowWithPositions
   >[0];
   assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: input.appId });
 
-  const projected = projectAppWorkflow(workflow);
+  const { workflow: projected, positions } = projectAppWorkflowWithPositions(
+    workflow,
+    input.ceiling
+  );
 
   // 🔴 TERMINALITY GATE — the invariant that makes the preview and the write
   // agree on WHICH IMAGES. A still-running workflow can gain an output between
@@ -496,7 +513,39 @@ export async function resolveOwnedWorkflowOutputs(input: {
   //
   // BLANKED IN PLACE, NOT FILTERED OUT — see the 🔴 note in the docblock. The
   // slot survives so index `n` still means the output the block saw at index `n`.
-  return projected.images.map((img) => (isAllowedOutputHost(img.url) ? img : null));
+  //
+  // 🔴 THE INDEX SPACE IS THE STABLE OUTPUT POSITIONS (`AppWorkflow.outputs`), NOT
+  // `images`. A RESTRICTED position keeps its slot as a marker with NO url, so a
+  // rating that lands after the block read the list never moves an index, and the
+  // caller refuses the position rather than reaching the next output.
+  //
+  // A PENDING position (not rated yet, and its rating could still restrict it) and a
+  // BLOCKED one are markers with no url too — refused by name, never skipped past.
+  return positions.map(({ image, output }): OwnedWorkflowOutputSlot => {
+    if ('restricted' in output) return { restricted: true };
+    if ('pending' in output) return { pending: true };
+    if ('blocked' in output) return { blocked: true };
+    return isAllowedOutputHost(image.url) ? image : null;
+  });
+}
+
+/**
+ * One output position as {@link resolveOwnedWorkflowOutputs} returns it: usable media,
+ * `{ restricted: true }` (refuse it — there is no url), or `null` (off the host
+ * allowlist).
+ */
+export type OwnedWorkflowOutputSlot =
+  | { url: string; width: number | null; height: number | null }
+  | { restricted: true }
+  | { pending: true }
+  | { blocked: true }
+  | null;
+
+/** True for a slot that carries media a block may use. */
+export function isUsableOutputSlot(
+  slot: OwnedWorkflowOutputSlot
+): slot is { url: string; width: number | null; height: number | null } {
+  return slot !== null && 'url' in slot;
 }
 
 /** The gated edge-url width used for consent thumbnails + the published-image read. */
@@ -688,6 +737,7 @@ export async function resolveBlockPostSources(input: {
         appBlockId: input.actor.appBlockId,
         workflowId: source.workflowId,
         getWorkflow: input.getWorkflow,
+        ceiling: input.actor.outputCeiling,
       });
       // 🔴 DID THE BLOCK NAME INDEXES, OR ASK FOR "EVERYTHING"? The two cases get
       // DIFFERENT treatment of a blanked slot below, and this is the only place
@@ -714,6 +764,16 @@ export async function resolveBlockPostSources(input: {
       if (outputs.length === 0 || outputs.every((o) => o == null)) {
         badRequest('workflow has no available outputs to post');
       }
+      // "Every available output" is not knowable while one is still being rated, so
+      // an omitted `imageIndexes` waits for the ratings rather than posting a subset.
+      if (!namedIndexes) {
+        const pending = outputs.findIndex((o) => o !== null && 'pending' in o);
+        if (pending !== -1) badRequest(pendingOutputMessage(pending));
+      }
+      // Every position unusable, and the block named none: nothing to post.
+      if (!namedIndexes && !outputs.some(isUsableOutputSlot)) {
+        badRequest('workflow has no available outputs to post');
+      }
       const selection = resolveWorkflowOutputSelection({
         requested: source.imageIndexes,
         availableCount: outputs.length,
@@ -725,6 +785,19 @@ export async function resolveBlockPostSources(input: {
       if (selection.length === 0) badRequest('no valid output indexes to post');
       for (const idx of selection) {
         const o = outputs[idx];
+        if (o && 'restricted' in o) {
+          // A NAMED restricted position is refused, never swapped for another output.
+          // An omitted `imageIndexes` means "every available output", which a
+          // restricted one is not, so it is skipped.
+          if (namedIndexes) badRequest(restrictedOutputMessage(idx));
+          continue;
+        }
+        if (o && 'pending' in o) badRequest(pendingOutputMessage(idx));
+        if (o && 'blocked' in o) {
+          // Blocked keeps its slot and the refusal a missing output always had.
+          if (namedIndexes) badRequest('workflow has no available outputs to post');
+          continue;
+        }
         if (!o) {
           // 🔴 REFUSE ONLY WHAT THE BLOCK ACTUALLY NAMED. An EXPLICIT index landing
           // on a blanked slot must refuse and never fall through to the next one:

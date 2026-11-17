@@ -44,6 +44,7 @@ describe('account section registry', () => {
     // "tipalti" appears in no section label; without keyword search this returns nothing.
     expect(searchAccountSections('tipalti').map((s) => s.id)).toEqual(['billing']);
     expect(searchAccountSections('hidden tags').map((s) => s.id)).toEqual(['content']);
+    expect(searchAccountSections('rate limit').map((s) => s.id)).toEqual(['usage']);
     expect(searchAccountSections('zzzz')).toEqual([]);
   });
 });

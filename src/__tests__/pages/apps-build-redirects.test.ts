@@ -46,7 +46,7 @@ const RETIRED_ROUTES = [
 /**
  * Where each retired route lands. 🔴 The two "my apps" routes land on the app LIST
  * (`?view=apps`), not bare `/apps/build`: the page renders the App Assistant for every viewer it
- * admits to it, authors included, so a bare destination would open an author's "My apps"
+ * admits to it, authors included, so a bare destination would open an author's "My builds"
  * bookmark on the assistant. Literal values, not the constant, so a wrong constant cannot pass.
  */
 const DESTINATIONS: Record<(typeof RETIRED_ROUTES)[number], string> = {
@@ -108,7 +108,7 @@ describe('the /apps/build consolidation redirects', () => {
     expect(control.parsedDestination.query).not.toEqual({ fork: 'pose-board-2' });
   });
 
-  it('the "my apps" redirects land on the same URL every in-app "My apps" link uses', () => {
+  it('the "my apps" redirects land on the same URL every in-app "My builds" link uses', () => {
     // `next.config.mjs` cannot import the TypeScript constant, so it spells the URL literally;
     // this is what keeps the two from drifting apart.
     expect(MY_APPS_HREF).toBe('/apps/build?view=apps');

@@ -44,14 +44,17 @@ export default function ManageHomeBlocksModal() {
 }
 
 type Props = { onClose: VoidFunction };
-function ManageHomeBlocks({ onClose }: Props) {
+export function ManageHomeBlocks({ onClose }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { data: homeBlocks = [], isLoading: isLoadingOwnedHomeBlocks } =
+  const { data: homeBlocks, isLoading: isLoadingOwnedHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,
       ownedOnly: true,
     });
+  // Saving sets the whole list, so it needs the list: not after an error, and not while a first
+  // load made offline sits paused (no data, neither loading nor errored).
+  const ownedHomeBlocksMissing = homeBlocks === undefined;
   const { data: systemHomeBlocks = [], isLoading: isLoadingSystemHomeBlocks } =
     trpc.homeBlock.getSystemHomeBlocks.useQuery({
       permanent: false,
@@ -60,7 +63,7 @@ function ManageHomeBlocks({ onClose }: Props) {
   const utils = trpc.useUtils();
 
   const isLoading = isLoadingSystemHomeBlocks || isLoadingOwnedHomeBlocks;
-  const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks);
+  const [items, setItems] = useState<HomeBlockGetAll>(homeBlocks ?? []);
   const [activeAccordion, setActionAccordion] = useState<string | null>('system-home-blocks');
   const { mutate: setHomeBlocksOrder, isPending: isUpdating } =
     trpc.homeBlock.setHomeBlockOrder.useMutation({
@@ -100,7 +103,8 @@ function ManageHomeBlocks({ onClose }: Props) {
 
   useEffect(() => {
     if (!isLoadingOwnedHomeBlocks) {
-      setItems(homeBlocks);
+      // Not a `= []` default on `data`: a fresh array each render would re-run this for ever.
+      setItems(homeBlocks ?? []);
     }
   }, [homeBlocks, isLoadingOwnedHomeBlocks]);
 
@@ -218,7 +222,20 @@ function ManageHomeBlocks({ onClose }: Props) {
           collisionDetection={rectIntersection}
         >
           <SortableContext items={items} strategy={verticalListSortingStrategy}>
-            {items.length === 0 && (
+            {ownedHomeBlocksMissing && (
+              <AlertWithIcon
+                py={5}
+                my="xs"
+                color="red"
+                title="Your home blocks could not be loaded"
+                icon={<IconInfoCircle />}
+                iconSize="lg"
+                radius="md"
+              >
+                <Text>Close this and try again. Saving is off until your blocks load.</Text>
+              </AlertWithIcon>
+            )}
+            {!ownedHomeBlocksMissing && items.length === 0 && (
               <AlertWithIcon
                 py={5}
                 my="xs"
@@ -242,7 +259,7 @@ function ManageHomeBlocks({ onClose }: Props) {
       </Stack>
 
       <Stack>
-        <Button mt="sm" disabled={isUpdating} onClick={handleSave}>
+        <Button mt="sm" disabled={isUpdating || ownedHomeBlocksMissing} onClick={handleSave}>
           {isUpdating ? 'Updating settings...' : 'Save'}
         </Button>
       </Stack>

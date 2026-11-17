@@ -1,10 +1,14 @@
 import { Button, Center, Loader, Text } from '@mantine/core';
 import clsx from 'clsx';
-import { IconBooks } from '@tabler/icons-react';
+import { IconBooks, IconBrush } from '@tabler/icons-react';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineEditorBanner } from '~/components/Storyline/editor/StorylineEditorBanner';
 import { storylineCardClass } from '~/components/Storyline/StorylineChips';
+import { StorylineSparkCredit } from '~/components/Storyline/StorylineSparkCredit';
+import type { StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -48,6 +52,49 @@ function StorylineChapterOneWritten({ storyline }: { storyline: { id: number; ti
 }
 
 /**
+ * The image a spark storyline started from, above the upload. Many who start one have no image of
+ * their own, so a remixable spark offers a take on it, brought in through Import from Generator.
+ */
+function StorylineSparkStart({
+  spark,
+}: {
+  spark: { image: StorylineThumbImage; user: { username: string | null } };
+}) {
+  const features = useFeatureFlags();
+  // The spark payload lacks the fields RemixMenu's safety tiering reads, so it uses the full image.
+  const { data: image } = trpc.image.get.useQuery(
+    { id: spark.image.id },
+    { enabled: !!features.imageGeneration }
+  );
+  const source =
+    features.imageGeneration && image && image.url !== null && isRemixMenuVisible(image)
+      ? image
+      : null;
+
+  return (
+    <section
+      aria-label="Your story starts from this image"
+      className={clsx(storylineCardClass, 'flex flex-col gap-3 p-3')}
+    >
+      <StorylineSparkCredit spark={spark} className="" />
+      {source && (
+        <>
+          <Text size="sm" c="dimmed">
+            No image of your own yet? Make your take on this one, then add it with Import from
+            Generator below.
+          </Text>
+          <RemixMenu image={source} source="remix:storyline-spark">
+            <Button variant="light" fullWidth leftSection={<IconBrush size={16} />}>
+              Remix this image
+            </Button>
+          </RemixMenu>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
  * Wraps what writes chapter 1 on `/posts/create?storyline=`: the banner and the upload, or the way
  * to the storyline once its first chapter exists. Without a storyline it is transparent.
  */
@@ -76,6 +123,7 @@ export function StorylineCreateGate({
           storyline={{ id: storyline.id, title: storyline.title }}
         />
       )}
+      {storyline?.spark && <StorylineSparkStart spark={storyline.spark} />}
       {children}
     </>
   );

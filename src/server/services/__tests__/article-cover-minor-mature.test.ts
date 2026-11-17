@@ -62,10 +62,14 @@ const cover = (nsfwLevel: number, minor: boolean | null, imageOwner = OWNER) => 
   tags: [],
 });
 
-async function detailCover(image: ReturnType<typeof cover>, viewer: Viewer) {
-  // Answers only what the query selects, so a cover read without `minor` comes back without it.
+async function detailImage(
+  image: ReturnType<typeof cover>,
+  viewer: Viewer,
+  field: 'coverImage' | 'bannerImage'
+) {
+  // Answers only what the query selects, so an image read without `minor` comes back without it.
   dbMock.dbRead.article.findFirst.mockImplementation((async (args: {
-    select?: { coverImage?: { select?: { minor?: boolean } } };
+    select?: Record<string, { select?: { minor?: boolean } } | undefined>;
   }) => {
     const { minor, ...unflagged } = image;
     return {
@@ -77,7 +81,9 @@ async function detailCover(image: ReturnType<typeof cover>, viewer: Viewer) {
       tags: [],
       content: '',
       metadata: null,
-      coverImage: args.select?.coverImage?.select?.minor ? image : unflagged,
+      coverImage: null,
+      bannerImage: null,
+      [field]: args.select?.[field]?.select?.minor ? image : unflagged,
     };
   }) as never);
   dbMock.dbRead.imageConnection.findMany.mockResolvedValue([] as never);
@@ -86,8 +92,13 @@ async function detailCover(image: ReturnType<typeof cover>, viewer: Viewer) {
     userId: viewer?.id,
     isModerator: viewer?.isModerator,
   });
-  return article.coverImage;
+  return article[field];
 }
+
+const detailCover = (image: ReturnType<typeof cover>, viewer: Viewer) =>
+  detailImage(image, viewer, 'coverImage');
+const detailBanner = (image: ReturnType<typeof cover>, viewer: Viewer) =>
+  detailImage(image, viewer, 'bannerImage');
 
 async function listCover(image: ReturnType<typeof cover>, viewer: Viewer) {
   (dbMock.dbRead.$queryRaw as unknown as ReturnType<typeof vi.fn>).mockResolvedValue([
@@ -121,6 +132,7 @@ beforeEach(() => {
 
 describe.each([
   ['getArticleById', detailCover],
+  ['getArticleById banner', detailBanner],
   ['getArticles', listCover],
 ] as const)('%s', (_label, coverFor) => {
   it.each([['a signed-out viewer'], ['a stranger']] as const)(

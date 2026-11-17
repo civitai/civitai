@@ -206,6 +206,13 @@ describe('sendAsCivitai', () => {
     );
   });
 
+  it('refuses the feedback capture account, sending nothing', async () => {
+    await expect(sendAsCivitai({ actorId: MOD_A, userId: -2, message: 'hi' })).rejects.toThrow(
+      /feedback page captures/
+    );
+    expect(h.createMessage).not.toHaveBeenCalled();
+  });
+
   it('links the message to the report it was sent from', async () => {
     await sendAsCivitai({ actorId: MOD_A, userId: USER, message: 'hi', context: { reportId: 77 } });
     const { rows } = await db.query(

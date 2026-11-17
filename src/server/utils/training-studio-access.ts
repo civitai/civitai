@@ -1,5 +1,7 @@
+import { buildFliptContext } from '@civitai/flipt/context';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { OnboardingSteps } from '~/server/common/enums';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import {
   computeUserFeatureFlagsOverlay,
@@ -53,6 +55,25 @@ export async function allowTrainingStudio(
   if (!{ ...hostFlags, ...overlay }.trainingStudioUi)
     return refuse(res, 403, { error: 'Training Studio is not available on this account' });
   return true;
+}
+
+/**
+ * Closed-beta check for main-app endpoints only the standalone Studio calls but any session could
+ * reach. Mirrors apps/training-studio/src/lib/server/flipt.ts: the Flipt segment when evaluable, else
+ * moderators.
+ */
+export async function isStandaloneStudioAllowed(user: SessionUser): Promise<boolean> {
+  try {
+    await ensureFliptInitialized();
+    const evaluated = isFliptSync(
+      FLIPT_FEATURE_FLAGS.TRAINING_STUDIO,
+      String(user.id),
+      buildFliptContext(user)
+    );
+    return evaluated ?? user.isModerator === true;
+  } catch {
+    return user.isModerator === true;
+  }
 }
 
 function refuse(res: NextApiResponse, status: number, body: { error: string }): false {

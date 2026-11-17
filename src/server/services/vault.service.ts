@@ -28,6 +28,7 @@ import { ModelStatus, ModelUsageControl, VaultItemStatus } from '~/shared/utils/
 import { formatKBytes } from '~/utils/number-helpers';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
+import { isModelWithheld } from '~/shared/utils/model-withhold';
 
 type VaultWithUsedStorage = {
   userId: number;
@@ -143,10 +144,13 @@ export const getModelVersionDataForVault = async ({
     throw throwNotFoundError('Model version has no files.');
   }
 
-  const parsedFiles = modelVersion.files.map((file) => ({
-    ...file,
-    metadata: (file.metadata || {}) as FileMetadata,
-  }));
+  // Training data is never a version's stored file: its downloads go through the scan gate.
+  const parsedFiles = modelVersion.files
+    .filter((file) => file.type !== 'Training Data')
+    .map((file) => ({
+      ...file,
+      metadata: (file.metadata || {}) as FileMetadata,
+    }));
 
   const mainFile = getPrimaryFile(parsedFiles, { metadata: filePreferences });
 
@@ -224,6 +228,8 @@ export const addModelVersionToVault = async ({
       sizeKB: file.sizeKB,
       url: file.url,
       displayName: getFileDisplayName({ file, modelType: modelVersion.model.type }),
+      pickleScanResult: file.pickleScanResult,
+      virusScanResult: file.virusScanResult,
     };
   });
   const modelSizeKb = modelVersionFiles.reduce((acc, file) => acc + (file.sizeKB ?? 0), 0);
@@ -314,7 +320,7 @@ export const refreshVaultItems = async ({
 };
 
 export const getPaginatedVaultItems = async (
-  input: GetPaginatedVaultItemsSchema & { userId?: number }
+  input: GetPaginatedVaultItemsSchema & { userId?: number; isModerator?: boolean }
 ) => {
   const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
   const { take, skip } = getPagination(limit, page);
@@ -392,10 +398,24 @@ export const getPaginatedVaultItems = async (
     orderBy,
   });
 
+  // A taken-down model's media is moderators-only, vault included, as its downloads are.
+  const takenDown = new Set(
+    input.isModerator || !items.length
+      ? []
+      : (
+          await dbRead.model.findMany({
+            where: { id: { in: [...new Set(items.map((item) => item.modelId))] } },
+            select: { id: true, mode: true },
+          })
+        )
+          .filter(isModelWithheld)
+          .map((model) => model.id)
+  );
+
   const itemsWithCoverImages = await Promise.all(
     items.map(async (item) => {
       const { url } =
-        item.status === VaultItemStatus.Stored
+        item.status === VaultItemStatus.Stored && !takenDown.has(item.modelId)
           ? await getGetUrlByKey(
               constants.vault.keys.cover
                 .replace(':modelVersionId', item.modelVersionId.toString())

@@ -205,7 +205,6 @@ import estimateHandler from '~/pages/api/v1/blocks/workflows/estimate';
 import submitHandler from '~/pages/api/v1/blocks/workflows/submit';
 import queryHandler from '~/pages/api/v1/blocks/workflows/query';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { BLOCK_BUZZ_CAP_PER_DAY } from '~/shared/constants/block-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
@@ -537,7 +536,9 @@ describe('the rate-limit postures reach the wire unchanged', () => {
     mockCheckBlockPollRateLimit.mockResolvedValue({ allowed: false });
     const out = await call(pollHandler, { workflowId: OWN_ID }, '/api/v1/blocks/workflows/poll');
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ snapshot: { workflowId: OWN_ID, status: 'processing' } });
+    expect(out.json).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
     expect(mockGetWorkflow).not.toHaveBeenCalled();
   });
 
@@ -549,7 +550,9 @@ describe('the rate-limit postures reach the wire unchanged', () => {
       '/api/v1/blocks/workflows/cancel'
     );
     expect(out.status).toBe(200);
-    expect(out.json).toEqual({ snapshot: { workflowId: OWN_ID, status: 'processing' } });
+    expect(out.json).toStrictEqual({
+      snapshot: { workflowId: OWN_ID, status: 'processing', throttled: true },
+    });
     expect(mockCancelWorkflow).not.toHaveBeenCalled();
   });
 
@@ -603,6 +606,8 @@ describe('the account-restriction check reaches the wire', () => {
 describe('the budget and cap ladder reaches the wire as a PRICED 200, not an error', () => {
   /** The whatIf price the orchestrator quotes for the preflight step. */
   const QUOTED = 999;
+  /** The per-user daily app Buzz cap this suite's viewer is held to (the Free tier's). */
+  const FREE_DAILY_CAP = 50_000;
 
   beforeEach(() => {
     mockOrchSubmitWorkflow.mockResolvedValue({
@@ -649,8 +654,8 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
   it('LAYER 2 — over the PER-VIEWER daily Buzz cap: 200, priced, refused by reserveBlockBuzzSpend', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 5000 }));
     // The per-(user, UTC-day) reservation is an atomic INCRBY on sysRedis; drive its
-    // running total past BLOCK_BUZZ_CAP_PER_DAY so the platform cap is what refuses.
-    redisMock.sysRedis.incrBy.mockImplementation(async () => BLOCK_BUZZ_CAP_PER_DAY + QUOTED);
+    // running total past the Free tier's daily cap (50,000) so the platform cap is what refuses.
+    redisMock.sysRedis.incrBy.mockImplementation(async () => FREE_DAILY_CAP + QUOTED);
 
     const out = await call(
       submitHandler,
@@ -664,7 +669,7 @@ describe('the budget and cap ladder reaches the wire as a PRICED 200, not an err
     // The LAYER, named: this is the per-user platform ceiling, not the per-call
     // budget above it and not the per-app aggregate below it.
     expect(out.json.snapshot.error).toContain('daily Buzz cap reached');
-    expect(out.json.snapshot.error).toContain(String(BLOCK_BUZZ_CAP_PER_DAY));
+    expect(out.json.snapshot.error).toContain(String(FREE_DAILY_CAP));
     // Still no real submit — the reservation is taken BEFORE the orchestrator call.
     expect(mockOrchSubmitWorkflow).toHaveBeenCalledTimes(1);
   });

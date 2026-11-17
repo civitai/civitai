@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as HotReads5 from '@civitai/db-queries/hot-reads-5';
 import type * as PlacementService from '~/server/services/placement.service';
 import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -18,6 +19,15 @@ const placementReads = vi.hoisted(() => ({
   countPlacements: vi.fn(),
 }));
 vi.mock('@civitai/db-queries/placement', () => placementReads);
+// `getPlacementConfig`'s KeyValue read, through Kysely: no stored row, so the compiled defaults
+// apply.
+const { placementConfigRow } = vi.hoisted(() => ({
+  placementConfigRow: vi.fn(async () => undefined),
+}));
+vi.mock('@civitai/db-queries/hot-reads-5', async (importOriginal) => ({
+  ...(await importOriginal<typeof HotReads5>()),
+  getKeyValue: placementConfigRow,
+}));
 const imageTarget = placementReads.getImagePlacementTarget;
 const spaceRows = placementReads.listPlacementSpacesFor;
 vi.mock('~/server/services/placement.service', async (importOriginal) => ({
@@ -281,7 +291,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
     spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 4 },
     ]);
-    placementCount.mockResolvedValue(3);
+    placementCount.mockImplementation(async (_db, where) => ('data' in where ? 0 : 3));
 
     expect((await resolve()).freeSlotsRemaining).toBe(1);
   });
@@ -312,7 +322,7 @@ describe('resolvePlacementSpaceFor — free capacity', () => {
     spaceRows.mockResolvedValue([
       { entityType: 'image', mode: 'review', price: 100, freeSlots: 1 },
     ]);
-    placementCount.mockResolvedValue(3);
+    placementCount.mockImplementation(async (_db, where) => ('data' in where ? 0 : 3));
 
     expect((await resolve()).freeSlotsRemaining).toBe(0);
   });

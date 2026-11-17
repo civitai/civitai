@@ -12,6 +12,7 @@
  * plain fetch + Bearer auth. Admin operations — failures throw.
  */
 import { env } from '~/env/server';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 
 export type XGuardMode = 'text' | 'prompt';
 export type XGuardOptions = unknown;
@@ -23,7 +24,8 @@ async function call<T>(method: 'GET' | 'PUT' | 'POST', path: string, body?: unkn
   if (!endpoint) throw new Error('Missing ORCHESTRATOR_ENDPOINT env');
   if (!token) throw new Error('Missing ORCHESTRATOR_ACCESS_TOKEN env');
 
-  const res = await fetch(`${endpoint}${path}`, {
+  const res = await outboundFetch(`${endpoint}${path}`, {
+    timeoutMs: 30_000,
     method,
     headers: {
       Authorization: `Bearer ${token}`,

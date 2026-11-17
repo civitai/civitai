@@ -5,12 +5,12 @@ import {
   Loader,
   MultiSelect,
   Paper,
-  Popover,
   Stack,
   Text,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { IconInfoCircle } from '@tabler/icons-react';
 import type { ChartOptions } from 'chart.js';
 import {

@@ -79,6 +79,7 @@ vi.mock('~/server/db/client', () => ({
     $executeRaw: mockDbWriteExecuteRaw,
     $executeRawUnsafe: mockDbWriteExecuteRaw,
     challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
+    user: { findMany: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -140,6 +141,7 @@ vi.mock('~/server/games/daily-challenge/challenge-helpers', async (importOrigina
 
 vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
   distributeParticipationPrizes: vi.fn().mockResolvedValue([]),
+  refundBannedEntrantReviews: vi.fn().mockResolvedValue([]),
   promoteChallengeEntries: vi.fn().mockResolvedValue(0),
 }));
 
@@ -157,8 +159,11 @@ vi.mock('~/server/services/buzz.service', () => ({
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
 }));
 
-vi.mock('~/server/services/commentsv2.service', () => ({
-  upsertComment: vi.fn().mockResolvedValue(undefined),
+const { mockWriteJudgeComment } = vi.hoisted(() => ({
+  mockWriteJudgeComment: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('~/server/services/commentv3/comment-write.service', () => ({
+  writeJudgeComment: mockWriteJudgeComment,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -361,6 +366,11 @@ describe('reviewEntries — handing an entry to the engine', () => {
       (call[0] as unknown as string[]).join('').includes('UPDATE "CollectionItem"')
     );
     expect(noteWrite).toBeDefined();
+    expect(mockWriteJudgeComment).toHaveBeenCalledWith({
+      userId: 999,
+      imageId: 1,
+      content: 'nice',
+    });
   });
 });
 

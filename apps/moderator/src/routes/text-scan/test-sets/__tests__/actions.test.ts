@@ -43,7 +43,7 @@ const post = (
 const FREE_TEXT = {
   setId: '3',
   workspace: 'prompts',
-  entityType: 'CommentV2',
+  entityType: 'CommentV3',
   fields: JSON.stringify([{ heading: 'Comment', text: 'synthetic text' }]),
   expected: JSON.stringify({ scam: true }),
   origin: 'try',
@@ -85,7 +85,7 @@ describe('addCase', () => {
     expect(await post('addCase', FREE_TEXT)).toMatchObject({ success: true, caseId: 9 });
     expect(activity.recordModActivity).toHaveBeenCalledExactlyOnceWith({
       userId: 1,
-      entityType: 'CommentV2',
+      entityType: 'CommentV3',
       entityId: null,
       activity: 'textScan.testCase.add',
     });

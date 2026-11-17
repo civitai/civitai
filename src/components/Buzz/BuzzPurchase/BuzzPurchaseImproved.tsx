@@ -15,9 +15,9 @@ import {
   SimpleGrid,
   Title,
   Divider,
-  Tooltip,
   useComputedColorScheme,
 } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import {
   IconBolt,
   IconCreditCard,

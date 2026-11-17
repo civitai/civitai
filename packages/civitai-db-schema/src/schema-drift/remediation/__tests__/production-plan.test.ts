@@ -61,7 +61,6 @@ const SET_NULL_RELATIONS = [
 // this campaign. Pinning it as an intended DELETE target meant the tests were blessing a
 // plan that would revert a 2024 architectural decision — precisely the error recorded
 // against the CollectionItem fix. It is now on the exclusion list.
-// Thread.*: an entity-less thread is an orphan nothing can render, so its entity FKs declare Cascade.
 const CASCADE_RELATIONS = [
   'DownloadHistory.modelVersionId',
   'ImageEngagement.imageId',
@@ -72,8 +71,6 @@ const CASCADE_RELATIONS = [
   'ImageTool.imageId',
   'ModelBaseModelMetric.modelId',
   'TagsOnImageVote.imageId',
-  'Thread.challengeId',
-  'Thread.imageId',
 ];
 
 /** Orphan counts stand in for a live measurement so the plan reaches its statements. */

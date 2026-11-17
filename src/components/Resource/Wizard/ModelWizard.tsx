@@ -23,7 +23,7 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { resolveTrainedFileName } from '~/utils/file-display-helpers';
 import { QS } from '~/utils/qs';
-import { sanitizeDownloadFilename } from '~/utils/string-helpers';
+import { sanitizeOverrideName } from '~/utils/model-file-naming';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplatePicker } from './TemplateSelect';
@@ -339,7 +339,7 @@ const TrainSteps = ({
 
   const handleVersionNext = async () => {
     if (modelFile?.id) {
-      const next = fileName.trim() ? sanitizeDownloadFilename(fileName) : null;
+      const next = fileName.trim() ? sanitizeOverrideName(fileName, modelFile.name) : null;
       const current = modelFile.overrideName ?? null;
       if (next !== current) {
         try {

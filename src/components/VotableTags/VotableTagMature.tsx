@@ -1,14 +1,5 @@
-import {
-  Badge,
-  Divider,
-  Chip,
-  Group,
-  Text,
-  Popover,
-  Stack,
-  useMantineTheme,
-  lighten,
-} from '@mantine/core';
+import { Badge, Divider, Chip, Group, Text, Stack, useMantineTheme, lighten } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';

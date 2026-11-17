@@ -38,6 +38,10 @@ const PLAIN = {
   items: [{ name: 'a', when: new Date(0), next: null }],
 };
 
+/** One object at two paths, as a feed post shares its `user` with its first image. */
+const SHARED_USER = { id: 9, username: 'creator', at: new Date('2026-05-06T07:08:09.000Z') };
+const SHARED = { user: SHARED_USER, images: [{ id: 1, user: SHARED_USER }] };
+
 /** Not a POJO: devalue refuses it, which is what drives the fail-open fallback. */
 class NotAPojo {
   constructor(public readonly id: number) {}
@@ -63,13 +67,20 @@ vi.mock('~/shared/utils/trpc-union-transformer', async (importOriginal) => ({
  * The `trpc-fast-superjson-write` Flipt flag, read per access. `null` is what `isFliptSync`
  * returns for an unknown key or an uninitialized client, the state before the key exists.
  */
-const flag = vi.hoisted(() => ({ fastSuperjson: null as boolean | null }));
+const flag = vi.hoisted(() => ({
+  fastSuperjson: null as boolean | null,
+  sharedRefs: null as boolean | null,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
     isFliptSync: (key: string, ...rest: [string?, Record<string, string>?]) =>
-      key === 'trpc-fast-superjson-write' ? flag.fastSuperjson : actual.isFliptSync(key, ...rest),
+      key === 'trpc-fast-superjson-write'
+        ? flag.fastSuperjson
+        : key === 'trpc-fast-superjson-shared-refs'
+        ? flag.sharedRefs
+        : actual.isFliptSync(key, ...rest),
   };
 });
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
@@ -94,6 +105,7 @@ vi.mock('~/server/routers', async () => {
     appRouter: router({
       payload: publicProcedure.query(() => PAYLOAD),
       plain: publicProcedure.query(() => PLAIN),
+      shared: publicProcedure.query(() => SHARED),
       notAPojo: publicProcedure.query(() => new NotAPojo(7)),
       // A block-token query path (BLOCK_TOKEN_QUERY_PROCEDURES): always answered `no-store`.
       blocks: router({ listMyWorkflows: publicProcedure.query(() => PAYLOAD) }),
@@ -439,5 +451,48 @@ describe('trpc-fast-superjson-write — the outcome counter', () => {
       expect(singleData(await get('payload'))).toEqual(asSuperjson(PAYLOAD));
     });
     expect(delta).toEqual({});
+  });
+});
+
+describe('trpc-fast-superjson-shared-refs — a shared reference without superjson.serialize', () => {
+  const sharedSuperjson = asSuperjson(SHARED);
+
+  beforeEach(async () => {
+    h.writeDevalue = true;
+    flag.fastSuperjson = true;
+    const { resetResponseWriteFlagGatesForTests } = await import(
+      '~/server/trpc/response-write-format'
+    );
+    resetResponseWriteFlagGatesForTests();
+  });
+  afterEach(() => {
+    flag.fastSuperjson = null;
+    flag.sharedRefs = null;
+    vi.restoreAllMocks();
+  });
+
+  it('writes the identical body with the walk when the flag is on', async () => {
+    flag.sharedRefs = true;
+    // Positive control: the expected body really carries referentialEqualities.
+    expect(JSON.stringify(sharedSuperjson)).toContain('referentialEqualities');
+    const spy = vi.spyOn(superjson, 'serialize');
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('shared'))).toEqual(sharedSuperjson);
+    });
+    expect(spy).not.toHaveBeenCalled();
+    expect(delta).toEqual({ 'shared|fast': 1 });
+  });
+
+  it.each([
+    ['off', false],
+    ['unknown (no Flipt key yet)', null],
+  ])('bails to superjson.serialize as before when the flag is %s', async (_label, value) => {
+    flag.sharedRefs = value;
+    const spy = vi.spyOn(superjson, 'serialize');
+    const delta = await fastWriteDelta(async () => {
+      expect(singleData(await get('shared'))).toEqual(sharedSuperjson);
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(delta).toEqual({ 'shared|bail': 1 });
   });
 });

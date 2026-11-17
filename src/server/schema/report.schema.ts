@@ -4,6 +4,7 @@ import {
   parseSourceModelId,
 } from '@civitai/shared/merge-permission';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
+import { REQUESTABLE_LOCKS } from '@civitai/shared/lock-review';
 import { ExternalModerationType } from '~/server/common/enums';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -223,6 +224,12 @@ export const createEntityAppealSchema = z.object({
   entityId: z.number(),
   entityType: z.enum(EntityType),
   message: z.string().trim().min(1).max(MAX_APPEAL_MESSAGE_LENGTH),
+  /** A model owner's request to review these locked settings, rather than an appeal of a flag. */
+  locks: z.string().array().min(1).max(REQUESTABLE_LOCKS.length).optional(),
+  // Minted by the client once per appeal and resent on its retries: the appeal fee's ledger ids
+  // derive from it, so a retry after an unanswered submit cannot charge the fee again. Optional
+  // for clients from before keys, which get a new id per call as before.
+  idempotencyKey: z.string().uuid().optional(),
 });
 
 export type GetLatestAppealInput = z.output<typeof getLatestAppealSchema>;

@@ -53,7 +53,9 @@ export function SourceImagesInput({
 
   return (
     <ImageUploadMultipleInput
+      data-generation-field="images"
       label="Source images"
+      required={(meta?.min ?? 0) > 0}
       value={value}
       onChange={onChange}
       aspect="square"

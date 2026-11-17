@@ -4,6 +4,15 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+const sparkHooks = vi.hoisted(() => ({
+  onStorySparked: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkLost: vi.fn<(id: number) => Promise<void>>(async () => undefined),
+  onStorySparkRemoved: vi.fn<(spark: object) => Promise<void>>(async () => undefined),
+}));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...sparkHooks,
+}));
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -175,6 +184,7 @@ describe('setFirstChapter', () => {
     expect(result).toMatchObject({ storylineId: EMPTY, ceilingRaisedTo: undefined });
     expect(await chaptersOf(EMPTY)).toEqual([{ postId: 100, depth: 0 }]);
     expect(await ceilingOf(EMPTY)).toBe(PG13);
+    expect(sparkHooks.onStorySparked).toHaveBeenCalledWith(EMPTY);
   });
 
   it('refuses a storyline that already has a chapter', async () => {

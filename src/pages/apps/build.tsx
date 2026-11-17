@@ -40,6 +40,8 @@ type AssistantProps = {
   subagents: boolean;
   /** Replies run on the server runner (`appAssistantRemoteRunner`, the runner and the sandbox service configured). */
   remoteRunner: boolean;
+  /** App hibernate (`app-hibernate`): sleeping apps, Wake, and the assistant's tools for them. */
+  hibernate: boolean;
 };
 export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
 
@@ -48,7 +50,7 @@ export type AppsBuildPageProps = { mode: 'build' } | AssistantProps;
  * and `/apps/assistant` (all 301 here) and absorbed the on-platform half of `/apps/submit`.
  *
  *   assistant — the App Assistant workspace, for a signed-in viewer `canAccessAppAssistant`
- *               admits. An author also gets a "My apps" switch to the states below.
+ *               admits. An author also gets a "My builds" switch to the states below.
  *   A · pitch     (not an author)                   — recruit, and request access
  *   B · first-app (author, nothing yet)             — agent card, create
  *   C · workbench (author, has apps or submissions) — the app list + `New app`
@@ -67,8 +69,13 @@ export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
     if (!('assistant' in access)) return access;
 
     const user = session!.user!;
-    const { isAppBlocksDevTunnelEnabled } = await import('~/server/services/app-blocks-flag');
-    const canPreview = !!features?.appBlocksAuthor && (await isAppBlocksDevTunnelEnabled({ user }));
+    const { isAppBlocksDevTunnelEnabled, isAppHibernateEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    const [canPreview, hibernate] = await Promise.all([
+      features?.appBlocksAuthor ? isAppBlocksDevTunnelEnabled({ user }) : false,
+      isAppHibernateEnabled({ user }),
+    ]);
 
     const { env } = await import('~/env/server');
     const { isAssistantRunnerConfigured } = await import(
@@ -87,6 +94,7 @@ export const getServerSideProps = createServerSideProps<AppsBuildPageProps>({
           !!features?.appAssistantRemoteRunner &&
           isAssistantRunnerConfigured() &&
           !!env.APP_ASSISTANT_SANDBOX_URL,
+        hibernate,
       },
     };
   },
@@ -132,7 +140,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
         leftSection={<IconLayoutList size={16} />}
         data-testid="apps-build-show-apps"
       >
-        My apps
+        My builds
       </Button>
     ) : undefined;
 
@@ -154,6 +162,7 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
               sandboxUrl={props.sandboxUrl}
               subagents={props.subagents}
               remoteRunner={props.remoteRunner}
+              hibernate={props.hibernate}
               userId={currentUser?.id ?? null}
             />
           )}

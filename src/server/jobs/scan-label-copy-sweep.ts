@@ -1,4 +1,6 @@
-import { DeleteObjectCommand, ListObjectVersionsCommand, S3Client } from '@aws-sdk/client-s3';
+import { newS3Client } from '~/utils/s3-client-factory';
+import type { S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, ListObjectVersionsCommand } from '@aws-sdk/client-s3';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -71,7 +73,7 @@ export function scanLabelSweepStoreFromEnv(): ScanLabelSweepStore | null {
   const config = sweepConfig();
   if (!config) return null;
   return createScanLabelSweepStore({
-    client: new S3Client({
+    client: newS3Client({
       credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
       region: config.region,
       endpoint: config.endpoint,

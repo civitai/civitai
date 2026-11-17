@@ -955,10 +955,13 @@ describe('every /apps page on disk is classified', () => {
         '/apps/revenue',
         '/apps/review',
         '/apps/review/[publishRequestId]',
+        // The store, moved here from `/apps` (which became the viewer's app home). A bare
+        // prefix sorts before its longer sibling, so it precedes `store-preview`.
+        '/apps/store',
         '/apps/store-preview/[slug]',
         '/apps/submit',
       ]);
-      expect(RENDERING_ROUTES).toHaveLength(12);
+      expect(RENDERING_ROUTES).toHaveLength(13);
     });
 
     test('every RETURN of every page renders the layout (AST, not text)', () => {

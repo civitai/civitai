@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
+import { dispatchArgs } from '../ci/unit-batched.mjs';
+
 // Guards that a COMMIT ON `main` gets a CI verdict.
 //
 // THE REGRESSION THIS EXISTS FOR, stated so it is not re-derived from scratch.
@@ -28,6 +30,10 @@ import { describe, expect, it } from 'vitest';
 // push to `main` reaches a typecheck and the unit suite at all. Moving those
 // tiers into a different workflow, renaming the jobs, or splitting the file
 // keeps this green; losing main coverage does not, however it is lost.
+//
+// The unit suite is verified in batches, not per push (lint.yml header). The guard below asserts
+// that path (a schedule within MAX_BATCH_HOURS, a dispatch that runs the suite, a job that posts
+// commit statuses) instead of a push-reachable job.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORKFLOW_DIR = path.resolve(HERE, '../../.github/workflows');
@@ -150,10 +156,9 @@ describe('CI coverage for commits on main', () => {
   //
   // The app suites and the app typecheck are here because pull requests reach them through a
   // `paths:` filter (apps.yml): a PR that touches nothing they read never runs them, so the push
-  // run is the backstop for a filter entry that is missing.
+  // runs are the backstop for a filter entry that is missing (see the next test).
   it.each([
     ['the whole-repo typecheck', 'pnpm run typecheck'],
-    ['the unit suite', 'test:unit:run'],
     // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
     // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
     ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
@@ -172,28 +177,129 @@ describe('CI coverage for commits on main', () => {
     ).not.toHaveLength(0);
   });
 
-  // A backstop only works if it fires whatever the commit touched. The PR trigger's `paths:`
-  // list is the obvious thing to copy onto `push:`, and doing so would make a missing entry
-  // invisible on `main` too.
+  // The unit suite's verdict for `main`, batched (see the header). Each link of the chain is
+  // asserted, because each one failing alone leaves `main` with no unit verdict and no red.
+  describe('the unit suite, verified in batches on main', () => {
+    // The contract: a commit on `main` gets a unit verdict within this many hours plus a run.
+    // A tighter cron passes; a wider one is a contract change and must change this number.
+    const MAX_BATCH_HOURS = 2;
+    // Hours between firings of a cron that fires at a fixed minute every N hours, else null.
+    const everyHours = (cron: string): number | null => {
+      const m = /^\d{1,2} (\*|\*\/(\d{1,2})) \* \* \*$/.exec(cron.trim());
+      if (!m) return null;
+      return m[1] === '*' ? 1 : Number(m[2]);
+    };
+    const withinContract = (cron: string) => {
+      const n = everyHours(cron);
+      return n !== null && n <= MAX_BATCH_HOURS;
+    };
+
+    it.each([
+      ['41 * * * *', 1],
+      ['41 */2 * * *', 2],
+      ['41 */3 * * *', 3],
+      ['41 3 * * *', null],
+      ['*/5 * * * *', null],
+    ])('reads the interval of %s as %s hours', (cron, want) => {
+      expect(everyHours(cron)).toBe(want);
+    });
+    const schedules = (doc: Workflow) =>
+      (
+        ((doc.on as Record<string, unknown> | undefined)?.schedule as Array<{ cron: string }>) ?? []
+      ).map((s) => s.cron);
+
+    it('a workflow fires at least every MAX_BATCH_HOURS and runs the gate that dispatches the suite', () => {
+      const hit = workflows
+        .filter((w) => schedules(w.doc).some(withinContract))
+        .filter((w) =>
+          Object.values(w.doc.jobs ?? {}).some((j) =>
+            runScripts(j).includes('unit-batched.mjs gate')
+          )
+        )
+        .map((w) => w.file);
+      expect(
+        hit,
+        `no workflow scheduled at least every ${MAX_BATCH_HOURS} h runs \`scripts/ci/unit-batched.mjs gate\``
+      ).not.toHaveLength(0);
+      // The gate dispatches lint.yml with `only: unit`, the dispatch the next test checks runs it.
+      expect(dispatchArgs('main', 'owner/repo')).toEqual([
+        'workflow',
+        'run',
+        'lint.yml',
+        '--repo',
+        'owner/repo',
+        '--ref',
+        'main',
+        '-f',
+        'only=unit',
+      ]);
+    });
+
+    it('lint.yml runs test:unit:run on a dispatch with only: unit', () => {
+      const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
+      expect((lint?.on as Record<string, unknown>)?.workflow_dispatch).toBeDefined();
+      const runners = Object.values(lint?.jobs ?? {}).filter(
+        (j) =>
+          runScripts(j).includes('test:unit:run') &&
+          !(j.if ?? '').includes("github.event_name == 'pull_request'") &&
+          (j.if ?? '').includes("inputs.only == 'unit'")
+      );
+      expect(runners).not.toHaveLength(0);
+    });
+
+    it('a job after that dispatch posts the verdict as a commit status', () => {
+      const lint = workflows.find((w) => w.file === 'lint.yml')?.doc;
+      const posters = Object.values(lint?.jobs ?? {}).filter(
+        (j) =>
+          runScripts(j).includes('unit-batched.mjs verify') &&
+          (j.permissions as Record<string, string> | undefined)?.statuses === 'write' &&
+          !unconditionallyTrue(j['continue-on-error'])
+      );
+      expect(posters).not.toHaveLength(0);
+      // And when that job crashes or is cancelled, it still leaves an `error` status on HEAD.
+      const crashSteps = posters.flatMap((j) =>
+        (j.steps ?? []).filter(
+          (s) =>
+            String(s.if ?? '').includes('failure()') &&
+            String(s.if ?? '').includes('cancelled()') &&
+            String(s.run ?? '').includes('state=error')
+        )
+      );
+      expect(crashSteps).not.toHaveLength(0);
+    });
+  });
+
+  // A push to main may skip these only where a pull request skips them too: `push:` carries no
+  // filter, or exactly the PR trigger's `paths:` list (apps.yml shares it through a YAML anchor).
+  // A push run is never scoped, so the next push the list matches runs every app suite and goes
+  // red on a break a missing entry let through; the red lands on that later commit. A push
+  // filter NARROWER than the PR's, or one on a workflow whose PRs are unfiltered, would leave a
+  // change no run ever reaches, so either fails here.
   it.each([
     // apps.yml runs vitest itself with the `Scope app suites` step's selection, which is
     // always `app:*` on a push (scripts/ci/app-suite-scope.mjs).
     ['the app suites', 'vitest run $VITEST_PROJECT_ARGS'],
     ['the app typecheck', 'scripts/ci/typecheck-apps.mjs'],
-  ])('runs %s on EVERY push to main, with no path filter', (_label, needle) => {
+  ])('runs %s on a push to main behind no filter but the PR one', (_label, needle) => {
     const hit = pushReachable()
       .filter((j) => j.script.includes(needle))
       .filter((j) => {
-        const push = (j.doc.on as Record<string, unknown> | undefined)?.push as
-          | Record<string, unknown>
-          | null
-          | undefined;
-        return !push || (!('paths' in push) && !('paths-ignore' in push));
+        const on = j.doc.on as Record<string, unknown> | undefined;
+        const push = on?.push as Record<string, unknown> | null | undefined;
+        const pr = on?.pull_request as Record<string, unknown> | null | undefined;
+        if (!push || 'paths-ignore' in push) return !push;
+        if (!('paths' in push)) return true;
+        return (
+          Array.isArray(push.paths) &&
+          !!pr &&
+          !('paths-ignore' in pr) &&
+          JSON.stringify(push.paths) === JSON.stringify(pr.paths)
+        );
       })
       .map((j) => j.where);
     expect(
       hit,
-      `\`${needle}\` runs on a push to main only behind a path filter. Remove the filter from push:`
+      `\`${needle}\` runs on a push to main only behind a filter the pull_request trigger does not share. Give push: the PR's exact paths list, or none.`
     ).not.toHaveLength(0);
   });
 
@@ -272,11 +378,10 @@ describe('CI coverage for commits on main', () => {
   // for main, so with cancel-in-progress a PR push would cancel main's run and
   // main would sit with no verdict, the failure this file exists for.
   //
-  // Keying on `github.ref` IS allowed, and is what lint.yml and windows-dev-env
-  // use since 2026-10: a newer commit on main cancels the older one's run. The
-  // newest run checks a tree containing every older commit, so main keeps a
-  // verdict; intermediate commits show `cancelled`. That trade was made to stop
-  // per-commit main runs queueing behind PRs under a concurrent-job limit.
+  // Keying on `github.ref` IS allowed, and is what lint.yml, apps.yml,
+  // moderator-boot.yml and windows-dev-env use: one group for `main`, so per-commit
+  // main runs do not pile up behind PRs under a concurrent-job limit. windows-dev-env
+  // cancels the older main run; the other three queue on push (next test).
   // `github.sha` (one group per commit, nothing cancels) also passes.
   it('never lets a PR run cancel the run for a commit on main', () => {
     for (const { file, doc } of workflows) {
@@ -291,4 +396,18 @@ describe('CI coverage for commits on main', () => {
       ).toBe(true);
     }
   });
+
+  // On `main` these QUEUE instead of cancelling. `main` takes pushes faster than these runs take,
+  // so cancel-in-progress left most push runs `cancelled` with no verdict. PR runs still cancel
+  // their PR's stale run. A literal `true` here brings the no-verdict bursts back.
+  it.each(['lint.yml', 'apps.yml', 'moderator-boot.yml'])(
+    '%s queues push runs on main and cancels only non-push runs',
+    (file) => {
+      const doc = workflows.find((w) => w.file === file)?.doc;
+      expect(doc, `${file} not found`).toBeDefined();
+      expect(String(doc?.concurrency?.['cancel-in-progress'] ?? '').replace(/\s+/g, ' ')).toBe(
+        "${{ github.event_name != 'push' }}"
+      );
+    }
+  );
 });

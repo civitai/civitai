@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * FeedbackDrawer — the panel the support menu's "Report a bug" opens.
@@ -38,6 +39,9 @@ const { mocks } = vi.hoisted(() => ({
     networkErrors: {
       value: [] as Array<{ url: string; status: number; initiatorType: string }>,
     },
+    trpcErrors: {
+      value: [] as Array<{ path: string; code: string; httpStatus?: number; at: string }>,
+    },
     /** When set, `mutate` takes the failure path instead of the success one. */
     mutateError: { value: undefined as string | undefined },
   },
@@ -47,24 +51,22 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof TrpcModule>();
   return {
     ...actual,
-    trpc: {
-      feedback: {
-        getArea: { useQuery: () => ({ data: { enabled: mocks.areaEnabled.value } }) },
-        create: {
-          useMutation: (opts?: {
-            onSuccess?: () => void;
-            onError?: (error: { message: string }) => void;
-          }) => ({
-            mutate: (input: unknown) => {
-              mocks.createMutate(input);
-              if (mocks.mutateError.value) opts?.onError?.({ message: mocks.mutateError.value });
-              else opts?.onSuccess?.();
-            },
-            isPending: false,
-          }),
-        },
+    trpc: makeTrpcProxy({
+      'feedback.getArea': { useQuery: () => ({ data: { enabled: mocks.areaEnabled.value } }) },
+      'feedback.create': {
+        useMutation: (opts?: {
+          onSuccess?: () => void;
+          onError?: (error: { message: string }) => void;
+        }) => ({
+          mutate: (input: unknown) => {
+            mocks.createMutate(input);
+            if (mocks.mutateError.value) opts?.onError?.({ message: mocks.mutateError.value });
+            else opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
       },
-    },
+    }),
   };
 });
 
@@ -85,9 +87,12 @@ vi.mock('~/utils/faro/getFaroSessionId', () => ({
   getFaroSessionId: () => mocks.faroSessionId.value,
 }));
 
-vi.mock('~/utils/feedback/browserErrorLog', () => ({
+vi.mock('~/utils/feedback/browserErrorLog', async (importOriginal) => ({
+  // The real module too: `~/utils/trpc` imports its recorder through the tRPC error link.
+  ...(await importOriginal<object>()),
   readConsoleErrors: () => mocks.consoleErrors.value,
   readNetworkErrors: () => mocks.networkErrors.value,
+  readTrpcErrors: () => mocks.trpcErrors.value,
 }));
 
 vi.mock('~/utils/notifications', () => ({
@@ -132,6 +137,7 @@ beforeEach(() => {
   mocks.areaEnabled.value = true;
   mocks.faroSessionId.value = undefined;
   mocks.consoleErrors.value = [];
+  mocks.trpcErrors.value = [];
   mocks.networkErrors.value = [];
   mocks.mutateError.value = undefined;
   setRoute('/');
@@ -353,5 +359,41 @@ describe('when the area stopped collecting between the click and the render', ()
     // Present-then-absent would be a race; this state never arrives at all, so a
     // synchronous read after the awaited assertion above is safe.
     expect(document.querySelector('textarea')).toBeNull();
+  });
+});
+
+describe('the environment and failed calls attached to a report', () => {
+  const TRPC = [
+    { path: 'image.create', code: 'BAD_REQUEST', httpStatus: 400, at: '2026-11-08T23:39:00.000Z' },
+  ];
+
+  test('a report carries the failed tRPC calls, the screen and the time it was sent', async () => {
+    mocks.trpcErrors.value = TRPC;
+    await fileReport();
+    const sentContext = await context();
+    expect(sentContext).toMatchObject({
+      trpcErrors: TRPC,
+      device: expect.objectContaining({
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }),
+      clientAt: expect.any(String),
+    });
+  });
+
+  test('"Details we attach" shows the errors the report then sends', async () => {
+    mocks.consoleErrors.value = [{ message: 'TypeError: x is undefined', count: 2 }];
+    mocks.trpcErrors.value = TRPC;
+    await openDrawer();
+    await userEvent.click(page.getByRole('button', { name: 'Details we attach' }));
+
+    await expect.element(page.getByText('×2 TypeError: x is undefined')).toBeInTheDocument();
+    await expect.element(page.getByText('400 image.create BAD_REQUEST')).toBeInTheDocument();
+
+    await userEvent.fill(messageBox(), 'it broke');
+    await userEvent.click(page.getByRole('button', { name: 'Send report' }));
+    expect(await context()).toMatchObject({
+      consoleErrors: mocks.consoleErrors.value,
+      trpcErrors: TRPC,
+    });
   });
 });

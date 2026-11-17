@@ -19,6 +19,7 @@ type UserRow = {
   deletedAt: Date | null;
   email: string | null;
   username: string;
+  meta?: unknown;
 };
 type RestrictionRow = {
   id: number;
@@ -193,6 +194,10 @@ const {
 const { revokeTokens } = vi.hoisted(() => ({
   revokeTokens: vi.fn(async (_: { userId: number | string }) => true),
 }));
+// A mute calls the orchestrator to cancel the account's generations; never from a test.
+vi.mock('~/server/services/orchestrator/cancel-pending-workflows', () => ({
+  cancelPendingWorkflows: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
   revokeCivitaiUserTokens: revokeTokens,
@@ -240,6 +245,7 @@ import overturnHandler from '~/pages/api/mod/overturn-user-mute';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/server';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { moderationActionEmail } from '~/server/email/templates';
 import { setUserMuted } from '~/server/services/user.service';
 import {
@@ -421,6 +427,7 @@ describe('pending-review mute', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -440,7 +447,12 @@ describe('pending-review mute', () => {
       updateSource: 'test',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -457,6 +469,49 @@ describe('pending-review mute', () => {
     expect(result).toEqual({ muted: false, skipped });
     expect(store.restrictions).toHaveLength(0);
     expect(store.users.get(userId)?.muted ?? false).toBe(false);
+  });
+
+  describe('system accounts', () => {
+    afterEach(() => resetEnv());
+
+    it.each([
+      ['its configured id', 105, { username: 'Renamed' }],
+      ['the reserved name, with no id configured', undefined, { username: 'civitaimoderation' }],
+      [
+        'the system-account marker',
+        undefined,
+        { username: 'svc-bot', meta: { systemAccount: true } },
+      ],
+    ])('refuses to mute one recognized by %s', async (_label, configuredId, over) => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: configuredId });
+      store.users.set(105, makeUser(105, over));
+
+      for (const type of ['generation', 'scam'] as const) {
+        const result = await applyPendingReviewMute({
+          userId: 105,
+          triggers,
+          updateSource: 'test',
+          type,
+        });
+        expect(result).toEqual({ muted: false, skipped: 'system-account' });
+      }
+      // The fake returns the whole row whatever is selected; the real read only returns these.
+      expect(dbWrite.user.findUnique.mock.calls[0][0]).toMatchObject({
+        select: { id: true, username: true, meta: true },
+      });
+      expect(store.restrictions).toHaveLength(0);
+      expect(store.users.get(105)?.muted).toBe(false);
+    });
+
+    it('still mutes another account holding the reserved name once an id is configured', async () => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: 999 });
+      store.users.set(105, makeUser(105, { username: 'CivitaiModeration' }));
+
+      const result = await applyPendingReviewMute({ userId: 105, triggers, updateSource: 'test' });
+
+      expect(result).toMatchObject({ muted: true });
+      expect(store.users.get(105)?.muted).toBe(true);
+    });
   });
 
   it('still reports success when the session refresh fails', async () => {
@@ -582,6 +637,7 @@ describe('pending-review mute — restriction type', () => {
       muted: true,
       userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
       deduped: true,
+      wasMuted: true,
     });
   });
 
@@ -679,7 +735,12 @@ describe('pending-review mute — restriction type', () => {
       type: 'bot-account',
     });
 
-    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(result).toEqual({
+      muted: true,
+      userRestrictionId: 99,
+      deduped: true,
+      wasMuted: false,
+    });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
   });
@@ -1509,6 +1570,36 @@ describe('POST /api/mod/mute-user-pending-review', () => {
     expect(trackUserActivity).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'Muted', targetUserId: USER_ID })
     );
+  });
+
+  it('audits a mute that joins an open case on an unmuted account', async () => {
+    store.restrictions.push({
+      id: 99,
+      userId: USER_ID,
+      type: 'generation',
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(),
+    });
+
+    const { body } = await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+
+    expect(body).toMatchObject({ muted: true, deduped: true, wasMuted: false });
+    expect(trackModActivity).toHaveBeenCalledOnce();
+    expect(trackUserActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'Muted', targetUserId: USER_ID })
+    );
+  });
+
+  it('audits nothing when the account is already muted under an open case', async () => {
+    await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+    vi.clearAllMocks();
+
+    const { body } = await call(muteHandler, { body: { userId: USER_ID, reason: REASON } });
+
+    expect(body).toMatchObject({ muted: true, deduped: true, wasMuted: true });
+    expect(trackModActivity).not.toHaveBeenCalled();
+    expect(trackUserActivity).not.toHaveBeenCalled();
   });
 
   it('audits the mute even when the session refresh fails', async () => {

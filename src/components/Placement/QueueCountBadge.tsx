@@ -1,4 +1,5 @@
-import { Badge, Tooltip } from '@mantine/core';
+import { Badge } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import type { MantineSize } from '@mantine/core';
 import { queueCountBadgeShape } from '~/components/Placement/queue-count-badge.shape';
 

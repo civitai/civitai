@@ -7,6 +7,7 @@ import {
   APP_FEEDBACK_NOT_AVAILABLE_MESSAGE,
   APP_FEEDBACK_SENT_MESSAGE,
   APP_FEEDBACK_SIGNED_OUT_MESSAGE,
+  appFeedbackAttachmentNotice,
   appFeedbackEntryRequest,
   appFeedbackModalTitle,
   appFeedbackCharacterCounter,
@@ -15,6 +16,7 @@ import {
   canSubmitAppFeedback,
   isAppFeedbackSubmitShortcut,
   resolveAppFeedbackRequest,
+  withAppFeedbackDiagnostics,
 } from '~/components/AppBlocks/appFeedbackChrome';
 import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
 import {
@@ -180,6 +182,82 @@ describe('buildAppFeedbackCreateInput — the literal mutation input', () => {
     expect(Object.keys(input.context).sort()).toEqual(['modelId', 'surface']);
     // Parsing strips undeclared keys, so equality proves nothing was there to strip.
     expect(createAppFeedbackSchema.parse(input)).toStrictEqual(input);
+  });
+});
+
+describe("withAppFeedbackDiagnostics — the app session's failures on the report", () => {
+  const failure = (message: string) => ({
+    method: 'SUBMIT_WORKFLOW',
+    message,
+    at: 1_762_000_000_000,
+    count: 1,
+  });
+  const slot = resolveAppFeedbackRequest({
+    appBlockId: 'ab_9',
+    slotId: 'model.sidebar_top',
+    modelId: 7,
+  })!;
+
+  it('attaches the failures to the context, and the server schema keeps them', () => {
+    const request = withAppFeedbackDiagnostics(slot, { recentErrors: [failure('nope')] });
+    const input = buildAppFeedbackCreateInput(request, 'it broke');
+    expect(input.context).toStrictEqual({
+      surface: 'slot',
+      modelId: 7,
+      recentErrors: [failure('nope')],
+    });
+    expect(createAppFeedbackSchema.parse(input)).toStrictEqual(input);
+  });
+
+  it('sends no recentErrors key at all when there were none', () => {
+    expect(withAppFeedbackDiagnostics(slot, { recentErrors: [] }).context).toStrictEqual({
+      surface: 'slot',
+      modelId: 7,
+    });
+    expect(withAppFeedbackDiagnostics(slot, {}).context).toStrictEqual(slot.context);
+  });
+
+  it('keeps only the newest 10', () => {
+    const many = Array.from({ length: 12 }, (_, i) => failure(`e${i}`));
+    const sent = withAppFeedbackDiagnostics(slot, { recentErrors: many }).context.recentErrors!;
+    expect(sent.map((e) => e.message)).toEqual(many.slice(2).map((e) => e.message));
+  });
+
+  it('tells the reporter what is attached, and says nothing when nothing is', () => {
+    const one = withAppFeedbackDiagnostics(slot, { recentErrors: [failure('a')] });
+    const two = withAppFeedbackDiagnostics(slot, { recentErrors: [failure('a'), failure('b')] });
+    expect(appFeedbackAttachmentNotice(one.context)).toBe(
+      '1 recent app error will be attached, to help the developer find the problem.'
+    );
+    expect(appFeedbackAttachmentNotice(two.context)).toBe(
+      '2 recent app errors will be attached, to help the developer find the problem.'
+    );
+    expect(appFeedbackAttachmentNotice(slot.context)).toBeNull();
+  });
+
+  it('attaches the environment, and names everything attached in the notice', () => {
+    const environment = {
+      browser: { family: 'firefox' as const, major: 132 },
+      viewport: { width: 1280, height: 720 },
+      appRoute: '/gallery',
+    };
+    const request = withAppFeedbackDiagnostics(slot, {
+      recentErrors: [failure('a'), failure('b')],
+      environment,
+    });
+    const input = buildAppFeedbackCreateInput(request, 'it broke');
+    expect(input.context.environment).toStrictEqual(environment);
+    expect(createAppFeedbackSchema.parse(input)).toStrictEqual(input);
+    expect(appFeedbackAttachmentNotice(request.context)).toBe(
+      "Your browser, its version and your operating system, your window size and scrollbar type, the app page you're on and 2 recent app errors will be attached, to help the developer find the problem."
+    );
+    expect(
+      appFeedbackAttachmentNotice(
+        withAppFeedbackDiagnostics(slot, { environment: { browser: { family: 'other' } } }).context
+      )
+    ).toBe(
+      'Your browser, its version and your operating system will be attached, to help the developer find the problem.'
+    );
   });
 });
 

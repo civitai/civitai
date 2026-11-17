@@ -1,0 +1,71 @@
+-- `userActivities.source` — ClickHouse DDL.
+--
+-- 🔴 MANUAL. Apply this by hand, then restart the ClickHouse tracker (harmless). We do not auto-run
+-- DDL. `Tracker.userActivity` (src/server/clickhouse/tracker.ts) already accepts and sends a `source`
+-- key, but the table has no such column, so the tracker rejects every batch for `userActivities` that
+-- contains a row carrying it (`Missing columns: 'source'`, UNKNOWN_IDENTIFIER) — the WHOLE batch,
+-- so rows without `source` that happen to share it are rejected with it. Observed in production.
+-- The app logs nothing: the tracker POST is fire-and-forget and returns success.
+--
+-- What is lost while this is missing (every caller that passes `source`):
+--   - `Login` and `Registration` rows when a referral source is set
+--     (src/server/auth/login-side-effects.ts) — `Login` feeds the last-seen rollup
+--     (2026-09-04-user-activity-rollup.sql), so those users read as less active than they are;
+--   - `Muted` / `Unmuted` rows from src/pages/api/mod/mute-user-pending-review.ts,
+--     src/pages/api/mod/overturn-user-mute.ts and src/server/services/scam-auto-mute.service.ts —
+--     the moderation history of those mutes is missing;
+--   - plus any other row, of any type, rejected in the same batch as one of the above.
+--
+-- Additive and metadata-only: ADD COLUMN with a constant DEFAULT on a MergeTree-family table writes
+-- no data and schedules no mutation; existing parts read the column as ''. Placed AFTER `landingPage`
+-- to sit with the other referral field; position is cosmetic.
+--
+-- 🔴 BEFORE APPLYING, the production build must already include this PR's personal-data-export
+-- change (`drop: ['source']` for `default.userActivities` in
+-- src/server/services/personal-data-export/sources/clickhouse.ts). That export reads the table with
+-- `SELECT *`, and no name rule withholds `source`: applied before that deploy, exports built in the
+-- gap carry the mute-reason text this PR withholds.
+--
+-- 🔴 Then re-read prod:
+--
+--   SELECT name, type FROM system.columns
+--   WHERE database = 'default' AND table = 'userActivities' ORDER BY position;
+--     -- must NOT list `source`, and must still list `landingPage`. (`IF NOT EXISTS` makes a re-run a
+--     -- no-op, but a `source` of another TYPE added since would then be kept silently.)
+--
+--   SELECT dependencies_table FROM system.tables
+--   WHERE database = 'default' AND name = 'userActivities';
+--     -- must still be []. A materialized view added since that selects `*` from this table would
+--     -- change shape with it and need looking at first.
+--
+-- POST-APPLY: restart the ClickHouse tracker so it re-reads the table's columns (harmless if it
+-- already does so per batch), then confirm with a real event.
+--
+-- Verify, AFTER applying (metadata-only, returns immediately):
+--
+--   SHOW CREATE TABLE default.userActivities;
+--     -- must show `source` String DEFAULT '' after `landingPage`, every other column unchanged.
+--
+-- Positive control once the tracker is restarted: sign in through a link that sets a referral
+-- source (or wait for a mute through the pending-review path), then:
+--
+--   SELECT countIf(source != '') AS with_source, count() AS control
+--   FROM default.userActivities WHERE time > now() - INTERVAL 1 HOUR;
+--     -- with_source must be non-zero after such an event. A zero beside a non-zero control after a
+--     -- real referral sign-in means the tracker is still rejecting it; a zero on both means the
+--     -- window is empty.
+--
+-- Rollback: `ALTER TABLE default.userActivities DROP COLUMN source` — only once nothing reads it.
+-- Dropping it brings the batch rejections straight back while any caller still sends `source`.
+--
+-- Readers: none breaks. Every query in this repo that reads `userActivities` names its columns,
+-- except the personal-data export (src/server/services/personal-data-export/sources/clickhouse.ts),
+-- which reads `SELECT *`. It EXCLUDES `source` by decision (the `drop` list on its
+-- `default.userActivities` entry): on a mute or unmute the column carries the moderation reason, and
+-- the row is exported to its actor. `landingPage` is still exported.
+
+-- No trailing semicolon and nothing after the statement: ClickHouse rejects the file as a
+-- multi-statement query otherwise, so it can be run as-is.
+--
+ALTER TABLE default.userActivities
+  ADD COLUMN IF NOT EXISTS `source` String DEFAULT '' AFTER `landingPage`

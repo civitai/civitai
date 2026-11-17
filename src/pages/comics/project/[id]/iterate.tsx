@@ -1,5 +1,6 @@
 import { keepPreviousData } from '@tanstack/react-query';
-import { ActionIcon, Alert, Text, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Text, Title } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconAlertTriangle, IconArrowLeft, IconMessages } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';

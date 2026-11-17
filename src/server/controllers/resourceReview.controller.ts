@@ -1,4 +1,9 @@
-import type { ProtectedContext } from '~/server/createContext';
+import type { Context, ProtectedContext } from '~/server/createContext';
+import { getInfiniteImagesHandler } from '~/server/controllers/image.controller';
+import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { Flags } from '~/shared/utils/flags';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -6,6 +11,7 @@ import type { GetByUsernameSchema } from '~/server/schema/user.schema';
 import {
   createResourceReview,
   deleteResourceReview,
+  getReviewImageIds,
   getUserRatingTotals,
   toggleExcludeResourceReview,
   updateResourceReview,
@@ -18,6 +24,7 @@ import {
 } from '~/server/utils/errorHandling';
 import type {
   CreateResourceReviewInput,
+  GetResourceReviewImagesInput,
   UpdateResourceReviewInput,
   UpsertResourceReviewInput,
 } from '../schema/resourceReview.schema';
@@ -181,4 +188,41 @@ export const getUserRatingTotalHandler = async ({ input }: { input: GetByUsernam
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+/**
+ * The images a review card shows. Ids come from the predicate `imageCount` counts with; hydration
+ * reuses the feed's by-id read for `ImageGuard2`'s fields.
+ */
+export const getResourceReviewImagesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetResourceReviewImagesInput;
+  ctx: Context;
+}) => {
+  const browsingLevel = Flags.intersection(input.browsingLevel, getRequestBrowsingLevel(ctx));
+  if (!browsingLevel) return { items: [] };
+  const ids = await getReviewImageIds({
+    reviewId: input.reviewId,
+    limit: input.limit,
+    browsingLevel,
+    userId: ctx.user?.id,
+  });
+  if (!ids.length) return { items: [] };
+
+  const { items } = await getInfiniteImagesHandler({
+    input: getInfiniteImagesSchema.parse({
+      ids,
+      limit: ids.length,
+      browsingLevel,
+      period: MetricTimeframe.AllTime,
+      excludedTagIds: input.excludedTagIds,
+      disablePoi: input.disablePoi,
+      disableMinor: input.disableMinor,
+    }),
+    ctx,
+  });
+  const order = new Map(ids.map((id, index) => [id, index]));
+  return { items: [...items].sort((a, b) => order.get(a.id)! - order.get(b.id)!) };
 };

@@ -132,7 +132,11 @@ permissions:
 # so `main` still gets a verdict; intermediate commits show as `cancelled`.
 # Until 2026-10 a push grouped by `github.sha` so every `main` commit kept its
 # own run, which queued behind PR runs under the plan's concurrent-job limit.
-# Same expression and reasoning as `lint.yml`.
+# It keys on `github.ref` like lint.yml, but unlike lint.yml, apps.yml and
+# moderator-boot.yml it still CANCELS the older `main` run instead of queueing:
+# its push trigger is path-filtered, so `main` runs here are rare and bursts of
+# them rarer, and the queue-vs-cancel replay that moved those three did not
+# cover this workflow.
 concurrency:
   group: windows-dev-env-${{ github.ref }}
   cancel-in-progress: true

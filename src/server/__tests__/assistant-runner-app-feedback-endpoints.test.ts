@@ -164,7 +164,7 @@ describe('the runner’s secret and run grant', () => {
 });
 
 describe('POST …/app-feedback/review', () => {
-  it('reads the grant’s user’s own app, as My apps shows it', async () => {
+  it('reads the grant’s user’s own app, as My builds shows it', async () => {
     const { status, json } = await call(reviewRoute, {
       grant: await grantFor(OWNER),
       app: OWNED_APP,

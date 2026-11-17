@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Group, Tooltip, createPolymorphicComponent } from '@mantine/core';
+import { Button, Group, createPolymorphicComponent } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconDownload } from '@tabler/icons-react';
 import { forwardRef } from 'react';
 import { JoinPopover } from '~/components/JoinPopover/JoinPopover';

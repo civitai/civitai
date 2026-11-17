@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from '~/types/session';
 import * as z from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/edge-url';
 import { CollectionSort } from '~/server/common/enums';
 import { getAllCollections, getCollectionItemCount } from '~/server/services/collection.service';
 import { withServableCovers } from '~/server/services/collection-cover-visibility';
@@ -10,21 +9,23 @@ import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-
 import { getNextPage } from '~/server/utils/pagination-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import {
+  getCoverBrowsingLevels,
+  publicCoverImageSelect,
+  toPublicCoverImage,
+} from '~/server/utils/public-cover-image';
+import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import {
-  CollectionItemStatus,
-  CollectionReadConfiguration,
-  MediaType,
-} from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 /**
- * GET /api/v1/collections — public, edge-cacheable list/search over collections.
+ * GET /api/v1/collections — public list/search over collections, edge-cacheable except at
+ * `?nsfw=true`, whose body depends on the caller's region and is `private, no-store`.
  *
  * Wraps the EXISTING `getAllCollections` service (no reimplemented business
  * logic). This endpoint serves PUBLIC data only: privacy is pinned to `[Public]`
@@ -70,10 +71,12 @@ type CollectionListItem = {
   name: string;
   description: string | null;
   type: string | null;
+  mode: string | null;
   nsfwLevel: number | null;
   read: CollectionReadConfiguration;
   isPublic: boolean;
   itemCount: number;
+  coverImage: ReturnType<typeof toPublicCoverImage>;
   coverImageUrl: string | null;
   user: { id: number | null; username: string | null };
 };
@@ -101,23 +104,8 @@ export default MixedAuthEndpoint(async function handler(
   const region = getRegion(req);
   let browsingLevel = !nsfw ? publicBrowsingLevelsFlag : allBrowsingLevelsFlag;
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
-
-  const coverUrl = (
-    image:
-      | {
-          url: string;
-          type: MediaType | null;
-          nsfwLevel: number | null;
-          poi: boolean;
-          minor: boolean;
-        }
-      | null
-      | undefined
-  ): string | null =>
-    // poi/minor: the same exclusion the public image endpoints apply.
-    image?.url && !image.poi && !image.minor && withinCeiling(image.nsfwLevel, browsingLevel)
-      ? getEdgeUrl(image.url, { width: 450, type: image.type ?? undefined })
-      : null;
+  // Above SFW, the body depends on the caller's region, which the shared cache does not key on.
+  if (nsfw) res.setHeader('Cache-Control', 'private, no-store');
 
   try {
     // Public discovery. The keyset cursor is id-based, which only tracks the
@@ -159,12 +147,11 @@ export default MixedAuthEndpoint(async function handler(
         description: true,
         read: true,
         type: true,
+        mode: true,
         nsfwLevel: true,
         userId: true,
         user: { select: { id: true, username: true } },
-        image: {
-          select: { id: true, url: true, type: true, nsfwLevel: true, poi: true, minor: true },
-        },
+        image: { select: publicCoverImageSelect },
       },
     });
 
@@ -190,18 +177,27 @@ export default MixedAuthEndpoint(async function handler(
     });
     const countMap = new Map(countRows.map((c) => [c.id, Number(c.count)]));
 
-    const items: CollectionListItem[] = shown.map((c) => ({
-      id: c.id,
-      name: c.name,
-      description: c.description ?? null,
-      type: c.type ?? null,
-      nsfwLevel: c.nsfwLevel ?? null,
-      read: c.read,
-      isPublic: c.read === CollectionReadConfiguration.Public,
-      itemCount: countMap.get(c.id) ?? 0,
-      coverImageUrl: coverUrl(c.image),
-      user: { id: c.user?.id ?? c.userId ?? null, username: c.user?.username ?? null },
-    }));
+    const coverLevel = await getCoverBrowsingLevels(
+      shown.map((c) => c.image),
+      browsingLevel
+    );
+    const items: CollectionListItem[] = shown.map((c) => {
+      const coverImage = toPublicCoverImage(c.image, coverLevel(c.image));
+      return {
+        id: c.id,
+        name: c.name,
+        description: c.description ?? null,
+        type: c.type ?? null,
+        mode: c.mode ?? null,
+        nsfwLevel: c.nsfwLevel ?? null,
+        read: c.read,
+        isPublic: c.read === CollectionReadConfiguration.Public,
+        itemCount: countMap.get(c.id) ?? 0,
+        coverImage,
+        coverImageUrl: coverImage?.url ?? null,
+        user: { id: c.user?.id ?? c.userId ?? null, username: c.user?.username ?? null },
+      };
+    });
 
     const nextCursorStr = nextCursor !== undefined ? String(nextCursor) : undefined;
     const { nextPage } = getNextPage({ req, nextCursor: nextCursorStr });

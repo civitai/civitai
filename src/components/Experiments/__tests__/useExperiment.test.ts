@@ -44,7 +44,6 @@ function renderHook<T>(useHook: () => T) {
 
 const assigned = (variant: string) => ({
   hatTurfFeedCard: { variant, assignment: 'rule' },
-  hatTurfImageDetail: { variant: 'control', assignment: 'rule' },
 });
 
 describe('useExperiment', () => {
@@ -59,7 +58,7 @@ describe('useExperiment', () => {
   it.each([
     [
       'the server does not know the experiment',
-      { hatTurfImageDetail: { variant: 'control', assignment: 'rule' } },
+      { retiredExperiment: { variant: 'control', assignment: 'rule' } },
       false,
     ],
     ['the request failed', undefined, true],
@@ -73,25 +72,25 @@ describe('useExperiment', () => {
   it('is not ready for a signed-in viewer until the assignment arrives', () => {
     const { result, rerender } = renderHook(() => useExperiment('hatTurfFeedCard'));
     expect(result.current).toEqual({ ready: false, variant: undefined, assignment: undefined });
-    state.data = assigned('count-button');
+    state.data = assigned('badge-popover');
     rerender();
-    expect(result.current).toEqual({ ready: true, variant: 'count-button', assignment: 'rule' });
+    expect(result.current).toEqual({ ready: true, variant: 'badge-popover', assignment: 'rule' });
   });
 
   it('keeps the first arm for the life of the tab when a refetch answers differently', () => {
-    state.data = assigned('count-button');
+    state.data = assigned('badge-popover');
     const { result, rerender } = renderHook(() => useExperiment('hatTurfFeedCard'));
     state.data = assigned('control');
     rerender();
-    expect(result.current.variant).toBe('count-button');
+    expect(result.current.variant).toBe('badge-popover');
     // A component mounted later on the same page sees the same arm.
     expect(renderHook(() => useExperiment('hatTurfFeedCard')).result.current.variant).toBe(
-      'count-button'
+      'badge-popover'
     );
   });
 
   it('does not carry one account’s arm over to another on the same tab', () => {
-    state.data = assigned('count-button');
+    state.data = assigned('badge-popover');
     renderHook(() => useExperiment('hatTurfFeedCard'));
     state.user = { id: 502 };
     state.data = assigned('control');
@@ -102,9 +101,21 @@ describe('useExperiment', () => {
 
   it('gives a signed-out viewer the default arm without asking the server', () => {
     state.user = null;
-    state.data = assigned('count-button');
+    state.data = assigned('badge-popover');
     const { result } = renderHook(() => useExperiment('hatTurfFeedCard'));
     expect(result.current).toEqual({ ready: true, variant: 'control', assignment: 'signed-out' });
+    expect(state.enabled.every((e) => e === false)).toBe(true);
+  });
+
+  it('disabled, stays not ready and asks the server nothing, signed in or out', () => {
+    state.data = assigned('badge-popover');
+    expect(
+      renderHook(() => useExperiment('hatTurfFeedCard', { enabled: false })).result.current
+    ).toEqual({ ready: false, variant: undefined, assignment: undefined });
+    state.user = null;
+    expect(
+      renderHook(() => useExperiment('hatTurfFeedCard', { enabled: false })).result.current.ready
+    ).toBe(false);
     expect(state.enabled.every((e) => e === false)).toBe(true);
   });
 });

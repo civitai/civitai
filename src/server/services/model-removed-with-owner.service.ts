@@ -6,6 +6,8 @@ import {
   REMOVED_WITH_OWNER_META_KEYS,
   withoutRemovedWithOwner,
 } from '~/server/utils/legal-hold';
+import { assertNoFailedScanFiles } from '~/server/utils/failed-scan';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * The meta a content wipe writes on a model it keeps: its status before, and the versions
@@ -28,6 +30,13 @@ export { REMOVED_WITH_OWNER_META_KEYS, withoutRemovedWithOwner };
 export async function restoreModelRemovedWithOwner(
   modelId: number
 ): Promise<{ status: string; userId: number; versionIds: number[] } | null> {
+  const stored = await dbWrite.model.findUnique({ where: { id: modelId }, select: { meta: true } });
+  const taken = (stored?.meta as RemovedWithOwnerMeta | null)?.versionsUnpublishedByRemoval ?? [];
+  const goingLive = taken
+    .filter((v) => v.status === ModelStatus.Published || v.status === ModelStatus.Scheduled)
+    .map((v) => v.id);
+  if (goingLive.length) await assertNoFailedScanFiles({ modelId, id: { in: goingLive } });
+
   const [restored] = await dbWrite.$queryRaw<
     { status: string; userId: number; versionIds: number[] }[]
   >`

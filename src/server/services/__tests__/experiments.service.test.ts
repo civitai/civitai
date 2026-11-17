@@ -30,7 +30,6 @@ const user = {
 const moderator = { ...user, id: 7, isModerator: true } as SessionUser;
 
 const FEED = 'exp-hat-turf-feed-card';
-const DETAIL = 'exp-hat-turf-image-detail';
 const hit = (variantKey: string, segmentKeys: string[] = ['all-users']): FliptVariantDetail => ({
   match: true,
   variantKey,
@@ -45,7 +44,7 @@ describe('getExperimentAssignments', () => {
 
   it('buckets on the user id and passes the user context, so pin and tester segments can match', async () => {
     await getExperimentAssignments({ user });
-    expect(evals.map((e) => e.flag).sort()).toEqual([FEED, DETAIL].sort());
+    expect(evals.map((e) => e.flag).sort()).toEqual([FEED]);
     for (const e of evals) {
       expect(e.entityId).toBe('4242');
       expect(e.context).toMatchObject({ userId: '4242', isModerator: 'false' });
@@ -53,15 +52,15 @@ describe('getExperimentAssignments', () => {
   });
 
   it('returns the rolled-out arm as a randomised assignment', async () => {
-    answers.set(FEED, hit('count-button'));
+    answers.set(FEED, hit('badge-popover'));
     const out = await getExperimentAssignments({ user });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'rule' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'rule' });
   });
 
   it('marks a pin-segment match as pinned, so the readout can drop it', async () => {
-    answers.set(FEED, hit('count-button', ['exp-pin-hat-turf-feed-card-count-button']));
+    answers.set(FEED, hit('badge-popover', ['exp-pin-hat-turf-feed-card-badge-popover']));
     const out = await getExperimentAssignments({ user });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'pinned' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'pinned' });
   });
 
   it.each([
@@ -78,10 +77,10 @@ describe('getExperimentAssignments', () => {
     answers.set(FEED, hit('control'));
     const out = await getExperimentAssignments({
       user: moderator,
-      overrideCookie: 'hatTurfFeedCard:count-button,hatTurfImageDetail:bogus',
+      overrideCookie: 'hatTurfFeedCard:badge-popover,retiredExperiment:bogus',
     });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'override' });
-    expect(evals.map((e) => e.flag)).toEqual([DETAIL]);
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'override' });
+    expect(evals).toEqual([]);
   });
 
   it('drops cookie pairs naming inherited properties instead of throwing', async () => {
@@ -94,16 +93,16 @@ describe('getExperimentAssignments', () => {
   });
 
   it('marks a dev local override as an override', async () => {
-    answers.set(FEED, hit('count-button', ['local-override']));
+    answers.set(FEED, hit('badge-popover', ['local-override']));
     const out = await getExperimentAssignments({ user });
-    expect(out.hatTurfFeedCard).toEqual({ variant: 'count-button', assignment: 'override' });
+    expect(out.hatTurfFeedCard).toEqual({ variant: 'badge-popover', assignment: 'override' });
   });
 
   it('ignores the preview cookie for everyone else', async () => {
     answers.set(FEED, hit('control'));
     const out = await getExperimentAssignments({
       user,
-      overrideCookie: 'hatTurfFeedCard:count-button',
+      overrideCookie: 'hatTurfFeedCard:badge-popover',
     });
     expect(out.hatTurfFeedCard).toEqual({ variant: 'control', assignment: 'rule' });
   });

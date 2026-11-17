@@ -63,8 +63,8 @@ beforeEach(() => {
 });
 
 describe('nowPayments.getDepositAddress rate limit', () => {
-  it('refuses once the last hour holds more than 60 calls', async () => {
-    mockHGet.mockResolvedValue(attemptsSpanning(61, 59 * MINUTE));
+  it('refuses the 61st call in the hour', async () => {
+    mockHGet.mockResolvedValue(attemptsSpanning(60, 59 * MINUTE));
 
     const err = await call().then(
       () => null,
@@ -77,7 +77,7 @@ describe('nowPayments.getDepositAddress rate limit', () => {
   });
 
   it('still serves the 60th call in the hour', async () => {
-    mockHGet.mockResolvedValue(attemptsSpanning(60, 59 * MINUTE));
+    mockHGet.mockResolvedValue(attemptsSpanning(59, 59 * MINUTE));
 
     await expect(call()).resolves.toMatchObject({ address: 'addr' });
   });

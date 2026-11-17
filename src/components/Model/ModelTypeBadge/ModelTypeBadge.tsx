@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
-import { Badge, Divider, Popover, Stack, Text } from '@mantine/core';
+import { Badge, Divider, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useState } from 'react';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';

@@ -8,8 +8,8 @@ import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles'
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import {
+  getLeaderboardPopulation,
   getUnpopulatedLeaderboards,
-  isLeaderboardPopulated,
 } from '~/server/services/leaderboard.service';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
@@ -62,7 +62,7 @@ async function getExcludedUserIdsOrUnfiltered() {
       type: 'error',
       name: 'leaderboard-metric-exclusion-unavailable',
       message: (e as Error).message,
-    }).catch();
+    });
     return [];
   }
 }
@@ -116,7 +116,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
           logToAxiom({
             type: 'leaderboard-start',
             id,
-          }).catch();
+          });
 
           const populated = await populateLeaderboard(context, async () => {
             if (!imageRange) imageRange = await getImageRange();
@@ -129,7 +129,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             type: 'leaderboard-done',
             id,
             duration: Date.now() - start,
-          }).catch();
+          });
         }, 3)
   );
   try {
@@ -143,7 +143,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     await redis.purgeTags('leaderboard');
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ type: 'leaderboard-error', message: error.message }).catch();
+    logToAxiom({ type: 'leaderboard-error', message: error.message });
     throw error;
   }
 });
@@ -170,7 +170,7 @@ export async function populateLeaderboard(
     }
   } catch (e) {
     const error = e as Error;
-    logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
+    logToAxiom({ type: 'leaderboard-error', id, message: error.message });
     throw e;
   }
 
@@ -178,7 +178,7 @@ export async function populateLeaderboard(
   // cosmetic revocation strip every holder.
   if (skipped) {
     log(`Leaderboard ${id} - Skipped, ClickHouse unavailable`);
-    logToAxiom({ type: 'leaderboard-skipped', id }).catch();
+    logToAxiom({ type: 'leaderboard-skipped', id });
     return false;
   }
 
@@ -291,13 +291,43 @@ type LeaderboardContext = {
   excludedUserIds: number[];
 };
 
+const USER_RANK_BUILT_KEY = 'leaderboard:user-rank:built';
+
+/**
+ * Rebuilds UserRank once per day, retried hourly until it succeeds. A board not marked populated
+ * for today carries its latest earlier day's ranks, so one late board can't freeze every badge; the day
+ * is only marked done once every board is in, so a board that lands later still gets picked up.
+ */
+export async function rebuildUserRanks() {
+  const [{ built }] = await dbWrite.$queryRaw<{ built: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "KeyValue" WHERE key = ${USER_RANK_BUILT_KEY} AND value #>> '{}' = current_date::text
+    ) AS built`;
+  if (built) return { skipped: true };
+
+  // The marker, not rows: rows appear batch by batch while a board is still being written.
+  const { boards, unmarked } = await getLeaderboardPopulation();
+  // Nothing to rebuild from: the TRUNCATE would blank every badge. Keep yesterday's and retry.
+  if (boards > 0 && unmarked.length >= boards) throw new Error('Leaderboard not populated');
+  if (unmarked.length)
+    logToAxiom({
+      type: 'warn',
+      name: 'user-rank-partially-populated',
+      // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
+      error: { unpopulated: unmarked },
+    });
+
+  await updateLeaderboardRank({
+    carriedBoardIds: unmarked,
+    builtMarkerKey: unmarked.length ? undefined : USER_RANK_BUILT_KEY,
+  });
+  return { carried: unmarked };
+}
+
 const updateUserLeaderboardRank = createJob(
   'update-user-leaderboard-rank',
-  '1 0 * * *',
-  async () => {
-    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
-    await updateLeaderboardRank();
-  }
+  '1 * * * *',
+  rebuildUserRanks
 );
 
 const updateUserDiscordLeaderboardRoles = createJob(
@@ -528,7 +558,7 @@ export async function setCoverImageNsfwLevelOrLog() {
       type: 'error',
       name: 'leaderboard-cover-nsfw-level-failed',
       message: (e as Error).message,
-    }).catch();
+    });
   }
 }
 
@@ -546,7 +576,7 @@ function withoutMalformedMeta(rows: NsfwLevelRow[], table: 'Model' | 'ModelVersi
       name: 'leaderboard-malformed-meta',
       // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
       error: { table, count: malformed.length, ids: malformed.slice(0, 100).map((row) => row.id) },
-    }).catch();
+    });
   return rows.filter(isWritable);
 }
 

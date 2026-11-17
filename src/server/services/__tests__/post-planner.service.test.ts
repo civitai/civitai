@@ -766,6 +766,11 @@ describe('getPlannerPostDetail', () => {
     expect(detail.description).not.toMatch(/<[a-z]/);
     expect(detail.stats).toBeNull();
     expect(fetchStats).not.toHaveBeenCalled();
+    expect(getPostResources).toHaveBeenCalledWith({
+      id: 11,
+      userId: OWNER.id,
+      isModerator: OWNER.isModerator,
+    });
   });
 
   it('reads live engagement once the post is published', async () => {

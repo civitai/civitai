@@ -6,6 +6,7 @@ import type {
 } from '@civitai/components-chat/civitai-chat';
 import {
   CREATE_APP,
+  WAKE_APP,
   GENERATE_APP_COVER,
   REPORT_READY,
   SET_FEEDBACK_STATUS,
@@ -77,6 +78,7 @@ export function createAssistantGate({
   openApp,
   feedback,
   cover,
+  onAppChanged,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -95,6 +97,8 @@ export function createAssistantGate({
   feedback?: { source: AppFeedbackSource; setStatus: SetFeedbackStatus };
   /** The store cover: what its offer reads and what its card's press does. Without it, no tool. */
   cover?: { offer: Omit<CoverArtDeps, 'nextId'>; press: CoverPressDeps };
+  /** Told after a call changed the open app's files (`createGateCore`): the source-repo save. */
+  onAppChanged?: (app: string) => void;
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
   const feedbackCards = feedback ? createFeedbackStatusCards(feedback) : null;
@@ -128,6 +132,7 @@ export function createAssistantGate({
       onReply?.();
     },
     openApp,
+    onAppChanged,
   });
 
   const set_checklist: ChatTool = { ...core.tools[SET_CHECKLIST], render: renderChecklist };
@@ -168,7 +173,7 @@ export function createAssistantGate({
     },
     restoringChoices: (tools, chatId) => {
       const out = { ...tools };
-      for (const name of [CREATE_APP, USE_OPEN_APP]) {
+      for (const name of [CREATE_APP, USE_OPEN_APP, WAKE_APP]) {
         const tool = tools[name];
         if (!tool) continue;
         out[name] = {

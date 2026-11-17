@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import type { ApiKeyType } from '~/shared/utils/prisma/enums';
+import { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import type {
@@ -18,6 +18,8 @@ import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrato
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
+import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import { revokeReviewBatchesOfKeys } from '~/server/services/review-batch/review-batch.store';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
@@ -131,7 +133,7 @@ export async function setApiKeyBuzzLimit({
       type: 'oauth.bust-cache.failed',
       message: `bust-cache failed for apiKey ${updated.id} user ${updated.userId}`,
       error: safeError(err),
-    }).catch(() => {});
+    });
   }
 
   return updated;
@@ -181,7 +183,7 @@ export async function mintApiKey(
         name: logName,
         userId: args.userId,
         error: safeError(error),
-      }).catch(() => null)
+      })
     );
     throw refusal;
   }
@@ -203,6 +205,14 @@ export async function getTemporaryUserApiKey(args: MintApiKeyArgs) {
   return key;
 }
 
+/** Download links and review batches minted by a revoked key stop working with it. */
+const revokeLinksOfRevokedApiKeys = async (ids: number[]) => {
+  await revokeLinksOfRevokedCredentials(
+    ids.map((id) => ({ kind: 'apikey' as const, id: String(id) }))
+  );
+  await revokeReviewBatchesOfKeys(ids);
+};
+
 /**
  * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
  * the stored hash — so the hashes are read first. Use this, not `apiKey.deleteMany`, for any delete
@@ -219,6 +229,7 @@ export async function deleteApiKeys(where: Prisma.ApiKeyWhereInput) {
     where: { AND: [where, { id: { in: rows.map((row) => row.id) } }] },
   });
   await evictCachedApiKeys(rows.map((row) => row.key));
+  await revokeLinksOfRevokedApiKeys(rows.map((row) => row.id));
   // The orchestrator caches keys for auth too. revokeCivitaiUserTokens swallows its own errors.
   const userIds = [...new Set(rows.map((row) => row.userId))];
   await Promise.all(userIds.map((userId) => revokeCivitaiUserTokens({ userId })));
@@ -245,10 +256,35 @@ export async function expireUserApiKeys(userId: number) {
     });
   }
   await evictCachedApiKeys(rows.map((row) => row.key));
+  await revokeLinksOfRevokedApiKeys(live.map((row) => row.id));
   await forgetGenerationToken(userId);
   // Even with no live rows: an earlier attempt may have expired them and then failed this call.
   const orchestratorConfirmed = await revokeCivitaiUserTokens({ userId });
   return { expired: live.length, orchestratorConfirmed };
+}
+
+/**
+ * Expires an OauthClient's issued tokens (Access and Refresh rows, kept) and the download links it
+ * minted. Only rotation of a download-link minter calls this; other clients keep their tokens.
+ */
+export async function expireClientTokens(clientId: string) {
+  const now = new Date();
+  const rows = await dbWrite.apiKey.findMany({
+    where: {
+      clientId,
+      type: { in: [ApiKeyType.Access, ApiKeyType.Refresh] },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    select: { id: true, key: true },
+  });
+  if (rows.length) {
+    await dbWrite.apiKey.updateMany({
+      where: { id: { in: rows.map((row) => row.id) } },
+      data: { expiresAt: now },
+    });
+    await evictCachedApiKeys(rows.map((row) => row.key));
+  }
+  return { expired: rows.length };
 }
 
 /**
@@ -274,7 +310,7 @@ export async function forgetGenerationToken(userId: number) {
       name: 'expire-user-api-keys-generation-token',
       userId,
       message: (error as Error).message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -304,6 +340,7 @@ export async function expireGenerationCredentials(userId: number) {
   }
   // Every matched key, not only the live ones: a repeat call retries an eviction an earlier one missed.
   if (matched.length) await evictCachedApiKeys(matched.map((row) => row.key));
+  await revokeLinksOfRevokedApiKeys(live.map((row) => row.id));
   await forgetGenerationToken(userId);
   return { expired: live.length };
 }
@@ -320,7 +357,7 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         type: 'oauth.delete-subject.failed',
         message: `delete-subject failed for apiKey ${id} user ${userId}`,
         error: safeError(err),
-      }).catch(() => {});
+      });
     });
   }
 

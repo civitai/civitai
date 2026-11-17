@@ -2,12 +2,14 @@ import { rateLimit } from '~/server/middleware.trpc';
 import {
   createPlatformFeedbackSchema,
   getPlatformFeedbackStatusSchema,
+  listPlatformFeedbackChangesSchema,
 } from '~/server/schema/platform-feedback.schema';
 import {
   createPlatformFeedback,
   getPlatformFeedbackStatus,
+  listPlatformFeedbackChanges,
 } from '~/server/services/platform-feedback.service';
-import { guardedProcedureAllowUnverifiedEmail, router } from '~/server/trpc';
+import { guardedProcedureAllowUnverifiedEmail, moderatorProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // `AppBlocksSubmit` is opt-in, so a token holding only ordinary scopes stays refused.
@@ -36,4 +38,13 @@ export const platformFeedbackRouter = router({
     .use(rateLimit(PLATFORM_FEEDBACK_STATUS_RATE_LIMIT))
     .input(getPlatformFeedbackStatusSchema)
     .query(({ ctx, input }) => getPlatformFeedbackStatus({ user: ctx.user, input })),
+
+  /**
+   * Read-only change feed for moderator tooling. No `.meta`: like every moderator procedure, a
+   * token caller must hold a full-scope personal API key, so a scoped token is refused whatever
+   * bits it carries, `AppBlocksSubmit` included.
+   */
+  listChanges: moderatorProcedure
+    .input(listPlatformFeedbackChangesSchema)
+    .query(({ input }) => listPlatformFeedbackChanges(input)),
 });

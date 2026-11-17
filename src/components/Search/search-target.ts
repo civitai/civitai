@@ -26,3 +26,46 @@ export function resolveSearchTarget(
   if (supported && !supported.includes('models')) return target;
   return 'models';
 }
+
+type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
+type FeedSearchFlags = Partial<
+  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch'>
+>;
+
+/**
+ * Images can be searched: on the search pages (`imageSearch`) or on the images feed (`feedSearch`).
+ * `feedSearch` alone is enough, so a rollout of it moves people to the new search.
+ */
+export const offersImageSearch = (features: ImageSearchFlags) =>
+  !!features.imageSearch || !!features.feedSearch;
+
+// The feeds that answer `?query=` themselves, each behind its own flag.
+const FEED_SEARCH = {
+  images: { flag: 'feedSearch', pathname: '/images' },
+  models: { flag: 'modelFeedSearch', pathname: '/models' },
+  articles: { flag: 'articleFeedSearch', pathname: '/articles' },
+} as const satisfies Partial<
+  Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string }>
+>;
+
+/** The feed a search on `index` lands on, when that feed answers `?query=` for this viewer. */
+export function feedSearchPathname(features: FeedSearchFlags, index: SearchIndexKey) {
+  const feed = FEED_SEARCH[index as keyof typeof FEED_SEARCH];
+  return feed && features[feed.flag] ? feed.pathname : undefined;
+}
+
+/** The header bar filters the feed it is on in place, rather than opening a search page. */
+export const searchesFeedInPlace = (
+  features: FeedSearchFlags,
+  index: SearchIndexKey,
+  pathname: string
+) => feedSearchPathname(features, index) === pathname;
+
+/** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
+export function legacyImageSearchDestination(
+  features: ImageSearchFlags
+): 'images-feed' | 'models-search' | undefined {
+  if (features.feedSearch) return 'images-feed';
+  if (!features.imageSearch) return 'models-search';
+  return undefined;
+}

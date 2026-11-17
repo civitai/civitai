@@ -35,6 +35,11 @@ vi.mock('~/server/services/app-blocks-flag', async (importOriginal) => ({
   ...(await importOriginal<typeof AppBlocksFlag>()),
   isAppBlocksEnabled: vi.fn(async () => h.appBlocksEnabled),
 }));
+// The per-user ceiling comes from the membership-tier resolver, for the figures shown and the
+// writes charged alike; here it is the custom one, so a figure that leaked a constant would show.
+vi.mock('~/server/services/blocks/user-app-caps.service', () => ({
+  docStoreUserLimits: async () => ({ userBytes: 7_003, userDocs: 17 }),
+}));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };

@@ -150,6 +150,18 @@ describe('enforceAppBlocksFlag — query (listForModel)', () => {
     expect(mockIsAppBlocksEnabled).toHaveBeenCalledWith({ user: modUser });
   });
 
+  it("🔴 threads the viewer's OWN browsing level so R/X blocks follow it", async () => {
+    // PG|R|X = 13: equal to no browsing-level constant, so a hardcoded flag cannot pass.
+    const viewer = { ...modUser, showNsfw: true, browsingLevel: 13 };
+    const ctx = fakeCtx(viewer);
+    const caller = blocksRouter.createCaller({
+      ...ctx,
+      features: { ...(ctx.features as object), canViewNsfw: true },
+    } as never);
+    await caller.listForModel(listInput);
+    expect(mockListForModel.mock.calls[0][0]).toMatchObject({ viewerBrowsingLevel: 13 });
+  });
+
   it('non-moderator: gate disables → [] (no-widening), registry NOT consulted', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(normalUser) as never);
     const result = await caller.listForModel(listInput);

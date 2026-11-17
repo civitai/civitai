@@ -32,10 +32,15 @@ function claimExposure(userId: number, key: ExperimentKey): boolean {
 
 /**
  * Logs that the viewer saw their arm of `key`. Attach the returned ref to the experimental UI;
- * it fires once half of it is on screen. Signed-out viewers are not in experiments and log nothing.
+ * it fires once half of it is on screen. Signed-out viewers are not in experiments and log nothing,
+ * and neither does a render with `enabled: false`.
  */
-export function useExperimentExposure(key: ExperimentKey, surface: ExperimentSurface) {
-  const experiment = useExperiment(key);
+export function useExperimentExposure(
+  key: ExperimentKey,
+  surface: ExperimentSurface,
+  { enabled = true }: { enabled?: boolean } = {}
+) {
+  const experiment = useExperiment(key, { enabled });
   const currentUser = useCurrentUser();
   const { trackAction } = useTrackEvent();
   const inExperiment = experiment.ready && experiment.assignment !== 'signed-out';

@@ -1,4 +1,5 @@
-import { Anchor, Divider, Group, Loader, Popover, ScrollArea, Stack, Text } from '@mantine/core';
+import { Anchor, Divider, Group, Loader, ScrollArea, Stack, Text } from '@mantine/core';
+import { Popover } from '~/components/MantineOverlays';
 import { useState } from 'react';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { formatDate } from '~/utils/date-helpers';

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, denied, requiresGrant } from '$lib/server/access';
 import { int4Id, parseForm, userIdSchema } from '$lib/server/query';
+import { isInt4Id } from '$lib/server/users.service';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { RETIRED_SECTIONS, isSection } from '../sections';
 import {
@@ -24,6 +25,10 @@ import {
   mintMembershipCode,
   previewMembershipExtension,
   extendMembership,
+  previewMembershipCancel,
+  setMembershipCancel,
+  previewMembershipResync,
+  resyncMembership,
   revokeMembershipCode,
   grantCreatorScore,
   revokeCreatorScoreGrant,
@@ -101,6 +106,10 @@ const membershipCodeFail = (message: string) =>
   fail(400, { scope: 'membershipCode' as const, error: message });
 const membershipExtendFail = (message: string) =>
   fail(400, { scope: 'membershipExtend' as const, error: message });
+const membershipCancelFail = (message: string) =>
+  fail(400, { scope: 'membershipCancel' as const, error: message });
+const membershipResyncFail = (message: string) =>
+  fail(400, { scope: 'membershipResync' as const, error: message });
 const creatorScoreFail = (message: string) =>
   fail(400, { scope: 'creatorScore' as const, error: message });
 const shopFail = (message: string) => fail(400, { scope: 'shop' as const, error: message });
@@ -526,6 +535,8 @@ export const actions: Actions = {
           .transform(() => undefined)
           .or(z.coerce.number().int().positive().max(2_147_483_647))
           .optional(),
+        // One per form (the panel mints it); the ledger key that makes a resubmit recognisable.
+        submissionId: z.string().regex(/^[0-9a-f]{16,64}$/),
       }),
       await request.formData()
     );
@@ -544,6 +555,7 @@ export const actions: Actions = {
       entityType: input.entityType || undefined,
       entityId: input.entityId,
       moderatorId: locals.user.id,
+      submissionId: input.submissionId,
     });
     if (!result.ok) return buzzFail(result.error);
     // The parsed input, not the raw form: the confirmation the panel shows has to name what was
@@ -628,6 +640,58 @@ export const actions: Actions = {
     return { success: true, extended: result.result };
   }),
 
+  previewMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({ cancelAtPeriodEnd: z.stringbool() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCancelFail(input);
+
+    const result = await previewMembershipCancel(input);
+    if (!result.ok) return membershipCancelFail(result.error);
+    return { success: true, cancelPreview: result.preview };
+  }),
+
+  setMembershipCancel: requiresGrant('user.membership.cancel', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        cancelAtPeriodEnd: z.stringbool(),
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipCancelFail(input);
+
+    const result = await setMembershipCancel(input);
+    if (!result.ok) return membershipCancelFail(result.error);
+    return { success: true, cancelChanged: result.result };
+  }),
+
+  previewMembershipResync: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(userIdSchema, await request.formData());
+    if (typeof input === 'string') return membershipResyncFail(input);
+
+    const result = await previewMembershipResync(input);
+    if (!result.ok) return membershipResyncFail(result.error);
+    return { success: true, resyncPreview: result.preview };
+  }),
+
+  resyncMembership: requiresGrant('user.membership.extend', async ({ request }) => {
+    const input = parseForm(
+      userIdSchema.extend({
+        reason: z.string().trim().min(MEMBERSHIP_EXTEND_REASON_MIN).max(500),
+        // The checkbox carries the preview's confirm token; absent when unticked.
+        confirmEndBuzzMembership: z.string().max(200).optional(),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return membershipResyncFail(input);
+
+    const result = await resyncMembership(input);
+    if (!result.ok) return membershipResyncFail(result.error);
+    return { success: true, resynced: result.result };
+  }),
+
   grantCreatorScore: requiresGrant('user.creatorScore.grant', async ({ request, locals }) => {
     const maxAmount = locals.grants['user.creatorScore.grantLarge']
       ? CREATOR_SCORE_GRANT_LARGE_MAX_AMOUNT
@@ -703,13 +767,12 @@ export const actions: Actions = {
       form
         .getAll(name)
         .map((v) => Number(v))
-        .filter((n) => Number.isInteger(n) && n > 0);
+        .filter(isInt4Id);
 
     if (input.kind === 'comments') {
       if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')
         return contentFail('Unsupported action for comments.');
       const commentIds = ids('commentIds');
-      const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
         action:
           input.op === 'delete'
@@ -718,7 +781,6 @@ export const actions: Actions = {
             ? 'removeAsTos'
             : 'restoreFromTos',
         commentIds,
-        commentV2Ids,
         userId: input.userId,
         moderatorId: locals.user.id,
       });
@@ -727,8 +789,7 @@ export const actions: Actions = {
         success: true,
         op: input.op,
         affected: result.affected ?? 0,
-        retainedHidden: result.retainedHidden ?? 0,
-        requested: commentIds.length + commentV2Ids.length,
+        requested: commentIds.length,
       };
     }
 

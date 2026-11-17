@@ -1,0 +1,41 @@
+diff --git a/dist/platform/generic.js b/dist/platform/generic.js
+index 80e55e8bb9afe003c8b82251c1b604f2536c1c3a..3b85ab65eeddc2d0430b370f348092f7b4b6865f 100644
+--- a/dist/platform/generic.js
++++ b/dist/platform/generic.js
+@@ -3,6 +3,27 @@ Object.defineProperty(exports, "__esModule", { value: true });
+ var shared_1 = require("../shared");
+ // This is the generic config class for all platforms that doesn't have a special
+ // implementation (e.g: vercel, netlify). All config classes extends this one.
++// Credential params blanked from the logged request path. Keep in step with
++// CREDENTIAL_PARAM_NAMES in @civitai/axiom (a parity test in the app checks it).
++var CREDENTIAL_PARAM_NAMES = ['token', 'accesstoken', 'refreshtoken', 'idtoken', 'apikey', 'key', 'secret', 'clientsecret', 'sig', 'signature', 'xamzsignature', 'xamzcredential', 'xgoogsignature', 'password', 'code'];
++function redactRequestPath(url) {
++    if (typeof url !== 'string' || url.indexOf('=') === -1)
++        return url;
++    return url.replace(/([?&#])([^=&#\s"'<>]+)=([^&#\s"'<>]*)/g, function (match, sep, name, value) {
++        if (!value)
++            return match;
++        var decoded = name;
++        try {
++            decoded = decodeURIComponent(name);
++        }
++        catch (e) { }
++        return CREDENTIAL_PARAM_NAMES.indexOf(decoded.toLowerCase().replace(/[-_]/g, '')) === -1
++            ? match
++            : sep + name + '=[redacted]';
++    });
++}
++exports.redactRequestPath = redactRequestPath;
++exports.CREDENTIAL_PARAM_NAMES = CREDENTIAL_PARAM_NAMES;
+ var GenericConfig = /** @class */ (function () {
+     function GenericConfig() {
+         this.proxyPath = '/_axiom';
+@@ -47,7 +68,7 @@ var GenericConfig = /** @class */ (function () {
+     GenericConfig.prototype.generateRequestMeta = function (req) {
+         return {
+             startTime: new Date().getTime(),
+-            path: req.url,
++            path: redactRequestPath(req.url),
+             method: req.method,
+             host: this.getHeaderOrDefault(req, 'host', ''),
+             userAgent: this.getHeaderOrDefault(req, 'user-agent', ''),

@@ -66,3 +66,22 @@
     </ul>
   </section>
 {/if}
+
+{#if context.trpcErrors.length}
+  <section class="flex min-w-0 flex-col gap-2">
+    <h3 class="text-xs tracking-wide text-dark-2 uppercase">
+      Failed API calls
+      <span class="ml-2 font-normal normal-case">{context.trpcErrors.length} captured</span>
+    </h3>
+    <ul class="flex max-h-64 min-w-0 flex-col gap-1 overflow-auto">
+      {#each context.trpcErrors as entry, i (i)}
+        <li class="flex min-w-0 items-baseline gap-2 font-mono text-xs">
+          <span class="shrink-0 text-red-400">{entry.httpStatus ?? '—'}</span>
+          <span class="shrink-0 text-dark-2">{entry.code}</span>
+          <span class="min-w-0 wrap-anywhere">{entry.path}</span>
+          <span class="shrink-0 text-dark-2">{entry.at}</span>
+        </li>
+      {/each}
+    </ul>
+  </section>
+{/if}

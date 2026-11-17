@@ -8,6 +8,7 @@ const {
   mockLogToAxiom,
   mockSafeError,
   mockGetJobDate,
+  mockRefreshProfilePictures,
   markerView,
 } = vi.hoisted(() => ({
   mockDeleteImages: vi.fn(),
@@ -20,6 +21,7 @@ const {
     stack: (e as Error).stack,
   })),
   mockGetJobDate: vi.fn(),
+  mockRefreshProfilePictures: vi.fn(async (_userIds: number[]) => undefined),
   // Whether the database has the hold marker's view; prod does.
   markerView: { present: true },
 }));
@@ -31,6 +33,9 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/post.service', () => ({
   bustCachesForPosts: mockBustCachesForPosts,
+}));
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForUsersLazy: mockRefreshProfilePictures,
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: mockLogToAxiom,
@@ -266,6 +271,8 @@ function parseSetClause(sql: string, params: unknown[]) {
     if (value === '?') row[column] = queue.shift();
     else if (/^CASE WHEN "needsReview" = 'csam' THEN 'csam' END$/.test(value))
       row[column] = { keeps: 'csam' };
+    else if (/^CASE WHEN "blockedFor" = \? THEN "blockedFor" ELSE \? END$/.test(value))
+      row[column] = { keeps: queue.shift(), otherwise: queue.shift() };
     else if (value === 'now()') row[column] = new Date();
     else if (value === 'NULL') row[column] = null;
     else if (value.startsWith('"metadata" || jsonb_build_object(')) {
@@ -357,8 +364,13 @@ function applyImageUpdate(sql: string, values: unknown[]) {
       const kept = (row.needsReview as { keeps: string }).keeps;
       recorded.needsReview = fixture.reviewFlags?.[id] === kept ? kept : null;
     }
+    if (row.blockedFor && typeof row.blockedFor === 'object') {
+      const { keeps, otherwise } = row.blockedFor as { keeps: string; otherwise: string };
+      recorded.blockedFor = blockedForOf(fixture, id) === keeps ? keeps : otherwise;
+    }
     if (typeof row.ingestion === 'string') (fixture.ingestion ??= {})[id] = row.ingestion;
-    if (typeof row.blockedFor === 'string') (fixture.blockedFor ??= {})[id] = row.blockedFor;
+    if (typeof recorded.blockedFor === 'string')
+      (fixture.blockedFor ??= {})[id] = recorded.blockedFor;
     fireBlockedDeleteTrigger(fixture, id, before, recorded);
 
     blockedUpdates.push({ id, ...recorded });
@@ -1260,6 +1272,33 @@ describe('grace mode search index and caches', () => {
 
     expect(mockBustCachesForPosts).not.toHaveBeenCalled();
   });
+
+  it("refreshes the account's cached profile picture after blocking its images", async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10 });
+
+    await run();
+
+    expect(mockRefreshProfilePictures).toHaveBeenCalledTimes(1);
+    expect(mockRefreshProfilePictures).toHaveBeenCalledWith([7]);
+  });
+
+  it("refreshes the account's cached profile picture when a later batch fails", async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 300 });
+    mockQueueSearchIndex.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('down'));
+
+    await run();
+
+    expect(mockRefreshProfilePictures).toHaveBeenCalledWith([7]);
+  });
+
+  it('refreshes nothing when the pass blocked no images', async () => {
+    seedUser({ id: 7, imageRemoval: 'grace', images: 10, restoredAfterCheck: true });
+
+    const result = await run();
+
+    expect(result.blockedImages).toBe(0);
+    expect(mockRefreshProfilePictures).not.toHaveBeenCalled();
+  });
 });
 
 describe('grace mode delete queue', () => {
@@ -1332,7 +1371,34 @@ describe('grace mode restore breadcrumbs', () => {
     await run();
 
     // Restoring these to a flat `Scanned` would promote an image past the scan it never had.
-    expect(blockedRows()[0].metadata).toEqual({ [PRIOR_INGESTION_KEY]: 'Pending' });
+    expect(blockedRows()[0].metadata).toEqual({
+      [PRIOR_INGESTION_KEY]: 'Pending',
+      [PRIOR_BLOCKED_FOR_KEY]: null,
+    });
+  });
+
+  it('keeps a CSAM reason a failed rescan left unblocked, and records it for the restore', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [1, 2],
+        ingestion: { 1: 'Error', 2: 'Scanned' },
+        blockedFor: { 1: 'CSAM' },
+      },
+    });
+
+    await run();
+
+    const [csam, other] = blockedRows();
+    expect(csam).toMatchObject({
+      id: 1,
+      ingestion: 'Blocked',
+      blockedFor: 'CSAM',
+      metadata: { [PRIOR_INGESTION_KEY]: 'Error', [PRIOR_BLOCKED_FOR_KEY]: 'CSAM' },
+    });
+    // Control: any other unblocked image is hidden as moderated.
+    expect(other).toMatchObject({ id: 2, ingestion: 'Blocked', blockedFor: 'moderated' });
   });
 
   it('records the block reason it overwrote when re-pointing', async () => {

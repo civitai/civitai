@@ -1,4 +1,5 @@
-import { AspectRatio, Badge, Checkbox, Tooltip } from '@mantine/core';
+import { AspectRatio, Badge, Checkbox } from '@mantine/core';
+import { Tooltip } from '~/components/MantineOverlays';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { memo, useCallback, useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

@@ -7,6 +7,7 @@ import * as z from 'zod';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { showErrorNotification } from '~/utils/notifications';
 import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './EditResourceReview.module.scss';
@@ -26,6 +27,8 @@ type EditResourceReviewProps = {
   onCancel?: VoidFunction;
   thumbsUpCount?: number;
   initialEditing?: boolean;
+  /** The post the review is written from, so it stays hidden until that post is live. */
+  postId?: number;
 };
 
 const schema = z.object({
@@ -46,6 +49,7 @@ export function EditResourceReview({
   onSuccess,
   onCancel,
   initialEditing = false,
+  postId,
 }: EditResourceReviewProps) {
   const [id, setId] = useState(initialId ?? undefined);
   const [rating, setRating] = useState(initialRating ?? 0);
@@ -65,7 +69,7 @@ export function EditResourceReview({
 
     const rating = recommended ? 5 : 1;
     mutate(
-      { id: id ?? undefined, rating, recommended, modelVersionId, modelId },
+      { id: id ?? undefined, rating, recommended, modelVersionId, modelId, postId },
       {
         onSuccess: async (response) => {
           setRating(rating);
@@ -73,13 +77,19 @@ export function EditResourceReview({
           setId(response.id);
           await queryUtils.resourceReview.getUserResourceReview.invalidate();
         },
+        onError: (error) => {
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Could not save rating',
+          });
+        },
       }
     );
   };
 
   const form = useForm({ schema, defaultValues: { details: details ?? '' } });
   const handleSubmit = ({ details }: z.infer<typeof schema>) => {
-    if (!modelId || !modelVersionId || !id || !recommended) return;
+    if (!modelId || !modelVersionId || !id || recommended === null) return;
 
     mutate(
       { id, modelVersionId, modelId, rating, recommended, details },
@@ -90,6 +100,12 @@ export function EditResourceReview({
           toggleEditDetail();
           onSuccess?.(id);
           await queryUtils.resourceReview.getUserResourceReview.invalidate();
+        },
+        onError: (error) => {
+          showErrorNotification({
+            error: new Error(error.message),
+            title: 'Could not save review',
+          });
         },
       }
     );
@@ -109,10 +125,7 @@ export function EditResourceReview({
         {modelId && modelVersionId ? (
           <Stack gap={4}>
             <Group align="center" justify="space-between">
-              <Link
-                href={getModelUrl({ modelId, modelName, modelVersionId })}
-                target="_blank"
-              >
+              <Link href={getModelUrl({ modelId, modelName, modelVersionId })} target="_blank">
                 <Stack gap={0} style={{ cursor: 'pointer' }}>
                   {modelName && <Text lineClamp={1}>{modelName}</Text>}
                   {modelVersionName && (

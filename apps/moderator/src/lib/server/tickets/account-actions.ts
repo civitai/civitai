@@ -52,7 +52,7 @@ async function readLinkedUser(
     civitaiUserId: userId,
   });
   if (panel === 'hidden') return { status: 'refused', code: 409, message: notShown };
-  return { status: 'ok', userId };
+  return { status: 'ok', userId, ticketCreatedAt: res.ticket.createdAt };
 }
 
 /** The restriction a ruling names, read live: its owner, type and status decide whether it may be ruled on. */

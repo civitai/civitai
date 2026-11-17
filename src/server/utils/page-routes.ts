@@ -28,14 +28,19 @@ const isPageRoute = (route: string) =>
   route === ERROR_ROUTE ||
   (route !== '/api' && !route.startsWith('/api/') && !route.startsWith('/_'));
 
-/** Never throws: an unreadable manifest yields an empty set, so every route labels as `other`. */
-export function readPageRoutes(manifestPath: string): Set<string> {
+const isApiRoute = (route: string) => route === '/api' || route.startsWith('/api/');
+
+function readManifestRoutes(
+  manifestPath: string,
+  keep: (route: string) => boolean,
+  kind: string
+): Set<string> {
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-    return new Set(Object.keys(manifest).filter(isPageRoute));
+    return new Set(Object.keys(manifest).filter(keep));
   } catch (e) {
     console.warn(
-      `[page-routes] cannot read ${manifestPath}; every page route will be labelled "${PAGE_ROUTE_OTHER}": ${
+      `[page-routes] cannot read ${manifestPath}; every ${kind} route will be labelled "${PAGE_ROUTE_OTHER}": ${
         e instanceof Error ? e.message : String(e)
       }`
     );
@@ -43,10 +48,22 @@ export function readPageRoutes(manifestPath: string): Set<string> {
   }
 }
 
+/** Never throws: an unreadable manifest yields an empty set, so every route labels as `other`. */
+export function readPageRoutes(manifestPath: string): Set<string> {
+  return readManifestRoutes(manifestPath, isPageRoute, 'page');
+}
+
+/** The pages-API route patterns (`/api/...`) in the manifest. Never throws, like `readPageRoutes`. */
+export function readApiRoutes(manifestPath: string): Set<string> {
+  return readManifestRoutes(manifestPath, isApiRoute, 'API');
+}
+
 let knownRoutes: Set<string> | undefined;
+let knownApiRoutes: Set<string> | undefined;
 
 export function __resetPageRoutesForTest() {
   knownRoutes = undefined;
+  knownApiRoutes = undefined;
 }
 
 /**
@@ -58,4 +75,15 @@ export function pageRouteLabel(raw: string | string[] | null | undefined): strin
   if (!value) return PAGE_ROUTE_NONE;
   knownRoutes ??= readPageRoutes(pagesManifestPath());
   return knownRoutes.has(value) ? value : PAGE_ROUTE_OTHER;
+}
+
+/**
+ * Maps a pages-API route pattern (`/api/v1/models/[id]`) to a metric label: a pattern the build's
+ * manifest lists passes through, anything else (a concrete URL, a page route, a missing value) is
+ * `other`. The label set is therefore the manifest's API keys plus `other`, whatever requests arrive.
+ */
+export function apiRouteLabel(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return PAGE_ROUTE_OTHER;
+  knownApiRoutes ??= readApiRoutes(pagesManifestPath());
+  return knownApiRoutes.has(raw) ? raw : PAGE_ROUTE_OTHER;
 }

@@ -160,6 +160,25 @@ describe('createSessionRegistry', () => {
       expect(await reg.isRevoked({ jti: 'target-own', sub: '7', signedAt: 4_000 })).toBe(false);
     });
 
+    it("ending a moderator's impersonations leaves their own sessions and other moderators' alone", async () => {
+      let clock = 5_000;
+      const redis = makeRedis();
+      const reg = createSessionRegistry({ redis, keys: KEYS, now: () => clock });
+      await reg.invalidateImpersonationsBy(100);
+      clock = 9_000;
+
+      expect(
+        await reg.isRevoked({ jti: 'imp', sub: '7', impersonatedBy: 100, signedAt: 4_000 })
+      ).toBe(true);
+      expect(await reg.isRevoked({ jti: 'mod-own', sub: '100', signedAt: 4_000 })).toBe(false);
+      expect(
+        await reg.isRevoked({ jti: 'other-mod', sub: '7', impersonatedBy: 101, signedAt: 4_000 })
+      ).toBe(false);
+      expect(
+        await reg.isRevoked({ jti: 'imp-later', sub: '7', impersonatedBy: 100, signedAt: 6_000 })
+      ).toBe(false);
+    });
+
     it('an invalid family ends every member, the root included', async () => {
       const redis = makeRedis();
       await redis.hSet(KEYS.familyState, 'root-jti', 'invalid');
@@ -221,8 +240,8 @@ describe('createSessionRegistry', () => {
       const reg = createSessionRegistry({ redis, keys: KEYS });
 
       await reg.isRevoked({ jti: 'j', sid: 'f', sub: '7', impersonatedBy: 100, signedAt: 1 });
-      expect(issued).toBe(5);
-      expect(issuedBeforeFirstReply).toBe(5);
+      expect(issued).toBe(6);
+      expect(issuedBeforeFirstReply).toBe(6);
     });
 
     it('keeps revocation markers past the 90-day limit while tracking stays 30 days', async () => {
@@ -234,7 +253,9 @@ describe('createSessionRegistry', () => {
       await reg.trackToken('t', 7);
       await reg.invalidateUserSessions(7);
       await reg.invalidateAll();
+      await reg.invalidateImpersonationsBy(100);
 
+      expect(ttls.get(`${KEYS.userCut}:impersonator:100`)).toBe(91 * DAY);
       expect(ttls.get(`${KEYS.userTokens}:7|t`)).toBe(30 * DAY);
       expect(ttls.get(`${KEYS.tokenState}|t`)).toBe(91 * DAY);
       expect(ttls.get(`${KEYS.userCut}:7`)).toBe(91 * DAY);

@@ -8,6 +8,51 @@
 // Enforced by the `eslint-config-next: "15"` entry in package.json `pnpm.overrides`.
 const noDirectPgPool = require('./eslint-no-direct-pg-pool.cjs');
 
+const restrictedImportPaths = [
+  {
+    name: '@civitai/generation-metadata',
+    importNames: ['readMetadata', 'parseGenerationText'],
+    message:
+      'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
+  },
+  {
+    name: '@civitai/generation-metadata/image',
+    importNames: ['readMetadata', 'parseGenerationText'],
+    message:
+      'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
+  },
+  {
+    name: '@civitai/generation-metadata/node',
+    importNames: ['readMetadataFromFile'],
+    message:
+      'Plugin-less by default — read the file yourself and use readCivitaiMetadata from @civitai/generation-metadata/civitai, or pass plugins explicitly.',
+  },
+];
+
+// App code takes Tooltip, Popover, Menu and HoverCard from `~/components/MantineOverlays`, which
+// renders Mantine's component unchanged unless the `ssrClosedOverlayFastPath` flag is on (then a
+// closed overlay renders only its trigger on the server and mounts Mantine on first use). A raw
+// `@mantine/core` import would silently opt its overlays out of that switch, and a raw
+// Popover/Menu/HoverCard Target or Dropdown inside a wrapped root would have no Mantine context.
+// Tests and the wrapper module itself may import Mantine's (see the override below).
+const mantineOverlayImport = {
+  name: '@mantine/core',
+  importNames: [
+    'Tooltip',
+    'Popover',
+    'Menu',
+    'HoverCard',
+    'PopoverTarget',
+    'PopoverDropdown',
+    'MenuTarget',
+    'MenuDropdown',
+    'HoverCardTarget',
+    'HoverCardDropdown',
+  ],
+  message:
+    'Import Tooltip, Popover, Menu and HoverCard from ~/components/MantineOverlays (same API; it carries the ssrClosedOverlayFastPath switch).',
+};
+
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -52,31 +97,7 @@ module.exports = {
     // (copyMetadata, embedMetadata, types) stay importable. Covers the /image
     // and /node subpaths too (they re-export the same bare readers); a dynamic
     // `await import(...)` is not caught — don't do that.
-    'no-restricted-imports': [
-      'error',
-      {
-        paths: [
-          {
-            name: '@civitai/generation-metadata',
-            importNames: ['readMetadata', 'parseGenerationText'],
-            message:
-              'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
-          },
-          {
-            name: '@civitai/generation-metadata/image',
-            importNames: ['readMetadata', 'parseGenerationText'],
-            message:
-              'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
-          },
-          {
-            name: '@civitai/generation-metadata/node',
-            importNames: ['readMetadataFromFile'],
-            message:
-              'Plugin-less by default — read the file yourself and use readCivitaiMetadata from @civitai/generation-metadata/civitai, or pass plugins explicitly.',
-          },
-        ],
-      },
-    ],
+    'no-restricted-imports': ['error', { paths: [...restrictedImportPaths, mantineOverlayImport] }],
 
     // Flags a `vi.mock('~/utils/trpc', () => ({ ... }))` whose factory hand-writes
     // the module instead of spreading the real one via `importOriginal`. A
@@ -260,6 +281,20 @@ module.exports = {
   },
 
   overrides: [
+    {
+      // The wrapper is the one place that wraps Mantine's overlays, and tests may render Mantine's
+      // own as a baseline. Same paths as the top level, minus `mantineOverlayImport`.
+      files: [
+        'src/components/MantineOverlays/**',
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        '**/__tests__/**',
+        'test/**',
+      ],
+      rules: {
+        'no-restricted-imports': ['error', { paths: restrictedImportPaths }],
+      },
+    },
     {
       // Services must build their Redis caches LAZILY. A module-scope
       // `createCachedObject(...)` runs on IMPORT, so it needs `createCachedObject`

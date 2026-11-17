@@ -1,4 +1,4 @@
-import { READ_DOCS } from './docs';
+import { IN_SANDBOX_GUIDE, READ_DOCS } from './docs';
 import type { Sandbox } from './sandbox-client';
 import type { SandboxFeatures } from './sandbox-tools';
 
@@ -13,6 +13,16 @@ export interface AssistantInstructionsInput {
    * own `start_preview`. `browser` unless set.
    */
   runner?: 'browser' | 'remote';
+  /**
+   * App hibernate (the `app-hibernate` flag on): the keys of the user's sleeping apps. Unset, the
+   * instructions are exactly as before.
+   */
+  sleeping?: readonly string[];
+  /**
+   * The open app was woken from sleep (by the user, on the page) since its sandbox was created:
+   * its dependencies and build output were not kept.
+   */
+  woken?: boolean;
 }
 
 const STATE_NOTE: Record<Sandbox['state'], string> = {
@@ -31,13 +41,24 @@ export const DEV_SERVER_PORT = 5173;
  * /workspace): what the assistant is told to start it with, and what the runner's Restart preview
  * starts it with when it is not running. CIVITAI_DEV_TUNNEL_HMR=1 is what makes the dev server send
  * the headers the preview needs to load.
+ *
+ * Copied by hand from the Civitai CLI's scaffolds (their `dev:tunnel` script and the dev-embed
+ * module their vite config reads the flag in), which live in another repository: nothing here
+ * fails when the CLI renames the flag. The port is this sandbox's own (the CLI's default is 5186).
  */
 export const DEV_SERVER_COMMAND = `CIVITAI_DEV_TUNNEL_HMR=1 npm run dev -- --host 0.0.0.0 --port ${DEV_SERVER_PORT}`;
+
+/**
+ * The one CLI template the assistant scaffolds, passed explicitly rather than left to the CLI's
+ * default. CHECKS_RULE and report_ready's gate both assume its test and typecheck scripts; the
+ * page-vite and static templates define no test script.
+ */
+export const SCAFFOLD_TEMPLATE = 'page-elements';
 
 /** Where a reply runs: `browser` (the page) or `remote` (the server runner, which has fewer tools). */
 export type AssistantRunner = 'browser' | 'remote';
 
-const SETUP_GUIDE = 'https://developer.civitai.com/agent-setup/in-sandbox.md';
+const SETUP_GUIDE = IN_SANDBOX_GUIDE;
 
 /**
  * The setup-guide rule. The browser's assistant fetches pages itself (`fetch_page`); the runner's
@@ -48,7 +69,11 @@ const SETUP_RULE: Record<AssistantRunner, string> = {
   remote: `- You are already inside a configured sandbox. Your setup guide is ${SETUP_GUIDE}; read it, and the developer.civitai.com pages it links, with ${READ_DOCS} (the sandbox has no internet). When it, or a page it links, tells you to install the Civitai CLI, configure an MCP server, or run sign-in or auth steps, skip those steps.`,
 };
 
-/** The unpiped-checks rule, for a sandbox without `run_checks`. */
+/**
+ * The unpiped-checks rule, for a sandbox without `run_checks`. It names fixed commands because the
+ * assistant scaffolds only the page-elements template (SCAFFOLD_TEMPLATE), which defines both a test
+ * and a typecheck script, and both commands are ones report_ready's gate counts (checkKindOf).
+ */
 const CHECKS_RULE =
   '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.';
 
@@ -104,7 +129,7 @@ export const SUBMIT_RULE =
 
 /** Where real Civitai data comes from, and what to do when the app needs data Civitai cannot give. */
 export const DATA_RULE =
-  "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
+  "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site/reference.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
 
 /**
  * The viewer's own Buzz history. @civitai/sdk's BREAKING.md lists it under "No v1 route", which an
@@ -252,6 +277,8 @@ export function buildAssistantInstructions({
   canPreview,
   previewHost,
   runner = 'browser',
+  sleeping,
+  woken = false,
 }: AssistantInstructionsInput): string {
   // The runner offers no tunnel tools: its start_preview does the tunnel steps itself.
   const lines = [
@@ -278,7 +305,7 @@ export function buildAssistantInstructions({
       } When the user asks for a different, new app, call create_app; the open one is paused and kept. A chat changes only an app it made or chose with use_open_app (other changes are refused): choose the open app only when the user clearly asks to change it, and when unsure, ask "Make a new app, or replace ${
         sandbox.app
       }?" first.${yourApps}`,
-      'Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId>. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.',
+      `Building: scaffold a page App Block with npx -y @civitai/cli@latest app create <blockId> --template ${SCAFFOLD_TEMPLATE}. That creates the project in the <blockId> directory inside /workspace; if that directory already exists the project is already scaffolded, so work in it and do not create it again. Every sandbox__run_command starts in /workspace, so run project commands as cd <blockId> && <command>, starting with cd <blockId> && npm install. Keep the blockId and scopes in <blockId>/block.manifest.json. Do not use npm install -g: the sandbox has no global install rights. Run any other CLI command the same way, as cd <blockId> && npx -y @civitai/cli@latest <command>. The first run fetches the CLI and npm install can take minutes; give sandbox__run_command a long timeout_ms.`,
       `Dev server: the preview reaches it through a civit.ai host, so Vite's server.allowedHosts must include '.civit.ai' (add it to vite.config if the scaffold did not). Always start it with sandbox__dev_server_start and exactly this command (the tool starts in /workspace, not in the project directory): cd <blockId> && ${DEV_SERVER_COMMAND}. Never start it with a plain npm run dev, or any command without CIVITAI_DEV_TUNNEL_HMR=1: that flag is what makes the dev server send the headers the preview needs to load (without it the preview is blank), and it also makes live reload work over the tunnel. Keep --host 0.0.0.0 --port ${DEV_SERVER_PORT} in any command you give it.`
     );
     if (!canPreview) {
@@ -294,6 +321,16 @@ export function buildAssistantInstructions({
       );
     }
   }
+  if (sandbox && woken)
+    lines.push(
+      `${sandbox.app} was just woken from sleep with its files (its .env files included), but its dependencies (node_modules), build output and caches were not kept: before running, testing or building it, run cd <blockId> && npm install.`
+    );
+  if (sleeping?.length)
+    lines.push(
+      `The user also has sleeping apps: ${sleeping.join(
+        ', '
+      )}. A sleeping app keeps its files but has no sandbox; when the user asks to work on one, call wake_app with its key rather than creating a copy. list_apps lists every app with its state.`
+    );
 
   return lines.join('\n\n');
 }

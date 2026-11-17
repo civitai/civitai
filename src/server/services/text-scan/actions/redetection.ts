@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { dbWrite } from '~/server/db/client';
 import { randomUUID } from 'node:crypto';
 import { delIfValue } from '~/server/redis/atomic';
@@ -88,6 +90,11 @@ export async function hasOpenModelAppeal(modelId: number) {
       entityId: modelId,
       status: AppealStatus.Pending,
       category: null,
+      // A lock review is not a dispute of the flag. A JSON path NOT alone also drops NULL contexts.
+      OR: [
+        { context: { equals: Prisma.AnyNull } },
+        { NOT: { context: { path: ['kind'], equals: LOCK_REVIEW_KIND } } },
+      ],
     },
     select: { id: true },
   });
@@ -183,7 +190,7 @@ async function resolve({
       promptIds: detection.promptIds ?? null,
       moderatorId: userId,
       ...(decision !== 'closed' && { reason: reason ?? null, note: note ?? null }),
-    }).catch(() => null);
+    });
 
   // Any label: the owner's appeal covers the model, and the queue disables its buttons on the same
   // rule (`hasPendingAppeal` in the moderator app's getRedetectedModels).

@@ -94,8 +94,11 @@
 
 import { TRPCError } from '@trpc/server';
 
-import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import { noteDegradedRead } from '~/server/services/blocks/degraded-read-log';
+
+/** Log event for a beta read on a rendering path that fell back to `BETA_UNAVAILABLE`. */
+const BETA_READ_DEGRADED_EVENT = 'app-listing-beta-read-degraded';
 
 /** What a guarded read of the beta columns yields. See the module header on `available`. */
 export type ListingBetaRead = {
@@ -247,49 +250,6 @@ export async function readListingBetaMany(
 }
 
 /**
- * Record a degraded beta read, without letting the recording break the page.
- *
- * 🔴 `type: 'error'`, AND AN EARLIER VERSION OF THIS COMMENT ARGUED FOR `'warning'` ON A
- * CASE THAT CANNOT REACH HERE. It said "a missing column during the manual-apply window is
- * an expected intermediate state, not an incident" — but the missing-column error is
- * swallowed UPSTREAM: `readListingBeta` and its siblings match `P2022`/`42703` themselves and
- * RETURN `BETA_UNAVAILABLE` without throwing, so it never reaches {@link readForRender}'s
- * catch at all.
- *
- * What actually arrives here is the complement: a connection failure, a statement timeout, a
- * missing TABLE (`42P01`), a permission error (`42501`) — exactly the set this module's
- * `readListingBeta` docstring calls "a real outage". Those are SERVER faults, and
- * `~/server/logging/client` classifies severity on precisely that axis
- * (`fault === 'server' ? 'error' : 'info'`). Filing them as warnings would keep a genuine
- * `app_listings` outage off the error board.
- *
- * 🔴 THE FLOODING OBJECTION DOES NOT APPLY, which is why this differs from
- * `app-listing-assets.service`'s deliberate `'warning'`. That one downgrades because an
- * AUTHOR can trigger it at will (by swapping the object behind a key they own), so at
- * `error` it is an author-controlled tap on the error board. Nothing an author can do
- * produces a `42P01` here.
- *
- * `type` is the load-bearing field — the Alloy→Loki pipeline reads it as the level; `level`
- * is not read.
- *
- * 🔴 THE `.catch(() => null)` IS LOAD-BEARING, not tidiness. Nothing awaits this call, and
- * `logToAxiom` returns a promise that can reject — so without the
- * catch the rejection has nowhere to go but `unhandledRejection`, and the render this exists
- * merely to OBSERVE would be taken down by the observation. That is the precise failure this
- * whole `…ForRender` posture exists to prevent, reintroduced through the logging. Same
- * reasoning as `app-listing-assets.service`, `~/server/redis/fail-open-log` and
- * `~/server/meilisearch/client`.
- */
-function noteDegradedBetaRead(err: unknown): void {
-  logToAxiom({
-    name: 'app-listing-beta-read-degraded',
-    type: 'error',
-    message: err instanceof Error ? err.message : String(err),
-    code: (err as { code?: unknown })?.code ?? null,
-  }).catch(() => null);
-}
-
-/**
  * A read for a RENDERING path, which degrades on **any** error rather than only on a missing
  * column.
  *
@@ -315,7 +275,7 @@ function noteDegradedBetaRead(err: unknown): void {
  * sibling reads `app_blocks`, so a table-scoped failure on `app_listings` (`42P01`, `42501`
  * — the exact codes this module's tests enumerate) is invisible to it. Without a log, an
  * `app_listings` outage would leave the badge silently absent on that page with no signal
- * anywhere. Hence {@link noteDegradedBetaRead}: the page still renders, and the failure is
+ * anywhere. Hence {@link noteDegradedRead}: the page still renders, and the failure is
  * still findable. What is suppressed is only this label's ability to be the thing that takes
  * a page down.
  *
@@ -332,7 +292,7 @@ async function readForRender(read: () => Promise<ListingBetaRead>): Promise<List
   try {
     return await read();
   } catch (err) {
-    noteDegradedBetaRead(err);
+    noteDegradedRead(BETA_READ_DEGRADED_EVENT, err);
     return BETA_UNAVAILABLE;
   }
 }
@@ -370,7 +330,7 @@ export async function readListingBetaManyForRender(
   try {
     return await readListingBetaMany(listingIds, db);
   } catch (err) {
-    noteDegradedBetaRead(err);
+    noteDegradedRead(BETA_READ_DEGRADED_EVENT, err);
     return new Map();
   }
 }
