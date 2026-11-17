@@ -199,12 +199,16 @@ describe('the hand-off routes', () => {
     expect(writes()).toEqual([]);
   });
 
-  it('refuses Privacy without the reply permission, because it emails the requester', async () => {
+  it.each([
+    ['the reply permission, because it emails the requester', 'tickets.reply'],
+    ['the hand-off permission', 'tickets.escalate'],
+  ])('refuses Privacy without %s', async (_why, missing) => {
+    const grants = { 'tickets.privacy': true, 'tickets.reply': true, 'tickets.escalate': true };
     const res = await run(
       'moderation',
       'privacy',
       { ticketId: '5' },
-      { 'tickets.privacy': true, 'tickets.escalate': true }
+      { ...grants, [missing]: false }
     );
     expect(res).toMatchObject({ status: 403 });
     expect(getTicketDetail).not.toHaveBeenCalled();
@@ -237,6 +241,24 @@ describe('the hand-off routes', () => {
     );
     expect(updateTicket).not.toHaveBeenCalled();
     expect(setTicketStatus).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a refusal (4xx)', { ok: false, status: 400, error: 'bad' }, 'NOT filed'],
+    [
+      'a request that never left',
+      { ok: false, requestNeverSent: true, error: 'down' },
+      'NOT filed',
+    ],
+    ['a 5xx', { ok: false, status: 500, error: 'boom' }, 'may or may not'],
+    ['a timeout', { ok: false, error: 'timed out' }, 'may or may not'],
+    ['a success with no report id', { ok: true, body: {} }, 'may or may not'],
+    ['a success with an invalid report id', { ok: true, body: { id: 'x' } }, 'may or may not'],
+  ])('after %s, says whether the bug report was filed', async (_case, answer, says) => {
+    callModEndpoint.mockResolvedValue(answer);
+    const res = await run('moderation', 'fileBug', { ticketId: '5', reason: 'Buttons overlap' });
+    expect((res as { data: { error: string } }).data.error).toContain(says);
+    expect(addPrivateNote).not.toHaveBeenCalled();
   });
 
   it('links the moderator-app ticket in the mod-lead note', async () => {

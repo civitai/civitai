@@ -20,7 +20,6 @@ export function countTicketViews(snapshot: Snapshot | null): Record<string, numb
       routerTopic: t.routerTopic,
       tags: t.tags,
     });
-    // Legal's tickets are in neither view, so they count in neither badge.
     if (route !== 'legal') counts[TICKET_COUNT_KEYS[route]]++;
   }
   return counts;

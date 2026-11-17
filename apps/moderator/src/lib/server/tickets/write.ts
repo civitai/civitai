@@ -244,7 +244,6 @@ export function createTicketWriter(deps: WriteDeps) {
 
       const res = await deps.escalate(ticketId, privacyFields(ticket.tags));
       if (res.status !== 'ok') {
-        // The note above already says it was sent; correct it on the ticket.
         await attribute(ticketId, [
           res.status === 'error' && !res.certain
             ? 'The hand-off to Legal above may or may not have gone through; check the tag and status.'
@@ -285,9 +284,8 @@ export function createTicketWriter(deps: WriteDeps) {
     },
 
     /**
-     * Hands a ticket to the mod lead: one PUT (tag + Waiting on Mod Lead), then a note with the moderator
-     * and the moderator-app link, so the ticket stands on its own. Nothing is emailed. The ticket stays
-     * in the moderation view: status 8 routes there.
+     * Hands a ticket to the mod lead. The note carries the moderator-app link so the ticket stands on its
+     * own. Nothing is emailed.
      */
     async modLead(
       ticketId: string,

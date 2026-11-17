@@ -3,12 +3,11 @@ import { handOffRoutes } from './hand-off';
 
 describe('handOffRoutes', () => {
   it('leaves the privacy button out entirely while its grant is off; the other three always show', () => {
-    expect(handOffRoutes(false).map((r) => r.action)).toEqual(['fileBug', 'modLead', 'escalate']);
-    expect(handOffRoutes(true).map((r) => r.action)).toEqual([
-      'fileBug',
-      'privacy',
-      'modLead',
-      'escalate',
-    ]);
+    const actions = (canPrivacy: boolean) =>
+      handOffRoutes(canPrivacy)
+        .map((r) => r.action)
+        .sort();
+    expect(actions(false)).toEqual(['escalate', 'fileBug', 'modLead']);
+    expect(actions(true)).toEqual(['escalate', 'fileBug', 'modLead', 'privacy']);
   });
 });

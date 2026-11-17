@@ -196,7 +196,7 @@ export function ticketActions(view: TicketView): Actions {
             );
           }),
 
-          // Its own grant (it ships dark), plus the hand-off one, plus the reply one: it emails the requester.
+          // Ships dark behind its own grant.
           privacy: requiresGrant('tickets.privacy', async ({ request, locals }) => {
             if (!locals.grants['tickets.escalate'] || !locals.grants['tickets.reply'])
               return fail(403, {
