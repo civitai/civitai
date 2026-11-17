@@ -493,9 +493,15 @@ export const serverSchema = z
     DOWNLOAD_LINK_API_KEY_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_CLIENT_IDS: commaDelimitedStringArray().default([]),
     DOWNLOAD_LINK_PUBLIC_API_KEY_IDS: commaDelimitedStringArray().default([]),
+    DOWNLOAD_LINK_PROVIDER_API_KEY_IDS: commaDelimitedStringArray().default([]),
     // Derives each link's id from its linkId so a reused link's URL can be rebuilt. Unset or under
     // 32 characters: every mint is a new link.
     DOWNLOAD_LINK_SECRET: z.string().optional(),
+    // Review sheet batches (`POST /api/mod/review-batches`). The list is private; while it is unset
+    // every batch is routed to the held tier.
+    REVIEW_SHEET_BLOCKEDFOR_PATTERNS: z.string().optional(),
+    // The moderator app origin a batch link names; production's when unset.
+    REVIEW_SHEET_ORIGIN: z.string().url().optional(),
     // The least a link's fetch cap can be; large files get more (`linkFetchCap`).
     DOWNLOAD_LINK_MAX_FETCHES: z.coerce.number().int().positive().default(50),
     DOWNLOAD_LINK_MIN_REUSE_SECONDS: z.coerce.number().int().nonnegative().default(7200),
@@ -504,7 +510,8 @@ export const serverSchema = z
       .int()
       .positive()
       .default(6 * 60 * 60),
-    // Mints (reused ones included) per minute.
+    // Mints per minute: on /api/v1/download-links reused ones included, for mini's provider links
+    // fresh ones only.
     DOWNLOAD_LINK_MINT_LIMIT_PER_CREDENTIAL: z.coerce.number().int().positive().default(3000),
     DOWNLOAD_LINK_MINT_LIMIT_PER_USER: z.coerce.number().int().positive().default(120),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
@@ -539,6 +546,12 @@ export const serverSchema = z
     // newest-first (starving the oldest backlog) — a bad hand-tune must fail
     // loudly at boot instead.
     IMAGE_SCANNING_MAX_PER_RUN: z.coerce.number().int().positive().default(1000),
+    // Most scan submits one `ingest-images` run makes, across all its lanes; the rest stay queued
+    // for later runs. Above a small burst they are spaced evenly over the run, so the cron's
+    // in-flight scans stay well below the orchestrator's scan slot, which refuses work when full
+    // rather than queueing it. Sized above an ordinary run's retries, so only a backlog is held
+    // back. Retry capacity is this x 12 per hour; raise it to drain a backlog faster.
+    IMAGE_SCANNING_RETRY_MAX_PER_RUN: z.coerce.number().int().positive().default(200),
     DELIVERY_WORKER_ENDPOINT: z.string().optional(),
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
@@ -594,8 +607,6 @@ export const serverSchema = z
     // search through /api/search).
     SEARCH_TOKEN_API_KEY: z.string().optional(),
     SEARCH_TOKEN_API_KEY_UID: z.string().optional(),
-    METRICS_SEARCH_HOST: z.url().optional(),
-    METRICS_SEARCH_API_KEY: z.string().optional(),
     // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
     SEARCH_SERVICE_URL: z.url().optional(),
     SEARCH_SERVICE_TOKEN: z.string().optional(),
@@ -637,15 +648,6 @@ export const serverSchema = z
     // Traefik's 30s router timeout fires. Default tuned for the image feed
     // hot path (typical P99 ~700ms under healthy load).
     MEILI_CALL_TIMEOUT_MS: z.coerce.number().optional().default(2500),
-    // Server-side deadline for fetchDocumentsAbortable in ms. Distinct from
-    // MEILI_CALL_TIMEOUT_MS — that one wraps SDK calls via withMeili();
-    // this one is the local AbortController timer on the raw fetch path
-    // (image:meili:http span). Generous default (5_000) so healthy
-    // /documents/fetch calls complete cleanly; tunable down at runtime if
-    // the backend tightens up, or up if a brownout needs more headroom
-    // without a code redeploy. Defensive cap: prevents pods from holding
-    // event-loop slots for the Node default (~30s) when -new goes slow.
-    MEILI_FETCH_TIMEOUT_MS: z.coerce.number().optional().default(5000),
     // Per-pod cap on in-flight Meilisearch calls wrapped via withMeili().
     // When saturated, additional calls fail fast with MeiliCallTimeoutError
     // rather than queueing forever and pressuring the event loop.
@@ -798,6 +800,7 @@ export const serverSchema = z
     PROMPT_CHECK_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     BLOCKS_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     PRESET_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
+    ONSITE_ENHANCE_ENFORCE_GENERATION_STATUS: z.string().optional().transform(isEnvSwitchOn),
     TRAINING_STATUS_FAIL_CLOSED: z.string().optional().transform(isEnvSwitchOn),
     // SESSION_REVOCATION_CACHE: a failed session-revocation read still denies a revocation this process
     // has already read (@civitai/auth createRevocationCheck `markerCache`); off restores the plain
@@ -1052,6 +1055,11 @@ export const serverSchema = z
     // token; if either is unset, reports are saved but not filed.
     HQ_INTAKE_URL: z.url({ protocol: /^https$/ }).optional(),
     HQ_INTAKE_TOKEN: z.string().optional(),
+    // HQ -> feedback triage status sync (the `feedback-hq-sync` job): a member's HQ `read` token,
+    // the narrowest HQ issues that reaches its data API (it also reads recordings, so set it ONLY on
+    // the deployment that runs jobs, never on web pods). Unset (or '') the job does nothing and says
+    // so once. Also behind the `feedback-hq-sync` Flipt flag, default off.
+    HQ_FEEDBACK_SYNC_TOKEN: z.string().optional(),
 
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),

@@ -530,6 +530,31 @@ describe('upsertArticle — a live article leaves Scanned with its new text', ()
     expect(contentWrites()[0]).not.toHaveProperty('ingestion');
   });
 
+  it('for a scheduled draft too, which goes live without another text check', async () => {
+    const scheduledAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    stored({ status: 'Draft', scheduledAt });
+    await upsert({ status: 'Draft', scheduledAt });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
+  it('for a draft given a schedule in the same save', async () => {
+    stored({ status: 'Draft', scheduledAt: null });
+    await upsert({ status: 'Draft', scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
+  it('not for a scheduled draft whose schedule the same save clears', async () => {
+    stored({ status: 'Draft', scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
+    await upsert({ status: 'Draft', scheduledAt: null });
+    expect(contentWrites()[0]).not.toHaveProperty('ingestion');
+  });
+
+  it('for a scheduled draft saved without its schedule, which keeps the stored one', async () => {
+    stored({ status: 'Draft', scheduledAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) });
+    await upsert({ status: 'Draft' });
+    expect(contentWrites()[0]).toMatchObject({ ingestion: 'Rescan' });
+  });
+
   it('not for a draft, which is not live', async () => {
     stored({ status: 'Draft' });
     await upsert({ status: 'Draft' });

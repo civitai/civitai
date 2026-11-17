@@ -771,3 +771,52 @@ describe('keyset paging round-trip — no row skipped, no row repeated', () => {
     ]);
   });
 });
+
+/**
+ * REGRESSION. Postgres drops trailing zeros when it renders a timestamp, so a Newest/Oldest
+ * cursor (`CONCAT(mm."lastVersionAt", '|', id)`) carries 250 ms as `10:00:00.25`. dayjs read the
+ * fraction digits as a whole number of milliseconds, so `.25` bound as 25 ms and `.2` as 2 ms and
+ * the next page started from the wrong row. The rendering itself is pinned against a real
+ * Postgres in `get-models-raw.cursor-fraction.pglite.test.ts`.
+ */
+describe('parseCursor — fractional seconds in a timestamp token', () => {
+  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC';
+  const OLDEST = 'mm."lastVersionAt" ASC, mm."modelId"';
+
+  /** Every Date bound into the predicate, as ISO strings. The head token is bound more than once. */
+  const boundDates = (sql: unknown) =>
+    (sql as { values: unknown[] }).values
+      .filter((v): v is Date => v instanceof Date)
+      .map((d) => d.toISOString());
+
+  const cases: [label: string, token: string, iso: string][] = [
+    ['1-digit fraction', '2026-06-12 10:00:00.2', '2026-06-12T10:00:00.200Z'],
+    ['2-digit fraction', '2026-06-12 10:00:00.25', '2026-06-12T10:00:00.250Z'],
+    ['2-digit fraction with a leading zero', '2026-06-12 10:00:00.07', '2026-06-12T10:00:00.070Z'],
+    ['3-digit fraction (control)', '2026-06-12 10:00:00.123', '2026-06-12T10:00:00.123Z'],
+    [
+      '6-digit fraction, truncated (control)',
+      '2026-06-12 10:00:00.987654',
+      '2026-06-12T10:00:00.987Z',
+    ],
+    ['no fraction (control)', '2026-06-12 10:00:00', '2026-06-12T10:00:00.000Z'],
+    ['ISO with a zone suffix (control)', '2026-06-12T10:00:00.5Z', '2026-06-12T10:00:00.500Z'],
+  ];
+
+  for (const [label, token, iso] of cases) {
+    it(`${label}: "${token}" binds ${iso} (getCursorClauses, Newest)`, () => {
+      const { strict, equality, splittable } = getCursorClauses(NEWEST, `${token}|4242`);
+      expect(splittable).toBe(true);
+      const dates = [...boundDates(strict), ...boundDates(equality)];
+      expect(dates).toEqual([iso, iso]);
+    });
+
+    it(`${label}: "${token}" binds ${iso} (getCursor, Oldest)`, () => {
+      const { where } = getCursor(OLDEST, `${token}|4242`);
+      const dates = boundDates(where);
+      expect(dates.length).toBeGreaterThan(0);
+      expect(dates.every((d) => d === iso)).toBe(true);
+      expect((where as unknown as { values: unknown[] }).values).toContain(4242);
+    });
+  }
+});

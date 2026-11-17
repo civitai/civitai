@@ -354,7 +354,7 @@ async function syncRole(trx: Kysely<DB>, userId: number, active: boolean, actor:
       actor,
       note: removed.note,
       addedById: removed.addedById,
-    }).catch(() => {});
+    });
 }
 
 // After commit, never inside the transaction. A failed bust leaves the write in place: the change then

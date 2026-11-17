@@ -33,6 +33,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { autoLabelAvailable, browser, hostConfig, hostLink, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
@@ -65,6 +66,9 @@
     isLabeled,
     labelTextAfterSwitch,
     isTrainable,
+    repeatsOf,
+    clampRepeats,
+    selectionTakesRepeats,
     isTriggerTag,
     labelOptions,
     labelString,
@@ -92,6 +96,7 @@
   import { datasetEpoch, planRemoval } from './datasetRemoval';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
+  import RepeatsStepper from './RepeatsStepper.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
@@ -160,6 +165,7 @@
           name: r.name,
           caption: r.caption,
           previewWorkflowId: r.workflowId,
+          repeats: r.repeats,
         })),
         { silent: true }
       );
@@ -315,6 +321,23 @@
             ? images.filter(isFailed)
             : images
   );
+  // Per-image repeats: tucked into the label editor, a bulk setter while a tag filter is on, and a
+  // ×N badge only on images that repeat.
+  const takesRepeats = $derived(selectionTakesRepeats(selection));
+  let bulkRepeats = $state(2);
+  let bulkRepeatsOpen = $state(false);
+  function applyBulkRepeats() {
+    for (const img of shownImages) img.repeats = bulkRepeats > 1 ? bulkRepeats : undefined;
+    bulkRepeatsOpen = false;
+  }
+  // A skipped duplicate the user meant to keep is a weighting: one more repeat on the image it copies.
+  function keepDuplicatesAsRepeats() {
+    for (const id of dupOwnerIds) {
+      const img = images.find((i) => i.id === id);
+      if (img) img.repeats = clampRepeats(repeatsOf(img) + 1);
+    }
+    dupOwnerIds = [];
+  }
   const shownImages = $derived.by(() => {
     if (!tagFilter) return statusShownImages;
     const ids = new Set(tagFilter.ids);
@@ -402,6 +425,7 @@
       caption?: string;
       previewWorkflowId?: string;
       nsfwLevel?: string;
+      repeats?: number;
     }[],
     { silent = false }: { silent?: boolean } = {}
   ) {
@@ -448,6 +472,7 @@
         // Verbatim — the switch logic promises to restore the ARRIVAL text exactly.
         sourceLabel: item.caption || undefined,
         labelTried: label ? true : undefined,
+        repeats: item.repeats,
       };
     });
     images = [...images, ...added];
@@ -1115,6 +1140,14 @@
       <span>
         Skipped {dupNotice.count} duplicate{dupNotice.count === 1 ? '' : 's'} — same content as
         <strong class="text-dark-0">{dupNotice.names}</strong>.
+        {#if takesRepeats}
+          Meant to train {dupNotice.count === 1 ? 'it' : 'them'} more?
+          <button
+            type="button"
+            class="ml-1 font-semibold text-primary underline-offset-2 hover:underline"
+            onclick={keepDuplicatesAsRepeats}>Count as repeats</button
+          >
+        {/if}
       </span>
       <Button
         variant="ghost"
@@ -1389,7 +1422,7 @@
     <!-- Drag-and-drop is pointer-only by nature; the keyboard path is the Add more button. -->
     <div
       {...drop}
-      class="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
+      class="relative grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_280px]"
     >
       {#if dragging}
         <!-- pointer-events-none: the overlay must not intercept the drag, or its appearance would
@@ -1560,6 +1593,24 @@
                   {@render filterChip(t, true)}
                 {/each}
                 <span>Showing {mediaCount(shownImages.length, media)}</span>
+                {#if takesRepeats && shownImages.length > 0}
+                  <Popover.Root bind:open={bulkRepeatsOpen}>
+                    <Popover.Trigger
+                      class="rounded px-2 py-1 font-mono text-xs text-dark-2 hover:bg-dark-5 hover:text-white"
+                    >
+                      Set repeats…
+                    </Popover.Trigger>
+                    <Popover.Content class="w-64 text-xs" portalProps={portalProps()}>
+                      <p class="mb-2 text-dark-2">
+                        Repeats for the {mediaCount(shownImages.length, media)} shown. 1 trains each once.
+                      </p>
+                      <div class="flex items-center justify-between gap-2">
+                        <RepeatsStepper label="Repeats for the shown images" bind:value={bulkRepeats} />
+                        <Button size="xs" type="button" onclick={applyBulkRepeats}>Apply</Button>
+                      </div>
+                    </Popover.Content>
+                  </Popover.Root>
+                {/if}
                 <Button variant="ghost" size="xs" onclick={() => (tagFilter = null)}>
                   <IconX size={12} stroke={2} class="mr-1 inline" />Clear
                 </Button>
@@ -1704,6 +1755,17 @@
                     <IconCheck size={12} stroke={3} />
                   </span>
                   {@render ratingBadge(img)}
+                  {#if takesRepeats && repeatsOf(img) > 1}
+                    <button
+                      type="button"
+                      title="Trained {repeatsOf(img)} times — change in the label editor"
+                      aria-label="Repeats ×{repeatsOf(img)}"
+                      onclick={() => openEditor(img.id)}
+                      class="absolute bottom-1.5 right-1.5 rounded bg-black/70 px-1.5 py-0.5 font-mono text-xs font-semibold text-on-accent hover:bg-primary"
+                    >
+                      ×{repeatsOf(img)}
+                    </button>
+                  {/if}
                 {/if}
               </div>
 
@@ -1854,6 +1916,7 @@
   onRelabel={canAutoLabel ? relabelOne : undefined}
   position={{ index: editorIndex, total: editorSteps.length }}
   onStep={stepEditor}
+  repeatsEnabled={takesRepeats}
 />
 
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />

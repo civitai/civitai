@@ -80,15 +80,16 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/article.schema.ts': { imageReferenceInputSchema: 3 },
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
+  'src/server/schema/creator-service.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
   // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
   'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
   // collection.upsert cover (a reference any collection manager may set; see
   // CONNECT_EXISTING_LEDGER) and collection.addSimpleImagePost (no id).
   'src/server/schema/collection.schema.ts': { imageInputSchema: 2, imageReferenceInputSchema: 2 },
-  // Bounty images: an `id` keeps or links an existing image; updateEntityImages checks links.
-  'src/server/schema/bounty.schema.ts': { imageReferenceInputSchema: 2 },
-  'src/server/schema/bounty-entry.schema.ts': { imageReferenceInputSchema: 2 },
+  // Bounty and entry images (bounty-entry.schema reuses `bountyImagesSchema`): an `id` keeps or
+  // links an existing image; updateEntityImages checks links.
+  'src/server/schema/bounty.schema.ts': { comfylessImageSchema: 2 },
   // Moderator-only routes.
   'src/server/schema/cosmetic-shop.schema.ts': { comfylessImageSchema: 2 },
   'src/server/schema/purchasable-reward.schema.ts': { comfylessImageSchema: 2 },
@@ -234,6 +235,12 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: [],
     serverColumns: [],
   },
+  // `metadata` is built before the call from the staged bytes' own metadata and the source ref.
+  'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
     calls: 1,
     spreads: [],
@@ -313,6 +320,11 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
   'src/server/services/challenge.service.ts#upsertChallengeEvent': {
     calls: 1,
     decision: 'moderator-route',
+  },
+  // A service cover the seller supplies by id must be their own image, or the offering's current cover.
+  'src/server/services/creator-service.service.ts#resolveServiceCoverImageId': {
+    calls: 1,
+    decision: 'assertOwnership',
   },
   // The crucible inputs' cover and hero schemas have no `id`.
   'src/server/services/crucible.service.ts#createCrucible': {
@@ -606,6 +618,10 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     ],
     decision: 'moderator-route',
   },
+  'src/server/services/creator-service.service.ts#upsertServiceOffering': {
+    writes: ['coverImageId', 'coverImageId'],
+    decision: 'resolver',
+  },
   'src/server/services/crucible.service.ts#createCrucible': {
     writes: ['imageId', 'heroImageId'],
     decision: 'resolver',
@@ -668,7 +684,8 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/storyline-caption.service.ts#setStorylineImageCaption': {
     writes: ['imageId'],
     decision: 'owner-checked',
-    guards: { imageId: 'if (image.post.userId !== userId)' },
+    // The author check is assertChapterPostAuthor's first line.
+    guards: { imageId: 'await assertChapterPostAuthor({' },
   },
   // The spark: someone else's image by design, refused unless it may be shown, is outside a block
   // with the starter and its creator's remix gallery is open. Written once, here.
@@ -688,10 +705,6 @@ const IMAGE_FK_WRITE_LEDGER: Record<
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
-  },
-  'src/server/services/text-scan/actions/image-caption.ts#applyImageCaptionTextScan': {
-    writes: ['imageId: entityId'],
-    decision: 'server-derived',
   },
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],

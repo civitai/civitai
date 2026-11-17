@@ -153,7 +153,7 @@ export default AuthedEndpoint(
         message: (error as Error).message,
         stack: (error as Error).stack,
         userId: user.id,
-      }).catch(() => undefined);
+      });
 
       if (!res.headersSent)
         return res.status(500).json({ error: 'Could not export transactions right now.' });

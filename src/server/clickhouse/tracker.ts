@@ -390,6 +390,16 @@ export async function trackWebhookEvent(type: string, payload: string) {
   }
 }
 
+/**
+ * Whether `Tracker.send` dispatches at all: a tracker is configured, and a local origin has opted in
+ * (a tunnel on loopback can hide a real one). The one statement of that precondition — the beacon-go
+ * shadow sampler reads it too, since a request whose rows are never sent has nothing to compare.
+ */
+export function trackerSends(): boolean {
+  if (!env.CLICKHOUSE_TRACKER_URL) return false;
+  return outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED);
+}
+
 export class Tracker {
   private actor: TrackRequest = {
     userId: 0,
@@ -511,6 +521,13 @@ export class Tracker {
     }
   }
 
+  /**
+   * Called with every row `send` dispatches, as it is about to be POSTed. Set only by the beacon-go
+   * shadow sampler on a sampled beacon request (`~/server/beacon/beacon-go-shadow`), so the rows Node
+   * wrote can be compared with beacon-go's. Must not throw; the sampler's capture never does.
+   */
+  public onSend?: (table: string, row: object) => void;
+
   private async send(
     table: string,
     data: object | ((args: { session: Session | null; actor: TrackRequest }) => object),
@@ -521,14 +538,12 @@ export class Tracker {
     // same channel rather than raised. `awaitDelivery` callers must still not
     // read it as delivered: `send` returns false, `updateEntityMetric` passes
     // that on, and the row stays queued instead of being stamped counted.
-    if (!env.CLICKHOUSE_TRACKER_URL) return false;
-    // A local origin never reaches a tracker unless opted in: a tunnel on loopback can hide a real one.
-    if (!outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED))
-      return false;
+    if (!trackerSends()) return false;
     await this.resolveSession();
 
     const body =
       typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
+    this.onSend?.(table, body);
     const url = `${env.CLICKHOUSE_TRACKER_URL}/track/${table}`;
 
     // Fire-and-forget at the call site, but the inner attempt loop checks
@@ -599,7 +614,7 @@ export class Tracker {
               message: `Tracker returned ${res.status}`,
             },
             'clickhouse'
-          ).catch(() => undefined);
+          );
           failure = new Error(`tracker: ${table} rejected with ${res.status}`);
           break;
         }
@@ -622,7 +637,7 @@ export class Tracker {
             message: `Tracker returned ${res.status} after ${attempt} attempts`,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       } catch (e) {
         const error = e as Error;
         failure = error;
@@ -639,7 +654,7 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch(() => undefined);
+        );
       }
     }
 
@@ -673,7 +688,7 @@ export class Tracker {
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
+      );
     }
   }
 

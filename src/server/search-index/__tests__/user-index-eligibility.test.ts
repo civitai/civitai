@@ -41,7 +41,6 @@ import { norm, renderTag, whereClausesOf } from './sql-shape.test-utils';
 // a predicate, and the index module pulls `updateDocs` from the same place.
 vi.mock('~/server/meilisearch/client', () => ({
   searchClient: null,
-  metricsSearchClient: null,
   updateDocs: vi.fn(async () => undefined),
 }));
 

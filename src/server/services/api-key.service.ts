@@ -19,6 +19,7 @@ import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai'
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
 import { revokeLinksOfRevokedCredentials } from '~/server/services/download-link/download-link.store';
+import { revokeReviewBatchesOfKeys } from '~/server/services/review-batch/review-batch.store';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
@@ -132,7 +133,7 @@ export async function setApiKeyBuzzLimit({
       type: 'oauth.bust-cache.failed',
       message: `bust-cache failed for apiKey ${updated.id} user ${updated.userId}`,
       error: safeError(err),
-    }).catch(() => {});
+    });
   }
 
   return updated;
@@ -182,7 +183,7 @@ export async function mintApiKey(
         name: logName,
         userId: args.userId,
         error: safeError(error),
-      }).catch(() => null)
+      })
     );
     throw refusal;
   }
@@ -204,9 +205,13 @@ export async function getTemporaryUserApiKey(args: MintApiKeyArgs) {
   return key;
 }
 
-/** Download links minted by a revoked key stop working with it. */
-const revokeLinksOfRevokedApiKeys = (ids: number[]) =>
-  revokeLinksOfRevokedCredentials(ids.map((id) => ({ kind: 'apikey' as const, id: String(id) })));
+/** Download links and review batches minted by a revoked key stop working with it. */
+const revokeLinksOfRevokedApiKeys = async (ids: number[]) => {
+  await revokeLinksOfRevokedCredentials(
+    ids.map((id) => ({ kind: 'apikey' as const, id: String(id) }))
+  );
+  await revokeReviewBatchesOfKeys(ids);
+};
 
 /**
  * Delete the API keys matching `where` and evict them from the bearer-path cache, which is keyed by
@@ -305,7 +310,7 @@ export async function forgetGenerationToken(userId: number) {
       name: 'expire-user-api-keys-generation-token',
       userId,
       message: (error as Error).message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -352,7 +357,7 @@ export async function deleteApiKey({ id, userId }: DeleteAPIKeyInput & { userId:
         type: 'oauth.delete-subject.failed',
         message: `delete-subject failed for apiKey ${id} user ${userId}`,
         error: safeError(err),
-      }).catch(() => {});
+      });
     });
   }
 

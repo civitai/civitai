@@ -4,6 +4,7 @@
   import type { TrainingRow } from '$lib/data/trainingRows';
   import type { Media } from '$lib/data/trainingModels';
   import { isPairDataset, toReuseItems } from '$lib/reuse';
+  import { RETENTION_DAYS } from '$lib/orchestrator-core';
 
   // Emits items in addFromBlobs shape so the Data step can seed them with no re-upload.
   let {
@@ -54,6 +55,7 @@
           name: i.name,
           caption: i.caption,
           previewWorkflowId: i.workflowId,
+          repeats: i.repeats,
         }))
       );
       open = false;
@@ -70,7 +72,8 @@
     <Dialog.Header>
       <Dialog.Title>Reuse a dataset</Dialog.Title>
       <Dialog.Description>
-        Pick an existing training to load its images + captions — no re-upload.
+        Pick a training from the last {RETENTION_DAYS} days to load its images + captions — no
+        re-upload.
       </Dialog.Description>
     </Dialog.Header>
 
@@ -85,7 +88,7 @@
         {@const shown = rows.filter((r) => r.media === media)}
         {#if shown.length === 0}
           <div class="py-10 text-center font-mono text-sm text-dark-2">
-            No {media} trainings to reuse yet.
+            No {media} trainings from the last {RETENTION_DAYS} days to reuse.
           </div>
         {:else}
           <div class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">

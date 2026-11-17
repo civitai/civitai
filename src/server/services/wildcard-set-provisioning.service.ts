@@ -831,7 +831,7 @@ export async function importWildcardModelVersion(
         message: 'failed to schedule audits after import',
         wildcardSetId: created,
         error: err instanceof Error ? err.message : String(err),
-      }).catch(() => undefined)
+      })
     );
 
     return {
@@ -950,7 +950,7 @@ export async function reconcileWildcardSets(opts?: {
             path: skip.path,
             reason: skip.reason,
             sizeBytes: skip.sizeBytes,
-          }).catch(() => undefined);
+          });
         }
         break;
       case 'invalidated':
@@ -963,7 +963,7 @@ export async function reconcileWildcardSets(opts?: {
           modelVersionId: mv.id,
           wildcardSetId: outcome.wildcardSetId,
           reason: outcome.reason,
-        }).catch(() => undefined);
+        });
         break;
       case 'unsupported_format':
         result.unsupportedFormat++;
@@ -982,7 +982,7 @@ export async function reconcileWildcardSets(opts?: {
           modelName: mv.model.name,
           versionName: mv.name,
           files: outcome.fileNames,
-        }).catch(() => undefined);
+        });
         break;
       case 'already_exists':
         result.alreadyExists++;
@@ -997,7 +997,7 @@ export async function reconcileWildcardSets(opts?: {
           message: 'failed to import wildcard model version',
           modelVersionId: mv.id,
           error: outcome.error,
-        }).catch(() => undefined);
+        });
         break;
     }
   }

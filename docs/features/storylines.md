@@ -86,7 +86,7 @@ section).
   the image and, when it can be remixed, a "Remix this image" button; the result comes in through
   Import from Generator. Starting again from the same image, while that storyline still has no
   chapter 1 and is not taken down, opens it with the newly chosen title and terms instead of making a
-  second one.
+  second one, including when two starts arrive at once (they are serialised per user and image).
 - **Finding your own.** The "My storylines" filter on /storylines lists the storylines you started,
   empty ones included.
 - **Followed from the start.** A creator follows their storyline from the moment they start it, and a

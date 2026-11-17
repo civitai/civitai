@@ -42,6 +42,8 @@ export const imagesQueryParamSchema = z
     prioritizedUserIds: numericStringArray(),
     // Search v3: a feed that opts in (`ImagesInfinite searchable`) answers this from the semantic search.
     query: z.string(),
+    // Search v3 "more like this": the image whose look the searchable feed matches, while no query is set.
+    similarTo: numericString(z.number().int().positive()),
     reactions: z.preprocess(
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.enum(ReviewReactions))

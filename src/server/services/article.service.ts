@@ -12,6 +12,12 @@ import { ImageConnectionType, NotificationCategory } from '~/server/common/enums
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  CSAM_HELD_REVIEW,
+  isCsamHeldBodyImage,
+  isServableBodyImage,
+  removeBodyMedia,
+} from '~/server/utils/article-body-media';
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
@@ -43,7 +49,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   articleOwnImageIds,
   deriveArticleIngestionState,
+  articleModerationText,
+  articleTextScanFields,
 } from '~/server/services/article-ingestion.helpers';
+import { hashContent } from '~/server/services/entity-moderation.service';
+import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { lockAccessTokens, revokeActiveAccessTokens } from '~/server/services/access-token.service';
 import { isSharedArticle, sharedArticleTextHash } from '~/server/services/article-share.helpers';
 import { getArticleScheduleError } from '~/server/services/article-schedule.helpers';
@@ -76,6 +86,10 @@ import {
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
+import {
+  getModelWithheldImageIds,
+  imageAllowedByItsModelSql,
+} from '~/server/services/collection-cover-visibility';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -191,7 +205,7 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
         cause: error.cause,
       },
       'article-stats'
-    ).catch();
+    );
     return {};
   }
 };
@@ -202,12 +216,16 @@ export type ArticleGetAll = AsyncReturnType<typeof getArticles>['items'];
 /**
  * The image a card shows for an article `a`: its cover, else its banner once servable. The article
  * page hides a banner that is not scanned or awaits review, so a card must not show one either.
+ * Either is dropped when its model withholds it (taken down, or above a minor or SFW-only model's
+ * gallery level); a withheld cover does not fall back to the banner, as on the entity cover read.
  */
-export const articleCardCoverIdSql = Prisma.sql`COALESCE(
-  a."coverId",
-  (SELECT b.id FROM "Image" b
-    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL)
-)`;
+export const articleCardCoverIdSql = Prisma.sql`CASE
+  WHEN a."coverId" IS NOT NULL THEN
+    CASE WHEN ${imageAllowedByItsModelSql(Prisma.sql`a."coverId"`)} THEN a."coverId" END
+  ELSE (SELECT b.id FROM "Image" b
+    WHERE b.id = a."bannerId" AND b.ingestion = 'Scanned' AND b."needsReview" IS NULL
+      AND ${imageAllowedByItsModelSql(Prisma.sql`b.id`)})
+END`;
 
 export const getArticles = async ({
   limit,
@@ -795,7 +813,23 @@ export const articleContentImageSelect = {
   hash: true,
   width: true,
   height: true,
+  needsReview: true,
+  tosViolation: true,
 } satisfies Prisma.ImageSelect;
+
+/**
+ * Whether a cover or banner its model withholds is hidden from this non-moderator viewer: only the
+ * article's owner who uploaded it may see it. Read and save share this so a save keeps exactly what
+ * the edit form could not show.
+ */
+function modelHidesArticleImage(
+  image: { id: number; userId: number },
+  withheld: Set<number>,
+  viewerId: number | undefined,
+  articleUserId: number
+) {
+  return withheld.has(image.id) && !(viewerId === articleUserId && image.userId === articleUserId);
+}
 
 export const getArticleById = async ({
   id,
@@ -851,17 +885,55 @@ export const getArticleById = async ({
     });
 
     const isOwnerOrMod = isModerator || userId === article.userId;
-    const coverImage = viewableArticleImage(article.coverImage, isOwnerOrMod);
-    const bannerImage = viewableArticleImage(article.bannerImage, isOwnerOrMod);
+    // A cover or banner its model withholds is shown only to moderators, and to the article's
+    // owner when they uploaded it. The edit form learns of one it may not see from the
+    // `...Withheld` flags, and a save that leaves it out keeps it (upsertArticle).
+    const withheldByModel = isModerator
+      ? new Set<number>()
+      : await getModelWithheldImageIds(
+          [article.coverImage?.id, article.bannerImage?.id].filter(isDefined)
+        );
+    const hiddenByModel = (image: { id: number; userId: number } | null) =>
+      !!image && modelHidesArticleImage(image, withheldByModel, userId, article.userId);
+    const coverHidden = hiddenByModel(article.coverImage);
+    const bannerHidden = hiddenByModel(article.bannerImage);
+    const coverImage = viewableArticleImage(coverHidden ? null : article.coverImage, isOwnerOrMod);
+    const bannerImage = viewableArticleImage(
+      bannerHidden ? null : article.bannerImage,
+      isOwnerOrMod
+    );
+    // For the owner's edit form only: anyone else learns nothing about an image they cannot see.
+    const isOwner = userId !== undefined && userId === article.userId;
+    const coverImageWithheld = isOwner && coverHidden;
+    const bannerImageWithheld = isOwner && bannerHidden;
 
+    // Media nobody but its owner and moderators may get leaves the body, and csam-held media
+    // leaves it for the owner too.
+    const bodyImages = imageConnections.map((conn) => conn.image);
+    const contentImages = isModerator
+      ? bodyImages
+      : bodyImages.filter((image) =>
+          userId === article.userId ? !isCsamHeldBodyImage(image) : isServableBodyImage(image)
+        );
+    const withheld = bodyImages
+      .filter((image) => !contentImages.includes(image))
+      .map((image) => image.url);
+    const nonOwner = !isModerator && userId !== article.userId;
+    const content =
+      isModerator || !article.content
+        ? article.content
+        : removeBodyMedia(article.content, {
+            withheld,
+            keepEdgeMedia: nonOwner ? new Set(contentImages.map((image) => image.url)) : undefined,
+          });
     // `content` is always sanitized HTML — the editor only ever emits `editor.getHTML()`.
     // Never parse it as JSON: sanitize-html passes a JSON body through untouched, so that
     // branch let any author store a doc with node types the renderer has no schema entry for
     // (blank page for every reader) or malformed JSON (500 → NotFound for everyone, owner
     // included). `generateJSON` is total over arbitrary text.
     let contentJson: MixedObject | undefined;
-    if (article.content) {
-      contentJson = articleContentJson(article.content);
+    if (content) {
+      contentJson = articleContentJson(content);
     }
 
     return {
@@ -874,8 +946,11 @@ export const getArticleById = async ({
       })),
       coverImage,
       bannerImage,
+      coverImageWithheld,
+      bannerImageWithheld,
+      content,
       contentJson,
-      contentImages: imageConnections.map((conn) => conn.image),
+      contentImages,
       metadata: (article.metadata as ArticleMetadata) ?? null,
     };
   } catch (error) {
@@ -887,10 +962,9 @@ export const getArticleById = async ({
 type ArticleImageRow = Prisma.ImageGetPayload<{ select: typeof imageSelect }>;
 
 /** Owners and moderators always; anyone else per `servableArticleImage`. */
-function isArticleImageViewable<T extends Pick<ArticleImageRow, 'ingestion' | 'needsReview'>>(
-  image: T | null | undefined,
-  isOwnerOrMod: boolean
-): image is T {
+function isArticleImageViewable<
+  T extends Pick<ArticleImageRow, 'ingestion' | 'nsfwLevel' | 'needsReview'>
+>(image: T | null | undefined, isOwnerOrMod: boolean): image is T {
   if (!image) return false;
   return isOwnerOrMod || servableArticleImage(image) !== null;
 }
@@ -954,6 +1028,7 @@ export const upsertArticle = async ({
       lockedProperties: string[];
       metadata: Prisma.JsonValue;
       content: string | null;
+      scheduledAt: Date | null;
     } | null = null;
     if (id) {
       article = await dbWrite.article.findUnique({
@@ -973,6 +1048,7 @@ export const upsertArticle = async ({
           lockedProperties: true,
           metadata: true,
           content: true,
+          scheduledAt: true,
         },
       });
       if (!article) throw throwNotFoundError();
@@ -1088,6 +1164,33 @@ export const upsertArticle = async ({
       });
     }
 
+    // A save that leaves out a cover or banner its model hides from this editor keeps it: the
+    // edit form never had it to send back (getArticleById).
+    if (article && !isModerator) {
+      const stored = [
+        coverId === null ? article.coverId : null,
+        bannerId === null ? article.bannerId : null,
+      ].filter(isDefined);
+      if (stored.length) {
+        const withheld = await getModelWithheldImageIds(stored, dbWrite);
+        const owners = withheld.size
+          ? await dbWrite.image.findMany({
+              where: { id: { in: [...withheld] } },
+              select: { id: true, userId: true },
+            })
+          : [];
+        const hiddenIds = new Set(
+          owners
+            .filter((image) => modelHidesArticleImage(image, withheld, userId, article.userId))
+            .map((image) => image.id)
+        );
+        if (coverId === null && article.coverId && hiddenIds.has(article.coverId))
+          coverId = undefined;
+        if (bannerId === null && article.bannerId && hiddenIds.has(article.bannerId))
+          bannerId = undefined;
+      }
+    }
+
     if (!id) {
       // Set publishedAt based on status
       // - Published: Set to now (appears at top of feed)
@@ -1194,15 +1297,13 @@ export const upsertArticle = async ({
             cause: error.cause,
             stack: error.stack,
             articleId: result.id,
-          }).catch();
+          });
         }
       }
 
       // Submit for text moderation (non-blocking, fire-and-forget)
       if (result.content && isPublicArticle(result)) {
-        const textForModeration = [data.title, removeTags(result.content)]
-          .filter(Boolean)
-          .join(' ');
+        const textForModeration = articleModerationText(data.title, result.content);
         submitTextModerationOrScan({
           entityType: 'Article',
           entityId: result.id,
@@ -1221,7 +1322,7 @@ export const upsertArticle = async ({
             name: 'article-text-moderation',
             message: (e as Error).message,
             articleId: result.id,
-          }).catch();
+          });
         });
       }
 
@@ -1383,16 +1484,19 @@ export const upsertArticle = async ({
         ));
       if (sharedSave) await resetSharedArticleTextCheck(tx, id as number);
       sharedTextChanged = sharedSave;
-      // A live article leaves Scanned with its new text too, so no failure before the recompute
-      // can leave that text public without its own verdict.
-      const liveSave =
+      // A live or scheduled article leaves Scanned with its new text too, so no failure before the
+      // recompute can leave that text counted on an older verdict.
+      const publicSave =
         textChanged &&
-        ((data.status as ArticleStatus | undefined) ?? article.status) === ArticleStatus.Published;
+        isPublicArticle({
+          status: ((data.status as ArticleStatus | undefined) ?? article.status) as ArticleStatus,
+          scheduledAt: scheduledAtWrite === undefined ? article.scheduledAt : scheduledAtWrite,
+        });
       const updated = await tx.article.update({
         where: updateWhere,
         data: {
           ...data,
-          ...(sharedSave || liveSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
+          ...(sharedSave || publicSave ? { ingestion: ArticleIngestionStatus.Rescan } : {}),
           ...(moderatorNsfwLevelBasis !== undefined ? { moderatorNsfwLevelBasis } : {}),
           // The locked read: a block may have written its own keys since the first read.
           metadata: {
@@ -1484,18 +1588,26 @@ export const upsertArticle = async ({
 
     // The save has committed: a failed cleanup is logged, and must not skip the content change below.
     try {
-      // A replaced or cleared cover or banner, once nothing else shows it. The cover keeps the narrower
-      // check it always had (owner, and no other article shows it) rather than `unusedAuthorImage`.
+      // A replaced or cleared cover or banner, once nothing else shows it: the author's own
+      // unposted upload only, since the hold read below covers only the author's images.
       const replacedImageIds: number[] = [];
-      if (article.coverId !== coverId && article.coverId && article.coverId !== result.bannerId) {
-        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
+      if (
+        coverId !== undefined &&
+        article.coverId !== coverId &&
+        article.coverId &&
+        article.coverId !== result.bannerId
+      ) {
+        const isImgOwner =
+          (await isImageOwner({ userId, isModerator, imageId: article.coverId })) &&
+          !!(await dbWrite.image.findFirst({
+            where: { id: article.coverId, userId: result.userId, postId: null },
+            select: { id: true },
+          }));
         const shownElsewhere =
           isImgOwner &&
+          // This article too, as it stands now: a save since may have put the cover back.
           (await dbWrite.article.count({
-            where: {
-              id: { not: id },
-              OR: [{ coverId: article.coverId }, { bannerId: article.coverId }],
-            },
+            where: { OR: [{ coverId: article.coverId }, { bannerId: article.coverId }] },
           })) > 0;
         if (isImgOwner && !shownElsewhere) replacedImageIds.push(article.coverId);
       }
@@ -1668,13 +1780,12 @@ export async function applyArticleContentChange({
     // re-materialization is not a user edit: it must not reorder the "Recently Updated"
     // feed or reopen the rating-dispute re-edit window keyed on `updatedAt > resolvedAt`.
     // Under the share-token lock, so a link created meanwhile cannot miss this body: a shared
-    // draft, or a live article, leaves Scanned in the same statement that changes its text.
+    // draft, or a live or scheduled article, leaves Scanned in the same statement that changes its text.
     const affected = await dbWrite.$transaction(async (tx) => {
       await lockAccessTokens(tx, id);
       const shared = await isSharedArticle(id, publication.status, tx);
-      const live = publication.status === ArticleStatus.Published;
       const locked =
-        shared || live
+        shared || isPublicArticle(publication)
           ? await tx.article.findUnique({ where: { id }, select: { content: true } })
           : null;
       const changed = !!locked && locked.content !== content;
@@ -1751,7 +1862,7 @@ export async function applyArticleContentChange({
           cause: error.cause,
           stack: error.stack,
           articleId: id,
-        }).catch();
+        });
       }
     }
   }
@@ -1810,7 +1921,7 @@ export async function applyArticleContentChange({
           name: 'article-text-moderation',
           message: (e as Error).message,
           articleId: id,
-        }).catch();
+        });
         return null;
       });
       // The orchestrator client sets no timeout, so a hung submit would hold the save open.
@@ -1835,9 +1946,6 @@ export async function applyArticleContentChange({
 }
 
 const ARTICLE_TEXT_SUBMIT_TIMEOUT_MS = 10_000;
-
-const articleModerationText = (title: string, content: string | null) =>
-  [title, removeTags(content ?? '')].filter(Boolean).join(' ');
 
 /**
  * Whether the row now holds this text's scan or its verdict. Neither path throws on every miss: the
@@ -1932,6 +2040,7 @@ export const unusedAuthorImage = (ownerId: number) =>
     crucibles: { none: {} },
     crucibleHeroes: { none: {} },
     crucibleEntries: { none: {} },
+    serviceOfferingCovers: { none: {} },
     storylineCovers: { none: {} },
     storylineHeroes: { none: {} },
     storylineSparks: { none: {} },
@@ -2060,7 +2169,7 @@ export const deleteArticleById = async ({
         );
         // Per image, so one failed delete does not stop the rest.
         for (const imageId of deletable) {
-          await deleteImageById({ id: imageId }).catch((error) => {
+          await deleteImageById({ id: imageId, moderatorDelete: !!isModerator }).catch((error) => {
             handleLogError(
               error,
               imageId === deleted.coverId
@@ -2509,12 +2618,14 @@ export async function linkArticleContentImages({
         ...articleOwnImageIds({ coverId: coverId ?? null, bannerId: bannerId ?? null }),
       ];
 
-      // Get orphaned connections for this article
+      // Get orphaned connections for this article. A csam-held image is withheld from its owner's
+      // editor, so their save never carries it; its connection stays while the review is open.
       const orphanedConnections = await tx.imageConnection.findMany({
         where: {
           entityType: ImageConnectionType.Article,
           entityId: articleId,
           imageId: { notIn: excludeImageIds },
+          NOT: { image: { needsReview: CSAM_HELD_REVIEW } },
         },
         select: { imageId: true },
       });
@@ -2885,7 +2996,7 @@ export async function submitSharedArticleText(id: number): Promise<boolean> {
         submitTextModeration({
           entityType: 'Article',
           entityId: id,
-          content: [text.title, removeTags(text.content ?? '')].filter(Boolean).join(' '),
+          content: articleModerationText(text.title, text.content),
           labels: ['nsfw'],
           recordForReview: true,
           forceRescan: true,
@@ -2929,6 +3040,45 @@ export function articleHasText(title: string | null, content: string | null): bo
   const titleText = title?.trim() ?? '';
   const contentText = removeTags(content ?? '').trim();
   return titleText.length > 0 || contentText.length > 0;
+}
+
+/** Text verdicts older than this may not store a hash of the text they judged. */
+export const ARTICLE_TEXT_VERDICT_HASHED_SINCE = new Date('2026-11-11T00:00:00Z');
+
+/**
+ * Whether a stored text verdict covers this title and content. A text-scan verdict carries the
+ * scanned text's `textHash` in its result; an XGuard verdict carries `contentHash`.
+ */
+export function articleTextVerdictMatch(
+  row: { contentHash: string | null; result: Prisma.JsonValue | null; updatedAt: Date },
+  article: { title: string | null; content: string | null }
+): 'current' | 'other' | 'legacy' | 'partial' {
+  const result = row.result as {
+    version?: unknown;
+    textHash?: unknown;
+    meta?: { inputCut?: unknown };
+  } | null;
+  // It did not judge all of the text; a resubmit would judge the same part.
+  const cut = result?.version != null && result.meta?.inputCut === true;
+  const stored =
+    result?.version != null
+      ? typeof result.textHash === 'string'
+        ? result.textHash
+        : null
+      : row.contentHash;
+  if (!stored) {
+    if (row.updatedAt >= ARTICLE_TEXT_VERDICT_HASHED_SINCE) return 'other';
+    return cut ? 'partial' : 'legacy';
+  }
+  const current =
+    result?.version != null
+      ? textScanTextHash({
+          fields: articleTextScanFields(article.title, article.content),
+          declared: {},
+        })
+      : hashContent(articleModerationText(article.title, article.content));
+  if (stored !== current) return 'other';
+  return cut ? 'partial' : 'current';
 }
 
 /**
@@ -3047,7 +3197,7 @@ export async function recomputeArticleIngestionInTx(
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-    select: { status: true, blocked: true },
+    select: { status: true, blocked: true, contentHash: true, result: true, updatedAt: true },
   });
 
   // Articles with no text to scan (empty/null title AND content) can never
@@ -3060,13 +3210,26 @@ export async function recomputeArticleIngestionInTx(
     EntityModerationStatus.Expired,
     EntityModerationStatus.Canceled,
   ];
+  const textSucceeded = hasText && textModeration?.status === EntityModerationStatus.Succeeded;
+  // Only on the way into Scanned: an article already there keeps what it has, so rows from before
+  // verdicts carried a hash do not take it down on its next recompute.
+  const verdictMatch =
+    textSucceeded && textModeration && current.ingestion !== ArticleIngestionStatus.Scanned
+      ? articleTextVerdictMatch(textModeration, current)
+      : 'current';
+  if (verdictMatch === 'legacy') logToAxiom({ type: 'info', name: 'article-verdict-unverifiable' });
+  // A verdict for other text neither clears nor blocks it. One for part of this text blocks on a
+  // hit in the part it judged, but cannot clear the rest.
+  const verdictForThisText = verdictMatch === 'current' || verdictMatch === 'legacy';
   const textBlocked =
-    hasText &&
-    textModeration?.status === EntityModerationStatus.Succeeded &&
-    textModeration.blocked === true;
+    textSucceeded &&
+    (verdictForThisText || verdictMatch === 'partial') &&
+    textModeration?.blocked === true;
+  if (verdictMatch === 'partial' && !textBlocked)
+    logToAxiom({ type: 'warning', name: 'article-verdict-input-cut', articleId });
   const textError =
     hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
-  const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
+  const textDone = !hasText || (textSucceeded && verdictForThisText);
 
   // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
   const hasModeratorOverride = current.moderatorNsfwLevel != null;
@@ -3429,9 +3592,7 @@ export async function rescanArticle({
     article.content &&
     (isPublicArticle(article) || (await isSharedArticle(id, article.status)))
   ) {
-    const textForModeration = [article.title, removeTags(article.content)]
-      .filter(Boolean)
-      .join(' ');
+    const textForModeration = articleModerationText(article.title, article.content);
 
     await submitTextModerationOrScan({
       entityType: 'Article',
@@ -3453,7 +3614,7 @@ export async function rescanArticle({
         name: 'article-rescan-text-moderation',
         message: (e as Error).message,
         articleId: id,
-      }).catch();
+      });
     });
   }
 
@@ -3481,7 +3642,7 @@ export async function rescanArticle({
     articleId: id,
     imageCount: connections.length,
     isModerator,
-  }).catch();
+  });
 }
 
 /**
@@ -3579,7 +3740,7 @@ export async function rescanArticleImage({
     articleId,
     imageId,
     isModerator,
-  }).catch();
+  });
 }
 
 /** The seeded `civitai official` tag, or undefined until the row exists. */

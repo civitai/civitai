@@ -76,7 +76,9 @@ vi.mock('../redis', () => ({ getSysRedis: () => ({ del: vi.fn(), sRem: vi.fn() }
 vi.mock('../user-actions.service', () => ({ setImageFlag: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined), logToAxiom }));
 
-const { acceptImage, RemovedImageNotRestorableError } = await import('../image-moderation.service');
+const { acceptImage, ImageNotRestoredError, RemovedImageNotRestorableError } = await import(
+  '../image-moderation.service'
+);
 const { imageQueueActions } = await import('../image-queue');
 
 const SCHEMA = `
@@ -100,7 +102,8 @@ ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
 CREATE TABLE "ImageReport" ("imageId" INTEGER, "reportId" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -116,7 +119,11 @@ CREATE TABLE "Appeal" (
   "entityRemovedAt" TIMESTAMP(3)
 );
 CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
-CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+-- Rates a restored image as its tags would: an untagged one would go back to the scanner.
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
+  UPDATE "Image" SET "nsfwLevel" = 1
+  WHERE id = ANY(ids) AND NOT "nsfwLevelLocked" AND "ingestion" = 'Scanned' AND "blockedFor" IS NULL;
+$$;
 `;
 
 // Each image's own report has the image's id plus 1000.
@@ -328,10 +335,20 @@ describe('accepting from a review queue', () => {
     expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
   });
 
-  it('is overridden by an explicit unblock', async () => {
-    await acceptImage({ imageId: HELD, userId: 2, restoreRemoved: true });
+  // Ruled by the Moderation Lead: an explicit unblock used to lift this; a CSAM block is now lifted
+  // only through its own review. Do not restore the old expectation.
+  it('is not overridden by an explicit unblock when the reason is CSAM', async () => {
+    await expect(
+      acceptImage({ imageId: HELD, userId: 2, restoreRemoved: true })
+    ).rejects.toBeInstanceOf(ImageNotRestoredError);
 
-    expect(await row(HELD)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
+    expect(await row(HELD)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
+  });
+
+  it('is overridden by an explicit unblock for another reason', async () => {
+    await acceptImage({ imageId: OTHER_REASON, userId: 2, restoreRemoved: true });
+
+    expect(await row(OTHER_REASON)).toMatchObject({ ingestion: 'Scanned', blockedFor: null });
   });
 });
 

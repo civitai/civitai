@@ -61,7 +61,18 @@ vi.mock('~/server/redis/client', async () => ({
 function orchestratorClientMock() {
   return {
     // Enums
-    BuzzClientAccount: { System: 'System', User: 'User' },
+    // The four spend accounts carry the package's REAL values (`types.gen.d.ts`), so a
+    // test can assert the exact `currencies` order a submit sends. Without them
+    // `BuzzTypes.toOrchestratorType` maps every pool to `undefined`, and a test cannot
+    // tell `['yellow','blue']` from `['blue','yellow']`.
+    BuzzClientAccount: {
+      System: 'System',
+      User: 'User',
+      YELLOW: 'yellow',
+      BLUE: 'blue',
+      GREEN: 'green',
+      FAKE_RED: 'fakeRed',
+    },
     TransactionType: { Credit: 'Credit', Debit: 'Debit' },
     Priority: { Normal: 'Normal', High: 'High' },
     NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
@@ -174,6 +185,19 @@ process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432
 delete process.env.NOTIFICATIONS_ENDPOINT;
 delete process.env.NOTIFICATIONS_TOKEN;
 delete process.env.NOTIFICATIONS_NOTICES_TOKEN;
+// @civitai/email reads EMAIL_* from process.env, not the ~/env/server mock below, so a shell
+// exporting real SMTP settings would send real mail.
+for (const key of [
+  'EMAIL_HOST',
+  'EMAIL_PORT',
+  'EMAIL_SECURE',
+  'EMAIL_USER',
+  'EMAIL_PASS',
+  'EMAIL_FROM',
+  'EMAIL_TIMEOUTS',
+]) {
+  delete process.env[key];
+}
 vi.mock('~/server/notifications/client', () => ({
   notifications: createNotificationsClientStub(),
 }));

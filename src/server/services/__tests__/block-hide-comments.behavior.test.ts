@@ -25,6 +25,7 @@ vi.mock('~/server/db/pgDb', () => ({
 
 import {
   BLOCK_HIDE_MAX_COMMENTS,
+  blockHideCandidatesSql,
   hideBlockedUserCommentsOnOwnContent,
   SECTION_OWNERS,
 } from '~/server/services/block-hide-comments.service';
@@ -57,6 +58,7 @@ beforeAll(async () => {
     CREATE TABLE "Challenge" (id int PRIMARY KEY, "createdById" int);
     CREATE TABLE app_listings (serial_id int PRIMARY KEY, user_id int);
     CREATE TABLE "ComicChapter" (id int PRIMARY KEY, "projectId" int);
+    CREATE TABLE "PostText" (id int PRIMARY KEY, "postId" int);
     CREATE TYPE "CommentEntityType" AS ENUM (${Object.values(CommentEntityType)
       .map((t) => `'${t}'`)
       .join(', ')});
@@ -235,6 +237,11 @@ describe('SECTION_OWNERS', () => {
       `INSERT INTO "Storyline" (id, "userId") VALUES (:mine, ${BLOCKER}), (:theirs, ${OTHER_OWNER})`,
     ],
     [
+      'postText',
+      `INSERT INTO "Post" (id, "userId") VALUES (:mine, ${BLOCKER}), (:theirs, ${OTHER_OWNER});
+       INSERT INTO "PostText" (id, "postId") VALUES (:mine, :mine), (:theirs, :theirs)`,
+    ],
+    [
       'comicChapter',
       `INSERT INTO "ComicProject" (id, "userId") VALUES (:mine, ${BLOCKER}), (:theirs, ${OTHER_OWNER});
        INSERT INTO "ComicChapter" (id, "projectId") VALUES (:mine, :mine), (:theirs, :theirs)`,
@@ -247,7 +254,7 @@ describe('SECTION_OWNERS', () => {
     await holder.db.exec(`
       TRUNCATE "CommentV3", "Image", "Post", "Article", "Model", "ResourceReview", "Bounty",
         "BountyEntry", "Model3D", "Model3DReview", "Challenge", app_listings, "Crucible",
-        "Storyline", "ComicProject", "ComicChapter";
+        "Storyline", "ComicProject", "ComicChapter", "PostText";
       ${SECTIONS.map(([, sql], i) =>
         sql.replaceAll(':mine', String(mine(i))).replaceAll(':theirs', String(theirs(i)))
       ).join(';\n')};

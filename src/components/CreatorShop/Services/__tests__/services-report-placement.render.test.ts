@@ -4,14 +4,14 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Where the storefront offers the report, and on which offering. The button itself (what it
-// files) is pinned in report-service.render.test.ts; here it is a stand-in that shows its id.
+// Where the storefront offers the options menu (which holds Report), and on which offering. The menu's items are pinned in
+// ServiceOfferingMenu.browser.test.tsx; here it is a stand-in that shows what it was given.
 
 const mocks = vi.hoisted(() => ({ viewerId: 1 as number | null }));
 
-vi.mock('~/components/CreatorShop/Services/ReportServiceButton', () => ({
-  ReportServiceButton: ({ offeringId }: { offeringId: number }) =>
-    createElement('span', { 'data-report-offering': offeringId }, 'Report'),
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: ({ offering, isOwner }: { offering: { id: number }; isOwner: boolean }) =>
+    createElement('span', { 'data-menu-offering': offering.id, 'data-menu-owner': isOwner }),
 }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: ReactNode }) => children,
@@ -69,20 +69,21 @@ beforeEach(() => {
 });
 
 describe('storefront: reporting a service', () => {
-  it('offers a visitor the report on that offering, beside Request', () => {
+  it('gives a visitor the options menu on that offering, beside Request', () => {
     const html = renderShop();
-    expect(html).toContain('data-report-offering="42"');
+    expect(html).toContain('data-menu-offering="42"');
+    expect(html).toContain('data-menu-owner="false"');
     expect(html).toContain('Request');
   });
 
   it('offers no Request on a draft shop, which answers a buyer "Shop not found" (a moderator can see it)', () => {
     const html = renderShop(false);
     expect(html).not.toContain('Request');
-    expect(html).toContain('data-report-offering="42"');
+    expect(html).toContain('data-menu-offering="42"');
   });
 
-  it('shows no report to the seller on their own storefront', () => {
+  it('tells the menu the seller is the owner on their own storefront', () => {
     mocks.viewerId = SELLER;
-    expect(renderShop()).not.toContain('data-report-offering');
+    expect(renderShop()).toContain('data-menu-owner="true"');
   });
 });

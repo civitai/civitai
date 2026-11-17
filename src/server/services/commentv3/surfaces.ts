@@ -9,7 +9,10 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getModelVisibleToViewer } from '~/server/services/model-visibility.service';
+import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
+import { assertPostTextVisible } from '~/server/services/post-viewer-visibility.service';
 import { createNotification } from '~/server/services/notification.service';
+import { postTextOwnerNoticeSql } from '~/server/notifications/comment.notifications';
 import { assertStorylineVisible } from '~/server/services/storyline.service';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import type { StoredCommentV3 } from '~/server/services/commentv3/write.service';
@@ -138,6 +141,15 @@ async function assertModelOpen(modelId: number, ctx: ProtectedContext) {
  * An unpublished article's comments are its owner's, moderators', and those of a viewer whose share
  * link for it still opens the draft (round 1's cookie, re-resolved on every call).
  */
+/** A post's thread is readable to whoever may open the post: the post detail rule. */
+async function assertPostCommentsVisible(postId: number, ctx: CommentReadContext) {
+  const post = await dbRead.post.findFirst({
+    where: { id: postId, ...getPostDetailVisibility(ctx.user) },
+    select: { id: true },
+  });
+  if (!post) throw throwNotFoundError('Post not found');
+}
+
 async function assertArticleCommentsVisible(articleId: number, ctx: CommentReadContext) {
   const article = await dbRead.article.findUnique({
     where: { id: articleId },
@@ -231,10 +243,40 @@ async function notifyComicOwner(comment: StoredCommentV3, ctx: ProtectedContext)
   });
 }
 
+/**
+ * Tells the post's owner about a new top-level comment on one of its texts, as a post comment
+ * linked to the text slide. Named by the post, never the text: a notice outlives a later hold.
+ * Same dedupe key as `notifyComicOwner`.
+ */
+async function notifyPostTextOwner(comment: StoredCommentV3, ctx: ProtectedContext) {
+  if (comment.parentId) return;
+  const [text] = await dbRead.$queryRawUnsafe<
+    { postId: number; userId: number; title: string | null; anchorImageId: number | null }[]
+  >(postTextOwnerNoticeSql, comment.entityId);
+  // No image, no slide to open: the thread notices skip it too (`v3ThreadType`).
+  if (!text?.anchorImageId || text.userId === comment.userId) return;
+  await createNotification({
+    type: 'new-post-comment',
+    key: `new-comment-post-text:owner:v3:${comment.id}`,
+    category: NotificationCategory.Comment,
+    dedupeKey: `comment:v2:${comment.id}`,
+    userId: text.userId,
+    details: {
+      version: 3,
+      postId: text.postId,
+      postTitle: text.title,
+      commentId: comment.id,
+      username: ctx.user.username ?? 'Someone',
+      postTextId: comment.entityId,
+      anchorImageId: text.anchorImageId,
+    },
+  });
+}
+
 /** Every entity type with a comment section, so a new one does not compile until it has an entry. */
 export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
   article: { assertVisible: assertArticleCommentsVisible, assertWritable: accessGated('Article') },
-  post: { assertWritable: accessGated('Post') },
+  post: { assertVisible: assertPostCommentsVisible, assertWritable: accessGated('Post') },
   image: {
     onCreated: (comment, ctx) => {
       if (comment.parentId) return;
@@ -286,6 +328,18 @@ export const commentSurfaces: Record<CommentEntityType, CommentSurface> = {
     },
   },
   appListing: {},
+  postText: {
+    assertVisible: async (textId, ctx) => void (await assertPostTextVisible(textId, ctx)),
+    assertWritable: async (textId, ctx) => {
+      const text = await dbRead.postText.findUnique({
+        where: { id: textId },
+        select: { postId: true },
+      });
+      if (!text) throw throwNotFoundError('Text not found');
+      await accessGated('Post')(text.postId, ctx);
+    },
+    onCreated: (comment, ctx) => void notifyPostTextOwner(comment, ctx).catch(handleLogError),
+  },
 };
 
 export function commentSurface(entityType: string): CommentSurface {

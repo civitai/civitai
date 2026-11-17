@@ -213,7 +213,7 @@ function recordIntent(
     modelId,
     path,
     ...extra,
-  }).catch(() => undefined);
+  });
 }
 
 /** Drops the cover's safe bits from the model's level, which is what takes it off .com. */
@@ -381,7 +381,7 @@ function logError(message: string, modelId: number, error?: unknown) {
     ...(error !== undefined && {
       error: error instanceof Error ? error.message : String(error),
     }),
-  }).catch(() => undefined);
+  });
 }
 
 /**

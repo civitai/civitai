@@ -7,6 +7,8 @@
   import ImageFlagBadges from '$lib/components/ImageFlagBadges.svelte';
   import { entityUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { reviewReasonText } from '$lib/image-review';
+  import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import type { PageData } from './$types';
   import {
     FEEDBACK_CAPTURE_ACCOUNT_NOTE,
@@ -48,6 +50,8 @@
     ['Meta hidden by uploader', image.hideMeta ? 'yes' : 'no'],
   ]);
 
+  const reviewReason = $derived(image.needsReview ? reviewReasonText(image.needsReview) : null);
+
   const scanJobs = $derived(image.scanJobs ? JSON.stringify(image.scanJobs, null, 2) : null);
 
   // Everything in `meta` beyond the two prompts — seed, sampler, model hash, civitaiResources. Same
@@ -81,6 +85,16 @@
       {approvedAppeal}
     />
   </div>
+
+  {#if reviewReason}
+    <div class="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm">
+      <div class="text-xs tracking-wide text-amber-200 uppercase">Why it's in review</div>
+      <p class="text-dark-0">{reviewReason}</p>
+      {#if image.needsReview === 'modRule' && image.ruleReason}
+        <p class="text-dark-0">Rule: {image.ruleReason}</p>
+      {/if}
+    </div>
+  {/if}
 
   {#if canAct}
     <!-- Retool had Toggle Minor / Toggle Poi here, ON only. Both directions, because a flag set in
@@ -179,6 +193,14 @@
         <div>
           <div class="text-xs tracking-wide text-dark-2 uppercase">Negative prompt</div>
           <p class="wrap-break-word text-dark-2">{image.negativePrompt}</p>
+        </div>
+      {/if}
+      {#if image.promptHighlight?.hasHighlights}
+        <!-- Beside the raw prompt rather than in place of it: the highlighter normalises accents and
+             caps the length, so its text is not the stored prompt. -->
+        <div>
+          <div class="text-xs tracking-wide text-dark-2 uppercase">Flagged prompt terms</div>
+          <PromptHighlight result={image.promptHighlight} />
         </div>
       {/if}
     </div>

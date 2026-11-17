@@ -91,10 +91,10 @@ function logInternalModeratorKey(context: Context | undefined) {
   logToAxiom({
     name: 'download-internal-moderator-key',
     type: 'info',
-    apiKeyId: context?.apiKeyId ?? null,
     apiKeyType: context?.apiKeyType ?? null,
     client: context?.subject?.type ?? null,
-  }).catch(() => undefined);
+    payload: { apiKeyId: context?.apiKeyId ?? null },
+  });
 }
 
 /**
@@ -124,7 +124,7 @@ export async function scopeRefusalMode(
     ...fields,
     tokenScope: context?.tokenScope ?? null,
     apiKeyId: context?.apiKeyId ?? null,
-  }).catch(() => undefined);
+  });
   return mode;
 }
 

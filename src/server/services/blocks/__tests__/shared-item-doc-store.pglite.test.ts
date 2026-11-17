@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as DocStoreModule from '~/server/services/apps/doc-store';
+import type * as FliptClient from '~/server/flipt/client';
 import type { DocStoreDb } from '~/server/services/apps/doc-store';
 import {
   createPgliteHarness,
@@ -38,7 +39,20 @@ const h = vi.hoisted(() => ({
   legacy: new Map<string, { author: number; hidden: boolean }>(),
   legacyCalls: 0,
   appdataConfigured: false,
+  /** `app-blocks-shared-doc-levels`, for every app; off unless a case turns it on. */
+  docLevels: false,
 }));
+
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const real = await importOriginal<typeof FliptClient>();
+  return {
+    ...real,
+    isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+      flag === 'app-blocks-shared-doc-levels'
+        ? Promise.resolve(h.docLevels)
+        : real.isFlipt(flag, entityId, context as never),
+  };
+});
 
 // Whether the process has a document-store pool configured (`APPDATA_DATABASE_URL`).
 vi.mock('~/server/db/appdataDb', () => ({
@@ -462,6 +476,87 @@ function defineSuite(rls: boolean) {
 
 defineSuite(false);
 defineSuite(true);
+
+describe('content levels on (app-blocks-shared-doc-levels): the card path and attribution', () => {
+  let harness: Harness;
+  let store: DocStoreModule.DocStore;
+
+  beforeAll(async () => {
+    harness = await createPgliteHarness({ rls: true, docLevels: true });
+    store = docStore.createDocStore({ db: harness.db });
+  });
+  afterAll(async () => {
+    h.docLevels = false;
+    await harness?.close();
+  });
+  beforeEach(() => {
+    h.lookup = docStore.createDocStoreLookup({ db: harness.db });
+    h.legacy.clear();
+    h.legacyCalls = 0;
+    h.docLevels = true;
+    dbMock.dbRead.appBlock.findUnique.mockImplementation(
+      async ({ where }: { where: { id: string } }) => apps.get(where.id) ?? null
+    );
+  });
+
+  /** Set an item's rating directly: the rater (build 3) does not exist yet. */
+  const rate = (app: string, key: string, level: number, status: string) =>
+    harness.raw(
+      `UPDATE appdata.doc d SET level = $3, rating_status = $4, rated_at = now(),
+         rated_version = d.version
+       WHERE d.app_id = $1 AND d.ns = 'prod' AND d.key = $2`,
+      [app, key, level, status]
+    );
+  const write = (app: string, key: string) =>
+    store.put({ ...ctx(app, NS_PROD, DOC_AUTHOR), levels: { viewerLevel: 1 } }, POSTS, key, {
+      title: key,
+    });
+
+  it('🔴 the card path reads a pending item with its rating; spend attribution stays level-blind', async () => {
+    const app = freshApp();
+    await write(app, 'pending-item');
+    expect(await subListing(app, 'pending-item')).toEqual({
+      authorUserId: DOC_AUTHOR,
+      hidden: false,
+      rating: { level: null, status: 'pending' },
+    });
+    expect(await attribution(app, 'pending-item')).toBe(DOC_AUTHOR);
+  });
+
+  it('🔴 a rated item carries its effective level to the card path', async () => {
+    const app = freshApp();
+    await write(app, 'rated-item');
+    await rate(app, 'rated-item', 4, 'rated');
+    expect(await subListing(app, 'rated-item')).toEqual({
+      authorUserId: DOC_AUTHOR,
+      hidden: false,
+      rating: { level: 4, status: 'rated' },
+    });
+    expect(await attribution(app, 'rated-item')).toBe(DOC_AUTHOR);
+  });
+
+  it('a Blocked item carries its level; attribution still names its author', async () => {
+    const app = freshApp();
+    await write(app, 'blocked-item');
+    await rate(app, 'blocked-item', 32, 'rated');
+    expect(await subListing(app, 'blocked-item')).toEqual({
+      authorUserId: DOC_AUTHOR,
+      hidden: false,
+      rating: { level: 32, status: 'rated' },
+    });
+    expect(await attribution(app, 'blocked-item')).toBe(DOC_AUTHOR);
+  });
+
+  it('INVARIANT GUARD: flag off, the same pending item resolves as before', async () => {
+    const app = freshApp();
+    await write(app, 'off-item');
+    h.docLevels = false;
+    expect(await subListing(app, 'off-item')).toEqual({
+      authorUserId: DOC_AUTHOR,
+      hidden: false,
+    });
+  });
+});
 
 describe('the cross-collection lookup is reachable from the two key resolvers only', () => {
   // The lookup reads every shared collection of an app; the block-token routes' store must not

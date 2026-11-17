@@ -112,7 +112,7 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
   logToAxiom(
     { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -149,7 +149,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
       ...(route ? { route } : null),
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -298,6 +298,8 @@ function withApiMetrics(
   });
 }
 
+const TOKEN_HEADER = 'x-webhook-token';
+
 /**
  * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
  * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
@@ -324,10 +326,13 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    const { bearer, queryToken } = presentedTokens(req);
+    // `x-webhook-token` is what the Knights app sends. When it is present it is the only credential
+    // read, so a wrong header is refused even if `?token=` is right.
+    const { bearer, queryToken, header } = presentedTokens(req);
+    const headerOk = header !== undefined && timingSafeEqualStrings(token, header);
     const bearerOk = timingSafeEqualStrings(token, bearer);
     const queryOk = timingSafeEqualStrings(token, queryToken);
-    if (!bearerOk && !queryOk) {
+    if (header !== undefined ? !headerOk : !bearerOk && !queryOk) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -343,9 +348,11 @@ export function TokenSecuredEndpoint(
  * arrives as an array and is refused rather than read.
  */
 function presentedTokens(req: NextApiRequest) {
+  const header = req.headers[TOKEN_HEADER];
   return {
     bearer: req.headers.authorization?.match(/^Bearer (.+)$/)?.[1],
     queryToken: typeof req.query.token === 'string' ? req.query.token : undefined,
+    header: typeof header === 'string' && header !== '' ? header : undefined,
   };
 }
 
@@ -417,11 +424,14 @@ function webhookTokenEndpoint(
       return;
     }
 
-    const { bearer, queryToken } = presentedTokens(req);
+    const { bearer, queryToken, header } = presentedTokens(req);
+    // Same rule as `TokenSecuredEndpoint`: a present `x-webhook-token` is the only credential read.
     const slot =
-      matchWebhookToken(bearer) ??
-      matchWebhookToken(queryToken) ??
-      (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
+      header !== undefined
+        ? matchWebhookToken(header)
+        : matchWebhookToken(bearer) ??
+          matchWebhookToken(queryToken) ??
+          (acceptProbeToken ? matchProbeToken(bearer) ?? matchProbeToken(queryToken) : undefined);
     if (!slot) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
@@ -771,9 +781,12 @@ export function PartnerEndpoint(
 
 export function ModEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  /** `noStore`: `private, no-store` on every answer, this wrapper's own refusals included. */
+  { noStore = false }: { noStore?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (noStore) res.setHeader('cache-control', 'private, no-store');
     if (!req.method || !allowedMethods.includes(req.method)) {
       res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
@@ -946,7 +959,7 @@ export function OrchestratorEndpoint(
         route: req.url?.split('?')[0],
         requiredScope,
         ...credentialLogFields(credential),
-      }).catch(() => undefined);
+      });
       return res
         .status(403)
         .json({ error: 'Your API key does not have the required scope for this action' });

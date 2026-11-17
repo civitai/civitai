@@ -3,8 +3,6 @@ import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import {
   contentRatingFromNsfwLevel,
-  onlySelectableLevels,
-  publicBrowsingLevelsFlag,
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
@@ -94,17 +92,10 @@ export type BlockGatedImage =
     }
   | { imageId: number; status: 'hidden' };
 
-/**
- * Resolve a viewer's effective browsing-level ceiling from the block token's
- * `maxBrowsingLevel` claim (the platform-computed viewer+domain ceiling). Clamped
- * to selectable levels and FAILED CLOSED to the public (PG) floor for an absent /
- * zero / non-selectable value — so a malformed ceiling can only ever HIDE more,
- * never reveal above-level content.
- */
-export function resolveViewerBrowsingLevel(maxBrowsingLevel: number | undefined | null): number {
-  const selectable = onlySelectableLevels(maxBrowsingLevel ?? 0);
-  return selectable || publicBrowsingLevelsFlag;
-}
+// The viewer's browsing-level ceiling lives in its own pure module, so the App Blocks
+// output ceiling (`blockOutputCeilingFromClaims`) reads the same level without this
+// service's database graph. Re-exported here for its existing callers.
+export { resolveViewerBrowsingLevel } from '~/server/services/blocks/block-viewer-ceiling';
 
 /** Raw row shape read from Postgres for the clamp decision. */
 type GatedImageRow = {

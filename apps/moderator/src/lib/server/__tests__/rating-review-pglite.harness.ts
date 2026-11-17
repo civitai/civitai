@@ -34,6 +34,7 @@ CREATE TABLE "EntityModeration" ("id" SERIAL PRIMARY KEY, "entityType" TEXT NOT 
 
 CREATE TABLE "Image" ("id" SERIAL PRIMARY KEY, "url" TEXT, "type" TEXT, "postId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned', "index" INTEGER, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER NOT NULL, "entityId" INTEGER NOT NULL, "entityType" TEXT NOT NULL);
+CREATE TABLE "PostText" ("id" SERIAL PRIMARY KEY, "postId" INTEGER NOT NULL, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "refused" BOOLEAN NOT NULL DEFAULT false);
 CREATE TABLE "Report" ("id" SERIAL PRIMARY KEY, "reason" "ReportReason" NOT NULL, "status" "ReportStatus" NOT NULL);
 CREATE TABLE "ArticleReport" ("articleId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
 

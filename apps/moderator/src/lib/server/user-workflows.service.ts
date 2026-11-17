@@ -268,7 +268,7 @@ export async function getUserGeneratedWorkflows(
         source,
         ms,
         outcome,
-      }).catch(() => null);
+      });
     }
   }
   return {

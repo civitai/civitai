@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { SemanticImageSearchInput } from '~/server/schema/semantic-image-search.schema';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllImages } from '~/server/services/image.service';
@@ -6,26 +7,22 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { ImageSort } from '~/server/common/enums';
-import { matureRestrictedBaseModels } from '~/shared/constants/basemodel.constants';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   anchorBrowsingLevel,
-  queryVerdictLevel,
-  recordRefusal,
+  beginSemanticAudit,
   isNonModClampOn,
-  resolveSemanticBrowsingLevel,
-  semanticQueryRefusal,
+  makeRefusalOf,
   type QueryRefusal,
-  type QueryStage,
   type QueryTracker,
+  queryVerdictLevel,
+  refusedTextCandidates,
+  resolveSemanticBrowsingLevel,
 } from '~/server/services/semantic-query-guard';
 import { withCandidateCache } from '~/server/services/semantic-candidate-cache';
+import type { RefusedCandidates } from '~/server/services/semantic-search-audit.service';
 import { semanticSearchStage } from '~/server/metrics/semantic-search.metrics';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
-import {
-  nsfwBrowsingLevelsArray,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
@@ -38,6 +35,7 @@ import {
   type CandidateSource,
   type Hydrate,
   type SearchQuery,
+  viewerExcludedUserIds,
 } from '~/server/services/semantic-search-client';
 
 // The search service's collection name for the image vectors.
@@ -57,6 +55,7 @@ export async function searchSemanticImages({
   domain,
   track,
   candidateSource = searchServiceCandidates,
+  refuseNarrowing = false,
 }: {
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
@@ -64,6 +63,8 @@ export async function searchSemanticImages({
   domain?: DomainColor;
   track?: QueryTracker;
   candidateSource?: CandidateSource;
+  /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
+  refuseNarrowing?: boolean;
 }) {
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
@@ -98,27 +99,31 @@ export async function searchSemanticImages({
   const addonsFor = (level: number) =>
     resolveBrowsingSettingsAddons(addonData, level, { isModerator: user?.isModerator });
   let addons = addonsFor(browsingLevel);
-  const refusalOf = async (text: string, stage: QueryStage) => {
-    const refusal = await semanticQueryRefusal(text, {
-      browsingLevel,
+  const audit = beginSemanticAudit({
+    index: IMAGE_COLLECTION,
+    viewer: user,
+    query: input.query,
+    firstPage: !input.cursor,
+  });
+  const refusalOf = makeRefusalOf({
+    index: 'images_semantic',
+    track,
+    context: () => ({
+      // With refuseNarrowing the verdict is taken at one level, whatever level is asked for.
+      browsingLevel: refuseNarrowing ? allBrowsingLevelsFlag : browsingLevel,
       disablePoi: addons.disablePoi,
       isModerator: user?.isModerator,
-    });
-    recordRefusal(track, refusal, text, 'images_semantic', stage);
-    return refusal;
-  };
+    }),
+    audit,
+  });
   const refusal = input.query ? await refusalOf(input.query, 'query') : false;
   const verdictLevel = queryVerdictLevel(refusal, browsingLevel, user?.isModerator);
-  if (verdictLevel === 'refuse') return emptyPage();
-  if (verdictLevel !== browsingLevel) {
+  const queryRefused = verdictLevel === 'refuse' || (refuseNarrowing && !!refusal);
+  if (!queryRefused && verdictLevel !== browsingLevel) {
     browsingLevel = verdictLevel;
     addons = addonsFor(browsingLevel);
   }
-  const excludedUserIds = [
-    ...new Set(
-      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((x) => x.id)
-    ),
-  ];
+  const excludedUserIds = viewerExcludedUserIds(hidden);
   const hiddenTagIds = hidden.hiddenTags.filter((x) => x.hidden).map((x) => x.id);
   const viewerExcludedTagIds = [...new Set([...addons.excludedTagIds, ...hiddenTagIds])];
   const excludedTagIds = [...new Set([...(input.excludedTagIds ?? []), ...viewerExcludedTagIds])];
@@ -160,7 +165,7 @@ export async function searchSemanticImages({
 
   // "More like this" from an image the viewer cannot see would reveal what it resembles.
   let level = browsingLevel;
-  if (input.imageId) {
+  if (input.imageId && !queryRefused) {
     const [anchor] = await fetchVisible([input.imageId], browsingLevel, {
       excludedTagIds: viewerExcludedTagIds,
     });
@@ -192,9 +197,10 @@ export async function searchSemanticImages({
   // Hidden tags, users and images are left to hydration and `excluded` below: as Qdrant must_nots
   // they cost over a second per search on the on-disk payload, and hydration enforces them anyway.
   const filter: CandidateFilter = {
+    // With refuseNarrowing, candidates are not pre-narrowed to the viewer's level.
     gate: {
       kind: 'level',
-      nsfwLevels: Flags.instanceToArray(level),
+      nsfwLevels: Flags.instanceToArray(refuseNarrowing ? allBrowsingLevelsFlag : level),
     },
     tagIds,
     anyOf: { baseModels: input.baseModels, type: input.types },
@@ -204,22 +210,18 @@ export async function searchSemanticImages({
       gte: input.postedAfter?.toISOString(),
       lte: input.postedBefore?.toISOString(),
     },
-    // As the image search index: no NSFW images made with a base model whose license forbids it.
-    // A gate with no NSFW level already excludes them, and Qdrant would still test every candidate.
-    // Kept here, not only in hydration: Image."modelRestricted" is set by an hourly job, so a new
-    // image would pass hydration until it runs.
-    mustNot: Flags.intersects(level, nsfwBrowsingLevelsFlag)
-      ? [
-          {
-            must: [
-              { key: 'nsfwLevel', match: { any: nsfwBrowsingLevelsArray } },
-              { key: 'baseModels', match: { any: matureRestrictedBaseModels('images') } },
-            ],
-          },
-        ]
-      : [],
   };
 
+  const viewer = { isModerator: !!user?.isModerator };
+  // Refused before any search: the audit may run it after the response, for its row only.
+  if (queryRefused)
+    return input.query && !input.imageId
+      ? audit.refused(
+          emptyPage(),
+          browsingLevel,
+          refusedTextCandidates(cachedSource, { text: input.query, filter, viewer })
+        )
+      : audit.done(emptyPage(), browsingLevel);
   const query: SearchQuery = input.imageId
     ? { similarTo: input.imageId }
     : { text: input.query ?? '' };
@@ -229,12 +231,15 @@ export async function searchSemanticImages({
   // of different ages.
   const corrections = new Map<string, ReturnType<typeof refusalOf>>();
   let correctedRefusal: QueryRefusal | undefined;
+  let first: RefusedCandidates | undefined;
   const page = await collectPage({
     candidates: async (offset, limit) => {
       const result = await timed(
         'candidates',
-        cachedSource({ query, filter, offset, limit, sort: input.sort })
+        cachedSource({ query, filter, offset, limit, viewer, sort: input.sort })
       );
+      audit.candidates(result);
+      first ??= result;
       // The service embeds its spelling correction, not the text audited above.
       const corrected = result.correctedQuery;
       if (!correctedRefusal && corrected !== undefined && corrected !== input.query) {
@@ -251,6 +256,6 @@ export async function searchSemanticImages({
     limit: input.limit,
     excluded: new Set([...excludedImageIds, ...(input.imageId ? [input.imageId] : [])]),
   });
-  if (correctedRefusal) return emptyPage();
-  return { ...page, correctedQuery };
+  if (correctedRefusal) return audit.refused(emptyPage(), level, async () => first ?? { ids: [] });
+  return audit.done({ ...page, correctedQuery }, level);
 }

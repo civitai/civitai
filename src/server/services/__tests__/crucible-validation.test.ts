@@ -1151,7 +1151,7 @@ describe('submitEntry — one submit at a time per user', () => {
     expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
       'lock:crucible-entry:1:42',
       expect.stringMatching(/^[0-9a-f-]{36}$/),
-      { PX: 30_000, NX: true }
+      { PX: 180_000, NX: true }
     );
   });
 
@@ -1218,6 +1218,45 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.crucibleEntry.create.mock.invocationCallOrder[0]
     );
+  });
+
+  // The checks before the write read the crucible as it was; a moderator can lower a cap to the
+  // live count between them and this entry's write.
+  const capsAtWrite = (full: { total: boolean; user: boolean; entryLimit?: number }) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"maxTotalEntries"') ? [full] : []
+    );
+
+  it.each([
+    ['total cap', { total: true, user: false }, 'reached its maximum number of entries'],
+    [
+      'per-user limit',
+      { total: false, user: true, entryLimit: 2 },
+      'reached the maximum of 2 entries',
+    ],
+  ])(
+    'refuses an entry over a %s lowered since its checks, read after the row lock, and refunds it',
+    async (_, full, message) => {
+      capsAtWrite(full);
+
+      await expect(submit()).rejects.toThrow(message);
+
+      const capRead = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+        (strings as TemplateStringsArray).join('?').includes('"maxTotalEntries"')
+      );
+      expect(capRead).toBeGreaterThanOrEqual(0);
+      expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[capRead]
+      );
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+      expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('saves an entry while it is under both caps', async () => {
+    capsAtWrite({ total: false, user: false });
+    await submit();
+    expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalled();
   });
 
   it("raises the stored prize pool by a paid entry's fee", async () => {

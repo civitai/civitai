@@ -153,7 +153,10 @@ export function createAuthVerifier(config: AuthVerifierConfig = {}): AuthVerifie
 
     let alg: string | undefined;
     try {
-      alg = decodeProtectedHeader(token).alg;
+      const header = decodeProtectedHeader(token);
+      // A session is a plain JWT; an access token (`at+jwt`) or any other typed token is not one.
+      if (header.typ !== undefined && header.typ !== 'JWT') return null;
+      alg = header.alg;
     } catch {
       alg = undefined;
     }
@@ -260,4 +263,100 @@ function readCookie(
     if (part.slice(0, idx).trim() === name) return decodeURIComponent(part.slice(idx + 1).trim());
   }
   return undefined;
+}
+
+/** How far in the future an access token's `iat` may be, for clock skew between hub pods. */
+const ACCESS_TOKEN_IAT_LEEWAY_S = 30;
+
+export interface AccessTokenJwtVerifierConfig {
+  /** The hub's SPKI public key (PEM). Defaults to AUTH_JWT_PUBLIC_KEY. Unused when `jwksUri` is set. */
+  publicKeyPem?: string;
+  /**
+   * Verify against the hub's JWKS at this URL instead of a local key: a resource server, which holds
+   * no hub key. Keys are cached and refetched on an unknown `kid` (jose's remote JWKS set, with the
+   * same bounded fetch as the session verifier).
+   */
+  jwksUri?: string;
+  /**
+   * Require `aud` to name this resource, by exact string (one of its entries when it is an array).
+   * Unset: `aud` must be present but any value passes (the hub's own introspection, which serves
+   * every resource).
+   */
+  audience?: string;
+  clock?: () => number;
+}
+
+/**
+ * Whether a bearer is a compact JWS whose protected header says `typ: at+jwt` (RFC 9068 2.1; the
+ * `application/` prefix is optional, and media types compare case-insensitively). Decides which
+ * path a token takes only: it verifies nothing.
+ */
+export function isAccessTokenJwt(token: string): boolean {
+  if (token.split('.').length !== 3) return false;
+  try {
+    const typ = decodeProtectedHeader(token).typ;
+    return typeof typ === 'string' && /^(application\/)?at\+jwt$/i.test(typ);
+  } catch {
+    return false;
+  }
+}
+
+/** jose error codes that are about the key fetch, not the token: a failed or slow JWKS read. */
+const KEY_FETCH_ERROR_CODES = new Set(['ERR_JOSE_GENERIC', 'ERR_JWKS_TIMEOUT', 'ERR_JWKS_INVALID']);
+const isKeyFetchError = (err: unknown) => {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code !== 'string' || !code.startsWith('ERR_J') || KEY_FETCH_ERROR_CODES.has(code);
+};
+
+/**
+ * Verifies the hub's own RFC 9068 access tokens (`typ: at+jwt`): ES256 only, the given issuer exactly,
+ * the configured audience exactly, `exp` with no leeway, and `iat` at most 30 s ahead. Returns the
+ * payload, or null for a token that fails any check.
+ * Throws, on every call, when `issuer` is empty or (without `jwksUri`) when no public key is
+ * configured or it cannot be imported. With `jwksUri`, a failure to read the JWKS (unreachable,
+ * non-200, timeout, unparseable) also throws rather than returning null, so a caller can tell "the
+ * hub's keys are unavailable" from "this token is not valid".
+ */
+export function createAccessTokenJwtVerifier(config: AccessTokenJwtVerifierConfig = {}) {
+  const jwks = config.jwksUri
+    ? createRemoteJWKSet(new URL(config.jwksUri), { timeoutDuration: JWKS_TIMEOUT_MS })
+    : undefined;
+  const publicKeyPem = jwks ? undefined : config.publicKeyPem ?? loadAuthEnv().AUTH_JWT_PUBLIC_KEY;
+  const clock = config.clock ?? (() => Date.now());
+  let _key: ReturnType<typeof importSPKI> | undefined;
+  const key = () => {
+    if (!publicKeyPem) throw new Error('[@civitai/auth] no AUTH_JWT_PUBLIC_KEY configured');
+    return (_key ??= importSPKI(normalizePem(publicKeyPem), ALG));
+  };
+
+  return async function verifyAccessTokenJwt(
+    token: string,
+    issuer: string
+  ): Promise<JWTPayload | null> {
+    if (!issuer) throw new Error('[@civitai/auth] an access token is verified against an issuer');
+    // Outside the try: a missing or unimportable public key is a misconfiguration and throws; it
+    // is never read as "this token is not valid".
+    const pemKey = jwks ? undefined : await key();
+    const nowMs = clock();
+    const opts = {
+      algorithms: [ALG],
+      issuer,
+      ...(config.audience !== undefined ? { audience: config.audience } : {}),
+      typ: 'at+jwt',
+      clockTolerance: 0,
+      currentDate: new Date(nowMs),
+      requiredClaims: ['exp', 'iat', 'jti', 'sub', 'aud', 'client_id'],
+    };
+    try {
+      const { payload } = pemKey
+        ? await jwtVerify(token, pemKey, opts)
+        : await jwtVerify(token, jwks as NonNullable<typeof jwks>, opts);
+      if (typeof payload.iat !== 'number') return null;
+      if (payload.iat > Math.floor(nowMs / 1000) + ACCESS_TOKEN_IAT_LEEWAY_S) return null;
+      return payload;
+    } catch (err) {
+      if (jwks && isKeyFetchError(err)) throw err;
+      return null;
+    }
+  };
 }

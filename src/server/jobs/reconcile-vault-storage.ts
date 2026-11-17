@@ -46,12 +46,12 @@ export const reconcileVaultStorage = createJob(
     `;
 
     if (fixed.length > 0) {
-      await logToAxiom({
+      logToAxiom({
         name: 'reconcile-vault-storage',
         type: 'info',
         message: `Restored vault capacity for ${fixed.length} under-provisioned vault(s)`,
         details: { userIds: fixed.map((f) => f.userId) },
-      }).catch(() => null);
+      });
     }
 
     return { reconciled: fixed.length };

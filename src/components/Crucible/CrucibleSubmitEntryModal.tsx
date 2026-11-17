@@ -10,6 +10,7 @@ import {
   Tabs,
   Text,
 } from '@mantine/core';
+import { submissionIntent, withPaymentIntentKey } from '~/components/Buzz/payment-intent-keys';
 import { HoverCard } from '~/components/MantineOverlays';
 import { Dropzone } from '@mantine/dropzone';
 import {
@@ -871,10 +872,13 @@ export default function CrucibleSubmitEntryModal({
 
     try {
       for (const imageId of validImageIds) {
-        await submitEntryMutation.mutateAsync({
-          crucibleId,
-          imageId,
-        });
+        // One key per entry (crucible and image), held across a failure that may have charged the
+        // fee, so submitting it again is the same entry, charged once.
+        await withPaymentIntentKey(
+          submissionIntent('crucible-entry', { crucibleId, imageId }),
+          (idempotencyKey) =>
+            submitEntryMutation.mutateAsync({ crucibleId, imageId, idempotencyKey })
+        );
       }
 
       showSuccessNotification({

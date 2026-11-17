@@ -69,6 +69,7 @@ vi.mock('~/utils/trpc', () => ({
       previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getWorkflowMedia: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
       shared: {

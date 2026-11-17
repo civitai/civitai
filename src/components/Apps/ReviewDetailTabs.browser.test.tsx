@@ -121,6 +121,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
       }),
       blocks: {
         approveRequest: { useMutation: mutation('approve') },
+        listPublishRequestHolds: { useQuery: () => ({ data: [] }) },
         rejectRequest: { useMutation: mutation('reject') },
         getReviewStatus: { useQuery: () => ({ data: undefined, isLoading: false, error: null }) },
         previewRequest: { useMutation: mutation('preview') },

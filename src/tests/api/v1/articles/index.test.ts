@@ -282,7 +282,7 @@ describe('GET /api/v1/articles/[id] (detail)', () => {
           id: 5,
           url: 'u',
           ingestion: 'Scanned',
-          nsfwLevel: 16,
+          nsfwLevel: 1,
           userId: 7,
           hash: 'h',
           width: 1,

@@ -61,7 +61,10 @@ vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefin
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn(), syncSearchIndexBulk }));
 vi.mock('../kono', () => ({ syncKonoFinalize: vi.fn(async () => undefined) }));
 vi.mock('../storage', () => ({
-  getStorage: () => ({ deleteObject: vi.fn(async () => undefined) }),
+  getStorage: () => ({
+    deleteObject: vi.fn(async () => undefined),
+    purgeObjectVersions: vi.fn(async () => ({ versionsDeleted: 1, remaining: 0 })),
+  }),
 }));
 
 const { invalidateThumbnails } = await import('../thumbnail-cache');
@@ -102,7 +105,8 @@ CREATE TABLE "CsamReport" (
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "Appeal" ("id" SERIAL, "entityType" TEXT, "entityId" INTEGER, "status" TEXT);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
-CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER);
+CREATE TABLE "JobQueue" ("type" TEXT, "entityType" TEXT, "entityId" INTEGER,
+  PRIMARY KEY ("entityType", "entityId", "type"));
 CREATE TABLE "Model3D" (
   "id" INTEGER PRIMARY KEY,
   "thumbnailImageId" INTEGER,

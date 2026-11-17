@@ -1,4 +1,3 @@
-import type { GetCruciblesInfiniteSchema } from '~/server/schema/crucible.schema';
 import {
   Button,
   Center,
@@ -19,7 +18,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { CrucibleCard, CrucibleCardSkeleton } from '~/components/Cards/CrucibleCard';
-import { useCrucibleFilters, useQueryCrucibles } from './crucible.utils';
+import { useCrucibleFilters, useQueryCrucibles, type CrucibleFeedFilters } from './crucible.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -30,7 +29,11 @@ import { trpc } from '~/utils/trpc';
 export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const cruciblesFilters = useCrucibleFilters();
   const currentUser = useCurrentUser();
-  const hasFilters = !!(filterOverrides?.status || filterOverrides?.contentType);
+  const hasFilters = !!(
+    filterOverrides?.status ||
+    filterOverrides?.contentType ||
+    filterOverrides?.query
+  );
 
   const filters = removeEmpty({ ...cruciblesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
@@ -104,7 +107,7 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
   );
 }
 
-type Props = { filters?: Partial<GetCruciblesInfiniteSchema>; showEof?: boolean };
+type Props = { filters?: CrucibleFeedFilters; showEof?: boolean };
 
 /**
  * Skeleton grid for CruciblesInfinite loading state

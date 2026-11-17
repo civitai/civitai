@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { trainingWhatIf } from './orchestrator-core';
+import { buildKohyaInput } from './kohya-training';
 import { cardByType } from '$lib/data/trainingModels';
 import { parseServiceStatus } from '$lib/service-status-core';
 import {
@@ -10,6 +12,7 @@ import {
   continueTraining,
   continueTrainingWhatIf,
   countDatasetMature,
+  KOHYA_UNAVAILABLE,
   MatureAckRequiredError,
   submitTraining,
   submitTrainingBatch,
@@ -19,6 +22,7 @@ import {
   trainingDataReady,
   type TrainingRunInput,
   type TrainingTextCheck,
+  unavailableRunMessage,
 } from './train-core';
 import type { DatasetRating, StoredRating } from './dataset-rating';
 
@@ -32,6 +36,12 @@ const headBlob = vi.fn();
 vi.mock('@civitai/orchestration-client', () => ({
   Air: {
     isAir: () => false,
+    parseSafe: (air: string) => {
+      const match = /^urn:air:([^:]+):([^:]+):([^:]+):(.+)$/.exec(air);
+      return match
+        ? { ecosystem: match[1], type: match[2], source: match[3], id: match[4] }
+        : undefined;
+    },
     stringify: (p: Record<string, string>) =>
       `urn:air:${p.ecosystem}:${p.type}:${p.source}:${p.id}@${p.version}`,
   },
@@ -310,7 +320,7 @@ describe('custom base model', () => {
   const custom = 'urn:air:sdxl:checkpoint:civitai:1@2';
 
   it('trains an SDXL run on the pasted base', async () => {
-    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    getResource.mockResolvedValueOnce({ data: { air: custom, fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
     await submitTrainingBatch(client, [{ ...baseRun(), customModel: custom }], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(custom);
@@ -917,6 +927,22 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(headBlob.mock.calls.map(([a]) => a.path.blobId).sort()).toEqual(['safe-1', 'spicy-2']);
     });
 
+    it('counts a repeated mature image once when re-rating a run trained with repeats', async () => {
+      const source = matureSource('wf-rep1');
+      const spicy = 'urn:air:other:blob:civitai:blob@spicy-2';
+      source.data.steps[0]!.input.trainingData.items = [
+        { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+        ...[1, 2, 3].map((k) => ({ air: spicy, caption: 'b', path: `repeat_0002_${k}.png` })),
+      ];
+      getWorkflow.mockResolvedValue(source);
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
+      const quote = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-rep1' });
+      expect(quote.matureCount).toBe(1);
+      expect(headBlob.mock.calls.map(([a]) => a.path.blobId).sort()).toEqual(['safe-1', 'spicy-2']);
+    });
+
     it('rates a source once per page: the quote and the submit share the probe', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-c1'));
       headBlob.mockReset();
@@ -1059,6 +1085,57 @@ describe('a model that is down', () => {
   });
 });
 
+describe('Flux.2 (imageResourceTraining takes only a zip URL, the Studio holds blobs)', () => {
+  const flux2 = cardByType('flux2')!.versions[0]!;
+  const flux2Run = (over: Partial<TrainingRunInput> = {}): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: flux2.ecosystem,
+    engine: flux2.engine,
+    model: flux2.air,
+    ...over,
+  });
+  const message = 'Flux.2 is temporarily unavailable for training. Use another base model for now.';
+
+  it.each([
+    ['its catalog base', flux2Run()],
+    [
+      'a base the catalog does not name',
+      flux2Run({ model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
+    ],
+    [
+      'the edit engine',
+      flux2Run({ engine: 'flux2-dev-edit', model: 'urn:air:flux2:checkpoint:civitai:9@9' }),
+    ],
+  ])('refuses %s before any orchestrator call or trigger word check', async (_label, run) => {
+    vi.clearAllMocks();
+    const check = vi.fn(async () => undefined);
+    for (const status of [undefined, parseServiceStatus(null)])
+      await expect(
+        submitTrainingBatch(client, [baseRun(), run], { checkText: check, status })
+      ).rejects.toThrow(message);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  // The batch cases above stop at validateRun's engine check; this one reaches the status path, which
+  // must refuse a catalog Flux.2 base even when no status was loaded.
+  it('reports its catalog base unavailable with or without a loaded status', () => {
+    for (const status of [undefined, null, parseServiceStatus(null)])
+      expect(unavailableRunMessage(flux2Run(), status)).toBe(message);
+  });
+
+  it('still sends an ai-toolkit run its dataset as a blob list', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-ai' } });
+    await submitTraining(client, baseRun());
+    const step = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    expect(step.$type).toBe('training');
+    expect(step.input.trainingData).toEqual({
+      type: 'blobs',
+      items: [{ air: 'blob-1', caption: 'ohwx, 1girl' }],
+    });
+  });
+});
+
 describe('keep-training a custom-base run while a sibling model is down', () => {
   const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
   const source = {
@@ -1117,7 +1194,7 @@ describe('the checkpoint a run actually trains', () => {
 
   it('checks a custom base by its own AIR, even when the base it overrides is blocked', async () => {
     const customAir = 'urn:air:sdxl:checkpoint:civitai:12345@67890';
-    getResource.mockResolvedValueOnce({ data: { fileFormat: 'SafeTensor' } });
+    getResource.mockResolvedValueOnce({ data: { air: customAir, fileFormat: 'SafeTensor' } });
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom' } });
     const blockedBase = parseServiceStatus({ blockedModels: ['sdxl'] });
     await expect(
@@ -1132,6 +1209,204 @@ describe('the checkpoint a run actually trains', () => {
         status: parseServiceStatus({ blockedModels: [customAir] }),
       })
     ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+  });
+
+  it('refuses a custom base whose version belongs to a blocked model, whatever model id its AIR names', async () => {
+    // 53761 is blocked; the submitted AIR pairs one of its versions with an unblocked model id.
+    getResource.mockResolvedValueOnce({
+      data: { air: 'urn:air:sdxl:checkpoint:civitai:53761@67890', fileFormat: 'SafeTensor' },
+    });
+    submitWorkflow.mockClear();
+    await expect(
+      submitTrainingBatch(
+        client,
+        [{ ...baseRun(), customModel: 'urn:air:sdxl:checkpoint:civitai:12345@67890' }],
+        { checkText }
+      )
+    ).rejects.toThrow('This custom model is blocked from training. Pick another.');
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('Kohya training', () => {
+  const model = 'urn:air:sdxl:checkpoint:civitai:795765@889818';
+  const run = (): TrainingRunInput => ({
+    ...baseRun(),
+    engine: 'kohya',
+    model,
+    lrScheduler: 'cosine_with_restarts',
+    negativePrompt: 'blurry',
+    items: [
+      { air: 'blob-1', caption: '1girl' },
+      { air: 'blob-2', caption: 'OHWX, portrait' },
+    ],
+    kohya: {
+      numRepeats: 20,
+      enableBucket: false,
+      lrSchedulerNumCycles: 4,
+      vParameterization: true,
+      seed: 123,
+    },
+    shuffleTokens: true,
+    keepTokens: 1,
+    noiseOffset: 0.03,
+    minSnrGamma: 0,
+  });
+
+  it('quotes and submits the same config through the new training route', async () => {
+    const config = run();
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 300 } } });
+    await trainingWhatIf(client, { ...config, imageCount: 2 });
+    const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya' } });
+    await submitTraining(client, config);
+    const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0];
+    const { trainingData: _data, samples: _samples, trace: _trace, ...quoteConfig } = quoted.input;
+    const {
+      trainingData,
+      samples: _submittedSamples,
+      trace: _submittedTrace,
+      ...submitConfig
+    } = submitted.input;
+    expect(quoted.$type).toBe('training');
+    expect(submitted.$type).toBe('training');
+    expect(submitted.input.samples.negativePrompt).toBe('blurry');
+    expect(quoteConfig).toEqual(submitConfig);
+    expect(submitConfig).toMatchObject({
+      engine: 'kohya',
+      model,
+      maxTrainEpochs: 10,
+      steps: 2000,
+      numRepeats: 20,
+      trainBatchSize: 4,
+      unetLR: 0.0005,
+      textEncoderLR: 0.00005,
+      trainTextEncoder: true,
+      shuffleCaption: true,
+      keepTokens: 1,
+      lrSchedulerNumCycles: 4,
+      vParameterization: true,
+    });
+    expect(trainingData.items.map((item: { caption: string }) => item.caption)).toEqual([
+      'ohwx, 1girl',
+      'OHWX, portrait',
+    ]);
+    for (const key of ['usesStepPricing', 'ecosystem', 'epochs', 'lr', 'batchSize', 'triggerWord'])
+      expect(submitted.input).not.toHaveProperty(key);
+    expect(config.items[0]!.caption).toBe('1girl');
+  });
+
+  it.each(['sd1', 'sdxl', 'pony', 'illustrious', 'noobai', 'flux1', 'chroma'])(
+    'accepts an arbitrary compatible %s checkpoint',
+    async (family) => {
+      const ecosystem = ['pony', 'illustrious', 'noobai'].includes(family) ? 'sdxl' : family;
+      const customModel = `urn:air:${family}:checkpoint:civitai:123@456`;
+      getResource.mockResolvedValueOnce({ data: { air: customModel, fileFormat: 'SafeTensor' } });
+      headBlob.mockResolvedValue({ data: {}, response: { ok: true } });
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-custom-kohya' } });
+      await submitTrainingBatch(client, [{ ...run(), ecosystem, customModel }], {
+        checkText,
+        kohyaAllowed: true,
+      });
+      const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+      expect(input.model).toBe(customModel);
+      if (family === 'flux1' || family === 'chroma') {
+        expect(input).toMatchObject({
+          noiseOffset: 0,
+          minSnrGamma: 0,
+          clipSkip: 1,
+          fp8Base: true,
+          blocksToSwap: 18,
+        });
+        expect(input).not.toHaveProperty('vParameterization');
+      }
+      if (family === 'chroma')
+        expect(input).toMatchObject({ textEncoderLR: 0, trainTextEncoder: false });
+    }
+  );
+
+  it.each([
+    { batchSize: 10 },
+    { epochs: 21 },
+    { networkDim: 257 },
+    { resolution: 1000 },
+    { kohya: { numRepeats: 0 } },
+    { kohya: { seed: -1 } },
+    { minSnrGamma: 2.5 },
+    { optimizer: 'Automagic' },
+    { customModel: 'urn:air:flux1:checkpoint:civitai:1@2' },
+    { customModel: 'urn:air:sdxl:lora:civitai:1@2' },
+  ])('refuses invalid config before submission: %j', async (invalid) => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...run(), ...invalid }], { checkText, kohyaAllowed: true })
+    ).rejects.toThrow();
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('leaves SDXL prediction mode to checkpoint metadata by default', () => {
+    const input = buildKohyaInput({ ...run(), kohya: {} }, { type: 'blobs', items: [] }, 'none');
+    expect(input).not.toHaveProperty('vParameterization');
+    expect(input).not.toHaveProperty('zeroTerminalSnr');
+  });
+
+  it('preserves Kohya config and trigger checks when training further without echoing read-only fields', async () => {
+    const input = buildKohyaInput(run(), { type: 'blobs', items: [] }, 'events');
+    getWorkflow.mockResolvedValue({
+      data: {
+        metadata: { trigger: 'ohwx' },
+        steps: [
+          {
+            $type: 'training',
+            input: { ...input, usesStepPricing: true },
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+    submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 200 } } });
+    await continueTrainingWhatIf(client, opts, { kohyaAllowed: true });
+    const quoted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-further' } });
+    const check = vi.fn(async () => undefined);
+    await continueTraining(client, opts, { checkText: check, kohyaAllowed: true });
+    expect(check).toHaveBeenCalledWith({ triggerWord: 'ohwx' });
+    const submitted = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(submitted).toEqual(quoted);
+    expect(submitted).toMatchObject({
+      ...input,
+      maxTrainEpochs: 5,
+      steps: 1000,
+      continueFrom: 'urn:air:sdxl:lora:orchestrator:blob@blob-10',
+    });
+    expect(submitted).not.toHaveProperty('usesStepPricing');
+    expect(submitted).not.toHaveProperty('ecosystem');
+  });
+
+  it('refuses a Kohya run, or a continuation or its quote, without the gate', async () => {
+    getWorkflow.mockResolvedValue({
+      data: {
+        steps: [
+          {
+            $type: 'training',
+            input: buildKohyaInput(run(), { type: 'blobs', items: [] }, 'none'),
+            output: { epochs: [{ epochNumber: 10, model: { id: 'blob-10', available: true } }] },
+          },
+        ],
+      },
+    });
+    const opts = { workflowId: 'wf-kohya-source', fromEpoch: 10, addEpochs: 5 };
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(submitTrainingBatch(client, [run()], { checkText })).rejects.toThrow(
+      KOHYA_UNAVAILABLE
+    );
+    await expect(
+      submitTrainingBatch(client, [run()], { checkText, kohyaAllowed: false })
+    ).rejects.toThrow(KOHYA_UNAVAILABLE);
+    await expect(continueTrainingWhatIf(client, opts)).rejects.toThrow(KOHYA_UNAVAILABLE);
+    await expect(continueTraining(client, opts, { checkText })).rejects.toThrow(KOHYA_UNAVAILABLE);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });
 
@@ -1390,7 +1665,9 @@ describe('dataset maturity under the v2 rating', () => {
 
     it('a custom base that is not SafeTensor', async () => {
       const calls = submitWorkflow.mock.calls.length;
-      getResource.mockResolvedValueOnce({ data: { fileFormat: 'PickleTensor' } });
+      getResource.mockResolvedValueOnce({
+        data: { air: 'urn:air:sdxl:checkpoint:civitai:1@2', fileFormat: 'PickleTensor' },
+      });
       await expect(
         submitTrainingBatch(
           client,
@@ -1555,5 +1832,165 @@ describe('trainingDataReady (the readiness whatif)', () => {
     submitWorkflow.mockReset();
     expect(await trainingDataReady(client, { ...baseRun(), items: [] })).toBeNull();
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+});
+
+describe('per-image repeats', () => {
+  const wireItems = () =>
+    submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.trainingData.items;
+
+  it('puts a repeated image on the wire once per repeat, each at its own path', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-rep' } });
+    await submitTrainingBatch(
+      client,
+      [
+        {
+          ...baseRun(),
+          items: [
+            { air: 'blob-1', caption: 'ohwx, 1girl', repeats: 3, ext: 'JPG' },
+            { air: 'blob-2', caption: 'ohwx, portrait' },
+          ],
+        },
+      ],
+      { checkText }
+    );
+    const items = wireItems();
+    expect(items).toEqual([
+      { air: 'blob-1', caption: 'ohwx, 1girl', path: 'repeat_0001_1.jpg' },
+      { air: 'blob-1', caption: 'ohwx, 1girl', path: 'repeat_0001_2.jpg' },
+      { air: 'blob-1', caption: 'ohwx, 1girl', path: 'repeat_0001_3.jpg' },
+      { air: 'blob-2', caption: 'ohwx, portrait' },
+    ]);
+  });
+
+  it('sends a dataset without repeats exactly as before', async () => {
+    const run = {
+      ...baseRun(),
+      items: [
+        { air: 'blob-1', caption: 'a' },
+        { air: 'blob-2', caption: 'b' },
+      ],
+    };
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-plain-rep' } });
+    await submitTrainingBatch(client, [run], { checkText });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(JSON.stringify(input.trainingData)).toBe(
+      JSON.stringify({ type: 'blobs', items: run.items })
+    );
+  });
+
+  it('dedupes a blob before expanding it, so a repeated image is never sent extra times', async () => {
+    const blob = (key: string) => `urn:air:other:other:orchestrator:blob@${key}`;
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-dup-rep' } });
+    await submitTraining(client, {
+      ...baseRun(),
+      items: [
+        { air: blob('AbC'), caption: 'x', repeats: 3, ext: 'PNG' },
+        { air: blob('abc'), caption: 'x' },
+        { air: blob('XyZ'), caption: 'y', repeats: 2, ext: 'png' },
+        { air: blob('xyz'), caption: 'y', repeats: 2, ext: 'png' },
+      ],
+    });
+    expect(wireItems().map((i: { path?: string }) => i.path)).toEqual([
+      'repeat_0001_1.png',
+      'repeat_0001_2.png',
+      'repeat_0001_3.png',
+      'repeat_0002_1.png',
+      'repeat_0002_2.png',
+    ]);
+  });
+
+  it('expands repeats for Kohya too', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-kohya-rep' } });
+    await submitTraining(client, {
+      ...baseRun(),
+      engine: 'kohya',
+      model: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
+      lrScheduler: 'cosine_with_restarts',
+      items: [{ air: 'blob-1', caption: '1girl', repeats: 2, ext: 'png' }],
+    });
+    expect(wireItems().map((i: { path?: string }) => i.path)).toEqual([
+      'repeat_0001_1.png',
+      'repeat_0001_2.png',
+    ]);
+  });
+
+  it.each([
+    [
+      'a client-sent path on a plain run',
+      { air: 'blob-1', caption: '', path: 'x.png' },
+      /path only for edit/,
+    ],
+    [
+      'repeats of 1',
+      { air: 'blob-1', caption: '', repeats: 1, ext: 'png' },
+      /integer from 2 to 20/,
+    ],
+    [
+      'repeats over the cap',
+      { air: 'blob-1', caption: '', repeats: 21, ext: 'png' },
+      /integer from 2 to 20/,
+    ],
+    ['repeats without an extension', { air: 'blob-1', caption: '', repeats: 2 }, /file extension/],
+    [
+      'a path-like extension',
+      { air: 'blob-1', caption: '', repeats: 2, ext: '../a' },
+      /file extension/,
+    ],
+    [
+      'a caption-file extension',
+      { air: 'blob-1', caption: '', repeats: 2, ext: 'txt' },
+      /media file extension/,
+    ],
+    [
+      'an extension without repeats',
+      { air: 'blob-1', caption: '', ext: 'png' },
+      /only sent with repeats/,
+    ],
+  ])('refuses %s', async (_label, item, message) => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), items: [item] }], { checkText })
+    ).rejects.toThrow(message);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+
+  it('refuses repeats on Flux.2', async () => {
+    await expect(
+      submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            ecosystem: 'flux2',
+            engine: 'flux2-dev',
+            model: 'urn:air:flux2:checkpoint:civitai:1@2',
+            items: [{ air: 'blob-1', caption: '', repeats: 2, ext: 'png' }],
+          },
+        ],
+        { checkText }
+      )
+    ).rejects.toThrow(/repeats are not supported/);
+  });
+
+  it('refuses repeats on an edit run', async () => {
+    await expect(
+      submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            ecosystem: 'flux2klein',
+            modelVariant: '9b',
+            editTraining: true,
+            items: [
+              { air: 'a', caption: '', path: 'control_1/pair_0001.png', repeats: 2, ext: 'png' },
+              { air: 'b', caption: 'do it', path: 'main/pair_0001.png' },
+            ],
+          },
+        ],
+        { checkText }
+      )
+    ).rejects.toThrow(/repeats are not supported/);
   });
 });

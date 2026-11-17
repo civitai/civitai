@@ -1,3 +1,4 @@
+import { crucibleCoverScanSelect } from '~/server/services/crucible-visibility.sql';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   isCrucibleBlockedForViewer,
@@ -49,7 +50,7 @@ export async function toggleCrucibleFollow({
       status: true,
       ingestion: true,
       takenDownAt: true,
-      image: { select: { ingestion: true } },
+      image: { select: crucibleCoverScanSelect },
     },
   });
   if (!crucible || isCrucibleTakenDownForViewer(crucible, { isModerator }))

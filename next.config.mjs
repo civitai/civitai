@@ -201,6 +201,7 @@ export default defineNextConfig(
       '@civitai/post-planner',
       '@civitai/buzz',
       '@civitai/redis',
+      '@civitai/email',
       '@civitai/clickhouse',
       '@civitai/axiom',
       '@civitai/flipt',
@@ -398,15 +399,16 @@ export default defineNextConfig(
       return headers;
     },
     poweredByHeader: false,
-    // The `feedGoTransport` client path (`GO_TRANSPORT_URL` in src/utils/trpc-go-transport.ts). An
-    // exact-path route in front of this app may send it to a separate Go feed service; whatever
-    // reaches this app is served by the ordinary tRPC route, so the flag can never strand a request
-    // (edge rules keyed on `/api/trpc/` still do not match this path; see `feedGoTransport`).
+    // The `feedGoTransport` / `feedGoTransportModelGetAll` client path (`GO_TRANSPORT_URL` in
+    // src/utils/trpc-go-transport.ts). An exact-path route in front of this app may send it to a
+    // separate Go feed service; whatever reaches this app is served by the ordinary tRPC route, so
+    // the flag can never strand a request (edge rules keyed on `/api/trpc/` still do not match this
+    // path; see `feedGoTransport`).
     // One exact source per procedure in `GO_TRANSPORT_PROCEDURES`, never a wildcard: a wildcard would
     // make `/api/trpc-go/*` an alias of the whole tRPC API. src/utils/__tests__/trpc-go-transport.test.ts
     // pins that this list and that set agree.
     rewrites: async () =>
-      ['image.getImagesAsPostsInfinite'].map((procedure) => ({
+      ['image.getImagesAsPostsInfinite', 'model.getAll'].map((procedure) => ({
         source: `/api/trpc-go/${procedure}`,
         destination: `/api/trpc/${procedure}`,
       })),

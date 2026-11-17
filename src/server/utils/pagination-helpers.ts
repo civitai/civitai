@@ -17,6 +17,24 @@ export const DEFAULT_PAGE_SIZE = 20;
  */
 const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 
+/**
+ * The seconds and fraction of a date-time cursor token. Captures `YYYY-MM-DD[T ]HH:MM:SS` and
+ * the digits after its decimal point, and nothing past them (a `Z` or offset stays as it was).
+ */
+const CURSOR_TIMESTAMP_FRACTION = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})\.(\d+)/;
+
+/**
+ * Pads the fraction to 3 digits. Postgres drops trailing zeros (`.25` for 250 ms) and dayjs reads
+ * a zoneless short fraction as whole milliseconds (25 ms). Digits past the third are truncated; a
+ * Date holds no finer value.
+ */
+function normalizeCursorTimestamp(value: string) {
+  return value.replace(
+    CURSOR_TIMESTAMP_FRACTION,
+    (_, head: string, fraction: string) => `${head}.${fraction.padEnd(3, '0').slice(0, 3)}`
+  );
+}
+
 export function getPagination(limit: number, page: number | undefined) {
   const take = limit > 0 ? limit : undefined;
   const skip = page && take ? (page - 1) * take : undefined;
@@ -200,10 +218,11 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // and `'--5'` as valid dates and still binds a Date to an `int` column. A
     // structural fix requires the date branch to demand a date SHAPE and route
     // everything else numeric; that needs the formats a real
-    // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
-    // against a database — guessing them would turn a 500 into broken pagination.
+    // `CONCAT(timestamp, '|', id)` actually emits (the fraction loses trailing zeros;
+    // see `normalizeCursorTimestamp`), which has not been fully observed against a
+    // database — guessing the rest would turn a 500 into broken pagination.
     if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
-      const parsed = dayjs.utc(value);
+      const parsed = dayjs.utc(normalizeCursorTimestamp(value));
       if (!parsed.isValid())
         throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
       result[fields[i].field] = parsed.toDate();

@@ -15,6 +15,8 @@ import { isDefined } from '~/utils/type-guards';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
+import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
 
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = ARTICLES_SEARCH_INDEX;
@@ -73,17 +75,26 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 export const transformData = async ({
   articles,
   cosmetics,
+  modelWithheldImageIds = new Set(),
 }: {
   articles: Article[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
+  /** Cover or banner images their model withholds: a withheld cover leaves no card image. */
+  modelWithheldImageIds?: Set<number>;
 }) => {
+  const dropped = (image: NonNullable<Article['coverImage']>) =>
+    modelWithheldImageIds.has(image.id) ||
+    isTaggedMatureImage({ nsfwLevel: image.nsfwLevel, tags: image.tags.map((x) => x.tag.id) });
+  const servable = (image: Article['coverImage']) =>
+    image && !dropped(image) ? servableArticleImage(image) : null;
   const records = articles
     .map(({ tags, stats, bannerImage, ...articleRecord }) => {
       // Blocked or under-review cover: not indexed. Unscanned cover: indexed without it, so the
       // article stays searchable.
       const cover = articleRecord.coverImage;
       if (cover && (hasBlockMarker(cover) || cover.needsReview)) return null;
-      const coverImage = servableArticleImage(cover) ?? servableArticleImage(bannerImage);
+      // A dropped cover does not fall back to the banner, as a withheld one does not on the feed card.
+      const coverImage = cover && dropped(cover) ? null : servable(cover) ?? servable(bannerImage);
       if (!coverImage && !cover) return null;
       return {
         ...articleRecord,
@@ -187,7 +198,8 @@ export const pushData = async (
 ) => {
   await updateDocs({
     indexName,
-    documents: records as any[],
+    // An explicit null: the update merges, so a document without the key keeps its stored cover.
+    documents: records.map((record) => ({ ...record, coverImage: record.coverImage ?? null })),
     batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
   });
   // `updateDocs` upserts: an article that stopped qualifying keeps its old document otherwise.
@@ -238,9 +250,15 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled cosmetics`);
 
+    const modelWithheldImageIds = await getModelWithheldImageIds(
+      articles.flatMap((a) => [a.coverImage?.id, a.bannerImage?.id]).filter(isDefined),
+      db
+    );
+
     return {
       articles,
       cosmetics,
+      modelWithheldImageIds,
     };
   },
   transformData,

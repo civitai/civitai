@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as ImageService from '~/server/services/image.service';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as SystemCache from '~/server/services/system-cache';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
@@ -17,9 +16,11 @@ import { blockedNSFW } from '@civitai/mod-utils/prompt-audit/lists';
 // Qdrant's payload lags Postgres: an image blocked, unpublished, made private or re-rated a moment
 // ago can still be a candidate. These tests pin that the search only ever returns what the
 // image fetch path returns, and that the fetch path keeps every visibility filter for an id list.
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => {
   return {
+    recordAudit: vi.fn(),
     queryWithTimeout: vi.fn(),
     fakeGetAllImages: undefined as undefined | ((input: { ids: number[] }) => unknown),
     stripBenignPhrases: vi.fn(async (text: string) => text),
@@ -33,6 +34,11 @@ const h = vi.hoisted(() => {
   };
 });
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   stripBenignPhrases: h.stripBenignPhrases,
@@ -51,11 +57,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
   queryWithTimeout: h.queryWithTimeout,
-}));
-vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof MeilisearchClient>()),
-  metricsSearchClient: {},
-  getMetricsSearchClient: () => ({}),
 }));
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
@@ -328,6 +329,38 @@ describe('Made On-site and Metadata only', () => {
   });
 });
 
+// The own-images search asks for candidates at every level, so hydration is the only filter on
+// what the owner is shown: it must keep the review and minor filters for the owner too.
+describe("the own-images search's image query", () => {
+  async function ownImageSql() {
+    const { source } = rankedSource([101, 102]);
+    await searchSemanticImages({
+      input: input({ query: 'kuro', imageId: undefined, userIds: [VIEWER.id], browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    }).catch(() => undefined);
+    expect(h.queryWithTimeout, 'the search no longer reaches the image query').toHaveBeenCalled();
+    const stmt = h.queryWithTimeout.mock.calls[0][2] as { text: string; values: unknown[] };
+    return { text: stmt.text.replace(/\s+/g, ' '), values: stmt.values };
+  }
+
+  it('never serves the owner their own images awaiting review', async () => {
+    const { text } = await ownImageSql();
+    // Unconditional: the pending read's form, `(... IS NULL OR i."userId" = $n)`, exempts the owner.
+    expect(text).toMatch(/i\."needsReview" IS NULL(?! OR)/);
+    expect(text).not.toMatch(/i\."needsReview" IS NULL OR i\."userId"/);
+    expect(text).toMatch(/i\."acceptableMinor" = FALSE(?! OR)/);
+  });
+
+  // Control: the owner's candidates do reach that query, so the filter is what decides.
+  it("still asks for the owner's candidates", async () => {
+    const { text, values } = await ownImageSql();
+    expect(text).toMatch(/i\."id" = ANY\(/);
+    expect(values).toContainEqual([101, 102]);
+  });
+});
+
 describe.each([
   ['a text query', { query: 'a red fox', imageId: undefined }],
   ['the "more like this" anchor check', {}],
@@ -469,36 +502,18 @@ describe('filters', () => {
     expect(calls[0].filter.range).toMatchObject({ key: 'sortAt', gte: '2026-01-01T00:00:00.000Z' });
   });
 
-  it('never proposes NSFW images on a base model that forbids NSFW', async () => {
+  it.each([
+    ['a moderator', { id: 501, isModerator: true } as SessionUser],
+    ['a non-moderator', VIEWER],
+  ])('leaves the base-model licence rule to hydration for %s at NSFW levels', async (_, user) => {
     const { source, calls } = rankedSource([]);
     await searchSemanticImages({
       input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: { id: 501, isModerator: true } as SessionUser,
-      candidateSource: source,
-    });
-    const [restricted] = calls[0].filter.mustNot as {
-      must: { key: string; match: { any: unknown[] } }[];
-    }[];
-    expect(restricted.must.map((c) => c.key)).toEqual(['nsfwLevel', 'baseModels']);
-    for (const c of restricted.must) expect(c.match.any.length).toBeGreaterThan(0);
-  });
-
-  it('keeps the base-model rule for a non-moderator searching at an NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({
-      input: textQuery({ browsingLevel: 1 | 2 | 4 | 8 | 16 }),
-      user: VIEWER,
+      user,
       candidateSource: source,
     });
     expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
-    expect(calls[0].filter.mustNot).toHaveLength(1);
-  });
-
-  it('drops the base-model rule when the gate holds no NSFW level', async () => {
-    const { source, calls } = rankedSource([]);
-    await searchSemanticImages({ input: textQuery(), user: VIEWER, candidateSource: source });
-    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
-    expect(calls[0].filter.mustNot).toEqual([]);
+    expect(calls[0].filter.mustNot ?? []).toEqual([]);
   });
 
   it("sends the viewer's browsing level, never an empty one", async () => {
@@ -586,6 +601,56 @@ describe('the query audit and the browsing level', () => {
     expect(track.action).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'CSAM_Help_Triggered' })
     );
+  });
+
+  // The showcase picker's own-images search refuses where the general search narrows.
+  it('refuses a minor query on the own-images search, at an NSFW level with the clamp off', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    const { source, calls } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: ALL_LEVELS }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(result).toEqual({ items: [], nextCursor: undefined, correctedQuery: undefined });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('audits the own-images query at one level, whatever level is asked for', async () => {
+    const { source } = rankedSource([101]);
+    h.fakeGetAllImages = visibleOnly(new Set([101]));
+    await searchSemanticImages({
+      input: textQuery({ browsingLevel: SAFE }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+
+    expect(h.includesInappropriate).toHaveBeenCalledWith(expect.anything(), true);
+  });
+
+  it('asks every level for own-images candidates and keeps the viewer’s level on the page', async () => {
+    const levelOf: Record<number, number> = { 101: 1, 102: 16 };
+    h.fakeGetAllImages = async (args) => {
+      const { ids, browsingLevel } = args as { ids: number[]; browsingLevel: number };
+      return {
+        items: ids
+          .filter((id) => (levelOf[id] & browsingLevel) !== 0)
+          .map((id) => ({ id, nsfwLevel: levelOf[id] })),
+        nextCursor: undefined,
+      };
+    };
+    const { source, calls } = rankedSource([101, 102]);
+    const result = await searchSemanticImages({
+      input: textQuery({ browsingLevel: 1 }),
+      user: VIEWER,
+      candidateSource: source,
+      refuseNarrowing: true,
+    });
+    expect(calls[0].filter.gate).toMatchObject({ nsfwLevels: [1, 2, 4, 8, 16] });
+    expect(result.items.map((i) => i.id)).toEqual([101]);
   });
 
   it('recomputes the add-ons at the narrowed level', async () => {
@@ -975,4 +1040,21 @@ describe('the search service call', () => {
       searchSemanticImages({ input: input({ imageId: undefined, query: 'fox' }), user: VIEWER })
     ).rejects.toMatchObject({ code: 'BAD_GATEWAY' });
   });
+});
+
+describeSemanticAuditContract({
+  index: 'images',
+  run: ({ source, user, cursor }) => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 103]));
+    return searchSemanticImages({
+      input: input({ imageId: undefined, query: 'fox', cursor }),
+      user,
+      candidateSource: source,
+    });
+  },
+  ids: [101, 103],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
+  ownCache: true,
 });

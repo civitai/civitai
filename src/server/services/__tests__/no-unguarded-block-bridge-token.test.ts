@@ -201,12 +201,24 @@ const GUARD_CALL_SITE_LEDGER = [
   // guard through it and nothing else — the post preamble's shape, router-local for the same
   // reason.
   'authorizeBlockReactionRequest',
+  // The batch-upload preamble: the three `*MediaUploadBatch*` procedures reach the guard through
+  // it and nothing else — the post preamble's shape, router-local for the same reason.
+  'authorizeMediaUploadBatchRequest',
+  // The output-unlock preamble: `previewOutputUnlock` and `unlockOutput` both reach the guard
+  // through it and nothing else, router-local for the same reason as the preambles above.
+  'authorizeOutputUnlockRequest',
   'cancelAppWorkflow',
   'cancelWorkflow',
   'estimateWorkflow',
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'listMyWorkflows',
+  // PERSIST_GENERATION_SOURCE: the publish preamble, spelled inline.
+  'persistGenerationSource',
+  // A picked generation source copied into a scanned row: the same preamble minus the scope,
+  // spelled inline.
+  'persistUploadedGenerationSource',
   'pollWorkflow',
   'publishGenerationOutputs',
   'queryAppWorkflows',
@@ -232,6 +244,7 @@ const BRIDGE_INPUT_LEDGER = [
   // `blockEstimateBatchInputSchema`, imported from the workflow schema.
   'estimateWorkflowBatch',
   'getImagesByIds',
+  'getWorkflowMedia',
   'getMyBuzzAccounts',
   'getMyBuzzBalance',
   'getMyBuzzTransactions',
@@ -257,10 +270,25 @@ const BRIDGE_INPUT_LEDGER = [
   // `authorizeQuotedGrantConsentRequest`, above.
   'previewQuoteGrant',
   'consentQuoteGrant',
+  // The step-only standing consent, through the same preamble.
+  'consentQuoteGrantStanding',
   // The two app-reaction procedures (SET_ENTITY_REACTION / GET_ENTITY_REACTIONS), via
   // `authorizeBlockReactionRequest`, above.
   'setReactionFromApp',
   'getReactionsForApp',
+  // The three steps of OPEN_MEDIA_UPLOAD_BATCH, via `authorizeMediaUploadBatchRequest`, above.
+  'startMediaUploadBatch',
+  'presignMediaUploadBatchItem',
+  'recordMediaUploadBatchItem',
+  // REQUEST_OUTPUT_UNLOCK's preview and confirmed unlock, via `authorizeOutputUnlockRequest`,
+  // above. Their `blockToken` arrives through the two unlock schemas in the workflow schema.
+  'previewOutputUnlock',
+  'unlockOutput',
+  // PERSIST_GENERATION_SOURCE (a private generation source); calls the guard directly.
+  'persistGenerationSource',
+  // A picked generation source (the upload picker, a single OPEN_MEDIA_UPLOAD image) kept as a
+  // private scanned row; calls the guard directly.
+  'persistUploadedGenerationSource',
   'publishGenerationOutputs',
   'queryAppWorkflows',
   'submitWorkflow',

@@ -149,6 +149,13 @@ export const getAllModelsSchema = z.object({
   minorOnly: z.boolean().optional(),
 });
 
+/**
+ * `model.getAll`'s input: the listing filters, with `page` refused (that procedure pages by cursor).
+ * The router and scripts/feed-go-input-schemas.ts both read this one object, so feed-go's generated
+ * allow-list follows a change to it.
+ */
+export const getAllModelsInputSchema = getAllModelsSchema.extend({ page: z.never().optional() });
+
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
 
@@ -221,7 +228,7 @@ export const modelGallerySettingsInput = z.object({
   hiddenUsers: z.object({ id: z.number(), username: z.string().nullable() }).array(),
   hiddenTags: z.object({ id: z.number(), name: z.string() }).array(),
   hiddenImages: z.record(z.string(), z.number().array()).optional(),
-  level: z.number().optional(),
+  level: z.number().int().min(0).optional(),
   pinnedPosts: z
     .record(z.string(), z.number().array().max(constants.modelGallery.maxPinnedPosts))
     .optional(),
@@ -426,6 +433,19 @@ export type RestrictedNsfwVerdictRulingRecord = {
 
 export type ComFaceRemovedReason = 'detected' | 'recheck-unverified';
 
+export type ComFaceIntentRecord = {
+  detected: boolean;
+  reason?: string;
+  promptId?: number;
+  textHash: string;
+  at: string;
+  overturnedAt?: string;
+  /** The scan's rating marker the intent lock replaced, put back when that lock is lifted. */
+  priorSystemNsfwLock?: { source: string; at: string };
+  /** A system rating verdict that landed while the intent lock was on. */
+  laterVerdict?: { source: string; at: string };
+};
+
 export type ModelMeta = Partial<{
   /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
@@ -499,6 +519,13 @@ export type ModelMeta = Partial<{
   /** A system check (not a moderator) added the nsfw lock. Server-owned. The save-time text
    *  filter also records which field set it off, for the owner's explanation. */
   systemNsfwLock: { source: string; at: string } & Partial<MatureLockAttribution>;
+  /** The listing intent check's verdict at .com-face time, kept while the listing text it read
+   *  (`textHash`) is unchanged so a repeat attempt is not re-judged. `overturnedAt`: a dispute or a
+   *  moderator lifted the lock it set. `reason` is for moderators only. Server-owned. */
+  comFaceIntent: ComFaceIntentRecord;
+  /** A moderator lifted an nsfw lock that was not the intent check's: the check still gates the
+   *  face, but does not lock this listing text (`textHash`) again. Server-owned. */
+  comFaceIntentRelockSuppressed: { textHash: string; at: string };
   /** The listing re-check took the model off civitai.com: its .com cover was cleared, kept here so a
    *  moderator can restore it. `reason` says whether the check flagged the listing or never got a
    *  verdict; `detail` is the check's own reason, for moderators only. A save that sets a .com

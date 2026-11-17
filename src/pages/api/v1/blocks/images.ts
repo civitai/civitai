@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
@@ -167,6 +168,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // endpoint already returns for the paging guard / bulkhead shed.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'images',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
@@ -247,8 +255,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         req,
       }
     );
-    // Images picked by id name no model, so each is held by its own post's model.
-    const items = data.imageId || data.ids?.length ? await withoutHeldImages(found) : found;
+    // Each image is held by its own post's model: a model or version search selects by resource, so
+    // it can return images posted to another model's gallery.
+    const items = await withoutHeldImages(found);
 
     const metadata: Metadata = { nextCursor };
     if (usingPaging) {

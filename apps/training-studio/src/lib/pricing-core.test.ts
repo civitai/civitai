@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { cardByType } from '$lib/data/trainingModels';
+import { cardByType, versionStepDefault } from '$lib/data/trainingModels';
 import { cardFromPrice, selectionFromTotal } from '../routes/trainingFlow';
 
 const zimage = cardByType('zimage')!;
@@ -20,6 +20,7 @@ vi.mock('./orchestrator-core', () => ({
 }));
 
 const { computeFromPrices } = await import('./pricing-core');
+const { trainingWhatIf } = await import('./orchestrator-core');
 
 describe('from prices for version-gated cards', () => {
   it('prices Z-Image from the first version the viewer can pick', async () => {
@@ -39,5 +40,20 @@ describe('the selection total', () => {
     expect(selectionFromTotal(prices, [run('ltx', 'ltx2'), run('zimage', 'zimagebase')])).toBe(
       1000
     );
+  });
+});
+
+describe('the steps a from price is quoted at', () => {
+  // Quoted without steps, MOSS priced at the orchestrator's 3,000 (1,075) while Review starts at 2,000 (860).
+  it('are the steps Review starts each model with', async () => {
+    vi.mocked(trainingWhatIf).mockClear();
+    await computeFromPrices({} as never);
+    const moss = cardByType('mossimage')!.versions[0]!;
+    const quoted = vi
+      .mocked(trainingWhatIf)
+      .mock.calls.map(([, input]) => input)
+      .find((input) => input.model === moss.air);
+    expect(quoted?.steps).toBe(2000);
+    expect(quoted?.steps).toBe(versionStepDefault(moss.key));
   });
 });

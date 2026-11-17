@@ -26,6 +26,7 @@ const { mockHandleLogError, mockAwardTrophyCosmetic, counterStub, poolStub, pool
 // Heavy transitive deps the service imports at module load — stub so importing
 // the real service doesn't drag in db/redis/env/otel/signal machinery.
 vi.mock('~/server/games/new-order/utils', () => ({
+  legacyRank: (rank: string) => (rank === 'Paladin' ? 'Templar' : rank),
   acolyteFailedJudgments: counterStub,
   allJudgmentsCounter: counterStub,
   blessedBuzzCounter: counterStub,

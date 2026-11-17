@@ -7,7 +7,8 @@ import { articleMetrics, bountyEntryMetrics, postMetrics } from '~/server/metric
 /**
  * Every table a user's reactions live in, with the follow-up the one-at-a-time un-react path
  * (`reaction.service.ts`) runs after its delete, so a bulk erasure leaves the counts where that path
- * would have.
+ * would have. Event points are the exception: the un-react path keeps them, while an erasure removes
+ * them, so an erased account keeps nothing its reactions earned.
  *
  * - `queue`: the Postgres metric whose rows are recomputed only for queued ids.
  * - Image, Article and BountyEntry counts in ClickHouse and Redis follow the DELETE itself: those tables
@@ -92,7 +93,7 @@ async function deleteReturning(
 
 /**
  * Deletes the user's reactions from every table, image reactions up to `IMAGE_ROWS_PER_RUN`, and runs
- * the follow-ups the un-react path runs. Returns what was removed and how many image reactions remain.
+ * the follow-ups the un-react path runs, plus the event-points removal it skips. Returns what was removed and how many image reactions remain.
  */
 export async function removeUserReactions(userId: number): Promise<{
   removed: ReactionCounts;
@@ -149,6 +150,6 @@ async function followUp(
       name: 'user-reaction-erasure-follow-up',
       message: (error as Error).message,
       details: { table, step, entities: entityIds.length },
-    }).catch(() => undefined);
+    });
   }
 }

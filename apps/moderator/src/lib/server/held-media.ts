@@ -30,7 +30,7 @@ export function recordHeldGridView(moderatorId: number, count: number) {
     entityId: count,
     activity: 'heldMedia:grid',
   });
-  void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count }).catch(() => null);
+  void logToAxiom({ name: 'held-media-grid', type: 'info', moderatorId, count });
 }
 
 /** One image opened from byte 0, with the credential that fetched it. Throws when the row is not
@@ -47,5 +47,5 @@ export function recordHeldView(moderatorId: number, imageId: number, credential:
 
 /** Every response carrying held bytes, mid-file ranges included. */
 export function recordHeldServe(record: Record<string, unknown>) {
-  void logToAxiom(record).catch(() => null);
+  void logToAxiom(record);
 }

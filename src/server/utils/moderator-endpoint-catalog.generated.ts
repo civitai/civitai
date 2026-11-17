@@ -2,6 +2,8 @@
 // Re-run 'pnpm run generate:moderator-endpoints' after adding or removing a moderator endpoint.
 
 export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> = {
+  '/api/admin/temp/article-category-backfill': () =>
+    import('~/pages/api/admin/temp/article-category-backfill'),
   '/api/admin/temp/text-scan-clavata-cutover': () =>
     import('~/pages/api/admin/temp/text-scan-clavata-cutover'),
   '/api/admin/temp/text-scan-rescan': () => import('~/pages/api/admin/temp/text-scan-rescan'),
@@ -23,6 +25,8 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/cosmetic/create': () => import('~/pages/api/mod/cosmetic/create'),
   '/api/mod/cosmetic/delete': () => import('~/pages/api/mod/cosmetic/delete'),
   '/api/mod/cosmetic/holdings-removed': () => import('~/pages/api/mod/cosmetic/holdings-removed'),
+  '/api/mod/cosmetic/refund-box-purchase': () =>
+    import('~/pages/api/mod/cosmetic/refund-box-purchase'),
   '/api/mod/cosmetic/unassign': () => import('~/pages/api/mod/cosmetic/unassign'),
   '/api/mod/cosmetic/update': () => import('~/pages/api/mod/cosmetic/update'),
   '/api/mod/creator-services/deal-file-url': () =>
@@ -37,6 +41,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/creator-services/resolve-dispute': () =>
     import('~/pages/api/mod/creator-services/resolve-dispute'),
   '/api/mod/csam/training-data-report': () => import('~/pages/api/mod/csam/training-data-report'),
+  '/api/mod/feedback/triage': () => import('~/pages/api/mod/feedback/triage'),
   '/api/mod/homeblock/create': () => import('~/pages/api/mod/homeblock/create'),
   '/api/mod/homeblock/delete': () => import('~/pages/api/mod/homeblock/delete'),
   '/api/mod/homeblock/reorder': () => import('~/pages/api/mod/homeblock/reorder'),
@@ -44,6 +49,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/image/report-csam': () => import('~/pages/api/mod/image/report-csam'),
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
+  '/api/mod/knights/enqueue': () => import('~/pages/api/mod/knights/enqueue'),
   '/api/mod/label-store/predictions': () => import('~/pages/api/mod/label-store/predictions'),
   '/api/mod/membership-gift/refund-unfulfilled': () =>
     import('~/pages/api/mod/membership-gift/refund-unfulfilled'),
@@ -75,9 +81,12 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/poi-flag/dismiss': () => import('~/pages/api/mod/poi-flag/dismiss'),
   '/api/mod/poi-flag/flag-match': () => import('~/pages/api/mod/poi-flag/flag-match'),
   '/api/mod/poi-flag/revert': () => import('~/pages/api/mod/poi-flag/revert'),
+  '/api/mod/post-text/moderate': () => import('~/pages/api/mod/post-text/moderate'),
   '/api/mod/restriction/resolve': () => import('~/pages/api/mod/restriction/resolve'),
+  '/api/mod/review-batches': () => import('~/pages/api/mod/review-batches'),
   '/api/mod/review/delete': () => import('~/pages/api/mod/review/delete'),
   '/api/mod/review/set-exclude': () => import('~/pages/api/mod/review/set-exclude'),
+  '/api/mod/search-query-rule-dry-run': () => import('~/pages/api/mod/search-query-rule-dry-run'),
   '/api/mod/storyline/lift-title-takedown': () =>
     import('~/pages/api/mod/storyline/lift-title-takedown'),
   '/api/mod/storyline/resolve-title-appeal': () =>
@@ -90,6 +99,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
     import('~/pages/api/mod/text-scan/csam-hold/resolve'),
   '/api/mod/text-scan/model-rules-hold/resolve': () =>
     import('~/pages/api/mod/text-scan/model-rules-hold/resolve'),
+  '/api/mod/tipalti-resync-payee': () => import('~/pages/api/mod/tipalti-resync-payee'),
   '/api/mod/training-data/resolve': () => import('~/pages/api/mod/training-data/resolve'),
   '/api/mod/user/buzz-membership-end': () => import('~/pages/api/mod/user/buzz-membership-end'),
   '/api/mod/user/cancel-pending-workflows': () =>

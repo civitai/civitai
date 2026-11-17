@@ -60,14 +60,17 @@ export function isImageHiddenFromGreenViewer(
   return nsfwLevel == null || nsfwLevel === 0 || !passes(nsfwLevel);
 }
 
-// A challenge's cover image must finish moderation scanning before the challenge is publicly
-// visible — separate from (and in addition to) the challenge's own text-scan gate. Pure +
-// dependency-free so the rule can be unit-tested in isolation (the feed/detail queries apply the
-// equivalent filter via a join/lookup on `Image.ingestion`).
+// A challenge's cover image must finish moderation scanning, and carry a rating, before the
+// challenge is publicly visible — separate from (and in addition to) the challenge's own text-scan
+// gate. Pure + dependency-free so the rule can be unit-tested in isolation (the feed/detail queries
+// apply the equivalent filter via a join/lookup on `Image.ingestion` and `Image.nsfwLevel`).
 export function isChallengeCoverScanned(challenge: {
-  coverImage: { ingestion: ImageIngestionStatus } | null | undefined;
+  coverImage: { ingestion: ImageIngestionStatus; nsfwLevel: number } | null | undefined;
 }): boolean {
-  return challenge.coverImage?.ingestion === ImageIngestionStatus.Scanned;
+  return (
+    challenge.coverImage?.ingestion === ImageIngestionStatus.Scanned &&
+    challenge.coverImage.nsfwLevel !== 0
+  );
 }
 
 // Combines the cover-scan check above with the same source/creator scoping as
@@ -79,7 +82,7 @@ export function isChallengeHiddenByCoverScan(
   challenge: {
     source: ChallengeSource;
     createdById: number | null;
-    coverImage: { ingestion: ImageIngestionStatus } | null | undefined;
+    coverImage: { ingestion: ImageIngestionStatus; nsfwLevel: number } | null | undefined;
   },
   viewerId?: number
 ): boolean {
@@ -96,7 +99,7 @@ export const winnerImageStateSql = Prisma.sql`
   i."blockedFor" AS "imageBlockedFor",
   ${imageReviewedSql()} AS "imageReviewed"`;
 
-// A winner's image as any site may serve it: a blocked or unscanned image is withheld everywhere,
+// A winner's image as any site may serve it: a blocked, unscanned or unrated image is withheld everywhere,
 // while the winner and their place stay. All four fields go, because WinnerPodiumCard reads an id
 // and hash with no url as "gated on this site" and links to the image on the other one.
 export function winnerImageFields(row: {
@@ -112,6 +115,7 @@ export function winnerImageFields(row: {
   const withheld =
     imageId != null &&
     (!row.imageReviewed ||
+      imageNsfwLevel === 0 ||
       hasBlockMarker({
         ingestion: row.imageIngestion ?? '',
         nsfwLevel: imageNsfwLevel ?? 0,

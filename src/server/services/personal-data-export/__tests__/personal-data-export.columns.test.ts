@@ -85,6 +85,14 @@ describe('personal-data-export column policy, over every planned read', () => {
     ).toEqual([]);
   });
 
+  it("doesn't tell an author their text is held or was refused", () => {
+    const text = plans.find((p) => p.model === 'PostText');
+    expect(text).toBeDefined();
+    const columnList = selectSql(text!).split(' FROM ')[0];
+    expect(columnList).toContain('"content"');
+    for (const col of ['csamHeld', 'refused']) expect(columnList).not.toContain(`"${col}"`);
+  });
+
   it('writes no text column an automated check fills, on any table', () => {
     const leaks = plans.flatMap((p) =>
       p.columns

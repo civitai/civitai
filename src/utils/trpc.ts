@@ -37,11 +37,7 @@ import {
   getTrpcUnifiedBatchWindowEnabled,
   registerBatchingApplies,
 } from '~/utils/trpc-batch-window';
-import {
-  getFeedGoTransportEnabled,
-  GO_TRANSPORT_PROCEDURES,
-  GO_TRANSPORT_URL,
-} from '~/utils/trpc-go-transport';
+import { GO_TRANSPORT_URL, isGoTransportEnabledFor } from '~/utils/trpc-go-transport';
 
 const url = '/api/trpc';
 
@@ -252,7 +248,9 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'event.getTeamScores',
   'event.getWornHat',
   'generation.checkResourcesCoverage',
+  'hatTurf.getFlagRaceForCollection',
   'hatTurf.getFlags',
+  'hatTurf.getOpenFlagCrucible',
   'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',
@@ -360,7 +358,8 @@ export function shouldBatch(op: {
 /**
  * Send this operation over the Go transport only when ALL hold:
  *  - it's a `query` for a procedure in `GO_TRANSPORT_PROCEDURES`,
- *  - the `feedGoTransport` flag is on for this user,
+ *  - THAT procedure's own flag is on for this user (`feedGoTransport` for
+ *    `image.getImagesAsPostsInfinite`, `feedGoTransportModelGetAll` for `model.getAll`),
  *  - we're in an authenticated browser — signed-out responses are edge-cached under the
  *    `/api/trpc` path, and moving them to another path would trade those hits for origin load,
  *  - it would leave as a GET (`shouldSendQueryAsPost` false): the Go service answers GETs only.
@@ -368,8 +367,7 @@ export function shouldBatch(op: {
 export function shouldUseGoTransport(op: { type: string; path: string; input: unknown }) {
   return (
     op.type === 'query' &&
-    getFeedGoTransportEnabled() &&
-    GO_TRANSPORT_PROCEDURES.has(op.path) &&
+    isGoTransportEnabledFor(op.path) &&
     isAuthedBrowser() &&
     !shouldSendQueryAsPost(op)
   );

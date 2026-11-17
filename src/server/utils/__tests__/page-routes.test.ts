@@ -5,10 +5,12 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import {
   __resetPageRoutesForTest,
+  apiRouteLabel,
   PAGE_ROUTE_NONE,
   PAGE_ROUTE_OTHER,
   pageRouteLabel,
   pagesManifestPath,
+  readApiRoutes,
   readPageRoutes,
 } from '~/server/utils/page-routes';
 import { usePagesManifestFixture } from './pages-manifest.fixture';
@@ -97,6 +99,42 @@ describe('pageRouteLabel', () => {
     pageRouteLabel('/');
     pageRouteLabel('/images');
     pageRouteLabel('/nope');
+    expect(read.mock.calls.filter(([p]) => String(p).startsWith(distDir))).toHaveLength(1);
+  });
+});
+
+describe('readApiRoutes', () => {
+  it('keeps only the pages-API entries', () => {
+    const distDir = usePagesManifestFixture();
+    expect([...readApiRoutes(path.join(distDir, 'server', 'pages-manifest.json'))].sort()).toEqual(
+      ['/api', '/api/trpc/[trpc]', '/api/v1/images'].sort()
+    );
+  });
+});
+
+describe('apiRouteLabel', () => {
+  it('passes API route patterns from the manifest through, and labels anything else "other"', () => {
+    usePagesManifestFixture();
+    expect(apiRouteLabel('/api/trpc/[trpc]')).toBe('/api/trpc/[trpc]');
+    expect(apiRouteLabel('/api/v1/images')).toBe('/api/v1/images');
+    for (const raw of [
+      '/api/v1/images?x=1',
+      '/api/v1/images/1',
+      '/images',
+      '/_app',
+      '',
+      undefined,
+    ]) {
+      expect(apiRouteLabel(raw)).toBe(PAGE_ROUTE_OTHER);
+    }
+  });
+
+  it('reads the manifest once, not per lookup', () => {
+    const distDir = usePagesManifestFixture();
+    const read = vi.spyOn(fs, 'readFileSync');
+    apiRouteLabel('/api/trpc/[trpc]');
+    apiRouteLabel('/api/v1/images');
+    apiRouteLabel('/api/nope');
     expect(read.mock.calls.filter(([p]) => String(p).startsWith(distDir))).toHaveLength(1);
   });
 });

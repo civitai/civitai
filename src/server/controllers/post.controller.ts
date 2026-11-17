@@ -1,3 +1,6 @@
+import { getPostTextsForViewer } from '~/server/services/post-text.service';
+import { assertPostVisibleToViewer } from '~/server/services/post-viewer-visibility.service';
+import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 import { increaseDate } from '~/utils/date-helpers';
@@ -30,7 +33,6 @@ import {
   viewerBrowsingLevel,
 } from '~/server/utils/browsing-level';
 import { publishModel3D } from '~/server/services/model3d.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
 import { createPostOwnerCheck } from '~/server/services/image.service';
 import {
   handleLogError,
@@ -70,7 +72,6 @@ import {
   createPost,
   deletePost,
   getPostContestCollectionDetails,
-  getPostDetail,
   getPostResources,
   getPostResourceCovers,
   getPostsInfinite,
@@ -110,12 +111,27 @@ export const getPostsInfiniteHandler = async ({
       if (!browsingLevel) return { items: [], nextCursor: undefined };
       input = { ...input, browsingLevel };
     }
-    return await getPostsInfinite({ ...input, user: ctx.user, asModerator: moderator });
+    return await getPostsInfinite({
+      ...input,
+      user: ctx.user,
+      asModerator: moderator,
+      asOwner: ownerId !== undefined,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
 };
+
+async function assertCanPostToCollection(collectionId: number, ctx: ProtectedContext) {
+  const permissions = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
+  if (!permissions.write && !permissions.writeReview)
+    throw throwAuthorizationError('You cannot post to this collection');
+}
 
 export const createPostHandler = async ({
   input,
@@ -130,6 +146,8 @@ export const createPostHandler = async ({
     // The storyline router's flag, for the one storyline write that goes through posts.
     if ((input.storylineId || input.parentChapterId) && !ctx.features.storylines)
       throw new TRPCError({ code: 'FORBIDDEN' });
+
+    if (input.collectionId != null) await assertCanPostToCollection(input.collectionId, ctx);
 
     const post = await createPost({
       ...input,
@@ -326,14 +344,22 @@ export const updatePostHandler = async ({
       input.publishedAt = today;
     }
 
-    if (post && input.publishedAt && input.collectionId) {
+    // Pointing a post at a collection needs the same access as posting to it; clearing it doesn't.
+    if (post && input.collectionId != null && input.collectionId !== post.collectionId)
+      await assertCanPostToCollection(input.collectionId, ctx);
+
+    // Publishing enters the post into its collection, whether this request names it or the post
+    // already has it.
+    const publishCollectionId =
+      input.collectionId !== undefined ? input.collectionId : post?.collectionId;
+    if (post && input.publishedAt && publishCollectionId) {
       // Confirm & Validate in the case of a contest collection
       // That a submission can be made. We only do this as the user publishes
       // Because images are ready only at this point.
 
       // Check if user has access to the collection
       const permissions = await getUserCollectionPermissionsById({
-        id: input.collectionId,
+        id: publishCollectionId,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
@@ -343,7 +369,7 @@ export const updatePostHandler = async ({
       }
 
       const collection = await getCollectionById({
-        input: { id: input.collectionId },
+        input: { id: publishCollectionId },
       });
 
       if (collection.type !== CollectionType.Post && collection.type !== CollectionType.Image) {
@@ -371,6 +397,7 @@ export const updatePostHandler = async ({
             postId: input.id,
             tools: { none: {} },
           },
+          select: { id: true },
         });
 
         if (exists) throw throwBadRequestError('All images must have tools to be submitted');
@@ -451,6 +478,8 @@ export const updatePostHandler = async ({
           userId: ctx.user.id,
           isModerator: ctx.user.isModerator,
         });
+        if (!permissions.write && !permissions.writeReview)
+          throw throwAuthorizationError('You cannot post to this collection');
 
         if (collection.type === CollectionType.Post) {
           await bulkSaveItems({
@@ -622,20 +651,6 @@ export const updatePostHandler = async ({
   }
 };
 
-/**
- * The post as `post.get` serves it, or NOT_FOUND unless the viewer may see it: `getPostDetail`'s
- * visibility plus the owner's block of a non-moderator viewer.
- */
-async function assertPostVisibleToViewer({ id, user }: GetByIdInput & { user?: Context['user'] }) {
-  const post = await getPostDetail({ id, user });
-  if (!post) throw throwNotFoundError();
-  if (user && !user.isModerator) {
-    const blocked = await amIBlockedByUser({ userId: user.id, targetUserId: post.user.id });
-    if (blocked) throw throwNotFoundError();
-  }
-  return post;
-}
-
 export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
     const post = await assertPostVisibleToViewer({ ...input, user: ctx.user });
@@ -669,7 +684,16 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
     });
 
-    return { ...post, publishedWithApp };
+    // Storyline text items, after the post's own visibility above.
+    const texts = ctx.features.storylineText
+      ? await getPostTextsForViewer({
+          postId: post.id,
+          browsingLevel: storylineReaderLevel(ctx, undefined),
+          seesAll: !!ctx.user && (ctx.user.id === post.user.id || !!ctx.user.isModerator),
+        })
+      : [];
+
+    return { ...post, publishedWithApp, texts };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -699,7 +723,11 @@ export const deletePostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await deletePost({ ...input, deletedById: ctx.user.id });
+    const result = await deletePost({
+      ...input,
+      deletedById: ctx.user.id,
+      viewerIsModerator: ctx.user.isModerator,
+    });
     if (result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({
@@ -769,10 +797,13 @@ export const removeResourceFromPostImageHandler = async ({
 
 export const reorderPostImagesHandler = async ({
   input,
+  ctx,
 }: {
   input: ReorderPostImagesInput;
   ctx: ProtectedContext;
 }) => {
+  // Text items move only with their flag; without it a reorder moves images alone.
+  if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
     return await reorderPostImages({ ...input });
   } catch (error) {
@@ -936,11 +967,17 @@ export const getPostContestCollectionDetailsHandler = async ({
 
 export const updatePostCollectionTagIdHandler = async ({
   input,
+  ctx,
 }: {
   input: UpdatePostCollectionTagIdInput;
+  ctx: ProtectedContext;
 }) => {
   try {
-    return updatePostCollectionTagId({ ...input });
+    return await updatePostCollectionTagId({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
