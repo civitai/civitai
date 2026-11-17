@@ -1,4 +1,4 @@
-import { MetricEvent, CacheUpdate, FeedUpdate, Operation } from './events'
+import { MetricEvent, CacheUpdate, Operation } from './events'
 import { OutboxRecord } from '@/common/services/outbox'
 import { SpineWorkflowRequest } from './spine'
 
@@ -21,15 +21,10 @@ export interface MetricBuilder {
   }
 }
 
-export type FeedUpdateType = 'update' | 'delete' | 'metricUpdate'
-
 export interface HandlerActions {
   addMetricEvent: (event: MetricEvent) => void
   incMetricCache: (update: CacheUpdate | CacheUpdate[]) => Promise<void>
   forMetric: (entityType: MetricEvent['entityType'], entityId: MetricEvent['entityId'], timestamp?: Date) => MetricBuilder
-  feedUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId'], type?: FeedUpdateType) => void
-  feedDelete: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) => void
-  feedMetricUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId']) => void
   outboxRemove: (id: number) => Promise<void>
   spine: {
     req: (request: SpineWorkflowRequest) => Promise<void>

@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as CollectionReviewSql from '~/server/services/collection-review.sql';
 
 // A collection review reads its submissions as the reviewer: the normal read's filters, plus the
@@ -27,10 +26,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof DbHelpers>();
   return { ...actual, queryWithTimeout: queryWithTimeoutMock };
-});
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return { ...actual, metricsSearchClient: {}, getMetricsSearchClient: () => ({}) };
 });
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {

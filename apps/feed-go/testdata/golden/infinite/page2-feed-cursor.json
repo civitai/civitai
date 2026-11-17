@@ -765,7 +765,7 @@
         "v": 1
       }
     },
-    "cacheable": false,
+    "cacheable": true,
     "writes": {}
   }
 }

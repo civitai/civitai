@@ -57,6 +57,37 @@ describe('ImageFeedSearchSummary', () => {
     expect(setImageFilters).not.toHaveBeenCalled();
   });
 
+  test('removing the "more like this" chip is a new search without similarTo', async () => {
+    router.query = { similarTo: '42', baseModels: 'Illustrious' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        filters={{ baseModels: ['Illustrious'] }}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await expect.element(page.getByRole('link', { name: 'this image' })).toBeVisible();
+    await removeChip('Similar to this image');
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({ baseModels: 'Illustrious' });
+  });
+
+  test('Clear search leaves "more like this" too', async () => {
+    router.query = { similarTo: '42' };
+    renderWithProviders(
+      <ImageFeedSearchSummary
+        query=""
+        similarTo={42}
+        filters={{}}
+        failed={false}
+        onRetry={vi.fn()}
+      />
+    );
+    await page.getByRole('button', { name: 'Clear search' }).click();
+    expect(router.push.mock.calls.at(-1)?.[0].query).toEqual({});
+  });
+
   test('removing a saved filter changes the saved filters, not the URL', async () => {
     renderSummary();
     await removeChip('Posted: past week');

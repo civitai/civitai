@@ -192,7 +192,7 @@ describe('the gRPC binding', () => {
 
   // Rule 6: a filter this source will not evaluate is refused, never ignored.
   it.each([
-    ['a pattern', '{"properties":{"slug":{"pattern":"^zzz"}}}'],
+    ['a lookahead pattern', '{"properties":{"slug":{"pattern":"^(?!zzz)"}}}'],
     ['a $ref', '{"$ref":"#/x","x":{"properties":{"slug":{"const":"zzz"}}}}'],
     ['a filter over the size bound', JSON.stringify({ not: {}, description: 'x'.repeat(8192) })],
   ])('🔴 %s is INVALID_ARGUMENT with reason bad_request, and no event', async (_name, filter) => {

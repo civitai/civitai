@@ -1410,7 +1410,8 @@ function runInfinite(spec) {
     ...raw,
   };
   const features = { imageIndexFeed: spec.nodeFlags.imageIndexFeed };
-  return { value: infiniteHandler({ input, ctx: { user, features } }) };
+  // createContext's policy, as for the gallery procedure: cacheable without a session.
+  return { value: infiniteHandler({ input, ctx: { user, features } }), cacheable: !session };
 }
 
 // --- GET /api/v1/images ----------------------------------------------------------------------------
@@ -1992,10 +1993,10 @@ const V1 = [
     replies: { 'levels=1%2C2%2C4%2C8%2C16&excludeMinor=1&excludePoi=1&viewerId=1004&sort=oldest&limit=3': { body: { items: [8001, 8002, 8004], ...fc('1717000000000', '8004') } } },
   },
   {
-    name: 'extra-key-in-next-page',
-    description: 'A key outside the schema is kept in nextPage, in req.query order.',
+    name: 'fallback-unknown-key',
+    description: 'A key outside imagesEndpointSchema: Node strips it (and keeps it in nextPage), but a key the app added after the Go build was generated is one it reads, so feed-go never treats it as absent.',
     query: 'foo=bar&limit=2&sort=Newest',
-    replies: { 'levels=1&excludedTags=9901&excludeMinor=1&excludePoi=1&sort=newest&limit=2': { body: { items: [8001, 8003], ...fc('1718000000000', '8003') } } },
+    fallback: 'input-unknown-key',
   },
   // `ids`: the legacy Postgres path (getAllImages), in its own order, never the request's.
   {
@@ -2466,9 +2467,9 @@ function emitInfinite() {
       if (spec.viewer) T.packed.set(`${K.session}:${spec.viewer}`, SESSIONS[spec.viewer]);
       expect = { fallback: spec.fallback };
     } else {
-      const { value } = runInfinite({ ...spec, nodeFlags });
+      const { value, cacheable } = runInfinite({ ...spec, nodeFlags });
       checkReplies(spec);
-      expect = { envelope: superjson.serialize(value), cacheable: false, writes: writeEntries() };
+      expect = { envelope: superjson.serialize(value), cacheable, writes: writeEntries() };
     }
     // Every image the feed named is in the tables, so a row the hydrate's own filters drop (the tag
     // scope) is one feed-go must drop too, not one the fixture never held.

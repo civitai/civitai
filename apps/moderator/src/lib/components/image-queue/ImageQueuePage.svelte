@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AgentBadge from '$lib/components/AgentBadge.svelte';
   import { enhance } from '$app/forms';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import { untrack } from 'svelte';
@@ -208,6 +209,7 @@
   tagOptions={data.tagOptions}
   {itemKeys}
   {selected}
+  agentFilter={data.kind === 'reported' ? data.agentFilter : null}
 >
   {#snippet meta()}
     {#if reported}<LastWorked entity={ReportEntity.Image} />{/if}
@@ -408,6 +410,7 @@
           >
             {item.report.username ?? `[deleted] #${item.report.userId}`}
           </a>
+          {#if item.report.agentFiled}<AgentBadge />{/if}
           · {new Date(item.report.createdAt).toLocaleDateString()}
         </div>
         {#each reportDetailEntries(item.report.details) as [k, v] (k)}

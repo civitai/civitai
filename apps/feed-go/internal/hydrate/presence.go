@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -58,22 +59,26 @@ var PageCaches = []PageCache{
 	{Name: CacheCosmetics, Key: KeyCosmetics},
 }
 
-// MissReason is the fallback reason a miss on the named page cache raises in s.Page: the PageCaches
-// Reason, or "" for a cache s.Compute answers (MissCaches, shared with the miss computation) and for
-// a name that is not a page cache.
+// MissReason is the fallback reason a miss on the named cache raises when s serves: "" for a cache
+// s.Compute answers (MissCaches, shared with the miss computation; the metric hashes only when s
+// reads ClickHouse); else the PageCaches Reason of a
+// page cache, the lookup spec's reason for another computed cache (model-frames), and "" for any
+// other name.
 func (s *Sources) MissReason(name string) string {
-	c, ok := PageCacheNamed(name)
-	if !ok {
+	if name == CacheMetrics {
+		// Computed only with a ClickHouse reader (metricsComputed), not by every MissCompute.
+		if s.metricsComputed() {
+			return ""
+		}
+		return "metrics-miss"
+	}
+	if s.Compute != nil && slices.Contains(MissCaches, name) {
 		return ""
 	}
-	if s.Compute != nil {
-		for _, m := range MissCaches {
-			if m == name {
-				return ""
-			}
-		}
+	if c, ok := PageCacheNamed(name); ok {
+		return c.Reason
 	}
-	return c.Reason
+	return specReason(name)
 }
 
 // PageCacheNamed is the PageCaches entry of that name.
@@ -137,7 +142,7 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 		{CacheProfilePictures, profileUsers, s.Packed.Queue(stage1, KeyProfilePictures, profileUsers, 0)},
 		{CacheImageFrames, images, s.Packed.Queue(stage1, KeyImageFrames, images, 0)},
 		{CacheThumbnails, videos, s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)},
-		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, 0)},
+		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)},
 	}
 	// As Page: no visible event, no decoration read at all.
 	if len(images) > 0 && len(req.VisibleEvents) > 0 {
@@ -173,6 +178,16 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 			// fetch ignores markers then), so the lookup runs for it.
 			for id, e := range entries {
 				if e.NotFound {
+					delete(entries, id)
+				}
+			}
+		}
+		if r.name == CacheTagIDs && s.Compute != nil {
+			// As fillTagIDs: a stale entry (past the cache's ttl, or backdated by a bust) is looked up
+			// again. Counted as a miss: with write-back on a serve that finds its revalidation lock
+			// held serves it instead, so this can overstate that case's reads.
+			for id, e := range entries {
+				if e.Stale {
 					delete(entries, id)
 				}
 			}
@@ -301,17 +316,7 @@ type PresenceProbe struct {
 
 // Page records req's cache presence and returns an empty hydration.
 func (p *PresenceProbe) Page(ctx context.Context, req PageRequest) (*Page, error) {
-	now := time.Now
-	if p.Now != nil {
-		now = p.Now
-	}
-	started := now()
-	p.mu.Lock()
-	if p.first.IsZero() {
-		p.first = started
-	}
-	p.pages++
-	p.mu.Unlock()
+	p.notePage()
 	res, err := p.Checker.Check(ctx, req, p.RacedSince)
 	if err != nil {
 		return nil, err
@@ -335,6 +340,50 @@ func (p *PresenceProbe) Page(ctx context.Context, req PageRequest) (*Page, error
 	return &Page{}, nil
 }
 
+// notePage counts one page whose cache reads begin now (the first one's start is FirstCheck's).
+func (p *PresenceProbe) notePage() {
+	now := time.Now
+	if p.Now != nil {
+		now = p.Now
+	}
+	started := now()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.first.IsZero() {
+		p.first = started
+	}
+	p.pages++
+}
+
+// recordComputed records n missed ids of cache, a cache Go computes, and the one lookup query that
+// answers them (a page's batched lookup).
+func (p *PresenceProbe) recordComputed(cache string, n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.misses == nil {
+		p.misses, p.raced, p.dbReads = map[string]int{}, map[string]int{}, map[string]int{}
+	}
+	p.misses[cache] += n
+	p.dbReads[cache]++
+}
+
+type presenceKey struct{}
+
+// WithPresence is ctx for a Go-first probe that runs a serving path itself (model.getAll, whose
+// hydration is not the page hydrator PresenceProbe stands in for): under it a miss the computation
+// would answer (Sources.fill) is recorded on p, its ids and one database read, and answered as no
+// entry, never looked up or written (a version showcase miss is looked up, on the replica, as its
+// answer decides the page's rows: lookupSpec.probeLooksUp); and each model page (ModelPage) counts as
+// a page checked. A cache Go falls back on still falls back.
+func WithPresence(ctx context.Context, p *PresenceProbe) context.Context {
+	return context.WithValue(ctx, presenceKey{}, p)
+}
+
+func presenceOf(ctx context.Context) *PresenceProbe {
+	p, _ := ctx.Value(presenceKey{}).(*PresenceProbe)
+	return p
+}
+
 // VisibleModel3DIDs answers no linked model as visible (it changes a field, never which ids a page
 // holds).
 func (p *PresenceProbe) VisibleModel3DIDs(context.Context, []int, int, bool) (map[int]bool, error) {
@@ -356,8 +405,9 @@ func (p *PresenceProbe) Raced() map[string]int {
 }
 
 // DBReads is, per cache, the database queries a Go-first serve would have made for the misses Go
-// answers itself (one per page and cache with such misses; a lower bound: the user-cosmetics
-// computation can add up to two withheld-cosmetic queries).
+// answers itself (one per page and cache with such misses; a lower bound: the user-cosmetics and
+// frame computations can add up to two withheld-cosmetic queries, the tag-ids one a tag query for
+// the tags the basic-tags cache misses).
 func (p *PresenceProbe) DBReads() map[string]int {
 	p.mu.Lock()
 	defer p.mu.Unlock()

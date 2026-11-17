@@ -52,12 +52,19 @@ import type {
   BlockScopeRefusalKind,
 } from '~/server/middleware/block-scope.middleware';
 import {
+  blockClaimsAppLabel,
   markBlockRequestReadMiss,
   recordDocStoreError,
+  recordDocStoreUnchangedWrite,
   recordStorageTallyOp,
+  type AppBlockRefusalBucket,
   type DocStoreEndpoint,
   type StorageTallyOp,
 } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  blockSubjectUserId,
+  recordAppBlockRateLimitRefusal,
+} from '~/server/services/blocks/rate-limit-refusal.service';
 import {
   hasLinkedOAuthAccount,
   sharedWriteTrustRefusal,
@@ -333,11 +340,79 @@ function sendError(req: NextApiRequest, res: NextApiResponse, err: unknown): voi
   if (isDocumentReadMiss(req, err.code)) markBlockRequestReadMiss(res);
   // Every refusal that names a retry delay (a 429, or a retryable 503) says so in the header.
   const retryAfter = err.details?.retryAfter;
+  // Per-app attribution of the two refusals an app can loop on: a 429 (which limit) and a 409
+  // version conflict (bucket `version_conflict` — not a rate limit, on the same counter so one
+  // query answers "what is this app being refused"). Every document-store refusal leaves through
+  // here, so this is the one place.
+  if (err.code === 'rate_limited' || err.code === 'version_conflict') {
+    recordRefusal(req, err, retryAfter);
+  }
   if (typeof retryAfter === 'number') {
     res.setHeader('Retry-After', String(retryAfter));
     if (err.code === 'rate_limited') body.rateLimit = rateLimitMetaFor(retryAfter);
   }
   sendEnvelope(req, res, STORAGE_ERROR_STATUS[err.code], body);
+}
+
+/**
+ * Whether `app-blocks-storage-unchanged-writes-free` is on for the REQUESTING app: evaluated, like
+ * the publish flag (`isPublishRouteServed`), for the block token's app block id — not the
+ * resolved store context's app, which is the SOURCE app through an import. The free-write counter
+ * is labelled with the same app (`requestAppLabel`). No claims, no flag.
+ */
+async function isUnchangedWriteFree(req: NextApiRequest): Promise<boolean> {
+  const appBlockId = (req as BlockScopedNextApiRequest).blockClaims?.appBlockId;
+  if (!appBlockId) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE, appBlockId);
+}
+
+/** The `app_block_id` label of the request's verified block claims (`other` without any). */
+function requestAppLabel(req: NextApiRequest): string {
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  return claims ? blockClaimsAppLabel(claims) : 'other';
+}
+
+/** The `details.bucket` of every limiter refusal this route raises. */
+type DocStoreRefusalBucket = DocStoreRateBucket | 'shared-write' | 'publish';
+const DOC_STORE_REFUSAL_BUCKETS: ReadonlySet<string> = new Set<DocStoreRefusalBucket>([
+  'read',
+  'write',
+  'tally',
+  'report',
+  'shared-write',
+  'publish',
+]);
+
+/**
+ * Every `rate_limited` this module raises is built here (pinned by the ledger test), so its
+ * `details.bucket` — what the app receives in its 429, and the metric's `bucket` label — is always
+ * one of `DocStoreRefusalBucket`. The store's own lock-timeout refusals carry `reason:
+ * 'contention'` instead.
+ */
+function rateLimited(message: string, bucket: DocStoreRefusalBucket, retryAfter: number) {
+  return new DocStoreError('rate_limited', message, { bucket, retryAfter });
+}
+
+function refusalBucket(err: DocStoreError): AppBlockRefusalBucket {
+  if (err.code === 'version_conflict') return 'version_conflict';
+  const bucket = err.details?.bucket;
+  if (typeof bucket === 'string' && DOC_STORE_REFUSAL_BUCKETS.has(bucket)) {
+    return bucket as DocStoreRefusalBucket;
+  }
+  return err.details?.reason === 'contention' ? 'contention' : 'unattributed';
+}
+
+function recordRefusal(req: NextApiRequest, err: DocStoreError, retryAfter: unknown): void {
+  const claims = (req as BlockScopedNextApiRequest).blockClaims;
+  recordAppBlockRateLimitRefusal({
+    appBlockId: requestAppLabel(req),
+    surface: 'doc_store',
+    bucket: refusalBucket(err),
+    endpoint: storageEndpointLabel(req),
+    retryAfterSeconds: typeof retryAfter === 'number' ? retryAfter : undefined,
+    userId: claims ? blockSubjectUserId(claims.sub) : null,
+    status: STORAGE_ERROR_STATUS[err.code],
+  });
 }
 
 /**
@@ -807,12 +882,7 @@ async function charge(
   const uid = access.ctx.viewerUid;
   const principal = uid === null ? `ip:${resolveClientIp(req)}` : `u:${uid}`;
   const rl = await checkDocStoreRateLimit(bucket, access.ctx.appId, principal);
-  if (!rl.allowed) {
-    throw new DocStoreError('rate_limited', 'rate limit exceeded', {
-      bucket,
-      retryAfter: rl.retryAfterSeconds,
-    });
-  }
+  if (!rl.allowed) throw rateLimited('rate limit exceeded', bucket, rl.retryAfterSeconds);
 }
 
 const COARSE_CATEGORY = { link: 'link', overflow: 'unreviewable' } as Record<string, string>;
@@ -964,10 +1034,11 @@ async function withSharedWriteBudget<T>(
     DOC_STORE_SHARED_WRITE_BUDGET
   );
   if (!reservation.allowed) {
-    throw new DocStoreError('rate_limited', 'shared write budget exhausted', {
-      bucket: 'shared-write',
-      retryAfter: reservation.retryAfterSeconds,
-    });
+    throw rateLimited(
+      'shared write budget exhausted',
+      'shared-write',
+      reservation.retryAfterSeconds
+    );
   }
   let hasLanded = false;
   try {
@@ -1027,6 +1098,9 @@ async function run(
         getManyMax: DOC_STORE_BOUNDS.getManyMax,
         rate: {
           readsPerMinute: DOC_STORE_READ_RATE_LIMIT_MAX,
+          // The per-viewer `write` bucket: private writes, every DELETE, each publish and
+          // unpublish call, and — only while `app-blocks-storage-unchanged-writes-free` is on for
+          // the app — every shared PUT, changed or not (the field keeps its name).
           privateWritesPerMinute: DOC_STORE_PRIVATE_WRITE_RATE_LIMIT_MAX,
           marksAndCountersPerMinute: DOC_STORE_TALLY_RATE_LIMIT_MAX,
           reportsPerDay: DOC_STORE_REPORT_RATE_LIMIT_MAX,
@@ -1122,6 +1196,26 @@ async function run(
         return write(null, () => undefined);
       }
       const user = await assertTrusted(uid);
+      // A shared put that would change no stored row is free of the shared-write budget (FLAG:
+      // `app-blocks-storage-unchanged-writes-free`, per app; off, this block is skipped). After
+      // every check above, so it refuses exactly what any write does. Under the flag every shared
+      // put first spends one `write` token (the per-viewer request bucket, never refunded), as a
+      // publish does, so a loop of identical puts is still bounded. Then, when the store says the
+      // put would change nothing (`putIfUnchanged`: the publish rule plus the index rows), the
+      // answer is the stored document as a write returns it — no shared-write token, no
+      // moderation scan, nothing written — counted per app. Anything else (a change, a stale
+      // `ifVersion`, another author's or a hidden document) takes the ordinary write below. A
+      // create always writes a new key, so it is never unchanged.
+      if (putIn && route.op === 'put' && (await isUnchangedWriteFree(req))) {
+        await charge('write', access, req);
+        const stored = await store.putIfUnchanged(ctx, coll, route.key, putIn.data, {
+          ifVersion: putIn.ifVersion,
+        });
+        if (stored) {
+          recordDocStoreUnchangedWrite(requestAppLabel(req));
+          return ok(await presentDoc(stored, decl));
+        }
+      }
       return withSharedWriteBudget(access, uid, (landed) => write(user, landed));
     }
     case 'increment': {
@@ -1269,10 +1363,7 @@ async function runPublish(
 
   const reservation = await reserveSharedWrite(uid, ctx.appId, DOC_STORE_PUBLISH_BUDGET);
   if (!reservation.allowed) {
-    throw new DocStoreError('rate_limited', 'publish budget exhausted', {
-      bucket: 'publish',
-      retryAfter: reservation.retryAfterSeconds,
-    });
+    throw rateLimited('publish budget exhausted', 'publish', reservation.retryAfterSeconds);
   }
   let landed = false;
   try {

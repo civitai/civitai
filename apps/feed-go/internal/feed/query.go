@@ -304,7 +304,5 @@ func (q *ImagesQuery) Build() Built {
 	return Built{SQL: sql, Args: a.args, CacheTTL: cacheTTL, CacheTags: tags, ThrowOnStatementTimeout: q.ThrowOnStatementTimeout}
 }
 
-// imageOnSiteSQL is imageOnSiteSql('i.meta') (src/server/utils/image-onsite.ts).
-const imageOnSiteSQL = `(i.meta->>'civitaiResources' IS NOT NULL
- AND NOT (i.meta ? 'Version')
- AND (NOT (i.meta ? 'Model') OR (i.meta->>'Model') LIKE 'urn:air:%'))`
+// imageOnSiteSQL is imageOnSiteSql('i.meta'), shared with the version showcase lookup.
+const imageOnSiteSQL = hydrate.ImageOnSiteSQL

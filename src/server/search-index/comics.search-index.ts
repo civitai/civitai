@@ -1,9 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
+import {
+  createSearchIndexUpdateProcessor,
+  type SearchIndexContext,
+  type SearchIndexPullBatch,
+} from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
 import { imageNotRestrictedSql } from '~/server/common/image-visibility';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
@@ -13,6 +18,11 @@ import {
   type RawQueryClient,
 } from '~/server/services/profile-picture.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
+import { heldUserSql } from '@civitai/shared/held-media';
+import {
+  semanticCoverImageCleanText,
+  semanticImageHeldText,
+} from '~/server/services/semantic-held-content.sql';
 
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -111,14 +121,32 @@ export const comicSearchEligibleWhere = [
   Prisma.sql`cp."status" = 'Active'::"ComicProjectStatus"`,
   Prisma.sql`cp."tosViolation" = FALSE`,
   Prisma.sql`cp."userId" != -1`,
+  Prisma.sql`cp."nsfwLevel" NOT IN (0, 32)`,
   Prisma.sql`EXISTS (
     SELECT 1 FROM "User" u
-    WHERE u.id = cp."userId" AND u."bannedAt" IS NULL
+    WHERE u.id = cp."userId" AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
+  )`,
+  Prisma.raw(`NOT ${heldUserSql('cp."userId"')}`),
+  Prisma.raw(semanticCoverImageCleanText('cp."coverImageId"')),
+  Prisma.raw(`NOT EXISTS (
+    SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
+    WHERE hp."projectId" = cp.id AND ${semanticImageHeldText('hi')}
+  )`),
+  Prisma.sql`NOT EXISTS (
+    SELECT 1 FROM "ComicChapter" fc
+    JOIN "ComicPanel" fp ON fp."projectId" = fc."projectId" AND fp."chapterPosition" = fc."position"
+    JOIN "Image" fi ON fi.id = fp."imageId"
+    WHERE fc."projectId" = cp.id
+    AND fc."status" = 'Published'::"ComicChapterStatus"
+    AND fc."availability" = 'Public'::"Availability"
+    AND fp."status" = 'Ready'::"ComicPanelStatus"
+    AND (fi."blockedFor" IS NOT NULL OR fi.minor = TRUE OR fi.poi = TRUE)
   )`,
   Prisma.sql`EXISTS (
     SELECT 1 FROM "ComicChapter" cc
     WHERE cc."projectId" = cp.id
     AND cc."status" = 'Published'::"ComicChapterStatus"
+    AND cc."availability" = 'Public'::"Availability"
     AND EXISTS (
       SELECT 1 FROM "ComicPanel" cpn
       JOIN "Image" i ON i.id = cpn."imageId"
@@ -141,6 +169,10 @@ export const comicSearchEligibleWhere = [
         OR i."ingestion" != 'Scanned'::"ImageIngestionStatus"
         OR i."needsReview" IS NOT NULL
         OR i."tosViolation" = TRUE
+        OR i."blockedFor" IS NOT NULL
+        OR i.minor = TRUE
+        OR i.poi = TRUE
+        OR i."nsfwLevel" IN (0, 32)
       )
     )
   )`,
@@ -257,6 +289,54 @@ type ProfileImage = Prisma.ImageGetPayload<{
   select: typeof profileImageSelect;
 }>;
 
+export const pullData = async (
+  { db, logger }: SearchIndexContext,
+  batch: SearchIndexPullBatch
+): Promise<PulledComics | null> => {
+  logger(
+    `PullData :: Pulling data for batch`,
+    batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
+  );
+  const data = await pullComics(
+    db,
+    [
+      batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
+      batch.type === 'new'
+        ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
+        : undefined,
+    ].filter(isDefined)
+  );
+  const matched = new Set(data?.comics.map((c) => c.id));
+  const disqualifiedIds = batch.type === 'update' ? batch.ids.filter((id) => !matched.has(id)) : [];
+  if (!data && !disqualifiedIds.length) return null;
+
+  logger(`PullData :: Pulled comics and profile pictures`);
+
+  return { comics: [], profilePictures: [], ...data, disqualifiedIds };
+};
+
+export const transformIndexData = async ({
+  disqualifiedIds,
+  ...data
+}: PulledComics): Promise<TransformedComics> => ({
+  records: await transformData(data),
+  disqualifiedIds,
+});
+
+export const pushData = async (
+  { indexName }: SearchIndexContext,
+  { records, disqualifiedIds }: TransformedComics
+) => {
+  await updateDocs({
+    indexName,
+    documents: records as any[],
+    batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
+  });
+  // `updateDocs` upserts, so a comic that stopped qualifying keeps its document unless deleted here.
+  if (disqualifiedIds.length)
+    await onSearchIndexDocumentsCleanup({ indexName, ids: disqualifiedIds });
+};
+
 export const comicsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   outboxEntity: 'Comic',
@@ -284,34 +364,31 @@ export const comicsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
-    logger(
-      `PullData :: Pulling data for batch`,
-      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
-    );
-    const data = await pullComics(
-      db,
-      [
-        batch.type === 'update' ? Prisma.sql`cp.id IN (${Prisma.join(batch.ids)})` : undefined,
-        batch.type === 'new'
-          ? Prisma.sql`cp.id >= ${batch.startId} AND cp.id <= ${batch.endId}`
-          : undefined,
-      ].filter(isDefined)
-    );
-    if (!data) return null;
-
-    logger(`PullData :: Pulled comics and profile pictures`);
-
-    return data;
-  },
-  transformData,
-  pushData: async ({ indexName }, records) => {
-    await updateDocs({
-      indexName,
-      documents: records as any[],
-      batchSize: MEILISEARCH_DOCUMENT_BATCH_SIZE,
-    });
-
-    return;
-  },
+  pullData,
+  transformData: transformIndexData,
+  pushData,
+  // A disqualified comic is handled: `pushData` deletes its document.
+  getHandledIds: ({ records, disqualifiedIds }: TransformedComics) => [
+    ...records.map((record) => record.id),
+    ...disqualifiedIds,
+  ],
 });
+
+/**
+ * Queues every comic for an update, so one whose owner was banned, deleted or held, or whose cover
+ * or panel image was flagged, leaves the index (`pushData` deletes it) though no comic row changed.
+ */
+export async function queueAllComicsForRefresh(db: RawQueryClient) {
+  const rows = await db.$queryRaw<{ id: number }[]>`SELECT id FROM "ComicProject"`;
+  if (rows.length)
+    await comicsSearchIndex.queueUpdate(
+      rows.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
+      { reason: 'refresh' }
+    );
+  return rows.length;
+}
+
+type PulledComics = NonNullable<Awaited<ReturnType<typeof pullComics>>> & {
+  disqualifiedIds: number[];
+};
+type TransformedComics = { records: ComicSearchIndexRecord[]; disqualifiedIds: number[] };

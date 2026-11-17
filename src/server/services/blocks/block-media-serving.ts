@@ -17,6 +17,7 @@ import {
   type BlockOutputHiddenReason,
 } from '~/server/services/blocks/block-output-gate';
 import { readBlobState } from '~/server/services/orchestrator/blobRatings';
+import { hasEmptyViewerLevel } from '~/server/services/blocks/block-viewer-ceiling';
 
 /**
  * Off or absent: every App Block media item is paused (hidden). Flipt unreachable
@@ -88,6 +89,8 @@ export async function resolveWorkflowMediaRefs(args: {
   appBlockId: string;
   viewerId: number | null;
   viewerBrowsingLevel: number;
+  /** Users the viewer hid, blocked or is blocked by: their refs do not replay to this viewer. */
+  hiddenOwnerIds: ReadonlySet<number>;
 }): Promise<WorkflowMediaItem[]> {
   const serving = await isBlockMediaServing();
   return args.refs.map((token) => {
@@ -97,15 +100,24 @@ export async function resolveWorkflowMediaRefs(args: {
       item.status === 'visible' ? 'served' : item.status,
       item.status === 'hidden' ? item.reason : undefined
     );
-    return item;
+    // The app sees one reason for any ref it may not have, so it cannot learn that the viewer
+    // and the owner hid or blocked each other; the specific reason stays in the metric.
+    return item.status === 'hidden' && item.reason === 'owner_hidden'
+      ? ({ status: 'hidden', reason: 'invalid' } as const)
+      : item;
   });
 }
 
 function judgeRef(
   token: string,
-  viewer: { appBlockId: string; viewerId: number | null; viewerBrowsingLevel: number },
+  viewer: {
+    appBlockId: string;
+    viewerId: number | null;
+    viewerBrowsingLevel: number;
+    hiddenOwnerIds: ReadonlySet<number>;
+  },
   serving: boolean
-): WorkflowMediaItem {
+): WorkflowMediaItem | { status: 'hidden'; reason: 'owner_hidden' } {
   if (!serving) return { status: 'hidden', reason: 'paused' };
 
   const ref = openBlockMediaRef(token);
@@ -113,6 +125,8 @@ function judgeRef(
   if (!ref || ref.appBlockId !== viewer.appBlockId) return { status: 'hidden', reason: 'invalid' };
   if (ref.privateGen && ref.ownerId !== viewer.viewerId)
     return { status: 'hidden', reason: 'private' };
+  if (ref.ownerId !== viewer.viewerId && viewer.hiddenOwnerIds.has(ref.ownerId))
+    return { status: 'hidden', reason: 'owner_hidden' };
 
   const { exp: _refExp, ...claims } = ref;
   const ticket = sealBlockMediaTicket({
@@ -148,11 +162,20 @@ export async function resolveWorkflowMediaForBlockClaims(input: {
   const { resolveViewerBrowsingLevel } = await import(
     '~/server/services/blocks/block-gated-images.service'
   );
+  if (hasEmptyViewerLevel(input.claims)) {
+    return { media: input.refs.map(() => ({ status: 'hidden', reason: 'invalid' } as const)) };
+  }
+
+  const { getAllHiddenForUser } = await import('~/server/services/user-preferences.service');
+  const hidden = await getAllHiddenForUser({ userId });
   const media = await resolveWorkflowMediaRefs({
     refs: input.refs,
     appBlockId: input.claims.appBlockId,
     viewerId: userId,
     viewerBrowsingLevel: resolveViewerBrowsingLevel(input.claims),
+    hiddenOwnerIds: new Set(
+      [...hidden.hiddenUsers, ...hidden.blockedUsers, ...hidden.blockedByUsers].map((u) => u.id)
+    ),
   });
   return { media };
 }

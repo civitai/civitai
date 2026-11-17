@@ -85,8 +85,9 @@
     display: grid;
     flex: none;
     place-items: center;
-    width: 32px;
-    min-height: 32px;
+    width: 36px;
+    height: 36px;
+    min-height: 0;
     padding: 0;
     border: 1px solid var(--io-gold-muted);
     border-radius: 999px;

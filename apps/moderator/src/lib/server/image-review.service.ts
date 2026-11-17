@@ -1,4 +1,5 @@
 import { sql } from '@civitai/db/kysely';
+import { isAgentReporter, type AgentReportWhere } from './agent-reporters';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
@@ -448,6 +449,7 @@ export type ReportedImageItem = {
     createdAt: Date;
     username: string | null;
     userId: number;
+    agentFiled: boolean;
   };
 };
 
@@ -458,10 +460,13 @@ export async function getReportedImageQueue({
   cursor,
   limit,
   reportId,
+  agents,
 }: {
   browsingLevel: number;
   cursor?: number;
   limit: number;
+  /** Only, or all but, the reports agent accounts filed. Applied before the limit, so the cursor holds. */
+  agents?: AgentReportWhere;
   /** One report, whatever its status or rating — what `reportActionPath` links to from User Lookup and
    *  the hand-off panels. Without it a link to a ruled report landed on an unrelated Pending list. */
   reportId?: number;
@@ -504,6 +509,9 @@ export async function getReportedImageQueue({
         .where('r.reason', 'in', DEFAULT_REPORT_REASONS)
     )
     .$if(cursor != null, (qb) => qb.where('r.id', '>', cursor!))
+    .$if(agents != null, (qb) =>
+      qb.where('r.userId', agents!.mode === 'only' ? 'in' : 'not in', agents!.ids)
+    )
     .orderBy('r.id', 'asc')
     .limit(limit + 1)
     .execute();
@@ -532,6 +540,7 @@ export async function getReportedImageQueue({
       createdAt: r.reportCreatedAt,
       username: r.reportUsername,
       userId: r.reportUserId,
+      agentFiled: isAgentReporter(r.reportUserId),
     },
   }));
   return { items, nextCursor };

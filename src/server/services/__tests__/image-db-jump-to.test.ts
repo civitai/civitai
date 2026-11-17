@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 import type * as DbHelpers from '~/server/db/db-helpers';
-import type * as MeilisearchClient from '~/server/meilisearch/client';
 
 const { queryWithTimeoutMock } = vi.hoisted(() => ({ queryWithTimeoutMock: vi.fn() }));
 
@@ -12,10 +11,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
 vi.mock('~/server/db/db-helpers', async (importOriginal) => {
   const actual = await importOriginal<typeof DbHelpers>();
   return { ...actual, queryWithTimeout: queryWithTimeoutMock };
-});
-vi.mock('~/server/meilisearch/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof MeilisearchClient>();
-  return { ...actual, metricsSearchClient: {}, getMetricsSearchClient: () => ({}) };
 });
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {

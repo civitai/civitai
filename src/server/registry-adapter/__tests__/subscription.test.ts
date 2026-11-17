@@ -207,7 +207,7 @@ describe('end first only for a schema this source can never serve (rule 4: end m
 
 describe('🔴 end comes before a filter refusal: a request never served is end whatever its filter', () => {
   const APPS = 'urn:schema:apps.civitai.com:app@v1';
-  const REFUSED = filterParam('{"properties":{"slug":{"pattern":"^zzz"}}}');
+  const REFUSED = filterParam('{"properties":{"slug":{"pattern":"^(?!zzz)"}}}');
 
   it.each([
     ['a schema this source does not serve', q('urn:schema:elsewhere.example:model@v1', REFUSED)],

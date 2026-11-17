@@ -26,6 +26,14 @@ export function useImageFeedSearchQuery() {
   return normalizeFeedQuery(query.query);
 }
 
+/** The image the feed shows "more like this" for (`?similarTo=`), when this viewer has feed search. */
+export function useImageFeedSimilarTo() {
+  const features = useFeatureFlags();
+  const { query } = useImageQueryParams();
+  if (!features.feedSearch) return undefined;
+  return query.similarTo;
+}
+
 /**
  * The feed search's sort (`?searchSort=`) and whether the viewer may pick one. Without
  * `imageSearchNewestSort` it is always Best match, whatever the URL says.

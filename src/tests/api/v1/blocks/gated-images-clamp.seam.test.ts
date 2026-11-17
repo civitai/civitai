@@ -299,6 +299,32 @@ describe('GET /api/v1/blocks/gated-images — the maturity clamp reaches the wir
     expect((res._json() as any).images).toEqual([{ imageId: 1, status: 'hidden' }]);
   });
 
+  it('🔴 a token whose viewer level is 0 reads no images, not the public floor', async () => {
+    claimsBox.claims = claimsWith({ maxBrowsingLevel: MATURE_CEILING, viewerBrowsingLevel: 0 });
+    queryRaw.mockResolvedValue([row(1, { nsfwLevel: NsfwLevel.PG })]);
+
+    const { req, res } = createMocks({ query: { ids: '1' } });
+    await (baseHandler as any)(req, res);
+
+    expect((res._json() as any).images).toEqual([]);
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the same PG row is visible to a PG token', async () => {
+    claimsBox.claims = claimsWith({
+      maxBrowsingLevel: MATURE_CEILING,
+      viewerBrowsingLevel: NsfwLevel.PG,
+    });
+    queryRaw.mockResolvedValue([row(1, { nsfwLevel: NsfwLevel.PG })]);
+
+    const { req, res } = createMocks({ query: { ids: '1' } });
+    await (baseHandler as any)(req, res);
+
+    expect((res._json() as any).images).toEqual([
+      expect.objectContaining({ imageId: 1, status: 'visible' }),
+    ]);
+  });
+
   it('a token with no viewer claim fails closed to the public floor', async () => {
     claimsBox.claims = claimsWith({
       maxBrowsingLevel: MATURE_CEILING,

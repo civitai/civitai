@@ -15,7 +15,7 @@ import {
   useSemanticModelFeed,
 } from '~/components/Model/model.utils';
 import { normalizeFeedQuery } from '~/components/Image/Infinite/image-feed-search';
-import { ModelFeedSearchSummary } from '~/components/Model/Infinite/ModelFeedSearchSummary';
+import { FeedSearchSummary } from '~/components/Search/FeedSearchSummary';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
@@ -106,7 +106,8 @@ function ModelsFeed({
       hasSaleProvider
     >
       {feedSearch && (
-        <ModelFeedSearchSummary
+        <FeedSearchSummary
+          noun="Models"
           query={feedSearch.text}
           correctedQuery={searching ? feedSearch.search.correctedQuery : undefined}
           failed={searchFailed}

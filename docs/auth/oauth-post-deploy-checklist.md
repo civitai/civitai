@@ -86,7 +86,7 @@ Legend: 🛠️ devops/config · 🧪 smoke test · 👁️ monitor · 🧹 clea
 - [ ] 👁️ **Hub-unreachable from spokes** (JWKS/identity fetch failures) → sessions silently dropping to
   anonymous.
 - [ ] 👁️ **`fetch failed` 500s on search endpoints** (`/api/v1/images`, `/api/v1/models`) → this is the
-  **search backend** (`SEARCH_HOST`/`FEED_IMAGE_HOST`), *not* auth — verify search reachability per env.
+  **search backend** (`SEARCH_HOST` for models, the feed service for images), *not* auth — verify search reachability per env.
 - [x] 👁️ **Legacy-cookie migration is happening** (retired: the old cookie is no longer read in production).
 
 ## Phase 5 — Cleanup

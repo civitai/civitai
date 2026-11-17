@@ -218,6 +218,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // bundle assembled two different ways. Flip OFF to roll back without a deploy; the disk path
   // is kept intact and reachable for exactly that reason.
   CSAM_ARCHIVE_STREAM_UPLOAD = 'csam-archive-stream-upload',
+  // Where the evidence archive job runs. ON: in the app's hourly job. OFF: in the separate
+  // archiver, so the app job only stamps reports with no user. 🔴 NOT default-off: read with
+  // `isFliptSync`, an unreadable flag (no client yet, an evaluation error, a missing key) counts as ON.
+  // Created ON in Flipt before the deploy that reads it.
+  EVIDENCE_ARCHIVE_IN_APP = 'evidence-archive-in-app',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
@@ -298,6 +303,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // process; also needs BEACON_GO_SHADOW_URL and BEACON_GO_SHADOW_SAMPLE_RATE > 0. See
   // `src/server/beacon/beacon-go-shadow.ts`.
   BEACON_GO_SHADOW = 'beacon-go-shadow',
+  // The same mirror for the public REST `GET /api/v1/models` and `GET /api/v1/models/[id]`, to
+  // feed-go's `/internal/shadow/api/v1/models` and `/internal/shadow/api/v1/models/id`. One flag for
+  // both routes. DEFAULT-OFF. Global boolean, read at most once per 5s per process; shares
+  // FEED_GO_SHADOW_URL and the rate / in-flight knobs with FEED_GO_SHADOW, with a per-second bucket
+  // per route. See `src/server/trpc/feed-go-shadow.ts`.
+  FEED_GO_SHADOW_V1_MODELS = 'feed-go-shadow-v1-models',
   // Hands a full page load's server render the prefetched state it serialised into `trpcState`
   // instead of letting `withTRPC` parse it again (see `createServerSideProps`). DEFAULT-OFF:
   // `isFliptSync` returns null for an unknown flag or an uninitialized client, which keeps the
@@ -403,6 +414,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // ids. DEFAULT-OFF — absent or Flipt unreachable, both paths answer as an unknown route. See
   // PUBLISH in `doc-store-api.ts`.
   APP_BLOCKS_STORAGE_PUBLISH = 'app-blocks-storage-publish',
+  // A shared document PUT that would change no stored row is free of the shared-write budget:
+  // when the body's content hash and index rows equal the stored document's (the caller's own,
+  // visible, at the version any `ifVersion` names), the route answers with the stored document
+  // and spends no shared-write budget token, runs no moderation scan and writes nothing (no
+  // version bump, so its content-level rating stands). While on, every shared PUT also spends one
+  // per-viewer `write` token first, changed or not, so identical PUTs stay bounded.
+  // EVALUATED PER APP like the publish flag above: entityId = the REQUESTING app's block id (the
+  // block token's `appBlockId`, also through an import or a review preview), NO context.
+  // DEFAULT-OFF — absent or Flipt unreachable, every shared write spends and scans as before. See
+  // `putIfUnchanged` in `doc-store.ts`.
+  APP_BLOCKS_STORAGE_UNCHANGED_WRITES_FREE = 'app-blocks-storage-unchanged-writes-free',
   // Who may DECLARE an App Storage permission hook (`storage.collections.<c>.hook`): checked at
   // submit, on the git-push path and at approve, for a hook that is new or changed against the
   // approved manifest, on the actor who introduced it (the submitter, or the pusher on the git-push
@@ -646,6 +668,9 @@ export enum FLIPT_FEATURE_FLAGS {
   TRAINING_STUDIO = 'trainingStudio',
   // Gates sending the reporter's page capture to HQ.
   FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
+  // Gates the `feedback-hq-sync` job: a feedback row's triage status follows its HQ task. Off (or
+  // unknown to Flipt) the job reads and writes nothing.
+  FEEDBACK_HQ_SYNC = 'feedback-hq-sync',
   // Gates storing a feedback report's page capture as a scanned image owned by the capture account.
   // Evaluated with the reporter's id.
   FEEDBACK_CAPTURE_SCAN = 'feedback-capture-scan',

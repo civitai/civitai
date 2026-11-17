@@ -202,7 +202,7 @@ const BASELINE: Counts = {
   'src/server/services/games/new-order.service.ts': 1,
   'src/server/services/generation-size-preset.service.ts': 2,
   'src/server/services/generator-evidence/evidence-views.ts': 2,
-  'src/server/services/generator-evidence/generator-evidence.service.ts': 4,
+  'src/server/services/generator-evidence/generator-evidence.service.ts': 3,
   'src/server/services/home-block-collection-access.ts': 1,
   'src/server/services/home-block.service.ts': 2,
   'src/server/services/huggingface-import.service.ts': 9,

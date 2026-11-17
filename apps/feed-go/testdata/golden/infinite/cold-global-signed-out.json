@@ -1359,7 +1359,7 @@
         "v": 1
       }
     },
-    "cacheable": false,
+    "cacheable": true,
     "writes": {
       "packed:caches:cosmetics2:Image:8001": {
         "value": {

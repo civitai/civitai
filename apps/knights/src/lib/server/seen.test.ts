@@ -18,7 +18,13 @@ describe('readNotices', () => {
       guide: false,
       progress: null,
     });
-    expect(await store.get(1)).toEqual({ rank: 'Knight', level: 4, guide: false, whatsNew: false });
+    expect(await store.get(1)).toEqual({
+      rank: 'Knight',
+      level: 4,
+      guide: false,
+      whatsNew: false,
+      consent: false,
+    });
   });
 
   it("offers the guide once what's new is dismissed, until the guide is dismissed too", async () => {
@@ -42,14 +48,20 @@ describe('readNotices', () => {
 
   it("shows what's new to a player whose record predates it, keeping the guide they already dismissed", async () => {
     const store = memorySeenStore();
-    await store.set(1, { rank: 'Knight', level: 9, guide: true, whatsNew: false });
+    await store.set(1, { rank: 'Knight', level: 9, guide: true, whatsNew: false, consent: true });
     expect(await readNotices(store, 1, at('Templar', 50))).toEqual({
       whatsNew: true,
       guide: false,
       progress: null,
     });
     await dismissWhatsNew(store, 1, at('Templar', 50));
-    expect(await store.get(1)).toEqual({ rank: 'Knight', level: 9, guide: true, whatsNew: true });
+    expect(await store.get(1)).toEqual({
+      rank: 'Knight',
+      level: 9,
+      guide: true,
+      whatsNew: true,
+      consent: true,
+    });
     // The rank-up held back while what's new was open is announced after it.
     expect((await readNotices(store, 1, at('Templar', 50))).progress).toMatchObject({
       kind: 'rank',
@@ -58,7 +70,7 @@ describe('readNotices', () => {
 
   it('reports a new rank once, and the level reached with it', async () => {
     const store = memorySeenStore();
-    await store.set(1, { rank: 'Knight', level: 9, guide: true, whatsNew: true });
+    await store.set(1, { rank: 'Knight', level: 9, guide: true, whatsNew: true, consent: true });
     expect((await readNotices(store, 1, at('Templar', 10))).progress).toMatchObject({
       kind: 'rank',
       rank: 'Templar',
@@ -70,7 +82,7 @@ describe('readNotices', () => {
 
   it('reports a new level inside the same rank', async () => {
     const store = memorySeenStore();
-    await store.set(1, { rank: 'Knight', level: 4, guide: true, whatsNew: true });
+    await store.set(1, { rank: 'Knight', level: 4, guide: true, whatsNew: true, consent: true });
     expect((await readNotices(store, 1, at('Knight', 5))).progress).toMatchObject({
       kind: 'level',
       rank: 'Knight',
@@ -80,7 +92,7 @@ describe('readNotices', () => {
 
   it('announces the Acolyte to Knight step as a rank-up', async () => {
     const store = memorySeenStore();
-    await store.set(1, { rank: 'Acolyte', level: 20, guide: true, whatsNew: true });
+    await store.set(1, { rank: 'Acolyte', level: 20, guide: true, whatsNew: true, consent: true });
     expect((await readNotices(store, 1, at('Knight', 20))).progress).toMatchObject({
       kind: 'rank',
       rank: 'Knight',
@@ -90,7 +102,7 @@ describe('readNotices', () => {
 
   it('stays quiet about a drop, as after a career reset, and counts from the new standing', async () => {
     const store = memorySeenStore();
-    await store.set(1, { rank: 'Templar', level: 12, guide: true, whatsNew: true });
+    await store.set(1, { rank: 'Templar', level: 12, guide: true, whatsNew: true, consent: true });
     expect((await readNotices(store, 1, at('Acolyte', 1))).progress).toBeNull();
     expect((await readNotices(store, 1, at('Acolyte', 2))).progress).toMatchObject({
       kind: 'level',
@@ -132,7 +144,13 @@ describe('dismissals', () => {
     await dismissWhatsNew(store, 1, at('Knight', 4));
     await dismissProgress(store, 1, at('Knight', 5));
     await dismissGuide(store, 1, at('Knight', 5));
-    expect(await store.get(1)).toEqual({ rank: 'Knight', level: 5, guide: true, whatsNew: true });
+    expect(await store.get(1)).toEqual({
+      rank: 'Knight',
+      level: 5,
+      guide: true,
+      whatsNew: true,
+      consent: false,
+    });
   });
 });
 
@@ -144,9 +162,15 @@ describe('redisSeenStore', () => {
       set: async (key: string, value: string) => void data.set(key, value),
     };
     const store = redisSeenStore(() => client);
-    await store.set(7, { rank: 'Paladin', level: 30, guide: true, whatsNew: true });
+    await store.set(7, { rank: 'Paladin', level: 30, guide: true, whatsNew: true, consent: true });
     expect([...data.keys()]).toEqual(['knights:seen:7']);
-    expect(await store.get(7)).toEqual({ rank: 'Paladin', level: 30, guide: true, whatsNew: true });
+    expect(await store.get(7)).toEqual({
+      rank: 'Paladin',
+      level: 30,
+      guide: true,
+      whatsNew: true,
+      consent: true,
+    });
     data.set('knights:seen:7', '{"rank":3}');
     expect(await store.get(7)).toBeNull();
   });
@@ -162,6 +186,7 @@ describe('redisSeenStore', () => {
       level: 4,
       guide: true,
       whatsNew: false,
+      consent: false,
     });
   });
 
@@ -178,6 +203,7 @@ describe('redisSeenStore', () => {
       goldPending: 40,
       guide: false,
       whatsNew: true,
+      consent: true,
     };
     await redisSeenStore(() => client).set(7, status);
     expect(JSON.parse(data.get('knights:seen:7') ?? '')).toEqual({
@@ -185,6 +211,7 @@ describe('redisSeenStore', () => {
       level: 3,
       guide: false,
       whatsNew: true,
+      consent: true,
     });
   });
 });

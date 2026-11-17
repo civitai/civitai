@@ -39,7 +39,7 @@ export type KnightsSourcesConfig = {
   enabled: boolean;
   sfwRate: number;
   nsfwRate: number;
-  /** Scan sampling pauses while more than this many Knight-stage items are open. Absent when not stored: read it with `knightsSourcesMaxOpen`. */
+  /** Scan sampling pauses while more than this many Knight-stage rating items are open (yes/no questions do not count). Absent when not stored: read it with `knightsSourcesMaxOpen`. */
   maxOpen?: number;
 };
 

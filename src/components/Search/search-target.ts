@@ -28,7 +28,9 @@ export function resolveSearchTarget(
 }
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
-type FeedSearchFlags = Partial<Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch'>>;
+type FeedSearchFlags = Partial<
+  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch'>
+>;
 
 /**
  * Images can be searched: on the search pages (`imageSearch`) or on the images feed (`feedSearch`).
@@ -41,6 +43,7 @@ export const offersImageSearch = (features: ImageSearchFlags) =>
 const FEED_SEARCH = {
   images: { flag: 'feedSearch', pathname: '/images' },
   models: { flag: 'modelFeedSearch', pathname: '/models' },
+  articles: { flag: 'articleFeedSearch', pathname: '/articles' },
 } as const satisfies Partial<
   Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string }>
 >;
@@ -60,11 +63,8 @@ export const searchesFeedInPlace = (
 
 /** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
 export function legacyImageSearchDestination(
-  features: ImageSearchFlags,
-  { similarTo }: { similarTo?: unknown } = {}
+  features: ImageSearchFlags
 ): 'images-feed' | 'models-search' | undefined {
-  // The feed can't answer "more like this" yet, so that search stays on this page.
-  if (features.imageSearch && similarTo) return undefined;
   if (features.feedSearch) return 'images-feed';
   if (!features.imageSearch) return 'models-search';
   return undefined;

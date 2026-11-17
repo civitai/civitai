@@ -108,6 +108,7 @@ import {
   filterSensitiveProfanityData,
   keepStoredProfanityData,
 } from '~/libs/profanity-simple/helpers';
+import { withStoredScanDetails } from '~/server/utils/bounty-details';
 import { logToAxiom } from '~/server/logging/client';
 
 // Unique per request: a refund by prefix must never reach another request's charge. The
@@ -173,11 +174,12 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     period,
     baseModels,
     excludedUserIds,
+    ids,
   },
   select,
   viewer,
 }: {
-  input: GetInfiniteBountySchema;
+  input: GetInfiniteBountySchema & { ids?: number[] };
   select: TSelect;
   viewer?: BountyViewer;
 }) => {
@@ -220,6 +222,8 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   if (excludedUserIds?.length) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
+
+  if (ids) AND.push({ id: { in: ids } });
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
   if (sort === BountySort.EndingSoon) orderBy.push({ expiresAt: 'asc' });
@@ -342,7 +346,8 @@ export const createBounty = async ({
         expiresAt,
         // TODO.bounty: Once we support tipping buzz fully, need to re-enable this
         entryMode: BountyEntryMode.BenefactorsOnly,
-        details: (data.details as Prisma.JsonObject) ?? Prisma.JsonNull,
+        details:
+          (withStoredScanDetails(data.details, null) as Prisma.JsonObject) ?? Prisma.JsonNull,
         tags: tags
           ? {
               create: tags.map((tag) => {
@@ -653,6 +658,9 @@ export const updateBountyById = async ({
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
+      // Orders this edit against a text scan flagging the bounty: a flag the scan committed first is
+      // read here and kept; a scan that arrives mid-edit waits, then applies to the edited row.
+      await tx.$queryRaw`SELECT 1 FROM "Bounty" WHERE id = ${id} FOR UPDATE`;
       const existing = await tx.bounty.findUniqueOrThrow({
         where: { id },
         select: {
@@ -728,10 +736,11 @@ export const updateBountyById = async ({
           startsAt,
           expiresAt,
           details:
-            ((isModerator
-              ? details
-              : keepStoredProfanityData(details, existing.details)) as Prisma.JsonObject) ??
-            Prisma.JsonNull,
+            (withStoredScanDetails(
+              isModerator ? details : keepStoredProfanityData(details, existing.details),
+              // A moderator unflagging the bounty overrules the scan, so its record goes too.
+              isModerator && data.nsfw === false ? null : existing.details
+            ) as Prisma.JsonObject) ?? Prisma.JsonNull,
           tags: tags
             ? {
                 deleteMany: {
@@ -1177,7 +1186,7 @@ export const getBountyImages = async ({
       entityType: 'Bounty',
       image: { OR: imageOr, AND: [imageNotRestrictedWhere({ viewerId: userId })] },
     },
-    select: { image: { select: imageSelect } },
+    select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
   return connections.map(({ image }) => ({
@@ -1331,7 +1340,7 @@ export const getImagesForBounties = async ({
     },
     select: {
       entityId: true,
-      image: { select: imageSelect },
+      image: { select: { ...imageSelect, poi: true, minor: true } },
     },
   });
 

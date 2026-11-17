@@ -1,4 +1,5 @@
 import { fail, type Actions } from '@sveltejs/kit';
+import { agentReportFilterOf, agentReportWhere } from '$lib/server/agent-reporters';
 import { FEEDBACK_CAPTURE_OWNER_REFUSAL } from '@civitai/shared/feedback-capture';
 import { z } from 'zod';
 import { int4Id, parseForm, parseIdList, parseQuery } from '$lib/server/query';
@@ -30,7 +31,11 @@ import { getLatestApprovedImageAppeals } from '@civitai/db-queries/image-removal
 import { heldRemovalMessage, type HeldRemoval } from '$lib/server/removal-hold';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
-import { FLAG_KEPT_THROUGH_BLOCK, type ImageViewSlug } from '$lib/image-review';
+import {
+  FLAG_KEPT_THROUGH_BLOCK,
+  reviewHighlightCategories,
+  type ImageViewSlug,
+} from '$lib/image-review';
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -106,11 +111,13 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
     // `?report=<id>`: the one report a link names (`reportActionPath`), at any status.
     const reportParam = Number(url.searchParams.get('report'));
     const reportId = Number.isInteger(reportParam) && reportParam > 0 ? reportParam : undefined;
+    const agentFilter = agentReportFilterOf(url);
     const { items, nextCursor } = await getReportedImageQueue({
       browsingLevel: level,
       cursor: reportId ? undefined : cursor,
       limit,
       reportId,
+      agents: reportId ? undefined : agentReportWhere(agentFilter),
     });
     return {
       ...base,
@@ -119,6 +126,8 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       items: await withModel3d(items),
       nextCursor: reportId ? undefined : nextCursor,
       singleReport: reportId ?? null,
+      // `null` hides the control: no agent accounts configured, or a `?report=` view, which runs unfiltered.
+      agentFilter: reportId ? null : agentFilter,
     };
   }
 
@@ -141,8 +150,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
       cursor,
       limit,
     });
-    // The minor queue highlights only minor-relevant categories; other queues highlight the whole prompt.
-    const categories = view === 'minor' ? (['minor', 'young', 'age'] as const) : undefined;
+    const categories = reviewHighlightCategories(view);
     return {
       ...base,
       view,
@@ -152,7 +160,7 @@ export async function loadImageQueue(view: ImageViewSlug, url: URL) {
         items.map(({ prompt, negativePrompt, ...item }) => ({
           ...item,
           promptHighlight: getPromptHighlightSegments(prompt, negativePrompt, {
-            categories: categories ? [...categories] : undefined,
+            categories,
           }),
         }))
       ),

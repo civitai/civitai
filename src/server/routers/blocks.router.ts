@@ -84,11 +84,13 @@ import {
 import { projectBlockBuzzTransaction } from '~/server/services/blocks/block-buzz-read.projection';
 import {
   recordAppBlockSubmitFailure,
-  recordBlockBridgeRateLimitRefusal,
   recordConfirmedQuoteOvercharge,
+  recordConfirmedStepSubmit,
   recordSucceededWithoutMedia,
   submitFailureAppBlockLabel,
+  type AppBlockRateLimitBucket,
 } from '~/server/metrics/app-block-runtime.metrics';
+import { recordBridgeRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import {
   appSubmitFailureFromError,
   appSubmitFailureFromResult,
@@ -104,6 +106,8 @@ import {
   checkBlockSubmitUserRateLimit,
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
+  checkBlockUploadedGenerationSourceUserRateLimit,
+  claimBlockStandingSubmitSlot,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -163,6 +167,7 @@ import {
 import {
   BLOCK_TRAINING_QUOTE_ID_REGEX,
   blockQuoteGrantConsentInputSchema,
+  blockStepQuoteStandingConsentInputSchema,
   blockEstimateBatchInputSchema,
   blockOutputUnlockConfirmInputSchema,
   blockOutputUnlockInputSchema,
@@ -1041,7 +1046,11 @@ export type BlockBridgeViewerOptions = {
      * call written at the procedure or in a module-scope function of this file that it calls:
      * `no-unlimited-block-bridge-proc.test.ts` derives the bucket from those calls.
      */
-    check: (viewer: BlockBridgeViewer) => Promise<{ allowed: boolean }>;
+    check: (
+      viewer: BlockBridgeViewer
+    ) => Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }>;
+    /** The bucket `check` charges, for the refusal counter this middleware records. */
+    bucket: AppBlockRateLimitBucket;
   };
 };
 
@@ -1062,7 +1071,7 @@ export function authorizeBlockBridgeViewer(
   { blockViewer: BlockBridgeViewer },
   { blockToken: string }
 > {
-  return async ({ input, next }) => {
+  return async ({ input, next, path }) => {
     const claims = await authorizeBlockBridgeToken(input.blockToken);
     if (!claims.scopes.includes(options.scope)) {
       throw new TRPCError({ code: 'FORBIDDEN', message: `block lacks ${options.scope} scope` });
@@ -1075,6 +1084,13 @@ export function authorizeBlockBridgeViewer(
     const blockViewer = { claims, userId };
     const rate = await options.rateLimit.check(blockViewer);
     if (!rate.allowed) {
+      // `path` is `blocks.<procedure>`; the procedure label is its last segment.
+      recordBridgeRateLimitRefusal(
+        path.split('.').pop() ?? path,
+        options.rateLimit.bucket,
+        claims,
+        rate.retryAfterSeconds
+      );
       throw new TRPCError({
         code: 'TOO_MANY_REQUESTS',
         message: 'Rate limit exceeded, please retry shortly.',
@@ -1084,13 +1100,17 @@ export function authorizeBlockBridgeViewer(
   };
 }
 
-/** Middleware options for the buzz reads that share one refusal copy and count no refusals. */
+/**
+ * Middleware options for the buzz reads that share one refusal copy. The middleware counts each
+ * refusal (`recordBridgeRateLimitRefusal`).
+ */
 function buzzReadOptions(): BlockBridgeViewerOptions {
   return {
     scope: 'buzz:read:self',
     anonMessage: 'buzz read requires an authenticated viewer',
     rateLimit: {
       // Bounds the buzz-service and ClickHouse reads behind these. Fail-open on a redis incident.
+      bucket: 'catalog',
       check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
     },
   };
@@ -1897,6 +1917,25 @@ function consentBudgetRejection(
 const DAILY_LIMIT_READ_RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
 
 /** Fails closed: a Redis error reads as over the limit, which only keeps the dialog shut. */
+/**
+ * For the raise dialog's "run without asking" line; `null` on any error. Not flag-gated, like
+ * `getMyConfirmWithinLimit`: an opt-in kept through a flag rollback is still the viewer's, and
+ * re-arms with the flag, so raising the limit is still told what it means for those jobs.
+ */
+async function readMyConfirmWithinLimit(
+  user: SessionUser,
+  appBlockId: string
+): Promise<number | null> {
+  try {
+    const { readConfirmWithinLimit } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
+    return await readConfirmWithinLimit(user.id, appBlockId, 'read');
+  } catch {
+    return null;
+  }
+}
+
 async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
   const key = `${REDIS_SYS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
   try {
@@ -2301,6 +2340,94 @@ const GENERATION_SOURCE_IN_FLIGHT = {
   acquireTimeoutMs: 500,
   errorMessage: 'A generation source is already being saved — wait for it to finish.',
 };
+
+/**
+ * `blocks.persistUploadedGenerationSource`'s concurrency cap: the same size and TTL as
+ * {@link GENERATION_SOURCE_IN_FLIGHT}, in a pool of its own, so an app saving its outputs and a
+ * viewer picking sources cannot hold each other's slots.
+ */
+const UPLOADED_GENERATION_SOURCE_IN_FLIGHT = {
+  ...GENERATION_SOURCE_IN_FLIGHT,
+  bucket: 'block-uploaded-generation-source',
+};
+
+/**
+ * One generation-source save's bounds, keyed on the token subject: at most `inFlight` calls in
+ * flight (checked first, so a call it refuses spends nothing), then `charge` (an hourly bucket
+ * with no exemption), then `run`. A refusal by the pool is recorded here (bucket `in-flight`); a
+ * refusal by the bucket is recorded by `charge`, beside the limiter call it belongs to.
+ */
+async function withSourceSaveBounds<T>(
+  inFlight: typeof GENERATION_SOURCE_IN_FLIGHT,
+  who: { procedure: string; claims: BlockTokenClaims; userId: number },
+  charge: () => Promise<{ allowed: boolean }>,
+  run: () => Promise<T>
+): Promise<T> {
+  return withInFlightLimit(
+    { ...inFlight, userId: who.userId },
+    async () => {
+      const rate = await charge();
+      if (!rate.allowed) {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Too many generation sources saved — slow down.',
+        });
+      }
+      return run();
+    },
+    () => recordBridgeRateLimitRefusal(who.procedure, 'in-flight', who.claims)
+  );
+}
+
+/** `persistGenerationSource`'s bounds: its in-flight pool and its hourly bucket. */
+async function withGenerationSourceBounds<T>(
+  claims: BlockTokenClaims,
+  userId: number,
+  run: () => Promise<T>
+): Promise<T> {
+  const procedure = 'persistGenerationSource';
+  return withSourceSaveBounds(
+    GENERATION_SOURCE_IN_FLIGHT,
+    { procedure, claims, userId },
+    async () => {
+      const rate = await checkBlockGenerationSourceUserRateLimit(userId);
+      if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(procedure, 'gen-source-user', claims, rate.retryAfterSeconds);
+      }
+      return rate;
+    },
+    run
+  );
+}
+
+/**
+ * `persistUploadedGenerationSource`'s bounds: a pool and an hourly bucket of its own, the same
+ * sizes as `persistGenerationSource`'s and separate from them.
+ */
+async function withUploadedGenerationSourceBounds<T>(
+  claims: BlockTokenClaims,
+  userId: number,
+  run: () => Promise<T>
+): Promise<T> {
+  const procedure = 'persistUploadedGenerationSource';
+  return withSourceSaveBounds(
+    UPLOADED_GENERATION_SOURCE_IN_FLIGHT,
+    { procedure, claims, userId },
+    async () => {
+      const rate = await checkBlockUploadedGenerationSourceUserRateLimit(userId);
+      if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          procedure,
+          'uploaded-gen-source-user',
+          claims,
+          rate.retryAfterSeconds
+        );
+      }
+      return rate;
+    },
+    run
+  );
+}
 
 export const blocksRouter = router({
   /**
@@ -4059,7 +4186,114 @@ export const blocksRouter = router({
           input.appBlockId,
           limit.limit
         ),
+        confirmWithinLimitMaxJob: await readMyConfirmWithinLimit(ctx.user, input.appBlockId),
       };
+    }),
+
+  /**
+   * The viewer opts in, from the confirmed-step confirm, to running this app's above-budget jobs
+   * without asking while each fits what is left of their daily limit. With `buzzBudgetPerDay`, a
+   * viewer who has no limit sets one in the same write. Session only; never grants a scope.
+   */
+  optInConfirmWithinLimit: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(enforceAppBlocksFlag)
+    .input(
+      z
+        .object({
+          appBlockId: z.string().min(1).max(64),
+          // The price of the job the viewer is confirming: pricier jobs keep asking.
+          maxJobBuzz: z.number().int().min(1),
+          buzzBudgetPerDay: z
+            .number()
+            .int()
+            .min(BLOCK_CONSENT_BUDGET_MIN_PER_DAY)
+            .max(BLOCK_CONSENT_BUDGET_MAX_PER_DAY)
+            .optional(),
+        })
+        .refine((v) => v.buzzBudgetPerDay === undefined || v.buzzBudgetPerDay >= v.maxJobBuzz, {
+          message: 'the daily limit must cover the job',
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user!.id;
+      const { isAppConfirmedStepWithinLimitEnabled } = await import(
+        '~/server/services/app-blocks-flag'
+      );
+      if (
+        !ctx.features.appBlocks ||
+        !(await isAppConfirmedStepWithinLimitEnabled({ user: ctx.user }))
+      ) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'This is not available' });
+      }
+      if (input.maxJobBuzz > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'above the per-job maximum' });
+      }
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.status !== 'approved') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      const { optInConfirmWithinLimit, recordConsentLimitChange } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const optedIn = await optInConfirmWithinLimit({
+        userId,
+        appBlockId: input.appBlockId,
+        maxJob: input.maxJobBuzz,
+        newLimit: input.buzzBudgetPerDay,
+      });
+      if (!optedIn) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Your limit for this app changed. Close this and try again.',
+        });
+      }
+      if (input.buzzBudgetPerDay !== undefined) {
+        await recordConsentLimitChange({
+          userId,
+          appBlockId: input.appBlockId,
+          previousLimit: null,
+          limit: optedIn.limit,
+        });
+      }
+      return { limit: optedIn.limit };
+    }),
+
+  /**
+   * The viewer's opt-in for one app on /apps/activity, with today's spend against the limit it
+   * runs within; `null` when not opted in. Not flag-gated, so an opt-in kept through a flag
+   * rollback stays visible and can be turned off.
+   */
+  getMyConfirmWithinLimit: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const { readConfirmWithinLimit, readConsentDailyLimit } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      const maxJob = await readConfirmWithinLimit(ctx.user!.id, input.appBlockId, 'read');
+      if (maxJob == null) return null;
+      const limit = await readConsentDailyLimit(ctx.user!.id, input.appBlockId, 0);
+      if (!limit) return null;
+      return { maxJob, limit: limit.limit, spentToday: limit.spentToday };
+    }),
+
+  /**
+   * Turns the opt-in off: from the next job on, every above-budget job asks again. Not gated on
+   * any flag, so a viewer can always undo it.
+   */
+  optOutConfirmWithinLimit: protectedProcedure
+    .input(z.object({ appBlockId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      const { optOutConfirmWithinLimit } = await import(
+        '~/server/services/blocks/scope-grant.service'
+      );
+      await optOutConfirmWithinLimit(ctx.user!.id, input.appBlockId);
+      return { ok: true as const };
     }),
 
   /**
@@ -4068,6 +4302,7 @@ export const blocksRouter = router({
    * is set, and the new value is higher (`raiseConsentDailyLimit`).
    */
   raiseAppDailyLimit: protectedProcedure
+    .meta({ blockApiKeys: true })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -5251,7 +5486,13 @@ export const blocksRouter = router({
       // should get. Fail-open on a redis incident.
       const pollRate = await checkBlockPollRateLimit(claims.blockInstanceId, userId);
       if (!pollRate.allowed) {
-        recordBlockBridgeRateLimitRefusal('pollWorkflow', 'poll');
+        recordBridgeRateLimitRefusal(
+          'pollWorkflow',
+          'poll',
+          claims,
+          pollRate.retryAfterSeconds,
+          200
+        );
         // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT. IT DOES NOT THROW.
         //
         // What a throw from this procedure does depends on its code. The hosts reply
@@ -5600,7 +5841,13 @@ export const blocksRouter = router({
       // does not guarantee a ceiling.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
-        recordBlockBridgeRateLimitRefusal('cancelWorkflow', 'catalog');
+        recordBridgeRateLimitRefusal(
+          'cancelWorkflow',
+          'catalog',
+          claims,
+          rate.retryAfterSeconds,
+          200
+        );
         // 🔴 IT RETURNS A NON-TERMINAL SNAPSHOT, FOR EXACTLY THE REASON `pollWorkflow`
         // DOES — AND THIS SITE IS WHERE THAT INSIGHT WAS NEARLY MISSED. An earlier
         // revision of this change threw `TOO_MANY_REQUESTS` here while carefully
@@ -5776,6 +6023,12 @@ export const blocksRouter = router({
       // redis incident (same posture as the buzz self-read bridges).
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'queryAppWorkflows',
+          'catalog',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -5884,6 +6137,12 @@ export const blocksRouter = router({
       // on a redis incident (matches the buzz self-read bridges / query proc).
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'cancelAppWorkflow',
+          'catalog',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -6018,6 +6277,12 @@ export const blocksRouter = router({
       // the selection is known, BEFORE the heavy fetch/upload/scan loop.
       const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, 1);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'publishGenerationOutputs',
+          'publish',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -6153,6 +6418,12 @@ export const blocksRouter = router({
           selected.length - 1
         );
         if (!imageRate.allowed) {
+          recordBridgeRateLimitRefusal(
+            'publishGenerationOutputs',
+            'publish',
+            claims,
+            imageRate.retryAfterSeconds
+          );
           throw new TRPCError({
             code: 'TOO_MANY_REQUESTS',
             message: 'Rate limit exceeded, please retry shortly.',
@@ -6244,6 +6515,12 @@ export const blocksRouter = router({
       }
       const rate = await checkBlockUploadAppRateLimit(claims.appId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'persistAppUploadImage',
+          'upload-app',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'This app is handling too many uploads right now, please retry shortly.',
@@ -6316,14 +6593,7 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      return withInFlightLimit({ ...GENERATION_SOURCE_IN_FLIGHT, userId }, async () => {
-        const rate = await checkBlockGenerationSourceUserRateLimit(userId);
-        if (!rate.allowed) {
-          throw new TRPCError({
-            code: 'TOO_MANY_REQUESTS',
-            message: 'Too many generation sources saved — slow down.',
-          });
-        }
+      return withGenerationSourceBounds(claims, userId, async () => {
         const { persistBlockGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );
@@ -6338,6 +6608,68 @@ export const blocksRouter = router({
           getWorkflow: async (workflowId) =>
             getWorkflow({ token: await getOrchestratorToken(userId, ctx), path: { workflowId } }),
         });
+      });
+    }),
+
+  /**
+   * A generation source the viewer PICKED (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`,
+   * or a single `OPEN_MEDIA_UPLOAD` image), already uploaded by the host as a consumer blob, kept
+   * as a PRIVATE, scanned row and returned as `persistGenerationSource` returns one. The host calls
+   * it only while `app-block-source-scanned-rows` is on (`blockImageUpload.
+   * generationSourceUsesScannedRows`): the gate then refuses the blob, and accepts this row once it
+   * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
+   *
+   * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
+   * runtime flag. Then `app-block-source-scanned-rows` must be on (FORBIDDEN otherwise), read as
+   * the generation gate reads it. Identity comes from the token, never the body; the url is the only thing the
+   * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
+   *
+   * BOUNDS: the per-user 60/h `rateLimit` (keyed on this path), then
+   * `withUploadedGenerationSourceBounds`: an in-flight pool and an hourly bucket of its own, the
+   * same sizes as `persistGenerationSource`'s and not shared with it.
+   */
+  persistUploadedGenerationSource: protectedProcedure
+    .meta({ blockApiKeys: true })
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 3600,
+        errorMessage: 'Too many generation sources saved — slow down.',
+      })
+    )
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        url: z.string().min(1).max(2048),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await authorizeBlockBridgeToken(input.blockToken);
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'saving a generation source requires an authenticated viewer',
+        });
+      }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
+      await assertAppBlocksEnabledForTokenUser(userId);
+      // Only while the gate refuses blobs: the same flag, read the same way (global, no entity).
+      const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
+      if (!(await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS))) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'picked generation sources are not enabled',
+        });
+      }
+      return withUploadedGenerationSourceBounds(claims, userId, async () => {
+        const { persistUploadedGenerationSource } = await import(
+          '~/server/services/blocks/block-generation-source.service'
+        );
+        return persistUploadedGenerationSource({ userId, appId: claims.appId, url: input.url });
       });
     }),
 
@@ -6507,6 +6839,12 @@ export const blocksRouter = router({
       // viewer would see a rate-limit error for an action they never took.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'previewPostFromApp',
+          'catalog',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -6641,6 +6979,12 @@ export const blocksRouter = router({
       // per-source ownership proofs and the per-post consent confirm.
       const postRate = await checkBlockPostRateLimit(claims.blockInstanceId, userId);
       if (!postRate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'createPostFromApp',
+          'post',
+          claims,
+          postRate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -6648,6 +6992,12 @@ export const blocksRouter = router({
       }
       const appPostRate = await checkBlockPostAppRateLimit(claims.appId);
       if (!appPostRate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'createPostFromApp',
+          'post-app',
+          claims,
+          appPostRate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -6758,6 +7108,12 @@ export const blocksRouter = router({
         // two paths cannot be arbitraged against each other.
         const imageRate = await checkBlockPublishRateLimit(claims.blockInstanceId, resolved.length);
         if (!imageRate.allowed) {
+          recordBridgeRateLimitRefusal(
+            'createPostFromApp',
+            'publish',
+            claims,
+            imageRate.retryAfterSeconds
+          );
           throw new TRPCError({
             code: 'TOO_MANY_REQUESTS',
             message: 'Rate limit exceeded, please retry shortly.',
@@ -7026,6 +7382,12 @@ export const blocksRouter = router({
       const { claims, userId } = await authorizeBlockReactionRequest(input.blockToken, ctx.user.id);
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal(
+          'getReactionsForApp',
+          'catalog',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7136,6 +7498,7 @@ export const blocksRouter = router({
       // `no-store`, so the origin absorbs every call and Cloudflare absorbs none.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal('getImagesByIds', 'catalog', claims, rate.retryAfterSeconds);
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7165,6 +7528,7 @@ export const blocksRouter = router({
       // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`, as `getImagesByIds`.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
+        recordBridgeRateLimitRefusal('getWorkflowMedia', 'catalog', claims, rate.retryAfterSeconds);
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7205,6 +7569,19 @@ export const blocksRouter = router({
     .input(blockQuoteGrantConsentInputSchema)
     .mutation(async ({ ctx, input }) => {
       return consentQuoteGrantFor(input.kind, ctx, ctx.user.id, input);
+    }),
+
+  /**
+   * The host's consent to a step quote for a viewer who opted in to running this app's jobs
+   * without asking (`previewQuoteGrant` reported `standing: true`). Any error means: draw the
+   * per-job confirm. A server without this procedure answers NOT_FOUND, which hosts treat the
+   * same way.
+   */
+  consentQuoteGrantStanding: guardedProcedure
+    .meta({ blockApiKeys: true })
+    .input(blockStepQuoteStandingConsentInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      return consentQuoteGrantStandingFor(ctx, ctx.user.id, input);
     }),
 
   /**
@@ -7340,7 +7717,7 @@ export const blocksRouter = router({
       // not be, because there is no in-flight thing for it to describe.
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
-        recordBlockBridgeRateLimitRefusal('estimateWorkflow', 'catalog');
+        recordBridgeRateLimitRefusal('estimateWorkflow', 'catalog', claims, rate.retryAfterSeconds);
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7421,7 +7798,12 @@ export const blocksRouter = router({
       }
       const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
       if (!rate.allowed) {
-        recordBlockBridgeRateLimitRefusal('estimateWorkflowBatch', 'catalog');
+        recordBridgeRateLimitRefusal(
+          'estimateWorkflowBatch',
+          'catalog',
+          claims,
+          rate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7440,7 +7822,12 @@ export const blocksRouter = router({
         input.bodies.length
       );
       if (!cellRate.allowed) {
-        recordBlockBridgeRateLimitRefusal('estimateWorkflowBatch', 'estimate-cells');
+        recordBridgeRateLimitRefusal(
+          'estimateWorkflowBatch',
+          'estimate-cells',
+          claims,
+          cellRate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7558,7 +7945,7 @@ export const blocksRouter = router({
       // Above every `kind` branch: each returns early, and nothing is resolved or reserved yet.
       const rate = await checkBlockSubmitRateLimit(claims.blockInstanceId, claims.sub);
       if (!rate.allowed) {
-        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit');
+        recordBridgeRateLimitRefusal('submitWorkflow', 'submit', claims, rate.retryAfterSeconds);
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -7566,7 +7953,12 @@ export const blocksRouter = router({
       }
       const userRate = await checkBlockSubmitUserRateLimit(claims.sub);
       if (!userRate.allowed) {
-        recordBlockBridgeRateLimitRefusal('submitWorkflow', 'submit-user');
+        recordBridgeRateLimitRefusal(
+          'submitWorkflow',
+          'submit-user',
+          claims,
+          userRate.retryAfterSeconds
+        );
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
           message: 'Rate limit exceeded, please retry shortly.',
@@ -8767,9 +9159,11 @@ export const blocksRouter = router({
         rateLimit: {
           // A balance read costs a buzz-service round trip per call. Fail-open on a redis
           // incident.
+          bucket: 'catalog',
+          // Block body kept: `no-unlimited-block-bridge-proc.test.ts` mutates this exact
+          // `await` call in its controls. The refusal is counted by the middleware.
           check: async ({ claims }) => {
             const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
-            if (!rate.allowed) recordBlockBridgeRateLimitRefusal('getMyBuzzBalance', 'catalog');
             return rate;
           },
         },
@@ -8986,6 +9380,7 @@ export const blocksRouter = router({
         rateLimit: {
           // Bounds a block hammering the PRIMARY: the ban/mute lookup below reads dbWrite.
           // Fail-open on a redis incident.
+          bucket: 'catalog',
           check: ({ claims }) => checkBlockCatalogRateLimit(claims.blockInstanceId),
         },
       })
@@ -14746,6 +15141,7 @@ async function previewQuoteGrantFor(
   );
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
+    recordBridgeRateLimitRefusal('previewQuoteGrant', 'catalog', claims, rate.retryAfterSeconds);
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',
       message: 'Rate limit exceeded, please retry shortly.',
@@ -14820,6 +15216,7 @@ async function previewQuoteGrantFor(
       ...shared,
       stepType: String(quote.stepType),
       fundingOrder: confirmedStepFundingOrder(claims, quote.accountType),
+      ...(await previewStandingConsent(claims, auth, quote.total, limit)),
     };
   }
   return {
@@ -14856,6 +15253,7 @@ async function consentQuoteGrantFor(
   // The read bucket, like the preview: one Redis read + write per call.
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
+    recordBridgeRateLimitRefusal('consentQuoteGrant', 'catalog', claims, rate.retryAfterSeconds);
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',
       message: 'Rate limit exceeded, please retry shortly.',
@@ -14875,6 +15273,119 @@ async function consentQuoteGrantFor(
       code: 'NOT_FOUND',
       message: `${QUOTED_GRANT_COPY[kind].quoteNoun} quote not found or expired`,
     });
+  }
+  return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
+}
+
+/**
+ * `standing`: may this job run without a prompt; `standingOffer`: should the confirm offer the
+ * opt-in. Both false on any error (the host draws the per-job confirm). A private run never
+ * qualifies: its spend has no daily-limit reservation.
+ */
+async function previewStandingConsent(
+  claims: BlockClaims,
+  auth: QuotedGrantAuth,
+  total: number,
+  limit: { exceeds: boolean } | null
+): Promise<{ standing: boolean; standingOffer: boolean }> {
+  const none = { standing: false, standingOffer: false };
+  if (claims.privateRun === true || total > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB) return none;
+  try {
+    const { isAppConfirmedStepWithinLimitEnabled } = await import(
+      '~/server/services/app-blocks-flag'
+    );
+    if (!(await isAppConfirmedStepWithinLimitEnabled({ user: auth.user }))) return none;
+    const { readConfirmWithinLimit, resolveConsentSpendPosture } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
+    const maxJob = await readConfirmWithinLimit(auth.userId, claims.appBlockId, 'read');
+    if (maxJob != null && total <= maxJob) {
+      return { standing: limit != null && !limit.exceeds, standingOffer: false };
+    }
+    if (limit) return { standing: false, standingOffer: !limit.exceeds };
+    const posture = await resolveConsentSpendPosture({
+      userId: auth.userId,
+      appBlockId: claims.appBlockId,
+      db: 'read',
+    });
+    return { standing: false, standingOffer: posture.kind === 'no-budget' };
+  } catch {
+    return none;
+  }
+}
+
+/**
+ * Records a STANDING consent to one step quote: no click, because the viewer opted in for this
+ * app and the job fits what is left of their daily limit. Session only, like the click. Every
+ * condition the preview reported is checked again here on the primary, then one burst slot is
+ * taken; any refusal tells the host to draw the per-job confirm instead.
+ */
+async function consentQuoteGrantStandingFor(
+  ctx: Context,
+  sessionUserId: number,
+  input: { blockToken: string; quoteId: string }
+) {
+  const { claims, auth } = await authorizeQuotedGrantConsentRequest(
+    'step',
+    input.blockToken,
+    ctx,
+    sessionUserId
+  );
+  const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
+  if (!rate.allowed) {
+    recordBridgeRateLimitRefusal(
+      'consentQuoteGrantStanding',
+      'catalog',
+      claims,
+      rate.retryAfterSeconds
+    );
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Rate limit exceeded, please retry shortly.',
+    });
+  }
+  const refuse = (message: string): never => {
+    throw new TRPCError({ code: 'FORBIDDEN', message });
+  };
+  if (claims.privateRun === true) refuse('a private run asks for each job');
+  const { isAppConfirmedStepWithinLimitEnabled } = await import(
+    '~/server/services/app-blocks-flag'
+  );
+  if (!(await isAppConfirmedStepWithinLimitEnabled({ user: auth.user }))) {
+    refuse('running jobs without asking is not enabled');
+  }
+  const binding = {
+    userId: auth.userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+  };
+  const [{ readStepQuote, recordStepQuoteStandingConsent }, scopeGrant, rateLimit] =
+    await Promise.all([
+      import('~/server/services/blocks/block-quote-grant.service'),
+      import('~/server/services/blocks/scope-grant.service'),
+      import('~/server/utils/block-catalog-rate-limit'),
+    ]);
+  const quote = await readStepQuote(input.quoteId, binding);
+  if (!quote) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'step quote not found or expired' });
+  }
+  if (quote.total > BLOCK_CONFIRMED_STEP_MAX_BUZZ_PER_JOB)
+    refuse('this job is above the per-job maximum');
+  const maxJob = await scopeGrant.readConfirmWithinLimit(auth.userId, claims.appBlockId);
+  if (maxJob == null) refuse("you have not chosen to run this app's jobs without asking");
+  if (quote.total > maxJob!)
+    refuse('this job costs more than the jobs you chose to run without asking');
+  const limit = await scopeGrant.readConsentDailyLimit(auth.userId, claims.appBlockId, quote.total);
+  if (!limit || limit.exceeds) refuse('this job does not fit what is left of your daily limit');
+  if (!(await rateLimit.claimBlockStandingConsentSlot(auth.userId, claims.appBlockId))) {
+    throw new TRPCError({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'too many jobs without asking in the last minute',
+    });
+  }
+  const updated = await recordStepQuoteStandingConsent(input.quoteId, binding, sessionUserId);
+  if (!updated) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'step quote not found or expired' });
   }
   return { quoteId: updated.quoteId, total: updated.total, consented: true as const };
 }
@@ -14909,6 +15420,7 @@ async function authorizeOutputUnlockRequest(blockToken: string, sessionUserId: n
   await assertAppBlocksEnabledForTokenUser(userId);
   const rate = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rate.allowed) {
+    recordBridgeRateLimitRefusal('unlockOutput', 'catalog', claims, rate.retryAfterSeconds);
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',
       message: 'Rate limit exceeded, please retry shortly.',
@@ -15017,11 +15529,15 @@ type QuotedGrantSubmitArm = {
     auth: QuotedGrantAuth,
     quoteId: string
   ) => Promise<{ externalId: string; onDefiniteSubmit: () => Promise<void> }>;
-  /** THE money gate: the per-job ceiling for this claimed quote, or the refusal. */
+  /**
+   * THE money gate: the per-job ceiling for this claimed quote, or the refusal. `standing`: the
+   * quote was consented by the viewer's opt-in, which holds only if the reservation has a
+   * daily-limit leg.
+   */
   ceiling: (
     quote: BlockQuoteGrantRecord,
     userId: number
-  ) => { ceiling: number } | { refusal: TRPCError };
+  ) => { ceiling: number; standing?: boolean } | { refusal: TRPCError };
   /** Resolve the step to quote and submit (and run the kind's own admission checks). */
   plan: (auth: QuotedGrantAuth, quote: BlockQuoteGrantRecord) => Promise<QuotedGrantSubmitPlan>;
 };
@@ -15086,6 +15602,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
   // Everything before a reservation. Any refusal releases the claim.
   let jobBuzz: number;
   let confirmedTotal: number;
+  let standing = false;
   let plan: QuotedGrantSubmitPlan;
   let token: string;
   try {
@@ -15102,6 +15619,17 @@ async function submitConfirmedQuoteWorkflow(opts: {
     // than a shadowed second copy.
     const grant = arm.ceiling(quote, userId);
     if ('refusal' in grant) throw grant.refusal;
+    standing = grant.standing === true;
+    // The burst bound on jobs that run without a confirm is taken HERE, when the job runs: a
+    // quote can be submitted long after its standing consent, so a slot taken at consent alone
+    // would let earlier-consented quotes be bunched. After the quote claim, so the slot is spent
+    // on a real attempt; fails closed (a store error refuses), and the quote is used up.
+    if (standing && !(await claimBlockStandingSubmitSlot(userId, claims.appBlockId))) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'too many jobs without asking in the last minute',
+      });
+    }
     if (quote.bodyHash !== (await arm.bodyHash())) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -15198,6 +15726,13 @@ async function submitConfirmedQuoteWorkflow(opts: {
         errorCode: CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
       },
     };
+  }
+  // A standing consent is bounded by the viewer's daily limit; with no limit leg (the limit was
+  // removed since) nothing bounds it, so it is refused like an unconfirmed quote.
+  if (standing && !reservation.consent) {
+    await refundBlockBuzzReservation(reservation, jobBuzz);
+    await releaseGenIdempotency(genClaimKey);
+    throw new TRPCError({ code: 'FORBIDDEN', message: copy.notConfirmed });
   }
 
   // Per-app aggregate (daily Buzz + velocity). `claims.dev` is refused by the gate, so
@@ -15366,6 +15901,9 @@ async function submitConfirmedQuoteWorkflow(opts: {
     });
   }
 
+  if (arm.kind === 'step') {
+    recordConfirmedStepSubmit(submitFailureAppBlockLabel(claims), standing ? 'standing' : 'click');
+  }
   const genResult = { snapshot };
   await finalizeGenIdempotency(genClaimKey, genResult);
   // Only a DEFINITE submit advances the run identity; an ambiguous failure (above) does not.
@@ -15422,6 +15960,7 @@ async function submitConfirmedQuoteWorkflow(opts: {
           step: plan.invocation.step,
           variant: plan.invocation.variant,
           ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+          ...(arm.kind === 'step' ? { consentKind: standing ? 'standing' : 'click' } : {}),
         },
         dev: claims.dev === true,
         privateRun: claims.privateRun === true,
@@ -15669,8 +16208,9 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
   body: PassThroughStepBody & { quoteId: string };
 }) {
   const { ctx, claims, body } = opts;
-  // Set by the preflight, read by the plan.
   let capOutput = false;
+  // Read again at submit so switching the opt-in off reaches the next job.
+  let standingMaxJob: number | null = null;
   return submitConfirmedQuoteWorkflow({
     ctx,
     claims,
@@ -15685,7 +16225,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
       logFields: { stepType: body.$type },
       // Before anything that costs something: the platform denylist (the same rule as
       // the unconfirmed arm), then no training `$type` through this door, then the prompt gate.
-      preflight: async ({ userId }) => {
+      preflight: async ({ userId, user }) => {
         assertPassThroughStepTypeAllowed(body.$type, body.input);
         assertNotTrainingStepType(body.$type);
         const { isGreen } = resolveBlockMaturity(claims);
@@ -15695,16 +16235,35 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
         });
         await assertBlockTrainingModelsAllowed([body]);
         capOutput = (await checkAppStepResources(body.input)).capOutput;
+        const { isAppConfirmedStepWithinLimitEnabled } = await import(
+          '~/server/services/app-blocks-flag'
+        );
+        if (await isAppConfirmedStepWithinLimitEnabled({ user })) {
+          const { readConfirmWithinLimit } = await import(
+            '~/server/services/blocks/scope-grant.service'
+          );
+          standingMaxJob = await readConfirmWithinLimit(userId, claims.appBlockId);
+        }
       },
       runIdentity: async (_auth, quoteId) => ({
         externalId: composeConfirmedStepBlockExternalId(quoteId),
         onDefiniteSubmit: async () => undefined,
       }),
       ceiling: (quote, userId) => {
-        const grant = blockConfirmedStepCeiling(claims, quote, userId);
+        // The shared grant check knows only a click; a standing consent stands in for one here.
+        const standing =
+          standingMaxJob != null &&
+          quote.total <= standingMaxJob &&
+          quote.consentedBy == null &&
+          quote.standingConsentBy === userId;
+        const grant = blockConfirmedStepCeiling(
+          claims,
+          standing ? { ...quote, consentedBy: userId } : quote,
+          userId
+        );
         return 'refusal' in grant
           ? { refusal: confirmedStepCeilingRefusal(grant.refusal) }
-          : { ceiling: grant.ceiling };
+          : { ceiling: grant.ceiling, standing };
       },
       plan: async () => {
         const step = buildPassThroughOrchestratorStep(body);
