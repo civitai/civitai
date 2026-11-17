@@ -1,5 +1,12 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { muteAxiomEcho } from '../oneoffs/sweep-com-faces';
+
+// Stands in for the env files, which set LOGGING only when this module loads.
+vi.mock('~/env/server', () => {
+  process.env.LOGGING = 'prisma-showparams';
+  return {};
+});
+
+import { assertNoPrismaLogging, muteAxiomEcho } from '../oneoffs/sweep-com-faces';
 
 const original = console.log;
 afterEach(() => {
@@ -26,4 +33,10 @@ it("keeps the services' log echo, model id and error text, off stdout", () => {
     'model-com-face-intent: lock not added': 1,
     'model-com-face-intent: other': 1,
   });
+});
+
+it('refuses a prisma LOGGING entry that only the env files set', async () => {
+  delete process.env.LOGGING;
+  await expect(assertNoPrismaLogging()).rejects.toThrow('LOGGING');
+  delete process.env.LOGGING;
 });

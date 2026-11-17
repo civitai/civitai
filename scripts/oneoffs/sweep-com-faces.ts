@@ -21,7 +21,7 @@
  * `locked`, `lock-error` and `moderator-list` model id to the --list-out file, private, so a lock
  * can be reversed by id and a listed model reviewed.
  */
-import { appendFileSync, existsSync, writeFileSync } from 'fs';
+import { existsSync, openSync, writeSync } from 'fs';
 import path from 'path';
 import type { ComFaceIntentWrites } from '~/server/services/model-sfw-face.service';
 
@@ -245,10 +245,18 @@ export async function readCandidates(limit: number, apply: boolean) {
 class UsageError extends Error {}
 
 /** The private --list-out file: a new file only, owner-readable, one `<outcome>\t<model id>` line
- *  per model, appended as it happens. */
+ *  per model, written as it happens through the one descriptor that created it. */
 export function openIdOut(listOut: string) {
-  writeFileSync(listOut, '', { mode: 0o600, flag: 'wx' });
-  return (outcome: Outcome, id: number) => appendFileSync(listOut, `${outcome}\t${id}\n`);
+  const fd = openSync(listOut, 'wx', 0o600);
+  return (outcome: Outcome, id: number) => writeSync(fd, `${outcome}\t${id}\n`);
+}
+
+/** `LOGGING` with a `prisma*` entry prints each query's parameters. Read after the env files load,
+ *  as the db client reads it, or a value set only in `.env.local` would pass. */
+export async function assertNoPrismaLogging() {
+  await import('~/env/server');
+  if (/(^|,)\s*prisma/.test(process.env.LOGGING ?? ''))
+    throw new UsageError('unset the prisma entries in LOGGING: they print query parameters');
 }
 
 /** The services' `logToAxiom` echoes each event, model id and error text included, to stdout outside
@@ -268,8 +276,7 @@ export function muteAxiomEcho() {
 }
 
 async function main() {
-  if (/(^|,)\s*prisma/.test(process.env.LOGGING ?? ''))
-    throw new UsageError('unset the prisma entries in LOGGING: they print query parameters');
+  await assertNoPrismaLogging();
   const muted = muteAxiomEcho();
   const apply = process.argv.includes('--apply');
   const limit = Number(arg('--limit'));
@@ -280,6 +287,7 @@ async function main() {
 
   // The apply's moderator list holds model ids: a private file, never an existing one.
   const listOut = arg('--list-out');
+  if (listOut?.startsWith('-')) throw new UsageError('--list-out needs a path');
   if (apply && !listOut) throw new UsageError('--apply needs --list-out <new path>');
   // A run that reaches the ceiling stops, so a person decides before more locks land.
   const maxLocks = Number(arg('--max-locks'));
