@@ -21,7 +21,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import classes from './FlagRacePanel.module.scss';
 
 const ART =
-  'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d/width=900,optimized=true/4a5e404d-ece2-4cca-bbab-cb5a7b0d8d9d.jpeg';
+  'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/5064a196-aa66-4c07-bb2a-f3f2ccbacef1/width=900,optimized=true/5064a196-aa66-4c07-bb2a-f3f2ccbacef1.jpeg';
 const RULES_ARTICLE = '/articles/38657';
 export const HOWTO_DISMISSED_KEY = 'flag-race-howto-dismissed';
 
