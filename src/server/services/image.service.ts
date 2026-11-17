@@ -3763,6 +3763,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
+  asOwner?: boolean;
   holdExempt?: boolean;
   galleryOwnerId?: number;
   offset?: number;
@@ -3825,7 +3826,8 @@ async function resolveHubForFeed(searchInput: CapturableSearchInput) {
   if (!input.hubId) return undefined;
   const sources = await resolveHubSources({
     hubId: input.hubId,
-    userId: input.currentUserId,
+    // Only the owner's view opens the viewer's own private hubs; a scoped key sees Public ones.
+    userId: input.asOwner === true ? input.currentUserId : undefined,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
     galleryOwnerId: input.galleryOwnerId,
