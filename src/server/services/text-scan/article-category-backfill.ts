@@ -85,16 +85,19 @@ export async function runArticleCategoryBackfill({
     )
   );
   const result = summary(results);
+  // `failed` is an existing Axiom field; the other statuses are not, so they go under payload.
+  const { failed, ...otherStatuses } = result.byStatus;
   logToAxiom({
     name: 'text-category',
     type: 'info',
     message: 'backfill chunk',
+    failed,
     payload: {
       afterId,
       includeMature,
       selected: result.selected,
       nextAfterId,
-      ...result.byStatus,
+      ...otherStatuses,
     },
   });
   return result;
