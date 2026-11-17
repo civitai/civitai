@@ -440,6 +440,8 @@ describe('setVersionShowcase: a valid save', () => {
       isModerator: false,
     });
     expect(dbMock.dbWrite.modelVersionShowcaseItem.createMany).toHaveBeenCalledWith({
+      // A removal that lands after the tombstone check is kept, not overwritten.
+      skipDuplicates: true,
       data: [
         expect.objectContaining({
           imageId: 77,
@@ -522,18 +524,23 @@ describe('getCoverImages: a community cover on a model card', () => {
   });
 });
 
+// The tombstone SQL itself runs against PGlite in version-showcase.community-filter.pglite.test.ts.
+const tombstoneWrites = () =>
+  dbMock.dbWrite.$executeRaw.mock.calls.filter(([query]) =>
+    (Array.isArray(query) ? (query as string[]) : []).join('').includes('removed = TRUE')
+  );
+const publishedVersion = () =>
+  dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+    id: VERSION,
+    status: 'Published',
+    model: { id: 1, name: 'Model', userId: 5, nsfw: false, status: 'Published' },
+  } as never);
+
 describe('moderatorRemoveFromVersionShowcase', () => {
   it('leaves a tombstone instead of deleting, so the creator can’t feature it again', async () => {
-    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
-      id: VERSION,
-      status: 'Published',
-      model: { id: 1, name: 'Model', userId: 5, nsfw: false, status: 'Published' },
-    } as never);
+    publishedVersion();
     await showcase.moderatorRemoveFromVersionShowcase({ modelVersionId: VERSION, imageId: 77 });
-    expect(dbMock.dbWrite.modelVersionShowcaseItem.updateMany).toHaveBeenCalledWith({
-      where: { modelVersionId: VERSION, imageId: 77, source: 'Community' },
-      data: { removed: true, position: null },
-    });
+    expect(tombstoneWrites()).toHaveLength(1);
     expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
   });
 });
@@ -544,32 +551,25 @@ describe('removeMyImageFromVersionShowcase', () => {
     await expect(
       showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
     ).rejects.toThrow(/your own images/);
-    expect(dbMock.dbWrite.modelVersionShowcaseItem.updateMany).not.toHaveBeenCalled();
+    expect(tombstoneWrites()).toHaveLength(0);
   });
 
   it('leaves a tombstone on the author’s own image', async () => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
-    dbMock.dbWrite.modelVersionShowcaseItem.updateMany.mockResolvedValue({ count: 1 } as never);
-    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
-      id: VERSION,
-      status: 'Published',
-      model: { id: 1, name: 'Model', userId: 5, nsfw: false, status: 'Published' },
-    } as never);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(2 as never);
+    publishedVersion();
     await showcase.removeMyImageFromVersionShowcase({
       modelVersionId: VERSION,
       imageId: 77,
       userId: 9,
     });
-    expect(dbMock.dbWrite.modelVersionShowcaseItem.updateMany).toHaveBeenCalledWith({
-      where: { modelVersionId: VERSION, imageId: 77, source: 'Community' },
-      data: { removed: true, position: null },
-    });
+    expect(tombstoneWrites()).toHaveLength(1);
     expect(dbMock.dbWrite.modelVersionShowcaseItem.deleteMany).not.toHaveBeenCalled();
   });
 
   it('says so when the image isn’t featured there', async () => {
     dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: 9 } as never);
-    dbMock.dbWrite.modelVersionShowcaseItem.updateMany.mockResolvedValue({ count: 0 } as never);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
     await expect(
       showcase.removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: 77, userId: 9 })
     ).rejects.toThrow(/isn’t featured/);

@@ -773,7 +773,9 @@ export async function setVersionShowcase({
     dbWrite.modelVersionShowcaseItem.deleteMany({
       where: { modelVersionId, site, removed: false },
     }),
+    // Skips a row an author's or a moderator's removal wrote after the check above.
     dbWrite.modelVersionShowcaseItem.createMany({
+      skipDuplicates: true,
       data: unique.map((item) => ({
         modelVersionId,
         site,
@@ -875,10 +877,7 @@ export async function removeMyImageFromVersionShowcase({
   });
   if (!image || image.userId !== userId)
     throw throwAuthorizationError('You can only remove your own images.');
-  const { count } = await dbWrite.modelVersionShowcaseItem.updateMany({
-    where: { modelVersionId, imageId, source: 'Community' },
-    data: { removed: true, position: null },
-  });
+  const count = await tombstoneOnEverySite(modelVersionId, imageId);
   if (!count) throw throwNotFoundError('This image isn’t featured in that showcase.');
   const version = await getVersionForWrite(modelVersionId);
   await refreshVersionShowcases([modelVersionId]);
@@ -896,13 +895,31 @@ export async function moderatorRemoveFromVersionShowcase({
   modelVersionId: number;
   imageId: number;
 }) {
-  await dbWrite.modelVersionShowcaseItem.updateMany({
-    where: { modelVersionId, imageId, source: 'Community' },
-    data: { removed: true, position: null },
-  });
+  await tombstoneOnEverySite(modelVersionId, imageId);
   const version = await getVersionForWrite(modelVersionId);
   await refreshVersionShowcases([modelVersionId]);
   await dropCoversAfterWrite(version.model.id);
+}
+
+/**
+ * Marks a featured image removed on both sites, writing the row for a site it wasn't featured on.
+ * A creator's save inserts without overwriting, so a removal that lands mid-save still holds.
+ * Returns the rows written; 0 when the image isn't featured in the version.
+ */
+function tombstoneOnEverySite(modelVersionId: number, imageId: number) {
+  return dbWrite.$executeRaw`
+    INSERT INTO "ModelVersionShowcaseItem"
+      ("modelVersionId", site, "imageId", source, position, excluded, removed, "addedById")
+    SELECT s."modelVersionId", sites.site, s."imageId", 'Community', NULL, FALSE, TRUE, s."addedById"
+    FROM (
+      SELECT "modelVersionId", "imageId", "addedById" FROM "ModelVersionShowcaseItem"
+      WHERE "modelVersionId" = ${modelVersionId} AND "imageId" = ${imageId} AND source = 'Community'
+      LIMIT 1
+    ) s
+    CROSS JOIN (VALUES ('com'), ('red')) AS sites(site)
+    ON CONFLICT ("modelVersionId", site, "imageId") DO UPDATE SET removed = TRUE, position = NULL
+    WHERE "ModelVersionShowcaseItem".source = 'Community'
+  `;
 }
 
 export const versionShowcaseFeaturedKey = (modelVersionId: number, imageId: number) =>

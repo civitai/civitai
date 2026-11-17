@@ -4919,8 +4919,10 @@ export const upsertModel = async (
       tagsChanged: !!tagsOnModels,
     });
 
-    // The face and the .com cover feed the model's level, which decides whether .com lists it.
-    if (sfwFaceChanged || coverChanged) {
+    // The face, the .com cover and maturity feed the model's level, which decides whether .com
+    // lists it; on a model turned mature the recompute also drops a community .com cover.
+    const maturityChanged = result.nsfw !== beforeUpdate.nsfw;
+    if (sfwFaceChanged || coverChanged || maturityChanged) {
       await updateModelNsfwLevels([result.id]);
       await bustPublicModelResponseCache(result.id);
     }

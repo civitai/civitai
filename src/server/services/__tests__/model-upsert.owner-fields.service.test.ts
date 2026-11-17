@@ -1181,6 +1181,27 @@ describe('cover gate', () => {
   });
 });
 
+describe('a change in maturity', () => {
+  // `updateModelNsfwLevels` recomputes the level and, for a mature model, drops a community .com
+  // cover; it is seen here as its UPDATE.
+  const recomputed = () =>
+    mockDbWrite.$queryRaw.mock.calls.some(([query]) =>
+      ((query as { strings?: string[] })?.strings ?? []).join('').includes('SET "nsfwLevel" = (')
+    );
+
+  it('recomputes the model level when the owner marks the model mature', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: true });
+    expect(recomputed()).toBe(true);
+  });
+
+  it('does not recompute it when maturity, the face and the covers are unchanged', async () => {
+    mockStored({ nsfw: false });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+    expect(recomputed()).toBe(false);
+  });
+});
+
 describe('.com face re-check after a listing edit', () => {
   const withFace = { sfwName: 'Retro Style', sfwCoverImageId: 5 };
 

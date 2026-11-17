@@ -66,6 +66,7 @@ const {
   dropInvalidCommunityCovers,
   repointVersionShowcases,
   withCuratedShowcases,
+  removeMyImageFromVersionShowcase,
 } = await import('../version-showcase.service');
 const { getImagesForModelVersion } = await import('../image.service');
 
@@ -373,6 +374,37 @@ describe('when a featured image stops qualifying', () => {
     const id = await featured();
     const covers = await getShowcaseCommunityCovers([{ modelId: MODEL + 1, imageId: id }]);
     expect(covers.size).toBe(0);
+  });
+});
+
+describe("an author's removal", () => {
+  it('holds on both sites, so a save racing it on the other site cannot feature the image', async () => {
+    const id = await featured({ site: 'red' });
+    dbMock.dbWrite.image.findUnique.mockResolvedValue({ userId: id } as never);
+    dbMock.dbWrite.modelVersion.findUnique.mockResolvedValue({
+      id: VERSION,
+      status: 'Published',
+      model: { id: MODEL, name: 'M', userId: CREATOR, nsfw: false, status: 'Published' },
+    } as never);
+
+    await removeMyImageFromVersionShowcase({ modelVersionId: VERSION, imageId: id, userId: id });
+
+    const { rows } = await db.query<{ site: string; removed: boolean; position: number | null }>(
+      `SELECT site, removed, position FROM "ModelVersionShowcaseItem" WHERE "imageId" = $1 ORDER BY site`,
+      [id]
+    );
+    expect(rows).toEqual([
+      { site: 'com', removed: true, position: null },
+      { site: 'red', removed: true, position: null },
+    ]);
+    // What the save's insert does for that row: it conflicts and is skipped.
+    const inserted = await db.query(
+      `INSERT INTO "ModelVersionShowcaseItem" ("modelVersionId", site, "imageId", source, "addedById")
+       VALUES ($1, 'com', $2, 'Community', $3) ON CONFLICT DO NOTHING`,
+      [VERSION, id, CREATOR]
+    );
+    expect(inserted.affectedRows).toBe(0);
+    expect(await served('com')).not.toContain(id);
   });
 });
 
