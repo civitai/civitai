@@ -5119,22 +5119,33 @@ describe('a storyline started from an image', () => {
       it('starts a new one when its chapter 1 is written while this start looks it up', async () => {
         // Answers as Postgres would: a `setFirstChapter` that committed after the first lookup is
         // seen by any later statement.
-        let chapterOneWritten = false;
+        const steps: string[] = [];
         w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
-          if (!strings.join('?').includes('"sparkImageId" =')) return Promise.resolve([]);
-          const rows = chapterOneWritten ? [] : [{ id: 9, title: 'First try' }];
-          chapterOneWritten = true;
-          return Promise.resolve(rows);
+          const sql = strings.join('?');
+          if (sql.endsWith('FOR NO KEY UPDATE')) steps.push('lock');
+          if (!sql.includes('"sparkImageId" =')) return Promise.resolve([]);
+          steps.push('lookup');
+          // Only a lookup after the lock has waited out the chapter-1 writer sees its commit.
+          return Promise.resolve(steps.includes('lock') ? [] : [{ id: 9, title: 'First try' }]);
         }) as never);
 
         await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(steps).toEqual(['lookup', 'lock', 'lookup']);
         expect(w.storyline.update).not.toHaveBeenCalled();
         expect(w.storyline.create).toHaveBeenCalledOnce();
-        expect(
-          w.$queryRaw.mock.calls.some(([strings]) =>
-            (strings as unknown as string[]).join('?').endsWith('FOR NO KEY UPDATE')
-          )
-        ).toBe(true);
+      });
+
+      it('starts a new one when the lookup under the lock finds a different storyline', async () => {
+        let lookups = 0;
+        w.$queryRaw.mockImplementation(((strings: TemplateStringsArray) =>
+          Promise.resolve(
+            strings.join('?').includes('"sparkImageId" =')
+              ? [lookups++ === 0 ? { id: 9, title: 'First try' } : { id: 8, title: 'Older' }]
+              : []
+          )) as never);
+
+        await expect(start()).resolves.toEqual({ id: 10, rootChapterId: null });
+        expect(w.storyline.update).not.toHaveBeenCalled();
       });
 
       it('still starts a new one when a published post is chapter 1', async () => {
