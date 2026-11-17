@@ -81,8 +81,6 @@ export const createFluxInput = defineHandler<
     height: data.aspectRatio.height,
     steps,
     cfgScale,
-    sampler: 'euler_ancestral',
-    scheduler: 'normal',
     seed,
     quantity,
     outputFormat: data.outputFormat,
