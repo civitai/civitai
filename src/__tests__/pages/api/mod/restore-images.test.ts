@@ -5,7 +5,7 @@ import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 import type * as ImageService from '~/server/services/image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const h = vi.hoisted(() => ({ unblock: vi.fn() }));
+const h = vi.hoisted(() => ({ unblock: vi.fn(), trackImages: vi.fn() }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -14,7 +14,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   Tracker: class {
-    images = vi.fn();
+    images = h.trackImages;
   },
 }));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -49,6 +49,7 @@ beforeEach(() => {
   h.unblock
     .mockReset()
     .mockImplementation(async ({ ids }: { ids: number[] }) => ids.map((id) => ({ id })));
+  h.trackImages.mockReset();
 });
 
 describe('/api/mod/restore-images', () => {
@@ -87,5 +88,6 @@ describe('/api/mod/restore-images', () => {
     const body = await restore([2, 3]);
 
     expect(body).toEqual({ images: 1, skipped: [] });
+    expect(h.trackImages.mock.calls[0][0].map((e: { imageId: number }) => e.imageId)).toEqual([3]);
   });
 });
