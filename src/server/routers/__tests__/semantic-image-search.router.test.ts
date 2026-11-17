@@ -108,6 +108,24 @@ describe('semanticImageSearch router — own images without the flag', () => {
     expect(input.usernames).toBeUndefined();
   });
 
+  it('passes the service only the query, page size, browsing level and their id', async () => {
+    await caller().search({
+      query: 'kuro',
+      usernames: ['fox'],
+      limit: 7,
+      browsingLevel: 3,
+      tagNames: ['cat'],
+      baseModels: ['SDXL 1.0'],
+      postedAfter: new Date('2025-01-01'),
+    });
+    expect(h.search.mock.calls[0][0].input).toEqual({
+      query: 'kuro',
+      limit: 7,
+      browsingLevel: 3,
+      userIds: [7],
+    });
+  });
+
   it('answers in the same shape whatever the search found, with no timing', async () => {
     h.search.mockResolvedValue({ items: [{ id: 1 }], nextCursor: 50, correctedQuery: 'kuro' });
     const result = await caller().search({ query: 'kuro', usernames: ['fox'] });
@@ -125,6 +143,7 @@ describe('semanticImageSearch router — own images without the flag', () => {
     ['no owner at all', {}],
     ['an id beside their name', { usernames: ['fox'], userIds: [8] }],
     ['a page past the first', { usernames: ['fox'], cursor: 50 }],
+    ['a similar-image search', { usernames: ['fox'], imageId: 5 }],
   ])('refuses %s', async (_, scope) => {
     await expect(caller().search({ query: 'kuro', ...scope })).rejects.toMatchObject({
       code: 'FORBIDDEN',

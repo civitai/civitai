@@ -30,19 +30,26 @@ const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
   if (guardFlagEnabled(ctx, 'imageSearch') || guardFlagEnabled(ctx, 'feedSearch'))
     return next({ ctx: { ownImagesOf: undefined as number | undefined } });
 
-  const { usernames, userIds, cursor } = input as SemanticImageSearchInput;
+  const { usernames, userIds, cursor, imageId } = input as SemanticImageSearchInput;
   const username = ctx.user?.username?.toLowerCase();
   const ownOnly =
     !!username &&
     usernames?.length === 1 &&
     usernames[0].toLowerCase() === username &&
     !userIds &&
-    // The picker reads one page.
-    !cursor;
+    // The picker sends a text query and reads one page.
+    !cursor &&
+    !imageId;
   if (!ownOnly) throw new TRPCError({ code: 'FORBIDDEN' });
 
   return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
 });
+
+// Only what the picker sends; anything else on this path is dropped.
+const ownImagesInput = (
+  { query, limit, browsingLevel }: SemanticImageSearchInput,
+  userId: number
+): SemanticImageSearchInput => ({ query, limit, browsingLevel, userIds: [userId] });
 
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
 const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
@@ -62,7 +69,7 @@ export const semanticImageSearchRouter = router({
       const started = Date.now();
       const { ownImagesOf } = ctx;
       const result = await searchSemanticImages({
-        input: ownImagesOf ? { ...input, usernames: undefined, userIds: [ownImagesOf] } : input,
+        input: ownImagesOf ? ownImagesInput(input, ownImagesOf) : input,
         user: ctx.user,
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
