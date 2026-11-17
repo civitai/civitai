@@ -61,6 +61,8 @@ const h = vi.hoisted(() => ({
   moderationMode: 'enforce' as 'off' | 'shadow' | 'enforce',
   /** `app-blocks-shared-doc-levels` for every app; off unless a case turns it on. */
   docLevels: false,
+  /** The app ids `app-blocks-storage-unchanged-writes-free` is on for; none unless a case sets it. */
+  unchangedWritesApps: new Set<string>(),
   isFlipt: undefined as unknown as ReturnType<
     typeof vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>
   >,
@@ -71,12 +73,14 @@ const h = vi.hoisted(() => ({
 const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
 const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
 const DOC_LEVELS_FLAG = 'app-blocks-shared-doc-levels';
+const UNCHANGED_WRITES_FLAG = 'app-blocks-storage-unchanged-writes-free';
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptClient>();
   h.isFlipt = vi.fn(async (flag: string, entityId?: string, context?: unknown) => {
     if (flag === SHADOW_FLAG) return h.moderationMode === 'shadow';
     if (flag === ENFORCE_FLAG) return h.moderationMode === 'enforce';
     if (flag === DOC_LEVELS_FLAG) return h.docLevels;
+    if (flag === UNCHANGED_WRITES_FLAG) return h.unchangedWritesApps.has(entityId ?? '');
     return real.isFlipt(flag, entityId, context as never);
   });
   return {
@@ -2958,6 +2962,44 @@ describe('cross-app imports: a consumer acts as the viewer in the source app', (
       data: { title: 'hello' },
       author: { kind: 'user', isViewer: false },
     });
+  });
+
+  it("the unchanged-writes flag is the REQUESTING app's: an identical put through an import follows the consumer's flag, not the source's", async () => {
+    const { S, C } = importApps();
+    await grant(VIEWER_IDS.v1, C, S);
+    grantPublishInSource(VIEWER_IDS.v1, S);
+    const c = await as(C, VIEWER_IDS.v1);
+    const put = (key: string) =>
+      call({
+        token: c,
+        method: 'PUT',
+        path: `/board/${key}`,
+        query: { from: S.blockId },
+        body: { data: { title: 'same' } },
+      });
+    const evaluated = () =>
+      h.isFlipt.mock.calls.filter(([flag]) => flag === UNCHANGED_WRITES_FLAG).map(([, e]) => e);
+    try {
+      // On for the consumer only: the second identical put is answered without writing.
+      h.unchangedWritesApps = new Set([C.id]);
+      h.isFlipt.mockClear();
+      expect((await put('u1')).status).toBe(200);
+      const free = await put('u1');
+      expect(free.status).toBe(200);
+      expect((free.body as { version: number }).version).toBe(1);
+      expect(evaluated()).toEqual([C.id, C.id]);
+
+      // On for the source only: the consumer's flag is off, so the identical put writes.
+      h.unchangedWritesApps = new Set([S.id]);
+      h.isFlipt.mockClear();
+      expect((await put('u2')).status).toBe(200);
+      const written = await put('u2');
+      expect(written.status).toBe(200);
+      expect((written.body as { version: number }).version).toBe(2);
+      expect(evaluated()).toEqual([C.id, C.id]);
+    } finally {
+      h.unchangedWritesApps = new Set();
+    }
   });
 
   it('without a grant: 403 consent_required naming the scope and the source', async () => {

@@ -41,6 +41,8 @@ const GATE_KIND = {
   comics: 'level',
   models3d: 'level',
   storylines: 'level',
+  collections: 'level',
+  bounties: 'level',
   challenges: 'challenge',
   crucibles: 'crucible',
 } as const satisfies Record<string, ViewerGate['kind']>;

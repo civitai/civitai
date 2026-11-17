@@ -27,13 +27,14 @@ const (
 	MissTagIDs           = "tag-ids"           // tagIdsForImagesCache
 	MissModelFrames      = "model-frames"      // cosmeticEntityCaches.Model (model.getAll)
 	MissModelDecorations = "model-decorations" // eventDecorationEntityCaches.Model (model.getAll)
+	MissVersionImages    = "version-images"    // imagesForModelVersionsCache (model.getAll)
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissMetrics}
+	MissModelDecorations, MissVersionImages, MissMetrics}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -51,7 +52,8 @@ type MissCompute struct {
 	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
 	// The frame and event-decoration lookups (image and model) then read Primary, as Node's do
 	// (entityDB); the user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch
-	// does (dbRead).
+	// does (dbRead); the version-images lookup reads Primary for a version a recent write flagged, as
+	// Node's lag-aware read does (versionImagesDB).
 	WriteBack bool
 	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required with WriteBack: the
 	// frame and event-decoration lookups write what they read, so they must not read a lagging replica
@@ -162,9 +164,11 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 
 // memoized is whether lookupShared keeps cache's answers in recent: with write-back off, for every
 // cache but the image meta (imageMetaCache has no per-pod L1 in Node, deliberately: a hideMeta flip
-// must not leave the old prompt served from a process's copy). The tag ids, the model frames and the
-// model decorations are kept: none depends on the viewer, Node keeps tag ids in a per-pod L1 far
-// longer than recentTTL, and a model frame or decoration is the same lookup the image ones keep.
+// must not leave the old prompt served from a process's copy). The tag ids, the model frames, the
+// model decorations and the version showcases are kept: none depends on the viewer (the showcase
+// lookup reads no user, and the per-viewer image filter runs on every read), Node keeps tag ids in a
+// per-pod L1 far longer than recentTTL, and a model frame or decoration is the same lookup the image
+// ones keep.
 func (c *MissCompute) memoized(cache string) bool {
 	return !c.WriteBack && cache != MissImageMeta
 }
@@ -261,6 +265,10 @@ type lookupSpec struct {
 	ttl time.Duration
 	// notFoundTTL is a notFound marker's EX (`notFoundTtl ?? EX`).
 	notFoundTTL time.Duration
+	// probeLooksUp: under a Go-first probe (WithPresence) the miss is looked up, read-only, instead of
+	// answered as "no entry", because its answer decides which rows the page keeps (a model with no
+	// showcase image is dropped, so "no entry" would page on past where a serve stops).
+	probeLooksUp bool
 }
 
 // tagIDsTTL is tagIdsForImagesCache's ttl: an entry whose cachedAt is older is stale, and Node's
@@ -271,6 +279,18 @@ const tagIDsTTL = 8 * time.Hour
 // tagIDsEX is tagIdsForImagesCache's EX: the 8h ttl plus the 1h staleWhileRevalidateTtl, so 9h; no
 // notFoundTtl, so its markers get the same.
 const tagIDsEX = tagIDsTTL + time.Hour
+
+// versionImagesTTL is imagesForModelVersionsCache's ttl (CacheTTL.day): staleWhileRevalidate is on (the
+// default), so an entry whose cachedAt is older is revalidated by Node's fetch, as the tag ids are.
+const versionImagesTTL = ttlDay
+
+// versionImagesEX is its EX: resolveCacheExpiry(day, true, undefined) = the ttl twice. Its markers
+// get notFoundTtl, CacheTTL.xs (a minute): an empty answer read between publish and ingestion must not
+// keep the model out of feeds for long.
+const (
+	versionImagesEX         = 2 * versionImagesTTL
+	versionImagesNotFoundEX = time.Minute
+)
 
 var (
 	// userCosmeticCache: ttl a day, cacheNotFound (default) on, no notFoundTtl.
@@ -285,11 +305,14 @@ var (
 	modelEventSpec = lookupSpec{cache: MissModelDecorations, reason: "model-decoration-miss", key: KeyModelEvents, idKey: "equippedToId", ttl: ttlDay, notFoundTTL: time.Hour}
 	// tagIdsForImagesCache: see tagIDsEX; cacheNotFound (default) on.
 	tagIDsSpec = lookupSpec{cache: MissTagIDs, reason: "tag-ids-miss", key: KeyTagIDs, idKey: "imageId", ttl: tagIDsEX, notFoundTTL: tagIDsEX}
+	// imagesForModelVersionsCache: see versionImagesEX; cacheNotFound (default) on.
+	versionImagesSpec = lookupSpec{cache: MissVersionImages, reason: "model-images-miss", key: KeyVersionImages, idKey: "modelVersionId",
+		ttl: versionImagesEX, notFoundTTL: versionImagesNotFoundEX, probeLooksUp: true}
 )
 
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
 // the fallbacks those misses raise without a computation (Sources.MissReason).
-var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec}
+var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec}
 
 // specReason is the fallback reason of the named cache's lookup spec ("" for none).
 func specReason(cache string) string {
@@ -314,7 +337,7 @@ type packedWrite struct {
 // for every miss), adding each answer to got as the entry Node would have cached: the record, or a
 // notFound marker for an id the lookup found nothing for. writable says which misses Node would
 // write back (PackedRead.read); writeNotFound whether the cache writes markers; replace which
-// misses are stale entries being revalidated (revalidateStaleTagIDs): their value is written without NX,
+// misses are stale entries being revalidated (revalidateStale): their value is written without NX,
 // as Node's refill overwrites the stale entry, while their marker keeps NX (Node's marker write is
 // always NX, so it never replaces the stale value).
 func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[int]Entry, writable map[int]bool, writeNotFound bool,
@@ -323,20 +346,33 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 	if len(miss) == 0 {
 		return nil
 	}
-	if p := presenceOf(ctx); p != nil {
+	p := presenceOf(ctx)
+	if p != nil {
 		// A Go-first probe running a serving path (model.getAll): the miss is one Go answers, so it is
-		// recorded, with its one lookup query, and answered as "no entry" without being looked up;
-		// the probe never queries for a miss and never writes.
+		// recorded, with its one lookup query, and answered as "no entry" without being looked up,
+		// unless its answer decides the page's rows (probeLooksUp): then it is looked up, on the
+		// replica, outside the shared flights and the memo. The probe never writes, and is not counted
+		// in Observe.
 		p.recordComputed(spec.cache, len(miss))
-		for _, id := range miss {
-			got[id] = Entry{NotFound: true}
+		if !spec.probeLooksUp {
+			for _, id := range miss {
+				got[id] = Entry{NotFound: true}
+			}
+			return nil
 		}
-		return nil
 	}
 	c := s.Compute
-	records, err := c.lookupShared(ctx, spec.cache, miss, lookup)
+	var records map[int]jspack.Obj
+	var err error
+	if p != nil {
+		records, err = lookup(ctx, miss)
+	} else {
+		records, err = c.lookupShared(ctx, spec.cache, miss, lookup)
+	}
 	if err != nil {
-		c.observe(spec.cache, "error", len(miss))
+		if p == nil {
+			c.observe(spec.cache, "error", len(miss))
+		}
 		return fallback.Newf(spec.reason+"-failed", "%v", err)
 	}
 	now := c.now()
@@ -353,9 +389,12 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 			return fmt.Errorf("%s: a computed entry for %d does not decode", spec.cache, id)
 		}
 		got[id] = e
-		if c.WriteBack && (writable[id] || replace[id]) && (found || writeNotFound) {
+		if p == nil && c.WriteBack && (writable[id] || replace[id]) && (found || writeNotFound) {
 			writes = append(writes, packedWrite{key: s.Packed.key(spec.key, id), val: b, ttl: ttl, overwrite: found && replace[id]})
 		}
+	}
+	if p != nil {
+		return nil
 	}
 	c.observe(spec.cache, "computed", len(miss))
 	s.writePacked(ctx, writes)
@@ -402,31 +441,48 @@ func (s *Sources) fillEntityFrames(ctx context.Context, spec lookupSpec, lookup 
 
 // fillTagIDs computes the tag-ids misses of got (tagIdsForImagesCache.fetch's lookup), got read with
 // tagIDsTTL; a no-op without s.Compute (a miss then falls back in tagIDsFrom, a stale entry is
-// served). A stale entry is revalidated as Node's fetch revalidates it (revalidateStaleTagIDs).
+// served). A stale entry is revalidated as Node's fetch revalidates it (revalidateStale).
 func (s *Sources) fillTagIDs(ctx context.Context, images []int, got map[int]Entry, writable map[int]bool) error {
+	return s.fillSWR(ctx, tagIDsSpec, images, got, writable, s.lookupTagIDs)
+}
+
+// fillVersionImages computes the version-images misses of got (imagesForModelVersionsCache.fetch's
+// lookup), got read with versionImagesTTL; a no-op without s.Compute (a miss then falls back in
+// VersionImages, a stale entry is served). A stale entry is revalidated as the tag ids' are.
+func (s *Sources) fillVersionImages(ctx context.Context, versions []int, got map[int]Entry, writable map[int]bool) error {
+	return s.fillSWR(ctx, versionImagesSpec, versions, got, writable, s.lookupVersionImages)
+}
+
+// fillSWR is fill for a staleWhileRevalidate cache (markers written): the stale entries of got are
+// revalidated first (revalidateStale), and the locks taken released after the writes.
+func (s *Sources) fillSWR(ctx context.Context, spec lookupSpec, ids []int, got map[int]Entry, writable map[int]bool,
+	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) error {
 	if s.Compute == nil {
 		return nil
 	}
-	replace, locks := s.revalidateStaleTagIDs(ctx, got)
-	if err := s.fill(ctx, tagIDsSpec, images, got, writable, true, replace, s.lookupTagIDs); err != nil {
+	replace, locks := s.revalidateStale(ctx, spec.key, got)
+	if err := s.fill(ctx, spec, ids, got, writable, true, replace, lookup); err != nil {
 		return err
 	}
 	s.releaseLocks(ctx, locks)
 	return nil
 }
 
-// tagIDsLockKey is fetch's revalidation lock for one tag-ids entry,
+// tagIDsLockKey is fetch's revalidation lock for one tag-ids entry (lockKey).
+func (s *Sources) tagIDsLockKey(id int) string { return s.lockKey(KeyTagIDs, id) }
+
+// lockKey is fetch's revalidation lock for one entry of the cache at key,
 // `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`: both halves namespace-prefixed (applyCacheKeyPrefix
 // prefixes every leaf of the key table).
-func (s *Sources) tagIDsLockKey(id int) string {
-	return s.Packed.Prefix + "cache-lock:" + s.Packed.key(KeyTagIDs, id)
+func (s *Sources) lockKey(key string, id int) string {
+	return s.Packed.Prefix + "cache-lock:" + s.Packed.key(key, id)
 }
 
 // cacheLockTTL is the revalidation lock's EX (setNxKeepTtlWithEx(…, '1', 10)).
 const cacheLockTTL = 10 * time.Second
 
-// revalidateStaleTagIDs is fetch's stale-while-revalidate step over the tag-ids answer got (Stale
-// entries, read with tagIDsTTL), removing from got the stale ids to look up again:
+// revalidateStale is fetch's stale-while-revalidate step over the answer got of the cache at key
+// (Stale entries, read with its ttl), removing from got the stale ids to look up again:
 //
 //   - write-back on, as Node: each stale id takes the revalidation lock Node's fetch takes (SET NX EX
 //     10); an id whose lock is held elsewhere, or whose lock write failed, keeps its stale entry
@@ -435,7 +491,7 @@ const cacheLockTTL = 10 * time.Second
 //   - write-back off: every stale id is looked up (nothing is written, so no lock guards a write),
 //     so a busted entry is never served past its backdated stamp;
 //   - under a Go-first probe (WithPresence): every stale id is a miss (recorded by fill), no lock.
-func (s *Sources) revalidateStaleTagIDs(ctx context.Context, got map[int]Entry) (map[int]bool, []string) {
+func (s *Sources) revalidateStale(ctx context.Context, key string, got map[int]Entry) (map[int]bool, []string) {
 	stale := make([]int, 0, len(got))
 	for id, e := range got {
 		if e.Stale {
@@ -455,7 +511,7 @@ func (s *Sources) revalidateStaleTagIDs(ctx context.Context, got map[int]Entry) 
 	cmds := make([]*redis.BoolCmd, len(stale))
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, id := range stale {
-			cmds[i] = p.SetNX(ctx, s.tagIDsLockKey(id), "1", cacheLockTTL)
+			cmds[i] = p.SetNX(ctx, s.lockKey(key, id), "1", cacheLockTTL)
 		}
 		return nil
 	})
@@ -467,7 +523,7 @@ func (s *Sources) revalidateStaleTagIDs(ctx context.Context, got map[int]Entry) 
 		}
 		delete(got, id)
 		replace[id] = true
-		locks = append(locks, s.tagIDsLockKey(id))
+		locks = append(locks, s.lockKey(key, id))
 	}
 	return replace, locks
 }
