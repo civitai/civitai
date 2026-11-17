@@ -454,7 +454,7 @@ describe('rewardReportReporters multiplier', () => {
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
     expect(payload.message).toMatch(/negative and was floored/);
-    expect(payload.payload.flooredEvents).toBe(1);
+    expect(payload).toMatchObject({ payload: { flooredEvents: 1 } });
     // No `minRaw` at all rather than one computed from an empty list: `Math.min()` of no arguments
     // is +Infinity, so the floor alert would report a POSITIVE minimum, serialized as `null`.
     expect(payload).not.toHaveProperty('minRaw');
