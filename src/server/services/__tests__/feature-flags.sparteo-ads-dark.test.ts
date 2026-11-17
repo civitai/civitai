@@ -35,7 +35,7 @@ describe('sparteoAds is dark until Flipt turns it on', () => {
   });
 
   it('is on when its own Flipt key says so', async () => {
-    mocks.isFliptSync.mockImplementation((key: string) => key === 'sparteo-ads' || null);
+    mocks.isFliptSync.mockImplementation((key?: string) => key === 'sparteo-ads' || null);
     const viewer = { id: 9313, isModerator: false, tier: 'free' } as SessionUser;
     const flags = await getFeatureFlagsAsync({ user: viewer });
     expect(flags.sparteoAds).toBe(true);

@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   CONSENT_NOT_REQUIRED,
@@ -46,7 +45,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => stat
 const SparteoModule = await import('~/components/Ads/SparteoTag');
 const { SparteoTag, SPARTEO_TAG_ID } = SparteoModule;
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type TcfListener = (tcData: unknown, success: boolean) => void;
