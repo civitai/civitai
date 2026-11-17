@@ -14,8 +14,7 @@
  * the cache is still telling the truth — without it a false skip is a green run nobody can see.
  */
 
-// Extends the cost-based shard split, so a cached run that also shards splits the same way CI does.
-import TimingShardSequencer from '../test-shard/sequencer.mjs';
+import { BaseSequencer } from 'vitest/node';
 
 import { loadCore } from './load-core.mjs';
 
@@ -31,7 +30,7 @@ const SAMPLE_RATE =
 
 export const runKey = (spec) => `${spec.project.name}\0${spec.moduleId}`;
 
-export default class TestCacheSequencer extends TimingShardSequencer {
+export default class TestCacheSequencer extends BaseSequencer {
   async sort(files) {
     const state = {
       mode: core.mode(),

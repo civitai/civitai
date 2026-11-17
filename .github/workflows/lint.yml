@@ -751,47 +751,34 @@ jobs:
     # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
     # draft too).
     if: ${{ github.event_name != 'push' && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
-    # ── SHARDED ACROSS 6 RUNNERS, SPLIT BY RECORDED COST ─────────────────────
+    # ── SHARDED ACROSS 6 RUNNERS ────────────────────────────────────────────
     #
-    # The split is NOT Vitest's: `--shard` hands the file list to the root sequencer
-    # (scripts/test-shard/sequencer.mjs), which assigns files greedy longest-first by
-    # their recorded worker time (scripts/test-shard/unit-timings.json). Vitest's own
-    # split cuts a path-hash-ordered list into equal file COUNTS, and this suite's
-    # per-file cost is bimodal (a file either loads the big core-service graph or it
-    # does not), so equal counts are not equal time. Modelled on the cost table, the
-    # hash split's heaviest shard carries 1.08x the mean at N=4, 1.19x at N=6 and
-    # 1.26x at N=8; the cost split carries 1.00x at each. A file missing from the
-    # table (new, renamed) is dealt round-robin, so a stale table costs balance,
-    # never coverage. Refresh it from the `unit-perf-*` artifacts every shard uploads
-    # (scripts/test-shard/update-timings.mjs) when the shard durations drift apart.
-    #
-    # 🔴 RUNNER SPEED IS THE OTHER HALF OF THE SPREAD, AND NO SPLIT FIXES IT. The same
-    # files ran 0.77x on one shard's runner and 1.27x on another's within one run
-    # (Lint run 44092626209). So the slowest shard is usually the slowest RUNNER, and
-    # two runs of one config can differ by ~20% at the max. Compare configs over
-    # several runs, never one.
+    # Vitest's `--shard` cuts a path-hash-ordered list into equal file COUNTS. Fixed
+    # cost per shard (setup, checkout, install) is ~100-120s and does not shard.
     #
     # WHY 6, measured 2026-11-17 (only=unit dispatches, two runs per config; the
-    # job-minutes column is the sum of all shard jobs; fixed cost ~110s per shard):
+    # job-minutes column is the sum of all shard jobs):
     #
-    #   config        max shard job   job-minutes
-    #   hash  N=4     1005-1076s      64-65
-    #   cost  N=4     1173-1215s      69-72
-    #   hash  N=6     816-964s        69-70
-    #   cost  N=6     860-894s        65-70
-    #   cost  N=6 *   824-860s        66-71     (* the shipped, runner-normalised table)
-    #   cost  N=8     648-883s        69-79
+    #   config               max shard job   job-minutes
+    #   N=4                  1005-1076s      64-65
+    #   N=6                  816-964s        69-70
+    #   N=8 (cost split)     648-883s        69-79
     #
-    # Going 4 -> 6 is what moved the wall clock (~20%) at about the same job-minutes.
-    # The cost split's own share is BELOW this sample's noise: modelling the measured
-    # runner spread over the cost table puts it at 1.6% off the expected slowest shard
-    # at N=4, 4.0% at N=6, 5.4% at N=8 — it grows with N because count-split
-    # imbalance does. N=8 cuts the wall further but adds the fixed cost per extra
-    # shard (and one more slot of the plan's org-wide concurrent-job limit, which
-    # this workflow already saturates — each extra shard queues someone else's job),
-    # and exposes more runners to a slow install (one N=8 shard spent 342s in
-    # setup-node + Install against a typical ~65s). Shrink the fixed overhead or the
-    # suite before raising this number.
+    # 4 -> 6 takes ~20% off the slowest shard for a few more job-minutes. N=8 cuts the
+    # wall further but adds the fixed cost per extra shard (and one more slot of the
+    # plan's org-wide concurrent-job limit, which this workflow already saturates —
+    # each extra shard queues someone else's job), and exposes more runners to a slow
+    # install (one N=8 shard spent 342s in setup-node + Install against a typical
+    # ~65s). Shrink the fixed overhead or the suite before raising this number.
+    #
+    # A COST-BASED SPLIT WAS MEASURED AND DROPPED. Assigning files greedy longest-first
+    # by recorded per-file time (N=4/6/8, two runs each) could not be told apart from
+    # the count split at two runs per config: runner speed varies ~1.65x within one
+    # run (the same files ran 0.77x on one shard's runner and 1.27x on another's), so
+    # the slowest shard is mostly the slowest RUNNER. Modelled, it would take a few
+    # percent off the slowest shard (~4% at N=6). Don't rebuild it without several
+    # runs per config. Note for anyone measuring: the JSON reporter's per-file
+    # startTime/endTime cover only the test bodies, not import, which dominates here.
     #
     # ⚠️ Suite size moves fast: 1,065 files / 16,784 tests on 2026-08-15 became
     # 1,417 files / 22,157 executed ten days later, +33%. Any figure here is a
@@ -961,9 +948,7 @@ jobs:
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
       - name: Unit tests
-        env:
-          TESTPERF_LABEL: unit-shard-${{ matrix.shard }}
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json --reporter=./scripts/test-perf/reporter.mjs
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -990,22 +975,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
           # A re-run of a failed shard uploads again under the same name.
-          overwrite: true
-
-      # Per-file worker time (import + tests) from scripts/test-perf/reporter.mjs: the input
-      # scripts/test-shard/update-timings.mjs rebuilds the shard cost table from. Its OWN artifact,
-      # not inside `unit-report-<n>`: `unit-verify` downloads `unit-report-*` and counts every
-      # `.json` under it as one shard's report (scripts/ci/unit-batched.mjs readReports), so a
-      # second file there would inflate the count its completeness check relies on. Kept longer
-      # than the report because a refresh reads several runs; ~0.2 MB per shard.
-      - name: Upload per-file timings
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: unit-perf-${{ matrix.shard }}
-          path: .test-perf/runs/unit-shard-${{ matrix.shard }}.perf.json
-          if-no-files-found: warn
-          retention-days: 14
           overwrite: true
 
       # The registry adapter's bundle, and its check that every external it loads loads under
