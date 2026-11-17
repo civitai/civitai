@@ -1538,15 +1538,18 @@ func goldenCheckCollectionFilter(want *goldenCollectionFilter, sql string, args 
 			return fmt.Errorf("node's collection filter has no %s; feed-go's has %s", c.name, m[0][0])
 		case v == nil:
 			continue
-		case len(m) != 1:
-			return fmt.Errorf("node's collection filter binds %s = %d; feed-go's page query has %d such clause(s)", c.name, *v, len(m))
+		case len(m) == 0:
+			return fmt.Errorf("node's collection filter binds %s = %d; feed-go's page query has no such clause", c.name, *v)
 		}
-		n, err := strconv.Atoi(m[0][1])
-		if err != nil || n < 1 || n > len(args) {
-			return fmt.Errorf("feed-go's %s has placeholder $%s; its query has %d argument(s)", c.name, m[0][1], len(args))
-		}
-		if got, ok := args[n-1].(int); !ok || got != *v {
-			return fmt.Errorf("node binds %s = %d; feed-go binds $%d = %v", c.name, *v, n, args[n-1])
+		// A cursor page repeats the WHERE in each keyset branch: every copy must bind Node's value.
+		for _, mm := range m {
+			n, err := strconv.Atoi(mm[1])
+			if err != nil || n < 1 || n > len(args) {
+				return fmt.Errorf("feed-go's %s has placeholder $%s; its query has %d argument(s)", c.name, mm[1], len(args))
+			}
+			if got, ok := args[n-1].(int); !ok || got != *v {
+				return fmt.Errorf("node binds %s = %d; feed-go binds $%d = %v", c.name, *v, n, args[n-1])
+			}
 		}
 	}
 	return nil
