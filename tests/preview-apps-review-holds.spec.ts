@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
+import { acceptTermsForThisDomain } from './preview-tos';
 import { trpcMutation, trpcQuery } from './preview-trpc';
 
 /**
@@ -96,31 +97,6 @@ async function abortApprovals(page: Page) {
       return route.abort();
     return route.continue();
   });
-}
-
-/** Same as preview-apps-review-flow.spec.ts: the review page needs this domain's ToS accepted. */
-async function acceptTermsForThisDomain(page: Page) {
-  const meta = await page.evaluate(() => {
-    const d = (window as unknown as { __NEXT_DATA__?: { props?: Record<string, unknown> } })
-      .__NEXT_DATA__;
-    const props = d?.props ?? {};
-    return (props.tosMeta ?? (props.pageProps as Record<string, unknown> | undefined)?.tosMeta) as
-      | { hash?: string; fieldKey?: string; hashFieldKey?: string }
-      | undefined;
-  });
-  if (!meta?.hash || !meta.fieldKey || !meta.hashFieldKey) {
-    throw new Error(`could not read the served ToS metadata: ${JSON.stringify(meta)}`);
-  }
-  const res = await page.request.post('/api/trpc/user.setSettings?batch=1', {
-    headers: { 'content-type': 'application/json', ...csrf() },
-    data: {
-      '0': {
-        json: { [meta.fieldKey]: new Date().toISOString(), [meta.hashFieldKey]: meta.hash },
-        meta: { values: { [meta.fieldKey]: ['Date'] } },
-      },
-    },
-  });
-  if (!res.ok()) throw new Error(`user.setSettings (ToS acceptance) -> HTTP ${res.status()}`);
 }
 
 async function withdrawOffsite(request: APIRequestContext, slug: string) {
