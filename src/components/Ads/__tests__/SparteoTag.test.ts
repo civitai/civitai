@@ -41,7 +41,6 @@ vi.mock('~/components/Ads/sparteo.config', async (importOriginal) => {
     },
   };
 });
-vi.mock('~/components/Ads/AdsProvider', () => ({ useAdsContext: () => state.ads }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => state.flags }));
 
 const SparteoModule = await import('~/components/Ads/SparteoTag');
@@ -68,7 +67,7 @@ function render(consentAllowed: boolean) {
       React.createElement(
         ThirdPartyConsentContext.Provider,
         { value: consent },
-        React.createElement(SparteoTag)
+        React.createElement(SparteoTag, state.ads)
       )
     )
   );

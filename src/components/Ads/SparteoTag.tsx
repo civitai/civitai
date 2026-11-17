@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
 import {
   SPARTEO_TAG_SRC,
   SPARTEO_TCF,
@@ -63,8 +62,9 @@ function useTcfAllowsTag(active: boolean) {
   return active && allowed;
 }
 
-export function SparteoTag() {
-  const { adsEnabled, useDirectAds, ready } = useAdsContext();
+type SparteoTagProps = { adsEnabled: boolean; useDirectAds: boolean; ready: boolean };
+
+export function SparteoTag({ adsEnabled, useDirectAds, ready }: SparteoTagProps) {
   const { allowed: consentAllowed } = useThirdPartyConsent();
   const features = useFeatureFlags();
   const src = SPARTEO_TAG_SRC;

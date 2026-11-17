@@ -240,7 +240,11 @@ export function AdsProvider({
       }}
     >
       {children}
-      <SparteoTag />
+      <SparteoTag
+        adsEnabled={adsEnabled && !(gated || gateBlocked)}
+        useDirectAds={useDirectAds}
+        ready={ready}
+      />
       {adsEnabled && !useDirectAds && isDev && (
         <Script
           id="snigel-ads-domain-spoof"
