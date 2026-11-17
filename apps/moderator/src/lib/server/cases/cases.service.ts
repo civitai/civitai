@@ -124,17 +124,23 @@ export async function startBatchSend(
   return 'started';
 }
 
+const EXPORT_LOCK_TTL_SECONDS = 300;
+
 /**
  * Export the batch's unsent rows for the fallback sender, under the batch's run lock: refused while a
  * send of it runs, and no send can start until it is recorded.
  */
 export async function startExport(batchId: string, actorId: number) {
   const redis = getSysRedis();
-  const token = await acquireRunLock(redis, batchId, 300);
+  const token = await acquireRunLock(redis, batchId, EXPORT_LOCK_TTL_SECONDS);
   if (!token) return 'running' as const;
+  const holdsLock = () => renewRunLock(redis, batchId, token, EXPORT_LOCK_TTL_SECONDS);
+  // Keep the lock while the export runs; it re-checks before commit in case a renewal was missed.
+  const heartbeat = setInterval(() => void holdsLock().catch(() => undefined), 60_000);
   try {
-    return await exportUnsent(batchId, { actorId });
+    return await exportUnsent(batchId, { actorId, holdsLock });
   } finally {
+    clearInterval(heartbeat);
     await releaseRunLock(redis, batchId, token).catch(() => undefined);
   }
 }
