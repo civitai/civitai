@@ -130,6 +130,11 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 	if req.NoProfilePictures {
 		profileUsers = nil
 	}
+	// As Page: the user cosmetics and frames (and so the cosmetic records) only with 'cosmetics'.
+	cosmeticUsers, frameImages := users, images
+	if req.NoCosmetics {
+		cosmeticUsers, frameImages = nil, nil
+	}
 	stage1 := NewBatch()
 	reads := []struct {
 		name string
@@ -137,10 +142,10 @@ func (s *Sources) Check(ctx context.Context, req PageRequest, racedSince time.Ti
 		read *PackedRead
 	}{
 		{CacheBasicUsers, users, s.Packed.Queue(stage1, KeyBasicUsers, users, ttlDay)},
-		{CacheUserCosmetics, users, s.Packed.Queue(stage1, KeyUserCosmetics, users, 0)},
+		{CacheUserCosmetics, cosmeticUsers, s.Packed.Queue(stage1, KeyUserCosmetics, cosmeticUsers, 0)},
 		// As Page: the profile pictures only when the include list asks for them.
 		{CacheProfilePictures, profileUsers, s.Packed.Queue(stage1, KeyProfilePictures, profileUsers, 0)},
-		{CacheImageFrames, images, s.Packed.Queue(stage1, KeyImageFrames, images, 0)},
+		{CacheImageFrames, frameImages, s.Packed.Queue(stage1, KeyImageFrames, frameImages, 0)},
 		{CacheThumbnails, videos, s.Packed.Queue(stage1, KeyThumbnails, videos, ttlDay)},
 		{CacheTagIDs, images, s.Packed.Queue(stage1, KeyTagIDs, images, tagIDsTTL)},
 	}
@@ -326,16 +331,27 @@ func (p *PresenceProbe) Page(ctx context.Context, req PageRequest) (*Page, error
 	if p.misses == nil {
 		p.misses, p.raced, p.dbReads = map[string]int{}, map[string]int{}, map[string]int{}
 	}
+	// A miss or a raced entry on a cache Go answers itself: one database query for this cache on this
+	// page (the replica path's, or the miss computation's batched lookup). A raced entry was most
+	// likely filled by the Node request the probe races, so a Go-first serve would have looked it up
+	// with the misses; a cache both missed and raced on this page is one batched lookup, counted once.
+	read := map[string]bool{}
 	for name, n := range res.Misses {
 		p.misses[name] += n
-		if n > 0 && p.Checker.MissReason(name) == "" {
-			// A miss Go answers itself: one database query for this cache on this page (the
-			// replica path's, or the miss computation's batched lookup).
-			p.dbReads[name]++
+		if n > 0 {
+			read[name] = true
 		}
 	}
 	for name, n := range res.Raced {
 		p.raced[name] += n
+		if n > 0 {
+			read[name] = true
+		}
+	}
+	for name := range read {
+		if p.Checker.MissReason(name) == "" {
+			p.dbReads[name]++
+		}
 	}
 	return &Page{}, nil
 }
@@ -404,8 +420,9 @@ func (p *PresenceProbe) Raced() map[string]int {
 	return copyCounts(p.raced)
 }
 
-// DBReads is, per cache, the database queries a Go-first serve would have made for the misses Go
-// answers itself (one per page and cache with such misses; a lower bound: the user-cosmetics and
+// DBReads is, per cache, the database queries a Go-first serve would have made for the misses and
+// raced entries of the caches Go answers itself (one per page and cache with such a miss or raced
+// entry, once when both; a lower bound: the user-cosmetics and
 // frame computations can add up to two withheld-cosmetic queries, the tag-ids one a tag query for
 // the tags the basic-tags cache misses).
 func (p *PresenceProbe) DBReads() map[string]int {

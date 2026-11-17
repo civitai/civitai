@@ -11,7 +11,7 @@
   import ReportList from '$lib/components/report-queue/ReportList.svelte';
   import PostTextReportPanel from './PostTextReportPanel.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import CdnOrRetractedMedia from '$lib/components/image-queue/CdnOrRetractedMedia.svelte';
   import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
   import {
     bulkImageManagerUrl,
@@ -201,9 +201,8 @@
                       class="block overflow-hidden rounded-md bg-dark-6"
                       title={dateTime(img.createdAt)}
                     >
-                      <EdgeMedia
-                        src={img.url}
-                        type={img.type}
+                      <CdnOrRetractedMedia
+                        item={img}
                         width={220}
                         class="aspect-square w-full object-cover"
                       />

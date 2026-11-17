@@ -5,7 +5,6 @@ import {
   updateListingPatchSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import {
-  ALL_SCOPES,
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   TokenScope,
 } from '~/shared/constants/token-scope.constants';
@@ -29,7 +28,7 @@ describe('submitExternalListingSchema', () => {
   it('accepts a well-formed connect submission', () => {
     const parsed = submitExternalListingSchema.parse(valid);
     expect(parsed.connectClientId).toBe('oauth-client-1');
-    expect(parsed.requestedScopes).toBe(4);
+    expect(parsed.requestedScopes).toBe(4n);
     expect(parsed.scopeJustifications).toEqual({ ModelsRead: 'reason' });
   });
 
@@ -66,10 +65,11 @@ describe('submitExternalListingSchema', () => {
 
   // int4-overflow hardening: a value beyond the full defined scope set must be
   // rejected at the schema boundary (400), NOT survive the JS-ToInt32 subset check
-  // and 500 on the int4 INSERT. These FAIL without the `.max(ALL_SCOPES)` bound.
+  // and 500 on the int4 INSERT. These FAIL without the `.max` bound (2^31 - 1, the int4 maximum).
   it.each([
+    ['2**31 (AppsRead: past the int4 column)', 2 ** 31],
     ['2**32', 2 ** 32],
-    ['2**32 + a real bit', 2 ** 32 + TokenScope.ModelsRead],
+    ['2**32 + a real bit', 2 ** 32 + 4],
   ])('rejects an over-int4 requestedScopes (%s)', (_label, requestedScopes) => {
     expect(
       submitExternalListingSchema.safeParse({ ...valid, requestedScopes, scopeJustifications: {} })
@@ -77,11 +77,11 @@ describe('submitExternalListingSchema', () => {
     ).toBe(false);
   });
 
-  it('accepts requestedScopes at exactly ALL_SCOPES (the max bound)', () => {
+  it('accepts requestedScopes at exactly 2^31 - 1 (the max bound)', () => {
     expect(
       submitExternalListingSchema.safeParse({
         ...valid,
-        requestedScopes: ALL_SCOPES,
+        requestedScopes: 2147483647,
         scopeJustifications: {},
       }).success
     ).toBe(true);
@@ -93,7 +93,7 @@ describe('submitExternalListingSchema', () => {
     expect(
       submitExternalListingSchema.safeParse({
         ...valid,
-        requestedScopes: TokenScope.AppBlocksSubmit,
+        requestedScopes: Number(TokenScope.AppBlocksSubmit),
         scopeJustifications: {},
       }).success
     ).toBe(true);
@@ -122,7 +122,7 @@ describe('updateListingPatchSchema (connect fields)', () => {
       requestedScopes: 4,
       scopeJustifications: { ModelsRead: 'reason' },
     });
-    expect(parsed.requestedScopes).toBe(4);
+    expect(parsed.requestedScopes).toBe(4n);
   });
 
   it('rejects an over-long justification in a patch', () => {
@@ -141,9 +141,8 @@ describe('updateListingPatchSchema (connect fields)', () => {
     ).toBe(false);
   });
 
-  it('accepts requestedScopes at ALL_SCOPES in a patch', () => {
-    expect(
-      updateListingPatchSchema.safeParse({ requestedScopes: ALL_SCOPES }).success
-    ).toBe(true);
+  it('accepts requestedScopes at 2^31 - 1 in a patch, and refuses 2^31', () => {
+    expect(updateListingPatchSchema.safeParse({ requestedScopes: 2147483647 }).success).toBe(true);
+    expect(updateListingPatchSchema.safeParse({ requestedScopes: 2147483648 }).success).toBe(false);
   });
 });

@@ -110,6 +110,8 @@ export default MixedAuthEndpoint(async function handler(
       !Flags.intersects(publicArticle.coverImage.nsfwLevel, browsingLevel)
     ) {
       publicArticle.coverImage = undefined;
+      // The legacy `cover` is the same image's key.
+      publicArticle.cover = null;
     }
     // The banner is the same kind of image, and stands in for a missing cover on cards.
     if (

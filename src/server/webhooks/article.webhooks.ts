@@ -1,7 +1,12 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { hasBlockMarker } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  isMinorMatureImage,
+  withoutMinorFlag,
+} from '~/server/common/image-visibility';
 import { articleSemanticEligibleWhere } from '~/server/search-index/articles.search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { imageSelect } from '~/server/selectors/image.selector';
 import { getModelWithheldImageIds } from '~/server/services/collection-cover-visibility';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -26,7 +31,7 @@ export const articleWebhooks = createWebhookProcessor({
             lte: now,
           },
         },
-        select: articleDetailSelect,
+        select: { ...articleDetailSelect, coverImage: { select: { ...imageSelect, minor: true } } },
       });
       if (!articles.length) return [];
 
@@ -36,7 +41,7 @@ export const articleWebhooks = createWebhookProcessor({
         prisma
       );
       const publicCover = (image: (typeof articles)[number]['coverImage']) =>
-        image && !hasBlockMarker(image) && !withheld.has(image.id)
+        image && !hasBlockMarker(image) && !withheld.has(image.id) && !isMinorMatureImage(image)
           ? servableArticleImage(image)
           : null;
 
@@ -54,7 +59,7 @@ export const articleWebhooks = createWebhookProcessor({
 
         return {
           ...article,
-          coverImage: shownCover,
+          coverImage: shownCover && withoutMinorFlag(shownCover),
           type: categories[0] ?? 'article',
           tags,
           cover: coverAllowed && cover ? getEdgeUrl(cover, { width: 450 }) : null,

@@ -152,6 +152,7 @@ const row = (id: number, over: Record<string, unknown> = {}) => ({
   blockedFor: null,
   // The row carries THIS app's published key (the SQL's `viaPublished`).
   viaPublished: true,
+  modelRestricted: false,
   ...over,
 });
 

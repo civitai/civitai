@@ -48,8 +48,20 @@ const VIDEO_UUID = '33333333-3333-4333-8333-333333333333';
 const imageUrl = (uuid: string) =>
   `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid}/width=450/x.jpeg`;
 
-function state(url: string, nsfwLevel: number, extra: Partial<ArticleBodyImageState> = {}) {
-  return { url, nsfwLevel, ingestion: 'Scanned', needsReview: null, tosViolation: false, ...extra };
+function state(
+  url: string,
+  nsfwLevel: number,
+  extra: Partial<ArticleBodyImageState> = {}
+): ArticleBodyImageState {
+  return {
+    url,
+    nsfwLevel,
+    ingestion: 'Scanned',
+    needsReview: null,
+    tosViolation: false,
+    modelRestricted: false,
+    ...extra,
+  };
 }
 
 /**
@@ -140,15 +152,19 @@ describe('GET /api/v1/articles/[id] body media', () => {
     ['blocked', { ingestion: 'Blocked' }],
     ['pending a scan', { ingestion: 'Pending' }],
     ['a violation', { tosViolation: true }],
-  ])('🔴 an image %s is stripped for every caller, its author included', async (_, extra) => {
-    serve([state(PG_UUID, PG), state(R_UUID, PG, extra)]);
+    ['mature on a restricted base model', { nsfwLevel: R, modelRestricted: true }],
+  ] as const)(
+    '🔴 an image %s is stripped for every caller, its author included',
+    async (_, extra) => {
+      serve([state(PG_UUID, PG), state(R_UUID, PG, extra)]);
 
-    for (const session of [null, keyHolder(PG | R), keyHolder(PG | R, AUTHOR)]) {
-      const { body } = await call(session);
-      expect(body).not.toContain(R_UUID);
-      expect(body).toContain(PG_UUID);
+      for (const session of [null, keyHolder(PG | R), keyHolder(PG | R, AUTHOR)]) {
+        const { body } = await call(session);
+        expect(body).not.toContain(R_UUID);
+        expect(body).toContain(PG_UUID);
+      }
     }
-  });
+  );
 
   it('🔴 an unrated image, or one with no linked row, is stripped', async () => {
     serve([state(PG_UUID, PG), state(R_UUID, 0)]);

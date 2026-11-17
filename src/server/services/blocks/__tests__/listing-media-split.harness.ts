@@ -112,7 +112,8 @@ export async function createSplitDb(): Promise<SplitDb> {
       minor BOOLEAN NOT NULL DEFAULT false,
       "tosViolation" BOOLEAN NOT NULL DEFAULT false,
       "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
-      "blockedFor" TEXT
+      "blockedFor" TEXT,
+      "modelRestricted" BOOLEAN NOT NULL DEFAULT false
     );
     CREATE TABLE "app_listings" (id TEXT PRIMARY KEY, content_rating TEXT);
   `);

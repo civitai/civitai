@@ -34,6 +34,7 @@ import {
 } from './csam-queue-set-aside';
 import type { Kysely, Transaction } from 'kysely';
 import { queueModelsForImageChildTagChanges } from './image-models-reindex';
+import { queueArticlesForCoverImages } from './article-cover-reindex';
 import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
@@ -71,6 +72,58 @@ const recompute = async (imageId: number) => {
   await invalidateThumbnails(imageId);
   await bustProfilePictures({ imageIds: [imageId] });
   await queueModelsForImageChildTagChanges({ levelImageIds: [imageId] });
+};
+
+// The recompute rates an image from its live tags, so one the scanner never tagged (blocked before
+// its scan landed) stays at level 0. Rather than leave it Scanned with no rating, send it back to the
+// scanner, as the main app's rescanUnratedImages does. An image with tags, live or disabled by this
+// ruling, or with an earlier moderator review, is left as it is: a rescan would re-audit it over the
+// moderator's decision. This accept's own review row is written after this runs, so it does not
+// count. One out of rescan retries goes to Error instead.
+const IMAGE_RESCAN_RETRY_LIMIT = 9; // the main app's IMAGE_RESCAN_RETRY_LIMIT (image-scan-failure.ts)
+const rescanIfUnrated = async (imageId: number) => {
+  // Read first: most restores are rated, and need neither the tag check nor the write.
+  const image = await dbWrite
+    .selectFrom('Image')
+    .select(['ingestion', 'nsfwLevel', 'blockedFor'])
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  if (!image || image.ingestion !== 'Scanned' || image.nsfwLevel !== 0 || image.blockedFor) return;
+  const tagged = await sql<{ one: number }>`
+    SELECT 1 AS one FROM "TagsOnImageDetails" WHERE "imageId" = ${imageId} LIMIT 1`.execute(
+    dbWrite
+  );
+  if (tagged.rows.length) return;
+  const { rows } = await sql<{ retryCount: number | null }>`
+    SELECT ("scanJobs"->>'retryCount')::int AS "retryCount" FROM "Image" WHERE id = ${imageId}`.execute(
+    dbWrite
+  );
+  const outOfRetries = (rows[0]?.retryCount ?? 0) >= IMAGE_RESCAN_RETRY_LIMIT;
+  const updated = await dbWrite
+    .updateTable('Image')
+    .set({ ingestion: outOfRetries ? 'Error' : 'Rescan' })
+    .where('id', '=', imageId)
+    .where('ingestion', '=', 'Scanned')
+    .where('nsfwLevel', '=', 0)
+    .where('blockedFor', 'is', null)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('ModActivity')
+            .select(sql<number>`1`.as('one'))
+            .where('entityType', '=', 'image')
+            .where('entityId', '=', imageId)
+            .where('activity', '=', 'review')
+        )
+      )
+    )
+    .executeTakeFirst();
+  if (outOfRetries || !updated.numUpdatedRows) return;
+  await dbWrite
+    .insertInto('JobQueue')
+    .values({ type: 'ImageScan', entityType: 'Image', entityId: imageId })
+    .onConflict((oc) => oc.columns(['entityType', 'entityId', 'type']).doNothing())
+    .execute();
 };
 
 // update_nsfw_levels_new skips nsfwLevelLocked rows, so a locked Blocked image would stay hidden after
@@ -205,6 +258,12 @@ export async function acceptImage({
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
   }
+  // A minor-queue accept rewrites "minor", which no trigger watches.
+  if (nr === 'minor') {
+    await queueArticlesForCoverImages([imageId]);
+    await queueModelsForImageChildTagChanges({ minorImageIds: [imageId] });
+  }
+  await rescanIfUnrated(imageId);
 
   // Only a moderator removal is logged as one, so only its undoing is a restore. A scanner block
   // (`AiNotVerified` in the POI queue) has no removal event to pair with.
@@ -756,6 +815,7 @@ export async function resolveImageAppeal({
       await resetBlockedNsfwLevel(imageId);
     }
     await recompute(imageId);
+    await rescanIfUnrated(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
     if (restored) await trackImageRestore({ imageId, actorUserId: userId });
   } else {

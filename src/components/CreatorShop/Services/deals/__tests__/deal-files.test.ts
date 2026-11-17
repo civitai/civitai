@@ -45,6 +45,17 @@ describe('upload checks before sending', () => {
     );
   });
 
+  it('takes an MP4 or WebM preview only where the deal takes a video preview, under 64 MB', () => {
+    const clip = { name: 'a.mp4', type: 'video/mp4', size: 30 * MB };
+    expect(uploadRefusal('Preview', clip, 'Video')).toBeNull();
+    expect(uploadRefusal('Preview', { ...clip, type: 'video/webm' }, 'Video')).toBeNull();
+    expect(uploadRefusal('Preview', clip, 'Image')).toMatch(/JPEG, PNG, WebP or GIF/);
+    expect(uploadRefusal('Preview', { ...clip, size: 65 * MB }, 'Video')).toMatch(/max 64 MB/);
+    expect(uploadRefusal('Preview', { ...clip, type: 'video/quicktime' }, 'Video')).toMatch(
+      /MP4 or WebM/
+    );
+  });
+
   it('takes finals by extension, refuses video and unknown types, and caps the size', () => {
     expect(uploadRefusal('Final', { name: 'lora.safetensors', type: '', size: MB })).toBeNull();
     expect(

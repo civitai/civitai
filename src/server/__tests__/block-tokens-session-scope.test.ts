@@ -37,7 +37,7 @@ const handler = (await import('~/pages/api/v1/block-tokens')).default as unknown
 
 const USER = { id: 4242, username: 'someone', bannedAt: null, isModerator: true };
 
-const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
+const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 11,
   apiKeyType,
@@ -45,8 +45,8 @@ const nonOauthKey = (apiKeyType: 'User' | 'System', tokenScope: number) => ({
   tokenScope,
   buzzLimit: null,
 });
-const personalKey = (tokenScope: number) => nonOauthKey('User', tokenScope);
-const oauthToken = (tokenScope: number) => ({
+const personalKey = (tokenScope: bigint) => nonOauthKey('User', tokenScope);
+const oauthToken = (tokenScope: bigint) => ({
   user: USER,
   apiKeyId: 12,
   apiKeyType: 'Access',

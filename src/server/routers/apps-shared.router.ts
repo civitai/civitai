@@ -85,7 +85,10 @@ import {
   type SharedTextHit,
   type SharedTextScan,
 } from '~/server/services/apps/shared-data-moderation';
-import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
+import {
+  containsPrivateMediaUrl,
+  valueContainsPrivateMediaUrl,
+} from '~/server/services/apps/shared-private-media-urls';
 import {
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
@@ -1966,7 +1969,7 @@ async function assertSharedValueSafeAndSerialize(params: {
   const readStoredData = () =>
     value.data === undefined ? undefined : (JSON.parse(serialized) as { data?: unknown }).data;
   // Refused in every mode; under `enforce` the scan below records it.
-  if (mode !== 'enforce' && containsPrivateMediaUrl(serialized)) {
+  if (mode !== 'enforce' && valueContainsPrivateMediaUrl(JSON.parse(serialized))) {
     throw tagSharedStorageOutcome(
       new TRPCError({ code: 'BAD_REQUEST', message: 'Content contains a blocked link (data)' }),
       'moderation_blocked'

@@ -35,7 +35,10 @@ import { normalizeText } from '~/utils/normalize-text';
 import { styleTags, tagsNeedingReview } from '~/libs/tags';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
-import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
+import {
+  queueArticlesAndComicsForImages,
+  queueModelsForImageChildTagChanges,
+} from '~/server/services/image-models-reindex.service';
 import {
   tagIdsForImagesCache,
   tagCacheByName,
@@ -620,6 +623,7 @@ export async function resolveScanOutcome({
     toUpdate.scannedAt = now;
   else toUpdate.scannedAt = image.scannedAt;
 
+  const ratingLocked = image.nsfwLevelLocked && image.nsfwLevel !== 0;
   if (audit.blockedFor) {
     // A block outranks a locked rating: it is a ToS decision, not a rating.
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
@@ -629,8 +633,9 @@ export async function resolveScanOutcome({
     toUpdate.ingestion = ImageIngestionStatus.Scanned;
     toUpdate.needsReview = reviewKey;
     toUpdate.blockedFor = null;
-    // Respect a manually-locked nsfw level — never overwrite it from the scan.
-    toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
+    // Respect a manually-locked nsfw level — never overwrite it from the scan. A lock on no rating
+    // (level 0) is not a rating, so the scan's level stands and the lock is dropped in the write.
+    toUpdate.nsfwLevel = ratingLocked ? image.nsfwLevel : audit.nsfwLevel;
   }
 
   // Moderation rules can block the image, hold it for review, or annotate its
@@ -715,9 +720,14 @@ export async function resolveScanOutcome({
       "blockedFor" = CASE WHEN ${csamBlocked} THEN "blockedFor"
         ELSE ${(toUpdate.blockedFor as string) ?? null} END,
       "nsfwLevel" = CASE WHEN ${csamBlocked} THEN ${Prisma.raw(String(NsfwLevel.Blocked))}
+        -- A rating locked since the image was loaded stands over a rating, never over a block; a
+        -- lock that holds no level does not stand.
+        WHEN "nsfwLevelLocked" AND "nsfwLevel" <> 0
+          AND ${scanLevel}::int <> ${Prisma.raw(String(NsfwLevel.Blocked))} THEN "nsfwLevel"
         ELSE ${scanLevel}::int END,
       "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
         ELSE ${(toUpdate.needsReview as string) ?? null} END,
+      "nsfwLevelLocked" = "nsfwLevelLocked" AND "nsfwLevel" <> 0,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
@@ -777,7 +787,7 @@ export async function resolveScanOutcome({
     `.catch(() => []); // the verdict has landed: a failed read-back must not turn it into a scan error
     ingestion = row?.ingestion ?? ingestion;
   }
-  if (scanLevel !== NsfwLevel.Blocked && !image.nsfwLevelLocked) {
+  if (scanLevel !== NsfwLevel.Blocked && !ratingLocked) {
     const floor = judgeRatingFloorSql();
     const rescan = Prisma.sql`(${floor} > ${audit.checkedLevel}::int AND ${floor} > ${sfwBrowsingLevelsFlag}::int)`;
     try {
@@ -1206,7 +1216,12 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
-    await queueModelsForImageChildTagChanges({ levelImageIds: [image.id] });
+    // The scan writes "minor", which no trigger watches.
+    await queueArticlesAndComicsForImages([image.id]);
+    await queueModelsForImageChildTagChanges({
+      levelImageIds: [image.id],
+      ...(outcome.audit?.minor && { minorImageIds: [image.id] }),
+    });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.
     try {

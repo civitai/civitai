@@ -8,7 +8,7 @@ import {
   SCOPE_JUSTIFICATION_MAX_LENGTH,
   isSensitiveTokenScope,
   tokenScopeKeyByBit,
-  tokenScopeLabels,
+  tokenScopeLabel,
   tokenScopeMaskToList,
 } from '~/shared/constants/token-scope.constants';
 
@@ -48,7 +48,7 @@ export function DerivedScopesDisclosure({
   forceShowErrors = false,
 }: {
   /** The derived requested-scope mask (= the selected client's `allowedScopes`). */
-  requestedScopes: number;
+  requestedScopes: number | bigint;
   /** enum-key → rationale (prefilled + edited here). */
   justifications: Record<string, string>;
   onJustificationChange: (key: string, text: string) => void;
@@ -66,7 +66,8 @@ export function DerivedScopesDisclosure({
   const [otherOpened, { toggle: toggleOther }] = useDisclosure(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
-  const scopes = tokenScopeMaskToList(requestedScopes);
+  // The mask arrives as a number (the client's scope from tRPC); widened before it is decoded.
+  const scopes = tokenScopeMaskToList(BigInt(requestedScopes));
   const sensitive = scopes.filter((s) => isSensitiveTokenScope(s.bit));
   const nonSensitive = scopes.filter((s) => !isSensitiveTokenScope(s.bit));
 
@@ -109,7 +110,7 @@ export function DerivedScopesDisclosure({
                   const isEmpty = text.trim().length === 0;
                   const showError = isEmpty && (forceShowErrors || touched[justificationKey]);
                   return (
-                    <div key={bit}>
+                    <div key={key}>
                       <Group gap={8} wrap="nowrap" align="center" mb={4}>
                         <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                           {key}
@@ -187,13 +188,13 @@ export function DerivedScopesDisclosure({
                     Standard permissions — no justification needed.
                   </Text>
                   {nonSensitive.map(({ bit, key, label }) => (
-                    <Group key={bit} gap={8} wrap="nowrap" align="center">
+                    <Group key={key} gap={8} wrap="nowrap" align="center">
                       <Text size="sm" fw={600} style={{ fontFamily: 'ui-monospace, monospace' }}>
                         {key}
                       </Text>
-                      {(label || tokenScopeLabels[bit]) && (
+                      {(label || tokenScopeLabel(bit)) && (
                         <Text size="xs" c="dimmed">
-                          {label || tokenScopeLabels[bit]}
+                          {label || tokenScopeLabel(bit)}
                         </Text>
                       )}
                     </Group>
