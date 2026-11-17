@@ -10,10 +10,13 @@ import {
   headObjectResult,
   createMultipartResult,
   presignPartResult,
+  purgeObjectVersionsResult,
   type DeleteObjectInput,
   type DeleteManyObjectsInput,
   type HeadObjectInput,
   type HeadObjectResult,
+  type PurgeObjectVersionsInput,
+  type PurgeObjectVersionsResult,
   type PresignPutInput,
   type PresignGetInput,
   type PresignResult,
@@ -279,6 +282,13 @@ function buildRawClient(config: StorageClientConfig) {
 
     deleteManyObjects: async (input: DeleteManyObjectsInput): Promise<void> => {
       await post('/objects/delete-many', input, config);
+    },
+
+    /** Throws `StorageClientError` unless the service read back zero versions of the key. */
+    purgeObjectVersions: async (
+      input: PurgeObjectVersionsInput
+    ): Promise<PurgeObjectVersionsResult> => {
+      return purgeObjectVersionsResult.parse(await post('/objects/purge-versions', input, config));
     },
 
     headObject: async (input: HeadObjectInput): Promise<HeadObjectResult> => {

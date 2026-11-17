@@ -27,6 +27,7 @@ export const BLOCK_TOKEN_QUERY_PROCEDURES: ReadonlySet<string> = new Set([
   'apps.storage.get',
   'apps.storage.getQuota',
   'apps.storage.list',
+  'blockImageUpload.generationSourceUsesScannedRows',
   'blocks.listMyWorkflows',
 ]);
 

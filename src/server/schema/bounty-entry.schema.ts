@@ -1,8 +1,8 @@
 import { Currency } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
-import { imageGenerationSchema, imageReferenceInputSchema } from '~/server/schema/image.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { baseFileSchema } from './file.schema';
+import { bountyImagesSchema, shownImageIdsSchema } from '~/server/schema/bounty.schema';
 import { constants } from '~/server/common/constants';
 
 export type BountyEntryFileMeta = z.infer<typeof bountyEntryFileMeta>;
@@ -25,18 +25,12 @@ export const upsertBountyEntryInputSchema = z.object({
   bountyId: z.number(),
   files: z.array(bountyEntryFileSchema).min(1),
   ownRights: z.boolean().optional(),
-  images: z
-    .array(
-      imageReferenceInputSchema.extend({
-        meta: imageGenerationSchema.omit({ comfy: true }).nullish(),
-      })
-    )
-    .min(1, 'At least one example image must be uploaded')
-    .max(
-      constants.bounties.maxEntryImagesForEdit,
-      `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
-    ),
+  images: bountyImagesSchema.max(
+    constants.bounties.maxEntryImagesForEdit,
+    `An entry can have at most ${constants.bounties.maxEntryImagesForEdit} images`
+  ),
   description: getSanitizedStringSchema().nullish(),
+  shownImageIds: shownImageIdsSchema,
 });
 
 // Headless/agent (MCP) friendly bounty-entry submission. The full `upsert`

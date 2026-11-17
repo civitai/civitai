@@ -2169,7 +2169,7 @@ export const deleteArticleById = async ({
         );
         // Per image, so one failed delete does not stop the rest.
         for (const imageId of deletable) {
-          await deleteImageById({ id: imageId }).catch((error) => {
+          await deleteImageById({ id: imageId, moderatorDelete: !!isModerator }).catch((error) => {
             handleLogError(
               error,
               imageId === deleted.coverId

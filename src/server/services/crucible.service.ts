@@ -3598,7 +3598,8 @@ export type JudgingPairCount = {
  * entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
  * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
- * query off crucibles the judge never voted in, which the feed asks about most.
+ * query off crucibles where the judge has not yet voted on or dismissed a pair, which the feed asks
+ * about most.
  */
 export async function countJudgingPairs({
   crucibleIds,
@@ -6493,8 +6494,8 @@ export const getJudgingSuggestions = async ({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })
   );
-  // countJudgingPairs skips crucibles the judge never voted in (judgedOnly), so estimate those from
-  // the raw entry count: an overestimate, fine for weighting.
+  // countJudgingPairs skips crucibles where the judge has neither voted nor dismissed (judgedOnly),
+  // so estimate those from the raw entry count: an overestimate, fine for weighting.
   return suggestions.map((crucible) => ({
     ...crucible,
     remainingPairs:

@@ -70,7 +70,7 @@
       "goRoots": ["apps/feed-go/internal/modelfeed"],
       "flags": {
         "shadow": "feed-go-shadow-model-getall",
-        "transport": null,
+        "transport": "feed-go-transport-model-getall",
         "probe": null
       },
       "holdout": null,

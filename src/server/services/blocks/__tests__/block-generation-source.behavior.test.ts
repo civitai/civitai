@@ -176,6 +176,7 @@ async function gate(url: string, userId = VIEWER) {
       userId,
       entry: 'appBlocks',
       isApiCaller: false,
+      appBlockLog: { appBlockId: 'apb_alpha' },
     });
     return 'accepted';
   } catch (e) {
@@ -506,6 +507,7 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
       waitForGenerationSource({
         url,
         userId: VIEWER,
+        appBlockId: 'apb_alpha',
         deadline: start + GENERATION_SOURCE_DEADLINE_MS,
       })
     );
@@ -526,6 +528,7 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
       waitForGenerationSource({
         url,
         userId: VIEWER,
+        appBlockId: 'apb_alpha',
         deadline: start + GENERATION_SOURCE_DEADLINE_MS,
       })
     );
@@ -553,7 +556,12 @@ describe('the scan wait (the generation gate is the definition of ready)', () =>
     await scan(902, set);
     const url = generationSourceUrl('33333333-3333-4333-8333-333333333333');
     await expect(
-      waitForGenerationSource({ url, userId: VIEWER, deadline: Date.now() + 1 })
+      waitForGenerationSource({
+        url,
+        userId: VIEWER,
+        appBlockId: 'apb_alpha',
+        deadline: Date.now() + 1,
+      })
     ).rejects.toMatchObject({ message });
   });
 
@@ -695,6 +703,7 @@ describe('🔴 gate seam on the textToImage path (flag on): the persisted url as
         userId: VIEWER,
         entry: 'appBlocks',
         isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_alpha' },
       });
       return { urls, verdict: 'accepted' };
     } catch (e) {

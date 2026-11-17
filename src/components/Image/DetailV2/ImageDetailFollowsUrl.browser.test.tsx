@@ -130,6 +130,7 @@ function Detail() {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   return (
