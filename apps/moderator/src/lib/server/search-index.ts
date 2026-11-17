@@ -57,6 +57,7 @@ async function postSync(body: unknown, logContext: unknown, strict = false): Pro
   const token = env.WEBHOOK_TOKEN;
   if (!token) {
     console.warn('[search-index] WEBHOOK_TOKEN not set — skipping Meilisearch sync', logContext);
+    if (strict) throw new Error('search-index sync skipped: WEBHOOK_TOKEN not set');
     return;
   }
 
@@ -74,6 +75,7 @@ async function postSync(body: unknown, logContext: unknown, strict = false): Pro
     }
   } catch (err) {
     console.error('[search-index] sync error', err);
-    if (strict) throw err;
+    // A fresh error, not `err`: a URL parse error carries the request URL, token included.
+    if (strict) throw new Error(`search-index sync error: ${(err as Error)?.name ?? 'unknown'}`);
   }
 }

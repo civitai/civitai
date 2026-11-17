@@ -30,6 +30,14 @@ describe('syncSearchIndexBulk', () => {
     await expect(syncSearchIndexBulk(batch, { strict: true })).rejects.toThrow();
   });
 
+  it('throws an error that does not carry the token', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Invalid URL: https://main/api?token=t'));
+
+    const error = await syncSearchIndexBulk(batch, { strict: true }).catch((e: Error) => e);
+
+    expect(String((error as Error).message)).not.toContain('token');
+  });
+
   it('only logs it by default', async () => {
     fetchMock.mockResolvedValue(new Response('no', { status: 503 }));
 
@@ -40,5 +48,18 @@ describe('syncSearchIndexBulk', () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
 
     await expect(syncSearchIndexBulk(batch, { strict: true })).resolves.toBeUndefined();
+  });
+});
+
+describe('syncSearchIndexBulk without a token', () => {
+  it('throws in strict mode, and only warns by default', async () => {
+    vi.resetModules();
+    vi.doMock('$env/dynamic/private', () => ({ env: { CIVITAI_APP_URL: 'https://main' } }));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { syncSearchIndexBulk: sync } = await import('../search-index');
+
+    await expect(sync(batch, { strict: true })).rejects.toThrow('WEBHOOK_TOKEN');
+    await expect(sync(batch)).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
