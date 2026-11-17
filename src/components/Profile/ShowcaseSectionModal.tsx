@@ -4,7 +4,6 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   ShowcaseSectionSchema,
   ShowcaseSectionType,
@@ -39,12 +38,6 @@ export default function ShowcaseSectionModal({ sections, sectionId }: Props) {
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
   const existing = sections.find((s) => s.id === sectionId);
-  const features = useFeatureFlags();
-  // The Images picker searches through the image search, so without it the type would offer an
-  // empty picker. A section that already exists keeps its type.
-  const offeredTypes = typeOptions.filter(
-    ({ value }) => value !== 'Image' || features.imageSearch || existing?.type === 'Image'
-  );
   const [id] = useState(() => existing?.id ?? crypto.randomUUID().replace(/-/g, '').slice(0, 12));
 
   const [type, setType] = useState<ShowcaseSectionType>(existing?.type ?? 'Model');
@@ -99,7 +92,7 @@ export default function ShowcaseSectionModal({ sections, sectionId }: Props) {
     >
       <Stack>
         <SegmentedControl
-          data={offeredTypes}
+          data={typeOptions}
           value={type}
           onChange={(value) => {
             setType(value as ShowcaseSectionType);

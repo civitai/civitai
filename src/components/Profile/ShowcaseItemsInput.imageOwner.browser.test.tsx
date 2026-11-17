@@ -7,14 +7,23 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 // The showcase editor's Images picker, mounted with the real InstantSearch, Configure and search
 // client wiring. Only the transports are faked: Meilisearch has no images index any more (images_v6
-// was deleted), and the semantic search fake applies `usernames` the way the server does.
+// was deleted), the semantic search fake applies `usernames` the way the server does, and
+// `image.getMyImages` answers the caller's own images (the server reads the caller from the session).
 
 const OWNER_IMAGE = 41;
 const OTHER_USERS_IMAGE = 99;
 const OWNER_ARTICLE = 51;
 const OTHER_USERS_ARTICLE = 98;
+const RECENT_SAFE = 61;
+const RECENT_MATURE = 62;
 
-const state = vi.hoisted(() => ({ semanticQuery: vi.fn(), articleQuery: vi.fn() }));
+const state = vi.hoisted(() => ({
+  renderedHits: [] as unknown[],
+  imageSearch: true,
+  semanticQuery: vi.fn(),
+  articleQuery: vi.fn(),
+  myImages: vi.fn(),
+}));
 
 vi.mock('@meilisearch/instant-meilisearch', async () => {
   const { emptyResult } = await import('~/components/Search/semanticImageSearchClient');
@@ -38,8 +47,8 @@ vi.mock('@meilisearch/instant-meilisearch', async () => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  // The Images tab is offered only with `imageSearch` on.
-  useFeatureFlags: () => new Proxy({}, { get: () => true }),
+  useFeatureFlags: () =>
+    new Proxy({}, { get: (_, key) => (key === 'imageSearch' ? state.imageSearch : true) }),
 }));
 // Articles answer from the semantic article search when this is on; it ignores `filters`.
 vi.mock('~/components/Search/semanticArticleSearchFlag', () => ({
@@ -49,7 +58,7 @@ vi.mock('~/components/Search/semanticArticleSearchFlag', () => ({
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   BrowsingSettingsAddonsProvider: (props: { children: ReactNode }) => props.children,
-  useBrowsingSettingsAddons: () => ({ settings: {}, browsingLevel: 1 }),
+  useBrowsingSettingsAddons: () => ({ settings: {}, browsingLevel: 3 }),
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -61,9 +70,10 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
 // The option renderer is out of frame; a marker per offered image is all this test reads.
 vi.mock('~/components/AutocompleteSearch/renderItems/images', async () => {
   const React = await import('react');
-  const ImagesSearchItem = React.forwardRef((props: { value: string }, ref) =>
-    React.createElement('div', { ref, 'data-testid': `option-${props.value}` })
-  );
+  const ImagesSearchItem = React.forwardRef((props: { value: string; hit?: unknown }, ref) => {
+    state.renderedHits.push(props.hit);
+    return React.createElement('div', { ref, 'data-testid': `option-${props.value}` });
+  });
   ImagesSearchItem.displayName = 'ImagesSearchItemStub';
   return { ImagesSearchItem };
 });
@@ -85,12 +95,29 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpcVanilla: {
     semanticImageSearch: { search: { query: state.semanticQuery } },
     semanticArticleSearch: { search: { query: state.articleQuery } },
+    image: { getMyImages: { query: state.myImages } },
   },
 }));
 
 const { ShowcaseItemsInput } = await import('~/components/Profile/ShowcaseItemsInput');
 
 beforeEach(() => {
+  state.renderedHits = [];
+  state.imageSearch = true;
+  state.myImages.mockReset();
+  // Browsing level 3 (PG + PG-13) is set above; 2 is PG-13, 16 is X.
+  state.myImages.mockResolvedValue({
+    items: [
+      {
+        id: RECENT_SAFE,
+        nsfwLevel: 2,
+        url: 'a',
+        type: 'image',
+        metadata: { hash: 'h', width: 3, height: 2 },
+      },
+      { id: RECENT_MATURE, nsfwLevel: 16, url: 'b', type: 'image' },
+    ],
+  });
   state.semanticQuery.mockReset();
   // As the server: `usernames` narrows to those users' images; without it, anyone's.
   state.semanticQuery.mockImplementation(async (input: { usernames?: string[] }) => ({
@@ -109,7 +136,11 @@ const offeredIds = () =>
 describe('Images search in the showcase picker', () => {
   // Control built into the fake: it answers another user's image whenever the owner scope is
   // missing, so offering exactly the owner's image is the scope holding, not the fake.
-  test('typing a search offers the owner’s images and never another user’s', async () => {
+  test.each([
+    ['with image search', true],
+    ['without image search', false],
+  ])('typing a search offers the owner’s images and never another user’s, %s', async (_, flag) => {
+    state.imageSearch = flag;
     renderWithProviders(
       <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
     );
@@ -133,5 +164,33 @@ describe('Images search in the showcase picker', () => {
 
     await vi.waitFor(() => expect(offeredIds()).toEqual([OWNER_ARTICLE]), { timeout: 3000 });
     expect(state.articleQuery).not.toHaveBeenCalled();
+  });
+
+  test('on open, it lists the caller’s recent images at their browsing level', async () => {
+    state.imageSearch = false;
+    renderWithProviders(
+      <ShowcaseItemsInput username="fox" supportedIndexes={['images']} value={[]} />
+    );
+
+    await userEvent.click(page.getByPlaceholder('Search Civitai'));
+
+    await vi.waitFor(() => expect(offeredIds()).toEqual([RECENT_SAFE]), { timeout: 3000 });
+    // A blurred row draws its placeholder from these; without them it is an empty box.
+    expect(state.renderedHits.at(-1)).toMatchObject({ hash: 'h', width: 3, height: 2 });
+    expect(state.semanticQuery).not.toHaveBeenCalled();
+    // Whose images is the session's call: the request names no user.
+    expect(state.myImages).toHaveBeenCalledWith({
+      limit: 25,
+      mediaTypes: ['image'],
+      publishedOnly: true,
+    });
+  });
+
+  test('signed out, there is no picker to search', async () => {
+    renderWithProviders(<ShowcaseItemsInput supportedIndexes={['images']} value={[]} />);
+
+    await expect.element(page.getByText('You have not selected any items')).toBeInTheDocument();
+    expect(page.getByPlaceholder('Search Civitai').elements()).toHaveLength(0);
+    expect(state.myImages).not.toHaveBeenCalled();
   });
 });

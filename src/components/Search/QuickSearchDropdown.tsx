@@ -3,7 +3,10 @@ import { Group, Select } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
-import { withSemanticImageSearch } from '~/components/Search/semanticImageSearchClient';
+import {
+  createOwnerImageSearch,
+  withSemanticImageSearch,
+} from '~/components/Search/semanticImageSearchClient';
 import { withSemanticArticleSearch } from '~/components/Search/semanticArticleSearchClient';
 import { withSemanticComicSearch } from '~/components/Search/semanticComicSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
@@ -63,6 +66,16 @@ const semanticMeilisearch = withUserHydration(
       withSemanticArticleSearch(
         withSemanticImageSearch(createInstantMeiliSearch({ primaryKey: 'id' }))
       )
+    )
+  )
+);
+
+// An owner-scoped Images search (the showcase picker), with or without `imageSearch`.
+const ownerImagesSearch = withUserHydration(
+  createResilientSearchClient(
+    withSemanticImageSearch(
+      createInstantMeiliSearch({ primaryKey: 'id' }),
+      createOwnerImageSearch()
     )
   )
 );
@@ -266,7 +279,9 @@ const QuickSearchDropdownInner = ({
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>
-        (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+        (features.imageSearch || imageOwner
+          ? true
+          : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
         (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
         (features.articles ? true : value !== 'articles')
     )
@@ -334,8 +349,10 @@ const QuickSearchDropdownInner = ({
         searchClient={
           disableInitialSearch
             ? searchClient
-            : // With an owner scope, only Images: the other semantic searches ignore `filters`.
-            features.imageSearch && (!imageOwner || ownerScopedImages)
+            : ownerScopedImages
+            ? ownerImagesSearch
+            : // With an owner scope, the other tabs stay on Meili: the semantic searches ignore `filters`.
+            features.imageSearch && !imageOwner
             ? semanticMeilisearch
             : meilisearch
         }

@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
+  type SemanticImageSearchInput,
   semanticImageSearchSchema,
   semanticSearchFeedbackSchema,
 } from '~/server/schema/semantic-image-search.schema';
@@ -11,15 +12,35 @@ import {
   isFeedbackAreaEnabled,
 } from '~/server/services/feedback.service';
 import { searchSemanticImages } from '~/server/services/semantic-image-search.service';
-import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  guardFlagEnabled,
+  isFlagProtected,
+  middleware,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { FEEDBACK_FILTER_VALUE_MAX_LENGTH } from '~/shared/constants/feedback.constants';
 
+// Without `imageSearch` or `feedSearch` (the images feed answers its ?query= from here), a signed-in
+// user may still search their own images: the showcase picker. The request must name exactly their
+// username, and it is narrowed to their id, so it cannot reach anyone else's images.
+const imageSearchOrOwnImages = middleware(({ ctx, input, next }) => {
+  if (guardFlagEnabled(ctx, 'imageSearch') || guardFlagEnabled(ctx, 'feedSearch'))
+    return next({ ctx: { ownImagesOf: undefined as number | undefined } });
+
+  const { usernames, userIds } = input as SemanticImageSearchInput;
+  const username = ctx.user?.username?.toLowerCase();
+  const ownOnly =
+    !!username && usernames?.length === 1 && usernames[0].toLowerCase() === username && !userIds;
+  if (!ownOnly) throw new TRPCError({ code: 'FORBIDDEN' });
+
+  return next({ ctx: { ownImagesOf: ctx.user!.id as number | undefined } });
+});
+
 // Timed first, so flag and rate-limit refusals land on the dashboard too.
-// `feedSearch` alone opens it too: the images feed answers its ?query= from this procedure.
-const semanticSearchProcedure = publicProcedure
-  .use(timeSemanticSearch('images'))
-  .use(isFlagProtected('imageSearch', 'feedSearch'));
+const semanticSearchProcedure = publicProcedure.use(timeSemanticSearch('images'));
 
 export const semanticImageSearchRouter = router({
   search: semanticSearchProcedure
@@ -31,10 +52,12 @@ export const semanticImageSearchRouter = router({
       ])
     )
     .input(semanticImageSearchSchema)
+    .use(imageSearchOrOwnImages)
     .query(async ({ input, ctx }) => {
       const started = Date.now();
+      const { ownImagesOf } = ctx;
       const result = await searchSemanticImages({
-        input,
+        input: ownImagesOf ? { ...input, usernames: undefined, userIds: [ownImagesOf] } : input,
         user: ctx.user,
         domain: getRequestBoardDomainColor(ctx.req),
         track: ctx.track,
