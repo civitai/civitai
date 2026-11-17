@@ -48,10 +48,13 @@ describe('app access request notifications — where they point', () => {
     expect(msg('app-access-request-declined', { requestId: 31 }).url).toBe('/apps/build');
   });
 
-  it('a revoke reads differently from a refused request', () => {
+  it('a revoke says access was turned off; a refused request says it was not approved', () => {
     const declined = msg('app-access-request-declined', { requestId: 31 }).message;
     const revoked = msg('app-access-request-declined', { requestId: 31, revoked: true }).message;
-    expect(revoked).not.toBe(declined);
+    expect(revoked).toMatch(/turned off/);
+    expect(revoked).not.toMatch(/not approved/);
+    expect(declined).toMatch(/not approved/);
+    expect(declined).not.toMatch(/turned off/);
   });
 });
 

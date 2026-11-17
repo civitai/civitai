@@ -300,10 +300,23 @@ describe('AppAccessRequestPanel — the /apps/build?request-access=1 deep link',
   test('🔴 nothing happens until getMine answers — no form over a status that may be pending', async () => {
     mocks.request = undefined;
     withParam();
-    render();
+    const ui = () => (
+      <>
+        <AppAccessRequestPanel onRequest={mocks.onRequest} />
+        <DialogProvider />
+      </>
+    );
+    const view = await renderWithProviders(ui());
     await expect.element(page.getByTestId('app-access-request-button')).toBeInTheDocument();
     expect(router.replace).not.toHaveBeenCalled();
     expect(openDialogIds()).toEqual([]);
+
+    // Positive control: once getMine answers "never asked", the same mount opens the form — so
+    // what held it back was the missing answer, not a slow or dead effect.
+    mocks.request = null;
+    await view.rerender(ui());
+    await vi.waitFor(() => expect(openDialogIds()).toEqual(['app-access-request']));
+    expect(router.replace).toHaveBeenCalledTimes(1);
   });
 
   test('🔴 signed out: sign-in, returning to the URL WITH the param; no form', async () => {

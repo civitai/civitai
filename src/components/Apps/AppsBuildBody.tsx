@@ -1,14 +1,4 @@
-import {
-  Alert,
-  Button,
-  Collapse,
-  Container,
-  Divider,
-  Group,
-  Stack,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Alert, Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconArrowRight, IconChevronDown, IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -336,9 +326,8 @@ function AppsBuildPitch({ onRequest }: { onRequest: () => void }) {
 
 /**
  * `/apps/build` for a signed-in viewer the build gate refuses (the page's `request` mode): the
- * pitch and the Request access panel, and nothing else. No `AppsPageLayout` and no build-state
- * queries — this viewer has no `/apps` surface, so neither the rail nor `getNavSummary` belongs
- * here.
+ * pitch and the Request access panel, and nothing else. No build-state queries: this viewer has
+ * no build surface, so `getNavSummary` and the author states do not belong here.
  */
 export function AppsBuildRequestView() {
   const { trackAction } = useTrackEvent();
@@ -349,9 +338,9 @@ export function AppsBuildRequestView() {
     }).catch(() => undefined);
   }, [trackAction]);
   return (
-    <Container size="lg" py="xl" data-testid="apps-build-request-view">
+    <div data-testid="apps-build-request-view">
       <AppsBuildPitch onRequest={onRequest} />
-    </Container>
+    </div>
   );
 }
 

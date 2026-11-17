@@ -127,11 +127,9 @@ describe('/apps/build — which view the page mounts', () => {
     workspaceLoaded = true;
   });
 
-  test('🔴 the request view mounts only the request view: no /apps layout, no build body', async () => {
-    renderWithProviders(<AppsBuildPage mode="request" />);
+  test('🔴 the request view mounts the request view in the layout, and no build body', async () => {
+    await renderPage({ mode: 'request' });
     await expect.element(page.getByTestId('request-view')).toBeInTheDocument();
-    // The /apps chrome (its rail and nav queries) belongs to viewers who have /apps.
-    expect(seen('actions')).toBe(0);
     expect(seen('build-body')).toBe(0);
     expect(seen('workspace')).toBe(0);
   });

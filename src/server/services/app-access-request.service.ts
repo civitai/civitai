@@ -48,6 +48,19 @@ export type AppAccessRequestQueueItem = AppAccessRequestView & {
 const VIEW_COLUMNS = Prisma.raw(`"id", "whatToBuild", "status", "createdAt", "reviewedAt"`);
 
 /**
+ * Whether the person holds an approved request — the grant the auth hub reads ("EXISTS an approved
+ * row"). Read from the primary, like everything here.
+ */
+async function hasApprovedAppAccessRequest(userId: number): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<{ approved: boolean }[]>(Prisma.sql`
+    SELECT EXISTS (
+      SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'approved'
+    ) AS "approved"
+  `);
+  return !!row?.approved;
+}
+
+/**
  * Creates the viewer's request. One pending request per person (the partial unique index), so a
  * second submit while one is pending is a CONFLICT; after a decline a new request is a new row.
  */
@@ -58,12 +71,7 @@ export async function submitAppAccessRequest({
   userId: number;
   input: SubmitAppAccessRequestInput;
 }): Promise<AppAccessRequestView> {
-  const approved = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    SELECT "id" FROM "AppAccessRequest"
-    WHERE "userId" = ${userId} AND "status" = 'approved'
-    LIMIT 1
-  `);
-  if (approved.length > 0)
+  if (await hasApprovedAppAccessRequest(userId))
     throw new TRPCError({ code: 'CONFLICT', message: APP_ACCESS_ALREADY_APPROVED });
 
   const [row] = await dbWrite.$queryRaw<AppAccessRequestView[]>(Prisma.sql`
@@ -186,16 +194,12 @@ export async function decideAppAccessRequest({
     try {
       // Declining a stray PENDING row (the race above) leaves a standing grant in place, so a
       // "not approved" notice would be false. Read after the commit, so it sees this decision.
-      if (input.decision === 'declined' && prev === 'pending') {
-        const [{ stillApproved }] = await dbWrite.$queryRaw<{ stillApproved: boolean }[]>(
-          Prisma.sql`
-            SELECT EXISTS (
-              SELECT 1 FROM "AppAccessRequest" WHERE "userId" = ${userId} AND "status" = 'approved'
-            ) AS "stillApproved"
-          `
-        );
-        if (stillApproved) return view;
-      }
+      if (
+        input.decision === 'declined' &&
+        prev === 'pending' &&
+        (await hasApprovedAppAccessRequest(userId))
+      )
+        return view;
       await notifyAppAccessDecision({
         userId,
         requestId: view.id,

@@ -55,8 +55,8 @@ export type AppsBuildPageProps = { mode: 'build' } | { mode: 'request' } | Assis
  *   A · pitch     (not an author)                   — recruit, and request access
  *   B · first-app (author, nothing yet)             — agent card, create
  *   C · workbench (author, has apps or submissions) — the app list + `New app`
- *   request — a SIGNED-IN viewer the gate refuses: the pitch and the Request access panel only,
- *             outside the `/apps` chrome (no rail, no build data). Signed out, `?request-access=1`
+ *   request — a SIGNED-IN viewer the gate refuses: the pitch and the Request access panel only
+ *             (no build-state data; the shared layout's rail follows their own flags). Signed out, `?request-access=1`
  *             goes to sign-in and back; without it a refused viewer still gets `notFound`.
  *
  * 🔴 THE GATE IS `resolveAppsBuildPageMode`, WHICH THE RAIL'S Build ROW ALSO CALLS. That sharing
@@ -128,12 +128,16 @@ export default function AppsBuildPage(props: AppsBuildPageProps) {
     : false;
 
   if (props.mode === 'request') {
-    // Not `AppsPageLayout`: that is the `/apps` chrome (the rail and its nav queries), and this
-    // viewer has no `/apps`. Decided from the SSR props, so the first paint is already this view.
+    // The shared layout, like every /apps page. Its rail follows the viewer's own flags: an
+    // account with no store flag gets no rail and no nav query; one with the store (but no build
+    // access) gets only the store rows it can use, never Build. Decided from the SSR props, so the
+    // first paint is already this view.
     return (
       <>
         <Meta title="Build on Civitai" deIndex />
-        <AppsBuildRequestView />
+        <AppsPageLayout title="Build">
+          <AppsBuildRequestView />
+        </AppsPageLayout>
       </>
     );
   }
