@@ -378,7 +378,7 @@ export async function getServiceOfferingFeed({
   const rows = await dbRead.serviceOffering.findMany({
     where: {
       ...listable,
-      // Added to the listing rule's own AND, never in place of it.
+      // Keep the listing rule's AND; the query only narrows it.
       AND: [
         ...listable.AND,
         ...(query
