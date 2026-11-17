@@ -58,6 +58,18 @@ describe('/cases/batch grants', () => {
     expect(imports.retireNotice).not.toHaveBeenCalled();
   });
 
+  it('answers an export that lost its run lock with a 409, not a store outage', async () => {
+    service.startExport.mockRejectedValueOnce(
+      new imports.ImportRefusedError(
+        'the export of batch backlog-1 lost its run lock; export again'
+      )
+    );
+    await expect(POST(event({ 'cases.act': true }))).rejects.toMatchObject({
+      status: 409,
+      body: { message: expect.stringContaining('lost its run lock') },
+    });
+  });
+
   it('refuses the export without cases.act, and records nothing', async () => {
     await expect(POST(event({ 'cases.pii': true }))).rejects.toMatchObject({ status: 403 });
     expect(service.startExport).not.toHaveBeenCalled();

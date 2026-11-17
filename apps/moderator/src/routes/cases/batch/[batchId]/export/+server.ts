@@ -1,5 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import { denied } from '$lib/server/access';
+import { ImportRefusedError } from '$lib/server/cases/backlog-import';
 import { withCaseData } from '$lib/server/cases/case-routes';
 import { BATCH_ID } from '$lib/server/cases/cases.db';
 import { startExport } from '$lib/server/cases/cases.service';
@@ -16,7 +17,13 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ params, locals }) => {
   if (!locals.grants['cases.act']) error(403, denied('cases.act'));
   if (!BATCH_ID.test(params.batchId)) error(404, 'Unknown batch.');
-  const rows = await withCaseData(() => startExport(params.batchId, locals.user.id));
+  let rows;
+  try {
+    rows = await withCaseData(() => startExport(params.batchId, locals.user.id));
+  } catch (e) {
+    if (e instanceof ImportRefusedError) error(409, e.message);
+    throw e;
+  }
   if (!rows.ok) error(503, rows.message);
   if (rows.value === 'running') error(409, 'A send of this batch is running; export once it ends.');
   return json(rows.value, {
