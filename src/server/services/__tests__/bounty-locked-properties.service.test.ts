@@ -57,6 +57,8 @@ import {
   upsertBounty,
 } from '~/server/services/bounty.service';
 import { constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
+import { bountyNsfwFlagLevel } from '~/server/services/bounty-rated-level';
 import { loadRatingReviewSubject } from '~/server/services/rating-review.entities';
 import {
   checkEntityImageKeys,
@@ -76,12 +78,16 @@ function mockStored({
   poi = false,
   meta = null as unknown,
   details = null as unknown,
+  nsfw = false,
+  moderatorNsfwLevel = null as number | null,
 }: {
   lockedProperties?: string[];
   complete?: boolean;
   poi?: boolean;
   meta?: unknown;
   details?: unknown;
+  nsfw?: boolean;
+  moderatorNsfwLevel?: number | null;
 } = {}) {
   mockDbRead.bounty.findUnique.mockResolvedValue({ lockedProperties });
   mockDbWrite.bounty.findUniqueOrThrow.mockResolvedValue({
@@ -92,6 +98,8 @@ function mockStored({
     poi,
     meta,
     lockedProperties,
+    nsfw,
+    moderatorNsfwLevel,
     _count: { entries: 0 },
   });
 }
@@ -201,6 +209,46 @@ describe('updateBountyById — lock enforcement', () => {
     expect(mockDbWrite.bounty.findUniqueOrThrow).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
     );
+  });
+});
+
+describe('updateBountyById — a moderator rating against a new nsfw flag', () => {
+  const modEdit = { ...baseUpdate, userId: MODERATOR_ID, isModerator: true, nsfw: true };
+  // The level the feed serves the row at after this edit, with no text rating.
+  const servedLevel = (stored: { nsfw: boolean; moderatorNsfwLevel: number | null }) => {
+    const data = updateData();
+    const moderatorNsfwLevel =
+      'moderatorNsfwLevel' in data ? data.moderatorNsfwLevel : stored.moderatorNsfwLevel;
+    return bountyNsfwFlagLevel(
+      { nsfw: data.nsfw ?? stored.nsfw, nsfwLevel: 60, moderatorNsfwLevel },
+      undefined
+    );
+  };
+
+  it('drops a rating below R when the edit sets the flag, so the feed serves R or above', async () => {
+    for (const rated of [NsfwLevel.PG, NsfwLevel.PG13]) {
+      const stored = { nsfw: false, moderatorNsfwLevel: rated };
+      mockStored(stored);
+      await updateBountyById(modEdit as never);
+      expect(updateData()).toMatchObject({
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: null,
+      });
+      expect(servedLevel(stored)).toBeGreaterThanOrEqual(NsfwLevel.R);
+    }
+  });
+
+  it('keeps a rating made after the flag, and one at R or above', async () => {
+    const cases = [
+      { nsfw: true, moderatorNsfwLevel: NsfwLevel.PG13 },
+      { nsfw: false, moderatorNsfwLevel: NsfwLevel.R },
+    ];
+    for (const stored of cases) {
+      mockStored(stored);
+      await updateBountyById(modEdit as never);
+      expect(updateData()).not.toHaveProperty('moderatorNsfwLevel');
+      expect(servedLevel(stored)).toBe(stored.moderatorNsfwLevel);
+    }
   });
 });
 

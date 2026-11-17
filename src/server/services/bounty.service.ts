@@ -61,8 +61,8 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
-import type { NsfwLevel } from '../common/enums';
-import { BountySort, BountyStatus } from '../common/enums';
+import { BountySort, BountyStatus, NsfwLevel } from '../common/enums';
+import { ratedLevel } from '~/server/services/bounty-rated-level';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -667,6 +667,8 @@ export const updateBountyById = async ({
           meta: true,
           details: true,
           lockedProperties: true,
+          nsfw: true,
+          moderatorNsfwLevel: true,
           _count: { select: { entries: true } },
         },
       });
@@ -689,6 +691,13 @@ export const updateBountyById = async ({
         existing.poi &&
         data.poi === false &&
         hasOpenTextScanFlag(existing.meta, 'poi');
+      // A rating below R is older than a flag set now, and it would outrank the flag. Dropping it
+      // rates the bounty by the flag until a moderator rates it again.
+      const clearsStaleRating =
+        data.nsfw === true &&
+        !existing.nsfw &&
+        existing.moderatorNsfwLevel != null &&
+        ratedLevel(existing.moderatorNsfwLevel) < NsfwLevel.R;
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
       if (addLockedProperties?.length)
@@ -716,6 +725,7 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
+          ...(clearsStaleRating && { moderatorNsfwLevel: null, moderatorNsfwLevelBasis: null }),
           ...(liftedTextScanPoi && {
             availability:
               (readTextScanFlags(existing.meta).poi?.prev?.availability as

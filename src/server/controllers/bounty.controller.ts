@@ -118,7 +118,6 @@ export const getInfiniteBountiesHandler = async ({
         .map(({ moderatorNsfwLevel, ...item }) => {
           const tags = item.tags;
           const user = item.user;
-          // Images show at no less than the flag's level.
           const flagLevel = bountyNsfwFlagLevel(
             { ...item, moderatorNsfwLevel },
             textRated.get(item.id)
