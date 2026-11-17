@@ -641,6 +641,8 @@ export const getInfiniteImagesHandler = async ({
       const result = await getAllImagesIndex({
         ...scopedInput,
         user,
+        asModerator: moderatorView(ctx),
+        asOwner: isSessionOrFullUserKey(ctx),
         holdExempt: moderatorView(ctx),
         galleryOwnerId: galleryOwnerId(ctx),
         domain: getRequestBoardDomainColor(ctx.req),
@@ -901,6 +903,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       domain: getRequestBoardDomainColor(ctx.req),
       ids: fetchHidden ? versionHiddenImages : undefined,
       user,
+      asModerator: moderatorView(ctx),
+      asOwner: isSessionOrFullUserKey(ctx),
       eventDecorationViewer: eventViewer,
       headers: { src: 'getImagesAsPostsInfiniteHandler' },
       include: [...input.include, 'tagIds' as const, 'profilePictures' as const],

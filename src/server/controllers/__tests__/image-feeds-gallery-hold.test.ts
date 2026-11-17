@@ -430,4 +430,18 @@ describe('a narrow-scope key reads the feeds as a plain signed-in viewer', () =>
     expect(getAllImages).toHaveBeenCalledWith(expect.objectContaining(view));
     expect(getPostsInfinite).toHaveBeenCalledWith(expect.objectContaining(view));
   });
+
+  it.each([
+    ['a scoped key', credential(TokenScope.ModelsRead), false],
+    ['a full-access key (control)', credential(TokenScope.Full), true],
+  ])('%s on the index feed: owner and moderator views %s', async (_, key, elevated) => {
+    const viewer = { ...ctx(true, true), ...key } as unknown as Context;
+    await getInfiniteImagesHandler({
+      input: { modelVersionId: 10, include: [] } as never,
+      ctx: viewer,
+    });
+    expect(getAllImagesIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ asModerator: elevated, asOwner: elevated })
+    );
+  });
 });

@@ -307,7 +307,9 @@ export const getPostsInfinite = async ({
   const userId = user?.id;
   // One value for every moderator branch below: a narrow-scope key is not a moderator here.
   const isModerator = asModerator ?? user?.isModerator ?? false;
-  // A narrow-scope key is not the owner here either: every owner branch below reads `ownerId`.
+  // A narrow-scope key is not the owner of its posts here: the post owner branches read `ownerId`.
+  // Collection permissions (and the contributor read) still follow `user.id`: a scoped key keeps
+  // collection ownership and membership.
   const ownerId = asOwner ? userId : undefined;
   const includeCosmetics = !!include?.includes('cosmetics');
 

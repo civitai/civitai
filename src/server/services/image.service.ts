@@ -2039,6 +2039,12 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   holdExempt?: boolean;
   // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
   galleryOwnerId?: number;
+  // Server-only: whether the request may act as a moderator (a session or full-scope key);
+  // defaults to the user's.
+  asModerator?: boolean;
+  // Server-only: whether the request may see the user's own unpublished, private and held images;
+  // default true. False for a narrow-scope key.
+  asOwner?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -2183,6 +2189,24 @@ function applyHideChallengesExclusion(input: {
   ];
 }
 
+/**
+ * The viewer an image feed's tag exclusions and moderator exemptions are resolved for. A
+ * narrow-scope key (`asModerator`/`asOwner` false) is neither a moderator nor the owner, so its
+ * own feed keeps the exclusions too.
+ */
+function feedViewer(input: {
+  user?: { id?: number; username?: string | null; isModerator?: boolean };
+  asModerator?: boolean;
+  asOwner?: boolean;
+}) {
+  const owner = input.asOwner !== false;
+  return {
+    id: owner ? input.user?.id : undefined,
+    username: owner ? input.user?.username ?? undefined : undefined,
+    isModerator: input.asModerator ?? input.user?.isModerator ?? false,
+  };
+}
+
 const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -2196,10 +2220,6 @@ const getAllImagesUncaptured = async (
      * ownership or MANAGE permission in the query.
      */
     reviewCollectionId?: number;
-    /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
-    asModerator?: boolean;
-    /** Whether the request may see the user's own unpublished, private and held images; default true. */
-    asOwner?: boolean;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2217,11 +2237,7 @@ const getAllImagesUncaptured = async (
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
 
-  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
-    id: input.user?.id,
-    username: input.user?.username,
-    isModerator: input.user?.isModerator,
-  });
+  const blockedEnforcement = await enforceBlockedBrowsingTags(input, feedViewer(input));
   if (blockedEnforcement.emptyResult) {
     noteEmptyIdsPage(input, 'blocked-tags');
     return { nextCursor: undefined, items: [] };
@@ -3590,12 +3606,9 @@ export const getAllImagesIndex = async (
   // const { sort, browsingLevel } = input;
 
   const { user } = input;
+  const viewer = feedViewer(input);
 
-  const prepared = await prepareImageFeedRequest(input, {
-    id: user?.id,
-    username: user?.username,
-    isModerator: user?.isModerator,
-  });
+  const prepared = await prepareImageFeedRequest(input, viewer);
   if (prepared.blocked) return { nextCursor: undefined, items: [] };
   const { userId } = prepared;
   if (input.username && userId === undefined) throw throwNotFoundError('User not found');
@@ -3611,7 +3624,7 @@ export const getAllImagesIndex = async (
     ...input,
     userId,
     currentUserId,
-    isModerator: user?.isModerator,
+    isModerator: viewer.isModerator,
     offset,
     entry,
   };
