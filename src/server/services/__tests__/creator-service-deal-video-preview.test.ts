@@ -1,0 +1,77 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as OrchestrationClient from '@civitai/orchestration-client';
+
+const orchestrator = vi.hoisted(() => ({
+  submitWorkflow: vi.fn(),
+  getConsumerBlobUploadUrl: vi.fn(),
+}));
+vi.mock('@civitai/orchestration-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestrationClient>()),
+  ...orchestrator,
+}));
+
+const { buildWatermarkedVideoPreview } = await import(
+  '~/server/services/creator-service-deal-video-preview'
+);
+const { PreviewRejectedError } = await import('~/server/utils/service-deal-preview');
+
+const BLOB_URL = 'https://orchestration.example/v2/consumer/blobs/source.mp4?sig=x';
+const OUTPUT_URL = 'https://orchestration.example/v2/consumer/blobs/out.mp4?sig=y';
+const fetchMock = vi.fn();
+vi.stubGlobal('fetch', fetchMock);
+
+const workflow = (status: string, url: string | null = OUTPUT_URL) => ({
+  data: { status, steps: [{ status, output: url ? { url } : null }] },
+});
+
+beforeEach(() => {
+  orchestrator.submitWorkflow.mockReset();
+  orchestrator.getConsumerBlobUploadUrl.mockResolvedValue({
+    data: { uploadUrl: 'https://orchestration.example/upload?sig=z', expiresAt: '' },
+  });
+  fetchMock.mockReset();
+  fetchMock.mockImplementation(async (url: string) =>
+    url === OUTPUT_URL
+      ? new Response(Buffer.from('marked clip'))
+      : new Response(JSON.stringify({ url: BLOB_URL }), { status: 201 })
+  );
+});
+
+const submittedInput = () => orchestrator.submitWorkflow.mock.calls[0][0].body.steps[0].input;
+
+describe('buildWatermarkedVideoPreview', () => {
+  it('transcodes from an uploaded blob to a 480px, 15s, metadata-free clip with the mark burned in', async () => {
+    orchestrator.submitWorkflow.mockResolvedValue(workflow('succeeded'));
+
+    const result = await buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4');
+
+    expect(result.data.toString()).toBe('marked clip');
+    const [uploadUrl, upload] = fetchMock.mock.calls[0];
+    expect(uploadUrl).toBe('https://orchestration.example/upload?sig=z');
+    expect(upload).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'video/mp4' } });
+
+    const input = submittedInput();
+    expect(input.sourceUrl).toBe(BLOB_URL);
+    expect(input.width).toBe(480);
+    expect(input.maxDuration).toBe(15);
+    expect(input.hideMetadata).toBe(true);
+    expect(input.watermark.image).toMatch(/^data:image\/png;base64,.{100,}/);
+    expect(input.watermark.opacity).toBeGreaterThan(0);
+  });
+
+  it('puts a failed transcode on the file, for the seller to replace', async () => {
+    orchestrator.submitWorkflow.mockResolvedValue(workflow('failed', null));
+    await expect(
+      buildWatermarkedVideoPreview(Buffer.from('not a video'), 'video/mp4')
+    ).rejects.toBeInstanceOf(PreviewRejectedError);
+  });
+
+  it('throws a retryable error, not a rejection, when the transcode is still running', async () => {
+    orchestrator.submitWorkflow.mockResolvedValue(workflow('processing', null));
+    const error = await buildWatermarkedVideoPreview(Buffer.from('original'), 'video/mp4').catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PreviewRejectedError);
+  });
+});

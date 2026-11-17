@@ -30,6 +30,10 @@ import {
   PreviewRejectedError,
 } from '~/server/utils/service-deal-preview';
 import {
+  buildWatermarkedVideoPreview,
+  isVideoPreviewMime,
+} from '~/server/services/creator-service-deal-video-preview';
+import {
   SERVICE_ATTACHMENT_MAX_FILES,
   SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   SERVICE_FINAL_EXTENSIONS,
@@ -43,6 +47,7 @@ import {
   SERVICE_PREVIEW_MIME_TYPES,
   SERVICE_DEAL_HOLD_REASONS,
   SERVICE_PREVIEW_PROCESSING_STALE_MS,
+  SERVICE_PREVIEW_VIDEO_MAX_BYTES,
   SERVICE_ZIP_IMAGE_EXTENSIONS,
   SERVICE_ZIP_MAX_IMAGE_BYTES,
 } from '~/shared/constants/creator-services.constants';
@@ -57,6 +62,7 @@ import {
   getBucket,
   getGetUrlByKey,
   getPutUrl,
+  getImageUploadBackend,
   getS3Client,
   headObject,
   uploadImageBufferToStore,
@@ -164,7 +170,14 @@ export async function requestServiceDealUpload({
   // The buyer sees the file name. Scanned as it will be stored.
   await throwOnBlockedUserContent(cleanFileName(fileName), { surface: 'service-deal-file' });
 
-  if (kind === 'Preview') {
+  if (kind === 'Preview' && isVideoPreviewMime(mimeType)) {
+    if (size > SERVICE_PREVIEW_VIDEO_MAX_BYTES)
+      throw throwBadRequestError(
+        `Preview is too large (max ${Math.floor(
+          SERVICE_PREVIEW_VIDEO_MAX_BYTES / (1024 * 1024)
+        )} MB).`
+      );
+  } else if (kind === 'Preview') {
     if (!isPreviewMime(mimeType))
       throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
     if (size > previewByteCap(mimeType))
@@ -192,6 +205,8 @@ export async function requestServiceDealUpload({
     if (kind === 'Preview') {
       const max = SERVICE_PREVIEW_MAX_FILES[deal.previewKind];
       if (max === 0) throw throwBadRequestError('This service does not take a preview.');
+      if (isVideoPreviewMime(mimeType) && deal.previewKind !== 'Video')
+        throw throwBadRequestError('Previews must be JPEG, PNG, WebP or GIF images.');
       if (deal.files >= max)
         throw throwConflictError(`This delivery already has ${max === 1 ? 'a' : max} preview.`);
     } else if (deal.files >= SERVICE_FINAL_MAX_FILES) {
@@ -902,7 +917,11 @@ export async function listServiceDealFiles({
         scanStatus: row.kind === 'Final' || privileged ? row.scanStatus : null,
         previewUrl:
           row.kind === 'Preview' && row.status === 'Ready' && key
-            ? getEdgeUrl(key, { original: true, name: 'preview' })
+            ? getEdgeUrl(key, {
+                original: true,
+                name: 'preview',
+                type: isVideoPreviewMime(row.mimeType) ? 'video' : undefined,
+              })
             : null,
         canDownload: downloadable,
       },
@@ -1107,6 +1126,7 @@ type ClaimedPreview = {
   id: number;
   s3Key: string;
   scanKey: string | null;
+  mimeType: string;
   sellerId: number;
 };
 
@@ -1123,13 +1143,30 @@ function claimPreviews(where: Prisma.Sql, limit: number) {
         AND (p."processingAt" IS NULL
           OR p."processingAt" < now() - (${SERVICE_PREVIEW_PROCESSING_STALE_MS}::int * interval '1 millisecond'))
       ORDER BY p."id" LIMIT ${limit}::int FOR UPDATE SKIP LOCKED)
-    RETURNING f."id", f."s3Key", f."scanKey", d."sellerId"`;
+    RETURNING f."id", f."s3Key", f."scanKey", f."mimeType", d."sellerId"`;
 }
 
 export async function readObject(bucket: string, key: string) {
   const response = await getS3Client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!response.Body) throw new Error('Empty object body');
   return Buffer.from(await response.Body.transformToByteArray());
+}
+
+async function readImageStoreObject(key: string) {
+  const { s3, bucket } = await getImageUploadBackend();
+  const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!response.Body) throw new Error('Empty object body');
+  return Buffer.from(await response.Body.transformToByteArray());
+}
+
+/**
+ * A video is marked before it is scanned, unlike an image: the transcode is the only place a mark
+ * can be burned in, and running it twice per preview to scan a clean copy buys nothing, since the
+ * marked clip is exactly what the buyer would see.
+ */
+async function videoScanCopy(original: Buffer, mimeType: string) {
+  const marked = await buildWatermarkedVideoPreview(original, mimeType);
+  return { ...marked, height: null, frames: 0, type: 'video' as const };
 }
 
 const logPreview = (message: string, fields: Record<string, unknown>, type = 'info') =>
@@ -1151,13 +1188,19 @@ async function failOrRetry(preview: ClaimedPreview, error: unknown) {
  */
 export async function createScanImage(
   url: string,
-  copy: { mimeType: string; width: number; height: number; data: Buffer },
+  copy: {
+    mimeType: string;
+    width: number;
+    height: number | null;
+    data: Buffer;
+    type?: 'image' | 'video';
+  },
   userId: number
 ) {
   const { createImage } = await import('~/server/services/image.service');
   return createImage({
     url,
-    type: 'image',
+    type: copy.type ?? 'image',
     mimeType: copy.mimeType,
     width: copy.width,
     height: copy.height,
@@ -1186,7 +1229,9 @@ export async function startPreviewScans({ limit = 5 } = {}) {
       }
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
-        const copy = await buildScanCopy(original);
+        const copy = isVideoPreviewMime(preview.mimeType)
+          ? await videoScanCopy(original, preview.mimeType)
+          : await buildScanCopy(original);
         frames = copy.frames;
         let scanKey = preview.scanKey;
         if (!scanKey) {
@@ -1266,8 +1311,15 @@ export async function publishPreviews({ limit = 5 } = {}) {
   for (const preview of claimed) {
     const began = Date.now();
     try {
-      const original = await readObject(await getBucket(), preview.s3Key);
-      const result = await buildWatermarkedPreview(original);
+      // The video's scan copy is already marked; it is copied because step 4 deletes the copy.
+      const result =
+        isVideoPreviewMime(preview.mimeType) && preview.scanKey
+          ? {
+              data: await readImageStoreObject(preview.scanKey),
+              mimeType: 'video/mp4',
+              frames: 0,
+            }
+          : await buildWatermarkedPreview(await readObject(await getBucket(), preview.s3Key));
       const { key } = await uploadImageBufferToStore(result.data, { contentType: result.mimeType });
       await dbWrite.$executeRaw`
         UPDATE "ServiceDealFile"
@@ -1278,7 +1330,6 @@ export async function publishPreviews({ limit = 5 } = {}) {
       logPreview('preview published', {
         fileId: preview.id,
         frames: result.frames,
-        inputBytes: original.byteLength,
         outputBytes: result.data.byteLength,
         ms: Date.now() - began,
       });
