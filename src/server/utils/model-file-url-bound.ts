@@ -246,10 +246,9 @@ export function assertBountyEntryFileUrlAllowed({
     name: 'model-file-url-refused',
     op: 'bounty-award',
     userId,
-    authorId,
-    bountyEntryId,
     reason,
     url,
+    payload: { authorId, bountyEntryId },
   }).catch(handleLogError);
   throw throwBadRequestError(
     "This bounty entry's files can't be copied into a model version. Upload the files to the version instead."
