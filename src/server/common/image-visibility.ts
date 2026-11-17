@@ -133,6 +133,20 @@ export const notHeldForReviewSql = () =>
     OWNER_HIDDEN_REVIEWS
   )}))`;
 
+/** TS twin of `notHeldForReviewWhere`: whether a row's review state is an owner-hidden hold. */
+export const isHeldForReview = (needsReview: string | null | undefined) =>
+  !!needsReview && OWNER_HIDDEN_REVIEWS.includes(needsReview);
+
+/** `servableLevelWhere` as SQL over `Image` aliased `i`. */
+export const servableLevelSql = (levels: number) =>
+  levels === allBrowsingLevelsFlag
+    ? Prisma.sql`TRUE`
+    : Prisma.sql`i."nsfwLevel" IN (${Prisma.join(Flags.instanceToArray(levels))})`;
+
+/** TS twin of `servableLevelWhere`, for one image's level. */
+export const isServableLevel = (nsfwLevel: number, levels: number) =>
+  levels === allBrowsingLevelsFlag || Flags.instanceToArray(levels).includes(nsfwLevel);
+
 /** Held to the request's servable levels: a capped request gets no unrated upload either. */
 export const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
   levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };

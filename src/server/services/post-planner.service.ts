@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { servableLevelSql } from '~/server/common/image-visibility';
 import sanitize from 'sanitize-html';
 import {
   addMinutes,
@@ -98,12 +99,18 @@ type ScheduledPostRow = {
 
 export async function getScheduledPosts({
   user,
+  servableLevels,
   from,
   to,
   modelVersionId,
   tag,
 }: {
   user: SessionUser;
+  /**
+   * `requestServableLevels(ctx)`: the cover and count hold to it, as the editor does. The owner's
+   * own held image may still be the cover (Moderation Lead ruling for the calendar).
+   */
+  servableLevels: number;
   from: Date;
   to: Date;
   modelVersionId?: number;
@@ -129,7 +136,7 @@ export async function getScheduledPosts({
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     LEFT JOIN LATERAL (
       SELECT i.url, i.type, COUNT(*) OVER () AS count FROM "Image" i
-      WHERE i."postId" = p.id
+      WHERE i."postId" = p.id AND ${servableLevelSql(servableLevels)}
       ORDER BY i.index ASC NULLS LAST, i.id ASC
       LIMIT 1
     ) cover ON TRUE

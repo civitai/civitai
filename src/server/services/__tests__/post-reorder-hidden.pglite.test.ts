@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { startPglitePrisma } from '~/__tests__/pglite-prisma';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import type { SessionUser } from '~/types/session';
 
 // reorderPostImages against real Postgres (PGlite), with the version level read by the production
 // SQL (`imageDerivedVersionLevels`). The editor lists only the images it shows
@@ -18,6 +23,8 @@ const VERSION = 2;
 const POST = 3;
 const PG = 1;
 const XXX = 16;
+// The owner on an uncapped request, so only the unlisted image is hidden from the editor.
+const OWNER_EDITOR = { user: { id: OWNER } as SessionUser, servableLevels: allBrowsingLevelsFlag };
 
 let harness: Awaited<ReturnType<typeof startPglitePrisma>>;
 beforeAll(async () => {
@@ -28,7 +35,7 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, "modelVersionId" int, "publishedAt" timestamp(3)
     );
     CREATE TABLE "Image" (
-      id int PRIMARY KEY, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, index int,
+      id int PRIMARY KEY, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, index int, "needsReview" text,
       "updatedAt" timestamp(3)
     );
     CREATE TABLE "PostText" (
@@ -88,7 +95,7 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(await versionLevel()).toBe(XXX | PG);
 
     // The editor shows only the PG images (image 1 is held or above the cap); the owner reverses them.
-    await reorderPostImages({ id: POST, imageIds: [...pgIds].reverse() });
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [...pgIds].reverse() });
 
     const after = await indexes();
     expect(after[1]).toBe(0);
@@ -101,6 +108,7 @@ describe('reorderPostImages around images the editor does not list', () => {
     const pgIds = await seedPost();
     await harness.pg.exec(`INSERT INTO "PostText" VALUES (5, ${POST}, 0)`);
     await reorderPostImages({
+      ...OWNER_EDITOR,
       id: POST,
       imageIds: [],
       items: [{ type: 'text', id: 5 }, ...pgIds.map((id) => ({ type: 'image' as const, id }))],
@@ -114,10 +122,36 @@ describe('reorderPostImages around images the editor does not list', () => {
 
   it('control: with every image listed, positions are numbered from 0', async () => {
     const pgIds = await seedPost();
-    await reorderPostImages({ id: POST, imageIds: [...pgIds, 1] });
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [...pgIds, 1] });
     const after = await indexes();
     expect(after[10]).toBe(0);
     expect(after[1]).toBe(21); // the owner moved the XXX image last, out of the first 20
     expect(await versionLevel()).toBe(PG);
   });
+
+  // The editor gets every id from post.getImageIds, so a crafted list can name a hidden image.
+  it.each([
+    [
+      'held for review, listed by the owner',
+      `UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 1`,
+      allBrowsingLevelsFlag,
+    ],
+    ['above the request cap, listed by the owner', '', sfwBrowsingLevelsFlag],
+  ])(
+    'leaves an image %s at its index, and the version level unchanged',
+    async (_l, hold, servableLevels) => {
+      const pgIds = await seedPost();
+      if (hold) await harness.pg.exec(hold);
+      await reorderPostImages({
+        user: { id: OWNER } as SessionUser,
+        servableLevels,
+        id: POST,
+        imageIds: [...pgIds, 1],
+      });
+      const after = await indexes();
+      expect(after[1]).toBe(0);
+      expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
+      expect(await versionLevel()).toBe(XXX | PG);
+    }
+  );
 });

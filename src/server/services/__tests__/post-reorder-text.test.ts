@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { SessionUser } from '~/types/session';
 
 const { reorderPostImages } = await import('~/server/services/post.service');
 const { imageOnlyReorderIndexes } = await import('~/components/Post/EditV2/post-edit-items');
 
 const w = dbMock.dbWrite;
 const POST = 5;
+// The post's owner on an uncapped request: the editor shows every image.
+const EDITOR = { user: { id: 1 } as SessionUser, servableLevels: allBrowsingLevelsFlag };
 
 const imageIndexes = () =>
   w.image.update.mock.calls.map(([call]) => [call.where.id, call.data.index]);
@@ -16,12 +20,14 @@ describe('reorderPostImages with storyline text items', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     w.$transaction.mockResolvedValue([] as never);
-    // No image hidden from the editor unless a test says so.
+    // No image hidden from the editor, and no text left out, unless a test says so.
     w.image.findMany.mockResolvedValue([] as never);
+    w.postText.findMany.mockResolvedValue([] as never);
   });
 
   it('writes the position of every item, images and text, when given `items`', async () => {
     await reorderPostImages({
+      ...EDITOR,
       id: POST,
       imageIds: [],
       items: [
@@ -44,7 +50,7 @@ describe('reorderPostImages with storyline text items', () => {
     // Images at 0, 1 and 3, a text at 2. An old editor sends the images reversed.
     w.postText.count.mockResolvedValue(1 as never);
     w.image.findMany.mockResolvedValue([{ index: 3 }, { index: 0 }, { index: 1 }] as never);
-    await reorderPostImages({ id: POST, imageIds: [12, 11, 10] });
+    await reorderPostImages({ ...EDITOR, id: POST, imageIds: [12, 11, 10] });
     expect(imageIndexes()).toEqual([
       [12, 0],
       [11, 1],
@@ -62,7 +68,7 @@ describe('reorderPostImages with storyline text items', () => {
     ];
     w.postText.count.mockResolvedValue(1 as never);
     w.image.findMany.mockResolvedValue(reordered.map(({ index }) => ({ index })) as never);
-    await reorderPostImages({ id: POST, imageIds: reordered.map((image) => image.id) });
+    await reorderPostImages({ ...EDITOR, id: POST, imageIds: reordered.map((image) => image.id) });
     const predicted = imageOnlyReorderIndexes(reordered, true);
     expect(imageIndexes()).toEqual(reordered.map((image, i) => [image.id, predicted[i]]));
     expect(textIndexes()).toEqual([]);
@@ -71,7 +77,7 @@ describe('reorderPostImages with storyline text items', () => {
     w.$transaction.mockResolvedValue([] as never);
     w.image.findMany.mockResolvedValue([] as never);
     w.postText.count.mockResolvedValue(0 as never);
-    await reorderPostImages({ id: POST, imageIds: [12, 10] });
+    await reorderPostImages({ ...EDITOR, id: POST, imageIds: [12, 10] });
     expect(imageIndexes().map(([, index]) => index)).toEqual(
       imageOnlyReorderIndexes(reordered.slice(0, 2), false)
     );
@@ -79,7 +85,7 @@ describe('reorderPostImages with storyline text items', () => {
 
   it('without `items` on a post with no text, writes positions as before', async () => {
     w.postText.count.mockResolvedValue(0 as never);
-    await reorderPostImages({ id: POST, imageIds: [12, 11] });
+    await reorderPostImages({ ...EDITOR, id: POST, imageIds: [12, 11] });
     expect(imageIndexes()).toEqual([
       [12, 0],
       [11, 1],

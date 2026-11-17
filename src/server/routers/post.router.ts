@@ -239,7 +239,9 @@ export const postRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getScheduledPostsSchema)
     .use(isFlagProtected('postPlanner'))
-    .query(({ ctx, input }) => getScheduledPosts({ ...input, user: ctx.user })),
+    .query(({ ctx, input }) =>
+      getScheduledPosts({ ...input, user: ctx.user, servableLevels: requestServableLevels(ctx) })
+    ),
   getPlannerDetail: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(plannerPostIdSchema)

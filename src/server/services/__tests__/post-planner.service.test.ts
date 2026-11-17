@@ -636,6 +636,7 @@ describe('getScheduledPosts', () => {
     ]);
 
     const result = await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + 30 * DAY),
@@ -664,12 +665,17 @@ describe('getScheduledPosts', () => {
   it('scopes the query to the caller and counts the cover scan once', async () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
 
-    await getScheduledPosts({ user: OWNER, from: new Date(), to: new Date(Date.now() + DAY) });
+    await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
+      user: OWNER,
+      from: new Date(),
+      to: new Date(Date.now() + DAY),
+    });
 
     const [strings, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
     const sql = strings.join('?');
     expect(sql).toMatch(/WHERE p\."userId" = \?/);
-    expect(values[0]).toBe(7);
+    expect(values[strings.findIndex((part) => /WHERE p\."userId" = $/.test(part))]).toBe(7);
     expect(sql.match(/FROM "Image"/g)).toHaveLength(1);
     expect(sql).not.toMatch(/"modelVersionId" = \?/);
     expect(sql).not.toMatch(/"PostTag"/);
@@ -679,6 +685,7 @@ describe('getScheduledPosts', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
 
     await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + DAY),
@@ -705,6 +712,7 @@ describe('getScheduledPosts', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([]);
 
     await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + DAY),
@@ -713,7 +721,11 @@ describe('getScheduledPosts', () => {
 
     const [, ...values] = dbMock.dbRead.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
     const fragment = values.find(
-      (value): value is Sql => typeof value === 'object' && value !== null && 'strings' in value
+      (value): value is Sql =>
+        typeof value === 'object' &&
+        value !== null &&
+        'strings' in value &&
+        value.strings.join('').includes('"modelVersionId"')
     );
     expect(fragment?.strings.join('?')).toMatch(/AND p\."modelVersionId" = \?/);
     expect(fragment?.values).toEqual([30]);
@@ -723,6 +735,7 @@ describe('getScheduledPosts', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue(Array.from({ length: 1501 }, (_, i) => row(i + 1)));
 
     const result = await getScheduledPosts({
+      servableLevels: allBrowsingLevelsFlag,
       user: OWNER,
       from: new Date(),
       to: new Date(Date.now() + 30 * DAY),
