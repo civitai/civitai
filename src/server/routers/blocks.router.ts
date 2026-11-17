@@ -107,7 +107,7 @@ import {
   checkBlockUploadAppRateLimit,
   checkBlockGenerationSourceUserRateLimit,
   checkBlockUploadedGenerationSourceUserRateLimit,
-  BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS,
+  claimBlockStandingSubmitSlot,
 } from '~/server/utils/block-catalog-rate-limit';
 import { withInFlightLimit } from '~/server/utils/in-flight-limit';
 import { acquireBlockPollHoldSlot } from '~/server/utils/block-poll-hold-slots';
@@ -1917,18 +1917,19 @@ function consentBudgetRejection(
 const DAILY_LIMIT_READ_RATE_LIMIT = { max: 30, windowSeconds: 60 } as const;
 
 /** Fails closed: a Redis error reads as over the limit, which only keeps the dialog shut. */
-/** For the raise dialog's "run without asking" line; `null` on any error or with the flag off. */
+/**
+ * For the raise dialog's "run without asking" line; `null` on any error. Not flag-gated, like
+ * `getMyConfirmWithinLimit`: an opt-in kept through a flag rollback is still the viewer's, and
+ * re-arms with the flag, so raising the limit is still told what it means for those jobs.
+ */
 async function readMyConfirmWithinLimit(
   user: SessionUser,
   appBlockId: string
 ): Promise<number | null> {
   try {
-    const [{ isAppConfirmedStepWithinLimitEnabled }, { readConfirmWithinLimit }] =
-      await Promise.all([
-        import('~/server/services/app-blocks-flag'),
-        import('~/server/services/blocks/scope-grant.service'),
-      ]);
-    if (!(await isAppConfirmedStepWithinLimitEnabled({ user }))) return null;
+    const { readConfirmWithinLimit } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
     return await readConfirmWithinLimit(user.id, appBlockId, 'read');
   } catch {
     return null;
@@ -15314,19 +15315,6 @@ async function previewStandingConsent(
 }
 
 /**
- * A standing consent counts only if submitted within the burst window of being given, so the
- * burst bound taken at consent also bounds the submits: at most two windows' worth can land in
- * any one window.
- */
-function isFreshStandingConsent(consentedAt: string | null): boolean {
-  const at = consentedAt ? Date.parse(consentedAt) : NaN;
-  return (
-    Number.isFinite(at) &&
-    Date.now() - at <= BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS * 1000
-  );
-}
-
-/**
  * Records a STANDING consent to one step quote: no click, because the viewer opted in for this
  * app and the job fits what is left of their daily limit. Session only, like the click. Every
  * condition the preview reported is checked again here on the primary, then one burst slot is
@@ -15632,6 +15620,16 @@ async function submitConfirmedQuoteWorkflow(opts: {
     const grant = arm.ceiling(quote, userId);
     if ('refusal' in grant) throw grant.refusal;
     standing = grant.standing === true;
+    // The burst bound on jobs that run without a confirm is taken HERE, when the job runs: a
+    // quote can be submitted long after its standing consent, so a slot taken at consent alone
+    // would let earlier-consented quotes be bunched. After the quote claim, so the slot is spent
+    // on a real attempt; fails closed (a store error refuses), and the quote is used up.
+    if (standing && !(await claimBlockStandingSubmitSlot(userId, claims.appBlockId))) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: 'too many jobs without asking in the last minute',
+      });
+    }
     if (quote.bodyHash !== (await arm.bodyHash())) {
       throw new TRPCError({
         code: 'BAD_REQUEST',
@@ -16257,8 +16255,7 @@ async function submitConfirmedPassThroughStepWorkflow(opts: {
           standingMaxJob != null &&
           quote.total <= standingMaxJob &&
           quote.consentedBy == null &&
-          quote.standingConsentBy === userId &&
-          isFreshStandingConsent(quote.consentedAt);
+          quote.standingConsentBy === userId;
         const grant = blockConfirmedStepCeiling(
           claims,
           standing ? { ...quote, consentedBy: userId } : quote,

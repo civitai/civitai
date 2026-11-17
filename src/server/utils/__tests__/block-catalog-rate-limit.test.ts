@@ -279,6 +279,20 @@ describe('claimBlockStandingConsentSlot — fails CLOSED', () => {
     expect(await claimBlockStandingConsentSlot(43, 'apb_x')).toBe(true);
   });
 
+  it('the submit bucket is its own: a full consent bucket leaves it untouched, and it caps at five too', async () => {
+    const { claimBlockStandingConsentSlot, claimBlockStandingSubmitSlot } = await import(
+      '../block-catalog-rate-limit'
+    );
+    for (let i = 0; i < 6; i++) await claimBlockStandingConsentSlot(42, 'apb_x');
+    const results = [];
+    for (let i = 0; i < 6; i++) results.push(await claimBlockStandingSubmitSlot(42, 'apb_x'));
+    expect(results).toEqual([true, true, true, true, true, false]);
+    expect([...counts.keys()].sort()).toEqual([
+      'blocks:token-rate-limit:standing-consent:42:apb_x',
+      'blocks:token-rate-limit:standing-submit:42:apb_x',
+    ]);
+  });
+
   it('arms the window in the same MULTI that creates the key, so the count resets', async () => {
     const { claimBlockStandingConsentSlot, BLOCK_STANDING_CONSENT_RATE_LIMIT_WINDOW_SECONDS } =
       await import('../block-catalog-rate-limit');

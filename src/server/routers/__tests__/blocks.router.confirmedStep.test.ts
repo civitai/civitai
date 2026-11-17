@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import client from 'prom-client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -1648,19 +1649,93 @@ describe('STANDING consent — an opted-in viewer, within their daily limit', ()
     expect(realSubmits()).toHaveLength(0);
   });
 
-  it('a standing consent submitted after the burst window is refused, so the bound holds at submit', async () => {
-    const quoteId = await unconfirmedQuote();
-    await standingConsent(quoteId);
-    vi.useFakeTimers({ toFake: ['Date'] });
-    try {
-      vi.setSystemTime(Date.now() + 61_000);
-      await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
-        message: /not been confirmed/,
+  it('quotes consented earlier and submitted together: five run, the sixth is refused at submit', async () => {
+    // Consented before this window (seeded: no consent-time slot is taken here), so only a slot
+    // taken at submit can bound how many of them run now.
+    const quoteIds = [3, 4, 5, 6, 7, 8].map((d) => `sq_${String(d).repeat(32)}`);
+    for (const quoteId of quoteIds) {
+      seedQuote(quoteId, {
+        consentedBy: null,
+        consentedAt: new Date().toISOString(),
+        standingConsentBy: VIEWER,
       });
-    } finally {
-      vi.useRealTimers();
     }
+    const outcomes: string[] = [];
+    for (let i = 0; i < quoteIds.length; i++) {
+      workflowId = `${VIEWER}-bunched-${i}`;
+      outcomes.push(
+        await submit({ ...body(), quoteId: quoteIds[i] }).then(
+          () => 'ok',
+          (e: TRPCError) => `${e.code}: ${e.message}`
+        )
+      );
+    }
+    expect(outcomes).toEqual([
+      'ok',
+      'ok',
+      'ok',
+      'ok',
+      'ok',
+      'TOO_MANY_REQUESTS: too many jobs without asking in the last minute',
+    ]);
+    expect(realSubmits()).toHaveLength(5);
+  });
+
+  it('the submit-time burst store unreachable: a standing quote is refused, nothing submitted', async () => {
+    const quoteId = `sq_${'9'.repeat(32)}`;
+    seedQuote(quoteId, {
+      consentedBy: null,
+      consentedAt: new Date().toISOString(),
+      standingConsentBy: VIEWER,
+    });
+    redisMock.redis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    await expect(submit({ ...body(), quoteId })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: 'too many jobs without asking in the last minute',
+    });
     expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('control: a CLICKED quote takes no standing slot, so the burst store being down does not touch it', async () => {
+    const quoteId = await confirmedQuote();
+    redisMock.redis.multi.mockImplementation((() => {
+      throw new Error('redis down');
+    }) as never);
+    await submit({ ...body(), quoteId });
+    expect(realSubmits()).toHaveLength(1);
+  });
+
+  it('the submit counter carries the app: app_block_id and consent on every confirmed step', async () => {
+    h.authorize.mockImplementation(async () =>
+      claims({ appBlockId: 'apb_metric_label', blockInstanceId: 'page_apb_metric_label' })
+    );
+    const read = async () => {
+      const metric = client.register.getSingleMetric(
+        'civitai_app_block_confirmed_step_submit_total'
+      ) as unknown as {
+        get: () => Promise<{ values: { value: number; labels: Record<string, string> }[] }>;
+      };
+      return metric ? (await metric.get()).values : [];
+    };
+    const valueFor = (rows: { value: number; labels: Record<string, string> }[], consent: string) =>
+      rows.find((r) => r.labels.app_block_id === 'apb_metric_label' && r.labels.consent === consent)
+        ?.value ?? 0;
+    const before = await read();
+
+    const standingQuote = await unconfirmedQuote();
+    await standingConsent(standingQuote);
+    await submit({ ...body(), quoteId: standingQuote });
+    workflowId = `${VIEWER}-metric-click`;
+    const clickQuote = await confirmedQuote();
+    await submit({ ...body(), quoteId: clickQuote });
+
+    const after = await read();
+    expect(valueFor(after, 'standing') - valueFor(before, 'standing')).toBe(1);
+    expect(valueFor(after, 'click') - valueFor(before, 'click')).toBe(1);
+    const row = after.find((r) => r.labels.app_block_id === 'apb_metric_label');
+    expect(Object.keys(row!.labels).sort()).toEqual(['app_block_id', 'consent']);
   });
 
   it('the flag off: no standing, no offer, and the consent is refused', async () => {

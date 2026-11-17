@@ -1048,7 +1048,9 @@ same page host, so the owner sees the same confirm.
    per 60 seconds. That bound fails closed when its store is unreachable. Any error from that
    call, including NOT_FOUND from an older server, makes the host draw the confirm instead. The
    submit accepts such a quote only with the flag on, the opt-in still in place at that price,
-   and a daily-limit reservation to bound it. A pricier job asks again, and ticking the box on
+   a daily-limit reservation to bound it, and a slot from a second bucket of the same size
+   taken at submit: a consented quote can be submitted later, so only the submit-time slot
+   bounds how many jobs run in a minute. A pricier job asks again, and ticking the box on
    it raises the ceiling to its price. Re-consenting to spending, any limit change on
    `/apps/activity`, revoking spending, or "Ask me each job" there turns the opt-in off.
    Raising the limit from the raise dialog keeps it; that dialog then says "Jobs up to N Buzz

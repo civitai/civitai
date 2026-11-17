@@ -264,8 +264,16 @@ describe('the "run without asking" opt-in', () => {
     });
   });
 
-  it('control: with the flag off an opted-in viewer reads as not opted in', async () => {
+  it('with the flag rolled back the raise dialog still learns of a kept opt-in, which re-arms with the flag', async () => {
     m.optedIn.mockResolvedValue(1040);
+    expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toMatchObject({
+      confirmWithinLimitMaxJob: 1040,
+    });
+    expect(m.withinLimitFlag).not.toHaveBeenCalled();
+  });
+
+  it('control: not opted in, the raise dialog reads none', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toMatchObject({
       confirmWithinLimitMaxJob: null,
     });
@@ -352,22 +360,39 @@ describe('the "run without asking" opt-in', () => {
 
   it('with the flag rolled back, a kept opt-in is still shown so it can be turned off', async () => {
     m.optedIn.mockResolvedValue(1040);
-    expect(await caller().getMyConfirmWithinLimit({ appBlockId: APP })).toMatchObject({
+    expect(await caller().getMyConfirmWithinLimit({ appBlockId: APP })).toEqual({
       maxJob: 1040,
+      limit: 1000,
+      spentToday: 980,
     });
+    expect(m.withinLimitFlag).not.toHaveBeenCalled();
   });
 
   it('a full-scope API key or OAuth token can neither opt in nor raise the limit', async () => {
     m.withinLimitFlag.mockResolvedValue(true);
     m.optIn.mockResolvedValue({ limit: 1000 });
+    // The blockApiKeys refusal's own message, so another FORBIDDEN cannot pass for it.
+    const refusal = {
+      code: 'FORBIDDEN',
+      message: 'This action cannot be performed via API key or OAuth token.',
+    };
     await expect(
       caller(5).optInConfirmWithinLimit({ appBlockId: APP, maxJobBuzz: 1040 })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject(refusal);
     await expect(
       caller(5).raiseAppDailyLimit({ appBlockId: APP, buzzBudgetPerDay: 2000 })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject(refusal);
     expect(m.optIn).not.toHaveBeenCalled();
     expect(m.raise).not.toHaveBeenCalled();
+  });
+
+  it('control: the same calls from the session reach the write', async () => {
+    m.withinLimitFlag.mockResolvedValue(true);
+    m.optIn.mockResolvedValue({ limit: 1000 });
+    await caller().optInConfirmWithinLimit({ appBlockId: APP, maxJobBuzz: 1040 });
+    await caller().raiseAppDailyLimit({ appBlockId: APP, buzzBudgetPerDay: 2000 });
+    expect(m.optIn).toHaveBeenCalled();
+    expect(m.raise).toHaveBeenCalled();
   });
 
   it('control: not opted in, nothing to show', async () => {
@@ -388,5 +413,48 @@ describe('the "run without asking" opt-in', () => {
       mockIsAppBlocksEnabled.mockResolvedValue(true);
     }
     expect(m.optOut).toHaveBeenCalledWith(USER, APP);
+  });
+});
+
+/**
+ * The ledger of `blocksRouter` procedures that refuse every API key and OAuth token
+ * (`blockApiKeys`): the viewer's session only. Read off the built router, so dropping the
+ * meta from one, or adding it to another, fails here until the decision is written down.
+ */
+describe('blockApiKeys ledger', () => {
+  it('exactly these blocks procedures are session-only', () => {
+    const procedures = blocksRouter._def.procedures as unknown as Record<
+      string,
+      { _def: { meta?: { blockApiKeys?: boolean } } }
+    >;
+    const sessionOnly = Object.entries(procedures)
+      .filter(([, p]) => p._def.meta?.blockApiKeys === true)
+      .map(([name]) => name)
+      .sort();
+    expect(sessionOnly).toEqual(
+      [
+        'consentQuoteGrant',
+        'consentQuoteGrantStanding',
+        'consentTrainingQuote',
+        'createPostFromApp',
+        'getReactionsForApp',
+        // The viewer's standing spend consent and the limit it runs within.
+        'optInConfirmWithinLimit',
+        'persistAppUploadImage',
+        'persistGenerationSource',
+        'persistUploadedGenerationSource',
+        'presignMediaUploadBatchItem',
+        'previewOutputUnlock',
+        'previewPostFromApp',
+        'previewQuoteGrant',
+        'previewTrainingQuote',
+        'publishGenerationOutputs',
+        'raiseAppDailyLimit',
+        'recordMediaUploadBatchItem',
+        'setReactionFromApp',
+        'startMediaUploadBatch',
+        'unlockOutput',
+      ].sort()
+    );
   });
 });
