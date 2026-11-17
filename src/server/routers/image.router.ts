@@ -38,6 +38,7 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
+import { requestServableLevels } from '~/server/utils/browsing-level';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getApprovedImageAppeal } from '~/server/services/image-removal-hold.service';
 import { canAppealOwnImage } from '~/server/services/report.service';
@@ -253,7 +254,9 @@ export const imageRouter = router({
   getMyImages: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getMyImagesInput)
-    .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
+    .query(({ input, ctx }) =>
+      getMyImages({ ...input, userId: ctx.user.id, servableLevels: requestServableLevels(ctx) })
+    ),
   getAppealState: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
