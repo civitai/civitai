@@ -497,11 +497,32 @@ describe('request', () => {
   it.each([
     ['banned', `"bannedAt" = now()`],
     ['deleted', `"deletedAt" = now()`],
-    ['muted', `muted = true`],
   ])('refuses a request to a %s seller, before any charge', async (_name, set) => {
     await q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
     await expect(request()).rejects.toThrow(/Service not found/);
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it("answers a muted seller's offering exactly as a banned one's, before any charge", async () => {
+    const answer = (error: unknown) => {
+      const { name, code, message } = error as { name: string; code: string; message: string };
+      return { name, code, message };
+    };
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    const muted = answer(await request().catch((e) => e));
+    await q(`UPDATE "User" SET muted = false, "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    const banned = answer(await request().catch((e) => e));
+    expect(muted.code).toBeDefined();
+    expect(muted).toEqual(banned);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('takes the same request once the seller is no longer muted', async () => {
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    await expect(request()).rejects.toThrow();
+    await q(`UPDATE "User" SET muted = false WHERE id = $1`, [SELLER]);
+    await expect(request()).resolves.toMatchObject({ id: expect.any(Number) });
   });
 
   it('refuses a request when the shop is not visible to the buyer', async () => {
