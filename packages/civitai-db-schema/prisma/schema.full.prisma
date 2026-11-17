@@ -3476,6 +3476,22 @@ model AppBlockPublishRequest {
   // migration `20261126120000_app_fork_provenance`.
   forkOfAppBlockId      String?   @map("fork_of_app_block_id") // @no-type
   forkOfCommitSha       String?   @map("fork_of_commit_sha") // @no-type
+  // GITHUB ACTIONS RUN that submitted this request, from an OIDC token GitHub signed and the
+  // server verified at submit (flag `app-blocks-oidc-verified-submit`). Facts about the RUN, not
+  // the bundle: the developer's workflow uploads the bundle, so this says "submitted by a GitHub
+  // Actions run of <repo> at <tag> (<sha>)" and nothing more. A DIFFERENT trust level from the
+  // client-claimed sourceCommit/sourceDirty above and from forgejoCommitSha; never alias between
+  // them. Manual-apply and no-type (raw SQL only, in actions-run-source.service.ts), so no
+  // default-select query names them; migration
+  // `20271117130000_app_block_publish_request_actions_run_source`.
+  actionsRunRepository           String? @map("actions_run_repository") // @no-type
+  actionsRunRepositoryId         String? @map("actions_run_repository_id") // @no-type
+  actionsRunRepositoryOwnerId    String? @map("actions_run_repository_owner_id") // @no-type
+  actionsRunSha                  String? @map("actions_run_sha") // @no-type
+  actionsRunRef                  String? @map("actions_run_ref") // @no-type
+  actionsRunWorkflowRef          String? @map("actions_run_workflow_ref") // @no-type
+  actionsRunRepositoryVisibility String? @map("actions_run_repository_visibility") // @no-type
+  actionsRunId                   String? @map("actions_run_id") // @no-type
   createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
