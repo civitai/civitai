@@ -187,7 +187,7 @@ describe('sweepChatWindows', () => {
         name: 'text-scan',
         type: 'warning',
         message: 'sweep behind',
-        job: 'text-scan-chat-windows',
+        payload: expect.objectContaining({ job: 'text-scan-chat-windows' }),
       })
     );
   });

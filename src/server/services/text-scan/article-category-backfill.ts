@@ -89,11 +89,13 @@ export async function runArticleCategoryBackfill({
     name: 'text-category',
     type: 'info',
     message: 'backfill chunk',
-    afterId,
-    includeMature,
-    selected: result.selected,
-    nextAfterId,
-    ...result.byStatus,
+    payload: {
+      afterId,
+      includeMature,
+      selected: result.selected,
+      nextAfterId,
+      ...result.byStatus,
+    },
   });
   return result;
 }
