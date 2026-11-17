@@ -2151,8 +2151,8 @@ function buildDocStore(deps: DocStoreDeps) {
    * ONE unlocked read (SQL_UNCHANGED_PROBE), no lock: nothing is written on its answer, so a
    * concurrent write is simply before or after it, and a body that differs from what the read saw
    * always goes to the ordinary write. Not refreshed here: the schema-major stamp
-   * (`coll.schemaMajor`), which an ordinary write would re-stamp. Inert today: the stamp is read
-   * only by `applyMajorChain`, which has no caller outside this module.
+   * (`coll.schemaMajor`), which an ordinary write would re-stamp; revisit if a read path starts
+   * migrating bodies on serve.
    */
   async function putIfUnchanged(
     ctx: DocStoreContext,
