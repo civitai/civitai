@@ -2536,6 +2536,15 @@ async function loadListingEditView(
  * the listing itself. `slug` + `status` + `parentId` always describe the live
  * parent; `shadowId` hints whether the prefill came from a shadow.
  */
+async function findExistingShadow(listingId: string): Promise<{ shadowId: string } | null> {
+  // primary: a shadow minted moments ago by a set-/add- command must not read as absent.
+  const existing = await dbWrite.appListing.findFirst({
+    where: { revisionOfId: listingId },
+    select: { id: true },
+  });
+  return existing ? { shadowId: existing.id } : null;
+}
+
 async function findModeratorUsableShadow(
   listingId: string,
   userId: number
@@ -2553,8 +2562,10 @@ export async function getMyListingForEdit(opts: {
   listingId: string;
   userId: number;
   isModerator?: boolean;
+  /** Never open a shadow: report an existing one, else the live listing (CLI `listing status`). */
+  readOnly?: boolean;
 }): Promise<GetMyListingForEditResult> {
-  const { listingId, userId, isModerator = false } = opts;
+  const { listingId, userId, isModerator = false, readOnly = false } = opts;
   const listing = await loadOwnedEditableListing(listingId, userId, isModerator);
 
   if (listing.revisionOfId != null) {
@@ -2614,6 +2625,8 @@ export async function getMyListingForEdit(opts: {
     const begun =
       listing.callerRole === 'moderator'
         ? await findModeratorUsableShadow(listingId, userId)
+        : readOnly
+        ? await findExistingShadow(listingId)
         : await beginListingRevision({ listingId, userId, isModerator });
     shadowId = begun?.shadowId ?? null;
     effectiveId = shadowId ?? listingId;

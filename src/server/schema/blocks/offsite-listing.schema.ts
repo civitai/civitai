@@ -360,6 +360,7 @@ export type GetMyListingForAppInput = z.infer<typeof getMyListingForAppSchema>;
  */
 export const getMyListingForEditSchema = z.object({
   listingId: z.string().min(1).max(64),
+  readOnly: z.boolean().optional(),
 });
 export type GetMyListingForEditInput = z.infer<typeof getMyListingForEditSchema>;
 
