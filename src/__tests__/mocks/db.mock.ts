@@ -21,7 +21,6 @@ const WRITE_ROOT = 'dbWrite';
 const emptyArray = () => Promise.resolve([] as unknown[]);
 const nullish = () => Promise.resolve(null);
 const zero = () => Promise.resolve(0);
-const noneAffected = () => Promise.resolve({ count: 0 });
 
 /**
  * Post-reset behaviour, keyed on the last path segment. Deliberately conservative: these
@@ -36,7 +35,6 @@ const DEFAULTS: Record<string, () => Promise<unknown>> = {
   findFirst: nullish,
   findFirstOrThrow: nullish,
   count: zero,
-  deleteMany: noneAffected,
   aggregate: nullish,
   groupBy: emptyArray,
   $queryRaw: emptyArray,

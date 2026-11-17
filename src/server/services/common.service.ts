@@ -191,7 +191,12 @@ export const hasEntityAccess = async ({
     SELECT
       ea."accessToId" "entityId",
       ${
-        !!permissions ? Prisma.sql`(${permissions} & ea."permissions") != 0` : Prisma.sql`true`
+        !!permissions
+          ? Prisma.sql`(${permissions} & ea."permissions") != 0`
+          : entityType === 'ModelVersion'
+          ? // A moderator's revoke keeps the row, with no permissions, as the purchase record.
+            Prisma.sql`ea."permissions" != 0`
+          : Prisma.sql`true`
       } as "hasAccess",
       ea."permissions",
       ea."meta"

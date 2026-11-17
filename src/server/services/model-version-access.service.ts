@@ -123,7 +123,7 @@ function giftedPermissionsSql(column: string) {
  * Takes back refunded purchases. With `narrow`, only those bits and meta keys go and the row stays
  * for what is kept (an older purchase or a gift); without it, the whole grant goes. A gift's bits
  * are never taken: they are read from the row when it is written. Neither throws on a row that is
- * already gone. Returns how many rows the write touched (0 or 1).
+ * already gone.
  */
 export async function revokeModelVersionAccess({
   userId,
@@ -135,15 +135,16 @@ export async function revokeModelVersionAccess({
   narrow?: { revokePermissions: number; removeKeys: string[] };
 }) {
   if (narrow) {
-    return dbWrite.$executeRaw`
+    await dbWrite.$executeRaw`
       UPDATE "EntityAccess"
          SET "permissions" = "permissions"
                & ~(${narrow.revokePermissions}::int & ~${giftedPermissionsSql('"meta"')}),
              "meta" = ${asJsonbObjectSql('"meta"')} - ${narrow.removeKeys}::text[]
        WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
          AND "accessorId" = ${userId} AND "accessorType" = 'User'`;
+    return;
   }
-  const { count } = await dbWrite.entityAccess.deleteMany({
+  await dbWrite.entityAccess.deleteMany({
     where: {
       accessToId: modelVersionId,
       accessToType: 'ModelVersion',
@@ -151,5 +152,64 @@ export async function revokeModelVersionAccess({
       accessorType: 'User',
     },
   });
-  return count;
+}
+
+/** What pays for or gifted a grant: a moderator revoke keeps each under `revoked-<key>`. */
+const ARCHIVED_ON_REVOKE_KEYS = [
+  ...EARLY_ACCESS_PURCHASES.flatMap(({ transactionKey, purchasedAtKey }) => [
+    transactionKey,
+    purchasedAtKey,
+  ]),
+  'giftLinkId',
+  GIFT_PERMISSIONS_KEY,
+];
+
+/**
+ * A moderator's revoke, for a purchase refunded outside the unpublish refund. The row stays with no
+ * permissions, as the record of what was paid; its purchase and gift keys move under `revoked-`, so
+ * the unpublish refund, which reads only the live keys, can't refund it again, and a later purchase
+ * starts a fresh refund window. Returns the grant as it was, or null when there was none to revoke.
+ */
+export async function archiveModelVersionAccess({
+  client = dbWrite,
+  userId,
+  modelVersionId,
+  revokedById,
+}: {
+  client?: Prisma.TransactionClient;
+  userId: number;
+  modelVersionId: number;
+  revokedById: number;
+}) {
+  const [before] = await client.$queryRaw<{ permissions: number; meta: unknown }[]>`
+    WITH before AS (
+      SELECT permissions, meta FROM "EntityAccess"
+       WHERE "accessToId" = ${modelVersionId} AND "accessToType" = 'ModelVersion'
+         AND "accessorId" = ${userId} AND "accessorType" = 'User'
+         AND permissions <> 0
+       FOR UPDATE
+    )
+    UPDATE "EntityAccess" ea
+       SET permissions = 0,
+           meta = (
+             SELECT COALESCE(
+                      jsonb_object_agg(
+                        CASE WHEN e.key = ANY(${ARCHIVED_ON_REVOKE_KEYS}::text[])
+                             THEN 'revoked-' || e.key ELSE e.key END,
+                        e.value
+                      ),
+                      '{}'::jsonb
+                    )
+               FROM jsonb_each(${asJsonbObjectSql('ea."meta"')}) e
+           ) || jsonb_build_object(
+             'revokedAt', now(),
+             'revokedById', ${revokedById}::int,
+             'refundedExternally', true
+           )
+      FROM before
+     WHERE ea."accessToId" = ${modelVersionId} AND ea."accessToType" = 'ModelVersion'
+       AND ea."accessorId" = ${userId} AND ea."accessorType" = 'User'
+    RETURNING before.permissions, before.meta
+  `;
+  return before ?? null;
 }
