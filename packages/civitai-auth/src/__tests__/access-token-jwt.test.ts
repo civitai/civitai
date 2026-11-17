@@ -188,6 +188,43 @@ describe('createAccessTokenJwtVerifier with an audience and a JWKS', () => {
       /200 OK/
     );
   });
+
+  it('throws when the JWKS fetch itself fails (a network error with no code)', async () => {
+    const netErr = new TypeError('fetch failed');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async () => {
+        throw netErr;
+      })
+    );
+    const verify = createAccessTokenJwtVerifier({ jwksUri: JWKS_URI, audience: resource });
+    await expect(verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)).rejects.toBe(
+      netErr
+    );
+  });
+
+  it('throws when the JWKS response is not a key set (ERR_JWKS_INVALID)', async () => {
+    serve(() => new Response(JSON.stringify({ keys: 'not-a-list' }), { status: 200 }));
+    const verify = createAccessTokenJwtVerifier({ jwksUri: JWKS_URI, audience: resource });
+    await expect(
+      verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)
+    ).rejects.toMatchObject({ code: 'ERR_JWKS_INVALID' });
+  });
+
+  it('throws when the JWKS fetch times out (ERR_JWKS_TIMEOUT)', async () => {
+    // jose aborts the fetch with AbortSignal.timeout; a fetch so aborted rejects with a
+    // TimeoutError, which is what this one does at once, so no real time passes.
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const verify = createAccessTokenJwtVerifier({ jwksUri: JWKS_URI, audience: resource });
+    await expect(
+      verify(await signer.mintAccessTokenJwt(liveClaims()), issuer)
+    ).rejects.toMatchObject({ code: 'ERR_JWKS_TIMEOUT' });
+    // The fetch was given an abort signal, the timeout this stands in for.
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe('session verifier and at+jwt', () => {
