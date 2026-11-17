@@ -301,6 +301,37 @@ describe('raw-AIR resource ownership validation', () => {
     expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a no-subscription raw-AIR epoch generation flagged private', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      {
+        id: 100,
+        name: 'base',
+        canGenerate: true,
+        availability: 'Public',
+        baseModel: 'SDXL 1.0',
+        air: 'urn:air:sdxl:checkpoint:civitai:10@100',
+        model: { id: 10, type: 'Checkpoint', poi: false },
+      },
+    ] as never);
+    const result = await createWorkflowStepsFromGraph({
+      data: {
+        workflow: 'txt2img',
+        prompt: 'test',
+        ecosystem: 'SDXL',
+        aspectRatio: '1:1',
+        quantity: 1,
+        model: { id: 100, model: { type: 'Checkpoint' } },
+        resources: [rawAirResource()],
+      } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    });
+
+    expect(result.workflowMetadata).toMatchObject({ isPrivateGeneration: true });
+  });
+
   it("refuses a user with no subscription another user's raw-AIR epoch", async () => {
     mockGetHighestTierSubscription.mockResolvedValue(null);
 
