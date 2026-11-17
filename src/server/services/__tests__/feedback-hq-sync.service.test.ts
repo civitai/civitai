@@ -23,18 +23,28 @@ const url = (id: string) => `https://hq.civitai.com/t/${id}`;
 
 type Call = Parameters<SyncDeps['triage']>[0];
 
+const AREA = 'apps-platform';
+
+/** Rows and links default to one area, so a case only names it when the area is what it tests. */
 function deps(over: {
-  links?: { feedbackId: number; taskId: string }[];
-  rows?: FeedbackSyncRow[];
+  links?: { feedbackId: number; taskId: string; area?: string }[];
+  rows?: (Omit<FeedbackSyncRow, 'area'> & { area?: string })[];
   tasks?: Record<string, HqTaskRow | null | Error>;
   triage?: (call: Call) => 'changed' | 'conflict' | 'gone';
+  clock?: () => number;
+  deadlineMs?: number;
+  maxTaskReads?: number;
 }) {
-  const calls: Call[] = [];
+  /** The write as asked for, without the handler guard (asserted separately in `handlers`). */
+  const calls: Omit<Call, 'expectedHandledById'>[] = [];
+  const handlers: (number | null | undefined)[] = [];
   const counted: Record<string, number> = {};
   const reads: string[] = [];
   const d: SyncDeps = {
-    listLinks: vi.fn(async () => over.links ?? []),
-    readRows: vi.fn(async (ids: number[]) => (over.rows ?? []).filter((r) => ids.includes(r.id))),
+    listLinks: vi.fn(async () => (over.links ?? []).map((l) => ({ area: AREA, ...l }))),
+    readRows: vi.fn(async (ids: number[]) =>
+      (over.rows ?? []).filter((r) => ids.includes(r.id)).map((r) => ({ area: AREA, ...r }))
+    ),
     readTask: vi.fn(async (id: string) => {
       reads.push(id);
       const t = over.tasks?.[id];
@@ -42,7 +52,9 @@ function deps(over: {
       return t === undefined ? null : t;
     }),
     triage: vi.fn(async (call: Call) => {
-      calls.push(call);
+      const { expectedHandledById, ...rest } = call;
+      calls.push(rest);
+      handlers.push(expectedHandledById);
       return over.triage ? over.triage(call) : 'changed';
     }),
     actorId: ACTOR,
@@ -50,8 +62,11 @@ function deps(over: {
       counted[event] = (counted[event] ?? 0) + n;
     },
     log: vi.fn(),
+    ...(over.clock ? { clock: over.clock } : {}),
+    ...(over.deadlineMs !== undefined ? { deadlineMs: over.deadlineMs } : {}),
+    ...(over.maxTaskReads !== undefined ? { maxTaskReads: over.maxTaskReads } : {}),
   };
-  return { d, calls, counted, reads };
+  return { d, calls, handlers, counted, reads };
 }
 
 const open: HqTaskRow = { status: 'to do' };
@@ -290,6 +305,136 @@ describe('runFeedbackHqSync: a status a human set', () => {
   });
 });
 
+describe('runFeedbackHqSync: a moderator acting mid-run', () => {
+  it('scopes every write on the handler it read, so a row a moderator took over is refused', async () => {
+    const { d, handlers } = deps({
+      links: [
+        { feedbackId: 990000301, taskId: 't_no' },
+        { feedbackId: 990000302, taskId: 't_open' },
+        { feedbackId: 990000303, taskId: 't_done' },
+      ],
+      rows: [
+        { id: 990000301, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_no' },
+        { id: 990000302, status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000303, status: 'reviewed', handledById: HUMAN, hqTaskId: 't_done' },
+      ],
+      tasks: { t_no: wontfix, t_open: open, t_done: complete },
+    });
+    await runFeedbackHqSync(d);
+    // New rows are worked first: the new row on no handler, then the dismiss on the sync's own,
+    // then the actioned on the moderator's.
+    expect(handlers).toEqual([null, ACTOR, HUMAN]);
+  });
+
+  it('counts the refusal when a moderator re-stamped the row between the read and the dismiss', async () => {
+    const { d, calls, counted } = deps({
+      links: [{ feedbackId: 990000304, taskId: 't_no' }],
+      rows: [{ id: 990000304, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_no' }],
+      tasks: { t_no: wontfix },
+      // The shared write's answer when the handler no longer matches.
+      triage: () => 'conflict',
+    });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls).toEqual([{ id: 990000304, status: 'dismissed', expectedStatus: 'reviewed' }]);
+    expect(counted).toMatchObject({ conflict: 1 });
+    expect(summary.moved.dismissed).toBe(0);
+  });
+});
+
+describe('runFeedbackHqSync: the area cross-check', () => {
+  it('skips a row whose area is not the one HQ recorded, and counts it', async () => {
+    const { d, calls, reads, counted } = deps({
+      links: [
+        { feedbackId: 990000311, taskId: 't_open', area: 'site-bug-report' },
+        { feedbackId: 990000312, taskId: 't_open' },
+      ],
+      rows: [
+        { id: 990000311, area: 'apps-platform', status: 'new', handledById: null, hqTaskId: null },
+        { id: 990000312, status: 'new', handledById: null, hqTaskId: null },
+      ],
+      tasks: { t_open: open },
+    });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls.map((c) => c.id)).toEqual([990000312]);
+    expect(reads).toEqual(['t_open']);
+    expect(counted).toMatchObject({ area_mismatch: 1 });
+    expect(summary.areaMismatches).toBe(1);
+  });
+
+  it('skips a link that carries no area at all', async () => {
+    const { d, calls, counted } = deps({
+      rows: [{ id: 990000313, status: 'new', handledById: null, hqTaskId: null }],
+      tasks: { t_open: open },
+    });
+    d.listLinks = vi.fn(async () => [{ feedbackId: 990000313, taskId: 't_open' }]);
+    await runFeedbackHqSync(d);
+    expect(calls).toEqual([]);
+    expect(counted).toMatchObject({ area_mismatch: 1 });
+  });
+});
+
+describe('runFeedbackHqSync: a bounded run', () => {
+  const twoRows = {
+    links: [
+      { feedbackId: 990000321, taskId: 't_a' },
+      { feedbackId: 990000322, taskId: 't_b' },
+    ],
+    rows: [
+      { id: 990000321, status: 'new', handledById: null, hqTaskId: null },
+      { id: 990000322, status: 'new', handledById: null, hqTaskId: null },
+    ],
+    tasks: { t_a: open, t_b: open },
+  };
+
+  it('stops at the task-read cap, writes nothing past it, and counts the early stop', async () => {
+    const { d, calls, reads, counted } = deps({ ...twoRows, maxTaskReads: 1 });
+    const summary = await runFeedbackHqSync(d);
+    expect(reads).toEqual(['t_a']);
+    expect(calls.map((c) => c.id)).toEqual([990000321]);
+    expect(summary.stoppedEarly).toBe('task_cap');
+    expect(counted).toMatchObject({ stopped_early: 1 });
+  });
+
+  it('stops at the deadline', async () => {
+    let now = 1_000;
+    const { d, calls, counted } = deps({
+      ...twoRows,
+      deadlineMs: 50,
+      // Each read of the clock moves it 30 ms on: the second row starts past the deadline.
+      clock: () => (now += 30),
+    });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls.map((c) => c.id)).toEqual([990000321]);
+    expect(summary.stoppedEarly).toBe('deadline');
+    expect(counted).toMatchObject({ stopped_early: 1 });
+  });
+
+  it('does not stop early when the run fits', async () => {
+    const { d, calls, counted } = deps({ ...twoRows, maxTaskReads: 2, deadlineMs: 60_000 });
+    const summary = await runFeedbackHqSync(d);
+    expect(calls).toHaveLength(2);
+    expect(summary.stoppedEarly).toBeNull();
+    expect(counted.stopped_early ?? 0).toBe(0);
+  });
+
+  it('works the new rows first, so a cap never starves them behind reviewed ones', async () => {
+    const { d, calls } = deps({
+      links: [
+        { feedbackId: 990000331, taskId: 't_a' },
+        { feedbackId: 990000332, taskId: 't_b' },
+      ],
+      rows: [
+        { id: 990000331, status: 'reviewed', handledById: ACTOR, hqTaskId: 't_a' },
+        { id: 990000332, status: 'new', handledById: null, hqTaskId: null },
+      ],
+      tasks: { t_a: complete, t_b: open },
+      maxTaskReads: 1,
+    });
+    await runFeedbackHqSync(d);
+    expect(calls.map((c) => c.id)).toEqual([990000332]);
+  });
+});
+
 describe('runFeedbackHqSync: HQ failures', () => {
   it('skips the rows whose task could not be read and carries on with the rest', async () => {
     const { d, calls, counted } = deps({
@@ -407,10 +552,10 @@ describe('createHqFeedbackReader', () => {
         auth: new Headers(init?.headers).get('authorization'),
       });
       return u.searchParams.get('cursor')
-        ? ok({ rows: [{ id: 'fb-3', feedback_id: 3, task: 't_c' }] })
+        ? ok({ rows: [{ id: 'fb-3', feedback_id: 3, task: 't_c', area: 'app-block' }] })
         : ok({
             rows: [
-              { id: 'fb-1', feedback_id: 1, task: 't_a' },
+              { id: 'fb-1', feedback_id: 1, task: 't_a', area: 'apps-platform' },
               { id: 'fb-2', feedback_id: 2 },
             ],
             next: 'CUR',
@@ -418,13 +563,14 @@ describe('createHqFeedbackReader', () => {
     });
     const reader = createHqFeedbackReader({ token: 'hq_secret', fetch: fetchFn as typeof fetch });
     expect(await reader.listLinks()).toEqual([
-      { feedbackId: 1, taskId: 't_a' },
-      { feedbackId: 3, taskId: 't_c' },
+      { feedbackId: 1, taskId: 't_a', area: 'apps-platform' },
+      { feedbackId: 3, taskId: 't_c', area: 'app-block' },
     ]);
     expect(seen).toHaveLength(2);
     expect(seen.every((s) => s.auth === 'Bearer hq_secret')).toBe(true);
     expect(seen[0].url.startsWith('/api/v1/data/feedback_items?')).toBe(true);
     expect(seen[1].url).toContain('cursor=CUR');
+    expect(seen[0].url).toContain('fields=feedback_id,task,area');
   });
 
   it('reads a task row, answers null for one HQ does not show, and throws on a server error', async () => {

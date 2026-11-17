@@ -179,6 +179,36 @@ describe('what it accepts', () => {
   });
 });
 
+describe('a call that keeps the status', () => {
+  it('refuses one with no note, with 400 and no write: it would re-decide the verdict', async () => {
+    const { status } = await call({
+      id: 990000258,
+      status: 'reviewed',
+      expectedStatus: 'reviewed',
+    });
+    expect(status).toBe(400);
+    expect(triage).not.toHaveBeenCalled();
+  });
+
+  it('accepts one that appends a note', async () => {
+    const { status } = await call({
+      id: 990000258,
+      status: 'reviewed',
+      expectedStatus: 'reviewed',
+      noteAppend: 'more context',
+    });
+    expect(status).toBe(200);
+    expect(triage).toHaveBeenCalledTimes(1);
+  });
+
+  it('never forwards a handler guard from the body', async () => {
+    await call({ ...REQUEST, expectedHandledById: 7 });
+    expect(triage).toHaveBeenCalledWith(
+      expect.not.objectContaining({ expectedHandledById: expect.anything() })
+    );
+  });
+});
+
 describe('what it answers', () => {
   it('409 when the row moved since the caller read it', async () => {
     spokeAnswers({ ok: true, changed: false });

@@ -163,6 +163,59 @@ describe('feedback-triage: the status write', () => {
   });
 });
 
+describe('feedback-triage: the handler guard', () => {
+  it('refuses a write scoped on a handler the row no longer has, and changes nothing', async () => {
+    // The sync read the row as its own (moderatorId); a moderator re-stamped it since.
+    const id = await seedFeedback(db, {
+      userId: reporterId,
+      status: 'reviewed',
+      handledById: otherModeratorId,
+    });
+    expect(
+      await run({
+        id,
+        status: 'dismissed',
+        expectedStatus: 'reviewed',
+        expectedHandledById: moderatorId,
+      })
+    ).toEqual({ ok: true, changed: false });
+    expect(await readFeedback(db, id)).toMatchObject({
+      status: 'reviewed',
+      handledById: otherModeratorId,
+    });
+    expect(await handledAtText(id)).toBe(SEEDED_HANDLED_AT);
+  });
+
+  it('writes when the handler is still the one read', async () => {
+    const id = await seedFeedback(db, {
+      userId: reporterId,
+      status: 'reviewed',
+      handledById: moderatorId,
+    });
+    expect(
+      await run({
+        id,
+        status: 'dismissed',
+        expectedStatus: 'reviewed',
+        expectedHandledById: moderatorId,
+      })
+    ).toEqual({ ok: true, changed: true });
+    expect((await readFeedback(db, id)).status).toBe('dismissed');
+  });
+
+  it('reads a null expected handler as "nobody", matching only an unhandled row', async () => {
+    const unhandled = await seedFeedback(db, { userId: reporterId });
+    const handled = await seedFeedback(db, {
+      userId: reporterId,
+      status: 'new',
+      handledById: otherModeratorId,
+    });
+    const args = { status: 'reviewed', expectedStatus: 'new', expectedHandledById: null };
+    expect(await run({ id: unhandled, ...args })).toEqual({ ok: true, changed: true });
+    expect(await run({ id: handled, ...args })).toEqual({ ok: true, changed: false });
+  });
+});
+
 describe('feedback-triage: the note', () => {
   it('appends below a stored note, keeping it', async () => {
     const id = await seedFeedback(db, { userId: reporterId, triageNote: 'first line' });
