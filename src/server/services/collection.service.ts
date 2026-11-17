@@ -1392,12 +1392,13 @@ export const saveItemInCollections = async ({
     }
   }
 
-  // Excluding `unwrittenCollectionIds` keeps a no-op re-save from reading as a second submission.
+  // Only a new entry is a submission: a re-save of one already there (same tag, or a tag change)
+  // must not read as a second one.
   const reviewCollectionIds = uniq(
     data
       .filter((d) => d.status === CollectionItemStatus.REVIEW)
       .map((d) => d.collectionId)
-      .filter((id) => !unwrittenCollectionIds.has(id))
+      .filter((id) => !existingItemsByCollection.has(id))
   );
   await notifyCollectionSubmissionReceived({
     collections: collections.filter((c) => reviewCollectionIds.includes(c.id)),

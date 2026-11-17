@@ -35,6 +35,8 @@ vi.mock('~/server/services/image-visibility.service', async (importOriginal) => 
   ...(await importOriginal<typeof ImageVisibility>()),
   assertImagesVisibleToViewer: assertVisible,
 }));
+const { createNotification } = vi.hoisted(() => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/notification.service', () => ({ createNotification }));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<typeof SearchIndex>()),
   collectionsSearchIndex: { queueUpdate: vi.fn() },
@@ -271,6 +273,50 @@ describe('saveItemInCollections with an image', () => {
       mockDbRead.collectionItem.findMany.mockResolvedValue(entry(SUBMITTER_ID));
       expect(await outcome()).toBe('saved');
     });
+  });
+
+  it('re-saves an entry in a contest whose items the caller can read, without its checks', async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([
+      {
+        ...collectionRow,
+        mode: 'Contest',
+        metadata: { submissionEndDate: new Date(Date.now() - 86_400_000).toISOString() },
+      },
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: OWNER_ID, note: null },
+    ]);
+    await expect(
+      save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] })
+    ).resolves.toBe('added');
+  });
+
+  it("does not announce a re-save of someone else's entry as a submission", async () => {
+    mockDbRead.collection.findMany.mockResolvedValue([
+      { ...collectionRow, read: 'Private', write: 'Review' },
+    ]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Private',
+        write: 'Review',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+    mockDbRead.collectionItem.findMany.mockResolvedValue([
+      { id: 7, collectionId: COLLECTION_ID, tagId: null, addedById: OWNER_ID, note: null },
+    ]);
+    await save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] });
+    expect(createNotification).not.toHaveBeenCalled();
+
+    // Control: a new entry is announced.
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    await save({ imageId: VISIBLE_IMAGE, collections: [{ collectionId: COLLECTION_ID }] });
+    expect(createNotification).toHaveBeenCalled();
   });
 
   it('leaves non-image items alone', async () => {
