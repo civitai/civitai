@@ -8,6 +8,7 @@ import type {
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { PreviewRejectedError, watermarkTilePng } from '~/server/utils/service-deal-preview';
 import {
   SERVICE_PREVIEW_VIDEO_MAX_SECONDS,
@@ -47,11 +48,11 @@ function restrictedAsRejection(error: unknown): never {
 async function uploadSourceBlob(data: Buffer, mimeType: string, sellerId: number) {
   const token = await getOrchestratorToken(sellerId).catch(restrictedAsRejection);
   const presign = await getConsumerBlobUploadUrlService({ token });
-  const response = await fetch(presign.uploadUrl, {
+  const response = await outboundFetch(presign.uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': mimeType },
     body: new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength),
-    signal: AbortSignal.timeout(BLOB_UPLOAD_TIMEOUT_MS),
+    timeoutMs: BLOB_UPLOAD_TIMEOUT_MS,
   });
   if (response.status === 400 || response.status === 415)
     throw new PreviewRejectedError('This video could not be read. Upload an MP4 or WebM file.');
