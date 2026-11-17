@@ -51,7 +51,9 @@ const emptyPage = () => ({ items: [], nextCursor: undefined, correctedQuery: und
 
 export async function searchSemanticImages({
   input,
-  user,
+  user: sessionUser,
+  asModerator = false,
+  asOwner = false,
   domain,
   track,
   candidateSource = searchServiceCandidates,
@@ -60,12 +62,20 @@ export async function searchSemanticImages({
   input: SemanticImageSearchInput;
   // Signed out: the site defaults for hidden tags and browsing add-ons.
   user?: SessionUser;
+  /** The request's views (`credentialViews`): without them the search reads as a plain viewer. */
+  asModerator?: boolean;
+  asOwner?: boolean;
   domain?: DomainColor;
   track?: QueryTracker;
   candidateSource?: CandidateSource;
   /** A verdict that would narrow the level refuses instead (the showcase picker's own images). */
   refuseNarrowing?: boolean;
 }) {
+  // Every moderator exemption below reads `user.isModerator`, so the viewer carries the view.
+  const user = sessionUser && {
+    ...sessionUser,
+    isModerator: asModerator && !!sessionUser.isModerator,
+  };
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
@@ -157,6 +167,8 @@ export async function searchSemanticImages({
         include: ['cosmetics', 'tagIds'],
       }),
       user,
+      asModerator,
+      asOwner,
       domain,
       headers: { src: 'semanticImageSearch' },
     });

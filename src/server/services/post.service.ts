@@ -301,13 +301,13 @@ export const getPostsInfinite = async ({
   poiOnly,
   minorOnly,
   asModerator,
-  asOwner = true,
+  asOwner = false,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
-  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  /** Whether the request reads with a moderator's view; default false (`credentialViews`). */
   asModerator?: boolean;
-  /** Whether the request may see the user's own drafts, Private and scheduled posts; default true. */
+  /** Whether the request may see the user's own drafts, Private and scheduled posts; default false. */
   asOwner?: boolean;
 }) => {
   const AND = [Prisma.sql`1 = 1`];
@@ -315,7 +315,7 @@ export const getPostsInfinite = async ({
   let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   // One value for every moderator branch below: a narrow-scope key is not a moderator here.
-  const isModerator = asModerator ?? user?.isModerator ?? false;
+  const isModerator = asModerator === true && !!user?.isModerator;
   // A narrow-scope key is not the owner of its posts here: the post owner branches read `ownerId`.
   // Collection permissions (and the contributor read) still follow `user.id`: a scoped key keeps
   // collection ownership and membership.

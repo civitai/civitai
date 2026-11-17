@@ -1,3 +1,4 @@
+import { credentialViews } from '~/server/services/oauth/enforce-token-scope';
 import {
   getStickerBookSchema,
   getStickerBookSectionSchema,
@@ -40,7 +41,8 @@ export const stickerBookRouter = router({
       limit: input.limit,
       browsingLevel: input.browsingLevel,
       user: ctx.user ?? undefined,
-      isModerator: !!ctx.user?.isModerator,
+      isModerator: credentialViews(ctx).asModerator,
+      asOwner: credentialViews(ctx).asOwner,
     });
   }),
 
@@ -58,7 +60,8 @@ export const stickerBookRouter = router({
       page: input.page,
       browsingLevel: input.browsingLevel,
       user: ctx.user ?? undefined,
-      isModerator: !!ctx.user?.isModerator,
+      isModerator: credentialViews(ctx).asModerator,
+      asOwner: credentialViews(ctx).asOwner,
     });
   }),
 });

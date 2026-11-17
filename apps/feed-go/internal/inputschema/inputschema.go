@@ -6,7 +6,9 @@
 // scripts/__tests__/feed-go-input-schemas.schema-drift.test.ts fails when the two differ, so a key
 // the app adds to a schema cannot land without the file changing. The parsers accept only the keys
 // listed (plus the client transport keys each names), and fall back (`input-unknown-key`) on any
-// other: a build that does not know a key never answers as though it were absent.
+// other: a build that does not know a key never answers as though it were absent. One deliberate
+// exception: image.getInfinite also ignores the URL keys zod strips (feed.strippedURLKeys,
+// DESIGN.md §5.1).
 package inputschema
 
 import (

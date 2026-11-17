@@ -45,7 +45,10 @@ import {
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { contentRestriction } from '~/server/common/content-restriction';
-import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
+import {
+  credentialViews,
+  isSessionOrFullUserKey,
+} from '~/server/services/oauth/enforce-token-scope';
 import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
@@ -97,8 +100,9 @@ export const getPostsInfiniteHandler = async ({
     // taken-down model's only to its owner, except to moderators, who must see what they may need
     // to remove.
     const selector = { ...input, postIds: input.ids };
-    const moderator = !!ctx.user?.isModerator && isSessionOrFullUserKey(ctx);
-    const ownerId = ctx.user && isSessionOrFullUserKey(ctx) ? ctx.user.id : undefined;
+    const views = credentialViews(ctx);
+    const moderator = views.asModerator;
+    const ownerId = ctx.user && views.asOwner ? ctx.user.id : undefined;
     const [heldLevel, withheld] = moderator
       ? [undefined, false]
       : await Promise.all([
@@ -115,8 +119,7 @@ export const getPostsInfiniteHandler = async ({
     return await getPostsInfinite({
       ...input,
       user: ctx.user,
-      asModerator: moderator,
-      asOwner: ownerId !== undefined,
+      ...views,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
