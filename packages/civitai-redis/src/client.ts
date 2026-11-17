@@ -1353,13 +1353,15 @@ export function instrumentCommands(
     clientLabel === 'sys' ? opts.sysInflightCap ?? config?.sysCommandsQueueMaxLength ?? 0 : 0;
   // This connection's own timeout/success record for the sys self-heal (./sys-timeouts).
   const sysTimeouts = clientLabel === 'sys' ? createSysTimeoutRecord() : undefined;
+  // Sentinel client only: it re-resolves the master when a command fails with READONLY, so a
+  // retry can reach the new primary. A single-node client keeps its one connection, so READONLY
+  // there means it points at a replica and retrying the same address cannot help.
   const sysReadonlyRetry =
     clientLabel === 'sys' &&
+    isClusterClient &&
     (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
   // A pipeline that hits READONLY may already have applied earlier writes, so it is never retried.
-  // Only the Sentinel client routes pipelines through `_execute`; the single-node client's pipelines
-  // bypass `sendCommand` and are never wrapped.
-  if (sysReadonlyRetry && isClusterClient && typeof self._executePipeline === 'function') {
+  if (sysReadonlyRetry && typeof self._executePipeline === 'function') {
     const originalPipeline = self._executePipeline;
     self._executePipeline = function (this: any, ...args: any[]) {
       return withoutSysReadonlyRetry(() => originalPipeline.apply(this, args));

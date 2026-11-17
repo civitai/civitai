@@ -117,7 +117,7 @@ describe('sys READONLY retry', () => {
     expect(after).toEqual({ state: 'fulfilled', value: 'OK' });
   });
 
-  it('retries on the single-node client too (sendCommand)', async () => {
+  it('does not retry on the single-node client, which has no master to re-resolve', async () => {
     let n = 0;
     const client = {
       sendCommand: async (..._args: unknown[]) => {
@@ -130,8 +130,9 @@ describe('sys READONLY retry', () => {
     const s = settle((client as any).sendCommand(['SET', 'k', 'v']));
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(s).toEqual({ state: 'fulfilled', value: 'OK' });
-    expect(n).toBe(3);
+    expect(s.state).toBe('rejected');
+    expect((s.reason as Error).message).toMatch(/^READONLY /);
+    expect(n).toBe(1);
   });
 
   it('is off when disabled', async () => {
