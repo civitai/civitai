@@ -180,6 +180,22 @@ func TestLoadPprofDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestLoadServeModelGetAllDefaultsOff(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	for in, want := range map[string]bool{"": false, "false": false, "junk": false, "true": true, "1": true} {
+		t.Setenv("FEED_GO_SERVE_MODEL_GETALL", in)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.ServeModelGetAll != want {
+			t.Errorf("FEED_GO_SERVE_MODEL_GETALL=%q -> %v, want %v", in, c.ServeModelGetAll, want)
+		}
+	}
+}
+
 // SESSION_REVOCATION_CACHE is a default-on switch (isEnvSwitchOn): only off/0/false, any case and
 // surrounding whitespace, turn it off; unset, empty and unknown values keep it on. The cases are the
 // package's own env-switch.test.ts.

@@ -1512,6 +1512,14 @@ func goldenRunModels(t *testing.T, fx *goldenFixture) {
 		t.Fatalf("compare: %v", err)
 	}
 	goldenReport(t, rep, c.payload)
+	// createContext's policy (model.getAll's edgeCacheIt never reaches the header): the public TTL
+	// exactly when there is no session, none for a session.
+	if fx.Request.Session == nil && (c.ttl == nil || *c.ttl != trpc.SignedOutTTL) {
+		t.Errorf("signed out: want the public cache TTL %+v, got %v", trpc.SignedOutTTL, c.ttl)
+	}
+	if fx.Request.Session != nil && c.ttl != nil {
+		t.Errorf("a session: want no cache TTL, got %+v", *c.ttl)
+	}
 }
 
 func TestGoldenModelGetAll(t *testing.T) {

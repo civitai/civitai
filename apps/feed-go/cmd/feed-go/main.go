@@ -286,11 +286,13 @@ func run(log *slog.Logger) error {
 		Users: sources,
 	}
 	srv := &server.Server{
-		Resolver:    resolver,
-		Deps:        deps,
-		Models:      models,
-		Hosts:       cfg.Hosts,
-		RegionRules: cfg.RegionRules,
+		Resolver: resolver,
+		Deps:     deps,
+		Models:   models,
+		// FEED_GO_SERVE_MODEL_GETALL (default off): off, the public model.getAll route proxies everything.
+		ServeModelGetAll: cfg.ServeModelGetAll,
+		Hosts:            cfg.Hosts,
+		RegionRules:      cfg.RegionRules,
 		// REGION_BLOCK_CONFIG, else the app's default list (apipolicy.json).
 		RegionBlockRules: cfg.RegionBlockRules,
 		Metrics:          metrics,
@@ -320,6 +322,7 @@ func run(log *slog.Logger) error {
 	}
 
 	public := server.PublicMux(srv)
+	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
 	internal := server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), cfg.Pprof)
 	if cfg.Pprof {
