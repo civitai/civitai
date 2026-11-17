@@ -336,6 +336,15 @@ describe('mod/text-scan', () => {
       expect(runTextScanHarnessAction).not.toHaveBeenCalled();
     });
 
+    it("ignores a revoking note by a non-holder's restore", async () => {
+      dbMock.dbWrite.textScanPrompt.findMany.mockResolvedValue([
+        ...rows,
+        { id: 113, content: 'V77', note: 'restore revokes:111', createdById: MOD },
+      ]);
+      as(['textScanPromptPublish']);
+      expect((await put('V111')).status).toBe(200);
+    });
+
     it('refuses a restore once its author no longer holds the per-key grant', async () => {
       redisMock.sysRedis.get.mockResolvedValue(JSON.stringify({ textScanPromptPublishIntent: [] }));
       as(['textScanPromptPublish']);
