@@ -6,9 +6,9 @@ import { sql } from 'kysely';
  * an item is served, since a report can arrive after the item was sampled.
  *
  * Every signal is used, because none is complete on its own: a later moderator removal
- * overwrites `blockedFor`; an unsent `CsamReport` can have its image list replaced; and older
- * `Report` rows with the CSAM reason predate `CsamReport`. The owner checks are deliberately
- * broader than the ticket's "CSAM-reported images".
+ * overwrites `blockedFor`, and an unsent `CsamReport` can have its image list replaced. The
+ * `Report` arms match only rows written before `report.create` stopped taking the CSAM reason.
+ * The owner checks are deliberately broader than the ticket's "CSAM-reported images".
  */
 export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
   WITH candidate AS (SELECT DISTINCT unnest(${imageIds}::int[]) AS id),
