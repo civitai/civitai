@@ -15,9 +15,11 @@
  *
  * Prints counts only, never model ids, text or reasons; it refuses to start with a `prisma*` entry in
  * LOGGING, which prints each query's parameters. A model with a logged moderator nsfw ruling is not
- * locked. Rulings from the model form before 2026-10-20 were never logged, so a would-lock model with
- * any moderator ModActivity before then is not locked either: its id goes to the --list-out file,
- * private, for moderators (`moderator-list`). A form ruling that left no ModActivity is not seen.
+ * locked. Rulings from the model form were not logged until the 2026-10-20 deploy, so a would-lock
+ * model with any ModActivity (other than the system's) before 2026-10-21 is not locked either
+ * (`moderator-list`). A form ruling that left no ModActivity is not seen. The apply writes each
+ * `locked`, `lock-error` and `moderator-list` model id to the --list-out file, private, so a lock
+ * can be reversed by id and a listed model reviewed.
  */
 import { appendFileSync, existsSync, writeFileSync } from 'fs';
 import path from 'path';
@@ -36,7 +38,7 @@ export type Face = {
   sfwOnly: boolean;
   lockedProperties: string[];
   meta: unknown;
-  /** A moderator acted on the model or a version before nsfw rulings were logged (2026-10-20). */
+  /** Someone other than the system acted on the model or a version before rulings were logged. */
   touchedBeforeLogging: boolean;
 };
 
@@ -120,6 +122,9 @@ export async function sweepOne(face: Face, apply: boolean): Promise<Outcome> {
   return notLockedReason(face, textHash) ?? 'lock-refused';
 }
 
+/** The outcomes whose model ids the apply writes to the --list-out file. */
+const ID_OUT: Outcome[] = ['locked', 'lock-error', 'moderator-list'];
+
 export async function pool<T>(
   items: T[],
   concurrency: number,
@@ -139,7 +144,7 @@ export async function sweep(
   faces: Face[],
   apply: boolean,
   concurrency: number,
-  onListed: (modelId: number) => void = () => undefined,
+  onIdOut: (outcome: Outcome, modelId: number) => void = () => undefined,
   maxLocks = Infinity
 ) {
   const outcomes: Partial<Record<Outcome, number>> = {};
@@ -165,7 +170,7 @@ export async function sweep(
       if (!outcome) return;
       outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
       if (outcome === 'locked') owners.add(face.userId);
-      if (outcome === 'moderator-list') onListed(face.id);
+      if (ID_OUT.includes(outcome)) onIdOut(outcome, face.id);
     },
     atCap
   );
@@ -199,8 +204,8 @@ export async function readCandidates(limit: number, apply: boolean) {
     SELECT m.id, m."userId", m.name, m.description, m.nsfw, m.minor, m.poi, m."sfwOnly",
            COALESCE(m."lockedProperties", ARRAY[]::text[]) AS "lockedProperties", m.meta,
            EXISTS (
-             SELECT 1 FROM "ModActivity" a JOIN "User" u ON u.id = a."userId" AND u."isModerator"
-             WHERE a."createdAt" < '2026-10-20' AND a."userId" <> ${SYSTEM_USER_ID}
+             SELECT 1 FROM "ModActivity" a
+             WHERE a."createdAt" < '2026-10-21' AND a."userId" <> ${SYSTEM_USER_ID}
                AND ((a."entityType" IN ('model', 'Model') AND a."entityId" = m.id)
                  OR (a."entityType" IN ('modelVersion', 'ModelVersion') AND a."entityId" IN
                    (SELECT v.id FROM "ModelVersion" v WHERE v."modelId" = m.id)))
@@ -252,7 +257,8 @@ async function main() {
   // Appended as each model is listed, since its verdict is already stored and a re-run skips it.
   // shortcut: a crash between that store and the append drops the id; re-read verdicts if one does.
   if (apply && listOut) writeFileSync(listOut, '', { mode: 0o600, flag: 'wx' });
-  const onListed = (id: number) => listOut && apply && appendFileSync(listOut, `${id}\n`);
+  const onIdOut = (outcome: Outcome, id: number) =>
+    listOut && apply && appendFileSync(listOut, `${outcome}\t${id}\n`);
 
   const { candidates, dangling, faces } = await readCandidates(limit, apply);
   const started = Date.now();
@@ -260,7 +266,7 @@ async function main() {
     faces,
     apply,
     concurrency,
-    onListed,
+    onIdOut,
     apply ? maxLocks : Infinity
   );
   console.log({

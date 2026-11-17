@@ -115,12 +115,14 @@ describe('sweep-com-faces', () => {
       const touched = face({ touchedBeforeLogging: true });
       mocks.read.mockResolvedValue(touched);
       mocks.preview.mockResolvedValue(verdict(true));
-      const listed: number[] = [];
-      await expect(sweep([touched], apply, 1, (id) => listed.push(id))).resolves.toMatchObject({
+      const listed: [string, number][] = [];
+      await expect(
+        sweep([touched], apply, 1, (outcome, id) => listed.push([outcome, id]))
+      ).resolves.toMatchObject({
         outcomes: { 'moderator-list': 1 },
         ownersLocked: 0,
       });
-      expect(listed).toEqual([7]);
+      expect(listed).toEqual([['moderator-list', 7]]);
       expect(mocks.lock).not.toHaveBeenCalled();
       if (apply)
         expect(mocks.record).toHaveBeenCalledWith(7, expect.objectContaining({ detected: true }));
@@ -153,10 +155,15 @@ describe('sweep-com-faces', () => {
     mocks.preview.mockResolvedValue(verdict(true));
     mocks.lock.mockRejectedValueOnce(new Error('redis down'));
     const faces = [1, 2, 3].map((id) => face({ id }));
-    await expect(sweep(faces, true, 1, undefined, 2)).resolves.toMatchObject({
-      outcomes: { 'lock-error': 1, locked: 1 },
-      unchecked: 1,
-    });
+    const ids: [string, number][] = [];
+    await expect(
+      sweep(faces, true, 1, (outcome, id) => ids.push([outcome, id]), 2)
+    ).resolves.toMatchObject({ outcomes: { 'lock-error': 1, locked: 1 }, unchecked: 1 });
+    // Both ids reach the private list, so a lock can be reversed and an error re-checked by id.
+    expect(ids).toEqual([
+      ['lock-error', 1],
+      ['locked', 2],
+    ]);
   });
 
   it('apply: a lock the UPDATE refuses is counted lock-refused', async () => {

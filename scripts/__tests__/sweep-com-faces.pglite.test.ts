@@ -39,14 +39,14 @@ describe('sweep-com-faces candidates', () => {
         (7, 2, 'second candidate', 14, 'com', NULL, '{"other": 1}'),
         (8, 1, 'mod touched a version early', 10, 'com', NULL, '{}'),
         (9, 1, 'mod touched the model early', 10, 'com', NULL, '{}'),
-        (10, 1, 'touched late, by a non-mod, by the system', 10, 'com', NULL, '{}');
+        (10, 1, 'touched late, and by the system', 10, 'com', NULL, '{}');
       INSERT INTO "User" VALUES (50, true), (51, false), (-1, true);
       INSERT INTO "ModelVersion" VALUES (80, 8), (100, 10);
       INSERT INTO "ModActivity" ("userId", activity, "entityType", "entityId", "createdAt") VALUES
         (50, 'x', 'modelVersion', 80, '2026-09-01'),
-        (50, 'x', 'Model', 9, '2026-10-19 23:59'),
-        (50, 'x', 'model', 10, '2026-10-20 00:00'),
-        (51, 'x', 'model', 10, '2026-09-01'),
+        (50, 'x', 'Model', 9, '2026-10-20 23:59'),
+        (50, 'x', 'model', 10, '2026-10-21 00:00'),
+        (51, 'x', 'model', 7, '2026-09-01'),
         (-1, 'x', 'ModelVersion', 100, '2026-09-01'),
         (50, 'x', 'model', 1, '2026-11-01');
     `);
@@ -62,11 +62,13 @@ describe('sweep-com-faces candidates', () => {
     expect(faces[0].lockedProperties).toEqual([]);
   });
 
-  it('flags a moderator action on the model or a version before 2026-10-20 only', async () => {
+  // Decision (Mod Lead ruling): any actor but the system counts, moderator now or not, up to
+  // 2026-10-21, the day after logging deployed. A list entry beats a lock: don't narrow either.
+  it('flags any non-system action on the model or a version before 2026-10-21 only', async () => {
     const { faces } = await readCandidates(10, true);
     expect(Object.fromEntries(faces.map((f) => [f.id, f.touchedBeforeLogging]))).toEqual({
       1: false,
-      7: false,
+      7: true,
       8: true,
       9: true,
       10: false,
