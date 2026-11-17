@@ -52,8 +52,9 @@ describe('awardBountyEntry', () => {
 });
 
 describe('upsertBountyEntryHandler', () => {
-  const ctxFor = (userId: number) => ({ user: { id: userId } } as unknown as ProtectedContext);
-  const input = { bountyId: BOUNTY_ID, files: [], images: [] } as unknown as Parameters<
+  const ctxFor = (userId: number) =>
+    ({ user: { id: userId }, features: { canViewNsfw: true } } as unknown as ProtectedContext);
+  const input = { bountyId: BOUNTY_ID, files: [] } as unknown as Parameters<
     typeof upsertBountyEntryHandler
   >[0]['input'];
 

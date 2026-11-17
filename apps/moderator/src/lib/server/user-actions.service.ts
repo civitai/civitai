@@ -286,6 +286,7 @@ export type ModEndpoint =
   | 'poi-flag/dismiss'
   | 'poi-flag/flag-match'
   | 'poi-flag/revert'
+  | 'post-text/moderate'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'

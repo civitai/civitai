@@ -26,6 +26,11 @@ describe('bounty entry image limit', () => {
     expect(imageIssues(max + 1).map((i) => i.code)).toEqual(['too_big']);
   });
 
+  // An edit whose images the domain's cap hides all shows none; the save checks one stays linked.
+  it('accepts an edit that sends no image', () => {
+    expect(imageIssues(0)).toEqual([]);
+  });
+
   const submitImageIssues = (imageCount: number) => {
     const result = submitBountyEntryInputSchema.safeParse({
       bountyId: 1,

@@ -39,8 +39,12 @@ import {
 // Pure shared module (only depends on token-scope.constants) — safe to import
 // statically without coupling to env/Prisma, so the pure-helper tests still run.
 import { assertSensitiveScopesJustified } from '~/shared/constants/block-scope.constants';
-// Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest.
-import { stampCanonicalIframeSrc } from '~/server/services/blocks/manifest-normalize';
+// Pure (no env/Prisma) — stamps the platform-owned iframe.src onto a manifest and trims the
+// string fields the validator measures trimmed.
+import {
+  stampCanonicalIframeSrc,
+  trimManifestStringFields,
+} from '~/server/services/blocks/manifest-normalize';
 import { manifestValidationContext } from '~/server/services/blocks/manifest-submit-validation';
 import type { RegistryExportDiff } from '~/shared/constants/block-storage.constants';
 import { registryExportDiff } from '~/shared/constants/block-storage.constants';
@@ -1176,6 +1180,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // OauthClient.allowedOrigins. Mirrors how trustTier is server-owned.
   const { env } = await import('~/env/server');
   stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
+  // Store tagline/repository as the validator measures them (trimmed).
+  trimManifestStringFields(manifest);
 
   // 🔴 Before the pending-conflict check, so a non-owner learns nothing about pending state. One
   // read: the row gated here is the row the request links to below (`appBlockId`).
@@ -2326,6 +2332,9 @@ export async function recordPendingFromPush(args: {
   /** The civitai user who pushed, when the pushing Forgejo account maps to one. */
   pusherUserId?: number | null;
 }): Promise<{ publishRequestId: string }> {
+  // The one store sink for both the git-push webhook and the web manifest editor: store
+  // tagline/repository as the validator measures them (trimmed).
+  trimManifestStringFields(args.manifest as Record<string, unknown>);
   const [{ dbWrite, dbRead }, { newUlid }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
@@ -3391,6 +3400,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // makes the value the validator (below), the app_blocks.manifest write, and
   // the committed block.manifest.json (step 5) all see consistent.
   stampCanonicalIframeSrc(manifest, request.slug, env.APPS_DOMAIN);
+  // Store tagline/repository as the validator measures them (trimmed) in app_blocks.manifest.
+  trimManifestStringFields(manifest);
 
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
   // runs, BEFORE any DB writes or the Forgejo commit. Without this:
@@ -6593,6 +6604,8 @@ export async function backfillPublishRequest(
   if (!manifest || typeof manifest !== 'object') {
     throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
   }
+  // The repo's block.manifest.json keeps the author's padding; the stored row does not.
+  trimManifestStringFields(manifest as Record<string, unknown>);
 
   // Idempotency: if a publish_request for this exact (slug, sha) already
   // exists, return it instead of inserting a duplicate.
