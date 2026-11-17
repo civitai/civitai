@@ -319,7 +319,7 @@ describe('getModelCollectionShowcaseHandler (the model meta)', () => {
   it('the Kysely read on the client the lag decision picks', async () => {
     getKyselyWithoutLag.mockResolvedValue(kyselyWrite);
     q.getModelMeta.mockResolvedValue({ id: ID, meta: {} } as never);
-    await expect((await load())({ input: { id: ID } })).resolves.toBeNull();
+    await expect((await load())({ input: { id: ID }, ctx: {} as never })).resolves.toBeNull();
     expect(getKyselyWithoutLag).toHaveBeenCalledWith('model', ID);
     expect(q.getModelMeta.mock.calls).toEqual([[kyselyWrite, ID]]);
     expect(q.getModelMeta.mock.calls[0][0]).toBe(kyselyWrite);
@@ -329,7 +329,9 @@ describe('getModelCollectionShowcaseHandler (the model meta)', () => {
 
   it('a missing model is still a not-found error', async () => {
     q.getModelMeta.mockResolvedValue(undefined as never);
-    await expect((await load())({ input: { id: ID } })).rejects.toThrow(`No model with id ${ID}`);
+    await expect((await load())({ input: { id: ID }, ctx: {} as never })).rejects.toThrow(
+      `No model with id ${ID}`
+    );
   });
 });
 

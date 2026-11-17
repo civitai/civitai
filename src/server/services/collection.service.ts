@@ -501,6 +501,16 @@ export function submissionStatus(
     : CollectionItemStatus.ACCEPTED;
 }
 
+/**
+ * Whether a viewer may see a collection's own details (name, description, owner, settings). Unlike
+ * item reads (`canReadCollectionItems`), write (not writeReview) counts: this is metadata, not items.
+ */
+export function canSeeCollectionDetails(
+  permission: Pick<CollectionContributorPermissionFlags, 'read' | 'write' | 'manage'>
+) {
+  return permission.read || permission.write || permission.manage;
+}
+
 export function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
