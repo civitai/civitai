@@ -56,10 +56,31 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
     <div className={classes.panel} data-testid="flag-race-panel">
       <img className={classes.art} src={ART} alt="" />
       <div className={classes.artSpace} />
-      <p className={classes.title}>Flag Race</p>
-      <p className={classes.tag}>
-        Stack hats. <b>Win the flag.</b>
-      </p>
+      <div className={classes.head}>
+        <div className={classes.titles}>
+          <p className={classes.title}>Flag Race</p>
+          <p className={classes.tag}>
+            Stack hats. <b>Win the flag.</b>
+          </p>
+        </div>
+        {next && (
+          <Link
+            href={`/crucibles/${next.id}`}
+            className={classes.enter}
+            data-testid="flag-race-enter"
+          >
+            {next.coverUrl && <img src={getEdgeUrl(next.coverUrl, { width: 96 })} alt="" />}
+            <span className="min-w-0">
+              <b className="block text-[13px]">Enter tomorrow&apos;s flags</b>
+              <small>
+                Today&apos;s Crucible · <Countdown endTime={new Date(next.endAt)} format="short" />{' '}
+                left
+              </small>
+            </span>
+            <IconArrowRight size={18} className="ml-auto shrink-0" />
+          </Link>
+        )}
+      </div>
       <div className={classes.bar}>
         <div className={classes.pills}>
           <FlagRaceHeader summary={summary} />
@@ -97,7 +118,7 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
           <div className={classes.held}>
             <div className={classes.label}>Flags held right now</div>
             {held.length ? (
-              <Group gap={6} wrap="nowrap" data-testid="flag-race-held">
+              <Group gap={6} data-testid="flag-race-held">
                 {held.map(([team, count]) => (
                   <Badge
                     tt="none"
@@ -117,24 +138,6 @@ export function FlagRacePanel({ event, summary }: { event: string; summary: Flag
               </Text>
             )}
           </div>
-        )}
-
-        {next && (
-          <Link
-            href={`/crucibles/${next.id}`}
-            className={classes.enter}
-            data-testid="flag-race-enter"
-          >
-            {next.coverUrl && <img src={getEdgeUrl(next.coverUrl, { width: 96 })} alt="" />}
-            <span className="min-w-0">
-              <b className="block text-[13px]">Enter tomorrow&apos;s flags</b>
-              <small>
-                Today&apos;s Crucible · <Countdown endTime={new Date(next.endAt)} format="short" />{' '}
-                left
-              </small>
-            </span>
-            <IconArrowRight size={18} className="ml-auto shrink-0" />
-          </Link>
         )}
       </div>
 

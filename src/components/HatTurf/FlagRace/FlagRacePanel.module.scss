@@ -145,7 +145,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1 1 100%;
+  flex: none;
+  margin-top: 12px;
   border-radius: 12px;
   padding: 8px;
   background: #fefefe;
@@ -165,19 +166,16 @@
     color: #5c5f66;
   }
 
-  // Stacked but wide: on the title's line, at the right.
-  @container (min-width: 640px) {
-    position: absolute;
-    top: 0;
-    right: 0;
-    z-index: 1;
-    width: 300px;
+  // On a phone and side by side it follows the flags held; stacked but wide, it sits beside the title.
+  order: 1;
+
+  @container (min-width: 640px) and (max-width: 1199px) {
+    order: 0;
+    flex: 0 0 280px;
+    margin-top: 0;
   }
 
   @container (min-width: 1200px) {
-    position: static;
-    width: auto;
-    order: 1;
     flex: none;
     margin: auto 0 0;
   }
@@ -221,6 +219,7 @@
 
   @container (min-width: 640px) and (max-width: 1199px) {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
 
@@ -246,5 +245,34 @@
 .bar:last-child .held {
   @container (min-width: 1200px) {
     margin-bottom: 12px;
+  }
+}
+
+// The title and the way in: a row only when stacked but wide. Elsewhere their children are the
+// panel's own, so the way in can come after the flags held.
+.head,
+.titles {
+  display: contents;
+}
+
+.head {
+  @container (min-width: 640px) and (max-width: 1199px) {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+  }
+}
+
+.titles {
+  @container (min-width: 640px) and (max-width: 1199px) {
+    display: block;
+  }
+}
+
+// On a phone the how-it-works box comes after the way in.
+.howto {
+  @container (max-width: 639px) {
+    order: 2;
   }
 }
