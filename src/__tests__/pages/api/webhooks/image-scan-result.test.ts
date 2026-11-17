@@ -749,7 +749,8 @@ describe('image-scan-result webhook - pipeline tests', () => {
         ingestion: param('ingestion', `CASE[\\s\\S]*?ELSE \\(CASE[\\s\\S]*?ELSE \\$(\\d+)::`),
         nsfwLevel: param(
           'nsfwLevel',
-          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+\\s+ELSE \\$(\\d+)`
+          // The scan's value is the ELSE arm, after the CSAM and locked-rating arms.
+          `CASE WHEN "blockedFor" = 'CSAM' THEN \\d+[\\s\\S]*?ELSE \\$(\\d+)`
         ),
         // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
         needsReview: param(
