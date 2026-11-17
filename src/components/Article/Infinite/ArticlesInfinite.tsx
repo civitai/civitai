@@ -18,9 +18,24 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-export function ArticlesInfinite(props: Props) {
-  return props.searchText ? <SearchableArticlesFeed {...props} /> : <ArticlesFeed {...props} />;
+export function ArticlesInfinite({ searchable, ...props }: Props & { searchable?: boolean }) {
+  if (props.searchText) return <SearchableArticlesFeed {...props} />;
+  return searchable ? <PageQueryArticlesFeed {...props} /> : <ArticlesFeed {...props} />;
+}
+
+// Only a feed that can be searched pays for the flag lookup and reads the page's `?query=`.
+function PageQueryArticlesFeed(props: Props) {
+  const features = useFeatureFlags();
+  const feedQuery = useFeedSearchQuery();
+  const searchText = features.articleFeedSearch ? feedQuery : undefined;
+  return searchText ? (
+    <SearchableArticlesFeed {...props} searchText={searchText} />
+  ) : (
+    <ArticlesFeed {...props} />
+  );
 }
 
 /** The feed's filters: the saved ones under the caller's, stable while their content is. */
@@ -117,6 +132,6 @@ type Props = {
   showEof?: boolean;
   showEmptyCta?: boolean;
   disableStoreFilters?: boolean;
-  /** The articles page's `?query=`, with articleFeedSearch: answered by the semantic search. */
+  /** Text to search the feed by; without it, `searchable` reads the page's `?query=`. */
   searchText?: string;
 };

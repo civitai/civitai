@@ -39,13 +39,22 @@ type FeedSearchFlags = Partial<
 export const offersImageSearch = (features: ImageSearchFlags) =>
   !!features.imageSearch || !!features.feedSearch;
 
-// The feeds that answer `?query=` themselves, each behind its own flag.
+// The feeds that answer `?query=` themselves, each behind its own flag. `profilePathname` is the
+// same feed on a creator's profile tab: filtered in place there, but never where a search lands.
 const FEED_SEARCH = {
-  images: { flag: 'feedSearch', pathname: '/images' },
-  models: { flag: 'modelFeedSearch', pathname: '/models' },
-  articles: { flag: 'articleFeedSearch', pathname: '/articles' },
+  images: { flag: 'feedSearch', pathname: '/images', profilePathname: '/user/[username]/images' },
+  models: {
+    flag: 'modelFeedSearch',
+    pathname: '/models',
+    profilePathname: '/user/[username]/models',
+  },
+  articles: {
+    flag: 'articleFeedSearch',
+    pathname: '/articles',
+    profilePathname: '/user/[username]/articles',
+  },
 } as const satisfies Partial<
-  Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string }>
+  Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string }>
 >;
 
 /** The feed a search on `index` lands on, when that feed answers `?query=` for this viewer. */
@@ -54,12 +63,39 @@ export function feedSearchPathname(features: FeedSearchFlags, index: SearchIndex
   return feed && features[feed.flag] ? feed.pathname : undefined;
 }
 
-/** The header bar filters the feed it is on in place, rather than opening a search page. */
-export const searchesFeedInPlace = (
+// The profile sections whose feed is the searchable one: published models and articles, the images
+// tab's own images. Drafts, private models, training and reactions render other lists.
+const SEARCHABLE_PROFILE_SECTIONS: unknown[] = [undefined, 'published', 'images'];
+
+/**
+ * The header bar filters the feed it is on in place, rather than opening a search page. `pathname`
+ * is the route pattern (`router.pathname`), not the URL path; `section` is a profile's `?section=`.
+ */
+export function searchesFeedInPlace(
   features: FeedSearchFlags,
   index: SearchIndexKey,
-  pathname: string
-) => feedSearchPathname(features, index) === pathname;
+  pathname: string,
+  section?: unknown
+) {
+  const feed = FEED_SEARCH[index as keyof typeof FEED_SEARCH];
+  if (!feed || !features[feed.flag]) return false;
+  if (pathname === feed.pathname) return true;
+  return pathname === feed.profilePathname && SEARCHABLE_PROFILE_SECTIONS.includes(section);
+}
+
+/** A creator's profile tab that the header bar filters in place (its `username` is the route's). */
+export const isProfileFeedPathname = (pathname: string) =>
+  Object.values(FEED_SEARCH).some((feed) => feed.profilePathname === pathname);
+
+/**
+ * The section the header bar's target follows: the first path segment, or on a creator's profile
+ * (`/user/<name>/<tab>`) the tab when it is a searchable feed (Models, Images or Articles).
+ */
+export function searchSectionFromPath(path: string) {
+  const [section, username, tab] = path.split('?')[0].split('/').filter(Boolean);
+  const isFeedTab = !!tab && tab in FEED_SEARCH;
+  return section === 'user' && username && isFeedTab ? tab : section;
+}
 
 /** Where /search/images sends a viewer: the images feed, the models search, or nowhere (it stays). */
 export function legacyImageSearchDestination(
