@@ -171,6 +171,7 @@ import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema
 import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex } from '~/server/search-index';
+import { queueModelsForImageChildTagChanges } from '~/server/services/image-models-reindex.service';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -6504,6 +6505,7 @@ export async function resolveIngestionError({
     ids: [id],
     action: SearchIndexUpdateQueueAction.Update,
   });
+  if (image.postId) await queueModelsForImageChildTagChanges({ levelImageIds: [id] });
 
   await trackModActivity(userId, {
     entityType: 'image',
