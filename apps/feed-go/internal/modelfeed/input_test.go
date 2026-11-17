@@ -59,7 +59,15 @@ func ptrInt(n int) *int { return &n }
 func TestParseFallbacks(t *testing.T) {
 	for _, c := range []struct{ input, reason string }{
 		{`{"json":{"query":"x"}}`, "input-query"},
-		{`{"json":{"collectionId":5}}`, "input-collectionId"},
+		// collectionId and collectionTagId are z.number(): anything else, null included, is a 400; a
+		// number that is not an int4 integer is not ported.
+		{`{"json":{"collectionId":5.5}}`, "model-collection-id"},
+		{`{"json":{"collectionId":3000000000}}`, "model-collection-id"},
+		{`{"json":{"collectionId":5,"collectionTagId":1.5}}`, "model-collection-id"},
+		{`{"json":{"collectionId":"5"}}`, "input-invalid"},
+		{`{"json":{"collectionId":null}}`, "input-invalid"},
+		{`{"json":{"collectionTagId":"x"}}`, "input-invalid"},
+		{`{"json":{"collectionId":5,"sort":"Recently Added"}}`, "model-sort-recently-added"},
 		{`{"json":{"hidden":true}}`, "input-hidden"},
 		{`{"json":{"followed":true}}`, "input-followed"},
 		{`{"json":{"newCreators":true}}`, "input-newCreators"},
