@@ -145,14 +145,12 @@ import {
   getServableCoverCollectionIds,
   isCoverWithinBrowsingLevel,
 } from '~/server/services/collection-cover-visibility';
-import {
-  assertImagesVisibleToViewer,
-  assertImageVisibleToViewer,
-} from '~/server/services/image-visibility.service';
+import { assertImageVisibleToViewer } from '~/server/services/image-visibility.service';
 import {
   JUDGE_RATING_METADATA_KEY,
   stripBlockProvenanceMetadata,
 } from '~/shared/utils/block-provenance-metadata';
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import {
   collectionSupportsCollaborators,
   freeGrantBaseline,
@@ -1166,11 +1164,13 @@ export const saveItemInCollections = async ({
   );
 
   // Before the contest gates: they can charge an entry fee.
-  if (
-    itemKey === 'imageId' &&
-    upsertCollectionItems.some((upsert) => !unwrittenCollectionIds.has(upsert.collectionId))
-  ) {
-    await assertImagesVisibleToViewer({ ids: [input.imageId as number], userId, isModerator });
+  if (upsertCollectionItems.some((upsert) => !unwrittenCollectionIds.has(upsert.collectionId))) {
+    await assertCollectionItemsVisibleToViewer({
+      itemKey,
+      ids: [input[itemKey] as number],
+      userId,
+      isModerator,
+    });
   }
 
   // Check if any contest collections are involved and validate ONCE
@@ -1906,7 +1906,16 @@ export const upsertCollection = async ({
     throw throwBadRequestError('3D model collections cannot be contests');
   }
 
-  if (imageId) await assertImagesVisibleToViewer({ ids: [imageId], userId, isModerator });
+  for (const [itemKey, itemId] of [
+    ['imageId', imageId],
+    ['postId', collectionItem.postId],
+    ['articleId', collectionItem.articleId],
+    ['modelId', collectionItem.modelId],
+    ['model3dId', collectionItem.model3dId],
+  ] as const) {
+    if (itemId)
+      await assertCollectionItemsVisibleToViewer({ itemKey, ids: [itemId], userId, isModerator });
+  }
 
   const hasInitialItem = [
     collectionItem.modelId,
@@ -2091,6 +2100,8 @@ export const getCollectionItemsByCollectionId = async ({
   imagesAsPublicCatalog = false,
   coverage,
   requireRead = false,
+  asModerator,
+  asOwner = true,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2108,6 +2119,10 @@ export const getCollectionItemsByCollectionId = async ({
    * leave it off must check read themselves.
    */
   requireRead?: boolean;
+  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  asModerator?: boolean;
+  /** Whether the request may see the user's own unpublished and private items; default true. */
+  asOwner?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -2122,10 +2137,18 @@ export const getCollectionItemsByCollectionId = async ({
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
+  const isModerator = asModerator ?? user?.isModerator ?? false;
+  // Ownership and contributor rights follow the user even on a scoped key: it is their own
+  // collection. The item reads inside still get no owner or moderator view.
+  const itemsViewer = !asOwner
+    ? undefined
+    : user && isModerator !== !!user.isModerator
+    ? { ...user, isModerator }
+    : user;
   const permission = await getUserCollectionPermissionsById({
     id: input.collectionId,
     userId: user?.id,
-    isModerator: user?.isModerator,
+    isModerator,
   });
 
   // Readers and managers see every item. A viewer who may only submit (the usual contest setup:
@@ -2403,7 +2426,7 @@ export const getCollectionItemsByCollectionId = async ({
       ? await (
           await modelService()
         ).getModelsWithImagesAndModelVersions({
-          user,
+          user: itemsViewer,
           coverage,
           input: {
             limit: modelIds.length,
@@ -2432,7 +2455,7 @@ export const getCollectionItemsByCollectionId = async ({
           sort: ArticleSort.Newest,
           ...userPreferencesInput,
           browsingLevel: input.browsingLevel,
-          sessionUser: user,
+          sessionUser: itemsViewer,
           ids: articleIds,
           include: ['cosmetics'],
         })
@@ -2454,7 +2477,9 @@ export const getCollectionItemsByCollectionId = async ({
             ...userPreferencesInput,
             browsingLevel: input.browsingLevel,
             user: imagesAsPublicCatalog ? undefined : user,
-            ...(imagesAsPublicCatalog && { disablePoi: true, disableMinor: true }),
+            ...(imagesAsPublicCatalog
+              ? { disablePoi: true, disableMinor: true }
+              : { asModerator: isModerator, asOwner }),
             ids,
             headers: { src: 'getCollectionItemsByCollectionId' },
             includeBaseModel: true,
@@ -2490,6 +2515,8 @@ export const getCollectionItemsByCollectionId = async ({
           sort: PostSort.Newest,
           ...userPreferencesInput,
           user,
+          asModerator: isModerator,
+          asOwner,
           browsingLevel: input.browsingLevel,
           ids: postIds,
           include: ['cosmetics'],
@@ -3707,8 +3734,14 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
-  if (imageIds.length > 0)
-    await assertImagesVisibleToViewer({ ids: imageIds, userId, isModerator });
+  for (const [itemKey, ids] of [
+    ['imageId', imageIds],
+    ['postId', postIds],
+    ['articleId', articleIds],
+    ['modelId', modelIds],
+  ] as const) {
+    await assertCollectionItemsVisibleToViewer({ itemKey, ids, userId, isModerator });
+  }
   const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
   if (

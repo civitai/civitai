@@ -433,6 +433,13 @@ export enum FLIPT_FEATURE_FLAGS {
   // declaration. 🔴 It gates declaring a hook and nothing else: no flag may skip a hook an approved
   // version declares (that would fail open). See `storage-hooks.ts`.
   APP_BLOCKS_STORAGE_HOOKS = 'app-blocks-storage-hooks',
+  // An App submit may carry a GitHub Actions OIDC token (the `civitai/app-submit-action` Action
+  // sends one on a tag push). On: the submit verifies it and records the run's repository, tag
+  // and commit on the publish request; a token that fails verification refuses the submit.
+  // EVALUATED PER SUBMITTER — entityId = the user id, context = `buildFliptContext(user)`.
+  // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
+  // See `github-actions-oidc.service.ts`.
+  APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
   // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
   // in `block-media-serving.ts` for what happens when Flipt is unreachable.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',

@@ -40,9 +40,27 @@ const pushedQueries = () => router.push.mock.calls.map(([url]) => url.query);
 
 describe('useFeedSearchSync', () => {
   beforeEach(() => {
+    router.pathname = '/images';
     router.query = {};
     router.push.mockReset();
     setSearch.mockReset();
+  });
+
+  it("keeps a profile tab's route username when an @user token is typed", () => {
+    router.pathname = '/user/[username]/images';
+    router.query = { username: 'RisingV' };
+    const render = mount();
+    render({ debouncedSearch: '@someone red dragon' });
+    act(() => hook.commit('@someone red dragon'));
+    expect(pushedQueries()).toEqual([{ username: 'RisingV', query: 'red dragon' }]);
+  });
+
+  it('lets an @user token set the user filter on the main feed', () => {
+    router.query = { username: 'RisingV' };
+    const render = mount();
+    render({ debouncedSearch: '@someone red dragon' });
+    act(() => hook.commit('@someone red dragon'));
+    expect(pushedQueries()).toEqual([{ username: 'someone', query: 'red dragon' }]);
   });
 
   it('never searches as you type', () => {

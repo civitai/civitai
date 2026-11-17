@@ -58,13 +58,21 @@ func TestServeHTTPHandsABlockedRegionToTheApp(t *testing.T) {
 		for k, v := range c.headers {
 			r.Header.Set(k, v)
 		}
-		s.ServeHTTP(httptest.NewRecorder(), r)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
 		if c.blocked {
 			if fb.calls != 1 || calls != 0 || fallbackCount(t, reg, "region-blocked") != 1 {
 				t.Errorf("%s: proxied=%d computed=%d region-blocked=%v, want 1, 0, 1", c.name, fb.calls, calls,
 					fallbackCount(t, reg, "region-blocked"))
 			}
+			// The app answers its 451 before tRPC runs, so without tRPC's Vary: none is added here.
+			if got := w.Header().Values("Vary"); len(got) != 0 {
+				t.Errorf("%s: a region-blocked (proxied) answer got Vary %q from this service", c.name, got)
+			}
 			continue
+		}
+		if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != "trpc-accept, accept" {
+			t.Errorf("%s: served answer Vary = %q, want [\"trpc-accept, accept\"]", c.name, got)
 		}
 		if fb.calls != 0 || calls != 1 {
 			t.Errorf("%s: proxied=%d computed=%d, want served here", c.name, fb.calls, calls)

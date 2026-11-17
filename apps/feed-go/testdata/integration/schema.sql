@@ -286,3 +286,31 @@ CREATE TABLE "ModelVersionSaleItem" (
   "modelVersionId" integer NOT NULL,
   PRIMARY KEY ("saleId", "modelVersionId")
 );
+
+-- model.getAll's collection filter: the permission read (internal/modelfeed/collection.go) and the
+-- CollectionItem semi-join of the page query.
+CREATE TYPE "CollectionReadConfiguration" AS ENUM ('Private', 'Public', 'Unlisted');
+CREATE TYPE "CollectionItemStatus" AS ENUM ('ACCEPTED', 'REVIEW', 'REJECTED');
+CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
+
+CREATE TABLE "Collection" (
+  id       integer PRIMARY KEY,
+  "userId" integer NOT NULL,
+  read     "CollectionReadConfiguration" NOT NULL DEFAULT 'Private'
+);
+
+CREATE TABLE "CollectionItem" (
+  id             integer PRIMARY KEY,
+  "collectionId" integer NOT NULL,
+  "modelId"      integer,
+  "addedById"    integer,
+  status         "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED',
+  "tagId"        integer
+);
+
+CREATE TABLE "CollectionContributor" (
+  "userId"       integer NOT NULL,
+  "collectionId" integer NOT NULL,
+  permissions    "CollectionContributorPermission"[] NOT NULL,
+  PRIMARY KEY ("userId", "collectionId")
+);

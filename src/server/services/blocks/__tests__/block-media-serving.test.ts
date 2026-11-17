@@ -4,13 +4,29 @@ import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type { BlobState } from '~/server/services/orchestrator/blobRatings';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
 
-const serving = { on: true };
+/**
+ * The media brake. `on` alone: on for everyone. `onlyFor`: on only for that user, matched on
+ * the evaluation CONTEXT's `userId` as a Flipt segment constraint reads it, so a global
+ * evaluation, or one without the session context, reads off. `throws`: evaluation fails.
+ */
+const serving = { on: true, onlyFor: null as number | null, throws: false };
 const blobState = vi.fn<(blobId: string) => Promise<BlobState>>();
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  // Only the media brake answers `serving.on`, so reading any other flag reads as off.
-  isFlipt: async (flag: string) => flag === 'app-blocks-workflow-media-serve' && serving.on,
+  // Only the media brake answers `serving`, so reading any other flag reads as off.
+  isFlipt: async (flag: string, _entityId?: string, context?: Record<string, string>) => {
+    if (flag !== 'app-blocks-workflow-media-serve') return false;
+    if (serving.throws) throw new Error('flipt eval failed');
+    if (serving.onlyFor !== null) return context?.userId === String(serving.onlyFor);
+    return serving.on;
+  },
+}));
+const unresolvable = new Set<number>();
+vi.mock('~/server/auth/session-client', () => ({
+  sessionClient: {
+    getSessionUserById: async (id: number) => (unresolvable.has(id) ? null : { id, tier: 'free' }),
+  },
 }));
 const appAccess = vi.fn<(userId: number) => Promise<void>>();
 vi.mock('~/server/services/blocks/block-token-access.service', () => ({
@@ -33,8 +49,12 @@ vi.mock('~/server/services/orchestrator/blobRatings', async (importOriginal) => 
   readBlobState: (blobId: string) => blobState(blobId),
 }));
 
-const { resolveBlockMediaFetch, resolveWorkflowMediaRefs, resolveWorkflowMediaForBlockClaims } =
-  await import('~/server/services/blocks/block-media-serving');
+const {
+  resolveBlockMediaFetch,
+  resolveWorkflowMediaRefs,
+  resolveWorkflowMediaForBlockClaims,
+  resolveBlockOutputView,
+} = await import('~/server/services/blocks/block-media-serving');
 const { sealBlockMediaRef, sealBlockMediaTicket } = await import(
   '~/server/services/blocks/block-media-token'
 );
@@ -64,6 +84,9 @@ const rated = (nsfwLevel: string, blockedReason: string | null = null): BlobStat
 
 beforeEach(() => {
   serving.on = true;
+  serving.onlyFor = null;
+  serving.throws = false;
+  unresolvable.clear();
   blobState.mockReset();
   appAccess.mockReset().mockResolvedValue(undefined);
   relations = noRelations();
@@ -395,5 +418,69 @@ describe('a token whose viewer level is 0', () => {
       state: 'redirect',
       location: CONTENT,
     });
+  });
+});
+
+describe('🔴 the media brake is judged per viewer, at the route, on replay and on the poll', () => {
+  const ticketAs = (viewerId: number) =>
+    sealBlockMediaTicket({ ...claims, viewerId, viewerBrowsingLevel: NsfwLevel.PG })!;
+  const replayAs = async (viewerId: number) =>
+    (
+      await resolveWorkflowMediaRefs({
+        appBlockId: 'apb_1',
+        viewerId,
+        viewerBrowsingLevel: NsfwLevel.PG,
+        hiddenOwnerIds: new Set<number>(),
+        refs: [sealBlockMediaRef(claims)!],
+      })
+    )[0];
+  const pollMintAs = async (viewerId: number) =>
+    (
+      await resolveBlockOutputView({
+        sub: `user:${viewerId}`,
+        appBlockId: 'apb_1',
+        maxBrowsingLevel: allBrowsingLevelsFlag,
+        viewerBrowsingLevel: NsfwLevel.PG,
+      })
+    ).mint;
+
+  /** Every point, for one viewer: what the route, a replay and the poll each give them. */
+  const pointsFor = async (viewerId: number) => ({
+    route: await resolveBlockMediaFetch(ticketAs(viewerId)),
+    replay: (await replayAs(viewerId)).status,
+    poll: await pollMintAs(viewerId),
+  });
+  const PAUSED = { route: { state: 'hidden', reason: 'paused' }, replay: 'hidden', poll: null };
+
+  beforeEach(() => blobState.mockResolvedValue(rated('pg')));
+
+  it('on for one viewer only: that viewer is served everywhere, any other is paused everywhere', async () => {
+    serving.onlyFor = 99;
+    expect(await pointsFor(99)).toEqual({
+      route: { state: 'redirect', location: CONTENT },
+      replay: 'visible',
+      poll: { userId: 99, appBlockId: 'apb_1' },
+    });
+    expect(await pointsFor(5)).toEqual(PAUSED);
+  });
+
+  it('an evaluation that throws reads off at every point', async () => {
+    serving.throws = true;
+    expect(await pointsFor(99)).toEqual(PAUSED);
+  });
+
+  it('a viewer whose session does not resolve reads off at every point', async () => {
+    unresolvable.add(99);
+    expect(await pointsFor(99)).toEqual(PAUSED);
+  });
+
+  it('a signed-out poll never mints', async () => {
+    const view = await resolveBlockOutputView({
+      sub: 'anon',
+      appBlockId: 'apb_1',
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG,
+    });
+    expect(view.mint).toBeNull();
   });
 });

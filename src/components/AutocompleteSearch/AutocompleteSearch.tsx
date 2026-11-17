@@ -67,6 +67,8 @@ import {
   offersImageSearch,
   resolveSearchTarget,
   feedSearchPathname,
+  profileFeedSection,
+  searchSectionFromPath,
   searchesFeedInPlace,
 } from '~/components/Search/search-target';
 import {
@@ -162,7 +164,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // their pick — so the category selector would only ever "work" when it picked what the URL
   // already said.
   const pathname = usePathname();
-  const currentSection = pathname.split('/')[1] || 'models';
+  const currentSection = searchSectionFromPath(pathname) || 'models';
   // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
   const imageSearchOn = offersImageSearch(features);
   const searchTarget = resolveSearchTarget(
@@ -291,7 +293,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   }: AutocompleteSearchProps<TKey>,
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
-  // const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const showSfwFace = useShowsSfwFace();
   const colorScheme = useComputedColorScheme('dark');
@@ -316,7 +318,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
 
   // Search v3: on a feed that answers `?query=`, the bar filters that feed on Enter or blur.
-  const filtersFeedInPlace = searchesFeedInPlace(features, indexNameProp, router.pathname);
+  const filtersFeedInPlace = searchesFeedInPlace(
+    features,
+    indexNameProp,
+    router.pathname,
+    profileFeedSection(router.query, currentUser?.username)
+  );
   const [queryFilters, setQueryFilters] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
   // Each image search is an embedding plus a Qdrant query: the dropdown never runs one as the user

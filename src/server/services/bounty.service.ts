@@ -10,7 +10,9 @@ import {
   Availability,
   BountyEntryMode,
   Currency,
+  EntityType,
   ImageIngestionStatus,
+  JobQueueType,
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -63,6 +65,9 @@ import {
 import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import type { NsfwLevel } from '../common/enums';
 import { BountySort, BountyStatus } from '../common/enums';
+import { staleRatingRaise } from '~/server/services/bounty-rated-level';
+import { enqueueJobs } from '~/server/services/job-queue.service';
+import { updateBountyNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -78,6 +83,7 @@ import { createBountyInputSchema, updateBountyInputSchema } from '../schema/boun
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -655,6 +661,7 @@ export const updateBountyById = async ({
 
   let imagesToIngest: IngestImageInput[] = [];
   const keysCheckedFor = await checkEntityImageKeys({ images, userId });
+  let nsfwChanged = false;
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -671,6 +678,8 @@ export const updateBountyById = async ({
           meta: true,
           details: true,
           lockedProperties: true,
+          nsfw: true,
+          moderatorNsfwLevel: true,
           _count: { select: { entries: true } },
         },
       });
@@ -693,6 +702,9 @@ export const updateBountyById = async ({
         existing.poi &&
         data.poi === false &&
         hasOpenTextScanFlag(existing.meta, 'poi');
+      const ratingRaise = staleRatingRaise(existing, data.nsfw);
+      // Covers the rating raise, which only happens when the flag changes.
+      nsfwChanged = data.nsfw !== undefined && data.nsfw !== existing.nsfw;
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
       if (addLockedProperties?.length)
@@ -720,6 +732,7 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
+          ...ratingRaise,
           ...(liftedTextScanPoi && {
             availability:
               (readTextScanFlags(existing.meta).poi?.prev?.availability as
@@ -800,10 +813,23 @@ export const updateBountyById = async ({
           tx,
         });
 
+      // The stored level is recomputed below; the queued job covers a crash before that runs.
+      if (nsfwChanged)
+        await enqueueJobs(
+          [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
+          tx
+        );
+
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
   );
+
+  // The edit has committed, so a failure here is logged; the queued job retries it.
+  if (nsfwChanged)
+    await updateBountyNsfwLevels([id]).catch((e) =>
+      handleLogError(e, 'bounty-edit-nsfw-level-recompute', { bountyId: id })
+    );
 
   enqueueImageIngestion({
     images: imagesToIngest,
@@ -966,7 +992,13 @@ export async function applyBountyContentChange({
 
   const stored = await dbWrite.bounty.findUnique({
     where: { id },
-    select: { name: true, nsfw: true, lockedProperties: true, details: true },
+    select: {
+      name: true,
+      nsfw: true,
+      moderatorNsfwLevel: true,
+      lockedProperties: true,
+      details: true,
+    },
   });
   if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
 
@@ -1004,12 +1036,31 @@ export async function applyBountyContentChange({
     } as Prisma.InputJsonObject;
     // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
     // the jsonb + text[] binds is where that trade stops being worth it.
-    await dbWrite.bounty.update({
-      where: { id },
-      data: flagged.lock
-        ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), details }
-        : { details },
+    // One transaction with the retry job: the next fan-out pass sees nsfw already set and would
+    // never recompute a stored level left stale by a failed enqueue.
+    await dbWrite.$transaction(async (tx) => {
+      await tx.bounty.update({
+        where: { id },
+        data: flagged.lock
+          ? {
+              nsfw: true,
+              ...staleRatingRaise(stored, true),
+              lockedProperties: uniq([...stored.lockedProperties, 'nsfw']),
+              details,
+            }
+          : { details },
+      });
+      if (flagged.lock)
+        await enqueueJobs(
+          [{ entityId: id, entityType: EntityType.Bounty, type: JobQueueType.UpdateNsfwLevel }],
+          tx
+        );
     });
+    // Before the reindex, which reads the stored level. Same pairing as `updateBountyById`.
+    if (flagged.lock)
+      await updateBountyNsfwLevels([id]).catch((e) =>
+        handleLogError(e, 'bounty-blurb-nsfw-level-recompute', { bountyId: id })
+      );
   }
 
   await queueBountySearchIndexUpdate(id);
@@ -1987,8 +2038,8 @@ export async function releaseStuckBountyAward(
       userId: supporter.userId,
       unitAmount: supporter.unitAmount,
       buzzTransactionId: supporter.buzzTransactionId,
-      winnerUserId: read.payoutWinnerUserId,
       moderatorId,
+      payload: { winnerUserId: read.payoutWinnerUserId },
     });
   return { unpaidAwards: unpaid.length, refundSettled };
 }
@@ -2186,9 +2237,8 @@ export async function resolveUnpaidBountyAward({
       message: `Bounty ${bountyId}: unpaid award from user ${userId} resolved as ${ruling}`,
       bountyId,
       userId,
-      ruling,
-      ledgerReference,
       moderatorId,
+      payload: { ruling, ledgerReference },
     });
   return { recorded };
 }

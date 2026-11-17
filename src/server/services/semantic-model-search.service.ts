@@ -21,6 +21,7 @@ import {
   resolveUserIds,
   searchServiceSource,
   viewerExcludedUserIds,
+  withWordMatchesFirst,
   type CandidateFilter,
   type CandidateSource,
   type Hydrate,
@@ -166,8 +167,10 @@ export async function searchSemanticModels({
     return result.items;
   };
 
+  // Name and keyword matches first (search_text opens with the model's name), then by meaning.
+  const ranked = withWordMatchesFirst(cachedSource, 'search_text');
   const search = auditedTextCandidates({
-    source: (args) => timed('candidates', cachedSource(args)),
+    source: (args) => timed('candidates', ranked(args)),
     viewer,
     text: query,
     filter,

@@ -640,7 +640,8 @@ path as serving, and compares decoded values:
   needs both. Each difference is counted in `feed_go_shadow_field_diffs_total` under category
   `header:<name>`, with kind `value`, `missing-in-go` or `missing-in-node`. The Go side is what the
   public route writes: its Cache-Control is `trpc.ResultCacheControl`, the one function
-  `trpc.WriteResult` also calls. Noise rules (`shadow.CompareResponse`):
+  `trpc.WriteResult` also calls, and its Vary is `trpc.Vary` (`trpc-accept, accept`, the value tRPC's
+  `resolveResponse` sets on every answer). Noise rules (`shadow.CompareResponse`):
   - Cache-Control and Vary compare as sets of lowercased directives or names (`max-age=060` reads as
     `max-age=60`); Cache-Tag as a set of tags; Set-Cookie by presence.
   - An empty value is absent.
@@ -733,6 +734,10 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      unreadable one is already `would_miss` there (`blocked-tags`); on the other procedures the
      overstatement is bounded by how often that key is absent, which
      `feed_go_cache_miss_total{cache="tag-ids",result="error"}` counts on the serving side;
+
+   The caveats on misses Go computes (the cosmetic lower bound, the stale tag-ids entry, the tag-ids
+   gate) apply equally to a raced entry on such a cache: since it is costed and classified as a miss
+   there (below), whatever over- or understates that miss's reads or verdict does the same for it;
 3. records the result in `feed_go_gofirst_total{feed_endpoint,result}`:
    - `would_serve`: every cache answered, or missed only where Go answers the miss itself
      (`Sources.MissReason` is `""`): from the replica (basic users, profile pictures, thumbnails,
@@ -743,11 +748,15 @@ probes in the background, bounded by its own queue (`ProbeQueue`, as many slots 
      ClickHouse reader is configured (the five per-image caches above too with it off) — or before hydration the session user
      (`session-cache-miss` / `-cleared`), the gallery settings (`gallery-settings-miss` /
      `-stale`) or, for `image.getInfinite`, the blocked-tag list (`blocked-tags-miss` / `-stale`);
-   - `raced`: as `would_serve`, but some present entry was filled at or after the request began
-     (its `cachedAt`, or a metric hash's `_populatedAt`, is at least `startedAt` −
-     `RaceSkewMargin`, 100 ms): most likely by the Node request this probe races, so a Go-first
-     serve would have found it missing. `feed_go_gofirst_raced_total{feed_endpoint,cache}` counts
-     the probes with a raced entry per cache. Not served: it is not in the numerator of the served
+   - `raced`: as `would_serve`, but a present entry of a cache Go falls back on
+     (`Sources.MissReason` non-empty) was filled at or after the request began (its `cachedAt`, or
+     a metric hash's `_populatedAt`, is at least `startedAt` − `RaceSkewMargin`, 100 ms): most
+     likely by the Node request this probe races, so a Go-first serve would have found it missing
+     and fallen back. A raced entry on a cache Go answers itself does not make the probe `raced`:
+     a Go-first serve would have answered it as it answers a miss there, so it stays `would_serve`
+     and its lookup is costed instead (the cost gate, below).
+     `feed_go_gofirst_raced_total{feed_endpoint,cache}` counts the probes with a raced entry per
+     cache, every cache, whatever the result. Not served: it is not in the numerator of the served
      share. `would_miss` wins over it (a miss was seen anyway);
    - `unsupported`: Go falls back for any other reason (an input shape, a bearer token, a sponsored
      post it cannot decide, the request budget); the reason is on
@@ -773,8 +782,10 @@ cache of every served fixture emptied, and require the same verdict; the `cold-*
 cache, and costed (below). The probe never computes a miss.
 
 **The cost gate.** A miss Go answers itself (replica path or computed) is served, but each costs a
-database query a warm cache does not. Per served probe (`would_serve`, `raced`), the probe counts
-one query per page and cache with such misses, `feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
+database query a warm cache does not; so does a raced entry on such a cache, which a Go-first serve
+would have found missing. Per served probe (`would_serve`, `raced`), the probe counts one query per
+page and cache with such a miss or raced entry (once when that page's cache has both),
+`feed_go_gofirst_db_reads_total{feed_endpoint,cache}`
 (a lower bound: the user-cosmetics and frame computations, image and model, can each add the
 withheld-cosmetic check's two queries, and a computed tag-ids miss counts one read, its tag-records
 query for the tags `basic-tags` misses not included), over the pages it checked,
@@ -825,9 +836,14 @@ MGET plus a miss query, which is the margin.
 `feed_go_gofirst_check_lag_seconds` is the first page cache read minus request start, to hold
 against Node's time to its first fill on the same procedure (the route's hydration span). It
 crosses two pods' clocks; a negative difference is recorded as 0. It shows timing only, not
-whether the race was lost: that is the `raced` result. Where the probe loses the race it reads an
-entry Node just filled; the entry's own fill stamp says so, and the probe is `raced`, not
-`would_serve`. What the stamp cannot catch: an entry with no stamp (a frame record, a profile
+whether the race was lost: that is `feed_go_gofirst_raced_total` per cache, every cache whatever the
+result (the `raced` result counts only the probes that lost it on a cache Go falls back on; with
+every page cache answered by Go, as with the miss computation on and a ClickHouse reader configured,
+it reads 0 while races still happen). Where the probe loses the race it reads an
+entry Node just filled; the entry's own fill stamp says so. On a cache Go falls back on the probe is
+then `raced`, not `would_serve`; on a cache Go answers itself it stays `would_serve`, with that
+entry's lookup counted in the cost gate (it is what a cold miss there costs). What the stamp cannot
+catch: an entry with no stamp (a frame record, a profile
 picture, a watcher-fed metric hash), and a fill by another request just before ours outside the
 margin (which a Go-first serve would have found anyway). Later pages of one request (the page loop,
 the post completions) are checked later than the first, which makes a lost race on them likelier.
@@ -850,9 +866,12 @@ sum by (cache) (rate(feed_go_gofirst_db_reads_total{feed_endpoint="as-posts"}[1h
 sum(rate(feed_go_gofirst_db_reads_total{feed_endpoint="as-posts"}[1h]))
   / sum(rate(feed_go_gofirst_pages_total{feed_endpoint="as-posts"}[1h]))
 
-# How often the probe lost the race, and on which cache.
+# The share of probes that lost the race on a cache Go falls back on (`raced`; 0 when Go answers
+# every page cache itself, e.g. miss computation on with a ClickHouse reader).
 sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts",result="raced"}[1h]))
   / sum(rate(feed_go_gofirst_total{feed_endpoint="as-posts"}[1h]))
+# How often the probe lost the race at all, per cache (every cache, whatever the result: a race on a
+# cache Go answers itself is costed in (3), not counted as `raced`).
 topk(10, sum by (cache) (rate(feed_go_gofirst_raced_total{feed_endpoint="as-posts"}[1h])))
 
 # What blocks (2): the caches, then the other fallbacks.
@@ -870,6 +889,12 @@ every probe, `raced`, `unsupported` and `error` included: a request Go falls bac
 or whose served verdict the race may have flattered, is not counted as served Go-first. Write-back
 must be on before ramping past 10% (the cost gate above). Read `feed_go_gofirst_dropped_total` and the Node-side `dropped_overload`
 beside it: a dropped probe is not in the denominator.
+
+**Gate windows must start after the race reclassification rolls out.** Since a race on a cache Go
+answers itself stopped making a probe `raced` (it is `would_serve`, its lookup costed as a database
+read), the served share (2) and the DB reads per page (3) both step up at that deploy. The step is the
+reclassification, not Go serving better or reading more: a window that spans the deploy mixes the two
+definitions, so read both figures over a window that begins after it.
 
 ## 8. Flags the Node path reads, and what this service does with them
 
@@ -1519,7 +1544,10 @@ profile-picture / image-tag cache readers with the gallery port; its own readers
    official checkpoints and drops them from every page.
 3. **`getModelsRaw`.** `enforceBlockedBrowsingTagsForModels`: a blocked tag name is an empty page; the
    addons' poi / minor switches and tag exclusions are resolved at the request level (the tag ones off
-   on the viewer's own `username`). The query: `ModelMetric` joined to `Model`, or, with
+   on the viewer's own `username`). With a `collectionId`, the viewer's read permission on the
+   collection (`getUserCollectionPermissionsById`, no moderator branch): no read is an empty page
+   (`isPrivate`); otherwise the query gains a `CollectionItem` semi-join. The query: `ModelMetric`
+   joined to `Model`, or, with
    `base-model-feed-metrics` on and a base-model filter, one of three per-base-model paths (one base
    model drives from `ModelBaseModelMetric`; several on Newest / Oldest / Hot drive from `ModelMetric`
    with a LATERAL sum; several on the other sorts aggregate per model); every filter clause; a keyset
@@ -1544,19 +1572,42 @@ profile-picture / image-tag cache readers with the gallery port; its own readers
 
 The ported set was chosen by the input shapes' share of the route's successful answers, read from
 request logs before the port (the figures are not recorded here): base-model filters, cursors, tag
-names and creators are the common shapes and are ported; a collection and Hot with a base-model filter
-are the largest fallbacks; every other unsupported key is rare. A ported shape can still fall back on
+names and creators are the common shapes and are ported; a collection, the largest fallback measured
+after them, is ported too (§15.2.1); Hot with a base-model filter is the largest left; every other
+unsupported key is rare. A ported shape can still fall back on
 a cache miss. In shadow that is not measured: the sample is computed after Node answered the same
 request and filled every key it read, so the shadow's miss fallbacks undercount the misses a Go-first
 read would see. Serving needs a Go-first miss measurement and Go-side miss filling first (§3).
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor` | `query` (Meilisearch), `collectionId`, `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added (`model-sort-recently-added`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1) | `query` (Meilisearch), `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
-| Lookups | the tag by name and the creator by name on the replica; the blocked tag list | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
+| Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
 | Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model frames, the model hats, the version showcases and the showcase images' tag ids | misses on the model data, the model tags, user cosmetics, memberships (`model-data-miss`, `model-tags-miss`, `user-cosmetics-miss`, `membership-miss`), and on the model frames, model hats, version showcases and image tags without the computation (`model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+
+### 15.2.1 Collections
+
+`getModelsRaw` with a `collectionId` (truthy: 0 is no filter), after the tag and creator lookups and
+before the cursor is parsed, as Node orders them (`internal/modelfeed/collection.go`, `servePage`):
+
+- **Read.** `getUserCollectionPermissionsById({ userId, id })`, called without `isModerator`: a
+  collection reads when its `read` is Public or Unlisted, when the viewer owns it, or when the
+  viewer's `CollectionContributor` row holds VIEW. A missing collection reads for no one. No read is
+  `{ items: [], nextCursor: undefined }` with no page query, whatever the cursor (Node returns before
+  parsing it). One indexed read of the `Collection` row (with the viewer's contributor row when signed
+  in) on the replica, on every page of the loop, as Node reads it on every `getModelsRaw` call.
+- **Items.** `getAvailableCollectionItemsFilterForUser` without `statuses` (model.getAll never passes
+  them; `collectionItemStatus` is ignored): `ACCEPTED` items, and for a signed-in viewer also the
+  `REVIEW` items they added, as `EXISTS (SELECT 1 FROM "CollectionItem" ci …)` on `mm."modelId"`,
+  narrowed by `collectionTagId` when it is set. Every sort, filter, base-model path and the keyset
+  cursor apply as without a collection; Recently Added (the `JOIN` ordered by `ci."id"`) falls back.
+- **Versions.** A collection turns `hidePrivateModels` off: Private versions are listed.
+- **Cache policy.** Unchanged: Node's `isPrivate` sets `canCache = false` on the copy of `ctx.cache`
+  `skipEdgeCache` hands the handler, which no header reads (its comment in `model.router.ts`), so a
+  signed-out answer stays public and a session's private. A signed-out viewer reads no private
+  collection, so nothing private reaches a shared cache.
 
 ### 15.3 Flags
 
@@ -1628,6 +1679,8 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
   this service and a Node pod up to 30 s apart;
 - a cursor's date token is read in Postgres' own `CONCAT` form only; any other spelling dayjs accepts
   falls back;
+- the collection read permission: Node's read also joins the viewer's accepted invite, which feeds
+  only `isCollaborator`, not `read`; it is not read here;
 - `ids` falls back whenever it is present, empty included: Node reads `[]` as `[]` and `""` as `[0]`,
   both truthy, so either turns off the private-model filter;
 - `canGenerate`, `isMatureRestricted` and the level constants come from `internal/modelfeed/basemodels.json`,

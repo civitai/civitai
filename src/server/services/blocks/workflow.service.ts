@@ -21,7 +21,13 @@ import type { OrchestratorBlobLike, StepOutputSlot, TrainedEpoch } from './steps
 import { isNeverRatedVideoStep } from '~/shared/orchestrator/workflow-data';
 import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
 import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restriction';
-import type { BlockOutputCeiling, BlockOutputWorkflowFacts } from './block-output-restriction';
+import type { BlockOutputWorkflowFacts } from './block-output-restriction';
+import {
+  applyServingRules,
+  isPrivateGenerationWorkflow,
+  mintBlockOutput,
+  type BlockOutputView,
+} from './block-output-mint';
 import { hasRecasedTwin, isRepeatStepType } from './workflow-graph';
 import { safeQuoteReason } from './pass-through-quote-failure';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -105,16 +111,17 @@ export { WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY, readModelSubstitutionsFromMe
  * surfaced — pending/blocked blobs are dropped rather than sending dead links
  * the block would render as broken images.
  *
- * 🔴 `ceiling` IS REQUIRED, and that is the guard: it is the calling token's maturity
- * ceiling (`blockOutputCeilingFromClaims(claims)`), and every available output is
- * passed through `classifyBlockOutput` with it. A RESTRICTED output is reported on
+ * 🔴 `view` IS REQUIRED, and that is the guard: its ceiling is the calling token's
+ * maturity ceiling, and every available output is passed through `classifyBlockOutput`
+ * with it. A RESTRICTED output is reported on
  * `outputs` (and `steps[].outputs`) in position, with no url, and is left out of
  * `imageUrls`, `steps[].imageUrls` and `model3dOutputs`. See `outputs` in
- * `schema/blocks/workflow.schema`.
+ * `schema/blocks/workflow.schema`. Its `mint` (`resolveBlockOutputView`) turns every
+ * url the app is given into a host media ticket while serving is on for the viewer.
  */
 export function snapshotFromWorkflow(
   workflow: Workflow,
-  ceiling: BlockOutputCeiling,
+  view: BlockOutputView,
   /**
    * Facts known to the SUBMITTING request that the orchestrator Workflow object
    * does not itself model — currently only the silent checkpoint substitutions
@@ -174,13 +181,13 @@ export function snapshotFromWorkflow(
       const extracted = isRepeatStepType(step.$type)
         ? EMPTY_STEP_EXTRACT
         : extractSnapshotStep(step, true);
-      const stepOutputList = classifyOutputs(extracted.media, step, workflow, ceiling);
+      const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
       const stepUrls = unrestrictedUrls(stepOutputList);
       if (!member.suppressOutput) {
         imageUrls.push(...stepUrls);
         outputs.push(...stepOutputList);
         // Labels only for urls that are in `imageUrls` — see the field's own doc.
-        model3dOutputs.push(...labelsFor(extracted.model3d, stepUrls));
+        model3dOutputs.push(...labelsFor(extracted.model3d, extracted.media, stepOutputList));
       }
       trainedEpochs.push(...extracted.trainedEpochs);
       const error = stepFailureReason(step);
@@ -205,13 +212,13 @@ export function snapshotFromWorkflow(
       continue;
     }
     const extracted = extractSnapshotStep(step, step.name === BLOCK_STEP_NAME);
-    const stepOutputList = classifyOutputs(extracted.media, step, workflow, ceiling);
+    const stepOutputList = classifyOutputs(extracted.media, step, workflow, view);
     const stepUrls = unrestrictedUrls(stepOutputList);
     imageUrls.push(...stepUrls);
     outputs.push(...stepOutputList);
     trainedEpochs.push(...extracted.trainedEpochs);
     // ADDITIVE: the 3D models among those urls, labelled — `imageUrls` is unchanged.
-    model3dOutputs.push(...labelsFor(extracted.model3d, stepUrls));
+    model3dOutputs.push(...labelsFor(extracted.model3d, extracted.media, stepOutputList));
     // A step with no output yet — the submit reply — would otherwise get an
     // entry saying nothing.
     if (extracted.rest !== undefined) {
@@ -309,19 +316,32 @@ function classifyOutputs(
   slots: readonly StepOutputSlot[],
   step: { $type: string; status?: string; output?: unknown; metadata?: unknown; input?: unknown },
   workflow: Workflow,
-  ceiling: BlockOutputCeiling
+  view: BlockOutputView
 ): BlockWorkflowOutput[] {
   const neverRatedVideo = isBlockNeverRatedVideoStep(step, workflow);
-  return propagateMeshRating(slots, step, workflow).map((m) =>
-    classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, ceiling, {
+  const mintStep = view.mint
+    ? {
+        workflowId: workflow.id ?? '',
+        privateGen: isPrivateGenerationWorkflow(workflow, step),
+        neverRatedVideoStep: neverRatedVideo,
+      }
+    : null;
+  return propagateMeshRating(slots, step, workflow).map((m) => {
+    const output = classifyBlockOutput(m, workflow as BlockOutputWorkflowFacts, view, {
       neverRated: m.neverRated === true,
       // 🔴 MIRRORS THE SITE (`workflow-data.ts`, `NEVER_RATED_VIDEO_ECOSYSTEMS`): the
       // provider moderates a never-rated engine's own output, so an UNRATED video from
       // one is delivered — neither held nor locked — whatever the ceiling. A rating
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
-    })
-  );
+    });
+    if (view.mint && mintStep) {
+      return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
+    }
+    return view.serving
+      ? applyServingRules(output, m, { neverRatedVideoStep: neverRatedVideo })
+      : output;
+  });
 }
 
 /**
@@ -492,11 +512,25 @@ function unrestrictedUrls(outputs: readonly BlockWorkflowOutput[]): string[] {
   return urls;
 }
 
-/** 3D labels only for urls the app is given: a restricted model's url is withheld. */
-function labelsFor(labels: readonly BlockModel3dOutput[], urls: readonly string[]) {
+/**
+ * 3D labels only for urls the app is given (a restricted model's url is withheld), each
+ * carrying the url the app was given for that position.
+ */
+function labelsFor(
+  labels: readonly BlockModel3dOutput[],
+  slots: readonly StepOutputSlot[],
+  outputs: readonly BlockWorkflowOutput[]
+): BlockModel3dOutput[] {
   if (labels.length === 0) return [];
-  const given = new Set(urls);
-  return labels.filter((l) => given.has(l.url));
+  const given = new Map<string, string>();
+  slots.forEach((slot, i) => {
+    const output = outputs[i];
+    if (output && isUnrestrictedOutput(output)) given.set(slot.url, output.url);
+  });
+  return labels.flatMap((l) => {
+    const url = given.get(l.url);
+    return url === undefined ? [] : [url === l.url ? l : { ...l, url }];
+  });
 }
 
 const TERMINAL_SNAPSHOT_STATUSES: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set<
@@ -1043,15 +1077,15 @@ export type AppWorkflow = {
  * Pure projection Workflow → AppWorkflow. No IO, no throws — safe to map over a
  * whole page of LIST results. See `AppWorkflow` for the field-by-field contract.
  *
- * 🔴 `ceiling` IS REQUIRED for the same reason as on `snapshotFromWorkflow`: the
+ * 🔴 `view` IS REQUIRED for the same reason as on `snapshotFromWorkflow`: the
  * calling token's maturity ceiling decides which outputs are RESTRICTED, and a
  * restricted output's url is in neither `images` nor `model3dOutputs`. Every
- * consumer — the listing, the cancel reply, publish and post — must pass the
- * calling token's ceiling, so the `images` a block indexed is the `images` the
- * server resolves its `imageIndexes` against.
+ * consumer — the listing, the cancel reply, publish, post and persist — passes the
+ * calling token's ceiling and serving rules, so the positions a block indexed are the
+ * positions the server resolves its `imageIndexes` against.
  */
-export function projectAppWorkflow(workflow: Workflow, ceiling: BlockOutputCeiling): AppWorkflow {
-  return projectAppWorkflowWithPositions(workflow, ceiling).workflow;
+export function projectAppWorkflow(workflow: Workflow, view: BlockOutputView): AppWorkflow {
+  return projectAppWorkflowWithPositions(workflow, view).workflow;
 }
 
 /**
@@ -1073,7 +1107,7 @@ export type AppWorkflowOutputPosition = { image: AppWorkflowImage; output: Block
  */
 export function projectAppWorkflowWithPositions(
   workflow: Workflow,
-  ceiling: BlockOutputCeiling
+  view: BlockOutputView
 ): { workflow: AppWorkflow; positions: AppWorkflowOutputPosition[] } {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   // Every output position (surfaceable and blocked), in order, and its verdict —
@@ -1082,7 +1116,7 @@ export function projectAppWorkflowWithPositions(
   const outputs: BlockWorkflowOutput[] = [];
   const add = (step: Parameters<typeof classifyOutputs>[1], slots: readonly StepOutputSlot[]) => {
     available.push(...slots);
-    outputs.push(...classifyOutputs(slots, step, workflow, ceiling));
+    outputs.push(...classifyOutputs(slots, step, workflow, view));
   };
   const trainedEpochs: TrainedEpoch[] = [];
   const model3dOutputs: BlockModel3dOutput[] = [];
@@ -1150,21 +1184,23 @@ export function projectAppWorkflowWithPositions(
     // `nativeStepOutputMedia`.
     add(step, nativeStepOutputMedia(step));
   }
-  // `outputs` keeps every position, `images` only the unrestricted ones.
-  const unrestricted = available.filter((_, i) => isUnrestrictedOutput(outputs[i]));
+  // `outputs` keeps every position, `images` only the unrestricted ones, each with the
+  // url the app is given for it.
+  const images: AppWorkflowImage[] = [];
+  available.forEach((m, i) => {
+    const output = outputs[i];
+    if (isUnrestrictedOutput(output)) images.push({ ...toAppWorkflowImage(m), url: output.url });
+  });
   const total = workflow.cost?.total;
   const publishedModel = readBlockPublishedModel(workflow);
-  const labels = labelsFor(
-    model3dOutputs,
-    unrestricted.map((m) => m.url)
-  );
+  const labels = labelsFor(model3dOutputs, available, outputs);
   return {
     workflow: {
       // A real LIST/GET item always carries an id; empty-string only if the
       // orchestrator ever omits it (never for a persisted workflow).
       workflowId: workflow.id ?? '',
       status,
-      images: unrestricted.map(toAppWorkflowImage),
+      images,
       cost: typeof total === 'number' ? total : null,
       createdAt: workflow.createdAt,
       ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),

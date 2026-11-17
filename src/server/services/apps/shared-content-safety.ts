@@ -7,6 +7,7 @@ import {
   getBlocklistData,
   throwOnBlockedUserContent,
 } from '~/server/services/blocklist.service';
+import { containsPrivateMediaUrl } from '~/server/services/apps/shared-private-media-urls';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { isPromptCheckUnavailable } from '~/server/services/orchestrator/prompt-check-unavailable';
 
@@ -204,6 +205,11 @@ export async function assertSharedTextSafe(
     }
     if (includesPoi(combined)) {
       throw new SharedContentBlockedError('poi', 'Content flagged for review');
+    }
+
+    // Orchestrator media links belong to the viewer who made them, not to other viewers.
+    if (containsPrivateMediaUrl(combined)) {
+      throw new SharedContentBlockedError('link', 'Content contains a blocked link');
     }
 
     // M1 — both blocklists. `onBlocked` reports WHICH list rejected the text, so the category

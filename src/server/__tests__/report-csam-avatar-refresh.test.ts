@@ -10,6 +10,13 @@ const { refreshProfilePicturesForImages } = vi.hoisted(() => ({
 // which fails under the partial db mock; the never-throwing lazy import would then swallow that
 // and the refresh would never be called.
 vi.mock('~/server/services/user.service', () => ({ refreshProfilePicturesForImages }));
+const { bustCachesForPosts } = vi.hoisted(() => ({
+  bustCachesForPosts: vi.fn(async (_postIds: number | number[]) => undefined),
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  bustCachesForPosts,
+}));
 vi.mock('~/server/services/system-cache', () => ({ getModeratedTags: vi.fn(async () => []) }));
 
 const reportCreate = vi.fn();
@@ -37,6 +44,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   dbMock.dbWrite.report.findFirst.mockResolvedValue(null);
   reportCreate.mockResolvedValue({ id: 74, details: {} });
+  dbMock.dbWrite.image.update.mockResolvedValue({ postId: null } as never);
 });
 
 describe('a CSAM image report', () => {
@@ -60,5 +68,23 @@ describe('a CSAM image report', () => {
 
     expect(refreshProfilePicturesForImages).toHaveBeenCalledTimes(1);
     expect(refreshProfilePicturesForImages).toHaveBeenCalledWith([IMAGE_ID]);
+  });
+
+  it("refreshes the blocked image's post showcase even when the search-index queue throws", async () => {
+    dbMock.dbWrite.image.update.mockResolvedValue({ postId: 55 } as never);
+    vi.spyOn(imagesMetricsSearchIndex, 'queueUpdate').mockRejectedValue(new Error('queue down'));
+
+    await expect(reportCsam()).rejects.toThrow('queue down');
+
+    expect(bustCachesForPosts).toHaveBeenCalledWith(55);
+  });
+
+  it('busts no post for an image on no post', async () => {
+    dbMock.dbWrite.image.update.mockResolvedValue({ postId: null } as never);
+    vi.spyOn(imagesMetricsSearchIndex, 'queueUpdate').mockResolvedValue(undefined as never);
+
+    await reportCsam();
+
+    expect(bustCachesForPosts).not.toHaveBeenCalled();
   });
 });

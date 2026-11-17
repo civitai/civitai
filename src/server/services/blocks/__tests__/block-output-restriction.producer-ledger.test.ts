@@ -32,41 +32,43 @@ const HOME = 'src/server/services/blocks/workflow.service.ts';
 
 /** The token's ceiling, from the verified claims in scope at that site. */
 const TOKEN = 'blockOutputCeilingFromClaims(claims)';
+/** The token's ceiling plus the viewer's mint context: what an app-facing read passes. */
+const VIEW = 'awaitresolveBlockOutputView(claims)';
+/** The token's serving rules with no mint: a read that fetches the media server-side. */
+const RULES = 'awaitresolveBlockOutputRules(claims)';
+const RULES_NO_MINT = '{...(awaitresolveBlockOutputRules(claims)),mint:null}';
+/** No outputs to judge (an estimate): the ceiling alone, serving off. */
+const NO_OUTPUTS = '{...blockOutputCeilingFromClaims(claims),serving:false,mint:null}';
 
 const LEDGER: Record<string, string> = {
-  // The block's own reads and writes of one workflow.
-  'src/server/routers/blocks.router.ts::pollWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::cancelWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::submitWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::estimateBlockWorkflowCell::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::submitStepWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::submitPassThroughStepWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::submitMultiStepWorkflow::snapshotFromWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::submitConfirmedQuoteWorkflow::snapshotFromWorkflow': TOKEN,
-  // The subqueue listing and its cancel.
-  'src/server/routers/blocks.router.ts::queryAppWorkflows::projectAppWorkflow': TOKEN,
-  'src/server/routers/blocks.router.ts::cancelAppWorkflow::projectAppWorkflow': TOKEN,
-  // Publish, post and persist resolve `imageIndexes` / `imageIndex` against the STABLE
-  // output positions; the ceiling decides which positions are restricted (refused).
+  'src/server/routers/blocks.router.ts::pollWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::cancelWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::submitWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::estimateBlockWorkflowCell::snapshotFromWorkflow':
+    NO_OUTPUTS,
+  'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::submitStepWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::submitPassThroughStepWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::submitMultiStepWorkflow::snapshotFromWorkflow': VIEW,
+  'src/server/routers/blocks.router.ts::submitConfirmedQuoteWorkflow::snapshotFromWorkflow': VIEW,
+  // `const outputView = await resolveBlockOutputView(claims)`, once for the page.
+  'src/server/routers/blocks.router.ts::queryAppWorkflows::projectAppWorkflow': 'outputView',
+  'src/server/routers/blocks.router.ts::cancelAppWorkflow::projectAppWorkflow': VIEW,
   'src/server/routers/blocks.router.ts::publishGenerationOutputs::projectAppWorkflowWithPositions':
-    TOKEN,
-  // Post and persist: `BlockPostActor.outputCeiling` / the persist input's `ceiling`.
+    RULES_NO_MINT,
   'src/server/services/blocks/block-post.service.ts::resolveOwnedWorkflowOutputs::projectAppWorkflowWithPositions':
-    'input.ceiling',
-  // `projectAppWorkflow` is the positions projection's `workflow` half.
+    '{...input.ceiling,mint:null}',
   'src/server/services/blocks/workflow.service.ts::projectAppWorkflow::projectAppWorkflowWithPositions':
-    'ceiling',
-  // The output UNLOCK (`block-output-unlock.service`): its one snapshot call, at the ceiling
-  // `outputAt` is handed. Only the TOKEN ceiling's snapshot (`blockOutputCeilingFromClaims`)
-  // ever leaves that module; the domain-only and all-ratings calls in
-  // `planBlockOutputUnlock` decide between link-out and a settings pointer and are discarded.
-  'src/server/services/blocks/block-output-unlock.service.ts::outputAt::snapshotFromWorkflow':
-    'ceiling',
-  // The author's activity view: reads only a COUNT of every output (restricted ones
-  // included), never a url, so the fail-closed (PG) ceiling is passed.
+    'view',
+  // `outputAt` builds the view: the request's serving rules, minted only for what is shown.
+  'src/server/services/blocks/block-output-unlock.service.ts::snapshotAt::snapshotFromWorkflow':
+    'view',
+  // Diagnostics only: the raw level at a position for the charged-but-not-released WARN; never
+  // reaches the app.
+  'src/server/services/blocks/block-output-unlock.service.ts::levelAt::projectAppWorkflowWithPositions':
+    '{maxBrowsingLevel:allBrowsingLevelsFlag,serving:false,mint:null}',
   'src/server/services/app-assistant/app-activity.service.ts::generationOf::projectAppWorkflow':
-    'blockOutputCeilingFromClaims({})',
+    '{...blockOutputCeilingFromClaims({}),serving:false,mint:null}',
 };
 
 /**
@@ -80,7 +82,7 @@ const OBJECT_LEDGER: Record<string, string> = {
   'src/server/services/blocks/block-generation-source.service.ts::persistWithin::resolveOwnedWorkflowOutputs':
     'input.ceiling',
   'src/server/routers/blocks.router.ts::persistGenerationSource::persistBlockGenerationSource':
-    TOKEN,
+    RULES,
 };
 
 /**
@@ -90,8 +92,8 @@ const OBJECT_LEDGER: Record<string, string> = {
  * annotation (`outputCeiling: BlockOutputCeiling;`) is a declaration, not a value.
  */
 const OUTPUT_CEILING_LEDGER: Record<string, string> = {
-  'src/server/routers/blocks.router.ts::previewPostFromApp': TOKEN,
-  'src/server/routers/blocks.router.ts::createPostFromApp': TOKEN,
+  'src/server/routers/blocks.router.ts::previewPostFromApp': RULES,
+  'src/server/routers/blocks.router.ts::createPostFromApp': RULES,
 };
 
 function scanOutputCeilingValues() {
@@ -158,7 +160,9 @@ function enclosing(code: string, offset: number): string {
   return name;
 }
 
-/** The text of the call's SECOND top-level argument, whitespace-normalised. */
+const normalise = (text: string) => text.replace(/\s+/g, '').replace(/,}/g, '}');
+
+/** The text of the call's SECOND top-level argument, whitespace and trailing-comma normalised. */
 function secondArgument(code: string, open: number): string | null {
   let depth = 0;
   let start = -1;
@@ -166,10 +170,10 @@ function secondArgument(code: string, open: number): string | null {
     const c = code[i];
     if (c === '(' || c === '[' || c === '{') depth += 1;
     else if (c === ')' || c === ']' || c === '}') {
-      if (depth === 0) return start === -1 ? null : code.slice(start, i).replace(/\s+/g, '');
+      if (depth === 0) return start === -1 ? null : normalise(code.slice(start, i));
       depth -= 1;
     } else if (c === ',' && depth === 0) {
-      if (start !== -1) return code.slice(start, i).replace(/\s+/g, '');
+      if (start !== -1) return normalise(code.slice(start, i));
       start = i + 1;
     }
   }

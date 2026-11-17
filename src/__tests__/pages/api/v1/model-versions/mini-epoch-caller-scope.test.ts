@@ -418,7 +418,7 @@ describe('mini/[id], the primary file hidden from the caller', () => {
     const picks = (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
       .map(([entry]) => entry)
       .filter((entry) => entry?.name === 'mini-epoch-caller')
-      .map((entry) => entry.pick);
+      .map((entry) => (entry.payload as { pick?: unknown } | undefined)?.pick);
     expect(picks).toEqual(['hidden-primary', 'primary']);
   });
 });
