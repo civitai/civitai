@@ -11,7 +11,8 @@
  * Retrying is safe for writes: a replica rejects a write with `READONLY` before executing it, so
  * the rejected command was not applied. That holds for one command (and for a MULTI, which aborts
  * as a whole) but not for a pipeline, whose earlier writes may have run on the primary before it
- * was demoted. Pipelines therefore run under `withoutSysReadonlyRetry`.
+ * was demoted, so this wrapper never retries a pipeline: it runs under `withoutSysReadonlyRetry`.
+ * (RedisSentinel's own internal rediscover-and-resend still applies to it, as before this change.)
  *
  * Pure (no redis/prom imports) so it can be unit-tested in isolation.
  */
@@ -70,6 +71,10 @@ let noRetryDepth = 0;
 /**
  * Run `fn` with READONLY retry disabled for every command it STARTS synchronously. RedisSentinel's
  * `_executePipeline` calls `_execute` before its first await, so wrapping it marks the pipeline.
+ *
+ * A synchronous depth counter rather than AsyncLocalStorage: this package is reachable from the
+ * browser bundle, which has no `async_hooks`. The ordering it relies on is pinned against the real
+ * @redis/client prototype in __tests__/sys-readonly-retry.test.ts ("real RedisSentinel").
  */
 export function withoutSysReadonlyRetry<T>(fn: () => T): T {
   noRetryDepth++;

@@ -1021,6 +1021,8 @@ export type RedisMetricsBridge = {
   // Cluster routing retry-after-rediscover counter (the topology-churn 500 wave). Read via the
   // same globalThis bridge so this client-bundle-reachable module avoids a static prom import.
   redisRoutingRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
+  // sys READONLY retry outcome counter (./sys-readonly-retry), same bridge and label shape.
+  redisSysReadonlyRetryCounter?: { inc: (labels: { result: 'recovered' | 'exhausted' }) => void };
 };
 
 function getRedisMetrics(): RedisMetricsBridge | undefined {
@@ -1360,7 +1362,8 @@ export function instrumentCommands(
     clientLabel === 'sys' &&
     isClusterClient &&
     (opts.sysReadonlyRetryEnabled ?? config?.sysReadonlyRetryEnabled ?? true);
-  // A pipeline that hits READONLY may already have applied earlier writes, so it is never retried.
+  // A pipeline that hits READONLY may already have applied earlier writes, so this wrapper never
+  // retries one (RedisSentinel's own internal rediscover-and-resend is unchanged).
   if (sysReadonlyRetry && typeof self._executePipeline === 'function') {
     const originalPipeline = self._executePipeline;
     self._executePipeline = function (this: any, ...args: any[]) {
@@ -1412,8 +1415,10 @@ export function instrumentCommands(
       : sysReadonlyRetry && isSysReadonlyRetryAllowed()
       ? withSysReadonlyRetry(runOnce, {
           backoffMs: opts.sysReadonlyRetryBackoffMs,
-          onResult: (result, retries) =>
-            log(`sysRedis READONLY retry ${result} after ${retries} retries`),
+          onResult: (result, retries) => {
+            getRedisMetrics()?.redisSysReadonlyRetryCounter?.inc({ result });
+            log(`sysRedis READONLY retry ${result} after ${retries} retries`);
+          },
         })
       : runOnce();
 
