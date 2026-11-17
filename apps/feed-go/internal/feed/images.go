@@ -220,18 +220,21 @@ type Hydrated struct {
 // profilePictures] (what the gallery handler always passes): every lookup of the page in one
 // Hydrator.Page call, then the Model3D visibility of the linked models.
 func Hydrate(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool) (*Hydrated, error) {
-	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true)
+	return hydrateRows(ctx, h, rows, viewer, visibleEvents, true, true)
 }
 
 // hydrateRows is Hydrate; profilePictures is whether the include list holds 'profilePictures'
-// (without it every creator's profilePicture is null, and its cache is not read).
-func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures bool) (*Hydrated, error) {
+// (without it every creator's profilePicture is null, and its cache is not read), cosmetics whether
+// it holds 'cosmetics' (without it every creator's cosmetics are [] and every image's frame null, and
+// neither cache is read).
+func hydrateRows(ctx context.Context, h Hydrator, rows []RawImage, viewer Viewer, visibleEvents map[string]bool, profilePictures, cosmetics bool) (*Hydrated, error) {
 	req := hydrate.PageRequest{
 		UserIDs:           make([]int, 0, len(rows)),
 		ImageIDs:          make([]int, 0, len(rows)),
 		VisibleEvents:     visibleEvents,
 		ViewerID:          viewer.ID,
 		NoProfilePictures: !profilePictures,
+		NoCosmetics:       !cosmetics,
 	}
 	var model3dIDs []int
 	for _, r := range rows {

@@ -1,6 +1,7 @@
 import { Center, Container, Group, Loader, Select, Stack, Text, Title } from '@mantine/core';
 import { useState } from 'react';
 import { ServiceFeedCard } from '~/components/CreatorShop/Services/feed/ServiceFeedCard';
+import { ServicesKickoffHero } from '~/components/CreatorShop/Services/feed/ServicesKickoffHero';
 import { useServiceOfferingFeed } from '~/components/CreatorShop/Services/creator-service.util';
 import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -40,6 +41,7 @@ export default function ServicesFeedPage() {
       />
       <Container size="xl" py="lg">
         <Stack gap="md">
+          <ServicesKickoffHero />
           <Group justify="space-between" align="flex-end" gap="sm">
             <Stack gap={2}>
               <Title order={1} size="h2">
