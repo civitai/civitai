@@ -17,7 +17,7 @@ import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const h = vi.hoisted(() => ({
-  pg: null as unknown as import('@electric-sql/pglite').PGlite,
+  pg: null as unknown as PGlite,
   kv: new Map<string, unknown>(),
   unseen: vi.fn(),
 }));
