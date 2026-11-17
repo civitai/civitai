@@ -19,14 +19,17 @@ vi.mock('~/server/services/image.service', () => ({
 const CHILD_TAG = childBrowsingTagIds[0];
 const OTHER_TAG = -1;
 
-type SqlArg = { strings?: string[]; sql?: string; values: unknown[] };
-const sqlText = (sql: SqlArg) => sql.sql ?? sql.strings?.join('?') ?? '';
-const queries = () => dbMock.dbWrite.$queryRaw.mock.calls.map(([sql]) => sql as unknown as SqlArg);
-const query = (table: string) => queries().find((q) => sqlText(q).includes(table));
+const sqlText = (strings: TemplateStringsArray) => strings.join('?');
+const queries = () =>
+  dbMock.dbWrite.$queryRaw.mock.calls.map(([strings, ...values]) => ({
+    text: sqlText(strings as TemplateStringsArray),
+    values,
+  }));
+const query = (table: string) => queries().find((q) => q.text.includes(table));
 
 /** Answers the child-tag check and the image -> model lookup, both on the primary. */
 function arm({ models = [] as number[], childTagged = [] as number[] } = {}) {
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: SqlArg) =>
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
     sqlText(sql).includes('"TagsOnImageNew"')
       ? childTagged.map((imageId) => ({ imageId }))
       : models.map((modelId) => ({ modelId, modelVersionId: modelId * 10 }))) as never);
@@ -83,7 +86,7 @@ describe('queueModelsForImageChildTagChanges', () => {
   });
 
   it('queues each model once, as an update, when several of its versions hold the images', async () => {
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: SqlArg) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) =>
       sqlText(sql).includes('"TagsOnImageNew"')
         ? [{ imageId: 8 }]
         : [

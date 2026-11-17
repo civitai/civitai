@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { childBrowsingTagIds } from '@civitai/shared';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
@@ -56,24 +55,24 @@ async function queueModels({ tagWrites = [], levelImageIds = [] }: ImageChildTag
   const levelOnly = [...new Set(levelImageIds)].filter((id) => !imageIds.has(id));
   if (levelOnly.length) {
     // Primary: the tag that makes the image count may have been written moments ago.
-    const tagged = await dbWrite.$queryRaw<{ imageId: number }[]>(Prisma.sql`
+    const tagged = await dbWrite.$queryRaw<{ imageId: number }[]>`
       SELECT DISTINCT "imageId"
       FROM "TagsOnImageNew"
       WHERE "imageId" = ANY(${levelOnly}::int[])
         AND "tagId" = ANY(${CHILD_TAG_IDS}::int[])
-    `);
+    `;
     for (const { imageId } of tagged) imageIds.add(imageId);
   }
 
   if (!imageIds.size) return;
   // Primary: the image or its post may be moments old.
-  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>(Prisma.sql`
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
     SELECT DISTINCT p."modelVersionId", mv."modelId"
     FROM "Image" i
     JOIN "Post" p ON p.id = i."postId"
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     WHERE i.id = ANY(${[...imageIds]}::int[])
-  `);
+  `;
   if (!rows.length) return;
 
   // Call-site imports: both modules import image.service, which calls this.
