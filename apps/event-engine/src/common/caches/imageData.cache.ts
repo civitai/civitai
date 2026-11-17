@@ -238,7 +238,8 @@ export type ProfilePictureData = {
  * Cache for user profile pictures. A picture that may not be served is looked up as no picture.
  */
 export const profilePictures = createCache<ProfilePictureData>({
-  redisKey: 'user:profilePicture',
+  // v2: entries cached before pictures with no rating were withheld are dropped.
+  redisKey: 'user:profilePicture:v2',
   idKey: 'userId',
   fieldTypes: {
     userId: 'number',
@@ -267,6 +268,7 @@ export const profilePictures = createCache<ProfilePictureData>({
        JOIN "Image" i ON i.id = u."profilePictureId"
        WHERE u.id = ANY($1)
          AND i.ingestion <> 'Blocked'
+         AND i."nsfwLevel" != 0
          AND i."needsReview" IS DISTINCT FROM 'csam'`,
       [ids]
     );
