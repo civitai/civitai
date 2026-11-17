@@ -76,7 +76,7 @@ beforeEach(() => {
     nsfwLevel: 4,
     userId: 9,
     postId: 3,
-    pHash: 123n,
+    pHash: BigInt(123),
     post: null,
   } as never);
 });
@@ -91,7 +91,7 @@ describe('setTosViolationHandler blocklist write', () => {
     await remove();
 
     expect(svc.addBlockedImage).toHaveBeenCalledWith(
-      expect.objectContaining({ hash: 123n, reason: 'TOS' })
+      expect.objectContaining({ hash: BigInt(123), reason: 'TOS' })
     );
   });
 

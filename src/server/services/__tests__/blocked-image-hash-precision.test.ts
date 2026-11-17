@@ -101,7 +101,7 @@ const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await
 
 // A real 64-bit pHash: past 2^53, and one whose rounded form is visibly different so a
 // revert prints the wrong value beside the right one rather than timing out.
-const HASH = -4276845791567733103n;
+const HASH = BigInt('-4276845791567733103');
 const ROUNDED = String(Number(HASH)); // '-4276845791567733000'
 
 describe('blocked-image hashes keep all 64 bits (ClickUp 868kta7p0)', () => {
@@ -145,7 +145,7 @@ describe('blocked-image hashes keep all 64 bits (ClickUp 868kta7p0)', () => {
 });
 
 describe('a hash with a CSAM entry keeps it', () => {
-  const OTHER = 1234567890123n;
+  const OTHER = BigInt('1234567890123');
   const csamEntryOn = (hash: bigint) => (csamQueryResult = [{ hash: hash.toString() }]);
 
   beforeEach(() => {

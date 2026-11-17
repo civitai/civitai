@@ -156,7 +156,7 @@ describe('fileCsamReport', () => {
   // Ruled: the message must stop a re-file, which can create a second report. A 500's message
   // is replaced before it reaches the moderator, so this has to stay a 503 with this text.
   it('tells the moderator not to file again when the blocklist write throws, after one filing', async () => {
-    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
     vi.mocked(logToAxiom).mockClear();
 
@@ -178,12 +178,12 @@ describe('fileCsamReport', () => {
     );
     expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: MOD });
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
-      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+      expect.objectContaining({ data: [{ hash: BigInt(123), reason: 'CSAM' }] })
     );
   });
 
   it('leaves the blocklist write to after the removal, not to the report service', async () => {
-    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(logToAxiom).mockClear();
 
     await expect(file(OWNER, [IMAGE])).resolves.toEqual({
@@ -201,19 +201,19 @@ describe('fileCsamReport', () => {
   });
 
   it('still writes the hashes when the account removal throws, then throws its error', async () => {
-    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(bulkAddBlockedImages).mockClear();
     softDeleteUser.mockRejectedValueOnce(new Error('ban failed'));
 
     await expect(file(OWNER, [IMAGE])).rejects.toThrow('ban failed');
 
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
-      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+      expect.objectContaining({ data: [{ hash: BigInt(123), reason: 'CSAM' }] })
     );
   });
 
   it('logs the removal failure when the blocklist write fails too', async () => {
-    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     softDeleteUser.mockRejectedValueOnce(new Error('ban failed'));
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
     vi.mocked(logToAxiom).mockClear();
@@ -233,7 +233,7 @@ describe('fileCsamReport', () => {
     vi.mocked(releaseReviewFlagsToReportHold).mockClear();
     dbMock.dbWrite.appeal.updateMany.mockClear();
     dbMock.dbWrite.$executeRaw.mockClear();
-    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(bulkAddBlockedImages).mockRejectedValueOnce(new Error('no ClickHouse client'));
 
     await expect(file(OWNER, [IMAGE])).rejects.toThrow(CSAM_BLOCKLIST_FAILED_MESSAGE);
@@ -250,7 +250,7 @@ describe('fileCsamReport', () => {
 // main), a supplemental only for an Image report. Widening or narrowing this needs a new ruling.
 describe('fileCsamReport blocklist scope by report type', () => {
   beforeEach(() => {
-    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: 123n }] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ pHash: BigInt(123) }] as never);
     vi.mocked(bulkAddBlockedImages).mockClear();
   });
   const fileAs = (type: string, supplementalOf?: number) =>
@@ -270,14 +270,14 @@ describe('fileCsamReport blocklist scope by report type', () => {
   it('writes CSAM hashes for an Image supplemental', async () => {
     await fileAs('Image', 3);
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
-      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+      expect.objectContaining({ data: [{ hash: BigInt(123), reason: 'CSAM' }] })
     );
   });
 
   it('writes CSAM hashes for a non-Image first filing, as main did', async () => {
     await fileAs('TrainingData');
     expect(bulkAddBlockedImages).toHaveBeenCalledWith(
-      expect.objectContaining({ data: [{ hash: 123n, reason: 'CSAM' }] })
+      expect.objectContaining({ data: [{ hash: BigInt(123), reason: 'CSAM' }] })
     );
   });
 });
