@@ -451,6 +451,7 @@ import {
   opaqueInputUrlsIn,
   type GenerationInputPhase,
 } from '~/server/services/generation-input-urls';
+import { appUsesScannedSourceRows } from '~/server/services/blocks/source-scanned-rows';
 import { getUserById } from '~/server/services/user.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { assertGenerationStatusAllows } from '~/server/services/generation/generation-kill-switch';
@@ -2135,6 +2136,8 @@ async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise
 async function createBlockTextToImageStep(opts: {
   input: Record<string, unknown>;
   user: SessionUser;
+  /** The block token's `appBlockId` claim: the app the source gate reads its flags for. */
+  appBlockId: string;
   whatIf?: boolean;
   isGreen?: boolean;
 }) {
@@ -2154,7 +2157,11 @@ async function createBlockTextToImageStep(opts: {
     user: { id: opts.user.id, isModerator: opts.user.isModerator },
     isWhatIf: opts.whatIf,
     isGreen: opts.isGreen,
-    inputGate: { entry: 'appBlocks', isApiCaller: false },
+    inputGate: {
+      entry: 'appBlocks',
+      isApiCaller: false,
+      appBlockLog: { appBlockId: opts.appBlockId, stepTypes: 'textToImage' },
+    },
   });
   // The block path is plain txt2img with no snippet fan-out, so the graph
   // always yields exactly one step. Fail closed if that invariant breaks rather
@@ -6620,9 +6627,10 @@ export const blocksRouter = router({
    * is scanned. See `persistUploadedGenerationSource` in `block-generation-source.service.ts`.
    *
    * GATES: `persistGenerationSource`'s preamble: `ai:write:budgeted`, subject = session user, the
-   * runtime flag. Then `app-block-source-scanned-rows` must be on (FORBIDDEN otherwise), read as
-   * the generation gate reads it. Identity comes from the token, never the body; the url is the only thing the
-   * caller supplies, and the service accepts only a consumer blob on a trusted orchestrator host.
+   * runtime flag. Then `app-block-source-scanned-rows` must be on for the token's app (FORBIDDEN
+   * otherwise), read as the generation gate reads it (`appUsesScannedSourceRows`). Identity comes
+   * from the token, never the body; the url is the only thing the caller supplies, and the service
+   * accepts only a consumer blob on a trusted orchestrator host.
    *
    * BOUNDS: the per-user 60/h `rateLimit` (keyed on this path), then
    * `withUploadedGenerationSourceBounds`: an in-flight pool and an hourly bucket of its own, the
@@ -6657,9 +6665,8 @@ export const blocksRouter = router({
       }
       assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
-      // Only while the gate refuses blobs: the same flag, read the same way (global, no entity).
-      const { FLIPT_FEATURE_FLAGS, isFlipt } = await import('~/server/flipt/client');
-      if (!(await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS))) {
+      // Only while the gate refuses this app's blobs: the gate's own read, for the token's app.
+      if (!(await appUsesScannedSourceRows(claims.appBlockId))) {
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'picked generation sources are not enabled',
@@ -6669,7 +6676,12 @@ export const blocksRouter = router({
         const { persistUploadedGenerationSource } = await import(
           '~/server/services/blocks/block-generation-source.service'
         );
-        return persistUploadedGenerationSource({ userId, appId: claims.appId, url: input.url });
+        return persistUploadedGenerationSource({
+          userId,
+          appId: claims.appId,
+          appBlockId: claims.appBlockId,
+          url: input.url,
+        });
       });
     }),
 
@@ -8270,6 +8282,7 @@ export const blocksRouter = router({
         preflight = await createBlockTextToImageStep({
           input: generateInput,
           user,
+          appBlockId: claims.appBlockId,
           whatIf: true,
         });
       } catch (error) {
@@ -8738,6 +8751,7 @@ export const blocksRouter = router({
           await createBlockTextToImageStep({
             input: generateInput,
             user,
+            appBlockId: claims.appBlockId,
             isGreen,
           });
         const submitted = await submitWorkflow({
@@ -11013,6 +11027,7 @@ async function estimateBlockWorkflowCell(
     built = await createBlockTextToImageStep({
       input: generateInput,
       user,
+      appBlockId: claims.appBlockId,
       whatIf: true,
     });
   } catch (error) {
@@ -14335,6 +14350,14 @@ function prepareMultiStepWorkflow(
         if (!(e instanceof PlatformInternalStepTypeError)) throw e;
         return { refusal: multiStepRefusal('workflow_step_denied', e.message) };
       }
+    }
+    if (step.stepTypes.some(isTrainingStepTypeIgnoringCase)) {
+      return {
+        refusal: multiStepRefusal(
+          'workflow_step_denied',
+          `workflow step ${index}: a training step cannot run inside kind:'workflow' — use kind:'training'`
+        ),
+      };
     }
   }
   return { steps: graph.steps };

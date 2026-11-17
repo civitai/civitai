@@ -83,6 +83,7 @@
           <TableHead>Failed</TableHead>
           <TableHead>Pending</TableHead>
           <TableHead>Sending</TableHead>
+          <TableHead>Dropped</TableHead>
           <TableHead></TableHead>
         </TableRow>
       </TableHeader>
@@ -95,13 +96,14 @@
             <TableCell>{c.failed}</TableCell>
             <TableCell>{c.pending}</TableCell>
             <TableCell>{c.sending}</TableCell>
+            <TableCell>{c.dropped}</TableCell>
             <TableCell>
               {#if c.done}<Badge>done</Badge>{:else}<Badge variant="outline">not done</Badge>{/if}
             </TableCell>
           </TableRow>
         {:else}
           <TableRow>
-            <TableCell colspan={7} class="text-dark-2">Nothing imported for this batch.</TableCell>
+            <TableCell colspan={8} class="text-dark-2">Nothing imported for this batch.</TableCell>
           </TableRow>
         {/each}
       </TableBody>
@@ -117,6 +119,8 @@
     <p class="text-sm text-dark-0">
       {result.started ? 'Sending started.' : 'A send of this batch is already running.'}
     </p>
+  {:else if result?.scope === 'withdraw'}
+    <p class="text-sm text-dark-0">Row {result.rowId} withdrawn; it will not be sent.</p>
   {:else if result?.scope === 'retire'}
     <p class="text-sm text-dark-0">Row {result.rowId} retired.</p>
   {:else if result?.scope === 'resolve'}
@@ -192,7 +196,14 @@
             {#if row.error}<span class="text-red-300">{row.error}</span>{/if}
             {#if row.messageId}<span class="text-dark-2">message {row.messageId}</span>{/if}
           </div>
-          {#if data.canAct && row.status === 'failed' && row.error !== 'Retired'}
+          {#if data.canAct && row.status === 'pending'}
+            <form method="POST" action="?/withdraw" use:enhance class="mt-2 flex flex-wrap gap-2">
+              <input type="hidden" name="rowId" value={row.id} />
+              <Input name="reason" placeholder="Why withdraw?" required class="max-w-xs" />
+              <Button type="submit" size="sm" variant="outline">Withdraw (never send)</Button>
+            </form>
+          {/if}
+          {#if data.canAct && row.status === 'failed' && row.error !== 'Retired' && row.error !== 'Withdrawn'}
             <form
               method="POST"
               action="?/retire"

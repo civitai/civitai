@@ -12,9 +12,12 @@ import type { ImageKeptReason } from '$lib/image-kept-reasons';
 
 /** A moderator delete refuses any image a CSAM review, block, report or owner hold covers. */
 
-const { dbHandle, deletedKeys } = vi.hoisted(() => ({
+// `deletedKeys`: files removed with every version; `keyOnlyDeletes`: deletes that would leave versions.
+const { dbHandle, deletedKeys, keyOnlyDeletes, purgeFails } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   deletedKeys: [] as string[],
+  keyOnlyDeletes: [] as string[],
+  purgeFails: { current: false },
 }));
 
 vi.mock('../db', () => ({
@@ -30,7 +33,12 @@ vi.mock('../db', () => ({
 vi.mock('../storage', () => ({
   getStorage: () => ({
     deleteObject: async ({ key }: { key: string }) => {
+      keyOnlyDeletes.push(key);
+    },
+    purgeObjectVersions: async ({ key }: { key: string }) => {
+      if (purgeFails.current) throw new Error('Versions remain');
       deletedKeys.push(key);
+      return { versionsDeleted: 2, remaining: 0 };
     },
   }),
 }));
@@ -84,6 +92,12 @@ CREATE TABLE "File" ("entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "ImageConnection" ("imageId" INTEGER, "entityId" INTEGER, "entityType" TEXT);
 CREATE TABLE "CommentTopic" ("entityType" TEXT, "entityId" INTEGER);
 CREATE TABLE "CdnQueued" ("imageId" INTEGER);
+CREATE TYPE "EntityType" AS ENUM ('Image');
+CREATE TYPE "JobQueueType" AS ENUM ('ImageStorageDelete');
+CREATE TABLE "JobQueue" (
+  "entityId" INTEGER, "entityType" "EntityType", "type" "JobQueueType", "data" JSONB,
+  PRIMARY KEY ("entityType", "entityId", "type")
+);
 CREATE FUNCTION queue_cdn_access_sync(entity_id integer, entity_type text, payload jsonb)
   RETURNS void LANGUAGE sql AS $$ INSERT INTO "CdnQueued" VALUES (entity_id) $$;
 `;
@@ -96,6 +110,8 @@ let db: PGlite;
 
 beforeEach(async () => {
   deletedKeys.length = 0;
+  keyOnlyDeletes.length = 0;
+  purgeFails.current = false;
   db = await freshPglite();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
@@ -185,6 +201,42 @@ describe('deleteImageRows', () => {
     expect(await remaining()).toEqual([]);
     expect(deletedKeys.sort()).toEqual(['key-1', 'key-2']);
     expect(rows.refused).toEqual([]);
+  });
+
+  it('purges every version of each deleted image, never deleting by key alone', async () => {
+    await image(2, { blockedFor: 'moderated' });
+    await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([]);
+    expect(deletedKeys.sort()).toEqual([`key-${PLAIN}`, 'key-2']);
+    expect(keyOnlyDeletes).toEqual([]);
+  });
+
+  it('reports a purge that did not verify', async () => {
+    await image(2, { blockedFor: 'moderated' });
+    purgeFails.current = true;
+    const rows = await (dbHandle.current as Kysely<DB>)
+      .transaction()
+      .execute((trx) => deleteImageRows(trx, [PLAIN, 2]));
+    await expect(finishImageDeletes(rows)).resolves.toEqual({ storageFailed: [PLAIN, 2] });
+    // The main app's retry job works these, and keeps them all-versions purges.
+    const queued = await db.query<{ entityId: number; type: string; data: unknown }>(
+      `SELECT "entityId", type, data FROM "JobQueue" ORDER BY "entityId"`
+    );
+    expect(queued.rows).toEqual([
+      {
+        entityId: PLAIN,
+        type: 'ImageStorageDelete',
+        data: { url: `key-${PLAIN}`, allVersions: true },
+      },
+      { entityId: 2, type: 'ImageStorageDelete', data: { url: 'key-2', allVersions: true } },
+    ]);
+  });
+
+  it('purges nothing for a held image', async () => {
+    await image(2, { needsReview: 'csam' });
+    await deleteImages([PLAIN, 2]);
+    expect(await remaining()).toEqual([2]);
+    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
   });
 
   it('deletes an image whose owner was named only on a report closed over a year ago', async () => {
@@ -292,6 +344,50 @@ describe('deleteImageRows', () => {
     expect(deletedKeys).toEqual([`key-${PLAIN}`]);
     expect(rows.refused).toEqual([{ id: 2, reason: 'review' }]);
     expect(rows.notReturned).toEqual([]);
+  });
+});
+
+// `deleteImageRows` refuses CSAM-marked images today, so these rows are fed to `finishImageDeletes`
+// directly: if one ever gets through, its earlier versions stay.
+describe('finishImageDeletes', () => {
+  const finish = (csamMarked: boolean) =>
+    finishImageDeletes({
+      deleted: [{ id: PLAIN, url: `key-${PLAIN}`, postId: null, parentId: null, csamMarked }],
+      notReturned: [],
+      avatarUserIds: [],
+    });
+  const queuedData = async () =>
+    (await db.query<{ data: unknown }>(`SELECT data FROM "JobQueue"`)).rows.map((r) => r.data);
+  const queue = (data: object) =>
+    db.query(`INSERT INTO "JobQueue" VALUES ($1, 'Image', 'ImageStorageDelete', $2::jsonb)`, [
+      PLAIN,
+      JSON.stringify(data),
+    ]);
+
+  it('deletes a CSAM-marked image by key alone, purging no versions', async () => {
+    await expect(finish(true)).resolves.toEqual({ storageFailed: [] });
+    expect(keyOnlyDeletes).toEqual([`key-${PLAIN}`]);
+    expect(deletedKeys).toEqual([]);
+  });
+
+  it('purges every version of an unmarked image', async () => {
+    await finish(false);
+    expect(deletedKeys).toEqual([`key-${PLAIN}`]);
+    expect(keyOnlyDeletes).toEqual([]);
+  });
+
+  it('upgrades a queued key-only retry to an all-versions one', async () => {
+    await queue({ url: `key-${PLAIN}` });
+    purgeFails.current = true;
+    await finish(false);
+    expect(await queuedData()).toEqual([{ url: `key-${PLAIN}`, allVersions: true }]);
+  });
+
+  it('replaces a queued retry for another url', async () => {
+    await queue({ url: 'key-old', allVersions: true });
+    purgeFails.current = true;
+    await finish(false);
+    expect(await queuedData()).toEqual([{ url: `key-${PLAIN}`, allVersions: true }]);
   });
 });
 
