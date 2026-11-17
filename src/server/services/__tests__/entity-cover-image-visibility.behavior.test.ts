@@ -571,7 +571,8 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     }
   );
 
-  it.each(['anonymous', 'stranger', 'owner', 'moderator'] as const)(
+  // Its uploader keeps it, as in 'keeps the restricted cover for its uploader' below.
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
     'has no cover for an article whose R cover is on a restricted base model, for the %s',
     async (who) => {
       expect(await coverOf('Article', 2906, viewers[who])).toBeNull();
@@ -612,6 +613,51 @@ describe('getEntityCoverImage respects the parent entity visibility', () => {
     } as Parameters<typeof getEntityCoverImage>[0]);
     expect(covers.map((c) => c.id)).toEqual([102]);
   });
+});
+
+describe('getEntityCoverImage withholds mature images on a restricted base model', () => {
+  beforeAll(async () => {
+    // Article 1701's cover is restricted mature, article 1702's cover restricted but SFW. Public
+    // bounty 1721 has a restricted mature image ahead of a clean one.
+    await db.exec(`
+      INSERT INTO "Image" (id, "nsfwLevel", "modelRestricted") VALUES
+        (1711, 8, true), (1712, 1, true), (1731, 16, true), (1732, 8, false);
+      INSERT INTO "Post" (id, "publishedAt") VALUES (1751, now() - interval '1 day');
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", "modelRestricted") VALUES (1741, 1751, 4, true);
+      INSERT INTO "Article" (id, "coverId", status, "publishedAt") VALUES
+        (1701, 1711, 'Published', now()), (1702, 1712, 'Published', now());
+      INSERT INTO "Bounty" VALUES (1721, ${OWNER}, 'Public');
+      INSERT INTO "ImageConnection" VALUES (1731, 1721, 'Bounty'), (1732, 1721, 'Bounty');
+    `);
+  });
+
+  it.each(['anonymous', 'stranger', 'moderator'] as const)(
+    'gives a %s viewer no restricted cover',
+    async (who) => {
+      expect(await coverOf('Article', 1701, viewers[who])).toBeNull();
+      expect(await coverOf('Bounty', 1721, viewers[who])).toBe(1732);
+    }
+  );
+
+  it.each(['stranger', 'moderator'] as const)(
+    'gives a %s no restricted Image-entity cover',
+    async (who) => {
+      expect(await coverOf('Image', 1741, viewers[who])).toBeNull();
+    }
+  );
+
+  it('keeps the restricted cover for its uploader', async () => {
+    expect(await coverOf('Article', 1701, viewers.owner)).toBe(1711);
+    expect(await coverOf('Image', 1741, viewers.owner)).toBe(1741);
+    expect(await coverOf('Bounty', 1721, viewers.owner)).toBe(1731);
+  });
+
+  it.each(Object.keys(viewers) as (keyof typeof viewers)[])(
+    'keeps a SFW cover on a restricted base model for a %s viewer',
+    async (who) => {
+      expect(await coverOf('Article', 1702, viewers[who])).toBe(1712);
+    }
+  );
 });
 
 describe('a minor-flagged cover rated R or above', () => {

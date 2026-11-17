@@ -1,7 +1,14 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
+import {
+  nsfwBrowsingLevelsArray,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
@@ -109,6 +116,62 @@ export const imageReviewedSql = (alias = 'i') => {
     )
   )`;
 };
+
+type RestrictedImageOptions = { alias?: string; viewerId?: number | null };
+
+/**
+ * Over `Image` aliased `alias`: false for a mature image made with a base model that restricts
+ * mature images (`modelRestricted`), unless `viewerId` uploaded it. Moderators get no exception.
+ * Pass `viewerId` only where the result is per viewer, never into a cache shared between viewers.
+ */
+export const imageNotRestrictedSql = ({ alias = 'i', viewerId }: RestrictedImageOptions = {}) => {
+  const t = Prisma.raw(alias);
+  const own = isUploaderId(viewerId) ? Prisma.sql` OR ${t}."userId" = ${viewerId}` : Prisma.empty;
+  return Prisma.sql`((${t}."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT ${t}."modelRestricted"${own})`;
+};
+
+// Non-positive ids are placeholders (system accounts), never a real uploader.
+const isUploaderId = (viewerId?: number | null): viewerId is number => !!viewerId && viewerId > 0;
+
+/**
+ * `imageNotRestrictedSql` as a Prisma `Image` filter. `nsfwLevel` holds a single level, so
+ * `notIn` the mature levels matches the SQL's bitmask test.
+ */
+export const imageNotRestrictedWhere = ({
+  viewerId,
+}: { viewerId?: number | null } = {}): Prisma.ImageWhereInput => ({
+  OR: [
+    { nsfwLevel: { notIn: nsfwBrowsingLevelsArray } },
+    { modelRestricted: false },
+    ...(isUploaderId(viewerId) ? [{ userId: viewerId }] : []),
+  ],
+});
+
+/** What {@link isImageNotRestricted} reads from an `Image`. */
+export const imageRestrictionSelect = {
+  nsfwLevel: true,
+  modelRestricted: true,
+  userId: true,
+} as const;
+
+export type RestrictableImage = Pick<Selectable<DB['Image']>, keyof typeof imageRestrictionSelect>;
+
+/** TS twin of `imageNotRestrictedSql`, for rows already fetched. */
+export const isImageNotRestricted = (image: RestrictableImage, viewerId?: number | null) =>
+  !isRestrictedImage(image) || (isUploaderId(viewerId) && image.userId === viewerId);
+
+/** `row` with its image at `key` set to null when `viewerId` may not see it. */
+export function withServableImage<
+  K extends PropertyKey,
+  T extends { [P in K]: RestrictableImage | null | undefined }
+>(row: T, key: K, viewerId?: number | null): T & { [P in K]: T[P] | null } {
+  const image = row[key];
+  return { ...row, [key]: image && isImageNotRestricted(image, viewerId) ? image : null };
+}
+
+/** The exact complement of `imageNotRestrictedSql`: a NULL flag on a mature image counts as restricted. */
+export const imageRestrictedSql = (options: RestrictedImageOptions = {}) =>
+  Prisma.sql`${imageNotRestrictedSql(options)} IS NOT TRUE`;
 
 /**
  * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`

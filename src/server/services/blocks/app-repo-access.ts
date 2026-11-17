@@ -1,5 +1,5 @@
 import { logToAxiom } from '~/server/logging/client';
-import { FORGEJO_SOURCE_ORG } from '~/shared/constants/app-source-repo.constants';
+import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
 
 /**
  * App Listing COLLABORATORS — the FORGEJO GRANT/REVOKE lifecycle for a seat.

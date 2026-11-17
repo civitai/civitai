@@ -217,6 +217,9 @@ function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
     ctx: {},
     scopes: ['collections:read:self'],
     maxBrowsingLevel: 3,
+    // The viewer at every level: these cases mock the DOMAIN clamp, so the viewer
+    // level must not narrow it unless a case says so (the viewer clamp's own cases do).
+    viewerBrowsingLevel: 31,
     ...over,
   } as BlockTokenClaims;
 }

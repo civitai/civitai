@@ -38,7 +38,8 @@ const SCHEMA = `
     ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
     "tosViolation" boolean NOT NULL DEFAULT false, poi boolean NOT NULL DEFAULT false,
     minor boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
-    "blockedFor" text, "hideMeta" boolean NOT NULL DEFAULT false
+    "blockedFor" text, "hideMeta" boolean NOT NULL DEFAULT false, "userId" int,
+    "modelRestricted" boolean NOT NULL DEFAULT false
   );
   CREATE TYPE "ModelStatus" AS ENUM ('Draft', 'Training', 'Published', 'Scheduled', 'Unpublished',
     'UnpublishedViolation', 'GatherInterest', 'Deleted');

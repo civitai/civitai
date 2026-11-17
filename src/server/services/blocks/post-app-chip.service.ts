@@ -34,11 +34,7 @@ import {
   type StoreScopeEntrypoint,
 } from '~/server/prom/store-scope.metrics';
 import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
-import type {
-  PostAppChip,
-  PostAppChipItemRow,
-  PostAppChipRow,
-} from '~/server/services/blocks/post-app-chip.logic';
+import type { PostAppChip, PostAppChipItemRow } from '~/server/services/blocks/post-app-chip.logic';
 import {
   postAppChipItemQuery,
   postAppChipQuery,
@@ -239,8 +235,7 @@ export async function readAppChip({
         }
         return hidden;
       },
-      readApp: async (appId) =>
-        (await dbRead.oauthClient.findUnique(postAppChipQuery(appId))) as PostAppChipRow | null,
+      readApp: (appId) => dbRead.oauthClient.findUnique(postAppChipQuery(appId)),
     });
     recordPostAppChipRead(outcome, surface);
     return chip;
