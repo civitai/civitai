@@ -207,7 +207,7 @@ async function wasStamped(reportId: number) {
 type Tick = { tickId: string; pod: string | null; inAppOn: boolean; readable: boolean };
 
 // civitai-prod is at Axiom's field cap, so a new top-level key is dropped on ingest; only keys that
-// are already dataset fields (pod) may stay top level.
+// are already dataset fields (pod, phase, reportId, ...) may stay top level.
 const tickFields = (tick: Tick) => ({
   pod: tick.pod,
   payload: { tickId: tick.tickId, inAppOn: tick.inAppOn, readable: tick.readable },
