@@ -130,6 +130,8 @@ export type EnqueueReviewApprovalArgs = {
   commit: () => Promise<unknown>;
   /** After a successful commit (refresh the queue lists). */
   onCommitted?: () => void | Promise<void>;
+  /** A notice that replaces "Approved … Build started." when the commit did not take effect. */
+  committedNotice?: () => { title: string; message: string } | null;
   /** Where Undo / a failure sends the moderator back to. Defaults to the request's page. */
   reviewHref?: string;
   queue?: PendingApprovalQueue;
@@ -145,6 +147,7 @@ export function enqueueReviewApproval({
   label,
   commit,
   onCommitted,
+  committedNotice,
   reviewHref = `/apps/review/${id}`,
   queue = reviewApprovalQueue,
 }: EnqueueReviewApprovalArgs): boolean {
@@ -186,12 +189,17 @@ export function enqueueReviewApproval({
     if (event.type === 'committed') {
       unsubscribe();
       hideNotification(toastId(id));
-      showNotification({
-        icon: <IconCheck size={18} />,
-        color: 'green',
-        message: `Approved ${label}. Build started.`,
-        autoClose: 3000,
-      });
+      const notice = committedNotice?.();
+      showNotification(
+        notice
+          ? { color: 'red', title: notice.title, message: notice.message, autoClose: false }
+          : {
+              icon: <IconCheck size={18} />,
+              color: 'green',
+              message: `Approved ${label}. Build started.`,
+              autoClose: 3000,
+            }
+      );
       void onCommitted?.();
     } else if (event.type === 'undone') {
       unsubscribe();
@@ -218,7 +226,17 @@ export function enqueueReviewApproval({
                 color="red"
                 onClick={() => {
                   hideNotification(errorId);
-                  if (enqueueReviewApproval({ id, label, commit, onCommitted, reviewHref, queue }))
+                  if (
+                    enqueueReviewApproval({
+                      id,
+                      label,
+                      commit,
+                      onCommitted,
+                      committedNotice,
+                      reviewHref,
+                      queue,
+                    })
+                  )
                     void queue.commitNow(id);
                 }}
                 data-testid="apps-review-approve-retry"
