@@ -247,7 +247,7 @@ func (q *ImagesQuery) Build() Built {
 			and = append(and, `p."modelVersionId" = `+a.add(q.ModelVersionID))
 		}
 		and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
-		orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
+		orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id" DESC` // MUTANT: tie-break reversed (reverted next commit)
 	}
 
 	if pendingView {
