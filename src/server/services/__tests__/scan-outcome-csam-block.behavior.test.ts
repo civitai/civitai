@@ -176,7 +176,6 @@ const loaded = async (id: number) => {
     meta: { prompt: 'a landscape' },
     metadata: {},
     postId: null,
-    nsfwLevelLocked: false,
     needsReview: null,
     ...row,
   } as unknown as ScanImage;
