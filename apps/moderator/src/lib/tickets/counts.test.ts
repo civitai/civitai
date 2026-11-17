@@ -34,6 +34,8 @@ describe('countTicketViews', () => {
         ticket({ id: '3', cfFeature: 'Billing' }),
         ticket({ id: '4' }),
         ticket({ id: '5', cfFeature: 'Moderation Decision', tags: ['sent-to-support'] }),
+        ticket({ id: '6', cfFeature: 'Moderation Decision', tags: ['privacy-request'] }),
+        ticket({ id: '7', cfFeature: 'Billing', tags: ['privacy-request'] }),
       ])
     );
     expect(counts).toEqual({
