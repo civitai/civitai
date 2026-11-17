@@ -304,6 +304,15 @@ describe('a restore that leaves the image with no rating', () => {
     expect(await queued()).toBe(0);
   });
 
+  it('marks an image out of scan retries Error, with nothing queued', async () => {
+    await db.query(`UPDATE "Image" SET "scanJobs" = '{"retryCount": 9}' WHERE id = $1`, [IMAGE_ID]);
+
+    await approve();
+
+    expect(await imageRow()).toEqual({ ingestion: 'Error', nsfwLevel: 0, nsfwLevelLocked: false });
+    expect(await queued()).toBe(0);
+  });
+
   it('leaves an image already queued for a scan queued once', async () => {
     await db.query(
       `INSERT INTO "JobQueue" ("type", "entityType", "entityId") VALUES ('ImageScan', 'Image', $1)`,

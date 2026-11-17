@@ -162,7 +162,11 @@ const loaded = async (id: number) => {
       ingestion: string;
       blockedFor: string | null;
       nsfwLevel: number;
-    }>(`SELECT "userId", ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = $1`, [id])
+      nsfwLevelLocked: boolean;
+    }>(
+      `SELECT "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked" FROM "Image" WHERE id = $1`,
+      [id]
+    )
   ).rows[0];
   return {
     id,
@@ -342,6 +346,59 @@ describe('the rating block', () => {
       ingestion: 'Blocked',
       blockedFor: null,
       nsfwLevel: 32,
+    });
+  });
+});
+
+describe('a scan of an image with a locked rating', () => {
+  const LOCKED = 63;
+  const PG13 = 2;
+  beforeEach(async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "nsfwLevelLocked")
+      VALUES (${LOCKED}, ${OTHER_OWNER}, 'Rescan', NULL, ${PG13}, TRUE);
+    `);
+  });
+
+  it('is blocked at the Blocked level when the audit blocks it', async () => {
+    holder.tagNsfwLevel = 16;
+    vi.mocked(auditPostImageMeta).mockReturnValue({
+      success: false,
+      blockedFor: ['tos-term'],
+    } as never);
+
+    await scan(LOCKED);
+
+    expect(await imageRow(LOCKED)).toEqual({
+      ingestion: 'Blocked',
+      blockedFor: 'tos-term',
+      nsfwLevel: 32,
+    });
+  });
+
+  it('is blocked at the Blocked level when a moderation rule blocks it', async () => {
+    vi.mocked(getImagesModRules).mockResolvedValue([{ id: 1 }] as never);
+    vi.mocked(evaluateRules).mockReturnValue({
+      id: 1,
+      action: ModerationRuleAction.Block,
+      reason: 'rule',
+    } as never);
+
+    await scan(LOCKED);
+
+    expect(await imageRow(LOCKED)).toMatchObject({ ingestion: 'Blocked', nsfwLevel: 32 });
+    expect((await imageRow(LOCKED)).blockedFor).not.toBeNull();
+  });
+
+  it('keeps the locked rating over the scan rating on a verdict that does not block (control)', async () => {
+    holder.tagNsfwLevel = 8;
+
+    await scan(LOCKED);
+
+    expect(await imageRow(LOCKED)).toEqual({
+      ingestion: 'Scanned',
+      blockedFor: null,
+      nsfwLevel: PG13,
     });
   });
 });
