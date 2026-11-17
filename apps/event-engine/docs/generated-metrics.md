@@ -159,13 +159,6 @@ Generated: 2026-11-09T21:48:56.696Z
 - `Tag.followerCount`
 - `Tag.hiddenCount`
 
-### tagsHandler
-
-**Tables**: TagsOnPost, TagsOnModels, TagsOnImageNew, TagsOnArticle, TagsOnBounty
-**Operations**: create, delete
-
-*No debug configuration or no metrics detected*
-
 ### bountyEngagementHandler
 
 **Tables**: BountyEngagement

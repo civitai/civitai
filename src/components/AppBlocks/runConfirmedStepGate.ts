@@ -3,7 +3,10 @@ import {
   resolveConsentBridgePrelude,
   type TrainingBridgeGateInput,
 } from '~/components/AppBlocks/runTrainingGate';
-import { CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE } from '~/shared/constants/block-scope.constants';
+import {
+  BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY,
+  CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE,
+} from '~/shared/constants/block-scope.constants';
 import { capitalize } from '~/utils/string-helpers';
 
 /**
@@ -22,7 +25,9 @@ import { capitalize } from '~/utils/string-helpers';
  *      viewer's own daily limit for the app — all server-resolved;
  *   2. if the job would exceed what remains of that daily limit, shows WHY and where
  *      to raise it, and replies `daily-limit-exceeded` — there is no confirm to click;
- *   3. otherwise shows the price in a host-chrome confirm;
+ *   3. otherwise, when the preview reports `standing`, records a standing consent instead of
+ *      asking; one that errors falls back to the confirm, never to running; else shows the
+ *      price in a host-chrome confirm;
  *   4. on confirm, records the viewer's confirmation (`blocks.consentQuoteGrant`,
  *      session-required) and THEN submits the body (`blocks.submitWorkflow`);
  *   5. replies `CONFIRMED_STEP_RESULT { requestId, snapshot }` or `{ requestId, error }`.
@@ -61,6 +66,13 @@ export type ConfirmedStepQuotePreview = {
    * predates picks on steps.
    */
   fundingOrder?: string[] | null;
+  /**
+   * TRUE when the viewer opted in for this app and the job fits their limit: the host draws no
+   * confirm and calls `consentQuoteGrantStanding`, drawing the confirm if that fails.
+   */
+  standing?: boolean;
+  /** TRUE when the confirm should offer the "don't ask me each job" opt-in. */
+  standingOffer?: boolean;
 };
 
 /**
@@ -207,6 +219,47 @@ function fundingLine(order: string[] | null | undefined): string | null {
   return rest.length === 0
     ? `Paid from ${first} Buzz.`
     : `Paid from ${first} Buzz first, then ${rest.join(', then ')}.`;
+}
+
+/**
+ * The opt-in the confirm offers when `preview.standingOffer` is set. With a limit already set it
+ * is one checkbox; with none it also sets a limit of `suggestedLimit` (editable, never below the
+ * job's own price, so the limit cannot refuse the job it was set from).
+ */
+export type ConfirmedStepStandingOfferCopy =
+  | { kind: 'existing-limit'; label: string }
+  | { kind: 'new-limit'; label: string; suggestedLimit: number; minLimit: number };
+
+export function buildConfirmedStepStandingOfferCopy({
+  appName,
+  preview,
+}: {
+  appName?: string | null;
+  preview: ConfirmedStepQuotePreview;
+}): ConfirmedStepStandingOfferCopy | null {
+  if (!preview.standingOffer) return null;
+  const who = sanitizeAppChromeName(appName) ?? 'this app';
+  if (preview.dailyLimit) {
+    return {
+      kind: 'existing-limit',
+      label:
+        `Don't ask me each job while ${who} stays within my daily limit ` +
+        `(${buzz(preview.dailyLimit.remaining)} of ${buzz(
+          preview.dailyLimit.limit
+        )} Buzz left today)`,
+    };
+  }
+  return {
+    kind: 'new-limit',
+    label: `Set a daily limit for ${who} and don't ask me each job`,
+    suggestedLimit: Math.max(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY, preview.total),
+    minLimit: preview.total,
+  };
+}
+
+/** Under the new-limit opt-in: what that limit lets run without asking. */
+export function confirmedStepStandingLimitHint(limit: number): string {
+  return `Up to ${buzz(limit)} Buzz a day can then run without asking.`;
 }
 
 export type ConfirmedStepDailyLimitCopy = { title: string; body: string; linkLabel: string };

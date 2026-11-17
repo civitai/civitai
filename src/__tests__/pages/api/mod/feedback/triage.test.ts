@@ -1,13 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { redisMock, resetSharedMocks } from '~/__tests__/mocks';
 
 /**
  * `/api/mod/feedback/triage`: a moderator's API key setting one feedback report's triage status.
  *
- * Drives the REAL endpoint wrapper and the REAL role-grant check, so each refusal is the rule itself
- * answering. Faked: the session, the grant row, and the moderator app, which owns the write and
+ * Drives the REAL endpoint wrapper, the REAL error mapping (`handleEndpointError`) and the REAL
+ * role-grant check, so each refusal and its status is the rule itself answering. Faked: the session, the grant row, and the moderator app, which owns the write and
  * whose half is pinned against real rows in `feedback-triage-action.pglite.test.ts`.
  */
 
@@ -33,17 +31,6 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (
-    res: { status: (n: number) => { json: (b: unknown) => unknown } },
-    e: unknown
-  ) => {
-    const status = e instanceof TRPCError ? getHTTPStatusCodeFromError(e) : 500;
-    return res
-      .status(status)
-      .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
-  },
-}));
 // The grant store: one `AppPageAccess` row, keyed by the path the check asks for.
 vi.mock('~/server/db/kyselyDb', () => {
   let path: unknown;

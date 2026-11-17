@@ -3,8 +3,9 @@
  *
  * A relay in front of this source exchanges each consumer's token at the hub (RFC 8693) for one
  * whose resource is this source, and sends that: an RFC 9068 JWT access token (`typ: at+jwt`),
- * ES256-signed with the hub's key. The auth extension's "Resource servers" 3: accept only tokens
- * issued for this source, and any other token is `invalid_token`.
+ * ES256-signed with the hub's key. As RFC 9068 §4 asks of a resource server (with the resource
+ * indicator of RFC 8707 as the token's `aud`): accept only tokens issued for this source, and any
+ * other token is `invalid_token`.
  *
  * Which path a bearer takes is decided by its shape alone ({@link isAccessTokenJwt}): a JWS whose
  * header says `typ: at+jwt` is verified here and nowhere else, so one that fails is
@@ -31,6 +32,8 @@ export function scopeBits(scope: unknown): number {
   if (typeof scope !== 'string') return ALL_SCOPES;
   let bits = 0;
   for (const name of scope.split(' ').filter(Boolean)) {
+    // `None` is 0 in the bitmask: looked up, a token claiming only `None` would read as no scope
+    // at all, so it is treated like an unknown name instead.
     if (name !== 'None' && Object.hasOwn(TokenScope, name)) {
       bits |= TokenScope[name as keyof typeof TokenScope];
     } else {
