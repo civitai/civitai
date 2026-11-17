@@ -807,6 +807,8 @@ describe('listMyPublishRequests — review holds never reach the developer', () 
       placedByLabel: 'code-check-label',
       reason: 'security check still running',
       clearedReason: 'override reason text',
+      // The count query reads `n`; a real value is what lets a leaked count show up below.
+      n: 2,
     };
     for (const c of [dbMock.dbRead, dbMock.dbWrite])
       c.$queryRaw.mockImplementation((async (strings: unknown) =>
@@ -844,5 +846,8 @@ describe('listMyPublishRequests — review holds never reach the developer', () 
     ])
       expect(body).not.toContain(secret);
     expect(body).not.toMatch(/hold/i);
+    // Under any key: no row carries the open-hold count.
+    for (const row of JSON.parse(body) as Record<string, unknown>[])
+      expect(Object.values(row)).not.toContain(2);
   });
 });
