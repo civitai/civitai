@@ -351,6 +351,13 @@ describe('services feed', () => {
       ).toEqual([r.id]);
     });
 
+    it("never returns a muted seller's matching offering", async () => {
+      const unmuted = row({ title: 'Portrait commission' });
+      const muted = row({ title: 'Portrait commission', sellerId: 8, seller: { muted: true } });
+      table = [unmuted, muted];
+      expect(await feedIds({ query: 'portrait' })).toEqual([unmuted.id]);
+    });
+
     it('keeps the listing rule for a match whose cover is still being checked', async () => {
       const pending = row({
         title: 'Portrait commission',
