@@ -1,9 +1,18 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { feedSecret } from './runtime';
+import { feedSecret, resetDeps } from './runtime';
 
 afterEach(() => {
   delete process.env.FEED_TOKEN_SECRET;
   delete process.env.JOBS_TOKEN;
+  delete process.env.KNIGHTS_APPRENTICE_SMITES;
+});
+
+describe('resetDeps.acolyteSmites', () => {
+  it('reads KNIGHTS_APPRENTICE_SMITES from the environment on every call', () => {
+    expect(resetDeps.acolyteSmites?.()).toBe(true);
+    process.env.KNIGHTS_APPRENTICE_SMITES = 'off';
+    expect(resetDeps.acolyteSmites?.()).toBe(false);
+  });
 });
 
 describe('feedSecret', () => {
