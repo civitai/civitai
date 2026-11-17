@@ -388,9 +388,7 @@ async function makeValidBundle(over: Record<string, unknown> = {}): Promise<Buff
   });
 }
 
-// Trimmed-store fixtures: a tagline of exactly MANIFEST_TAGLINE_MAX_LENGTH (140) chars and a valid
-// repository URL, each wrapped in heavy whitespace. The validator measures both trimmed, so the
-// padded manifest validates; every store path must then write the trimmed values.
+// Max-length tagline and valid repository URL, each wrapped in heavy whitespace.
 const TRIM_TAGLINE = 'Pitch: ' + 'abcdefghij'.repeat(13) + 'xyz';
 const TRIM_REPO = 'https://github.com/example-org/hello';
 const PAD = ` \t\n${' '.repeat(600)}\n\t `;
@@ -785,7 +783,6 @@ describe('submitVersion', () => {
     }
   });
 
-  // Red at origin/main: submit stored the padded strings verbatim.
   it('stores a padded tagline/repository trimmed in the publish_request row', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle(paddedStrings());
@@ -2855,8 +2852,7 @@ describe('approveRequest', () => {
     expect(ocUpdateArg.data.allowedScopes).toBe(0);
   });
 
-  // Red at origin/main: approve wrote the request's padded strings into app_blocks.manifest. The
-  // validator here is the real one, so this also shows the padded manifest is accepted, not refused.
+  // The validator here is the real one, so the padded manifest is accepted, not refused.
   it('writes a padded tagline/repository trimmed into app_blocks.manifest', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
@@ -4031,7 +4027,6 @@ describe('backfillPublishRequest', () => {
     expect(createArg.forgejoCommitSha).toBe('sha_in_repo');
   });
 
-  // Red at origin/main: backfill stored the repo manifest's padded strings verbatim.
   it('stores a padded tagline/repository from the repo manifest trimmed', async () => {
     const { backfillPublishRequest } = await import('../publish-request.service');
     mockDbRead.appBlock.findFirst.mockResolvedValue({
@@ -4234,8 +4229,6 @@ describe('recordPendingFromPush', () => {
     });
   });
 
-  // Red at origin/main: the push recorder (git-push webhook and web manifest editor) stored the
-  // padded strings verbatim, on both the create and the same-sha refresh.
   it('stores a padded tagline/repository trimmed on a new pending request', async () => {
     const { recordPendingFromPush } = await import('../publish-request.service');
     stubEnrichForgejoNoop();

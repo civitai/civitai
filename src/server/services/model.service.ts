@@ -4408,23 +4408,44 @@ export const upsertModel = async (
       { maxWait: 10000, timeout: 30000 }
     );
 
-    const modelMeta = result.meta as ModelMeta | null;
-    if (modelMeta?.showcaseCollectionId) {
-      // Best-effort — model create should not fail if the showcase collection
-      // can't be written to (e.g. user references one they don't own).
+    let modelMeta = result.meta as ModelMeta | null;
+    const showcaseCollectionId = modelMeta?.showcaseCollectionId;
+    if (showcaseCollectionId) {
+      // Best-effort: a refused add (e.g. a collection the user can't write) leaves the model
+      // created with no showcase, by the update branch's rule.
       await addModelToShowcaseCollection({
         modelId: result.id,
-        collectionId: modelMeta.showcaseCollectionId,
+        collectionId: showcaseCollectionId,
         userId,
         isModerator,
-      }).catch((error) =>
+      }).catch(async (error) => {
         logToAxiom({
           type: 'error',
           name: 'save-model-showcase-collection',
           error,
           message: error.message,
-        })
-      );
+        });
+        const cleared = await updateModelById({
+          id: result.id,
+          data: {},
+          meta: (stored) =>
+            ({
+              ...stored,
+              ...(stored?.showcaseCollectionId === showcaseCollectionId && {
+                showcaseCollectionId: null,
+              }),
+            } as ModelMeta),
+        }).catch((revertError) => {
+          logToAxiom({
+            type: 'error',
+            name: 'revert-model-showcase-collection',
+            error: revertError,
+            message: revertError.message,
+          });
+          return null;
+        });
+        if (cleared) modelMeta = cleared.meta as ModelMeta | null;
+      });
     }
 
     await modelTagCache.refresh(result.id);
@@ -7886,8 +7907,7 @@ export const privateModelFromTraining = async ({
             : 'revert left the model Private: held scan verdict not applied',
           modelId: id,
           error: revertError.message,
-        })
-          .then(() => false)
+        }).then(() => false)
     );
     // The model stayed Private, so its versions stay with it; the caller sees the flow's own error.
     if (!reverted) throw throwDbError(error);
