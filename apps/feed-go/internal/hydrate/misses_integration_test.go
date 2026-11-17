@@ -253,19 +253,25 @@ const (
 // that was not permanent), not blocked, not a ToS violation, not awaiting review, and not an R+ image
 // on a license-restricted model, in (post, index, id) order; the computed columns (hasMeta under
 // hideMeta, hasPositivePrompt, onSite, remixOfId) as Postgres computes them. 1150712 has no image:
-// a minute's marker. Written as Node writes them (2 d).
+// a minute's marker. Written as Node writes them (2 d). An acceptableMinor image is excluded, and so
+// is a mod-locked image whose scan errored permanently (imageReviewedSql: an Error row with a
+// permanent failure in scanJobs is not reviewed, where 1150738's plain Error row is). On the
+// system-owned model 1150702 (userId -1) every published post's images are included: the system
+// user's own post and another user's.
 func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 	e := integMissSetup(t)
 	integtest.Exec(t, e.pool, `DELETE FROM "Image" WHERE id BETWEEN 1150700 AND 1150799;
 		DELETE FROM "Post" WHERE id BETWEEN 1150700 AND 1150799;
 		DELETE FROM "ModelVersion" WHERE id BETWEEN 1150700 AND 1150799;
 		DELETE FROM "Model" WHERE id BETWEEN 1150700 AND 1150799;
-		INSERT INTO "Model" (id, "userId") VALUES (1150701, 1150801);
-		INSERT INTO "ModelVersion" (id, "modelId") VALUES (1150711, 1150701), (1150712, 1150701);
+		INSERT INTO "Model" (id, "userId") VALUES (1150701, 1150801), (1150702, -1);
+		INSERT INTO "ModelVersion" (id, "modelId") VALUES (1150711, 1150701), (1150712, 1150701), (1150713, 1150702);
 		INSERT INTO "Post" (id, "userId", "modelVersionId", "publishedAt") VALUES
 		  (1150721, 1150801, 1150711, now()),
 		  (1150722, 1150802, 1150711, now()),
-		  (1150723, 1150801, 1150711, NULL);
+		  (1150723, 1150801, 1150711, NULL),
+		  (1150724, -1, 1150713, now()),
+		  (1150725, 1150802, 1150713, now());
 		INSERT INTO "Image" (id, name, url, "userId", "postId", index, hash, width, height, type, metadata, meta, "hideMeta",
 		  "nsfwLevel", "nsfwLevelLocked", ingestion, "blockedFor", "tosViolation", "needsReview", "modelRestricted", poi) VALUES
 		  (1150731, 'integ-a', 'integ-url-a', 1150801, 1150721, 1, 'integ-hash', 8, 9, 'image', '{"height": 9, "width": 8}',
@@ -279,9 +285,17 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 		  (1150738, NULL, 'integ-url-b', 1150801, 1150721, 7, NULL, NULL, NULL, 'video', '{}',
 		   '{"prompt": "hidden", "extra": {"remixOfId": 77}}', true, 2, true, 'Error', NULL, false, NULL, false, true),
 		  (1150739, 'not-the-owner', 'u', 1150802, 1150722, 0, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, false, NULL, false, false),
-		  (1150740, 'unpublished', 'u', 1150801, 1150723, 0, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, false, NULL, false, false);`)
+		  (1150740, 'unpublished', 'u', 1150801, 1150723, 0, NULL, NULL, NULL, 'image', '{}', NULL, false, 1, false, 'Scanned', NULL, false, NULL, false, false);
+		INSERT INTO "Image" (id, name, url, "userId", "postId", index, type, metadata, "nsfwLevel", "nsfwLevelLocked", ingestion,
+		  "scanJobs", "acceptableMinor") VALUES
+		  (1150741, 'acceptable-minor', 'u', 1150801, 1150721, 8, 'image', '{}', 1, false, 'Scanned', NULL, true),
+		  (1150742, 'permanent-failure', 'u', 1150801, 1150721, 9, 'image', '{}', 1, true, 'Error',
+		   '{"lastFailure": {"failureClass": "permanent"}}', false),
+		  (1150745, 'system-post', 'u', -1, 1150724, 0, 'image', '{}', 1, false, 'Scanned', NULL, false),
+		  (1150746, 'system-model-other-post', 'u', 1150802, 1150725, 0, 'image', '{}', 1, false, 'Scanned', NULL, false);`)
 	ctx := integtest.Ctx(t)
-	ids := []int{1150711, 1150712}
+	ids := []int{1150711, 1150712, 1150713}
+	t.Cleanup(func() { _ = e.c.Del(integtest.Ctx(t), e.prefix+KeyVersionImages+":1150713").Err() })
 	got, writable := e.src.read(ctx, KeyVersionImages, ids, versionImagesTTL)
 	if err := e.src.fillVersionImages(ctx, ids, got, writable); err != nil {
 		t.Fatal(err)
@@ -291,6 +305,18 @@ func TestIntegrationVersionImagesMissComputed(t *testing.T) {
 	}
 	if d, ok := got[1150712]; !ok || !d.NotFound {
 		t.Fatalf("1150712 = %+v, want a notFound entry", d)
+	}
+	// The image ids first, so a wrongly admitted row is named (the bytes below pin the rest).
+	for v, want := range map[int][]int{1150711: {1150731, 1150738}, 1150713: {1150745, 1150746}} {
+		var ids []int
+		for _, img := range asList(got[v].Value["images"]) {
+			m, _ := img.(map[string]any)
+			id, _ := Int(m["id"])
+			ids = append(ids, id)
+		}
+		if !reflect.DeepEqual(ids, want) {
+			t.Fatalf("version %d showcase ids %v, want %v", v, ids, want)
+		}
 	}
 	integWantPacked(t, e, KeyVersionImages, 1150711, integWantVersionImages, 48*time.Hour)
 	integWantPacked(t, e, KeyVersionImages, 1150712, integWantVersionImagesMarker, time.Minute)
