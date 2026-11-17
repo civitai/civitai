@@ -1248,7 +1248,9 @@ export const saveItemInCollections = async ({
         }
 
         // An existing entry's tag is changed only by its author or a manager; anyone else's re-save
-        // keeps it as it is.
+        // keeps it as it is (the upsert below enforces the same against the row it hits). Not folded
+        // into `unwrittenCollectionIds`: skipping the entry checks for an item already there would
+        // answer whether it is there.
         const existing = existingItemsByCollection.get(collectionId);
         const keepsTag = !!existing && existing.addedById !== userId && !permission.manage;
 
@@ -1267,6 +1269,9 @@ export const saveItemInCollections = async ({
   let removedCount = 0;
 
   if (data.length > 0) {
+    const managedCollectionIds = data
+      .filter((d) => permissionsMap.get(d.collectionId)?.manage)
+      .map((d) => d.collectionId);
     transactions.push(
       dbWrite.$executeRaw`
       INSERT INTO "CollectionItem" ("collectionId", "addedById", "status", "${Prisma.raw(
@@ -1287,7 +1292,9 @@ export const saveItemInCollections = async ({
       )
       ON CONFLICT ("collectionId", "${Prisma.raw(itemKey)}")
         WHERE "${Prisma.raw(itemKey)}" IS NOT NULL
-        DO UPDATE SET "tagId" = EXCLUDED."tagId";
+        DO UPDATE SET "tagId" = EXCLUDED."tagId"
+        WHERE "CollectionItem"."addedById" = EXCLUDED."addedById"
+          OR "CollectionItem"."collectionId" = ANY(${managedCollectionIds}::int[]);
     `
     );
   }
@@ -1381,12 +1388,13 @@ export const saveItemInCollections = async ({
     }
   }
 
-  // Excluding `unwrittenCollectionIds` keeps a no-op re-save from reading as a second submission.
+  // Only a new entry is a submission: a re-save of one already there (same tag, or a tag change)
+  // must not read as a second one.
   const reviewCollectionIds = uniq(
     data
       .filter((d) => d.status === CollectionItemStatus.REVIEW)
       .map((d) => d.collectionId)
-      .filter((id) => !unwrittenCollectionIds.has(id))
+      .filter((id) => !existingItemsByCollection.has(id))
   );
   await notifyCollectionSubmissionReceived({
     collections: collections.filter((c) => reviewCollectionIds.includes(c.id)),

@@ -6,6 +6,8 @@ import type * as HomeBlockCache from '~/server/services/home-block-cache.service
 
 // Re-saving an item already in a collection with a different tag: who may change the entry's tag.
 
+const { createNotification } = vi.hoisted(() => ({ createNotification: vi.fn() }));
+vi.mock('~/server/services/notification.service', () => ({ createNotification }));
 vi.mock('~/server/services/image-visibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageVisibility>()),
   assertImagesVisibleToViewer: vi.fn(),
@@ -77,11 +79,12 @@ beforeEach(() => {
   mockDbWrite.$transaction.mockResolvedValue([]);
 });
 
-const resave = (userId: number, tagId: number | undefined) =>
+const resave = (userId: number, tagId: number | undefined, isModerator?: boolean) =>
   saveItemInCollections({
     input: {
       type: 'Image',
       userId,
+      isModerator,
       imageId: IMAGE_ID,
       collections: [{ collectionId: COLLECTION_ID, tagId }],
       removeFromCollectionIds: [],
@@ -118,9 +121,57 @@ describe('re-saving an entry with a different tag', () => {
     expect(writtenTag()).toBe(TAG_B);
   });
 
+  it('changes it for a moderator (control)', async () => {
+    await resave(OTHER_ID, TAG_B, true);
+    expect(writtenTag()).toBe(TAG_B);
+  });
+
+  it('has the upsert change the tag only for the row author or a managed collection', async () => {
+    await resave(OWNER_ID, TAG_B);
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(strings.join('?')).toMatch(
+      /DO UPDATE SET "tagId" = EXCLUDED\."tagId"\s+WHERE "CollectionItem"\."addedById" = EXCLUDED\."addedById"\s+OR "CollectionItem"\."collectionId" = ANY\(\?::int\[\]\)/
+    );
+    expect(values.at(-1)).toEqual([COLLECTION_ID]);
+
+    mockDbWrite.$executeRaw.mockClear();
+    await resave(OTHER_ID, TAG_B);
+    const [, ...strangerValues] = mockDbWrite.$executeRaw.mock.calls[0] as unknown[];
+    expect(strangerValues.at(-1)).toEqual([]);
+  });
+
   it('tags a new entry as asked (control)', async () => {
     mockDbRead.collectionItem.findMany.mockResolvedValue([]);
     await resave(OTHER_ID, TAG_B);
     expect(writtenTag()).toBe(TAG_B);
+  });
+});
+
+describe('a collection that reviews entries', () => {
+  beforeEach(() => {
+    mockDbRead.collection.findMany.mockResolvedValue([{ ...collectionRow(), write: 'Review' }]);
+    mockDbRead.$queryRaw.mockResolvedValue([
+      {
+        id: COLLECTION_ID,
+        read: 'Public',
+        write: 'Review',
+        userId: OWNER_ID,
+        type: 'Image',
+        mode: null,
+        contributorPermissions: null,
+        collaborationDisabledAt: null,
+      },
+    ]);
+  });
+
+  it("does not announce someone else's re-save with another tag as a new submission", async () => {
+    await resave(OTHER_ID, TAG_B);
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('announces a new entry (control)', async () => {
+    mockDbRead.collectionItem.findMany.mockResolvedValue([]);
+    await resave(OTHER_ID, TAG_B);
+    expect(createNotification).toHaveBeenCalled();
   });
 });
