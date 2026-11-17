@@ -20,7 +20,7 @@ import {
   mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
 import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
@@ -120,7 +120,8 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  // The VIEWER's level held to the domain cap (the main site's rule), never the domain alone.
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   try {
     // VISIBILITY gate. `read` is true for public/unlisted, and for the
