@@ -5,9 +5,11 @@ import type * as ModeratorEndpoint from '~/server/utils/moderator-endpoint';
 import type * as CollectionService from '~/server/services/collection.service';
 
 const saveItemInCollections = vi.fn(async (_: unknown) => 'added');
+const collectionPermissions = vi.fn(async (_: unknown) => ({ write: true, manage: false }));
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
   saveItemInCollections: (args: unknown) => saveItemInCollections(args),
+  getUserCollectionPermissionsById: (args: unknown) => collectionPermissions(args),
 }));
 
 // The moderator routes' auth is not what this file tests: their handlers are called directly.
@@ -181,6 +183,15 @@ describe('setting the showcase collection', () => {
     await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
     expect(saveItemInCollections).not.toHaveBeenCalled();
     expect(written()).toMatchObject({ showcaseCollectionId: 9 });
+  });
+
+  it('refuses a collection the model is already in when the owner cannot write to it', async () => {
+    dbMock.dbWrite.collectionItem.findFirst.mockResolvedValueOnce({ id: 1 } as never);
+    collectionPermissions.mockResolvedValueOnce({ write: false, manage: false });
+    await expect(
+      setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
   });
 
   it('adds nothing when the showcase is cleared', async () => {

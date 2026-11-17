@@ -121,7 +121,12 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
-import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
+import {
+  canSeeCollectionDetails,
+  getCollectionById,
+  getCollectionItemCount,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -2563,7 +2568,13 @@ export async function copyGalleryBrowsingLevelHandler({
   }
 }
 
-export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
+export async function getModelCollectionShowcaseHandler({
+  ctx,
+  input,
+}: {
+  ctx: Context;
+  input: GetByIdInput;
+}) {
   try {
     const model = await readModelMetaViaKysely(
       await getKyselyWithoutLag('model', input.id),
@@ -2573,6 +2584,13 @@ export async function getModelCollectionShowcaseHandler({ input }: { input: GetB
 
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
+
+    const permissions = await getUserCollectionPermissionsById({
+      id: modelMeta.showcaseCollectionId,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    });
+    if (!canSeeCollectionDetails(permissions)) return null;
 
     const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
     const [itemCount] = await getCollectionItemCount({
