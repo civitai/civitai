@@ -7692,8 +7692,7 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
-          // A preview returns no snapshot, so nothing is minted.
-          view: { serving: (await resolveBlockOutputRules(auth.claims)).serving, mint: null },
+          view: { ...(await resolveBlockOutputRules(auth.claims)), mint: null },
         },
         deps
       );
@@ -11214,7 +11213,6 @@ async function estimateBlockWorkflowCell(
   return {
     snapshot: snapshotFromWorkflow(
       whatIfResult,
-      // An estimate has no outputs to mint.
       { ...blockOutputCeilingFromClaims(claims), serving: false, mint: null },
       {
         modelSubstitutions,

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type { BlobState } from '~/server/services/orchestrator/blobRatings';
 import type * as UserPreferences from '~/server/services/user-preferences.service';
@@ -10,13 +11,16 @@ import type * as UserPreferences from '~/server/services/user-preferences.servic
  * evaluation, or one without the session context, reads off. `throws`: evaluation fails.
  */
 const serving = { on: true, onlyFor: null as number | null, throws: false };
+/** The entity id of every evaluation of the media brake. */
+const brakeEvaluations: Array<string | undefined> = [];
 const blobState = vi.fn<(blobId: string) => Promise<BlobState>>();
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
   // Only the media brake answers `serving`, so reading any other flag reads as off.
-  isFlipt: async (flag: string, _entityId?: string, context?: Record<string, string>) => {
+  isFlipt: async (flag: string, entityId?: string, context?: Record<string, string>) => {
     if (flag !== 'app-blocks-workflow-media-serve') return false;
+    brakeEvaluations.push(entityId);
     if (serving.throws) throw new Error('flipt eval failed');
     if (serving.onlyFor !== null) return context?.userId === String(serving.onlyFor);
     return serving.on;
@@ -54,6 +58,7 @@ const {
   resolveWorkflowMediaRefs,
   resolveWorkflowMediaForBlockClaims,
   resolveBlockOutputView,
+  resolveBlockMediaServing,
 } = await import('~/server/services/blocks/block-media-serving');
 const { sealBlockMediaRef, sealBlockMediaTicket } = await import(
   '~/server/services/blocks/block-media-token'
@@ -469,7 +474,8 @@ describe('🔴 the media brake is judged per viewer, at the route, on replay and
     expect(await pointsFor(99)).toEqual(PAUSED);
   });
 
-  it('a viewer whose session does not resolve reads off at every point', async () => {
+  it('a viewer whose session does not resolve, with the flag on only for a session segment, reads off at every point', async () => {
+    serving.onlyFor = 99;
     unresolvable.add(99);
     expect(await pointsFor(99)).toEqual(PAUSED);
   });
@@ -482,5 +488,169 @@ describe('🔴 the media brake is judged per viewer, at the route, on replay and
       viewerBrowsingLevel: NsfwLevel.PG,
     });
     expect(view.mint).toBeNull();
+  });
+});
+
+describe('🔴 the serve decision: off, on, or unknown', () => {
+  const viewAs = (sub: string) =>
+    resolveBlockOutputView({
+      sub,
+      appBlockId: 'apb_1',
+      maxBrowsingLevel: allBrowsingLevelsFlag,
+      viewerBrowsingLevel: NsfwLevel.PG,
+    });
+  const unknownLogs = () =>
+    loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry as { name?: string; reason?: string })
+      .filter((entry) => entry.name === 'app-block-media-serving-degraded');
+
+  beforeEach(() => {
+    brakeEvaluations.length = 0;
+    loggingMock.logToAxiom.mockClear();
+  });
+
+  it('a signed-out viewer is off without asking Flipt, even with the flag on for everyone', async () => {
+    serving.on = true;
+    expect(await resolveBlockMediaServing(null)).toBe('off');
+    expect(brakeEvaluations).toStrictEqual([]);
+  });
+
+  it('CONTROL: a signed-in viewer is evaluated, by their own entity id', async () => {
+    serving.on = true;
+    expect(await resolveBlockMediaServing(99)).toBe('on');
+    expect(brakeEvaluations).toStrictEqual(['99']);
+  });
+
+  it('an evaluation that throws is unknown: the poll restricts every media output, and it is logged', async () => {
+    serving.throws = true;
+    const view = await viewAs('user:99');
+    expect(view).toMatchObject({ serving: false, servingUnknown: true, mint: null });
+    expect(unknownLogs()).toStrictEqual([
+      { type: 'warning', name: 'app-block-media-serving-degraded', reason: 'eval-threw' },
+    ]);
+  });
+
+  it('a viewer whose session does not resolve is judged by entity id alone, and it is logged', async () => {
+    serving.on = true;
+    unresolvable.add(99);
+    const view = await viewAs('user:99');
+    expect(view.servingUnknown).toBeUndefined();
+    expect(brakeEvaluations).toStrictEqual(['99']);
+    expect(unknownLogs()).toMatchObject([{ reason: 'no-session' }]);
+  });
+
+  it('CONTROL: a viewer the flag is off for is plain off, with nothing logged', async () => {
+    serving.on = false;
+    const view = await viewAs('user:99');
+    expect(view.servingUnknown).toBeUndefined();
+    expect(view.serving).toBe(false);
+    expect(unknownLogs()).toStrictEqual([]);
+  });
+});
+
+describe('owner-only media the orchestrator never scans (its blob reads `NA` for good)', () => {
+  const ticketFor = (mediaType: 'audio' | 'archive' | 'model3d' | 'video', viewerId: number) =>
+    sealBlockMediaTicket({
+      ...claims,
+      mediaType,
+      viewerId,
+      viewerBrowsingLevel: allBrowsingLevelsFlag,
+    });
+
+  beforeEach(() => blobState.mockResolvedValue(rated('na')));
+
+  it.each(['audio', 'archive', 'model3d'] as const)('%s: its owner is served', async (type) => {
+    expect(await resolveBlockMediaFetch(ticketFor(type, claims.ownerId))).toEqual({
+      state: 'redirect',
+      location: CONTENT,
+    });
+  });
+
+  it.each(['audio', 'archive', 'model3d'] as const)(
+    '%s: anyone else is refused as owner-only',
+    async (type) => {
+      expect(await resolveBlockMediaFetch(ticketFor(type, 99))).toEqual({
+        state: 'hidden',
+        reason: 'owner_only',
+      });
+    }
+  );
+
+  it('CONTROL: an `NA` video is still hidden as unrated, even for its owner', async () => {
+    expect(await resolveBlockMediaFetch(ticketFor('video', claims.ownerId))).toEqual({
+      state: 'hidden',
+      reason: 'unrated',
+    });
+  });
+
+  it('a blocked audio blob is refused even to its owner', async () => {
+    blobState.mockResolvedValue(rated('na', 'csam'));
+    expect(await resolveBlockMediaFetch(ticketFor('audio', claims.ownerId))).toEqual({
+      state: 'hidden',
+      reason: 'blocked',
+    });
+  });
+});
+
+describe('🔴 a viewer whose session does not resolve is anonymous downstream', () => {
+  const R_PLUS = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
+  const viewOf = (viewerId: number) =>
+    resolveBlockOutputView({
+      sub: `user:${viewerId}`,
+      appBlockId: 'apb_1',
+      maxBrowsingLevel: R_PLUS,
+      viewerBrowsingLevel: R_PLUS,
+    });
+
+  beforeEach(() => {
+    serving.on = true;
+  });
+
+  it('the flag on, no session: the poll mints at the anonymous level, as signed out', async () => {
+    unresolvable.add(99);
+    const view = await viewOf(99);
+    expect(view.maxBrowsingLevel).toBe(NsfwLevel.PG);
+    expect(view.mint).toStrictEqual({ userId: 99, appBlockId: 'apb_1', anonymous: true });
+  });
+
+  it('CONTROL: a signed-in R+ viewer mints at their own level, as themselves', async () => {
+    const view = await viewOf(99);
+    expect(view.maxBrowsingLevel).toBe(R_PLUS);
+    expect(view.mint).toStrictEqual({ userId: 99, appBlockId: 'apb_1' });
+  });
+
+  it("an anonymous ticket for the owner's own audio is refused as owner-only", async () => {
+    blobState.mockResolvedValue(rated('na'));
+    const ticket = sealBlockMediaTicket({
+      ...claims,
+      mediaType: 'audio',
+      viewerId: claims.ownerId,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      anonymous: true,
+    });
+    expect(await resolveBlockMediaFetch(ticket)).toEqual({ state: 'hidden', reason: 'owner_only' });
+  });
+
+  it('a replayed private ref is refused to its own owner when their session does not resolve', async () => {
+    unresolvable.add(claims.ownerId);
+    const [item] = await resolveWorkflowMediaRefs({
+      appBlockId: 'apb_1',
+      viewerId: claims.ownerId,
+      viewerBrowsingLevel: R_PLUS,
+      hiddenOwnerIds: new Set<number>(),
+      refs: [sealBlockMediaRef({ ...claims, privateGen: true })!],
+    });
+    expect(item).toEqual({ status: 'hidden', reason: 'private' });
+  });
+
+  it('CONTROL: the same private ref replays for its owner when their session resolves', async () => {
+    const [item] = await resolveWorkflowMediaRefs({
+      appBlockId: 'apb_1',
+      viewerId: claims.ownerId,
+      viewerBrowsingLevel: R_PLUS,
+      hiddenOwnerIds: new Set<number>(),
+      refs: [sealBlockMediaRef({ ...claims, privateGen: true })!],
+    });
+    expect(item.status).toBe('visible');
   });
 });
