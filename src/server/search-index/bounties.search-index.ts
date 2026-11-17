@@ -14,9 +14,11 @@ import { bountiesFilterableAttributes } from '~/server/search-index/filterable-a
 import { bountiesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import type { ImageModelWithIngestion } from '../selectors/image.selector';
 import { isTaggedMatureImage } from '~/server/search-index/utils/tagged-mature-image';
+import { isMinorMatureImage, withoutMinorFlag } from '~/server/common/image-visibility';
 import { NsfwLevel } from '~/server/common/enums';
 import { getServableProfilePictures } from '~/server/services/profile-picture.sql';
 import type { profileImageSelect } from '../selectors/image.selector';
@@ -103,6 +105,7 @@ type ImageProps = {
   meta: Prisma.JsonObject | null;
   generationProcess: ImageGenerationProcess;
   needsReview: string;
+  minor: boolean | null;
   metadata: ImageMetadata | null;
   entityId: number;
 } | null;
@@ -181,13 +184,15 @@ export const transformData = async ({
             .filter((t) => t.imageId === i.id)
             .map((t) => ({ id: t.tagId, name: t.tag.name })),
         }))
-        .filter(
-          (i) =>
-            !isTaggedMatureImage({
-              nsfwLevel: nsfw ? NsfwLevel.XXX : i.nsfwLevel,
-              tags: i.tags.map((tag) => tag.id),
-            })
-        );
+        .filter((i) => {
+          const nsfwLevel = nsfw ? NsfwLevel.XXX : i.nsfwLevel;
+          // The index has no viewer, so a restricted minor image is left out for everyone.
+          return (
+            !isTaggedMatureImage({ nsfwLevel, tags: i.tags.map((tag) => tag.id) }) &&
+            !isMinorMatureImage({ minor: i.minor, nsfwLevel })
+          );
+        })
+        .map(withoutMinorFlag);
       const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
       return {
@@ -332,6 +337,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
               'meta', i."meta",
               'generationProcess', i."generationProcess",
               'needsReview', i."needsReview",
+              'minor', i."minor",
               'entityId', ic."entityId"
             )
           ) images
@@ -339,6 +345,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id AND ic."entityId" IN (SELECT "id" FROM target) AND ic."entityType" = 'Bounty'
         WHERE i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
+          AND ${imageNotRestrictedSql()}
         GROUP BY ic."entityId"
       ), tags AS MATERIALIZED (
         SELECT

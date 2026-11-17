@@ -32,7 +32,7 @@ const WRITE_SCOPE = TokenScopePresets.ReadOnly | TokenScope.AIServicesWrite;
 let meta: unknown = SYSTEM_ACCOUNT_META;
 
 // `sessionMeta` is the session user's copy of the account meta; by default the same as the row.
-function keyCaller(tokenScope: number, opts: { sessionMeta?: unknown } = {}) {
+function keyCaller(tokenScope: bigint, opts: { sessionMeta?: unknown } = {}) {
   const sessionMeta = 'sessionMeta' in opts ? opts.sessionMeta : meta;
   const req = {
     url: '/api/trpc/orchestrator.getStatus?batch=1',
@@ -126,7 +126,8 @@ describe('the orchestrator token for a system account', () => {
       type: 'info',
       route: '/api/trpc/orchestrator.getStatus',
       accountUnreadable: false,
-      tokenScope: TokenScopePresets.ReadOnly,
+      // The log line carries the scope as a JSON number.
+      tokenScope: Number(TokenScopePresets.ReadOnly),
       apiKeyType: ApiKeyType.User,
       client: 'personal-key',
       clientIdHash: undefined,
