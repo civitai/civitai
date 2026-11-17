@@ -7,7 +7,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { getAllImages } = vi.hoisted(() => ({
-  getAllImages: vi.fn(async () => ({ items: [], nextCursor: undefined })),
+  getAllImages: vi.fn(async (_input: unknown) => ({ items: [], nextCursor: undefined })),
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -17,6 +17,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
 const { getRemixGallery } = await import('~/server/services/remix-gallery.service');
 
 const moderator = { id: 5, isModerator: true } as never;
+type Views = { asModerator?: boolean; asOwner?: boolean };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,7 +27,7 @@ beforeEach(() => {
 });
 
 describe('remix gallery hydration', () => {
-  it.each([
+  it.each<[string, Views]>([
     ['a scoped key', { asModerator: false, asOwner: false }],
     ['a session (control)', { asModerator: true, asOwner: true }],
     ['a caller naming no view (fail closed)', {}],
