@@ -10,6 +10,7 @@ import {
   tokenScopeLabel,
   getScopeLabel,
   apiKeyScopeColumns,
+  LEGACY_TOKEN_SCOPE_MASK,
   parseTokenScope,
   readApiKeyScope,
 } from '../token-scope';
@@ -246,6 +247,13 @@ describe('parseTokenScope (untrusted wire values)', () => {
     expect(parseTokenScope(0)).toBe(0n);
   });
 
+  it('accepts exactly ALL_SCOPES (2^33 - 1) and refuses one more', () => {
+    expect(parseTokenScope(8589934591)).toBe(8589934591n);
+    expect(parseTokenScope(8589934591n)).toBe(8589934591n);
+    expect(parseTokenScope('8589934591')).toBe(8589934591n);
+    expect(parseTokenScope(8589934592n)).toBeNull();
+  });
+
   it('refuses a value above ALL_SCOPES, a negative, a fraction and anything else', () => {
     expect(parseTokenScope(8589934592)).toBeNull();
     expect(parseTokenScope('8589934592')).toBeNull();
@@ -271,6 +279,28 @@ describe('ApiKey scope columns', () => {
       tokenScope: 33554431,
       tokenScopeWide: 33554431n,
     });
+  });
+
+  it('keeps bits 25..30 in tokenScope: the low column is every bit up to 30, not Full', () => {
+    // Every defined bit (ALL_SCOPES, 2^33 - 1): the low column holds all 31 bits it can.
+    expect(apiKeyScopeColumns(8589934591n)).toEqual({
+      tokenScope: 2147483647,
+      tokenScopeWide: 8589934591n,
+    });
+    // LinkConnect (2^27) | AppsRead (2^31): bit 27 is above Full and stays in the low column.
+    expect(apiKeyScopeColumns(2281701376n)).toEqual({
+      tokenScope: 134217728,
+      tokenScopeWide: 2281701376n,
+    });
+    // DownloadLink (2^30) | AppsRead (2^31): bit 30 is the top bit the low column holds.
+    expect(apiKeyScopeColumns(3221225472n)).toEqual({
+      tokenScope: 1073741824,
+      tokenScopeWide: 3221225472n,
+    });
+  });
+
+  it('pins the low-column mask to 2^31 - 1', () => {
+    expect(LEGACY_TOKEN_SCOPE_MASK).toBe(2147483647n);
   });
 
   it('reads tokenScopeWide when set, whatever the 32-bit column holds', () => {

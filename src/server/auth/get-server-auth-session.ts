@@ -55,8 +55,9 @@ export const getServerAuthSession = async ({
     if (!req.context?.session) {
       const result = await getSessionFromBearerToken(token);
       // The session can reach a page's props, which are serialised as JSON, and JSON has no bigint:
-      // it carries the scope as a number (lossless: every bit is below 2^53). The bigint the scope
-      // checks read is `req.context.tokenScope`.
+      // it carries the scope as a number (lossless: every bit is below 2^53). Scope checks must read
+      // the bigint `req.context.tokenScope`, never `session.tokenScope` (a number: a bitwise op on it
+      // is 32-bit and drops bits 31 and 32).
       req.context.session = result && { ...result, tokenScope: Number(result.tokenScope) };
       if (result && 'tokenScope' in result) {
         req.context.tokenScope = result.tokenScope;

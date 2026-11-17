@@ -10,7 +10,7 @@
  * must never pass through a `number` `&`, `|`, `~` or shift. Use `hasScope(tokenScope,
  * TokenScope.ModelsWrite)` to check. At a wire or storage boundary that carries a JSON number, send
  * `Number(scope)` (every bit is below 2^53, so it is lossless) and read it back with
- * `parseTokenScope` / `toTokenScope`.
+ * `parseTokenScope` (untrusted) or `BigInt` (storage).
  *
  * Buzz spending is implicit in the scopes that require it:
  *  - AIServicesWrite (generation, training, scanning)
@@ -149,14 +149,6 @@ export function hasScope(instance: bigint, flag: bigint): boolean {
 }
 
 /**
- * A scope read from storage (a Prisma `Int`/`BigInt`, or a pg `int8` a driver parsed to a number or
- * string) as a bigint. Throws on a non-integer, which storage never holds.
- */
-export function toTokenScope(value: bigint | number | string): bigint {
-  return BigInt(value);
-}
-
-/**
  * A scope from an untrusted wire value: a non-negative safe-integer number, a non-negative bigint, or
  * a decimal string. Null for anything else, or for a value above `ALL_SCOPES`.
  */
@@ -194,7 +186,7 @@ export function readApiKeyScope(row: {
   tokenScope: bigint | number | string;
   tokenScopeWide?: bigint | number | string | null;
 }): bigint {
-  return toTokenScope(row.tokenScopeWide ?? row.tokenScope);
+  return BigInt(row.tokenScopeWide ?? row.tokenScope);
 }
 
 /** Each labelled scope bit with its human-readable label (the consent text), in bit order. */

@@ -9,6 +9,14 @@ const h = vi.hoisted(() => ({ inserts: [] as any[] }));
 
 vi.mock('$lib/server/db/db', () => ({
   db: {
+    // The account check an AI Services scope triggers: an unrestricted user.
+    selectFrom() {
+      const qb: any = {};
+      qb.select = () => qb;
+      qb.where = () => qb;
+      qb.executeTakeFirst = () => Promise.resolve({ muted: false, bannedAt: null });
+      return qb;
+    },
     insertInto() {
       const qb: any = {};
       qb.values = (v: any) => {
@@ -75,6 +83,32 @@ describe('createOAuthTokenPair (parity)', () => {
       expect(row.tokenScopeWide).toBe('6459228161');
       // The 32-bit column a pod on the previous build reads: the same mask without bits 31 and 32.
       expect(row.tokenScope).toBe(16777217);
+    }
+  });
+
+  it('keeps bits 25..30 in tokenScope: the low column is every bit up to 30, not Full', async () => {
+    // Every defined bit (2^33 - 1).
+    await createOAuthTokenPair(1, 'c', 8589934591n);
+    expect(h.inserts).toHaveLength(2);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('8589934591');
+      expect(row.tokenScope).toBe(2147483647);
+    }
+    h.inserts.length = 0;
+    // LinkConnect (2^27) | AppsRead (2^31); UserRead (1) is forced on.
+    await createOAuthTokenPair(1, 'c', 2281701376n);
+    expect(h.inserts).toHaveLength(2);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('2281701377');
+      expect(row.tokenScope).toBe(134217729);
+    }
+    h.inserts.length = 0;
+    // DownloadLink (2^30) | AppsRead (2^31); UserRead (1) is forced on.
+    await createOAuthTokenPair(1, 'c', 3221225472n);
+    expect(h.inserts).toHaveLength(2);
+    for (const row of h.inserts) {
+      expect(row.tokenScopeWide).toBe('3221225473');
+      expect(row.tokenScope).toBe(1073741825);
     }
   });
 

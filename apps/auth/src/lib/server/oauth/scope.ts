@@ -6,7 +6,6 @@ import {
   NON_USER_SCOPES,
   parseTokenScope,
   readApiKeyScope,
-  toTokenScope,
   TokenScope,
   tokenScopeLabels,
 } from '@civitai/auth/token-scope';
@@ -35,9 +34,12 @@ export function carriesNonUserScope(requested: bigint): boolean {
 // `scopeFromColumn` and a write through `scopeToColumn`. `ApiKey` keeps its 32-bit `tokenScope`
 // beside the wide column: see `apiKeyScopeColumns` in @civitai/auth/token-scope.
 
-/** A scope column's value (a number from the pg driver, or the string Kysely's types name) as a bigint. */
+/**
+ * A scope column's value (a number from the pg driver, or the string Kysely's types name) as a bigint.
+ * Throws on a non-integer, which the column never holds; a nullable column's caller handles null.
+ */
 export function scopeFromColumn(value: string | number | bigint): bigint {
-  return toTokenScope(value);
+  return BigInt(value);
 }
 
 /** A scope as a `bigint` column value. */
