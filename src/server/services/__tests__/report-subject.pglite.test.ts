@@ -22,7 +22,7 @@ beforeAll(async () => {
     CREATE TABLE "ChatMember" ("chatId" int NOT NULL, "userId" int NOT NULL);
     ${OWNED_REPORT_TABLES.map(
       ({ reportTable, fk, table, ownerColumn }) => `
-      CREATE TABLE "${table}" (id int PRIMARY KEY, "${ownerColumn}" int);
+      CREATE TABLE IF NOT EXISTS "${table}" (id int PRIMARY KEY, "${ownerColumn}" int);
       CREATE TABLE "${reportTable}" ("reportId" int NOT NULL, "${fk}" int NOT NULL);`
     ).join('\n')}
   `);
