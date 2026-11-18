@@ -28,6 +28,7 @@
     loraTypeById,
     releasedLabel,
     typesForMedia,
+    type LabelType,
     type Media,
     type ModelCard,
   } from '$lib/data/trainingModels';
@@ -37,6 +38,7 @@
     cardFromPrice,
     isCustom,
     isValidAir,
+    labelModeForCard,
     labelNoun,
     newRun,
     nextRunId,
@@ -53,7 +55,7 @@
     runVersion,
     runVersionLabel,
     selectionFromTotal,
-    sweepCompatible,
+    sweepLabelMode,
     versionOptions,
     type Run,
     type Selection,
@@ -65,6 +67,8 @@
     enabledModelFlags = [],
     initial = null,
     startInEdit = false,
+    flowLabelMode = 'tag',
+    datasetLabeled = false,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
@@ -76,6 +80,8 @@
     initial?: Selection | null;
     /** Open on the Image edit section (a reused edit dataset) when there is no selection to restore. */
     startInEdit?: boolean;
+    flowLabelMode?: LabelType;
+    datasetLabeled?: boolean;
   } = $props();
 
   // Derived so the seed and lists reflect the prop rather than a captured snapshot.
@@ -174,14 +180,26 @@
   const selectedInOthers = $derived(otherCards.some((c) => c.type === focused.cardType));
   const modelsExpanded = $derived(showAllModels || selectedInOthers);
   const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
-  const labelMode = $derived(runCard(primary).label);
-  const labelModeNoun = $derived(labelNoun(runCard(primary)));
+  const previousCard = $derived(initial ? runCard(initial.runs[0]!) : null);
+  // The mode the Data step will open on for these runs; the flow computes it the same way on Continue.
+  const labelMode = $derived(
+    sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) ??
+      labelModeForCard(previousCard, runCard(primary), flowLabelMode, datasetLabeled)
+  );
+  /** Whether `card` could take run `index`'s place with the other runs staying: the whole selection must
+   *  still share a dataset shape and label mode. */
+  function sweepAllows(card: ModelCard, index: number): boolean {
+    const cards = runs.map((r, i) => (i === index ? card : runCard(r)));
+    return sweepLabelMode(cards, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
   const primaryPairs = $derived(runCard(primary).pairs === true);
   /** Why `card` can't join this sweep — the dataset is shared, so its shape must match. */
   function sweepLockReason(card: ModelCard): string {
     if (!!card.pairs !== primaryPairs)
       return `${card.name} ${card.pairs ? 'trains on before/after pairs' : 'trains on single images'}; your other run doesn't. One dataset can't mix — remove the other run to switch.`;
-    return `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`;
+    if (focus === 0)
+      return `Making ${card.name} the first run would change the dataset's tags/captions format, which your other runs can't use. One dataset can't mix — remove them to switch.`;
+    return `${card.name} can't train on ${labelMode === 'tag' ? 'tags' : 'captions'} like your other run. One dataset can't mix — remove the other run to switch.`;
   }
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
@@ -232,6 +250,10 @@
   // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
   onMount(() => void serviceStatus.refresh());
   const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
+  // Defensive: not reachable today, but keep it — without it Continue would fall back to a mode some run can't take.
+  const sweepBroken = $derived(
+    multi && sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) === null
+  );
 
   /** Whether a version chip's model is down (Custom has no catalog version: never). */
   function versionDown(card: ModelCard, key: string) {
@@ -260,7 +282,7 @@
   }
 
   function pickBase(card: ModelCard) {
-    if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
+    if (multi && !sweepAllows(card, focus)) return; // dataset-shape lock
     if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
     runs = runs.map((r, i) => {
       if (i !== focus) return r;
@@ -286,7 +308,7 @@
   const kohyaFallbackCard = $derived(
     kohyaCards.find(
       (c) =>
-        (!multi || sweepCompatible(c, runCard(primary))) &&
+        (!multi || sweepAllows(c, focus)) &&
         !cardUnavailability(c, enabledFlags, serviceStatus.value)
     )
   );
@@ -368,8 +390,14 @@
     focus = runs.length - 1;
   }
 
+  /** Removing run 1 makes the next run the lead, which can re-pick the dataset's mode and strand the rest. */
+  function removalAllowed(i: number): boolean {
+    const rest = runs.filter((_, k) => k !== i).map(runCard);
+    return rest.length === 0 || sweepLabelMode(rest, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
+
   function removeRun(i: number) {
-    if (runs.length <= 1) return;
+    if (runs.length <= 1 || !removalAllowed(i)) return;
     runs = runs.filter((_, k) => k !== i);
     // Keep focus on the same run: removing one before it shifts every later run down a slot.
     if (i < focus) focus -= 1;
@@ -458,7 +486,7 @@
 {#snippet continueButton(placement: string)}
   <Button
     class="h-11 {placement}"
-    disabled={customIncomplete || !!blockedMessage}
+    disabled={customIncomplete || !!blockedMessage || sweepBroken}
     onclick={continueToData}
   >
     Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
@@ -690,7 +718,7 @@
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
-          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const locked = multi && !selected && !sweepAllows(card, focus)}
           {@const disabled = locked || (!!down && !selected)}
           {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
           {@const cardPrice = price(card.type)}
@@ -905,11 +933,15 @@
                   <button
                     type="button"
                     aria-label={`Remove run ${ri + 1}`}
+                    disabled={!removalAllowed(ri)}
+                    title={removalAllowed(ri)
+                      ? undefined
+                      : "Removing this run would change the dataset's tags/captions format for your other runs. Remove them first."}
                     onclick={(e) => {
                       e.stopPropagation();
                       removeRun(ri);
                     }}
-                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
+                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-dark-4 disabled:hover:text-dark-2"
                   >
                     <IconX size={14} stroke={2} />
                   </button>

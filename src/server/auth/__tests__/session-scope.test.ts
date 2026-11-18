@@ -265,13 +265,100 @@ describe('REST_SCOPE_ENFORCE', () => {
     expect(decisionLogs().map(([entry]) => entry.payload.outcome)).toEqual(['moderator-withheld']);
   });
 
-  it('logs the route with numeric and UUID segments as :id', async () => {
+  const loggedRoute = async (url: string, query?: Record<string, string | string[]>) => {
     setEnv({ REST_SCOPE_ENFORCE: 'report' });
     bearerKey(TokenScope.ModelsRead);
-    const req = bearerRequest();
-    req.url = '/api/v1/models/123/files/550e8400-e29b-41d4-a716-446655440000/latest?token=x';
+    const req = { ...bearerRequest(), url, query };
     await resolve(req, { scope: TokenScope.VaultRead });
-    expect(decisionLogs()[0][0].route).toBe('/api/v1/models/:id/files/:id/latest');
+    const [entry] = decisionLogs()[0];
+    return { route: entry.route as string, logged: JSON.stringify(entry) };
+  };
+
+  it('logs the route template, naming the dynamic params', async () => {
+    const { route } = await loggedRoute('/api/download/models/123?type=Model&token=x', {
+      modelVersionId: '123',
+      type: 'Model',
+      token: 'x',
+    });
+    expect(route).toBe('/api/download/models/[modelVersionId]');
+  });
+
+  it('logs a catch-all storage key by its param name only', async () => {
+    const key = [
+      'users',
+      '77',
+      'a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef',
+      'My Model.safetensors',
+    ];
+    const { route, logged } = await loggedRoute(
+      `/api/storage/files/${key.map(encodeURIComponent).join('/')}`,
+      { key }
+    );
+    expect(route).toBe('/api/storage/files/[...key]');
+    expect(logged).not.toContain(
+      'a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef'
+    );
+    expect(logged).not.toContain('safetensors');
+  });
+
+  it('logs a hash segment by its param name only', async () => {
+    const { route, logged } = await loggedRoute(
+      '/api/v1/images/a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef/meta',
+      { hash: 'a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef' }
+    );
+    expect(route).toBe('/api/v1/images/[hash]/meta');
+    expect(logged).not.toContain(
+      'a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef'
+    );
+  });
+
+  it('without a route template, logs only short lowercase non-hex segments', async () => {
+    const { route, logged } = await loggedRoute(
+      `/api/v1/models/123/a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef/deadbeef/Bucket_Key/550e8400-e29b-41d4-a716-446655440000/latest?token=x`
+    );
+    expect(route).toBe('/api/v1/models/:segment/:segment/:segment/:segment/:segment/latest');
+    expect(logged).not.toContain(
+      'a3f1c2d4e5b6a7980123456789abcdef0123456789abcdef0123456789abcdef'
+    );
+    expect(logged).not.toContain('Bucket_Key');
+  });
+
+  it('logs a route param the caller repeats in the query string as :segment', async () => {
+    const { route, logged } = await loggedRoute('/api/v1/creators/alice?username=alice', {
+      username: 'alice',
+    });
+    expect(route).toBe('/api/v1/creators/:segment');
+    expect(logged).not.toContain('alice');
+  });
+
+  it('never names or keeps a segment from a query-string key or value', async () => {
+    const { route, logged } = await loggedRoute('/api/v1/models?evil_key=models', {
+      evil_key: 'models',
+    });
+    expect(route).toBe('/api/v1/:segment');
+    expect(logged).not.toContain('evil_key');
+  });
+
+  it('does not label the empty leading segment with an empty query value', async () => {
+    const { route } = await loggedRoute('/api/v1/models?cursor=', { cursor: '' });
+    expect(route).toBe('/api/v1/models');
+  });
+
+  it("names a page's route params from the page context", async () => {
+    setEnv({ REST_SCOPE_ENFORCE: 'report' });
+    bearerKey(TokenScope.ModelsRead);
+    const req = { ...bearerRequest(), url: '/user/alice?token=k' };
+    await getServerAuthSession({
+      req: req as never,
+      res: {} as never,
+      query: { username: 'alice', token: 'k' },
+    });
+    expect(decisionLogs()[0][0].route).toBe('/user/[username]');
+  });
+
+  it('logs a long word, and a malformed escape, as :segment', async () => {
+    const { route } = await loggedRoute(`/api/v1/models/${'z'.repeat(33)}/%E0%A4%A/latest`);
+    expect(route).toBe('/api/v1/models/:segment/:segment/latest');
   });
 
   it('keys the api key id hash with the server secret', async () => {

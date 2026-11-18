@@ -124,7 +124,7 @@ type proxyErrors struct {
 	reasons []string
 }
 
-func (e *proxyErrors) record(reason string, _ error) {
+func (e *proxyErrors) record(_ *http.Request, reason string, _ error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.reasons = append(e.reasons, reason)
@@ -150,7 +150,7 @@ func proxyDo(p http.Handler, method, body string) *httptest.ResponseRecorder {
 func TestFallbackProxyPostAfterTheUpstreamKeepAlive(t *testing.T) {
 	up := newKeepAliveUpstream(t, testUpstreamKeepAlive)
 	errs := &proxyErrors{}
-	p := fallbackProxy(up.target(t), testProxyIdle, errs.record)
+	p := fallbackProxy(up.target(t), testProxyIdle, errs.record, nil)
 
 	if w := proxyDo(p, http.MethodPost, "first"); w.Code != http.StatusOK {
 		t.Fatalf("first POST: status %d, want 200", w.Code)
@@ -178,7 +178,7 @@ func TestFallbackProxyPostAfterTheUpstreamKeepAlive(t *testing.T) {
 func TestKeepAliveUpstreamDropsAStaleConnection(t *testing.T) {
 	up := newKeepAliveUpstream(t, testUpstreamKeepAlive)
 	errs := &proxyErrors{}
-	p := fallbackProxy(up.target(t), time.Hour, errs.record)
+	p := fallbackProxy(up.target(t), time.Hour, errs.record, nil)
 
 	if w := proxyDo(p, http.MethodPost, "first"); w.Code != http.StatusOK {
 		t.Fatalf("first POST: status %d, want 200", w.Code)
@@ -211,7 +211,7 @@ func TestKeepAliveUpstreamDropsAStaleConnection(t *testing.T) {
 func TestFallbackProxyReportsACanceledClient(t *testing.T) {
 	up := newKeepAliveUpstream(t, testUpstreamKeepAlive)
 	errs := &proxyErrors{}
-	p := fallbackProxy(up.target(t), testProxyIdle, errs.record)
+	p := fallbackProxy(up.target(t), testProxyIdle, errs.record, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "http://green.example.test/api/trpc/x", strings.NewReader("x"))
@@ -233,7 +233,7 @@ func TestFallbackProxyTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr, ok := fallbackProxy(target, fallbackIdleTimeout, nil).Transport.(*http.Transport)
+	tr, ok := fallbackProxy(target, fallbackIdleTimeout, nil, nil).Transport.(*http.Transport)
 	if !ok {
 		t.Fatal("the proxy has no *http.Transport of its own")
 	}
@@ -246,7 +246,7 @@ func TestFallbackProxyTransport(t *testing.T) {
 	if tr.MaxIdleConnsPerHost != 32 {
 		t.Errorf("MaxIdleConnsPerHost = %d, want 32", tr.MaxIdleConnsPerHost)
 	}
-	if fallbackProxy(target, 7*time.Second, nil).Transport.(*http.Transport).IdleConnTimeout != 7*time.Second {
+	if fallbackProxy(target, 7*time.Second, nil, nil).Transport.(*http.Transport).IdleConnTimeout != 7*time.Second {
 		t.Error("the idle parameter does not reach the transport")
 	}
 }

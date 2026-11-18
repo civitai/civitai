@@ -4,9 +4,11 @@ import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageScanFailureClass } from '~/server/services/image-scan-failure';
 import {
+  allBrowsingLevelsFlag,
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
@@ -117,6 +119,59 @@ export const imageReviewedSql = (alias = 'i') => {
   )`;
 };
 
+/** Review holds not served even to the image's owner; their other review states stay visible to them. */
+const OWNER_HIDDEN_REVIEWS = ['csam', 'minor'];
+
+/** Not under an owner-hidden review hold. `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
+export const notHeldForReviewWhere = (): Prisma.ImageWhereInput => ({
+  OR: [{ needsReview: null }, { needsReview: { notIn: OWNER_HIDDEN_REVIEWS } }],
+});
+
+/** `notHeldForReviewWhere` as SQL over `Image` aliased `i`. */
+export const notHeldForReviewSql = () =>
+  Prisma.sql`(i."needsReview" IS NULL OR i."needsReview" NOT IN (${Prisma.join(
+    OWNER_HIDDEN_REVIEWS
+  )}))`;
+
+/** TS twin of `notHeldForReviewWhere`: whether a row's review state is an owner-hidden hold. */
+export const isHeldForReview = (needsReview: string | null | undefined) =>
+  !!needsReview && OWNER_HIDDEN_REVIEWS.includes(needsReview);
+
+/** `servableLevelWhere` as SQL over `Image` aliased `i`. */
+export const servableLevelSql = (levels: number) =>
+  levels === allBrowsingLevelsFlag
+    ? Prisma.sql`TRUE`
+    : Prisma.sql`i."nsfwLevel" IN (${Prisma.join(Flags.instanceToArray(levels))})`;
+
+/** TS twin of `servableLevelWhere`, for one image's level. */
+export const isServableLevel = (nsfwLevel: number, levels: number) =>
+  levels === allBrowsingLevelsFlag || Flags.instanceToArray(levels).includes(nsfwLevel);
+
+/** TS twin of `servableLevelOrOwnUnratedWhere`, for one image. */
+export const isServableLevelOrOwnUnrated = (
+  image: { nsfwLevel: number; userId: number },
+  levels: number,
+  viewerId: number
+) =>
+  isServableLevel(image.nsfwLevel, levels) || (image.nsfwLevel === 0 && image.userId === viewerId);
+
+/** Held to the request's servable levels: a capped request gets no unrated upload either. */
+export const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
+  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
+
+/**
+ * `servableLevelWhere`, but `userId`'s own unrated uploads stay in, so an owner keeps sight of an
+ * upload while its scan runs. Not an `OR` around `servableLevelWhere`: with its uncapped `{}`
+ * inside, Prisma's `OR` returned no rows.
+ */
+export const servableLevelOrOwnUnratedWhere = (
+  levels: number,
+  userId: number
+): Prisma.ImageWhereInput =>
+  levels === allBrowsingLevelsFlag
+    ? {}
+    : { OR: [{ nsfwLevel: { in: Flags.instanceToArray(levels) } }, { userId, nsfwLevel: 0 }] };
+
 type RestrictedImageOptions = { alias?: string; viewerId?: number | null };
 
 /**
@@ -176,7 +231,8 @@ export const imageRestrictedSql = (options: RestrictedImageOptions = {}) =>
 /**
  * What a signed-in non-moderator's `pending` read requires of another user's image, over `Image`
  * aliased `i`: not awaiting moderator review, not `acceptableMinor`, and reviewed if rated. The
- * viewer's own images are exempt. Unrated images still need the read's own level check to show.
+ * viewer's own images are exempt, but for owner-hidden review holds (`notHeldForReviewSql`).
+ * Unrated images still need the read's own level check to show.
  * `acceptableMinorAlso` admits further images past the `acceptableMinor` check only.
  */
 export const pendingOthersImageConditions = (
@@ -188,6 +244,7 @@ export const pendingOthersImageConditions = (
     acceptableMinorAlso ? Prisma.sql` OR ${acceptableMinorAlso}` : Prisma.empty
   })`,
   Prisma.sql`(i."userId" = ${userId} OR i."nsfwLevel" = 0 OR ${imageReviewedSql()})`,
+  notHeldForReviewSql(),
 ];
 
 /**

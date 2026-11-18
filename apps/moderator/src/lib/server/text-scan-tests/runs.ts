@@ -16,6 +16,7 @@ import {
   promptKeyOf,
   type LiveState,
 } from '../../text-scan-tests/baseline';
+import { INTENT_LABELS, isIntentEvalSet } from '../../text-scan-tests/intent-set';
 import {
   ACTIVE_RUN_STATUSES,
   CANCELLABLE_RUN_STATUSES,
@@ -92,6 +93,7 @@ async function record(audit: RunAudit, event: RunAuditEvent) {
 }
 
 export async function setLabels(db: Db, setId: number): Promise<LabLabel[]> {
+  if (isIntentEvalSet(setId)) return [...INTENT_LABELS];
   const rows = await runnableCases(db, setId).select('c.entity_type').distinct().execute();
   return labelsOf(rows.map((r) => r.entity_type as LabEntityType));
 }

@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { notificationCategories } from './constants';
+import { notificationCategories, type NotificationCategory } from './constants';
 import { cursorDate, notificationListCursor } from './cursor';
 
 // The notification producer contract — the single source of truth the notifications app validates
@@ -134,6 +134,44 @@ export const cleanupNotificationsInput = z.object({
   before: z.coerce.date(),
 });
 export type CleanupNotificationsInput = z.infer<typeof cleanupNotificationsInput>;
+
+/** Users per unseen-notification read; the digest job pages through its candidates in batches. */
+export const MAX_UNSEEN_USERS = 1000;
+/** Newest unseen notifications returned per user. */
+export const MAX_UNSEEN_ITEMS = 20;
+/** Per-user count ceiling: past it the count is reported as a floor, so one busy user can't stall a read. */
+export const UNSEEN_COUNT_LIMIT = 1000;
+
+export const unseenNotificationsInput = z.object({
+  /** Each user with the instant after which a notification counts: their window start. */
+  users: z
+    .array(z.object({ userId: z.number().int().positive(), since: z.coerce.date() }))
+    .min(1)
+    .max(MAX_UNSEEN_USERS),
+  /** Types left out of the count and the list (the ones already sent by email when they happened). */
+  excludeTypes: z.array(z.string()).max(1000).default([]),
+  limit: z.number().int().min(1).max(MAX_UNSEEN_ITEMS),
+});
+export type UnseenNotificationsInput = z.input<typeof unseenNotificationsInput>;
+
+export type UnseenNotificationItem = {
+  id: number;
+  type: string;
+  category: NotificationCategory;
+  details: Record<string, unknown>;
+  createdAt: Date;
+};
+
+/** A user with at least one unseen notification in their window; users with none are left out. */
+export type UnseenNotifications = {
+  userId: number;
+  /** Unseen notifications in the window, at most UNSEEN_COUNT_LIMIT. */
+  total: number;
+  /** True when the count stopped at UNSEEN_COUNT_LIMIT. */
+  floor: boolean;
+  /** The newest `limit`, newest first. */
+  items: UnseenNotificationItem[];
+};
 
 // --- System notices (POST /notifications/notices) --------------------------------------------------
 
