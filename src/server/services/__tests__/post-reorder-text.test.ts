@@ -49,7 +49,11 @@ describe('reorderPostImages with storyline text items', () => {
   it('without `items`, keeps every text row where it is: images swap the indexes they hold', async () => {
     // Images at 0, 1 and 3, a text at 2. An old editor sends the images reversed.
     w.postText.count.mockResolvedValue(1 as never);
-    w.image.findMany.mockResolvedValue([{ index: 3 }, { index: 0 }, { index: 1 }] as never);
+    w.image.findMany.mockResolvedValue([
+      { id: 10, index: 0, needsReview: null, nsfwLevel: 1 },
+      { id: 11, index: 1, needsReview: null, nsfwLevel: 1 },
+      { id: 12, index: 3, needsReview: null, nsfwLevel: 1 },
+    ] as never);
     await reorderPostImages({ ...EDITOR, id: POST, imageIds: [12, 11, 10] });
     expect(imageIndexes()).toEqual([
       [12, 0],
@@ -67,7 +71,9 @@ describe('reorderPostImages with storyline text items', () => {
       { id: 11, index: 1 },
     ];
     w.postText.count.mockResolvedValue(1 as never);
-    w.image.findMany.mockResolvedValue(reordered.map(({ index }) => ({ index })) as never);
+    w.image.findMany.mockResolvedValue(
+      reordered.map(({ id, index }) => ({ id, index, needsReview: null, nsfwLevel: 1 })) as never
+    );
     await reorderPostImages({ ...EDITOR, id: POST, imageIds: reordered.map((image) => image.id) });
     const predicted = imageOnlyReorderIndexes(reordered, true);
     expect(imageIndexes()).toEqual(reordered.map((image, i) => [image.id, predicted[i]]));

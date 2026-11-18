@@ -236,7 +236,7 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(positions).toContainEqual({ type: 'image', id: 40, index: 0 });
   });
 
-  it('on a capped request with a pinned image, a listed unrated upload cannot shift its rank', async () => {
+  it('with a pinned image, moving an unrated upload cannot shift its rank among rated images', async () => {
     // 0-18 PG, 19 unrated upload Z (40), 20 XXX (1, above the cap), 21 PG Y (50): XXX is the 20th
     // rated image. Moving Y above Z would make it the 21st and drop the version level.
     const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i})`);
@@ -253,8 +253,72 @@ describe('reorderPostImages around images the editor does not list', () => {
       imageIds: [...pgIds, 50, 40, 1],
     });
     const after = await indexes();
-    expect([after[40], after[1]]).toEqual([19, 20]);
-    expect(positions.map((p) => p.id)).not.toContain(40);
+    expect(after[1]).toBe(20);
+    expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
+    expect(positions.map((p) => p.id)).toContain(40); // the upload is still placed
+    expect(await versionLevel()).toBe(XXX | PG);
+  });
+
+  it("with `items`, moving a text cannot shift a held image's rank among rated images", async () => {
+    // Text 5 at 0, PG 10..28 at 1..19, held XXX image 1 at 20 (the 20th rated image), PG 50 at 21.
+    const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i + 1}, NULL)`);
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        ${pg.join(', ')},
+        (1, ${POST}, ${XXX}, 20, 'minor'), (50, ${POST}, ${PG}, 21, NULL);
+      INSERT INTO "PostText" VALUES (5, ${POST}, 0);
+    `);
+    expect(await versionLevel()).toBe(XXX | PG);
+    const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
+    await reorderPostImages({
+      ...OWNER_EDITOR,
+      id: POST,
+      imageIds: [],
+      items: [
+        ...[...pgIds, 50].map((id) => ({ type: 'image' as const, id })),
+        { type: 'text', id: 5 },
+      ],
+    });
+    const after = await indexes();
+    expect(after[1]).toBe(20);
+    const text = (await harness.pg.query<{ index: number }>(`SELECT index FROM "PostText"`)).rows;
+    const all = [...Object.values(after), ...text.map((t) => t.index)];
+    expect(new Set(all).size).toBe(all.length);
+    expect(await versionLevel()).toBe(XXX | PG);
+  });
+
+  it("uncapped, moving a Blocked image cannot shift a held image's rank among rated images", async () => {
+    // Blocked 60 at 0, PG 10..28 at 1..19, held XXX image 1 at 20 (the 20th rated image), PG 50 at 21.
+    const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i + 1}, NULL)`);
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (60, ${POST}, 32, 0, NULL), ${pg.join(', ')},
+        (1, ${POST}, ${XXX}, 20, 'csam'), (50, ${POST}, ${PG}, 21, NULL);
+    `);
+    expect(await versionLevel()).toBe(XXX | PG);
+    const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [50, ...pgIds, 60] });
+    const after = await indexes();
+    expect(after[1]).toBe(20);
+    expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
+    expect(await versionLevel()).toBe(XXX | PG);
+  });
+
+  it("without `items` on a post with text, moving a Blocked image cannot shift a held image's rank", async () => {
+    // Blocked 60 at 0, PG 10..28 at 1..19, held XXX 1 at 20, PG 50 at 21, a text at 22.
+    const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i + 1}, NULL)`);
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (60, ${POST}, 32, 0, NULL), ${pg.join(', ')},
+        (1, ${POST}, ${XXX}, 20, 'minor'), (50, ${POST}, ${PG}, 21, NULL);
+      INSERT INTO "PostText" VALUES (5, ${POST}, 22);
+    `);
+    const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [50, ...pgIds, 60] });
+    const after = await indexes();
+    expect([after[60], after[1]]).toEqual([0, 20]);
+    const text = (await harness.pg.query<{ index: number }>(`SELECT index FROM "PostText"`)).rows;
+    expect(text).toEqual([{ index: 22 }]);
     expect(await versionLevel()).toBe(XXX | PG);
   });
 

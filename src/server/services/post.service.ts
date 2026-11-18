@@ -14,7 +14,12 @@ import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NsfwLevel,
+  PostSort,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -2209,14 +2214,15 @@ export const removeResourceFromPostImage = async ({
 
 type Editor = { user: SessionUser; servableLevels: number };
 
+/** Whether an image counts toward the version level (`imageDerivedVersionLevelSql`). */
+const countsTowardVersionLevel = (nsfwLevel: number) =>
+  nsfwLevel !== 0 && nsfwLevel !== NsfwLevel.Blocked;
+
 /**
- * The post's images this editor may not move: those it did not list, and those `getPostEditImages`
- * does not serve it (held for review unless a moderator, or rated outside the request's levels)
- * even if it lists them. They keep their index, so a reorder cannot push a hidden image out of the
- * version's first 20 (`imageDerivedVersionLevelSql`). A listed unrated image is an upload the
- * editor shows while its scan runs: it moves, unless the request's levels exclude unrated and an
- * image is pinned, since the version level skips unrated rows and swapping one for a rated image
- * would shift the pinned image's rank (a reload would not show the upload either).
+ * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or rated outside the
+ * request's levels) even if it lists them. They keep their index. `movable` holds the others the
+ * editor listed, with their current index and whether the version level counts them.
  */
 async function editorHiddenImages(
   postId: number,
@@ -2229,46 +2235,120 @@ async function editorHiddenImages(
     select: { id: true, index: true, needsReview: true, nsfwLevel: true },
   });
   const listed = new Set(listedIds);
-  const pinned = (image: (typeof images)[number]) =>
+  const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
     (!user.isModerator && isHeldForReview(image.needsReview)) ||
     (image.nsfwLevel !== 0 && !isServableLevel(image.nsfwLevel, servableLevels));
-  const pinUnrated = !isServableLevel(0, servableLevels) && images.some(pinned);
-  const hidden = images.filter((image) => pinned(image) || (pinUnrated && image.nsfwLevel === 0));
+  const hidden = images.filter(isHidden);
+  const movable = new Map(
+    images
+      .filter((image) => !isHidden(image))
+      .map((image) => [
+        image.id,
+        { index: image.index ?? 0, counted: countsTowardVersionLevel(image.nsfwLevel) },
+      ])
+  );
   return {
     ids: new Set(hidden.map((image) => image.id)),
     indexes: new Set(hidden.map((image) => image.index ?? 0)),
+    movable,
   };
 }
 
-/** `count` indexes from 0 up, skipping the `taken` ones. */
-function freeIndexes(count: number, taken: Set<number>) {
-  const indexes: number[] = [];
-  for (let index = 0; indexes.length < count; index++) if (!taken.has(index)) indexes.push(index);
-  return indexes;
+type Hidden = Awaited<ReturnType<typeof editorHiddenImages>>;
+type Placed = { type: 'image' | 'text'; id: number };
+
+const sortedIndexes = (items: Placed[], hidden: Hidden) =>
+  items.map((item) => hidden.movable.get(item.id)?.index ?? 0).sort((a, b) => a - b);
+
+/**
+ * Indexes for `order`, in order. `ownSlots`: the images trade the indexes they already hold.
+ * Otherwise items are numbered from 0 in the editor's order, skipping the pinned images' and
+ * `reserved` indexes. Either way each pinned image keeps the same number of images the version
+ * level counts ahead of it: those images fill the stretches between pinned images up to the count
+ * each held before, and texts and uncounted images take the room left over.
+ */
+function placeAroundPinned(
+  order: Placed[],
+  hidden: Hidden,
+  { ownSlots, reserved = new Set<number>() }: { ownSlots: boolean; reserved?: Set<number> }
+) {
+  const seen = new Set<string>();
+  const items = order.filter((item) => {
+    const key = `${item.type}:${item.id}`;
+    return !seen.has(key) && !!seen.add(key);
+  });
+  const isCounted = (item: Placed) =>
+    item.type === 'image' && !!hidden.movable.get(item.id)?.counted;
+
+  const index = new Map<Placed, number>();
+  if (ownSlots) {
+    const groups = hidden.ids.size
+      ? [items.filter(isCounted), items.filter((item) => !isCounted(item))]
+      : [items];
+    for (const group of groups) {
+      const slots = sortedIndexes(group, hidden);
+      group.forEach((item, i) => index.set(item, slots[i]));
+    }
+    return items.map((item) => ({ ...item, index: index.get(item)! }));
+  }
+
+  // Stretch k runs up to the k-th pinned index; the last one is open.
+  const pins = [...hidden.indexes].sort((a, b) => a - b);
+  const last = pins.length;
+  const stretchOf = (at: number) => pins.filter((pin) => pin < at).length;
+  const blocked = new Set([...pins, ...reserved]);
+  const room = pins.map((pin, k) => {
+    let free = 0;
+    for (let at = k ? pins[k - 1] + 1 : 0; at < pin; at++) if (!blocked.has(at)) free++;
+    return free;
+  });
+  const quota = pins.map(() => 0);
+  for (const item of items.filter(isCounted)) {
+    const k = stretchOf(hidden.movable.get(item.id)!.index);
+    if (k < last) quota[k]++;
+  }
+  const used = pins.map(() => 0);
+  const usedCounted = pins.map(() => 0);
+  const stretch = new Map<Placed, number>();
+  let k = 0;
+  for (const item of items) {
+    let at;
+    if (isCounted(item)) {
+      while (k < last && usedCounted[k] >= quota[k]) k++;
+      at = k;
+      if (at < last) usedCounted[at]++;
+    } else {
+      at = k;
+      while (at < last && room[at] - used[at] <= quota[at] - usedCounted[at]) at++;
+    }
+    if (at < last) used[at]++;
+    stretch.set(item, at);
+  }
+
+  let at = 0;
+  for (let s = 0; s <= last; s++) {
+    if (s) at = Math.max(at, pins[s - 1] + 1);
+    for (const item of items.filter((item) => stretch.get(item) === s)) {
+      while (blocked.has(at)) at++;
+      index.set(item, at++);
+    }
+  }
+  return items.map((item) => ({ ...item, index: index.get(item)! }));
 }
 
 /**
  * Without `items` (an editor from before text items, or with them off), a post that has text keeps
- * every text row where it is: the listed images take, in order, the indexes those images already
- * hold. Otherwise they are numbered from 0, around the images the editor may not move.
+ * every text row where it is: the listed images trade the indexes those images already hold.
+ * Otherwise they are numbered from 0, around the images the editor may not move.
  */
 async function imageOnlyReorder(postId: number, imageIds: number[], editor: Editor) {
   const hidden = await editorHiddenImages(postId, imageIds, editor);
-  const movable = imageIds.filter((id) => !hidden.ids.has(id));
   const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
-  if (!hasText) {
-    const indexes = freeIndexes(movable.length, hidden.indexes);
-    return movable.map((id, i) => ({ type: 'image' as const, id, index: indexes[i] }));
-  }
-  const held = await dbWrite.image.findMany({
-    where: { postId, id: { in: movable } },
-    select: { index: true },
-  });
-  const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
-  return movable
-    .slice(0, indexes.length)
-    .map((id, i) => ({ type: 'image' as const, id, index: indexes[i] }));
+  const order = imageIds
+    .filter((id) => !hidden.ids.has(id) && (!hasText || hidden.movable.has(id)))
+    .map((id) => ({ type: 'image' as const, id }));
+  return placeAroundPinned(order, hidden, { ownSlots: !!hasText });
 }
 
 /**
@@ -2282,15 +2362,16 @@ async function itemsReorder(
 ) {
   const ids = (type: 'image' | 'text') => items.filter((i) => i.type === type).map((i) => i.id);
   const hidden = await editorHiddenImages(postId, ids('image'), editor);
-  const movable = items.filter((item) => item.type === 'text' || !hidden.ids.has(item.id));
+  const order = items.filter((item) => item.type === 'text' || !hidden.ids.has(item.id));
   // primary: decides which indexes the reorder write that follows may take
   const unlistedTexts = await dbWrite.postText.findMany({
     where: { postId, id: { notIn: ids('text') } },
     select: { index: true },
   });
-  const taken = new Set([...hidden.indexes, ...unlistedTexts.map((text) => text.index)]);
-  const indexes = freeIndexes(movable.length, taken);
-  return movable.map(({ type, id }, i) => ({ type, id, index: indexes[i] }));
+  return placeAroundPinned(order, hidden, {
+    ownSlots: false,
+    reserved: new Set(unlistedTexts.map((text) => text.index)),
+  });
 }
 
 /** Writes the editor's order and returns the index each item it may move now has. */
