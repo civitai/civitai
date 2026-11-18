@@ -112,7 +112,6 @@ describe('the trials pool', () => {
   it('leaves hidden checks and core references alone, and reads Acolyte answers, not Knight votes', async () => {
     const hidden = await reference(1, [], { pool: 'hiddenCheck' });
     const core = await reference(2, [], { source: 'core' });
-    // Knight votes on a trials reference do not count toward keeping it.
     const knightVoted = await reference(3, []);
     for (let p = 0; p < 5; p++) {
       await pg.query(
@@ -130,8 +129,13 @@ describe('the trials pool', () => {
   it('leaves trials references alone on a hidden-check run, and hidden checks alone on a trials run', async () => {
     const trialsRef = await reference(1, []);
     const hidden = await reference(2, [], { pool: 'hiddenCheck' });
+    await run();
+    expect(await statusOf(hidden)).toBe('active');
+    expect(await statusOf(trialsRef)).toBe('retired');
+
+    const trialsRef2 = await reference(3, []);
     await retireUnagreedHiddenChecks(db, { now: NOW, excludeImageIds: [] });
-    expect(await statusOf(trialsRef)).toBe('active');
+    expect(await statusOf(trialsRef2)).toBe('active');
     expect(await statusOf(hidden)).toBe('retired');
   });
 
