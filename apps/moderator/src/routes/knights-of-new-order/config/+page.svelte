@@ -1,6 +1,7 @@
 <script lang="ts">
   import ConfigEditor from './ConfigEditor.svelte';
   import RecentChanges from './RecentChanges.svelte';
+  import RuleGuideEditor from './RuleGuideEditor.svelte';
   import StatusStrip from './StatusStrip.svelte';
   import type { PageData } from './$types';
 
@@ -17,6 +18,7 @@
 
   {#key JSON.stringify(data.settings)}
     <ConfigEditor settings={data.settings} />
+    <RuleGuideEditor guide={data.settings.config.ruleGuide} />
   {/key}
 
   <RecentChanges lastChange={data.lastChange} />
