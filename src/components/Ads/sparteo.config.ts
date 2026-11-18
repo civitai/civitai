@@ -1,8 +1,6 @@
-/**
- * Sparteo's head tag. `null` renders nothing even with the `sparteoAds` flag on; set it from the
- * tag Sparteo issues for civitai.com, never a guessed URL.
- */
-export const SPARTEO_TAG_SRC: string | null = null;
+/** Sparteo's head tag for civitai.com, as issued in its platform (property → Get integration tag). */
+export const SPARTEO_TAG_SRC: string | null =
+  'https://www.flashb.id/universal/f812656a-2eb5-5363-b9fb-90c27d71eb79.js';
 
 export type SparteoTcfRequirements = {
   vendorId: number;
