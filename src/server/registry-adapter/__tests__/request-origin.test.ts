@@ -110,7 +110,38 @@ describe('🔴 a region the site blocks is held to SFW as well', () => {
   });
 });
 
+describe('🔴 meta is ignored until REGISTRY_ADAPTER_TRUST_META is 1', () => {
+  it.each([
+    ['unset', undefined],
+    ['0', '0'],
+    ['true (only "1" turns it on)', 'true'],
+  ])(
+    'flag %s: meta DE does not release the header GB, nor an origin with no headers',
+    async (_name, flag) => {
+      if (flag !== undefined) vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', flag);
+      const { regionRestricted } = await load(undefined);
+      expect(
+        regionRestricted({ headers: { 'cf-ipcountry': 'GB' }, meta: { country: 'DE' } }, NOW)
+      ).toBe(true);
+      expect(regionRestricted({ headers: {}, meta: { country: 'DE' } }, NOW)).toBe(true);
+    }
+  );
+
+  it('positive control: with the flag at 1 the same meta DE releases both', async () => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+    const { regionRestricted } = await load(undefined);
+    expect(
+      regionRestricted({ headers: { 'cf-ipcountry': 'GB' }, meta: { country: 'DE' } }, NOW)
+    ).toBe(false);
+    expect(regionRestricted({ headers: {}, meta: { country: 'DE' } }, NOW)).toBe(false);
+  });
+});
+
 describe('🔴 a region value in the request’s meta is judged as its header is', () => {
+  beforeEach(() => {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
+  });
+
   it.each([
     // The site's default block list: GB.
     ['meta GB, no headers: held', true, { country: 'GB' }, {}],

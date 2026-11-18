@@ -62,8 +62,8 @@ export type RequestOrigin = {
 };
 
 /**
- * The `meta` key each region header is read from. The names are the gateway's and not settled
- * yet: a rename is a change here alone.
+ * The `meta` key each region header is read from, as the gateway sets them: a rename is a change
+ * here alone.
  */
 export const REGION_META_KEYS = {
   'cf-ipcountry': 'country',
@@ -71,9 +71,19 @@ export const REGION_META_KEYS = {
   'x-isuk': 'isuk',
 } as const;
 
+/**
+ * Whether `meta` is believed at all (`REGISTRY_ADAPTER_TRUST_META=1`). Off until the gateway sets
+ * every {@link REGION_META_KEYS} key from the edge's headers: before that, a relay passes on the
+ * `meta` its caller sent, which would let a caller name its own country.
+ */
+export function metaTrusted(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.REGISTRY_ADAPTER_TRUST_META === '1';
+}
+
 /** `origin`'s headers with each region header replaced by its `meta` key, when that is a string. */
 function regionHeaders(origin: RequestOrigin): RequestOrigin['headers'] {
   const headers = { ...origin.headers };
+  if (!metaTrusted()) return headers;
   for (const [header, key] of Object.entries(REGION_META_KEYS)) {
     const value = origin.meta?.[key];
     if (typeof value === 'string') headers[header] = value;

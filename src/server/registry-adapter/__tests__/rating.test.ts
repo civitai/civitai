@@ -41,14 +41,17 @@ import {
 // The site reads its region lists when its module loads, so they are set before any import: one
 // country restricted to SFW (`ZY`) and the site's default block list spelled out (`GB`). Every
 // other case is sent from `DE` (`UNRESTRICTED_ORIGIN`), which neither list names, so only the
-// production-rule cases below see them.
+// production-rule cases below see them. `meta` is believed here, as it is once the gateway sets it
+// (`metaTrusted`); request-origin.test.ts covers the adapter with it off.
 const regionEnvBefore = vi.hoisted(() => {
   const before = {
     REGION_RESTRICTION_CONFIG: process.env.REGION_RESTRICTION_CONFIG,
     REGION_BLOCK_CONFIG: process.env.REGION_BLOCK_CONFIG,
+    REGISTRY_ADAPTER_TRUST_META: process.env.REGISTRY_ADAPTER_TRUST_META,
   };
   process.env.REGION_RESTRICTION_CONFIG = 'ZY:2025-01-01';
   process.env.REGION_BLOCK_CONFIG = 'GB:2025-07-24';
+  process.env.REGISTRY_ADAPTER_TRUST_META = '1';
   return before;
 });
 // The environment is the worker's, so it is put back for the files that run after this one.
