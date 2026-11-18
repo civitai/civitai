@@ -20,10 +20,7 @@ type MoreLikeThisFlags = Pick<FeatureAccess, 'imageSearch' | 'feedSearch' | 'mor
 export const offersMoreLikeThis = (features: MoreLikeThisFlags) =>
   !!features.moreLikeThis && offersImageSearch(features);
 
-/**
- * Images "more like this" can't search from, as Remix refuses image-to-image: blocked, flagged as
- * possibly a minor or a real person, or not scanned yet. Offering it there only ends in an error.
- */
+/** Images "more like this" can't search from: the ones Remix refuses image-to-image. */
 export function isMoreLikeThisRefused(image: MoreLikeThisImage) {
   if (image.ingestion === ImageIngestionStatus.Blocked || image.blockedFor) return true;
   if (image.minor || image.poi) return true;
@@ -41,7 +38,6 @@ export function isMoreLikeThisVisible(features: MoreLikeThisFlags, image: MoreLi
 export const moreLikeThisHref = (features: Pick<FeatureAccess, 'feedSearch'>, imageId: number) =>
   features.feedSearch ? `/images?similarTo=${imageId}` : `/search/images?similarTo=${imageId}`;
 
-/** A click that asks for a new tab: Ctrl or Cmd, Shift, or the middle button. */
 export const wantsNewTab = (event: {
   ctrlKey: boolean;
   metaKey: boolean;
