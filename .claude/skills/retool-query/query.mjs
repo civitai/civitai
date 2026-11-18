@@ -27,10 +27,7 @@ const skillDir = __dirname;
 const projectRoot = resolve(__dirname, '../../..');
 
 function loadEnv() {
-  const envFiles = [
-    resolve(skillDir, '.env'),
-    resolve(projectRoot, '.env'),
-  ];
+  const envFiles = [resolve(skillDir, '.env'), resolve(projectRoot, '.env')];
 
   for (const envPath of envFiles) {
     try {
@@ -167,15 +164,21 @@ async function main() {
     const elapsed = Date.now() - start;
 
     if (jsonOutput) {
-      console.log(JSON.stringify({
-        rows: result.rows,
-        rowCount: result.rowCount,
-        elapsed,
-        fields: result.fields?.map(f => f.name)
-      }, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            rows: result.rows,
+            rowCount: result.rowCount,
+            elapsed,
+            fields: result.fields?.map((f) => f.name),
+          },
+          null,
+          2
+        )
+      );
     } else {
       if (!quiet && result.fields) {
-        console.log('Columns:', result.fields.map(f => f.name).join(', '));
+        console.log('Columns:', result.fields.map((f) => f.name).join(', '));
         console.log('\u2500'.repeat(60));
       }
 
