@@ -61,7 +61,7 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
-  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
+  import { buildDatasetZip, runZipTrigger, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
@@ -321,7 +321,8 @@
           ext: (item.path && extOfAir(item.path)) || airExt(item.air),
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
-        }))
+        })),
+        runZipTrigger(d.settings.training)
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
