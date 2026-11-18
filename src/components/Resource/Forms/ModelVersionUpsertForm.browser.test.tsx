@@ -2,6 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import { useRouter } from 'next/router';
 
 /**
  * The monetization section is disclosed in three steps — charge intent, then the rights affirmation,
@@ -1192,5 +1193,35 @@ describe('ModelVersionUpsertForm — remembered paid access', () => {
     // Published, so there is no timed window to restore into. Shortening it to something on offer would
     // be a price-relevant choice made on the creator's behalf; the gate is left for them to set.
     await expect.element(accessSwitch()).not.toBeChecked();
+  });
+});
+
+// The model wizard keeps ?templateId= in the URL on every step. Forwarded on a save of a version that
+// already exists, the server creates another version from the template: a duplicate draft, checked for a
+// rights affirmation it can't have, while this form (reading the saved, affirmed version) shows no
+// checkbox to give one. hq:model_upload_cant_1rw0.
+describe('ModelVersionUpsertForm — back in the wizard from a template', () => {
+  const router = useRouter();
+  beforeEach(() => {
+    router.query = { templateId: '2237711' };
+    return () => {
+      router.query = {};
+    };
+  });
+
+  test('saving an affirmed, priced version edits it instead of re-creating it', async () => {
+    renderChargingForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(page.getByRole('button', { name: 'Restore the stored settings' }));
+    expect(rightsCheckbox().elements()).toHaveLength(0);
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ id: 456, licensingFee: 2 });
+    expect(payload.paidAccess).toBeTruthy();
+    expect(payload.templateId).toBeUndefined();
   });
 });

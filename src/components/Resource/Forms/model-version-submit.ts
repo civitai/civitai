@@ -213,10 +213,13 @@ export function decideModelVersionSubmit(
     };
   }
 
+  // A template seeds the FIRST save only. Once the version exists, the server reads id + templateId as
+  // "create another version", so each later save made a duplicate draft and checked the rights
+  // affirmation against that new row while the form, reading the saved one, showed no checkbox.
+  const templateId = ctx.versionId ? undefined : ctx.templateId;
   const shouldSubmit =
     ctx.isDirty ||
     !ctx.versionId ||
-    !!ctx.templateId ||
     !!ctx.bountyId ||
     !isEqual(data.paidAccessConfig, ctx.storedPaidAccessConfig);
   if (!shouldSubmit) return { kind: 'skip' };
@@ -251,7 +254,7 @@ export function decideModelVersionSubmit(
       baseModelType: data.baseModelType,
       monetization: ctx.monetizationBlocked ? null : data.monetization,
       recommendedResources,
-      templateId: ctx.templateId,
+      templateId,
       bountyId: ctx.bountyId,
     },
   };
