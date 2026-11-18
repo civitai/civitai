@@ -25,7 +25,7 @@ type WriteMock = {
     findUnique: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
-  apiKey: { deleteMany: ReturnType<typeof vi.fn> };
+  apiKey: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   appBlockPublishRequest: { create: ReturnType<typeof vi.fn> };
   appListingModerationEvent: { create: ReturnType<typeof vi.fn> };
 };
@@ -43,7 +43,10 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
       findUnique: vi.fn(async () => ({ appId: 'appblk-reset', status: 'suspended' })),
       count: vi.fn(async () => 0),
     },
-    apiKey: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
     appBlockPublishRequest: { create: vi.fn(async (a: { data: unknown }) => a.data) },
     appListingModerationEvent: { create: vi.fn(async (a: { data: unknown }) => a.data) },
   };
@@ -63,6 +66,12 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
+  deleteAuthSubject: vi.fn(async () => undefined),
+}));
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
 }));
@@ -138,6 +147,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ appId: 'appblk-reset', status: 'suspended' });
   mockWrite.appBlock.count.mockReset().mockResolvedValue(0);
+  mockWrite.apiKey.findMany.mockReset().mockResolvedValue([{ userId: 7 }]);
   mockWrite.apiKey.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlockPublishRequest.create
     .mockReset()
@@ -169,6 +179,8 @@ describe('resetOnsiteListingToPending', () => {
     expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
       where: { clientId: 'appblk-reset', type: { in: ['Access', 'Refresh'] } },
     });
+    const orchestrator = await import('~/server/services/orchestrator/civitai');
+    expect(orchestrator.revokeCivitaiUserTokens).toHaveBeenCalledWith({ userId: 7 });
     // (3) fresh pending block publish request cloned from the last approved (owner-owned).
     const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
     expect(reqArg).toMatchObject({

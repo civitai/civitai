@@ -4677,7 +4677,7 @@ async function approveRequestUnderClaim(
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
-  const { lateHoldIds } = await dbWrite.$transaction((tx) =>
+  const { lateHoldIds, revokedTokens } = await dbWrite.$transaction((tx) =>
     finaliseOnsiteApprove(tx, {
       holdDecision,
       reviewerUserId: params.reviewerUserId,
@@ -4693,6 +4693,8 @@ async function approveRequestUnderClaim(
   // A held version must not build, deploy or be announced; a moderator clears the hold first.
   // The suspended block stops only the on-site runtime, so the live pointer comes down too.
   if (lateHoldIds.length) {
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
     // The store listing was put back in the same transaction; drop the cached catalog copy.
     try {
       const { bustAppListingCatalogCache } = await import(

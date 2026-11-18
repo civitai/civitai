@@ -118,8 +118,8 @@ export async function finaliseOnsiteApprove(
           screenshots: input.screenshots,
         },
   });
-  if (!late.length) return { lateHoldIds: late };
-  await revokeAppBlockOauthTokens(tx, input.appBlockId);
+  if (!late.length) return { lateHoldIds: late, revokedTokens: null };
+  const revoked = await revokeAppBlockOauthTokens(tx, input.appBlockId);
   // The held version's client ceiling and store copy go back to what they were before step (3).
   if (input.priorVersion) {
     await tx.oauthClient.update({
@@ -135,7 +135,7 @@ export async function finaliseOnsiteApprove(
       where: { appBlockId: input.appBlockId, kind: 'onsite' },
       data: { status: 'pending' },
     });
-    return { lateHoldIds: late };
+    return { lateHoldIds: late, revokedTokens: revoked };
   }
   // Only a listing that was going live is left for that re-approve. Any other status (a delisted
   // app) goes back as it was, so the re-approve never republishes it.
@@ -149,5 +149,5 @@ export async function finaliseOnsiteApprove(
     const { writeListingIssueTrackerUrl } = await import('./app-listing-issue-tracker.service');
     await writeListingIssueTrackerUrl(tx, id, issueTracker.value);
   }
-  return { lateHoldIds: late };
+  return { lateHoldIds: late, revokedTokens: revoked };
 }

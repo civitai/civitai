@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { revokeAppBlockOauthTokens } from '~/server/services/blocks/app-block-token-revoke.service';
 
 type Block = { id: string; appId: string; status: string };
-type Key = { id: number; clientId: string | null; type: string };
+type Key = { id: number; clientId: string | null; type: string; userId?: number };
 
 // An in-memory AppBlock + ApiKey pair that answers the three calls the helper makes, so the
 // deletes are checked on rows, not on call shapes.
@@ -17,6 +17,10 @@ function store(blocks: Block[], keys: Key[]) {
         ).length,
     },
     apiKey: {
+      findMany: async ({ where }: { where: { clientId: string; type: { in: string[] } } }) =>
+        keys
+          .filter((k) => k.clientId === where.clientId && where.type.in.includes(k.type))
+          .map((k) => ({ userId: k.userId })),
       deleteMany: async ({ where }: { where: { clientId: string; type: { in: string[] } } }) => {
         const doomed = keys.filter(
           (k) => k.clientId === where.clientId && where.type.in.includes(k.type)
@@ -37,14 +41,17 @@ describe('revokeAppBlockOauthTokens', () => {
         { id: 'apb_live', appId: 'appblk-live', status: 'approved' },
       ],
       [
-        { id: 1, clientId: 'appblk-held', type: 'Access' },
-        { id: 2, clientId: 'appblk-held', type: 'Refresh' },
+        { id: 1, clientId: 'appblk-held', type: 'Access', userId: 11 },
+        { id: 2, clientId: 'appblk-held', type: 'Refresh', userId: 12 },
         { id: 3, clientId: 'appblk-live', type: 'Access' },
         { id: 4, clientId: null, type: 'User' },
         { id: 5, clientId: 'appblk-held', type: 'User' },
       ]
     );
-    expect(await revokeAppBlockOauthTokens(tx, 'apb_held')).toBe(2);
+    expect(await revokeAppBlockOauthTokens(tx, 'apb_held')).toEqual({
+      clientId: 'appblk-held',
+      userIds: [11, 12],
+    });
     expect(keys.map((k) => k.id)).toEqual([3, 4, 5]);
   });
 
@@ -54,7 +61,7 @@ describe('revokeAppBlockOauthTokens', () => {
         [{ id: 'apb_1', appId: 'client-1', status }],
         [{ id: 1, clientId: 'client-1', type: 'Access' }]
       );
-      expect(await revokeAppBlockOauthTokens(tx, 'apb_1')).toBe(0);
+      expect(await revokeAppBlockOauthTokens(tx, 'apb_1')).toBeNull();
       expect(keys).toHaveLength(1);
     }
   });
@@ -67,7 +74,7 @@ describe('revokeAppBlockOauthTokens', () => {
       ],
       [{ id: 1, clientId: 'shared', type: 'Access' }]
     );
-    expect(await revokeAppBlockOauthTokens(tx, 'apb_a')).toBe(0);
+    expect(await revokeAppBlockOauthTokens(tx, 'apb_a')).toBeNull();
     expect(keys).toHaveLength(1);
   });
 
@@ -77,15 +84,18 @@ describe('revokeAppBlockOauthTokens', () => {
         { id: 'apb_a', appId: 'shared', status: 'suspended' },
         { id: 'apb_b', appId: 'shared', status: 'suspended' },
       ],
-      [{ id: 1, clientId: 'shared', type: 'Access' }]
+      [{ id: 1, clientId: 'shared', type: 'Access', userId: 3 }]
     );
-    expect(await revokeAppBlockOauthTokens(tx, 'apb_b')).toBe(1);
+    expect(await revokeAppBlockOauthTokens(tx, 'apb_b')).toEqual({
+      clientId: 'shared',
+      userIds: [3],
+    });
     expect(keys).toHaveLength(0);
   });
 
   it('a missing block deletes nothing', async () => {
     const { tx, keys } = store([], [{ id: 1, clientId: 'appblk-x', type: 'Access' }]);
-    expect(await revokeAppBlockOauthTokens(tx, 'apb_gone')).toBe(0);
+    expect(await revokeAppBlockOauthTokens(tx, 'apb_gone')).toBeNull();
     expect(keys).toHaveLength(1);
   });
 });

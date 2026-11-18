@@ -28,7 +28,10 @@ function fakeTx() {
       findUnique: vi.fn(async () => ({ appId: 'appblk-app-a', status: 'suspended' })),
       count: vi.fn(async () => 0),
     },
-    apiKey: { deleteMany: vi.fn(async () => ({ count: 1 })) },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    },
     oauthClient: { update: vi.fn(async () => ({})) },
     appListing: {
       findUnique: vi.fn(async (): Promise<unknown> => null),
@@ -66,6 +69,7 @@ describe('finaliseOnsiteApprove', () => {
     const tx = fakeTx();
     await expect(finaliseOnsiteApprove(tx as never, input)).resolves.toEqual({
       lateHoldIds: [12],
+      revokedTokens: { clientId: 'appblk-app-a', userIds: [7] },
     });
     // The held sha is not marked current, so no restore or rebuild can serve it.
     expect(tx.appBlock.update).toHaveBeenCalledWith({
