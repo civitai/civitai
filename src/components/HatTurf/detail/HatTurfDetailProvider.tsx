@@ -26,9 +26,10 @@ export function HatTurfDetailProvider({
 }) {
   const gate = useHatTurfDetail();
   const imageIds = useMemo(() => images.filter(takesHats).map((image) => image.id), [images]);
-  // Today's flags, so a flag shows its flag badge and takes stacked hats here as on the home row.
+  // Today's flags, so a flag shows its flag badge and takes stacked hats here as on the home row, and
+  // past days', so an old flag shows who won it.
   const features = useFeatureFlags();
-  const flagRow = useFlagRow(features.flagRace ? gate?.event : undefined);
+  const flagRow = useFlagRow(features.flagRace ? gate?.event : undefined, { past: true });
   return (
     <FlagRaceContext.Provider value={flagRow}>
       <TurfSummaryProvider imageIds={imageIds} gate={gate}>

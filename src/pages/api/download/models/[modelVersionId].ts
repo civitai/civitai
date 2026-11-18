@@ -226,7 +226,10 @@ export function createModelDownloadHandler(
         }
 
         // Check if user is blacklisted
-        const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+        const session = await getApiAuthSession(
+          { req, res },
+          { whenBanned: 'anonymous', scope: 'selfGated' }
+        );
         const credential = await checkDownloadCredential(req, session?.user, {
           route,
           requiredScope: TokenScope.ModelsRead,

@@ -1,4 +1,5 @@
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { assertNoBlockMediaInputs } from '~/server/services/blocks/block-media-input-guard';
 import { isoDatetimeCompat } from '@civitai/shared/iso-datetime-compat';
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError, getTRPCErrorFromUnknown, type TRPCMiddlewareFunction } from '@trpc/server';
@@ -7526,10 +7527,16 @@ export const blocksRouter = router({
    * owner affordance above does not widen it: an author's RATED above-ceiling
    * image is still `hidden` from them.
    *
-   * The read is scoped to bare (post-less) rows THIS app PUBLISHED (the
-   * `blockPublishedAppId` provenance marker = the token's own `appId`), so a
-   * block reads only its OWN grid — never another app's images or a
-   * post-deletion-orphaned row. Like the block catalog reads (public, maturity-
+   * The read is scoped to bare (post-less) rows THIS app PUBLISHED, or viewer
+   * uploads it was allowed to SHARE (the `blockPublishedAppId` /
+   * `blockSharedUploadAppId` provenance marker = the token's own `appId`, both only
+   * ever stamped from a verified token), so a block reads only its OWN images —
+   * never another app's or a post-deletion-orphaned row. A viewer-picked upload
+   * carries the shared marker only when the app opted in to share it
+   * (`share: true`) and the host told the viewer so; a shared row is shown only once
+   * terminally scanned, rated, unflagged and within the viewer's AND the SFW
+   * ceiling, with no owner `ratingPending` branch (`getBlockGatedImagesByIds`). The
+   * app's bytes uploads (`blockUploadedAppId`) are never read here. Like the block catalog reads (public, maturity-
    * clamped data), it authorizes ANY valid block token for the app — NOT the
    * author capability (`assertViewerIsAppDeveloper`), so the grid renders for the
    * app's real audience, not just developers. Auth is still required so the clamp
@@ -7696,8 +7703,7 @@ export const blocksRouter = router({
           position: input.position,
           viewerUserId: auth.userId,
           claims: auth.claims,
-          // A preview returns no snapshot, so nothing is minted.
-          view: { serving: (await resolveBlockOutputRules(auth.claims)).serving, mint: null },
+          view: { ...(await resolveBlockOutputRules(auth.claims)), mint: null },
         },
         deps
       );
@@ -8067,6 +8073,8 @@ export const blocksRouter = router({
       if (input.body.kind !== 'training' && env.BLOCKS_ENFORCE_GENERATION_STATUS) {
         await assertBlockGenerationAllowed(subjectId);
       }
+      // Above every `kind` branch: a host media url is never an input, on any path.
+      assertNoBlockMediaInputs(input.body, { appBlockId: claims.appBlockId, phase: 'submit' });
       // App Blocks customComfy bridge (v1) — the SECURITY-CRITICAL post-paid
       // path. Branch to the dedicated handler (page-only guard + entitlement +
       // prompt audit + the §5.3 timeout-cap budget belt). The textToImage path
@@ -10919,6 +10927,7 @@ async function estimateBlockWorkflowCell(
   claims: BlockClaims,
   input: { body: BlockWorkflowBody; storeQuotes?: boolean }
 ) {
+  assertNoBlockMediaInputs(input.body, { appBlockId: claims.appBlockId, phase: 'estimate' });
   // App Blocks customComfy bridge (v1): a fixed server-authored recipe has no
   // whatIf-able cost, so estimate returns the recipe's per-engine DISPLAY
   // estimate. The textToImage path below stays byte-identical (we only ADD a
@@ -11218,7 +11227,6 @@ async function estimateBlockWorkflowCell(
   return {
     snapshot: snapshotFromWorkflow(
       whatIfResult,
-      // An estimate has no outputs to mint.
       { ...blockOutputCeilingFromClaims(claims), serving: false, mint: null },
       {
         modelSubstitutions,

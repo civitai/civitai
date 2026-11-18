@@ -340,21 +340,42 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && !!result.article.coverImage).toBe(shown);
   });
 
-  // The banner stands in for a missing cover, under the same servable rule.
+  // The banner is its own field, under the same servable rule as the cover.
   it.each([
     ['not scanned', { ingestion: 'Pending' }, undefined],
     ['awaiting review', { needsReview: 'minor' }, undefined],
     ['scanned and clear', {}, 6],
-  ])('with no cover, shows a banner that is %s', async (_, over, shownId) => {
+  ])('returns a banner that is %s as bannerImage: %s', async (_, over, shownId) => {
     articles({ coverImage: null, bannerImage: cover({ id: 6, ...over }) });
     const result = await read();
     expect(result.status).toBe('ok');
-    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(shownId);
+    expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(shownId);
+    // The banner no longer stands in for the cover.
+    expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
   });
 
-  it('shows the cover over the banner', async () => {
+  it('returns the cover and the banner each in its own field', async () => {
     articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
     const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+    expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(6);
+  });
+
+  it('returns no banner for an article without one, and the cover unchanged', async () => {
+    articles({ coverImage: cover({}) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+    expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
+  });
+
+  it('🔴 returns no banner that its model withholds, and still returns the cover', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+        ? [{ id: 6 }]
+        : []) as never);
+    articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
     expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
   });
 
@@ -376,18 +397,27 @@ describe('getArticleByShareToken: cover and viewer', () => {
       dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
     });
 
-    it('🔴 shows no cover, and not the banner, when the cover is a restricted minor image', async () => {
+    it('🔴 shows no cover when the cover is a restricted minor image, and still the clear banner', async () => {
       articles({ coverImage: cover({ minor: true, nsfwLevel: 4 }), bannerImage: cover({ id: 6 }) });
       const result = await read();
       expect(result.status).toBe('ok');
       expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+      expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(6);
     });
 
-    it('🔴 with no cover, shows no banner that is a restricted minor image', async () => {
+    it('🔴 shows no banner that is a restricted minor image', async () => {
       articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 4 }) });
       const result = await read();
       expect(result.status).toBe('ok');
-      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+      expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
+    });
+
+    it('shows a minor-flagged banner rated PG-13, without the flag (control)', async () => {
+      articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 2 }) });
+      const result = await read();
+      const shown = result.status === 'ok' ? result.article.bannerImage : undefined;
+      expect(shown?.id).toBe(6);
+      expect(shown).not.toHaveProperty('minor');
     });
 
     it.each([

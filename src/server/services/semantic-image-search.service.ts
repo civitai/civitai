@@ -79,7 +79,7 @@ export async function searchSemanticImages({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
 
   const [hidden, addonData, blockedTags, namedUserIds, namedTagIds] = await Promise.all([
