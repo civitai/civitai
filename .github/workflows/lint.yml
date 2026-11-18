@@ -1154,8 +1154,9 @@ jobs:
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() }}
-        # Telemetry only: a failed upload must never turn a green suite red.
-        continue-on-error: true
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-packages-a${{ github.run_attempt }}
@@ -1368,8 +1369,9 @@ jobs:
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
-        # Telemetry only: a failed upload must never turn a green suite red.
-        continue-on-error: true
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-component-${{ matrix.shard }}-a${{ github.run_attempt }}
@@ -1518,8 +1520,9 @@ jobs:
       # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
-        # Telemetry only: a failed upload must never turn a green suite red.
-        continue-on-error: true
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
         uses: actions/upload-artifact@v7
         with:
           name: test-times-geometry-a${{ github.run_attempt }}
