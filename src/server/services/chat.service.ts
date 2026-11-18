@@ -647,11 +647,12 @@ export const createMessage = async ({
     }
   }
 
-  // An Invited member who sends without pressing Join (an API client never sees
-  // the button) is joined by the send, so the history reads "X joined" before
-  // their first message instead of after it.
+  // Sending is joining: an API client never sees the Join button.
   const sender = userId !== -1 ? chat.chatMembers.find((cm) => cm.userId === userId) : undefined;
-  const { resp, joinNotice } = await dbWrite.$transaction(async (tx) => {
+  // Only a join needs the writes below to roll back together; every other send skips the transaction.
+  const inTx = <T>(fn: (tx: Prisma.TransactionClient) => Promise<T>) =>
+    sender?.status === ChatMemberStatus.Invited ? dbWrite.$transaction(fn) : fn(dbWrite);
+  const { resp, joinNotice } = await inTx(async (tx) => {
     const joinNotice =
       sender?.status === ChatMemberStatus.Invited
         ? await joinInvitedSender(tx, {
@@ -759,16 +760,7 @@ export const createMessage = async ({
               },
             })
             .then((embedResp) => {
-              withSignals(() =>
-                fetch(
-                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                  {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                  }
-                )
-              ).catch(() => undefined);
+              signalNewMessage(chatId, embedResp as ChatAllMessages[number]);
             });
         } else {
           safeUnfurl(href)
@@ -792,16 +784,7 @@ export const createMessage = async ({
                 include: { referenceMessage: { select: chatReferenceMessageSelect } },
               });
 
-              withSignals(() =>
-                fetch(
-                  `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-                  {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(embedResp as ChatAllMessages[number]),
-                  }
-                )
-              ).catch(() => undefined);
+              signalNewMessage(chatId, embedResp as ChatAllMessages[number]);
             })
             .catch(() => undefined);
         }

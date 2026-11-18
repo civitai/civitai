@@ -4,12 +4,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { SignalMessages } from '~/server/common/enums';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 
-/**
- * An Invited member who posts without pressing Join (every API client, since only
- * the UI shows the button) used to stay Invited: the UI then asked them to join,
- * and joining posted "X joined" below everything they had already said.
- * `createMessage` now joins them as part of the send. Ids are invented.
- */
+/** Sending as an Invited member joins the chat, as pressing Join would. Ids are invented. */
 
 const h = vi.hoisted(() => ({
   signals: [] as { url: string; body: string }[],
@@ -98,7 +93,9 @@ beforeEach(() => {
   }: {
     data: Omit<Message, 'id' | 'createdAt'> & { createdAt?: Date };
   }) => {
-    const row = { ...data, id: messages.length + 1, createdAt: data.createdAt ?? new Date() };
+    // A row without an explicit createdAt lands visibly later, so the notice's own stamp is what's tested.
+    const createdAt = data.createdAt ?? new Date(Date.now() + 60_000);
+    const row = { ...data, id: messages.length + 1, createdAt };
     messages.push(row);
     return { ...row, referenceMessage: null };
   }) as never);
@@ -118,7 +115,8 @@ describe('createMessage from an Invited member', () => {
       [-1, 'agent-bot joined'],
       [AGENT, 'first'],
     ]);
-    expect(agent().joinedAt!.getTime()).toBeLessThanOrEqual(messages[1].createdAt.getTime());
+    expect(messages[0].createdAt).toEqual(agent().joinedAt);
+    expect(messages[0].createdAt.getTime()).toBeLessThanOrEqual(messages[1].createdAt.getTime());
   });
 
   it('does not send the message signal until the notice signal has landed', async () => {
@@ -194,17 +192,15 @@ describe('createMessage from an Invited member', () => {
 });
 
 describe('createMessage does not join anyone else', () => {
-  it('leaves a Joined sender alone and posts no notice', async () => {
+  it('leaves a Joined sender alone, and the Invited recipient Invited', async () => {
     await send(OWNER);
 
     expect(dbMock.dbWrite.chatMember.updateMany).not.toHaveBeenCalled();
     expect(messages.map((m) => m.userId)).toEqual([OWNER]);
-  });
-
-  it('leaves the Invited recipient Invited: being messaged is not joining', async () => {
-    await send(OWNER);
-
+    // Being messaged is not joining.
     expect(agent().status).toBe(ChatMemberStatus.Invited);
+    // Nothing to roll back, so no transaction on the common path.
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it.each([ChatMemberStatus.Left, ChatMemberStatus.Kicked, ChatMemberStatus.Ignored])(
