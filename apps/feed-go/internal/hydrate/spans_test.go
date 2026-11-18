@@ -151,7 +151,10 @@ func TestJoinSpan(t *testing.T) {
 // is off (no Tracer) under a recording one; and none for an answer kept in recent (write-back off):
 // it is a map read, no wait.
 //
-// Fails on: the recording check dropped (the unsampled and bare cases); a span on the recent path.
+// Fails on: the recording check dropped (the "no span" case: the joiner's span would be a sampled
+// root); a span on the recent path. The "unsampled" case is an invariant guard only: under the
+// parent-based sampler a span started under an unsampled parent does not record and never reaches
+// the recorder, so it passes with the recording check dropped too.
 func TestJoinSpanOnlyWhenTraced(t *testing.T) {
 	tracer, rec := spanRecorder(t)
 	lctx, leader := tracer.Start(context.Background(), "serve leader")
@@ -213,18 +216,19 @@ func lockWait(ctx context.Context, t *testing.T, tracer trace.Tracer, fill, keyE
 
 // The wait on another process's populate lock is one `metrics lock wait` span under the request's:
 // the ids waited on, the Redis reads made and the outcome, exactly those attributes. Filled is unset
-// status; exhausted (15 reads, nothing landed), the context's deadline and a failed read are the
-// error status, by class.
+// status; exhausted (15 reads, nothing landed), the context's deadline or cancellation and a failed
+// read are the error status, by class.
 //
 // Fails on: the span dropped or not under the request (count / parent); polls miscounted (1 / 15 / 0
-// / 1); an outcome misclassified, e.g. exhausted or a deadline read as read_error; the status not
-// set on a failure.
+// / 0 / 1); an outcome misclassified, e.g. exhausted, a deadline or a cancellation read as
+// read_error; the status not set on a failure.
 func TestMetricsLockWaitSpan(t *testing.T) {
 	tracer, rec := spanRecorder(t)
 	for _, c := range []struct {
 		name          string
 		fill, keyErr  bool
 		expired       bool
+		cancelled     bool
 		polls         string
 		outcome       string
 		code          codes.Code
@@ -233,6 +237,7 @@ func TestMetricsLockWaitSpan(t *testing.T) {
 		{name: "filled", fill: true, polls: "1", outcome: "filled", code: codes.Unset},
 		{name: "exhausted", polls: "15", outcome: "exhausted", code: codes.Error, class: "other", errTyp: "*errors.errorString"},
 		{name: "deadline", expired: true, polls: "0", outcome: "ctx_done", code: codes.Error, class: "deadline"},
+		{name: "cancelled", cancelled: true, polls: "0", outcome: "ctx_done", code: codes.Error, class: "canceled", errTyp: "*errors.errorString"},
 		{name: "read error", keyErr: true, polls: "1", outcome: "read_error", code: codes.Error, class: "other", errTyp: "*errors.errorString"},
 	} {
 		rec.Reset()
@@ -242,6 +247,10 @@ func TestMetricsLockWaitSpan(t *testing.T) {
 			// Already past its deadline: the wait ends before its first read, deterministically.
 			cancel()
 			wctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+		}
+		if c.cancelled {
+			// Cancelled, not past a deadline: context.Canceled, before the first read.
+			cancel()
 		}
 		err := lockWait(wctx, t, tracer, c.fill, c.keyErr)
 		cancel()
@@ -276,7 +285,9 @@ func TestMetricsLockWaitSpan(t *testing.T) {
 
 // No wait span without a recording request span, without a Tracer, or with nothing to wait on.
 //
-// Fails on: the recording / Tracer check dropped; a span for an empty wait.
+// Fails on: the recording check dropped (the "no span" case: the wait span would be a sampled root);
+// the Tracer check dropped (a nil Tracer then panics); a span for an empty wait. The "unsampled" case
+// is an invariant guard only, for the reason TestJoinSpanOnlyWhenTraced gives.
 func TestMetricsLockWaitSpanOnlyWhenTraced(t *testing.T) {
 	tracer, rec := spanRecorder(t)
 	for name, ctx := range map[string]context.Context{"unsampled": unsampled(), "no span": context.Background()} {

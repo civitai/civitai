@@ -303,7 +303,9 @@ func TestRedisHook(t *testing.T) {
 // the system, operation and row count only: never the SQL (the metrics read inlines its ids), the
 // request URL (it carries the query) or the login. A failure is the error status (its class) and
 // error.type, never the exception text (it quotes the query); a timeout is `deadline`. Under an
-// unsampled request, or none, no span is started.
+// unsampled request, or none, no span is started. Only the no-span case fails with the recording
+// check dropped (the read's span would be a sampled root); the unsampled case is an invariant guard,
+// since under the parent-based sampler a span started under an unsampled parent does not record.
 func TestClickHouseTracer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -382,7 +384,8 @@ func TestClickHouseTracer(t *testing.T) {
 		}
 	}
 
-	// No recording request span (unsampled, or none at all): the read runs, nothing is started.
+	// No recording request span (unsampled, or none at all): the read runs, nothing is started. The
+	// root (context.Background) case is the one that catches a dropped recording check.
 	rec.Reset()
 	uctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
 		TraceID: traceID(t, "4bf92f3577b34da6a3ce929d0e0e4736"), SpanID: trace.SpanID{1}}))
