@@ -41,27 +41,17 @@ export async function revokeAppBlockOauthTokens(
 }
 
 /**
- * After the suspending transaction commits: drops what the orchestrator cached for the deleted
- * tokens, as every other OAuth token revoke does. Never throws.
+ * After the suspending transaction commits: drops the orchestrator's cached auth for each holder
+ * of a deleted token, as a client delete does. The auth subject itself is kept: the consent
+ * survives a suspension, and the subject carries that consent's spend window. Never throws.
  */
 export async function forgetRevokedAppTokens(revoked: RevokedAppTokens | null): Promise<void> {
   if (!revoked) return;
-  const [{ deleteAuthSubject }, { revokeCivitaiUserTokens }, logging] = await Promise.all([
-    import('~/server/http/orchestrator/api-key-spend'),
-    import('~/server/services/orchestrator/civitai'),
-    import('~/server/logging/client'),
-  ]);
-  await Promise.all(
-    revoked.userIds.map(async (userId) => {
-      await deleteAuthSubject({ userId, subject: { type: 'oauth', id: revoked.clientId } }).catch(
-        (err) =>
-          logging.logToAxiom({
-            type: 'oauth.delete-subject.failed',
-            message: `delete-subject failed for oauth client ${revoked.clientId} user ${userId}`,
-            error: logging.safeError(err),
-          })
-      );
+  try {
+    const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
+    for (const userId of revoked.userIds)
       await revokeCivitaiUserTokens({ userId }).catch(() => undefined);
-    })
-  );
+  } catch {
+    // A failed import leaves only the orchestrator's own cache expiry; the tokens are deleted.
+  }
 }

@@ -9,9 +9,6 @@ const { mockRevokeOrchestratorTokens } = vi.hoisted(() => ({
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
 }));
-vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
-  deleteAuthSubject: vi.fn(async () => undefined),
-}));
 vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
   ...(await importOriginal<typeof ManifestSubmitValidation>()),
   assertManifestValidAtSubmit: vi.fn(async () => undefined),

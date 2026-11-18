@@ -754,8 +754,8 @@ export async function delistListing(opts: {
 
   // Catalog bust: delist removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
-  await forgetRevokedAppTokens(revoked.value);
   const live = isOnsite && listing.appBlockId ? await takeDownLiveAppAfterCommit(listing.slug) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'removed', ...live };
 }
@@ -1777,9 +1777,9 @@ export async function resetOnsiteListingToPending(opts: {
 
   // Catalog bust: onsite reset-to-pending — same membership change as the offsite path.
   await bustAppListingCatalogCache().catch(() => undefined);
-  await forgetRevokedAppTokens(revoked.value);
   // The re-approval publishes again; until then the subdomain must not serve the old version.
   const live = await takeDownLiveAppAfterCommit(listing.slug);
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'pending', publishRequestId, ...live };
 }
@@ -1938,10 +1938,10 @@ export async function unpublishOwnListing(opts: {
 
   // Catalog bust: owner-unpublish removes the listing from the store catalog.
   await bustAppListingCatalogCache().catch(() => undefined);
-  await forgetRevokedAppTokens(revoked.value);
   // Widened back from the closure assignment (TypeScript cannot see through it).
   const slugToTakeDown = onsiteSlug as string | null;
   const live = slugToTakeDown ? await takeDownLiveAppAfterCommit(slugToTakeDown) : {};
+  await forgetRevokedAppTokens(revoked.value);
 
   return { appListingId: input.appListingId, status: 'removed', ...live };
 }

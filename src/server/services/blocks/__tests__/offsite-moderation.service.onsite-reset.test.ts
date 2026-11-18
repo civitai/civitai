@@ -69,9 +69,6 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   revokeCivitaiUserTokens: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
-  deleteAuthSubject: vi.fn(async () => undefined),
-}));
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: mockNotify,
 }));

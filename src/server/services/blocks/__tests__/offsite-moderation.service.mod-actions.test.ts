@@ -443,11 +443,8 @@ describe('delistListing', () => {
       reviewerUserId: REVIEWER,
     });
     expect(order).toEqual(['commit', 'orchestrator:7', 'orchestrator:8']);
-    expect(mockDeleteAuthSubject).toHaveBeenCalledWith({
-      userId: 7,
-      subject: { type: 'oauth', id: 'appblk-held-app' },
-    });
-    expect(mockDeleteAuthSubject).toHaveBeenCalledTimes(2);
+    // The consent survives a suspension, so its orchestrator subject (and spend window) stays.
+    expect(mockDeleteAuthSubject).not.toHaveBeenCalled();
   });
 
   it('a relist drops no orchestrator auth', async () => {

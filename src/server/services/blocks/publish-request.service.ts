@@ -4693,8 +4693,6 @@ async function approveRequestUnderClaim(
   // A held version must not build, deploy or be announced; a moderator clears the hold first.
   // The suspended block stops only the on-site runtime, so the live pointer comes down too.
   if (lateHoldIds.length) {
-    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
-    await forgetRevokedAppTokens(revokedTokens);
     // The store listing was put back in the same transaction; drop the cached catalog copy.
     try {
       const { bustAppListingCatalogCache } = await import(
@@ -4712,6 +4710,8 @@ async function approveRequestUnderClaim(
     }
     const { takeDownLiveApp } = await import('./live-unpublish.service');
     const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
     return {
       publishRequestId: request.id,
       appBlockId,
