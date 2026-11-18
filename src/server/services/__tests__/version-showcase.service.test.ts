@@ -268,25 +268,25 @@ describe('assertCoverImagesValid: which images may be a cover', () => {
     );
   });
 
-  it('refuses a community image as the .com cover of a mature model', async () => {
+  it('accepts a community image featured on civitai.com as the .com cover', async () => {
     featuredOn(77, ['com']);
     await expect(
-      cover.assertCoverImagesValid({ ...base, modelNsfw: true, sfwCoverImageId: 77 })
-    ).rejects.toThrow('On a mature model the civitai.com cover must be one of your own images.');
+      cover.assertCoverImagesValid({ ...base, sfwCoverImageId: 77 })
+    ).resolves.toBeUndefined();
   });
 
-  it('accepts it on a non-mature model when it is featured on civitai.com', async () => {
-    featuredOn(77, ['com']);
-    await expect(
-      cover.assertCoverImagesValid({ ...base, modelNsfw: false, sfwCoverImageId: 77 })
-    ).resolves.toBeUndefined();
+  it('refuses one rated above PG-13 as the .com cover', async () => {
+    featuredOn(77, ['com'], 4);
+    await expect(cover.assertCoverImagesValid({ ...base, sfwCoverImageId: 77 })).rejects.toThrow(
+      'The civitai.com cover must be an image rated PG or PG-13.'
+    );
   });
 
   it('refuses an image featured only on civitai.red as the .com cover', async () => {
     featuredOn(77, ['red']);
-    await expect(
-      cover.assertCoverImagesValid({ ...base, modelNsfw: false, sfwCoverImageId: 77 })
-    ).rejects.toThrow(/civitai.com cover/);
+    await expect(cover.assertCoverImagesValid({ ...base, sfwCoverImageId: 77 })).rejects.toThrow(
+      /civitai.com cover/
+    );
   });
 });
 

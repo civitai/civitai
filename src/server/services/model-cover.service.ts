@@ -23,20 +23,17 @@ import { isDefined } from '~/utils/type-guards';
 
 /**
  * A picked cover must be the creator's own published image on this model, or a community image the
- * creator featured in this model's showcase for that site. The .com one must be rated PG or PG-13,
- * and on a mature model it must be the creator's own: the model is listed on .com through its own
- * .com cover, and someone else's image must not decide that. Throws on the first id that is not.
+ * creator featured in this model's showcase for that site. The .com one must be rated PG or PG-13.
+ * Throws on the first id that is not.
  */
 export async function assertCoverImagesValid({
   modelId,
   ownerId,
-  modelNsfw,
   coverImageId,
   sfwCoverImageId,
 }: {
   modelId: number;
   ownerId: number;
-  modelNsfw?: boolean;
   coverImageId?: number | null;
   sfwCoverImageId?: number | null;
 }) {
@@ -68,10 +65,6 @@ export async function assertCoverImagesValid({
   if (sfwCoverImageId) {
     const owned = byId.get(sfwCoverImageId);
     const featured = featuredOn(sfwCoverImageId, 'com');
-    if (!owned && (featured ?? featuredOn(sfwCoverImageId, 'red')) && modelNsfw)
-      throw throwBadRequestError(
-        'On a mature model the civitai.com cover must be one of your own images.'
-      );
     if (!owned && !featured)
       throw throwBadRequestError(
         'The civitai.com cover must be one of your published images on this model, or an image featured in its civitai.com showcase.'
@@ -290,7 +283,6 @@ export async function assertCoverChange({
   await assertCoverImagesValid({
     modelId: model.id,
     ownerId: model.userId,
-    modelNsfw: model.nsfw,
     coverImageId,
     sfwCoverImageId,
   });

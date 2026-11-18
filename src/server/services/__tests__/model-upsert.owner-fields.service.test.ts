@@ -1182,8 +1182,7 @@ describe('cover gate', () => {
 });
 
 describe('a change in maturity', () => {
-  // `updateModelNsfwLevels` recomputes the level and, for a mature model, drops a community .com
-  // cover; it is seen here as its UPDATE.
+  // `updateModelNsfwLevels` recomputes the level; it is seen here as its UPDATE.
   const recomputed = () =>
     mockDbWrite.$queryRaw.mock.calls.some(([query]) =>
       ((query as { strings?: string[] })?.strings ?? []).join('').includes('SET "nsfwLevel" = (')

@@ -521,8 +521,7 @@ export async function getShowcaseVersionsForPosts(postIds: number[]) {
 
 /**
  * Clears any model cover that is a community image no longer allowed there (removed, its author
- * banned, opted out or blocked, the image moderated, or the model now mature on .com), judged
- * against the current state. The creator's own covers are left alone.
+ * banned, opted out or blocked, the image moderated), judged against the current state. The creator's own covers are left alone.
  */
 export async function dropInvalidCommunityCovers(modelIds: number[]) {
   const ids = [...new Set(modelIds)];
@@ -531,14 +530,13 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
     {
       id: number;
       userId: number;
-      nsfw: boolean;
       coverImageId: number | null;
       sfwCoverImageId: number | null;
       coverUserId: number | null;
       sfwCoverUserId: number | null;
     }[]
   >`
-    SELECT m.id, m."userId", m.nsfw, m."coverImageId", m."sfwCoverImageId",
+    SELECT m.id, m."userId", m."coverImageId", m."sfwCoverImageId",
       ci."userId" AS "coverUserId", si."userId" AS "sfwCoverUserId"
     FROM "Model" m
     LEFT JOIN "Image" ci ON ci.id = m."coverImageId"
@@ -553,20 +551,14 @@ export async function dropInvalidCommunityCovers(modelIds: number[]) {
       ] as const
     )
       .filter(([, imageId, imageUserId]) => imageId && imageUserId && imageUserId !== model.userId)
-      .map(([site, imageId]) => ({
-        modelId: model.id,
-        site,
-        imageId: imageId as number,
-        // A mature model's .com cover must be the creator's own image.
-        allowed: !(site === 'com' && model.nsfw),
-      }))
+      .map(([site, imageId]) => ({ modelId: model.id, site, imageId: imageId as number }))
   );
   if (!candidates.length) return;
   // Refreshes the versions holding the covers, which need not be the ones the caller refreshed.
   const valid = await getShowcaseCommunityCovers(candidates, { primary: true });
   const { saveModelCovers } = await import('~/server/services/model-cover.service');
-  for (const { modelId, site, imageId, allowed } of candidates) {
-    if (allowed && isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
+  for (const { modelId, site, imageId } of candidates) {
+    if (isShowcaseCoverImage(valid, { modelId, imageId, site })) continue;
     await saveModelCovers({
       modelId,
       covers: { [coverColumnForSite(site)]: null },
@@ -1067,7 +1059,6 @@ export async function getVersionShowcaseEditor({
   return {
     modelId: version.model.id,
     modelVersionId,
-    isMature: version.model.nsfw,
     isLatestPublished: model?.modelVersions[0]?.id === modelVersionId,
     covers: { com: model?.sfwCoverImageId ?? null, red: model?.coverImageId ?? null },
     ownerImages: owner[modelVersionId]?.images ?? [],

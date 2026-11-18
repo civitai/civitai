@@ -320,22 +320,6 @@ describe('when a featured image stops qualifying', () => {
     );
   });
 
-  it("clears a mature model's community .com cover, and keeps its .red one", async () => {
-    const com = await featured({ site: 'com' });
-    const red = await featured();
-    await db.query(
-      `UPDATE "Model" SET nsfw = true, "sfwCoverImageId" = $1, "coverImageId" = $2 WHERE id = $3`,
-      [com, red, MODEL]
-    );
-
-    await dropInvalidCommunityCovers([MODEL]);
-
-    expect(saveModelCovers).toHaveBeenCalledTimes(1);
-    expect(saveModelCovers).toHaveBeenCalledWith(
-      expect.objectContaining({ modelId: MODEL, covers: { sfwCoverImageId: null } })
-    );
-  });
-
   it('leaves a community cover whose author is still in good standing', async () => {
     const fine = await featured();
     await db.query(`UPDATE "Model" SET "coverImageId" = $1 WHERE id = $2`, [fine, MODEL]);

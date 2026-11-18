@@ -102,11 +102,9 @@ export default function VersionShowcaseEditor({
     setLink('');
   };
 
-  // Only the creator's own images can be the .com cover of a mature model.
   const canBeCover = (item: Item) =>
     !!data?.isLatestPublished &&
     !item.excluded &&
-    !(site === 'com' && data.isMature && item.source === 'Community') &&
     (site !== 'com' || item.nsfwLevel === undefined || isComSafeLevel(item.nsfwLevel));
 
   return (

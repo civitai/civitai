@@ -4256,7 +4256,6 @@ export const upsertModel = async (
     await assertCoverImagesValid({
       modelId: id,
       ownerId: beforeUpdate.userId,
-      modelNsfw: data.nsfw ?? beforeUpdate.nsfw,
       coverImageId: data.coverImageId,
       sfwCoverImageId: data.sfwCoverImageId,
     });
@@ -4920,7 +4919,7 @@ export const upsertModel = async (
     });
 
     // The face, the .com cover and maturity feed the model's level, which decides whether .com
-    // lists it; on a model turned mature the recompute also drops a community .com cover.
+    // lists it.
     const maturityChanged = result.nsfw !== beforeUpdate.nsfw;
     if (sfwFaceChanged || coverChanged || maturityChanged) {
       await updateModelNsfwLevels([result.id]);
