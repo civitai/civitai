@@ -42,6 +42,7 @@ vi.mock('~/server/services/feature-flags.service', () => ({
 vi.mock('~/server/services/retracted-media.service', () => ({
   getRetractedMedia,
   NEEDS_CSAM_QUEUE: 'needs-csam-queue',
+  SCANNER_UNREADABLE: 'scanner-unreadable',
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/utils/public-api-rate-limit', () => ({ checkFixedWindow }));
@@ -152,6 +153,14 @@ describe('/api/mod/retracted-media refusals', () => {
     expect(res.statusCode).toBe(403);
     expect(JSON.stringify(res.body)).toContain('Needs CSAM-queue access');
     expect(res.headers['cache-control']).toBe('private, no-store');
+    expect(getGetUrlByKey).not.toHaveBeenCalled();
+  });
+
+  it('asks for a retry when the scanner verdict cannot be read', async () => {
+    getRetractedMedia.mockResolvedValue('scanner-unreadable');
+    const res = await call();
+    expect(res.statusCode).toBe(503);
+    expect(JSON.stringify(res.body)).toContain('retry');
     expect(getGetUrlByKey).not.toHaveBeenCalled();
   });
 

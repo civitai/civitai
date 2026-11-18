@@ -8,6 +8,7 @@ import {
   getRetractedMedia,
   NEEDS_CSAM_QUEUE,
   recordRetractedView,
+  SCANNER_UNREADABLE,
   retractedMediaEnabled,
 } from '$lib/server/retracted-media';
 
@@ -43,6 +44,7 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
     csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
   });
   if (media === NEEDS_CSAM_QUEUE) error(403, 'Needs CSAM-queue access.');
+  if (media === SCANNER_UNREADABLE) error(503, 'Could not check this image; retry.');
   if (!media) error(404, 'Not available here.');
   // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.
   if (url.searchParams.get('probe') === '1')

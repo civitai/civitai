@@ -11,6 +11,8 @@ import { blockedForPatterns } from '~/server/services/blocked-for-patterns';
 import { readScannerVerdict } from '~/server/services/review-batch/review-batch.service';
 
 export const NEEDS_CSAM_QUEUE = 'needs-csam-queue';
+/** The scanner verdict could not be read: the route asks the moderator to retry. */
+export const SCANNER_UNREADABLE = 'scanner-unreadable';
 
 export const scannerVerdicts = createScannerVerdictCache(readScannerVerdict);
 
@@ -27,13 +29,14 @@ export type RetractedMedia = {
  * Read on the primary: a flag or hold the replica has not seen yet would otherwise serve as `plain`.
  * For a moderator without `csamReview`, a `plain` image is also checked against the scanner's labels,
  * and is refused when they mark it, have none for it, or cannot be read. No labels at all is answered
- * `NEEDS_CSAM_QUEUE`, which the route explains: a moderator can do something about it.
+ * `NEEDS_CSAM_QUEUE`, which the route explains: a moderator can do something about it. Unreadable
+ * labels are answered `SCANNER_UNREADABLE`, which the route answers 503 so the caller retries.
  */
 export async function getRetractedMedia(
   imageId: number,
   { csamReview }: { csamReview: boolean },
   db = dbWrite
-): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
+): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | typeof SCANNER_UNREADABLE | null> {
   const [row] = await db.$queryRaw<
     (Omit<RetractedMedia, 'tier'> & { blockedFor: string | null; suspect: boolean })[]
   >`
@@ -47,6 +50,7 @@ export async function getRetractedMedia(
   if (!csamReview) {
     if (tier === 'suspect') return null;
     const verdict = await scannerVerdicts.read(imageId);
+    if (verdict === null) return SCANNER_UNREADABLE;
     if (verdict === 'none') return NEEDS_CSAM_QUEUE;
     if (verdict !== 'clear') return null;
   }

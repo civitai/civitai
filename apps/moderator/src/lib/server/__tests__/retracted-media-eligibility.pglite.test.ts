@@ -50,6 +50,8 @@ CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);
 CREATE TABLE "CsamReport" (id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB, images JSONB);
 CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
 CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
+-- No CHECK on state, unlike the real table, so a state that is not a refusal can be written.
+CREATE TABLE "ImageCdnAccess" (url TEXT PRIMARY KEY, state TEXT NOT NULL);
 `;
 
 let db: PGlite;
@@ -64,8 +66,15 @@ beforeAll(async () => {
       (3, 'key-3', 303, 'Blocked', NULL, NULL, false),
       (4, 'key-4', 304, 'Blocked', 'csam', 'moderated', false),
       (5, 'key-5', 305, 'Scanned', NULL, NULL, false),
-      (6, 'key-6', 306, 'Blocked', NULL, 'tos', false);
+      (6, 'key-6', 306, 'Blocked', NULL, 'tos', false),
+      (7, 'key-7', 307, 'Scanned', NULL, NULL, false),
+      (8, 'key-8', 308, 'Scanned', NULL, NULL, false),
+      (9, 'key-9', 309, 'Scanned', NULL, NULL, true),
+      (10, 'key-10', 310, 'Scanned', 'csam', NULL, false);
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (6);
+    INSERT INTO "ImageCdnAccess" (url, state) VALUES
+      ('key-5', 'Allowed'), ('key-7', 'Retracted'), ('key-8', 'Denied'), ('key-9', 'Retracted'),
+      ('key-10', 'Retracted');
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -112,6 +121,19 @@ describe('retracted media eligibility', () => {
   it('keeps a minor signal or a block with no reason to moderators cleared for CSAM review', async () => {
     expect(await tierOf(2)).toBe('suspect');
     expect(await tierOf(3)).toBe('suspect');
+  });
+
+  it('serves an unblocked image while the CDN refuses its url, by the same tiers', async () => {
+    expect(await tierOf(7)).toBe('plain');
+    expect(await tierOf(8)).toBe('plain');
+    expect(await tierOf(9)).toBe('suspect');
+    expect(await tierOf(10)).toBe('none');
+  });
+
+  it('asks for a retry when the scanner verdict cannot be read', async () => {
+    scanner.verdict = null;
+    expect(await getRetractedMedia(1, { csamReview: false })).toBe('scanner-unreadable');
+    scanner.verdict = 'clear';
   });
 
   it('never serves held media, an unblocked image, an evidence-held one or a missing id', async () => {

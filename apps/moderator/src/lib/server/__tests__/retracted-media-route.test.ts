@@ -24,6 +24,7 @@ vi.mock('$lib/server/retracted-media', () => ({
   getRetractedMedia,
   recordRetractedView,
   NEEDS_CSAM_QUEUE: 'needs-csam-queue',
+  SCANNER_UNREADABLE: 'scanner-unreadable',
   retractedMediaEnabled: () => enabled.on,
 }));
 vi.mock('$lib/server/storage', () => ({ getStorage: () => ({ getGetUrl }) }));
@@ -102,6 +103,14 @@ describe('/api/retracted-media', () => {
     const { status, res } = await call();
     expect(status).toBe(403);
     expect(await res!.text()).toContain('Needs CSAM-queue access');
+    expect(getGetUrl).not.toHaveBeenCalled();
+  });
+
+  it('asks for a retry when the scanner verdict cannot be read', async () => {
+    getRetractedMedia.mockResolvedValue('scanner-unreadable');
+    const { status, res } = await call();
+    expect(status).toBe(503);
+    expect(await res!.text()).toContain('retry');
     expect(getGetUrl).not.toHaveBeenCalled();
   });
 
