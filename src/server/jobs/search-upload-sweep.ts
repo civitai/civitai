@@ -15,7 +15,7 @@ const SWEEPABLE = Prisma.sql`
     i.ingestion IN ('Scanned', 'Error', 'NotFound')
     OR (i.ingestion IN ('Pending', 'Rescan') AND i."createdAt" < now() - interval '1 day')
   )
-  AND i."needsReview" IS NULL
+  AND COALESCE(i."needsReview", '') NOT IN ('minor', 'csam')
   AND i."blockedFor" IS NULL
   AND i.minor = false
   AND i."tosViolation" = false
@@ -31,7 +31,8 @@ const BATCH = 500;
  * Deletes a search-by-upload row an hour after upload once its scan finished (a day if the scan
  * never answered). Held or flagged rows are kept: deleting an image cascades its pending
  * ScanLabelItem vote, a ToS violation may be moderation evidence, and an uploader with an unsent
- * CSAM report keeps every row.
+ * CSAM report keeps every row. Of the review keys only minor and csam hold a row: the moderator app
+ * does not show a search upload under any other, so a row held by one would be kept forever.
  */
 export const searchUploadSweepJob = createJob('search-upload-sweep', '*/10 * * * *', () =>
   sweepSearchUploads()

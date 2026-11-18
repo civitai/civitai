@@ -77,7 +77,10 @@ describe('search-upload-sweep', () => {
         (8, 5, NULL, 'Pending', NULL, NULL, false, ${UPLOAD}, ${OLD}),
         (9, 5, NULL, 'Scanned', NULL, NULL, false, '{"blockUploadedAppId": "app"}', ${OLD}),
         (10, 5, 77, 'Scanned', NULL, NULL, false, ${UPLOAD}, ${OLD}),
-        (11, 5, NULL, 'Scanned', 'poi', NULL, false, ${UPLOAD}, ${OLD});
+        (11, 5, NULL, 'Scanned', 'poi', NULL, false, ${UPLOAD}, ${OLD}),
+        (23, 5, NULL, 'Scanned', 'modRule', NULL, false, ${UPLOAD}, ${OLD}),
+        (24, 5, NULL, 'Scanned', 'minor', NULL, false, ${UPLOAD}, ${OLD}),
+        (25, 5, NULL, 'Scanned', 'csam', NULL, false, ${UPLOAD}, ${OLD});
       INSERT INTO "Image" (id, "userId", "postId", ingestion, "tosViolation", poi, metadata, "createdAt") VALUES
         (13, 5, NULL, 'Scanned', true, false, ${UPLOAD}, ${OLD}),
         (14, 5, NULL, 'Scanned', false, true, ${UPLOAD}, now() - interval '100 minutes'),
@@ -101,8 +104,17 @@ describe('search-upload-sweep', () => {
     await createIndex();
     const deleted: number[] = [];
     const result = await sweepSearchUploads({ deleteImage: async (id) => void deleted.push(id) });
-    expect(deleted.sort((a, b) => a - b)).toEqual([1, 14, 16, 18, 19]);
-    expect(result).toEqual({ swept: 5 });
+    expect(deleted.sort((a, b) => a - b)).toEqual([1, 11, 14, 16, 18, 19, 23]);
+    expect(result).toEqual({ swept: 7 });
+  });
+
+  it('deletes a row held for a review the moderator app hides, and keeps a minor or csam hold', async () => {
+    await createIndex();
+    const deleted: number[] = [];
+    await sweepSearchUploads({ deleteImage: async (id) => void deleted.push(id) });
+    expect(deleted).toEqual(expect.arrayContaining([11, 23]));
+    expect(deleted).not.toContain(24);
+    expect(deleted).not.toContain(25);
   });
 
   it('skips a row held while the batch was running', async () => {
