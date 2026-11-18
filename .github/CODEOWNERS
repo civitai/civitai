@@ -1,2 +1,7 @@
 /apps/auth/ @justmaier
 /packages/civitai-auth/ @justmaier
+
+# Dev tunnel / App Assistant preview path: changes here touch the shared dev-tunnel session
+# record (scopes, per-session Buzz cap, reaper) that both the CLI and the App Assistant use.
+dev-tunnel* @ZacxDev @koenbeuk
+reap-dev-tunnels.ts @ZacxDev @koenbeuk
