@@ -399,6 +399,8 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
 
     expect(error).toBeInstanceOf(HeldMediaCopyError);
     expect((error as Error).message).not.toContain(HASH.toString());
+    expect(JSON.stringify((error as Error).cause)).not.toContain(HASH.toString());
+    expect(String(((error as Error).cause as Error)?.message ?? '')).not.toContain(HASH.toString());
     expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(3);
     const logged = vi
       .mocked(logToAxiom)
@@ -412,6 +414,36 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
       attempts: 3,
     });
     expect(JSON.stringify(logged)).not.toContain(HASH.toString());
+  });
+
+  it('starts no attempt once the budget is spent, so the logged error is the driver error', async () => {
+    vi.useFakeTimers();
+    try {
+      const driverError = Object.assign(new Error('connection refused'), {
+        name: 'DriverError',
+        code: 'P1001',
+      });
+      vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockImplementation(
+        () => new Promise((_, reject) => setTimeout(() => reject(driverError), 650)) as never
+      );
+      vi.mocked(logToAxiom).mockClear();
+
+      const call = bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] }).catch(
+        (e: unknown) => e
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(await call).toBeInstanceOf(HeldMediaCopyError);
+      // 0-650 ms, then 750-1400 ms; the backoff then runs out the budget before a third.
+      expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+      const [logged] = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([entry]) => entry)
+        .filter((entry) => entry.name === 'held-media-copy-failed');
+      expect(logged.payload).toMatchObject({ errorName: 'DriverError', errorCode: 'P1001' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a copy that fails once and then lands passes', async () => {

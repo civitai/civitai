@@ -7165,8 +7165,14 @@ function logBlocklistCheckFailed(
 /** The blocklist entries were written but their Postgres copy failed. Its message holds no hash. */
 export class HeldMediaCopyError extends Error {
   readonly store = 'held-media-copy';
-  constructor(cause: unknown) {
-    super('the held-media copy of the blocklist entries failed', { cause });
+  /** Only the driver error's class and code: its message can quote the statement. */
+  constructor(failure: unknown) {
+    super('the held-media copy of the blocklist entries failed', {
+      cause: {
+        name: (failure as Error)?.name,
+        code: (failure as { code?: unknown })?.code,
+      },
+    });
   }
 }
 
@@ -7188,7 +7194,10 @@ async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteConte
   let lastError: unknown = new Error('no attempt fit the budget');
   let attempts = 0;
   while (attempts < COPY_ATTEMPTS && Date.now() < deadline) {
-    if (attempts > 0) await sleep(Math.min(COPY_BACKOFF_MS[attempts - 1], deadline - Date.now()));
+    if (attempts > 0) {
+      await sleep(Math.min(COPY_BACKOFF_MS[attempts - 1], deadline - Date.now()));
+      if (Date.now() >= deadline) break;
+    }
     attempts++;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
