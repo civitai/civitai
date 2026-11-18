@@ -9,6 +9,7 @@ import {
   readUserWithProfileViaPrisma,
 } from '~/server/services/hot-reads-9.reads';
 import type {
+  AddToShowcaseSectionSchema,
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
@@ -20,8 +21,10 @@ import type {
 import {
   customShowcaseKey,
   customShowcaseKeyPrefix,
+  showcaseSectionLimits,
   showcaseSectionTypes,
 } from '~/server/schema/user-profile.schema';
+import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -42,6 +45,7 @@ import {
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
@@ -190,7 +194,7 @@ export const getUserWithProfile = async ({
             user.profilePicture ??
               (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
           )
-        : // csam is already dropped upstream for every viewer.
+        : // A held picture is already dropped upstream for every viewer.
           servableProfilePicture(
             user.profilePicture,
             null,
@@ -327,7 +331,12 @@ const toShowcaseItems = (sections: ShowcaseSectionSchema[]): ShowcaseItemSchema[
 export const setShowcaseSections = async ({
   userId,
   sections,
-}: SetShowcaseSectionsSchema & { userId: number }) => {
+  ifUnchangedFrom,
+}: SetShowcaseSectionsSchema & {
+  userId: number;
+  /** Save only if the stored sections still equal these; refused as a conflict otherwise. */
+  ifUnchangedFrom?: ShowcaseSectionSchema[];
+}) => {
   await throwOnBlockedUserContent(
     sections.flatMap(({ title, button }) => [title, button?.label, button?.url]),
     { surface: 'userProfile', entityType: 'UserProfile', entityId: userId, userId }
@@ -351,16 +360,71 @@ export const setShowcaseSections = async ({
     allowedTypes: [...showcaseSectionTypes],
   });
 
-  const updated = await dbWrite.userProfile.update({
-    where: { userId },
-    data: { showcaseSections: sections },
-    select: { showcaseSections: true },
-  });
+  let saved: ShowcaseSectionSchema[];
+  if (ifUnchangedFrom) {
+    const { count } = await dbWrite.userProfile.updateMany({
+      where: { userId, showcaseSections: { equals: ifUnchangedFrom } },
+      data: { showcaseSections: sections },
+    });
+    if (!count) throw throwConflictError('Your showcase changed while saving. Try again.');
+    saved = sections;
+  } else {
+    const updated = await dbWrite.userProfile.update({
+      where: { userId },
+      data: { showcaseSections: sections },
+      select: { showcaseSections: true },
+    });
+    saved = updated.showcaseSections as ShowcaseSectionSchema[];
+  }
   // Every save. scanEntity skips the submit when the profile's combined text hashes the same as
   // its last successful scan, or as one still in flight.
   queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
-  return updated.showcaseSections as ShowcaseSectionSchema[];
+  return saved;
+};
+
+/** Adds one of the caller's images to the front of one of their Images sections. */
+export const addToShowcaseSection = async ({
+  userId,
+  sectionId,
+  entityType,
+  entityId,
+}: AddToShowcaseSectionSchema & { userId: number }) => {
+  // primary: the sections read here are written back whole below.
+  const profile = await dbWrite.userProfile.findUnique({
+    where: { userId },
+    select: { showcaseSections: true },
+  });
+  const sections = (profile?.showcaseSections ?? []) as ShowcaseSectionSchema[];
+  const section = sections.find((s) => s.id === sectionId && s.type === entityType);
+  if (!section) throw throwNotFoundError('Showcase section not found');
+  if (section.items.includes(entityId)) return { added: false, sections };
+  if (section.items.length >= showcaseSectionLimits.items)
+    throw throwBadRequestError(
+      `This section is full: it holds up to ${showcaseSectionLimits.items} items`
+    );
+
+  // One answer for "not yours" and "can't be shown", so the reply says nothing about another
+  // user's image.
+  // primary: an image published moments ago is the likeliest to be added.
+  const showable = await dbWrite.image.findFirst({
+    where: {
+      id: entityId,
+      userId,
+      ...publishedImageWhere(),
+      ingestion: { notIn: [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound] },
+    },
+    select: { id: true },
+  });
+  if (!showable)
+    throw throwBadRequestError('Only your own images in a published post can be showcased');
+
+  const updated = await setShowcaseSections({
+    userId,
+    sections: sections.map((s) => (s === section ? { ...s, items: [entityId, ...s.items] } : s)),
+    ifUnchangedFrom: sections,
+  });
+  return { added: true, sections: updated };
 };
 
 export const updateUserProfile = async ({

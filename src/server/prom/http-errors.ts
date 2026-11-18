@@ -2,6 +2,7 @@ import client from 'prom-client';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { routeSegments } from '~/server/utils/route-segments';
 
 // ---------------------------------------------------------------------------
 // Unsampled per-route APP-EMITTED 5xx attribution counter
@@ -114,39 +115,13 @@ function collapseSegment(seg: string): string {
  */
 export function reconstructApiRoute(req: NextApiRequest): string {
   const method = (req.method ?? 'GET').toUpperCase();
-  let pathname: string;
-  let queryStringKeys: Set<string>;
-  try {
-    const url = new URL(req.url ?? '/', 'http://x');
-    pathname = url.pathname;
-    queryStringKeys = new Set(url.searchParams.keys());
-  } catch {
-    return `${method} <bad-url>`;
-  }
-  if (!pathname.startsWith('/api/')) return `${method} <non-api>`;
-
-  // Next merges the dynamic ROUTE params and the query string into a single
-  // req.query. The route params are exactly the keys NOT present in the URL's
-  // query string. We must only value-match against route params: matching against
-  // query-string values is attacker-controllable — appending `?j=v1` would rewrite
-  // the static `/v1` segment, splitting/poisoning route labels and exhausting the
-  // cardinality budget. Build an exact value→[key] map from route params only.
-  const query = req.query ?? {};
-  const valueToParam = new Map<string, string>();
-  for (const key of Object.keys(query)) {
-    if (queryStringKeys.has(key)) continue; // query-string param — not a route param
-    const val = query[key];
-    const values = Array.isArray(val) ? val : [val];
-    for (const v of values) {
-      if (typeof v === 'string' && v.length >= 1) valueToParam.set(v, `[${key}]`);
-    }
-  }
-
-  // Replace by EXACT whole-segment equality (no substring `includes/split`).
-  const segments = pathname
-    .split('/')
-    .filter(Boolean)
-    .map((seg) => valueToParam.get(seg) ?? collapseSegment(seg))
+  // Route params are matched by `routeSegments`, which excludes query-string keys: appending
+  // `?j=v1` must not rewrite the static `/v1` segment and exhaust the cardinality budget.
+  const route = routeSegments(req.url, req.query);
+  if (!route) return `${method} <bad-url>`;
+  if (!route.pathname.startsWith('/api/')) return `${method} <non-api>`;
+  const segments = route.segments
+    .map(({ value, param }) => (param ? `[${param.name}]` : collapseSegment(value)))
     .slice(0, 6);
   return `${method} /${segments.join('/')}`;
 }

@@ -360,3 +360,23 @@ func TestIntegrationModelPageCollection(t *testing.T) {
 	integWant(t, "page 2", integIDs(integPage(t, pool, PageQuery{Take: 1, Sort: SortHighestRated, BrowsingLevel: 31, CollectionID: 3102002, Cursor: "50|10|3101002"})),
 		[]int{3101002})
 }
+
+// The official pin's id filters against the real schema, on every base-model path and without one,
+// composed with the other filters and with a split keyset cursor (each branch carries them).
+func TestIntegrationModelPageOfficialPinFilters(t *testing.T) {
+	pool := integtest.Postgres(t)
+	integSeedModels(t, pool)
+	integWant(t, "only, one base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		BaseModels: []string{"Pony"}, OnlyModelIDs: []int{3101005, 3101003, 3101999}})), []int{3101005})
+	integWant(t, "exclude, one base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		BaseModels: []string{"Pony"}, ExcludeModelIDs: []int{3101001}})), []int{3101005})
+	integWant(t, "only, several base models", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 1,
+		BaseModels: []string{"Pony", "SDXL 1.0"}, OnlyModelIDs: []int{3101001}})), []int{3101001})
+	integWant(t, "exclude, several base models", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 1,
+		BaseModels: []string{"Pony", "SDXL 1.0"}, ExcludeModelIDs: []int{3101001}})), []int{3101002})
+	// The private 3101004 stays out: neither filter relaxes the private-model filter.
+	integWant(t, "only, no base model", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHighestRated, BrowsingLevel: 1,
+		OnlyModelIDs: []int{3101002, 3101004}})), []int{3101002})
+	integWant(t, "exclude, from a cursor", integIDs(integPage(t, pool, PageQuery{Take: 5, Sort: SortHot, BrowsingLevel: 31,
+		Cursor: "9|3101001", ExcludeModelIDs: []int{3101002}})), []int{3101001, 3101005})
+}

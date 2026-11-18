@@ -5,7 +5,7 @@
 // Define exclusion patterns shared between region middlewares
 export const excludedPaths = ['/api', '/_next', '/fonts', '/sounds'];
 
-export const excludedFiles = ['favicon.ico', 'robots.txt', 'site.webmanifest'];
+export const excludedFiles = ['favicon.ico', 'robots.txt', 'ads.txt', 'site.webmanifest'];
 
 // Static asset file extensions — paths ending in these are skipped by the
 // region middlewares. Case-insensitive on purpose: the proxy matcher's exclusions

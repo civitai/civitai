@@ -68,9 +68,9 @@ import {
   UNAVAILABLE_LABEL,
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
-import { MatureAckRequiredError } from '$lib/mature-charge';
 import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
+import { MatureRepriceError } from '$lib/mature-charge';
 import type { TrainingTextCheck } from '$lib/training-text';
 
 /** Captions remain raw until the engine-specific submit builder applies the trigger word. */
@@ -135,9 +135,6 @@ export interface TrainingRunInput {
   /** Which Buzz accounts to charge, in priority order (the user's choice on Review). Validated + defaulted
    *  by `resolveCurrencies` — never trusted from the wire. */
   currencies?: string[];
-  /** The user ticked Review's mature-dataset confirm: the run unlocks mature content at submit and is
-   *  charged in Yellow (after Blue when `currencies` spends Blue). */
-  matureAck?: boolean;
   /**
    * One per run per Start attempt, minted by the flow (`newSubmitKey`) and REUSED when the user
    * starts the same batch again. It rides on the workflow as a tag, so a submit whose response was
@@ -185,32 +182,20 @@ export function unavailableRunMessage(
 const CURRENCIES: BuzzClientAccount[] = ['blue', 'yellow'];
 const runCurrencies = (input?: string[]) => resolveCurrencies(input, CURRENCIES);
 
-/** The accounts that may pay for mature content: Yellow, after Blue only if the user's order spends Blue
- *  (members may pay for mature content in Blue; the orchestrator drops it for everyone else). Never Green. */
+/** A mature dataset is never charged in Green: Blue first if the user's order spends Blue, then Yellow. */
 function matureCurrencies(currencies: string[] | undefined): BuzzClientAccount[] {
   return runCurrencies(currencies).includes('blue') ? ['blue', 'yellow'] : ['yellow'];
 }
 
-/** How a submit is charged. Always `manual`, so viewing a run never changes what it was charged; a run the
- *  user confirmed as mature unlocks at submit instead, and is charged once, in the accounts that may pay
- *  for mature content. */
-function chargeFields(currencies: string[] | undefined, matureUnlock: boolean) {
-  return matureUnlock
-    ? {
-        upgradeMode: 'manual' as const,
-        allowMatureContent: true,
-        currencies: matureCurrencies(currencies),
-      }
-    : { upgradeMode: 'manual' as const, currencies: runCurrencies(currencies) };
-}
-
-/** The orchestrator's reason for a refused charge; the workflow is refunded in full before it answers. */
-const INSUFFICIENT_BUZZ = 'insufficientBuzz';
-const MATURE_SHORT_OF_YELLOW =
-  'Not enough Yellow Buzz. Training on mature images is charged in Yellow; this run was not charged.';
-
-function chargeFailureReason(reason: string, matureUnlock: boolean): string {
-  return matureUnlock && reason === INSUFFICIENT_BUZZ ? MATURE_SHORT_OF_YELLOW : reason;
+/** How a submit is charged. Always `manual`, so viewing a run never changes what it was charged. Never
+ *  `allowMatureContent`: with it the orchestrator drops a non-member's Blue and charges Yellow, and Blue pays
+ *  for training whatever the dataset (as in the Classic trainer). The cost: a non-member's mature sample
+ *  images stay blurred unless the run was paid only in Yellow; the trained model is never restricted. */
+function chargeFields(currencies: string[] | undefined, mature: boolean) {
+  return {
+    upgradeMode: 'manual' as const,
+    currencies: mature ? matureCurrencies(currencies) : runCurrencies(currencies),
+  };
 }
 
 /** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
@@ -346,7 +331,9 @@ async function findSubmittedRun(client: OrchestratorClient, key: string) {
 export async function submitTraining(
   client: OrchestratorClient,
   run: TrainingRunInput,
-  { callbacks, traceMode = 'events' }: SubmitOptions = {}
+  { callbacks, traceMode = 'events' }: SubmitOptions = {},
+  /** The server's rating found the dataset mature: the charge stays out of Green. */
+  mature = false
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
   const slug = run.meta.name ? slugify(run.meta.name) : '';
@@ -379,7 +366,7 @@ export async function submitTraining(
       body: {
         tags,
         metadata: metadata as Record<string, unknown>,
-        ...trainingSteps(run, traceMode, run.matureAck === true),
+        ...trainingSteps(run, traceMode, mature),
         ...(callbacks ? { callbacks } : {}),
       },
       query: { wait: 0 },
@@ -404,15 +391,12 @@ export async function submitTraining(
     if (landed) return landed;
   }
   if (thrown !== undefined) throw thrown;
-  throw new TrainingSubmitError(
-    chargeFailureReason(describeSubmitError(error), run.matureAck === true),
-    status
-  );
+  throw new TrainingSubmitError(describeSubmitError(error), status);
 }
 
 /** The step and charge fields of a training submit; the readiness whatif sends the same. */
-function trainingSteps(run: TrainingRunInput, traceMode: string, matureUnlock: boolean) {
-  return { steps: [buildStep(run, traceMode)], ...chargeFields(run.currencies, matureUnlock) };
+function trainingSteps(run: TrainingRunInput, traceMode: string, mature: boolean) {
+  return { steps: [buildStep(run, traceMode)], ...chargeFields(run.currencies, mature) };
 }
 
 const READINESS_WHATIF_TIMEOUT_MS = 30_000;
@@ -589,8 +573,6 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
     (!Array.isArray(run.currencies) || run.currencies.some((c) => !isString(c)))
   )
     fail(`${field}.currencies`, 'must be an array of strings.');
-  if (run.matureAck !== undefined && typeof run.matureAck !== 'boolean')
-    fail(`${field}.matureAck`, 'must be a boolean.');
   if (!run.meta || typeof run.meta !== 'object') fail(`${field}.meta`, 'must be an object.');
   if (run.meta.name !== undefined && !isString(run.meta.name))
     fail(`${field}.meta.name`, 'must be a string.');
@@ -672,23 +654,18 @@ async function assertCustomModelTrainable(
     );
 }
 
-/** Refuse, before anything is charged, a run whose dataset is mature but carries no confirm: the client's
- *  own mature count is not trusted. Under the v2 rating a confirm is dropped (no Yellow) when a clean count
- *  finds nothing mature, since Review may have sent it before its own count answered. Every run of a sweep
- *  shares its dataset, so it is rated once. Returns the runs as they will be charged. */
-async function assertMatureAcked(
+/** Whether each run's dataset is mature, which keeps its charge out of Green. The client's own count is not
+ *  trusted: a run it priced as not mature (no positive `meta.matureCount`) that would spend Green is refused,
+ *  charging nothing, so the user sees the Yellow price first. Every run of a sweep shares its dataset, so it
+ *  is rated once. */
+async function rateRuns(
   client: OrchestratorClient,
   runs: TrainingRunInput[],
   opts: Pick<SubmitOptions, 'datasetRating' | 'onMatureCount'> = {}
-): Promise<TrainingRunInput[]> {
+): Promise<boolean[]> {
   const counts = new Map<string, Promise<MatureCount>>();
-  const resolved: TrainingRunInput[] = [];
+  const mature: boolean[] = [];
   for (const run of runs) {
-    const acked = run.matureAck === true;
-    if (acked && !opts.datasetRating) {
-      resolved.push(run);
-      continue;
-    }
     const airs = [...new Set(run.items.map((item) => item.air))].sort();
     const key = airs.join('\n');
     if (!counts.has(key))
@@ -699,11 +676,14 @@ async function assertMatureAcked(
           return r;
         })
       );
-    const { mature, failed } = await counts.get(key)!;
-    if (!acked && mature > 0) throw new MatureAckRequiredError(mature);
-    resolved.push(acked && mature === 0 && failed === 0 ? { ...run, matureAck: false } : run);
+    const { mature: count, failed } = await counts.get(key)!;
+    const pricedMature = typeof run.meta.matureCount === 'number' && run.meta.matureCount > 0;
+    if (count > 0 && !pricedMature && runCurrencies(run.currencies).includes('green'))
+      throw new MatureRepriceError(count);
+    // A count with a failed lookup can't clear what the client priced as mature.
+    mature.push(count > 0 || (pricedMature && failed > 0));
   }
-  return resolved;
+  return mature;
 }
 
 export interface SubmittedBatch {
@@ -739,7 +719,7 @@ export async function submitTrainingBatch(
     const unavailable = unavailableRunMessage(run, opts.status);
     if (unavailable) throw new TrainingBatchValidationError(unavailable);
   }
-  const charged = await assertMatureAcked(client, runs, opts);
+  const mature = await rateRuns(client, runs, opts);
 
   // Every run's trigger word is checked before ANY submit, so a refused batch never part-charges. A
   // sweep repeats one trigger word across runs; each distinct one is checked once.
@@ -756,7 +736,8 @@ export async function submitTrainingBatch(
 
   const workflowIds: string[] = [];
   try {
-    for (const run of charged) workflowIds.push(await submitTraining(client, run, opts));
+    for (const [i, run] of runs.entries())
+      workflowIds.push(await submitTraining(client, run, opts, mature[i]));
   } catch (err) {
     opts.onRunError?.(err, workflowIds.length);
     if (workflowIds.length === 0) throw err;
@@ -798,11 +779,12 @@ export interface ContinueOpts {
   /** Clamped to 1–20 at build time — callers pass the raw value. */
   addEpochs: number;
   currencies?: string[];
-  /** The user confirmed the mature-dataset Yellow charge on the continue panel. */
-  matureAck?: boolean;
+  /** The mature count the user's quote showed. A submit that rates the source mature when the quote did
+   *  not, and would spend Green, is refused so the user sees the Yellow price first. */
+  quotedMatureCount?: number;
 }
 
-export { MatureAckRequiredError };
+export { MatureRepriceError };
 
 const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 const PROBE_CONCURRENCY = 8;
@@ -893,7 +875,7 @@ function sourceMatureCount(
   return count;
 }
 
-/** Quote and submit share continuation training parameters; mature-content charging fields can differ. */
+/** The continuation body the quote and the submit share. */
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
@@ -973,12 +955,11 @@ async function buildContinuation(
         .filter((a): a is string => typeof a === 'string' && a.length > 0)
     ),
   ];
-  // A stamped positive count is trusted (it can only ask the user to confirm); 0 or none is re-checked.
+  // A stamped positive count is trusted (it can only keep the charge out of Green); 0 or none is re-checked.
   const matureCount =
     typeof srcMeta.matureCount === 'number' && srcMeta.matureCount > 0
       ? srcMeta.matureCount
       : await sourceMatureCount(client, opts.workflowId, airs, datasetRating, onMatureCount);
-  const matureUnlock = matureCount > 0 && opts.matureAck === true;
   const name = srcMeta.name ? `${srcMeta.name} (further)` : undefined;
   // Lineage always points at the IMMEDIATE parent — a copied-through sourceWorkflowId from the
   // source's own metadata would skip a link in the chain.
@@ -1040,7 +1021,8 @@ async function buildContinuation(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [continuedStep],
-      ...chargeFields(opts.currencies, matureUnlock),
+      // A quote that showed mature keeps it out of Green, even if this count has a failed lookup.
+      ...chargeFields(opts.currencies, matureCount > 0 || (opts.quotedMatureCount ?? 0) > 0),
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
@@ -1111,15 +1093,16 @@ export async function continueTraining(
   submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
   const { body, triggerWord, matureCount } = await buildContinuation(client, opts, submitOpts);
-  if (matureCount > 0 && opts.matureAck !== true) throw new MatureAckRequiredError(matureCount);
+  const quotedMature = typeof opts.quotedMatureCount === 'number' && opts.quotedMatureCount > 0;
+  if (matureCount > 0 && !quotedMature && runCurrencies(opts.currencies).includes('green'))
+    throw new MatureRepriceError(matureCount);
   // The source run may predate the check, so its trigger word is checked again before it trains again.
   await submitOpts.checkText({ triggerWord });
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
   if (!data?.id) {
-    const reason = describeSubmitError(error, response?.status);
-    if (body.allowMatureContent === true && reason === INSUFFICIENT_BUZZ)
-      throw new Error(MATURE_SHORT_OF_YELLOW);
-    throw new Error(`keep training: submit failed (${reason})`);
+    throw new Error(
+      `keep training: submit failed (${describeSubmitError(error, response?.status)})`
+    );
   }
   return data.id;
 }
@@ -1131,12 +1114,7 @@ export async function continueTrainingWhatIf(
   opts: ContinueOpts,
   submitOpts: SubmitOptions = {}
 ): Promise<{ cost: number | null; steps: number | undefined; matureCount: number }> {
-  // Priced without the unlock: the total is the same, and a whatif needs no Yellow on hand.
-  const { body, steps, matureCount } = await buildContinuation(
-    client,
-    { ...opts, matureAck: false },
-    submitOpts
-  );
+  const { body, steps, matureCount } = await buildContinuation(client, opts, submitOpts);
   const { data, error, response } = await submitWorkflow({ client, body, query: { whatif: true } });
   if (!data)
     throw new Error(`keep training quote failed: ${describeSubmitError(error, response?.status)}`);

@@ -9,6 +9,7 @@ import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { env } from '~/env/server';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 const schema = z.object({
   entityType: z.enum(['ModelVersion']).default('ModelVersion'),
@@ -20,7 +21,10 @@ const schema = z.object({
 /** Whether the caller may ask about `userId`: that user, a moderator, or a listed service account. */
 async function mayAskAbout(req: NextApiRequest, res: NextApiResponse, userId: number) {
   const caller = (
-    await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' }).catch(() => null)
+    await getApiAuthSession(
+      { req, res },
+      { whenBanned: 'anonymous', scope: MODEL_VIEW_SCOPE }
+    ).catch(() => null)
   )?.user;
   if (!caller) return false;
   return (

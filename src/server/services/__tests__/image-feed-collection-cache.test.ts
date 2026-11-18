@@ -48,6 +48,9 @@ const OTHER_VIEWER = { id: 11, isModerator: false };
 async function read(filters: object, user?: object) {
   cached.length = 0;
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'stats',

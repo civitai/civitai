@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isValidKnightsGameSetting,
   KNIGHTS_SOURCES_DEFAULT_MAX_OPEN,
   knightsSourcesMaxOpen,
   parseKnightsSourcesConfig,
@@ -53,6 +54,23 @@ describe('readKnightsSourcesConfig', () => {
   });
 });
 
+describe('readKnightsSourcesConfig yesNoShare', () => {
+  it('reads a stored yes/no share between 0 and 1, 0 included', () => {
+    expect(readKnightsSourcesConfig('{"enabled":true,"yesNoShare":0}').config.yesNoShare).toBe(0);
+    expect(readKnightsSourcesConfig('{"enabled":true,"yesNoShare":0.4}').config.yesNoShare).toBe(
+      0.4
+    );
+  });
+
+  it('leaves the share out when missing or unusable, so the Knights default applies', () => {
+    for (const yesNoShare of [undefined, '0.5', -0.1, 1.5, null, Number.NaN]) {
+      expect(
+        readKnightsSourcesConfig(JSON.stringify({ enabled: true, yesNoShare })).config
+      ).not.toHaveProperty('yesNoShare');
+    }
+  });
+});
+
 describe('knightsSourcesMaxOpen', () => {
   it('is the stored cap, or the default when none is stored', () => {
     expect(knightsSourcesMaxOpen(parseKnightsSourcesConfig('{"maxOpen":250}'))).toBe(250);
@@ -60,5 +78,77 @@ describe('knightsSourcesMaxOpen', () => {
     expect(knightsSourcesMaxOpen(parseKnightsSourcesConfig('{"enabled":true}'))).toBe(
       KNIGHTS_SOURCES_DEFAULT_MAX_OPEN
     );
+  });
+});
+
+describe('readKnightsSourcesConfig game settings', () => {
+  it('reads every stored game setting that is in range', () => {
+    const game = {
+      hiddenCheckRate: 0,
+      hiddenCheckFailureWindowHours: 12.5,
+      hiddenCheckSevereDistance: 3,
+      hiddenCheckSettleDelayMinutes: 0,
+      hiddenCheckRetireMinAnswers: 40,
+      hiddenCheckRetireFailureRate: 1,
+      yesNoStretch: 4,
+      yesNoMaxAgeDays: 7,
+      apprenticeSmites: false,
+      shopDisabled: true,
+      conversionDisabled: false,
+      harvest: false,
+      harvestHiddenCheckShare: 0.25,
+    };
+    expect(readKnightsSourcesConfig(JSON.stringify({ enabled: true, game })).config).toEqual({
+      enabled: true,
+      sfwRate: 1,
+      nsfwRate: 0.3,
+      game,
+    });
+  });
+
+  it.each([
+    ['hiddenCheckRate', 1.5],
+    ['hiddenCheckRate', -0.1],
+    ['hiddenCheckFailureWindowHours', 0],
+    ['hiddenCheckSevereDistance', 1.5],
+    ['hiddenCheckSettleDelayMinutes', -1],
+    ['hiddenCheckRetireMinAnswers', 0],
+    ['hiddenCheckRetireFailureRate', 0],
+    ['yesNoStretch', 2.5],
+    ['yesNoMaxAgeDays', 0],
+    ['yesNoMaxAgeDays', '7'],
+    ['apprenticeSmites', 'off'],
+    ['shopDisabled', 1],
+    ['conversionDisabled', null],
+    ['harvest', 'on'],
+    ['harvestHiddenCheckShare', 1.5],
+    ['harvestHiddenCheckShare', -0.1],
+  ])('leaves out %s = %j, so the Knights default applies', (key, value) => {
+    // A valid neighbour shows that only the bad field is dropped.
+    const other = key === 'yesNoMaxAgeDays' ? 'yesNoStretch' : 'yesNoMaxAgeDays';
+    const raw = JSON.stringify({ enabled: true, game: { [other]: 3, [key]: value } });
+    expect(readKnightsSourcesConfig(raw).config.game).toEqual({ [other]: 3 });
+  });
+
+  it('leaves game out when nothing in it is usable, so the main app reads its three fields unchanged', () => {
+    for (const game of [undefined, null, 'x', [], {}, { unknown: 1 }]) {
+      expect(readKnightsSourcesConfig(JSON.stringify({ enabled: true, game })).config).toEqual({
+        enabled: true,
+        sfwRate: 1,
+        nsfwRate: 0.3,
+      });
+    }
+  });
+});
+
+describe('isValidKnightsGameSetting', () => {
+  it('uses the same ranges as the Knights environment readers', () => {
+    expect(isValidKnightsGameSetting('hiddenCheckRate', 0)).toBe(true);
+    expect(isValidKnightsGameSetting('hiddenCheckRetireFailureRate', 0)).toBe(false);
+    expect(isValidKnightsGameSetting('hiddenCheckSevereDistance', 2)).toBe(true);
+    expect(isValidKnightsGameSetting('hiddenCheckSevereDistance', 2.5)).toBe(false);
+    expect(isValidKnightsGameSetting('yesNoMaxAgeDays', Number.POSITIVE_INFINITY)).toBe(false);
+    expect(isValidKnightsGameSetting('shopDisabled', true)).toBe(true);
+    expect(isValidKnightsGameSetting('shopDisabled', 'true')).toBe(false);
   });
 });

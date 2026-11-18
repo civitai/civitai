@@ -22,6 +22,7 @@ import { isDefined } from '~/utils/type-guards';
  *  this map is hidden in the embed for everyone. */
 export const studioModelFlagFeatures = {
   'training-studio-kohya': 'trainingStudioKohya',
+  'training-studio-tag-find-replace': 'trainingStudioTagFindReplace',
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',

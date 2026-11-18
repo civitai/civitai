@@ -39,9 +39,16 @@ export function ImageFeedFilters({
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser &&
         (searching ? (
-          // The search doesn't narrow by audience, so the selector waits until it's cleared.
+          // The search doesn't narrow by audience, so it reads Everyone, whatever the feed's saved
+          // audience is; that comes back once the search is cleared.
           <SearchLock reason="Clear the search to filter by who posted">
-            <FollowedFilter type="images" variant="button" buttonProps={{ disabled: true }} />
+            <FollowedFilter
+              type="images"
+              variant="button"
+              value="false"
+              onChange={() => undefined}
+              buttonProps={{ disabled: true }}
+            />
           </SearchLock>
         ) : (
           <FollowedFilter type="images" variant="button" />

@@ -116,7 +116,7 @@ var knownPeriods = map[string]bool{"AllTime": true, "Day": true, "Week": true, "
 // Parse validates the decoded input map. A shape outside the supported subset is a fallback; a value
 // the schema itself rejects is also a fallback (the Node app answers it with its own BAD_REQUEST).
 func Parse(m map[string]any) (*Input, error) {
-	in, err := parseInput(m, unsupportedKeys)
+	in, err := parseInput(m, unsupportedKeys, trpcTransportKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -126,16 +126,17 @@ func Parse(m map[string]any) (*Input, error) {
 	return in, nil
 }
 
-// parseInput is Parse with the procedure's own list of keys that fall back when present.
-func parseInput(m map[string]any, unsupported []string) (*Input, error) {
+// parseInput is Parse with the procedure's own list of keys that fall back when present, and its own
+// set of keys outside the schema that zod strips, read as absent.
+func parseInput(m map[string]any, unsupported []string, absent map[string]bool) (*Input, error) {
 	for _, k := range unsupported {
 		if v, ok := m[k]; ok && !isEmpty(v) {
 			return nil, fallback.Newf("input-"+k, "%v", v)
 		}
 	}
 	// After unsupported keys so the reason names the parity gap.
-	if k, ok := imagesSchema.Unknown(mapKeys(m), trpcTransportKeys); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
+	if k, ok := imagesSchema.Unknown(mapKeys(m), absent); ok {
+		return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(k), "%s", k)
 	}
 	in := &Input{
 		Limit: imagesDefaults.limit, Sort: imagesDefaults.sort, Period: imagesDefaults.period,
@@ -144,7 +145,7 @@ func parseInput(m map[string]any, unsupported []string) (*Input, error) {
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {
 		if in.Limit, err = intIn(v, 0, 200); err != nil {
-			return nil, fallback.Newf("input-invalid", "limit: %v", err)
+			return nil, fallback.NewfSafe("input-invalid", "limit", "limit: %v", err)
 		}
 	}
 	if v, ok := m["cursor"]; ok && v != nil {
@@ -155,21 +156,21 @@ func parseInput(m map[string]any, unsupported []string) (*Input, error) {
 	if v, ok := m["sort"]; ok && v != nil {
 		s, _ := v.(string)
 		if !knownSorts[s] {
-			return nil, fallback.Newf("input-sort", "%v", v)
+			return nil, fallback.NewfSafe("input-sort", fallback.Token(s), "%v", v)
 		}
 		in.Sort = s
 	}
 	if v, ok := m["period"]; ok && v != nil {
 		s, _ := v.(string)
 		if !knownPeriods[s] {
-			return nil, fallback.Newf("input-invalid", "period %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "period", "period %v", v)
 		}
 		in.Period = s
 	}
 	if v, ok := m["periodMode"]; ok && v != nil {
 		s, _ := v.(string)
 		if s != "published" && s != "stats" {
-			return nil, fallback.Newf("input-invalid", "periodMode %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "periodMode", "periodMode %v", v)
 		}
 		in.PeriodMode = s
 	}
@@ -177,7 +178,7 @@ func parseInput(m map[string]any, unsupported []string) (*Input, error) {
 		if v, ok := m[key]; ok && v != nil {
 			n, err := intIn(v, 0, math.MaxInt32)
 			if err != nil {
-				return nil, fallback.Newf("input-invalid", "%s: %v", key, err)
+				return nil, fallback.NewfSafe("input-invalid", key, "%s: %v", key, err)
 			}
 			*dst = &n
 		}
@@ -186,7 +187,7 @@ func parseInput(m map[string]any, unsupported []string) (*Input, error) {
 		if v, ok := m[key]; ok && v != nil {
 			n, err := intIn(v, math.MinInt32, math.MaxInt32)
 			if err != nil {
-				return nil, fallback.Newf("input-invalid", "%s: %v", key, err)
+				return nil, fallback.NewfSafe("input-invalid", key, "%s: %v", key, err)
 			}
 			*dst = n
 		}
@@ -232,7 +233,7 @@ func parseInput(m map[string]any, unsupported []string) (*Input, error) {
 			case "tagIds":
 				// Both handlers add it.
 			default:
-				return nil, fallback.Newf("input-include", "%v", e)
+				return nil, fallback.NewfSafe("input-include", includeToken(e), "%v", e)
 			}
 		}
 		in.IncludeCosmetics = hasCosmetics
@@ -329,7 +330,7 @@ func cursor(v any) (int, string, error) {
 	case json.Number, float64:
 		n, err := intIn(t, 0, math.MaxInt32)
 		if err != nil {
-			return 0, "", fallback.Newf("input-invalid", "cursor: %v", err)
+			return 0, "", fallback.NewfSafe("input-invalid", "cursor", "cursor: %v", err)
 		}
 		return n, "", nil
 	case string:
@@ -342,7 +343,7 @@ func cursor(v any) (int, string, error) {
 		}
 		return n, t, nil
 	}
-	return 0, "", fallback.Newf("input-cursor", "%T", v)
+	return 0, "", fallback.Safef("input-cursor", "%T", v)
 }
 
 // NumericCursor reports whether the cursor is one the Postgres page source reads as this service
@@ -355,6 +356,13 @@ func (in *Input) NumericCursor() bool {
 	}
 	n, err := strconv.Atoi(in.CursorText)
 	return err == nil && n > 0
+}
+
+// includeToken is an unported `include` entry's loggable detail: the enum value when it is a string
+// (fallback.Token), else "" (a number or object is not logged).
+func includeToken(e any) string {
+	s, _ := e.(string)
+	return fallback.Token(s)
 }
 
 func isZero(v any) bool {

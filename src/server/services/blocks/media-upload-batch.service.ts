@@ -1,7 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import type { ConsumerBlobPresignResponse } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import {
   MEDIA_UPLOAD_BATCH_DAILY_BYTES,
@@ -113,14 +114,16 @@ export async function reserveMediaUploadBatchQuota(
   now: Date = new Date()
 ): Promise<() => Promise<void>> {
   const day = now.toISOString().slice(0, 10);
-  const base = REDIS_SYS_KEYS.BLOCKS.MEDIA_UPLOAD_BATCH_DAILY;
+  const base = REDIS_KEYS.BLOCKS.MEDIA_UPLOAD_BATCH_DAILY;
   const itemsKey = `${base}:items:${userId}:${day}` as const;
   const bytesKey = `${base}:bytes:${userId}:${day}` as const;
   const charged: Array<[typeof itemsKey | typeof bytesKey, number]> = [];
   const release = async () => {
     for (const [key, amount] of charged) {
       try {
-        await sysRedis.decrBy(key, amount);
+        await takeClusterWindowCount('releaseMediaUploadBatchQuota', key, QUOTA_KEY_TTL_S, {
+          by: -amount,
+        });
       } catch {
         // Best-effort: a counter left high refuses early, never admits more.
       }
@@ -129,12 +132,12 @@ export async function reserveMediaUploadBatchQuota(
   let itemTotal: number;
   let byteTotal: number;
   try {
-    itemTotal = await sysRedis.incrBy(itemsKey, items);
+    itemTotal = await redis.incrBy(itemsKey, items);
     charged.push([itemsKey, items]);
-    if (itemTotal === items) await sysRedis.expire(itemsKey, QUOTA_KEY_TTL_S);
-    byteTotal = await sysRedis.incrBy(bytesKey, bytes);
+    if (itemTotal === items) await redis.expire(itemsKey, QUOTA_KEY_TTL_S);
+    byteTotal = await redis.incrBy(bytesKey, bytes);
     charged.push([bytesKey, bytes]);
-    if (byteTotal === bytes) await sysRedis.expire(bytesKey, QUOTA_KEY_TTL_S);
+    if (byteTotal === bytes) await redis.expire(bytesKey, QUOTA_KEY_TTL_S);
   } catch (err) {
     await release();
     throw new TRPCError({

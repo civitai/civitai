@@ -8,7 +8,8 @@ import type { BlockOutputWorkflowFacts } from '~/server/services/blocks/block-ou
 // the route side of each parity row runs the real `judgeTicket`.
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: async (flag: string) => flag === 'app-blocks-workflow-media-serve',
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string) => flag === 'app-blocks-workflow-media-serve',
 }));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: async (id: number) => ({ id, tier: 'free' }) },
@@ -25,7 +26,9 @@ const { snapshotFromWorkflow, projectAppWorkflowWithPositions, BLOCK_STEP_NAME }
 const { blockOutputCeilingFromClaims, classifyBlockOutput } = await import(
   '~/server/services/blocks/block-output-restriction'
 );
-const { mintBlockOutput } = await import('~/server/services/blocks/block-output-mint');
+const { mintBlockOutput, applyServingRules } = await import(
+  '~/server/services/blocks/block-output-mint'
+);
 const { openBlockMediaRef, openBlockMediaTicket, sealBlockMediaTicket } = await import(
   '~/server/services/blocks/block-media-token'
 );
@@ -422,5 +425,75 @@ describe('parity: classifyBlockOutput and deriveOutputGate over one fixture tabl
       fetched.state === 'redirect' ? 'visible' : fetched.state === 'pending' ? 'pending' : 'hidden';
 
     expect({ poll, route }).toStrictEqual({ poll: row.poll, route: row.route });
+  });
+});
+
+describe('🔴 no serve decision: every media output is restricted, never a raw url', () => {
+  const UNKNOWN = { ...OFF, servingUnknown: true as const };
+
+  it('a PG image is restricted as unrecognised_url, with no url anywhere in the snapshot', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), UNKNOWN);
+    expect(snap.outputs?.[0]).toStrictEqual({ restricted: true, reason: 'unrecognised_url' });
+    expect(snap.imageUrls ?? []).toStrictEqual([]);
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('a never-rated engine video, delivered unrated with serving off, is restricted too', () => {
+    const snap = snapshotFromWorkflow(wf([videoStep(video('v0', null), 'kling')]), UNKNOWN);
+    expect(snap.outputs?.[0]).toStrictEqual({ restricted: true, reason: 'unrecognised_url' });
+    expect(JSON.stringify(snap)).not.toContain('orch.example');
+  });
+
+  it('CONTROL: the same PG image with serving off carries its url', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), OFF);
+    expect(snap.imageUrls).toStrictEqual([blobUrl('pg0')]);
+  });
+});
+
+describe('owner-only media rated `na`: the poll keeps it, every other read refuses it', () => {
+  const AUDIO = { url: blobUrl('a0'), type: 'audio', nsfwLevel: 'na' };
+  const shown = { url: blobUrl('a0') } as const;
+  const step = { neverRatedVideoStep: false };
+
+  it("the owner's poll keeps it", () => {
+    expect(applyServingRules(shown, AUDIO, step, { forOwner: true })).toStrictEqual(shown);
+  });
+
+  it('a publish, post or persist read (not for the owner) refuses it as unrated', () => {
+    expect(applyServingRules(shown, AUDIO, step)).toStrictEqual({
+      restricted: true,
+      reason: 'unrated',
+    });
+  });
+
+  it('CONTROL: an `na` image is refused even to its owner', () => {
+    expect(
+      applyServingRules(shown, { ...AUDIO, type: 'image' }, step, { forOwner: true })
+    ).toStrictEqual({ restricted: true, reason: 'unrated' });
+  });
+});
+
+describe('🔴 an anonymous mint (no session): tickets judge the viewer as signed out', () => {
+  const ANON = {
+    maxBrowsingLevel: NsfwLevel.PG,
+    serving: true,
+    mint: { userId: VIEWER, appBlockId: APP, anonymous: true as const },
+  };
+
+  it('a PG image ticket carries the anonymous claim and the anonymous level', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), ANON);
+    const out = snap.outputs?.[0] as { url: string };
+    const ticket = openBlockMediaTicket(ticketOf(out.url));
+    expect(ticket).toMatchObject({
+      viewerId: VIEWER,
+      viewerBrowsingLevel: NsfwLevel.PG,
+      anonymous: true,
+    });
+  });
+
+  it('CONTROL: a signed-in mint carries no anonymous claim', () => {
+    const snap = snapshotFromWorkflow(wf([textToImage([image('pg0', 'pg')])]), SERVING);
+    const out = snap.outputs?.[0] as { url: string };
+    expect(openBlockMediaTicket(ticketOf(out.url))?.anonymous).toBeUndefined();
   });
 });

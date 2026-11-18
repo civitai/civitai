@@ -17,7 +17,7 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, noticeTone, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
@@ -41,6 +41,8 @@
     createVoteTracker,
     postVote,
     refillCount,
+    refusalNote,
+    skillCheckCue,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -92,6 +94,7 @@
     inFlight.landedOn = null;
   });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
+  let toastTone = $derived(noticeTone(data.notices));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
   // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
   // given right after "Onward" still records the card it appeared with.
@@ -395,10 +398,46 @@
     }
   });
 
+  // A right hidden-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
+  let cue = $state<string | null>(null);
+  let cueTimer: ReturnType<typeof setTimeout> | undefined;
+  const CUE_MS = 2500;
+  function cheer(result: Record<string, unknown> | undefined, smitesBefore: number) {
+    const next = skillCheckCue(result, smitesBefore);
+    if (!next) return;
+    cue = next;
+    clearTimeout(cueTimer);
+    cueTimer = setTimeout(() => (cue = null), CUE_MS);
+  }
+  function clearCue() {
+    cue = null;
+    clearTimeout(cueTimer);
+  }
+  onDestroy(() => {
+    clearTimeout(noteTimer);
+    clearTimeout(cueTimer);
+  });
+
+  // A refused background vote's note stays until the next judgment or until dismissed: the player has moved on by the time
+  // it arrives, and a note that vanished after five seconds let a press pass for a counted vote.
+  let sticky = $state(false);
   function tell(message: string) {
+    clearCue();
     note = message;
+    sticky = false;
     clearTimeout(noteTimer);
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
+  }
+  function stick(message: string) {
+    clearCue();
+    note = message;
+    sticky = true;
+    clearTimeout(noteTimer);
+  }
+  function unstick() {
+    if (!sticky) return;
+    sticky = false;
+    note = null;
   }
 
   // Background votes go one at a time, in the order they were answered: this page posts one vote at a time.
@@ -406,6 +445,8 @@
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
+    // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
+    const smitesBefore = data.status.smites;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
@@ -432,7 +473,8 @@
       },
       onFailure: (outcome) => {
         uncount();
-        tell(outcome.message);
+        const message = refusalNote(outcome);
+        if (message) stick(message);
         dropBuffered(key);
         if (outcome.resync) {
           local = null;
@@ -442,6 +484,7 @@
       },
       // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
       // against the data on screen until the refreshed data, which holds it, replaces it.
+      onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
         if (counted && alive) landVote(inFlight, data.daily);
         counted = false;
@@ -483,6 +526,7 @@
     if (!next) return submitAndResync(input, key, token);
     input.cancel();
     if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
+    unstick();
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
@@ -616,6 +660,7 @@
       streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
+      heartBack={data.status.heartBack}
       onmore={() => (railSheetOpen = true)}
     />
   {:else if data.mode === 'apprentice'}
@@ -634,11 +679,24 @@
   <div class="body">
   <div class="main">
   {#if data.notices.length > 0}
-    <section class="toast" role="status" aria-label="Skill check">
-      <Icon name="triangle-alert" size={18} />
+    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
+      <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
       <div class="toast-body">
-        {#each data.notices as notice (notice.title)}
-          <p><strong>{notice.title}</strong> {notice.message}</p>
+        {#each data.notices as notice (notice.key)}
+          <div class="check-notice" class:close={notice.consequence === 'close'}>
+            {#if notice.imageSrc}
+              <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
+            {/if}
+            <p>
+              <strong>{notice.title}</strong>
+              {notice.message}
+              {#if notice.consequence === 'smite'}
+                <span class="check-answers">
+                  You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
+                </span>
+              {/if}
+            </p>
+          </div>
         {/each}
         {#if form?.noticeFailed}
           <p>{form.message}</p>
@@ -766,7 +824,14 @@
         {/key}
         {@render levelToast(true)}
         {#if note}
-          <p class="nudge" role="status">{note}</p>
+          <p class="nudge" class:sticky>
+            <span role="status">{note}</span>
+            {#if sticky}
+              <button type="button" class="nudge-close" aria-label="Dismiss" onclick={unstick}>×</button>
+            {/if}
+          </p>
+        {:else if cue}
+          <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
@@ -879,6 +944,11 @@
     color: var(--io-crimson-text);
     font: 400 13px/1.4 var(--io-font-ui);
   }
+  /* Close calls only: information, not an alarm. */
+  .toast.calm {
+    border-color: var(--io-gold);
+    color: var(--io-gold);
+  }
   .toast-body {
     flex: 1;
   }
@@ -889,6 +959,29 @@
   .toast-body strong {
     display: block;
     color: var(--io-crimson-text);
+  }
+  .check-notice {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .check-notice + .check-notice {
+    margin-top: 8px;
+  }
+  .check-notice.close strong {
+    color: var(--io-gold);
+  }
+  .check-thumb {
+    flex: none;
+    width: 48px;
+    height: 48px;
+    border-radius: 6px;
+    object-fit: cover;
+  }
+  .check-answers {
+    display: block;
+    color: var(--io-parchment);
+    opacity: 0.8;
   }
   .toast button {
     min-height: 0;
@@ -922,6 +1015,29 @@
     color: var(--io-parchment);
     font: 400 13px/1.3 var(--io-font-ui);
     text-align: center;
+  }
+  .nudge.sticky {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+  }
+  .nudge-close {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--io-parchment);
+    font-size: 16px;
+    line-height: 1;
+  }
+  .nudge.cheer {
+    border-color: var(--io-gold);
   }
 
   .column {
