@@ -107,3 +107,12 @@ describe('spaceSkips', () => {
     expect(spaceSkips({ question: { options } })).toBe(true);
   });
 });
+
+describe('a ruling on screen', () => {
+  // The page builds the screen from the question alone: a smite, warning or close call in the toast holds nothing back.
+  it('leaves the answer keys and Space working, as with no ruling', () => {
+    const screen = { question: { options } };
+    expect(answerForKeyPress(optionsOnScreen(screen) ?? [], '3', false)).toBe('4');
+    expect(spaceSkips(screen)).toBe(true);
+  });
+});

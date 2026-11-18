@@ -264,7 +264,7 @@ export const usageLimitDefs = [
     kind: 'abuse',
     label: 'Training dataset images rated per minute',
     window: rolling(60),
-    base: 120,
+    base: 60,
   },
   {
     id: 'dataset-rating.daily',
@@ -272,7 +272,7 @@ export const usageLimitDefs = [
     kind: 'abuse',
     label: 'Training dataset images rated per day',
     window: rolling(DAY),
-    base: 3000,
+    base: 1000,
   },
   {
     // Counted by the gift claim itself (a calendar window), not by rateLimit().

@@ -8,6 +8,7 @@ import { metrics } from '$lib/server/metrics';
 import {
   answerHiddenCheck,
   dismissHiddenNotices,
+  parseNoticeKeys,
   hiddenItemId,
   readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
@@ -412,9 +413,14 @@ export const actions: Actions = {
     return { success: true };
   },
 
-  dismissNotices: async ({ locals }) => {
+  // The toast posts the keys it showed, so a check graded meanwhile stays unseen; a page without them dismisses all.
+  dismissNotices: async ({ locals, request }) => {
     try {
-      await dismissHiddenNotices(db, locals.user.id, queueDeps.now());
+      const posted = (await request.formData())
+        .getAll('notice')
+        .filter((key) => typeof key === 'string');
+      const shown = posted.length > 0 ? parseNoticeKeys(posted) : undefined;
+      await dismissHiddenNotices(db, locals.user.id, queueDeps.now(), shown);
     } catch (error) {
       console.error('knights: could not store the notice dismissal', { error });
       return fail(500, { message: DISMISS_FAILED, noticeFailed: true });
