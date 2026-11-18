@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
@@ -31,6 +31,7 @@ import (
 	"github.com/civitai/civitai/apps/feed-go/internal/modelfeed"
 	"github.com/civitai/civitai/apps/feed-go/internal/server"
 	"github.com/civitai/civitai/apps/feed-go/internal/sysredis"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 	"github.com/civitai/civitai/apps/feed-go/internal/v1models"
 )
 
@@ -78,12 +79,13 @@ func missCompute(cfg *config.Config, primary hydrate.Querier, observe func(cache
 // metricsReader is the ClickHouse reader the metric-hash misses are computed with: nil when it is not
 // configured (cfg.ClickHouseURL empty) or its URL is invalid, so feed-go starts and those misses fall
 // back (`metrics-miss`). The error is for the startup log; it never names the URL or credentials.
-func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
+// tracer spans its reads (nil when tracing is off).
+func metricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse, error) {
 	if cfg.ClickHouseURL == "" {
 		return nil, nil
 	}
 	c, err := chread.New(chread.Config{URL: cfg.ClickHouseURL, Username: cfg.ClickHouseUsername, Password: cfg.ClickHousePassword,
-		MaxInFlight: cfg.ClickHouseMaxInFlight})
+		MaxInFlight: cfg.ClickHouseMaxInFlight, Tracer: tracer})
 	if err != nil {
 		return nil, err
 	}
@@ -91,9 +93,18 @@ func metricsReader(cfg *config.Config) (hydrate.ClickHouse, error) {
 }
 
 // attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bound,
-// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). The error is metricsReader's.
-func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute) error {
-	reader, err := metricsReader(cfg)
+// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). With tracing on (tp set) the reader's
+// reads are spanned (tracing.ClickHouseTracer) and so are c's waits (MissCompute.Tracer); tp nil
+// leaves both untraced. The error is metricsReader's.
+func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing.Provider) error {
+	var chTracer chread.Tracer
+	if tp != nil {
+		chTracer = tracing.ClickHouseTracer{Tracer: tp.Tracer}
+		if c != nil {
+			c.Tracer = tp.Tracer
+		}
+	}
+	reader, err := metricsReader(cfg, chTracer)
 	if c != nil && reader != nil {
 		c.ClickHouse = reader
 		c.MetricsTimeout = cfg.ClickHouseTimeout
@@ -112,9 +123,21 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Tracing (DESIGN.md §10.3): nil = off, and then nothing below starts a span or touches a header.
+	tp, err := tracing.Setup(ctx, cfg.Tracing)
+	if err != nil {
+		return err
+	}
+	log.Info("tracing", "FEED_GO_OTEL_ENABLED", cfg.Tracing.Enabled, "OTEL_SERVICE_NAME", cfg.Tracing.ServiceName,
+		"OTEL_TRACES_SAMPLE_RATIO", cfg.Tracing.Ratio, "FEED_GO_FALLBACK_LOG_PER_MIN", cfg.FallbackLogPerMinute,
+		"FEED_GO_ERROR_LOG_PER_MIN", cfg.ErrorLogPerMinute)
+
 	poolCfg, err := dbpool.Config(cfg.DatabaseURL, dbpool.Settings{MaxConns: cfg.DBMaxConns})
 	if err != nil {
 		return err
+	}
+	if tp != nil {
+		poolCfg.ConnConfig.Tracer = tracing.PgxTracer{Tracer: tp.Tracer}
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
@@ -127,6 +150,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = cache.Close() }()
+	if tp != nil {
+		cache.AddHook(tracing.RedisHook{Tracer: tp.Tracer, Client: "cache"})
+	}
 	// The system redis is a primary/replica set, never a cluster: through its Sentinels when
 	// REDIS_SYS_SENTINELS is set, else the single REDIS_SYS_URL connection (internal/sysredis).
 	sys, err := sysredis.New(sysredis.Settings{
@@ -139,6 +165,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = sys.Close() }()
+	if tp != nil {
+		sys.AddHook(tracing.RedisHook{Tracer: tp.Tracer, Client: "sys"})
+	}
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -152,6 +181,9 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		if tp != nil {
+			primaryCfg.ConnConfig.Tracer = tracing.PgxTracer{Tracer: tp.Tracer}
+		}
 		primaryPool, err := pgxpool.NewWithConfig(ctx, primaryCfg)
 		if err != nil {
 			return err
@@ -163,7 +195,7 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
-	if err := attachMetricsReader(cfg, sources.Compute); err != nil {
+	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
@@ -202,7 +234,7 @@ func run(log *slog.Logger) error {
 		Verifier:            verifier,
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
-		CookieNames:         cfg.CookieNames(),
+		CookieNames:         cfg.CookieNames,
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{
@@ -307,24 +339,28 @@ func run(log *slog.Logger) error {
 		RequestBudget:  cfg.RequestBudget,
 		// The pool's resolved ceiling (FEED_GO_DB_MAX_CONNS, the URL's pool_max_conns, or the default).
 		MaxInFlight: server.ResolveMaxInFlight(log, cfg.MaxInFlight, int(poolCfg.MaxConns)),
+		Events:      &server.EventLog{Log: log, FallbackPerMinute: cfg.FallbackLogPerMinute, ErrorPerMinute: cfg.ErrorLogPerMinute},
+	}
+	var prop propagation.TextMapPropagator
+	if tp != nil {
+		srv.Tracer, srv.Propagator, prop = tp.Tracer, tp.Propagator, tp.Propagator
 	}
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
 		if err != nil {
 			return err
 		}
-		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(reason string, err error) {
+		srv.Fallback = fallbackProxy(target, fallbackIdleTimeout, func(r *http.Request, reason string, err error) {
 			metrics.FallbackProxyErrors.WithLabelValues(reason).Inc()
-			if reason == proxyErrorUpstream {
-				log.Warn("fallback proxy: the Node app did not answer", "err", err)
-			}
-		})
+			srv.NoteProxyError(r, reason, err)
+		}, prop)
 	}
 
 	public := server.PublicMux(srv)
 	log.Info("public model.getAll", "FEED_GO_SERVE_MODEL_GETALL", cfg.ServeModelGetAll)
 	// pprof only on the internal listener, and only with FEED_GO_PPROF set (default off).
-	internal := server.InternalMux(srv, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}), cfg.Pprof)
+	// OpenMetrics on request only with tracing on: the exemplars ride in that format alone.
+	internal := server.InternalMux(srv, server.MetricsHandler(reg, tp != nil), cfg.Pprof)
 	if cfg.Pprof {
 		log.Info("pprof enabled on the internal listener", "addr", cfg.InternalAddr, "path", "/debug/pprof/")
 	}
@@ -361,6 +397,10 @@ func run(log *slog.Logger) error {
 	}
 	for _, s := range servers {
 		_ = s.Shutdown(shutdown)
+	}
+	// The spans of the drained requests are exported before exit.
+	if err := tp.Shutdown(shutdown); err != nil {
+		log.Warn("trace exporter shutdown", "err", err)
 	}
 	return nil
 }

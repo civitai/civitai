@@ -73,6 +73,22 @@ describe('dealActions', () => {
     expect(dealActions(deal(), BUYER, NOW).actions).toEqual(['withdraw']);
   });
 
+  it('offers the buyer an immediate cancel while the seller is unavailable, before any due date', () => {
+    const unavailable = { sellerUnavailable: true };
+    for (const status of ['Accepted', 'InRevision'] as const)
+      expect(dealActions(deal({ status, dueAt: ago(-48) }), BUYER, NOW, unavailable)).toEqual({
+        actions: ['cancelAndRefund', 'requestCancellation'],
+        primaryAction: 'cancelAndRefund',
+      });
+    const delivered = deal({ status: 'Delivered', deliveredAt: ago(1) });
+    expect(dealActions(delivered, BUYER, NOW, unavailable).actions).not.toContain(
+      'cancelAndRefund'
+    );
+    expect(dealActions(deal({ status: 'Accepted' }), SELLER, NOW, unavailable).actions).toEqual([
+      'requestCancellation',
+    ]);
+  });
+
   it('offers the late cancel only from a day past due', () => {
     const working = { status: 'Accepted' as const };
     expect(dealActions(deal({ ...working, dueAt: ago(23) }), BUYER, NOW).actions).toEqual([

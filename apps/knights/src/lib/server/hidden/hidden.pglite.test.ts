@@ -72,6 +72,18 @@ describe('serving a hidden check', () => {
     expect(await pick(1, 'Knight', 1, Q, ids)).toBeNull();
   });
 
+  it('offers no check, never a repeat, once the player has answered every one in the pool', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    for (const imageId of [10, 11]) {
+      const id = await reference(imageId);
+      await answer(1, id, '4');
+    }
+
+    expect(await pick(1)).toBeNull();
+    expect(await pick(2)).not.toBeNull();
+  });
+
   it('only offers a check for the question the feed is showing', async () => {
     await seedPlayer(pg, 1);
     await reference(10, '4', 'hiddenCheck', 'knights.test.other');

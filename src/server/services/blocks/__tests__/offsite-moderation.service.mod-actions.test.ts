@@ -50,7 +50,13 @@ type WriteMock = {
     findUnique: ReturnType<typeof vi.fn>;
   };
   // On-site delist/relist flip the backing AppBlock's status in the same tx.
-  appBlock: { updateMany: ReturnType<typeof vi.fn>; findUnique: ReturnType<typeof vi.fn> };
+  appBlock: {
+    updateMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  // Suspending a block deletes its OAuth client's app tokens in the same tx.
+  apiKey: { findMany: ReturnType<typeof vi.fn>; deleteMany: ReturnType<typeof vi.fn> };
   appListingModerationEvent: {
     create: ReturnType<typeof vi.fn>;
     // republish reads the LATEST event on the primary inside the tx.
@@ -102,7 +108,16 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     appBlock: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       // Restoring a block reads its slug to check the app's open review holds.
-      findUnique: vi.fn(async () => ({ blockId: 'held-app' })),
+      findUnique: vi.fn(async () => ({
+        blockId: 'held-app',
+        appId: 'appblk-held-app',
+        status: 'suspended',
+      })),
+      count: vi.fn(async () => 0),
+    },
+    apiKey: {
+      findMany: vi.fn(async () => [{ userId: 7 }, { userId: 7 }, { userId: 8 }]),
+      deleteMany: vi.fn(async () => ({ count: 3 })),
     },
     appListingModerationEvent: {
       create: vi.fn(async (a: { data: unknown }) => a.data),
@@ -165,6 +180,16 @@ vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) =>
 }));
 // The on-site relist / owner-republish drift warn is a dynamic import of this module.
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+const { mockRevokeOrchestratorTokens, mockDeleteAuthSubject } = vi.hoisted(() => ({
+  mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
+  mockDeleteAuthSubject: vi.fn(async (_a: unknown) => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
+}));
+vi.mock('~/server/http/orchestrator/api-key-spend', () => ({
+  deleteAuthSubject: mockDeleteAuthSubject,
+}));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingReportId: () => `alrp_test_${++ids.n}`,
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
@@ -253,7 +278,14 @@ beforeEach(() => {
   mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
   mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
-  mockWrite.appBlock.findUnique.mockResolvedValue({ blockId: 'held-app' });
+  mockWrite.appBlock.findUnique.mockResolvedValue({
+    blockId: 'held-app',
+    appId: 'appblk-held-app',
+    status: 'suspended',
+  });
+  mockWrite.appBlock.count.mockResolvedValue(0);
+  mockWrite.apiKey.findMany.mockResolvedValue([{ userId: 7 }, { userId: 7 }, { userId: 8 }]);
+  mockWrite.apiKey.deleteMany.mockResolvedValue({ count: 3 });
   mockWrite.$queryRaw.mockImplementation(async () => []);
   // Default the in-tx purge primary read to a valid offsite listing (overridden
   // per-test where the snapshot status is load-bearing).
@@ -315,6 +347,9 @@ describe('delistListing', () => {
     });
     // No linked report → the report table is untouched.
     expect(mockWrite.appListingReport.updateMany).not.toHaveBeenCalled();
+    // No backing block → no token revoke.
+    expect(mockWrite.appBlock.findUnique).not.toHaveBeenCalled();
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
     // OFF-SITE hide → the owner is notified (post-commit), carrying the reason.
     expect(mockNotify).toHaveBeenCalledTimes(1);
     expect(mockNotify).toHaveBeenCalledWith(
@@ -345,6 +380,9 @@ describe('delistListing', () => {
       where: { id: BLOCK_ID, status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-held-app', type: { in: ['Access', 'Refresh'] } },
+    });
     // Still exactly one audit event.
     expect(mockWrite.appListingModerationEvent.create).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('delist');
@@ -358,6 +396,64 @@ describe('delistListing', () => {
         details: expect.objectContaining({ slug: SLUG, reason: GOOD_REASON }),
       })
     );
+  });
+
+  it('🔴 ON-SITE delist revokes the app tokens through the transaction, not outside it', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const txApiKey = {
+      findMany: vi.fn(async () => [{ userId: 7 }]),
+      deleteMany: vi.fn(async () => ({ count: 1 })),
+    };
+    mockWrite.$transaction.mockImplementationOnce(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+      cb({ ...mockWrite, apiKey: txApiKey })
+    );
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(txApiKey.deleteMany).toHaveBeenCalledTimes(1);
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('ON-SITE delist of an already-suspended block (0-count flip) still revokes its tokens', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 ON-SITE delist drops the orchestrator auth of each token holder, after the commit', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const order: string[] = [];
+    mockWrite.$transaction.mockImplementationOnce(
+      async (cb: (tx: WriteMock) => Promise<unknown>) => {
+        const out = await cb(mockWrite);
+        order.push('commit');
+        return out;
+      }
+    );
+    mockRevokeOrchestratorTokens.mockImplementation(async ({ userId }: { userId: number }) => {
+      order.push(`orchestrator:${userId}`);
+    });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(order).toEqual(['commit', 'orchestrator:7', 'orchestrator:8']);
+    // The consent survives a suspension, so its orchestrator subject (and spend window) stays.
+    expect(mockDeleteAuthSubject).not.toHaveBeenCalled();
+  });
+
+  it('a relist drops no orchestrator auth', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('removed'));
+    await relistListing({
+      input: { appListingId: APP_ID, reason: 'appeal upheld' },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockRevokeOrchestratorTokens).not.toHaveBeenCalled();
   });
 
   /**
@@ -662,6 +758,8 @@ describe('relistListing', () => {
       where: { id: BLOCK_ID, status: 'suspended' },
       data: { status: 'approved' },
     });
+    // Restoring revokes nothing.
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data.action).toBe('relist');
   });
 
@@ -1734,6 +1832,10 @@ describe('unpublishOwnListing', () => {
       where: { id: BLOCK_ID, status: 'approved' },
       data: { status: 'suspended' },
     });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledWith({
+      where: { clientId: 'appblk-held-app', type: { in: ['Access', 'Refresh'] } },
+    });
+    expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 8 });
     expect(mockWrite.appListingModerationEvent.create.mock.calls[0][0].data).toMatchObject({
       action: 'owner-unpublish',
       before: { status: 'approved' },

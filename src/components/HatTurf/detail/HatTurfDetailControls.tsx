@@ -39,7 +39,8 @@ export function HatTurfDetailControls({
 }) {
   const feed = useTurfFeed();
   const flag = useFlag(imageId);
-  return feed && !feed.hidden?.[imageId] ? (
+  // Today's flags are hidden from Hat Turf, but they take flag hats.
+  return feed && (flag || !feed.hidden?.[imageId]) ? (
     <div
       className={clsx(classes.group, large && classes.large)}
       data-testid="hat-turf-detail-controls"

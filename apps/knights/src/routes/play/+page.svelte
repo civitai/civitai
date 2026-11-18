@@ -10,6 +10,7 @@
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
   import LevelToast from './LevelToast.svelte';
+  import RulingToast from './RulingToast.svelte';
   import QueueClear from './QueueClear.svelte';
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
@@ -41,6 +42,8 @@
     createVoteTracker,
     postVote,
     refillCount,
+    refusalNote,
+    skillCheckCue,
     type PickedItem,
   } from './optimistic';
   import { BLOCKED_ANSWER, BLOCK_REASONS, asksBlockReason, type BlockReason } from '$lib/block-reasons';
@@ -395,10 +398,46 @@
     }
   });
 
+  // A right hidden-check answer while a smite weighs on the player: a short cue that it counted toward the next heart.
+  let cue = $state<string | null>(null);
+  let cueTimer: ReturnType<typeof setTimeout> | undefined;
+  const CUE_MS = 2500;
+  function cheer(result: Record<string, unknown> | undefined, smitesBefore: number) {
+    const next = skillCheckCue(result, smitesBefore);
+    if (!next) return;
+    cue = next;
+    clearTimeout(cueTimer);
+    cueTimer = setTimeout(() => (cue = null), CUE_MS);
+  }
+  function clearCue() {
+    cue = null;
+    clearTimeout(cueTimer);
+  }
+  onDestroy(() => {
+    clearTimeout(noteTimer);
+    clearTimeout(cueTimer);
+  });
+
+  // A refused background vote's note stays until the next judgment or until dismissed: the player has moved on by the time
+  // it arrives, and a note that vanished after five seconds let a press pass for a counted vote.
+  let sticky = $state(false);
   function tell(message: string) {
+    clearCue();
     note = message;
+    sticky = false;
     clearTimeout(noteTimer);
     noteTimer = setTimeout(() => (note = null), NOTE_MS);
+  }
+  function stick(message: string) {
+    clearCue();
+    note = message;
+    sticky = true;
+    clearTimeout(noteTimer);
+  }
+  function unstick() {
+    if (!sticky) return;
+    sticky = false;
+    note = null;
   }
 
   // Background votes go one at a time, in the order they were answered: this page posts one vote at a time.
@@ -406,6 +445,8 @@
   const wait = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
   function post(action: URL, body: FormData, key: string, counted: boolean) {
+    // Read at the press: by the time the answer lands, the page data may already hold this vote's effect.
+    const smitesBefore = data.status.smites;
     const uncount = () => {
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
@@ -432,7 +473,8 @@
       },
       onFailure: (outcome) => {
         uncount();
-        tell(outcome.message);
+        const message = refusalNote(outcome);
+        if (message) stick(message);
         dropBuffered(key);
         if (outcome.resync) {
           local = null;
@@ -442,6 +484,7 @@
       },
       // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
       // against the data on screen until the refreshed data, which holds it, replaces it.
+      onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
         if (counted && alive) landVote(inFlight, data.daily);
         counted = false;
@@ -483,6 +526,7 @@
     if (!next) return submitAndResync(input, key, token);
     input.cancel();
     if (cooling || !tracker.claim(key, token, input.action.search.startsWith('?/vote'))) return;
+    unstick();
     const answer = answerOf(input.submitter);
     if (answer === BLOCKED_ANSWER && blockReason) input.formData.set('blockReason', blockReason);
     blockReason = null;
@@ -506,6 +550,20 @@
     else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
   });
   let hearts = $derived(heartsLeft(data.status));
+  // Which body the page shows: the template branches on it, and the ruling sits directly above the stage when there is one.
+  let screen = $derived.by(() => {
+    if (data.mode === 'apprentice') {
+      const apprentice = data.apprentice;
+      if (apprentice.kind === 'question') return { kind: 'apprentice-question' as const, apprentice };
+      if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
+      return { kind: 'no-practice' as const };
+    }
+    if (data.muted) return { kind: 'muted' as const };
+    if (data.lockoutSeconds) return { kind: 'lockout' as const, seconds: data.lockoutSeconds };
+    if (view) return { kind: 'queue-stage' as const, view };
+    return { kind: data.resetPending ? ('none' as const) : ('clear' as const), daily: data.daily };
+  });
+  let rulingInStage = $derived(screen.kind === 'apprentice-question' || screen.kind === 'queue-stage');
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
@@ -576,6 +634,12 @@
   </div>
 {/snippet}
 
+{#snippet ruling()}
+  {#if data.notices.length > 0}
+    <RulingToast notices={data.notices} message={form?.noticeFailed ? form.message : null} {submitting} {submit} />
+  {/if}
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
   {#if levelNotice && levelToastShowing}
     <LevelToast
@@ -612,10 +676,12 @@
     <WatchMeta
       value={strip.value}
       max={strip.max}
+      watch={data.daily.watch}
       done={strip.done}
       streak={withVotesSent(data.daily, pendingVotes(inFlight, data.daily)).streak}
       {hearts}
       maxHearts={data.status.maxSmites}
+      heartBack={data.status.heartBack}
       onmore={() => (railSheetOpen = true)}
     />
   {:else if data.mode === 'apprentice'}
@@ -633,132 +699,121 @@
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0}
-    <section class="toast" role="status" aria-label="Skill check">
-      <Icon name="triangle-alert" size={18} />
-      <div class="toast-body">
-        {#each data.notices as notice (notice.title)}
-          <p><strong>{notice.title}</strong> {notice.message}</p>
-        {/each}
-        {#if form?.noticeFailed}
-          <p>{form.message}</p>
-        {/if}
-      </div>
-      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Understood</button>
-      </form>
-    </section>
+  {#if data.notices.length > 0 && !rulingInStage}
+    <div class="rulingwrap">{@render ruling()}</div>
   {/if}
 
   {#if data.mode === 'queue' && data.resetPending}
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
 
-  {#if data.mode === 'apprentice'}
-    {#if data.apprentice.kind === 'question'}
-      <div class="column">
-        <div class="qrow">
-          <p class="question" title={data.apprentice.prompt}>
-            <span class="eyebrow">Question</span>
-            <span class="text">{data.apprentice.prompt}</span>
-          </p>
-          {@render questionTools()}
-        </div>
-        <div class="stagewrap">
-          {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
-            <ImageStage
-              src={data.apprentice.item.src}
-              width={data.apprentice.item.width}
-              height={data.apprentice.item.height}
-              alt="The subject of this question"
-            />
-          {/key}
-          {@render levelToast(true)}
-        </div>
-        <div class="controls" class:yesno={yesNo}>
-          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
-            <input type="hidden" name="kind" value={data.apprentice.item.kind} />
-            <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
-            <input type="hidden" name="version" value={data.apprentice.item.version ?? ''} />
-            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
-            {#each data.apprentice.options as option, index (option.value)}
-              {@render pill(option, index, false, false)}
-            {/each}
-          </form>
-          {#if !yesNo}
-            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-          {/if}
-          <span class="rowtool">{@render soundToggle()}</span>
-        </div>
-        {#if formMessage}
-          <p class="notice flat" role="alert">{formMessage}</p>
+  {#if screen.kind === 'apprentice-question'}
+    {@const apprentice = screen.apprentice}
+    <div class="column">
+      <div class="qrow">
+        <p class="question" title={apprentice.prompt}>
+          <span class="eyebrow">Question</span>
+          <span class="text">{apprentice.prompt}</span>
+        </p>
+        {@render questionTools()}
+      </div>
+      {@render ruling()}
+      <div class="stagewrap">
+        {#key `${apprentice.item.kind}:${apprentice.item.referenceId}`}
+          <ImageStage
+            src={apprentice.item.src}
+            width={apprentice.item.width}
+            height={apprentice.item.height}
+            alt="The subject of this question"
+          />
+        {/key}
+        {@render levelToast(true)}
+      </div>
+      <div class="controls" class:yesno={yesNo}>
+        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
+          <input type="hidden" name="kind" value={apprentice.item.kind} />
+          <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
+          <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
+          {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+          {#each apprentice.options as option, index (option.value)}
+            {@render pill(option, index, false, false)}
+          {/each}
+        </form>
+        {#if !yesNo}
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
+        <span class="rowtool">{@render soundToggle()}</span>
       </div>
-    {:else if data.apprentice.kind === 'checkpoint'}
+      {#if formMessage}
+        <p class="notice flat" role="alert">{formMessage}</p>
+      {/if}
+    </div>
+  {:else if screen.kind === 'checkpoint'}
+    {@render levelToast(false)}
+    <CheckpointRecap
+      recap={screen.apprentice}
+      noticeShown={!!levelNotice}
+      message={formMessage}
+      {submitting}
+      submit={submitCheckpoint}
+      onguide={() => openGuide(guide)}
+    />
+  {:else if screen.kind === 'no-practice'}
+    <div class="panel">
       {@render levelToast(false)}
-      <CheckpointRecap
-        recap={data.apprentice}
-        noticeShown={!!levelNotice}
-        message={formMessage}
-        {submitting}
-        submit={submitCheckpoint}
-        onguide={() => openGuide(guide)}
-      />
-    {:else}
-      <div class="panel">
-        {@render levelToast(false)}
-        <section class="lockout" role="status" aria-label="No more practice items">
-          <h2>No more practice items right now</h2>
-          <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
-        </section>
-      </div>
-    {/if}
-  {:else if data.mode === 'queue' && data.muted}
+      <section class="lockout" role="status" aria-label="No more practice items">
+        <h2>No more practice items right now</h2>
+        <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
+      </section>
+    </div>
+  {:else if screen.kind === 'muted'}
     <div class="panel">
       <section class="lockout" role="status" aria-label="Judging unavailable">
         <h2>Judging is closed to you</h2>
         <p>Your account is muted, so you can't judge right now. You can still view your record and your gold.</p>
       </section>
     </div>
-  {:else if data.mode === 'queue' && data.lockoutSeconds}
+  {:else if screen.kind === 'lockout'}
     <div class="panel">
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
         <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
-        <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+        <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">Judging resumes by itself.</p>
       </section>
     </div>
-  {:else if view}
+  {:else if screen.kind === 'queue-stage'}
+    {@const shown = screen.view}
     <div class="column">
       <div class="qrow">
-      <p class="question" title={view.question.prompt}>
+      <p class="question" title={shown.question.prompt}>
         <span class="eyebrow">
           Question
-          {#if view.category}
+          {#if shown.category}
             <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
-            {#key view.category.heading}
-              <span class="category" class:glow={view.banner !== null}>
-                <span aria-hidden="true">·</span><span class="vh">Category: </span>{view.category.heading}
+            {#key shown.category.heading}
+              <span class="category" class:glow={shown.banner !== null}>
+                <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
               </span>
             {/key}
           {/if}
         </span>
-        <span class="text">{view.question.prompt}</span>
+        <span class="text">{shown.question.prompt}</span>
       </p>
       {@render questionTools()}
       </div>
       <span class="vh" role="status" aria-live="polite"
-        >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
+        >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
       >
+      {@render ruling()}
       <div class="stagewrap">
-        {#key view.item.key}
-          {@const itemKey = view.item.key}
+        {#key shown.item.key}
+          {@const itemKey = shown.item.key}
           <ImageStage
-            src={view.item.src}
-            width={view.item.width}
-            height={view.item.height}
+            src={shown.item.src}
+            width={shown.item.width}
+            height={shown.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
             onfail={() => (failedItem = itemKey)}
@@ -766,18 +821,25 @@
         {/key}
         {@render levelToast(true)}
         {#if note}
-          <p class="nudge" role="status">{note}</p>
+          <p class="nudge" class:sticky>
+            <span role="status">{note}</span>
+            {#if sticky}
+              <button type="button" class="nudge-close" aria-label="Dismiss" onclick={unstick}>×</button>
+            {/if}
+          </p>
+        {:else if cue}
+          <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
         <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
-          <input type="hidden" name="item" value={view.item.id} />
-          {#each view.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(view.question.key))}
+          <input type="hidden" name="item" value={shown.item.id} />
+          {#each shown.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
-          <input type="hidden" name="item" value={view.item.id} />
+          <input type="hidden" name="item" value={shown.item.id} />
           <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
@@ -794,9 +856,9 @@
         <p class="notice flat" role="alert">{formMessage}</p>
       {/if}
     </div>
-  {:else if !data.resetPending}
+  {:else if screen.kind === 'clear'}
     {@render levelToast(false)}
-    <QueueClear daily={data.daily} />
+    <QueueClear daily={screen.daily} />
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
@@ -861,42 +923,13 @@
     overflow-y: auto;
   }
 
-  /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
-  .toast {
-    position: absolute;
-    top: 4.5rem;
-    left: 50%;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: min(34rem, calc(100% - 2rem));
-    padding: 12px 16px;
-    transform: translateX(-50%);
-    border: 1px solid var(--io-crimson);
-    border-radius: 12px;
-    background: #14110dee;
-    color: var(--io-crimson-text);
-    font: 400 13px/1.4 var(--io-font-ui);
+  .rulingwrap {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 1056px;
+    margin: 0 auto;
+    padding: 8px 28px 0;
   }
-  .toast-body {
-    flex: 1;
-  }
-  .toast-body p {
-    margin: 0;
-    color: var(--io-parchment);
-  }
-  .toast-body strong {
-    display: block;
-    color: var(--io-crimson-text);
-  }
-  .toast button {
-    min-height: 0;
-    padding: 6px 12px;
-    border-color: var(--io-crimson);
-    font-size: 12px;
-  }
-
   /* The stage and whatever floats over it (the level-up toast). */
   .stagewrap {
     position: relative;
@@ -922,6 +955,29 @@
     color: var(--io-parchment);
     font: 400 13px/1.3 var(--io-font-ui);
     text-align: center;
+  }
+  .nudge.sticky {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+  }
+  .nudge-close {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--io-parchment);
+    font-size: 16px;
+    line-height: 1;
+  }
+  .nudge.cheer {
+    border-color: var(--io-gold);
   }
 
   .column {
@@ -1213,8 +1269,8 @@
       min-height: 10rem;
       padding: 4px 16px max(8px, env(safe-area-inset-bottom));
     }
-    .toast {
-      top: 3.5rem;
+    .rulingwrap {
+      padding: 4px 16px 0;
     }
     .eyebrow {
       font-size: 12px;

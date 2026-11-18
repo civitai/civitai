@@ -43,6 +43,24 @@ export function countQueryVerdict(index: string, verdict: string, stage: string,
   ensureRegisterQueryVerdictCounter(reg).inc({ index, verdict, stage });
 }
 
+const SEARCH_UPLOADS = 'search_upload_embed_total';
+
+/** Search-by-upload uploads: prepared (row written), refused (by the scan gate), embedded (searched). */
+export function countSearchUpload(
+  result: 'prepared' | 'refused' | 'embedded',
+  reg: Registry = client.register
+) {
+  const counter =
+    (reg.getSingleMetric(SEARCH_UPLOADS) as Counter<string> | undefined) ??
+    new client.Counter({
+      name: SEARCH_UPLOADS,
+      help: 'Search-by-upload uploads by result: prepared, refused by the scan gate, or embedded',
+      labelNames: ['result'],
+      registers: [reg],
+    });
+  counter.inc({ result });
+}
+
 const RULE_READS = 'semantic_search_query_rule_reads_total';
 
 /** Labels carry the rule type and where it was read from, never a term. */

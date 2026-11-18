@@ -9,16 +9,18 @@ import { NotificationCategory } from '@civitai/notifications';
 import { isSafeToRetry } from '@civitai/buzz';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { dbRead } from './db';
+import { dbRead, dbWrite } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
 import { getClickhouse } from './clickhouse';
 import { getNotifications } from './notifications';
 import { getSysRedis } from './redis';
 import { syncSearchIndex, syncSearchIndexBulk } from './search-index';
+import { parkModelSearchUpdates } from './search-index-park';
 import { logAxiomError, logToAxiom } from './axiom';
 import { appealResolutionEmail } from './emails/appeal-resolution.email';
 import { isFeedbackCaptureOwner } from '@civitai/shared/feedback-capture';
+import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
 
 /**
  * Run a post-write side effect so it cannot fail the moderation action that already happened.
@@ -128,7 +130,10 @@ export async function bustPostGalleryCaches(postIds: number[]): Promise<void> {
   const showcaseModelIds = [
     ...new Set(rows.filter((r) => r.isShowcase && r.modelId != null).map((r) => r.modelId!)),
   ];
-  await syncSearchIndexBulk({ entityType: 'model', entityIds: showcaseModelIds, action: 'update' });
+  await syncSearchIndexBulk(
+    { entityType: 'model', entityIds: showcaseModelIds, action: 'update' },
+    { strict: true }
+  ).catch(() => parkModelSearchUpdates(showcaseModelIds));
 }
 
 // Keep pHash as the full-precision string: it's a signed 64-bit value that overflows JS `number`
@@ -224,6 +229,10 @@ export async function addImagesToBlocklist(
 
   const csamRows = candidates.filter((v) => v.reason === 'CSAM');
   await write(csamRows);
+  // The Postgres copy review routing reads; it throws like the write above. Twin: the main app's
+  // bulkAddBlockedImages.
+  const mirror = mirrorBlockedHashesSql(csamRows.map((v) => v.hash));
+  if (mirror) await sql.raw(mirror).execute(dbWrite);
   const inBatch = new Set(csamRows.map((v) => v.hash));
   const others = candidates.filter((v) => v.reason !== 'CSAM' && !inBatch.has(v.hash));
   if (!others.length) return;

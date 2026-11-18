@@ -7,10 +7,12 @@ import { usePrevious } from '@mantine/hooks';
 import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import type { CSSProperties } from 'react';
+import { useRef } from 'react';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageStore } from '~/store/image.store';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ControlledImage } from '~/components/Post/EditV2/PostEditProvider';
@@ -19,6 +21,7 @@ import {
   imageOnlyReorderIndexes,
   mergeEditorItems,
   reorderPayload,
+  withSavedPositions,
 } from '~/components/Post/EditV2/post-edit-items';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -251,24 +254,41 @@ function SortableImage({ image, sortableId }: ItemProps) {
 export function ReorderImagesButton() {
   const queryUtils = trpc.useUtils();
   const textOn = !!useFeatureFlags().storylineText;
-  const [post, images, texts, isReordering, toggleReordering] = usePostEditStore((state) => [
-    state.post,
-    state.images,
-    state.texts,
-    state.isReordering,
-    state.toggleReordering,
-  ]);
+  const [post, images, texts, isReordering, toggleReordering, setImages, setTexts] =
+    usePostEditStore((state) => [
+      state.post,
+      state.images,
+      state.texts,
+      state.isReordering,
+      state.toggleReordering,
+      state.setImages,
+      state.setTexts,
+    ]);
 
   const { mutate, isPending: isLoading } = trpc.post.reorderImages.useMutation({
-    async onSuccess() {
+    async onSuccess(positions, { imageIds }) {
+      // The saved indexes, not the editor's guess: they differ around images the editor hides.
+      setImages((current) => withSavedPositions(current, [], positions, imageIds).images);
+      setTexts((current) => withSavedPositions([], current, positions).texts);
       await queryUtils.model.getAll.invalidate();
       await queryUtils.image.getInfinite.invalidate();
     },
+    onError(error) {
+      showErrorNotification({ title: 'Order not saved', error: new Error(error.message) });
+      // Back to the order the server still has.
+      const saved = beforeRearrange.current;
+      if (saved) {
+        setImages(() => saved.images);
+        setTexts(() => saved.texts);
+      }
+    },
   });
   const previous = usePrevious({ images, texts });
+  const beforeRearrange = useRef<{ images: typeof images; texts: typeof texts } | null>(null);
   const canReorder = !!images.every((x) => x.type === 'added');
 
   const onClick = () => {
+    if (!isReordering) beforeRearrange.current = { images, texts };
     toggleReordering();
     if (!isReordering || !previous || isEqual(previous, { images, texts }) || !post) return;
     mutate(reorderPayload({ postId: post.id, images, texts, textOn }));

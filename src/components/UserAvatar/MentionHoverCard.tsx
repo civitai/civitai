@@ -1,5 +1,6 @@
 import { mentionHref, mentionUserId } from '~/components/RenderHtml/mention-href';
 import { Popover } from '~/components/MantineOverlays';
+import { ViewportAnchor } from '~/components/UserAvatar/ViewportAnchor';
 import type { RefObject } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -179,8 +180,7 @@ export function MentionHoverCard({
       offset={4}
     >
       <Popover.Target>
-        <div
-          className="pointer-events-none fixed"
+        <ViewportAnchor
           style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
         />
       </Popover.Target>

@@ -17,8 +17,10 @@
 //     getUserCollectionPermissionsByIds (collection.service.ts, the `read` it decides),
 //     getShowcaseHeldLevels (src/server/services/model.service.ts), getCoverImages
 //     (model-cover.service.ts), getModelPaidAccessGates, getUserMetricPrivacyDefaultsMap,
-//     getValidCreatorMembershipMap, and the cache readers (createCachedObject and its appendFns in
-//     src/server/redis/caches.ts and image.service.ts).
+//     getValidCreatorMembershipMap, getOfficialModelIds (resource-select.service.ts, a fresh
+//     fetchThroughCache entry), and the cache readers (createCachedObject and its appendFns in
+//     src/server/redis/caches.ts and image.service.ts), with, for a fixture's `cold` keys, the
+//     lookups of dataForModelsCache and modelTagCache and the writes their fetch makes.
 // The answer is encoded with the real superjson, the cache values with the real msgpackr `pack`.
 //
 // The page query is an external system here, as the feed service is for the image fixtures: each
@@ -237,6 +239,7 @@ const MODELS = {
   5001: model(5001, 1001, {
     coverImageId: 8012,
     rank: rank(100, 90),
+    hotScore: 400,
     lastVersionAt: day(12, 10, 250),
     tagIds: [701, 702, 799], // 799 is not in the tag cache any more
     versions: [version(6001, 'SDXL 1.0', { flags: 32 }), version(6002, 'Pony', { nsfwLevel: 4 })],
@@ -245,6 +248,7 @@ const MODELS = {
     type: 'LORA',
     coverImageId: 8031, // on its other version
     rank: rank(80, 70),
+    hotScore: 600,
     lastVersionAt: day(11, 10, 125),
     versions: [version(6003, 'Pony', { covered: false }), version(6004, 'Illustrious')],
   }),
@@ -256,12 +260,14 @@ const MODELS = {
   5004: model(5004, 1001, {
     sfwOnly: true,
     rank: rank(40, 30),
+    hotScore: 800,
     lastVersionAt: day(8),
     meta: { metricVisibility: { downloads: 'hide' } },
     versions: [version(6006, 'Pony')],
   }),
   5005: model(5005, 1002, {
     rank: rank(30, 20),
+    hotScore: 700,
     lastVersionAt: day(7),
     versions: [
       version(6007, 'Pony', { availability: 'Private' }),
@@ -281,6 +287,7 @@ const MODELS = {
   }),
   5007: model(5007, 1002, {
     rank: rank(10, 5),
+    hotScore: 500,
     lastVersionAt: day(5),
     tagIds: [9901], // an addon-excluded tag: left out of every page that resolves the addon
     versions: [version(6010, 'Pony')],
@@ -294,10 +301,37 @@ const MODELS = {
   }),
   5009: model(5009, 1002, {
     rank: rank(4, 4),
+    hotScore: 900,
     lastVersionAt: day(3),
     versions: [version(6012, 'Pony')],
   }),
+  5010: model(5010, 1001, {
+    rank: rank(3, 3),
+    lastVersionAt: day(2),
+    tagIds: [], // modelTagCache's lookup finds no row: a notFound marker
+    hashes: ['HASH5010A', 'HASH5010B'],
+    versions: [
+      version(6014, 'Pony', { index: 1, trainedWords: [], description: null, publishedAt: null }),
+      version(6013, 'Pony', { index: 0, trainingStatus: 'Approved', vaeId: 6099, flags: 2 }),
+    ],
+  }),
+  // No version at all: dataForModelsCache's lookup has no record for it (cacheNotFound off: nothing is
+  // written, and the model is left out).
+  5011: model(5011, 1002, { rank: rank(2, 2), versions: [], hashes: ['HASH5011'] }),
 };
+// The lookup orders the versions by (modelId, index): the world lists 5010's out of that order, so a
+// cold read must sort them.
+const byIndex = (versions) => [...versions].sort((a, b) => a.index - b.index);
+// getOfficialModelIds' cached records ({id, type}, in the order the database returned them) and the
+// entry's cachedAt (Date.now() when written: a minute before the fixtures' clock, inside its 5 min ttl).
+// 5002 is a LORA (not pinned), 5098 an official checkpoint on another base (the pinned page finds no
+// row for it).
+const OFFICIAL = [
+  { id: 5004, type: 'Checkpoint' },
+  { id: 5002, type: 'LORA' },
+  { id: 5009, type: 'Checkpoint' },
+  { id: 5098, type: 'Checkpoint' },
+];
 // Collections as getUserCollectionPermissionsByIds reads them: the read configuration, the owner and
 // each user's contributor permissions.
 const COLLECTIONS = {
@@ -327,6 +361,8 @@ const VERSION_IMAGES = {
   6012: Array.from({ length: 9 }, (_, i) =>
     showcase(8120 + i, 1002, [4, 4, 4, 4, 4, 4, 1, 2, 4][i])
   ),
+  6013: [showcase(8130, 1001, 1)],
+  6014: [showcase(8140, 1001, 1)],
 };
 for (const [vid, list] of Object.entries(VERSION_IMAGES))
   for (const i of list) i.modelVersionId = Number(vid);
@@ -361,7 +397,7 @@ const K = {
   basic: 'packed:caches:basic-users',
   userCosmetics: 'packed:caches:user-cosmetics',
   cosmetics: 'packed:caches:cosmetics2',
-  profile: 'packed:caches:profile-pictures:v3',
+  profile: 'packed:caches:profile-pictures:v4',
   data: 'packed:caches:data-for-model-2',
   modelTags: 'packed:caches:model-tags',
   basicTags: 'packed:caches:basic-tags',
@@ -371,6 +407,7 @@ const K = {
   tagIds: 'packed:caches:tag-ids-for-images',
   privacy: 'packed:caches:user-metric-privacy-defaults',
   membership: 'packed:caches:creator-membership-valid',
+  official: 'packed:caches:official-models',
   session: 'session:data2',
 };
 const notFound = (idKey, id) => ({ [idKey]: id, notFound: true, cachedAt: CACHED_AT });
@@ -392,7 +429,7 @@ function worldPacked(prefix, id) {
       const m = MODELS[id];
       if (!m) return undefined;
       // The lookup's row (versions in index order, modelId dropped), tags [] until the appendFn.
-      return entry({ modelId: id, hashes: m.hashes, tags: [], versions: m.versions });
+      return entry({ modelId: id, hashes: m.hashes, tags: [], versions: byIndex(m.versions) });
     }
     case K.modelTags: {
       const m = MODELS[id];
@@ -426,8 +463,14 @@ class Trace {
     this.pages = [...(spec.pages ?? [])];
     this.pagesOut = [];
     this.dropKeys = spec.dropKeys ?? [];
+    this.cold = new Set(spec.cold ?? []);
+    this.coldRead = new Set();
+    this.writes = new Map(); // key -> what Node's fetch writes on the cold miss ({value, ex})
     this.events = new Set(spec.events ?? []);
     this.db = {
+      modelVersionRows: [],
+      modelHashes: [],
+      tagsOnModels: [],
       paidAccess: new Map(),
       coverImages: new Map(),
       tags: new Map(),
@@ -439,10 +482,67 @@ class Trace {
 }
 let T;
 
-/** createCachedObject.fetch over the world: notFound markers skipped, cachedAt stripped. */
+const DAY = 24 * 60 * 60;
+
+/** The lookupFn of a cold key's cache (createCachedObject's miss path), as the fetch writes it:
+ *  dataForModelsCache (src/server/redis/caches.ts: the versions and hashes queries, then
+ *  `{ modelId, hashes, tags: [], versions }` per model with a version; cacheNotFound off, so nothing for
+ *  one without; EX a day) and modelTagCache (TagsOnModels rows, `{ modelId, tagIds }`, else a notFound
+ *  marker; EX a day). Records the rows the queries return and the write. Returns the record, or
+ *  undefined. */
+function coldLookup(prefix, id) {
+  const m = MODELS[id];
+  switch (prefix) {
+    case K.data: {
+      for (const v of byIndex(m?.versions ?? [])) T.db.modelVersionRows.push(mark({ modelId: id, ...v }));
+      for (const hash of m?.hashes ?? []) T.db.modelHashes.push({ modelId: id, hash });
+      if (!m?.versions.length) return undefined;
+      const result = {
+        modelId: id,
+        hashes: [...m.hashes],
+        tags: [],
+        versions: structuredClone(byIndex(m.versions)),
+      };
+      T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
+      return result;
+    }
+    case K.modelTags: {
+      for (const tagId of m?.tagIds ?? []) T.db.tagsOnModels.push({ modelId: id, tagId });
+      if (!m?.tagIds.length) {
+        T.writes.set(`${prefix}:${id}`, {
+          value: { modelId: id, notFound: true, cachedAt: NOW },
+          ex: DAY,
+        });
+        return undefined;
+      }
+      const result = { modelId: id, tagIds: [...m.tagIds] };
+      T.writes.set(`${prefix}:${id}`, { value: { ...result, cachedAt: NOW }, ex: DAY });
+      return result;
+    }
+  }
+  throw new Error(`${T.name}: no cold lookup for ${prefix}`);
+}
+
+/** createCachedObject.fetch over the world: notFound markers skipped, cachedAt stripped; a cold key is
+ *  looked up (coldLookup) and not held in the fixture's cache. */
 function cacheFetch(prefix, ids, { appendFn } = {}) {
   const out = {};
   for (const id of [...new Set(ids)]) {
+    if (T.cold.has(`${prefix}:${id}`)) {
+      T.coldRead.add(`${prefix}:${id}`);
+      // A later fetch (the loop's next page) reads what the first one wrote.
+      const written = T.writes.get(`${prefix}:${id}`);
+      if (written) {
+        if (!written.value.notFound) {
+          const { cachedAt: _c, ...rest } = structuredClone(written.value);
+          out[id] = rest;
+        }
+        continue;
+      }
+      const result = coldLookup(prefix, id);
+      if (result) out[id] = structuredClone(result);
+      continue;
+    }
     const v = worldPacked(prefix, id);
     if (v === undefined) throw new Error(`${T.name}: cache miss ${prefix}:${id}`);
     T.packed.set(`${prefix}:${id}`, v);
@@ -556,7 +656,7 @@ function boundCursor(cursor) {
  *  the page records the values Node binds into its CollectionItem semi-join (the collection, the
  *  viewer its in-review items are kept for, the collection tag), which the harness checks feed-go
  *  binds too. */
-function pageQuery(input, take, viewerId) {
+function pageQuery(input, take, viewerId, { onlyModelIds, excludeModelIds } = {}) {
   const listed = T.pages.shift();
   if (!listed) throw new Error(`${T.name}: Node asks for a page the fixture does not list`);
   const cursor = input.cursor ?? null;
@@ -574,6 +674,9 @@ function pageQuery(input, take, viewerId) {
     };
   });
   const page = { cursor, bound: mark(boundCursor(cursor)), rows: rows.map(mark) };
+  // The pin's id filters (`mm."modelId" IN (…)` / `NOT IN (…)`): the harness checks feed-go binds them.
+  if (onlyModelIds?.length) page.onlyModelIds = onlyModelIds;
+  if (excludeModelIds?.length) page.excludeModelIds = excludeModelIds;
   if (input.collectionId)
     page.collection = {
       collectionId: input.collectionId,
@@ -618,7 +721,14 @@ function getUserCollectionPermissionsById({ id, userId }) {
 }
 
 /** getModelsRaw (model.service.ts) for the inputs the fixtures send. */
-function getModelsRaw({ input, user: sessionUser, include, eventDecorationViewer: _v }) {
+function getModelsRaw({
+  input,
+  user: sessionUser,
+  include,
+  eventDecorationViewer: _v,
+  onlyModelIds,
+  excludeModelIds,
+}) {
   const enforcement = enforceBlockedBrowsingTagsForModels(input, {
     id: sessionUser?.id,
     username: sessionUser?.username,
@@ -653,7 +763,7 @@ function getModelsRaw({ input, user: sessionUser, include, eventDecorationViewer
     isPrivate = !permissions.publicCollection;
   }
   const hidePrivateModels = !username && !user && !input.collectionId;
-  const models = pageQuery(input, take ?? 100, sessionUser?.id);
+  const models = pageQuery(input, take ?? 100, sessionUser?.id, { onlyModelIds, excludeModelIds });
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
   const userBasicData = cacheFetch(K.basic, userIds);
@@ -949,6 +1059,8 @@ function getModelsWithImagesAndModelVersions({
   metricPrivacyEnabled,
   heldViewer,
   coverage,
+  onlyModelIds,
+  excludeModelIds,
 }) {
   input.limit = input.limit ?? 100;
   const rawInput = { ...input, take: input.limit };
@@ -956,6 +1068,8 @@ function getModelsWithImagesAndModelVersions({
     input: rawInput,
     user,
     include: ['cosmetics'],
+    onlyModelIds,
+    excludeModelIds,
   });
   const modelVersionIds = items
     .filter((m) => !isModelWithheld(m))
@@ -1076,10 +1190,21 @@ function getModelsWithImagesAndModelVersions({
   };
 }
 
+/** getOfficialModelIds (resource-select.service.ts): fetchThroughCache over the one entry, read
+ *  fresh (cachedAt within its 5 min ttl), its data. */
+function getOfficialModelIds() {
+  const value = { data: OFFICIAL, cachedAt: NOW.getTime() - 60 * 1000 };
+  if (NOW.getTime() - 300 * 1000 > value.cachedAt)
+    throw new Error('the official entry is expired: not modelled');
+  T.packed.set(K.official, value);
+  // The rows its fetchFn would read (the same world): the harness answers a copy whose entry was
+  // emptied from them.
+  T.db.officialModels = OFFICIAL;
+  return structuredClone(value.data);
+}
+
 /** getModelsFeed (model.controller.ts) after resolveRequestBrowsingLevels. */
 function getModelsFeed(input, ctx) {
-  if (input.sort === 'Hot' && input.baseModels?.length && !input.query)
-    throw new Error('the official pin is not modelled');
   let loopCount = 0;
   let nextCursor;
   const slim = ctx.features.getAllModelImagesSlim;
@@ -1091,16 +1216,33 @@ function getModelsFeed(input, ctx) {
     metricPrivacyEnabled: true,
     coverage: { next: ctx.features.coverageNext, member: true },
   };
+  // Hot with a base-model filter leads with the official checkpoints, dropped from every page.
+  const pinnedIds =
+    input.sort === 'Hot' && input.baseModels?.length && !input.query
+      ? (getOfficialModelIds() ?? []).filter((m) => m.type === 'Checkpoint').map((m) => m.id)
+      : [];
+  const pinned =
+    pinnedIds.length && !input.cursor
+      ? getModelsWithImagesAndModelVersions({
+          ...queryOptions,
+          input: { ...input, limit: pinnedIds.length },
+          onlyModelIds: pinnedIds,
+        })
+      : undefined;
   const results = [];
   while (results.length < (input.limit ?? 100) && loopCount < 3) {
-    const result = getModelsWithImagesAndModelVersions({ ...queryOptions, input });
+    const result = getModelsWithImagesAndModelVersions({
+      ...queryOptions,
+      input,
+      excludeModelIds: pinnedIds,
+    });
     results.push(...result.items);
     if (!result.nextCursor) break;
     input.cursor = result.nextCursor;
     nextCursor = result.nextCursor;
     loopCount++;
   }
-  return { items: results, nextCursor };
+  return { items: [...(pinned?.items ?? []), ...results], nextCursor };
 }
 
 /** The tRPC request: applyDomainFeature + resolveRequestBrowsingLevels on the parsed input. */
@@ -1264,11 +1406,74 @@ const SPECS = [
     pages: [{ cursor: null, ids: [5001] }],
   },
   {
-    name: 'fallback-official-pin',
-    description: 'Hot with a base-model filter pins the official checkpoints: not ported.',
+    name: 'hot-official-pin-page1',
+    description:
+      'Hot with a base-model filter, first page: the official checkpoints (5004, 5009 and 5098; 5002 is a LORA) are fetched first as one page of the same query restricted to them (take 3; 5098 has no row on this base, and 5004 is held to its SFW gallery level) and lead the answer; the main page drops them and loops on its own limit, its lookahead the answer’s cursor.',
     host: HOST.blue,
-    input: { sort: 'Hot', baseModels: ['Pony'], browsingLevel: 1 },
-    fallback: 'model-official-pin',
+    viewer: 1003,
+    input: { sort: 'Hot', baseModels: ['Pony'], limit: 2, browsingLevel: 31 },
+    pages: [
+      { cursor: null, ids: [5009, 5004] },
+      { cursor: null, ids: [5005, 5002, 5007] },
+    ],
+  },
+  {
+    name: 'hot-official-pin-page2',
+    description:
+      'The next page of the same feed (the cursor from page 1): no pinned page, and the main page still drops the official checkpoints; an addon-excluded model leaves one item, and no lookahead leaves no cursor.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Hot', baseModels: ['Pony'], limit: 2, browsingLevel: 31, cursor: '500|5007' },
+    pages: [{ cursor: '500|5007', ids: [5007, 5001] }],
+  },
+  {
+    name: 'hot-official-pin-signed-out',
+    description:
+      'The pin signed out on the SFW domain, with several base models: the pinned page runs the multi-base-model query restricted to the checkpoints at the capped level; the main page has no lookahead, so no cursor.',
+    host: HOST.green,
+    input: { sort: 'Hot', baseModels: ['Pony', 'Illustrious'], limit: 3, browsingLevel: 31 },
+    pages: [
+      { cursor: null, ids: [5009, 5004] },
+      { cursor: null, ids: [5005, 5002] },
+    ],
+  },
+  {
+    name: 'fallback-official-models-miss',
+    description:
+      'The official-models entry absent with the miss computation off (FEED_GO_COMPUTE_MISSES=false; on, it is read from the replica).',
+    host: HOST.blue,
+    viewer: 1003,
+    config: { computeMissesOff: true },
+    input: { sort: 'Hot', baseModels: ['Pony'], limit: 2, browsingLevel: 31 },
+    pages: [
+      { cursor: null, ids: [5009, 5004] },
+      { cursor: null, ids: [5005, 5002, 5007] },
+    ],
+    dropKeys: [K.official],
+    fallback: 'official-models-miss',
+  },
+  {
+    name: 'cold-model-data',
+    description:
+      'Model data entries absent: computed with dataForModelsCache’s lookup (the versions in index order with their computed vaeId and coverage, the SHA256 hashes) and written back for a day; a model with no version is left out and nothing is written for it; the lookahead row’s entry, computed on page 1, is read again on page 2.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [
+      { cursor: null, ids: [5002, 5011, 5010, 5009] },
+      { cursor: '4|4|5009', ids: [5009] },
+    ],
+    cold: [`${K.data}:5010`, `${K.data}:5011`, `${K.data}:5009`],
+  },
+  {
+    name: 'cold-model-tags',
+    description:
+      'Model tags entries absent: computed with modelTagCache’s lookup (the tag ids in row order; a model with no tag gets a day’s notFound marker and keeps its data entry’s own tags) and written back.',
+    host: HOST.blue,
+    viewer: 1003,
+    input: { sort: 'Highest Rated', limit: 3, browsingLevel: 31 },
+    pages: [{ cursor: null, ids: [5001, 5010, 5009] }],
+    cold: [`${K.modelTags}:5001`, `${K.modelTags}:5010`],
   },
   {
     name: 'fallback-flag-off-state',
@@ -1395,6 +1600,16 @@ const SPECS = [
   },
 ];
 
+/** What Node writes on this fixture's cold misses, as the Go harness compares it. */
+function writeEntries() {
+  for (const key of T.cold)
+    if (!T.coldRead.has(key)) throw new Error(`${T.name}: cold key ${key} never read`);
+  const out = {};
+  for (const [key, w] of [...T.writes.entries()].sort())
+    out[key] = { value: mark(w.value), packed: packMarked(mark(w.value)), ex: w.ex };
+  return out;
+}
+
 function redisEntries(dropKeys) {
   const out = {};
   for (const [key, value] of [...T.packed.entries()].sort()) {
@@ -1418,6 +1633,11 @@ function dbTables() {
     tags: m2o(T.db.tags, ([name, id]) => ({ name, id })).filter((t) => t.id != null),
     creators: m2o(T.db.usernames, ([username, id]) => ({ username, id })),
   };
+  // Only a fixture with a cold model-data or model-tags key lists the lookups' rows.
+  if (T.db.modelVersionRows.length) tables.modelDataVersions = T.db.modelVersionRows;
+  if (T.db.modelHashes.length) tables.modelHashes = T.db.modelHashes;
+  if (T.db.tagsOnModels.length) tables.tagsOnModels = T.db.tagsOnModels;
+  if (T.db.officialModels) tables.officialModels = T.db.officialModels;
   // Only a fixture that reads a collection lists the table (a missing collection is no row).
   if (T.db.collections.size)
     tables.collections = m2o(T.db.collections, ([, c]) => c)
@@ -1455,7 +1675,10 @@ for (const spec of SPECS) {
       throw new Error(`${spec.name}: ${T.pages.length} listed page(s) never asked for`);
     expect = spec.fallback
       ? { fallback: spec.fallback }
-      : { envelope: JSON.parse(JSON.stringify(superjson.serialize(value))) };
+      : {
+          envelope: JSON.parse(JSON.stringify(superjson.serialize(value))),
+          writes: writeEntries(),
+        };
   }
   writeFileSync(
     join(dir, `${spec.name}.json`),

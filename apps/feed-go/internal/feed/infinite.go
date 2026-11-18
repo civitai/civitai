@@ -112,7 +112,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	if v, ok := m["userId"]; ok && v != nil {
 		n, err := intIn(v, 0, math.MaxInt32)
 		if err != nil {
-			return nil, fallback.Newf("input-invalid", "userId: %v", err)
+			return nil, fallback.NewfSafe("input-invalid", "userId", "userId: %v", err)
 		}
 		if n == 0 {
 			// `input.userId ?? …` keeps a 0 (the feed then has no creator) while the hydrate reads it
@@ -130,7 +130,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	}
 	if v, ok := m["postId"]; ok && v != nil {
 		if in.PostID, err = intIn(v, 0, math.MaxInt32); err != nil {
-			return nil, fallback.Newf("input-invalid", "postId: %v", err)
+			return nil, fallback.NewfSafe("input-invalid", "postId", "postId: %v", err)
 		}
 	}
 	if in.Tags, err = ints(m["tags"]); err != nil {
@@ -143,7 +143,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 	if v, ok := m["pending"]; ok && v != nil {
 		b, isBool := v.(bool) // z.boolean(), not coerced: anything else is Node's BAD_REQUEST
 		if !isBool {
-			return nil, fallback.Newf("input-invalid", "pending: %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "pending", "pending: %v", v)
 		}
 		in.Pending = b
 	}
@@ -299,7 +299,7 @@ func (b *BlockedTags) read(ctx context.Context) (*blockedList, error) {
 		return nil, fallback.New("blocked-tags-miss")
 	}
 	if err != nil {
-		return nil, fallback.Newf("blocked-tags-read-failed", "%v", err)
+		return nil, fallback.Wrap("blocked-tags-read-failed", err)
 	}
 	return parseBlockedList(raw)
 }
@@ -557,6 +557,7 @@ func ServeInfinite(ctx context.Context, d *InfiniteDeps, req InfiniteRequest) (*
 		TagIDs:         tags,
 		IndexOrder:     in.PostID != 0 && in.ModelID == 0,
 		Pending:        in.Pending,
+		Tools:          in.Tools,
 	}
 	if in.prioritized() {
 		q.PrioritizedUserIDs = in.PrioritizedUserIDs
@@ -594,6 +595,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		RequiringMeta:         in.RequiringMeta,
 		HasPrioritizedUserIDs: in.prioritized(),
 		Pending:               in.Pending,
+		Tools:                 in.Tools,
 	}
 	if in.CursorText != "" {
 		fq.CursorText = in.CursorText
@@ -621,10 +623,10 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-unavailable", "%v", err)
+		return nil, fallback.Wrap("feed-unavailable", err)
 	}
 	if ans.Status != 200 {
-		return nil, fallback.Newf("feed-status", "%d", ans.Status)
+		return nil, fallback.Safef("feed-status", "%d", ans.Status)
 	}
 	next := ""
 	if ans.NextCursor != "" {
@@ -646,7 +648,7 @@ func infiniteFromFeed(ctx context.Context, d *InfiniteDeps, in *InfiniteInput, q
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-hydrate-error", "%v", err) // Node: hydrate:error, a 503
+		return nil, fallback.Wrap("feed-hydrate-error", err) // Node: hydrate:error, a 503
 	}
 	if len(images) == 0 {
 		// hydrateWithReadRescue retries an empty hydrate on a replica this service does not reach.

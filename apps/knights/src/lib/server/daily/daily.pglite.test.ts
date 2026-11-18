@@ -437,6 +437,21 @@ describe('a career reset (startAt)', () => {
     });
   });
 
+  it('names a new Watch after a reset on the same day, and a new one the next day', async () => {
+    await seedPlayer(pg, 1);
+    const watch = (now: Date) =>
+      getDailyStatus(db, { playerId: 1, rank: 'Knight', level: 1, now }).then(
+        (status) => status.watch
+      );
+    const before = await watch(new Date(`${D1}T10:00:00Z`));
+    expect(await watch(NOON(D1))).toBe(before);
+
+    await setStart(1, `${D1} 12:00:00`);
+    const afterReset = await watch(new Date(`${D1}T13:00:00Z`));
+    expect(afterReset).not.toBe(before);
+    expect(await watch(NOON(D2))).not.toBe(afterReset);
+  });
+
   it('ends a 7-day streak, keeps the shields, and starts again from 1', async () => {
     await seedPlayer(pg, 1);
     await setKeeper(1, { streak: 7, lastWatchDay: D1, shields: 1 });

@@ -9,7 +9,7 @@ import {
 } from '~/server/utils/browsing-level';
 import { storedSourceImageIds } from '~/server/utils/source-image-ids';
 import { imageVisibilityConditions } from '~/server/services/image-visibility.service';
-import { Flags } from '~/shared/utils/flags';
+import { isRatingWithinCap } from '~/shared/utils/rating-cap';
 import { isSessionOrFullUserKey } from '~/server/services/oauth/enforce-token-scope';
 
 type MediaFields = {
@@ -44,8 +44,7 @@ export function canViewImageMedia(
   )
     return true;
   const cap = requestDomainBrowsingLevelCap(ctx);
-  // Under a cap, every bit of the rating must be inside it; unrated (0) and mixed ratings fail closed.
-  return cap === undefined || (image.nsfwLevel !== 0 && Flags.hasFlag(cap, image.nsfwLevel));
+  return cap === undefined || isRatingWithinCap(image.nsfwLevel, cap);
 }
 
 /** Signed-out answers are edge-cached by URL alone; a crawler's must not be served to others. */

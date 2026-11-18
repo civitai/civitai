@@ -65,6 +65,9 @@ type ImagesQuery struct {
 	// Pending is the input's `pending`: no published-before-now clause, and for a moderator or a
 	// signed-in viewer the pending visibility in place of the reviewed one (then never cached).
 	Pending bool
+	// Tools is the input's `tools`: only images whose ImageTool rows hold every one of these tool ids
+	// (an image with no tool row never matches). Not personalized: the query keeps its cache policy.
+	Tools []int
 }
 
 // Built is the SQL for one page plus its caching policy.
@@ -249,6 +252,17 @@ func (q *ImagesQuery) Build() Built {
 		and = append(and, `i."userId" = ANY(`+a.add(q.PrioritizedUserIDs)+`::int[])`)
 		orderBy = `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"` // oldest post first
 	}
+	if len(q.Tools) > 0 {
+		// getAllImagesUncaptured's `tools` clause, after the prioritizeUser branch as there. The list
+		// is bound as sent (Node joins it into ARRAY[…]::integer[]); `@>` ignores order and repeats.
+		and = append(and, `EXISTS (
+      SELECT 1
+      FROM "ImageTool" it
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> `+a.add(q.Tools)+`::integer[]
+    )`)
+	}
 
 	if pendingView {
 		if q.IsModerator {
@@ -349,7 +363,7 @@ const nsfwLevelBlocked = 32
 // reviewed image of a post in a collection the viewer MANAGEs shows above browsingLevel.
 func pendingViewerSQL(a *sqlArgs, viewerID, browsingLevel int) string {
 	own := func() string { return `i."userId" = ` + a.add(viewerID) }
-	return `((i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
+	return `((i."needsReview" IS NULL OR i."needsReview" NOT IN (` + a.add("csam") + `, ` + a.add("minor") + `)) AND (i."needsReview" IS NULL OR ` + own() + `) AND (i."acceptableMinor" = FALSE OR ` + own() + `) AND (` + own() +
 		` OR i."nsfwLevel" = 0 OR ` + hydrate.ImageReviewedSQL("i") + `)
     AND ((i."nsfwLevel" & ` + a.add(browsingLevel) + `) != 0 OR (i."nsfwLevel" = 0 AND ` + own() +
 		`) OR (p."collectionId" IS NOT NULL AND i."nsfwLevel" NOT IN (0, ` + a.add(nsfwLevelBlocked) + `) AND (i."acceptableMinor" = FALSE OR ` + own() +

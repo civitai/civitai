@@ -61,6 +61,16 @@ describe('smites', () => {
     expect(await getPlayerStatus(db, 1)).toMatchObject({ smites: 2, maxSmites: SMITES.max });
   });
 
+  it('shows how far the player is toward winning back the next heart', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","size","remaining") VALUES (1,25,13),(1,25,20)`
+    );
+    expect((await getPlayerStatus(db, 1))?.heartBack).toEqual({ done: 12, needed: 25 });
+    expect((await getPlayerStatus(db, 2))?.heartBack).toBeNull();
+  });
+
   it('works every active smite of a correct voter down by one when the item settles', async () => {
     for (const u of [1, 2, 3, 4, 5]) await seedPlayer(pg, u);
     await pg.query(

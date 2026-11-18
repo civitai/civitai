@@ -1,11 +1,16 @@
 import { Group, Paper, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { dealEscrowState, escrowCopy } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  dealEscrowState,
+  escrowCopy,
+  sellerHeldLine,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function DealEscrowPanel({ deal }: { deal: ServiceDealView }) {
   const copy = escrowCopy[dealEscrowState(deal)];
+  const body = (deal.viewerRole === 'seller' && sellerHeldLine(deal)) || copy.body;
   return (
     <Paper
       withBorder
@@ -25,7 +30,7 @@ export function DealEscrowPanel({ deal }: { deal: ServiceDealView }) {
           />
         </Group>
         <Text size="sm" c="dimmed">
-          {copy.body}
+          {body}
         </Text>
       </Stack>
     </Paper>

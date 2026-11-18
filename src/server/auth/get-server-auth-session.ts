@@ -1,12 +1,20 @@
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
+import type { ParsedUrlQuery } from 'node:querystring';
 // FINAL-CLEANUP: `Session` is the app-wide session return type; replace it with a first-party type when the
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
 import type { Session } from '~/types/session';
-import { legacySessionCookieName, readDeviceId, readSessionToken, rollSlot } from '@civitai/auth';
+import {
+  legacySessionCookieName,
+  readDeviceId,
+  readSessionToken,
+  rollSlot,
+  sessionCookieMode,
+} from '@civitai/auth';
 import { env } from '~/env/server';
 import { matchWebhookToken } from '~/server/utils/webhook-token';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
+import { applySessionScope, type SessionScope } from './session-scope';
 import { refuseModerationAccountSession } from './moderation-account';
 import { decodePreviewSessionCookie, previewCookieSignInEnabled } from './preview-session-cookie';
 import { getHubSession, maybeRollHubCookie } from './session-client';
@@ -32,13 +40,28 @@ async function getPreviewCookieSession(req: AuthRequest): Promise<Session | null
   return { user } as unknown as Session;
 }
 
+type ServerAuthSessionArgs = {
+  req: AuthRequest;
+  res: AuthResponse;
+  scope?: SessionScope;
+  /** A page's route params (`GetServerSidePropsContext.query`), for the scope decision log. */
+  query?: ParsedUrlQuery;
+};
+
+/**
+ * The request's session, with a bearer credential held to `scope` (see `SessionScope`). The
+ * credential and the unscoped session are recorded on `req.context`, so every call re-applies its
+ * own `scope`.
+ */
 export const getServerAuthSession = async ({
   req,
   res,
-}: {
-  req: AuthRequest;
-  res: AuthResponse;
-}): Promise<Session | null> => {
+  scope,
+  query,
+}: ServerAuthSessionArgs): Promise<Session | null> =>
+  applySessionScope(req, await resolveSession(req, res), scope, query).session;
+
+async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Session | null> {
   if (req.context?.session) return req.context.session as Session | null;
 
   // API/bearer token (Authorization header or `?token=`, excluding the webhook token).
@@ -72,9 +95,10 @@ export const getServerAuthSession = async ({
   const hub = await getHubSession(req).catch(() => null);
   if (hub) {
     req.context.session = hub;
-    const civ = readSessionToken(req.cookies);
-    const slot = civ && rollSlot(civ);
-    const device = readDeviceId(req.cookies)?.value;
+    const host = req.headers.host;
+    const civ = readSessionToken(req.cookies, { host });
+    const slot = civ && rollSlot(civ, sessionCookieMode(host));
+    const device = readDeviceId(req.cookies, { host })?.value;
     if (civ && slot) {
       await maybeRollHubCookie(civ.value, device, res, req.headers.host, slot, req.cookies);
     }
@@ -85,4 +109,4 @@ export const getServerAuthSession = async ({
   const preview = await getPreviewCookieSession(req).catch(() => null);
   req.context.session = preview;
   return preview;
-};
+}

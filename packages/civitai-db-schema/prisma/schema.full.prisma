@@ -462,6 +462,7 @@ model User {
   pushSubscriptions    PushSubscription[]
   pushSettings         UserPushSetting[]
   emailOptOuts         UserEmailNotificationOptOut[]
+  notificationDigest   UserNotificationDigest?
   webhooks             Webhook[]
   interests            ModelInterest[]
   engagingUsers        UserEngagement[]           @relation("engagingUsers")
@@ -5390,6 +5391,19 @@ model UserEmailNotificationOptOut {
   createdAt DateTime @default(now())
 
   @@id([userId, type])
+}
+
+// The weekly missed-notification digest: when each user was last sent one, so a user gets at most
+// one a week and no notification is listed in two of them. RAW SQL ONLY
+// (`notification-digest.service.ts`). Migration `20271117150000_user_notification_digest`, applied
+// by hand; the digest sends nothing while the table is missing.
+// @no-type
+model UserNotificationDigest {
+  userId     Int      @id
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastSentAt DateTime
+
+  @@map("UserNotificationDigest")
 }
 
 model Webhook {

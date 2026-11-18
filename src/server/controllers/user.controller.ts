@@ -9,7 +9,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -705,6 +707,13 @@ export const updateUserHandler = async ({
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];

@@ -19,7 +19,21 @@ const ch = vi.hoisted(() => ({
     | undefined,
 }));
 
-vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+// A CSAM entry is also copied to Postgres (blocklist-held-media-source.pglite.test.ts covers it);
+// here that write goes nowhere.
+vi.mock('$lib/server/db', async () => {
+  const { DummyDriver, Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler } =
+    await import('kysely');
+  const db = new Kysely<never>({
+    dialect: {
+      createAdapter: () => new PostgresAdapter(),
+      createDriver: () => new DummyDriver(),
+      createIntrospector: (i) => new PostgresIntrospector(i),
+      createQueryCompiler: () => new PostgresQueryCompiler(),
+    },
+  });
+  return { dbRead: db, dbWrite: db };
+});
 vi.mock('$lib/server/notifications', () => ({ getNotifications: () => ({}) }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 vi.mock('../axiom', () => ({ logToAxiom, logAxiomError: vi.fn() }));

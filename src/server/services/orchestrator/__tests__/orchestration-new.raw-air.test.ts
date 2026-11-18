@@ -292,10 +292,97 @@ describe('raw-AIR resource ownership validation', () => {
     ).toMatch(/Invalid epoch resource/);
   });
 
-  it('applies the epoch subscription gate to raw AIRs', async () => {
+  it('lets a user with no subscription generate with their own raw-AIR epoch', async () => {
     mockGetHighestTierSubscription.mockResolvedValue(null);
 
-    expect(await submit()).toMatch(/require an active subscription/);
+    const message = await submit();
+    expect(message).not.toMatch(/subscription/);
+    expect(message).not.toMatch(/epoch resource/i);
+    expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a no-subscription raw-AIR epoch generation flagged private', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      {
+        id: 100,
+        name: 'base',
+        canGenerate: true,
+        availability: 'Public',
+        baseModel: 'SDXL 1.0',
+        air: 'urn:air:sdxl:checkpoint:civitai:10@100',
+        model: { id: 10, type: 'Checkpoint', poi: false },
+      },
+    ] as never);
+    const result = await createWorkflowStepsFromGraph({
+      data: {
+        workflow: 'txt2img',
+        prompt: 'test',
+        ecosystem: 'SDXL',
+        aspectRatio: '1:1',
+        quantity: 1,
+        model: { id: 100, model: { type: 'Checkpoint' } },
+        resources: [rawAirResource()],
+      } as never,
+      user: { id: USER_ID, isModerator: false },
+      orchestratorToken: TOKEN,
+    });
+
+    expect(result.workflowMetadata).toMatchObject({ isPrivateGeneration: true });
+  });
+
+  it("refuses a user with no subscription another user's raw-AIR epoch", async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+
+    expect(await submit({ resource: rawAirResource({ workflowId: '999-1700000000000' }) })).toMatch(
+      /do not have access/
+    );
+  });
+});
+
+describe('subscription gate for ModelVersion resources', () => {
+  const VERSION_ID = 4242;
+  function versionRow(overrides: Record<string, unknown>) {
+    return {
+      id: VERSION_ID,
+      name: 'my version',
+      canGenerate: true,
+      availability: 'Public',
+      model: { id: 1, type: 'LORA', poi: false },
+      ...overrides,
+    };
+  }
+  async function submitVersion() {
+    return submit({ resource: { id: VERSION_ID, model: { type: 'LORA' }, strength: 0.8 } });
+  }
+
+  it('lets an owner with no subscription generate with their own epoch', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      versionRow({ epochDetails: { epochNumber: 3, isExpired: false } }),
+    ] as never);
+
+    expect(await submitVersion()).not.toMatch(/subscription/);
+    expect(getResourceData).toHaveBeenCalled();
+    expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
+  });
+
+  it("refuses someone else's unpublished epoch", async () => {
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      versionRow({ canGenerate: false, epochDetails: { epochNumber: 3, isExpired: false } }),
+    ] as never);
+
+    expect(await submitVersion()).toMatch(/not available for generation/);
+  });
+
+  it('still requires a subscription for a Private model', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+    vi.mocked(getResourceData).mockResolvedValueOnce([
+      versionRow({ availability: 'Private' }),
+    ] as never);
+
+    expect(await submitVersion()).toMatch(/require an active subscription/);
   });
 });
 

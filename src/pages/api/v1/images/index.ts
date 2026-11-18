@@ -33,6 +33,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { QS } from '~/utils/qs';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const config = {
   api: {
@@ -125,7 +126,13 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
     shape = reqParams.data;
 
-    const session = await getApiAuthSession({ req, res }, { whenBanned: 'anonymous' });
+    const session = await getApiAuthSession(
+      { req, res },
+      {
+        whenBanned: 'anonymous',
+        scope: { anyOf: [TokenScope.MediaRead, TokenScope.AIServicesRead] },
+      }
+    );
 
     // Handle pagination
     const {

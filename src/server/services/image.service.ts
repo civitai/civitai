@@ -14,6 +14,7 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
+import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
 import { randomUUID } from 'crypto';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
@@ -59,13 +60,17 @@ import {
   imageReviewedSql,
   isMinorMatureImage,
   keepPermanentScanFailureSql,
+  notHeldForReviewSql,
+  notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
+  servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
+  entityImageVisibilityConditions,
   imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
@@ -255,9 +260,7 @@ import {
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { Flags } from '~/shared/utils/flags';
 import {
-  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
@@ -2636,7 +2639,7 @@ const getAllImagesUncaptured = async (
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
-  // Whatever the viewer's settings; also the feed service's hydrate, which reads through here.
+  // Whatever the viewer's settings.
   AND.push(minorMatureImageVisibleSql({ userId: ownerId, isModerator }));
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -3763,6 +3766,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
+  asOwner?: boolean;
   holdExempt?: boolean;
   galleryOwnerId?: number;
   offset?: number;
@@ -3825,7 +3829,8 @@ async function resolveHubForFeed(searchInput: CapturableSearchInput) {
   if (!input.hubId) return undefined;
   const sources = await resolveHubSources({
     hubId: input.hubId,
-    userId: input.currentUserId,
+    // Only the owner's view opens the viewer's own private hubs; a scoped key sees Public ones.
+    userId: input.asOwner === true ? input.currentUserId : undefined,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
     galleryOwnerId: input.galleryOwnerId,
@@ -5012,33 +5017,9 @@ export const getImagesByEntity = async ({
     return [];
   }
 
-  const AND: Prisma.Sql[] = !isModerator
-    ? [
-        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
-          userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
-        })`,
-      ]
-    : [];
-
-  if (!isModerator) {
-    // An unrated image is its owner's and moderators' alone, as in the image feeds.
-    AND.push(
-      userId
-        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
-        : Prisma.sql`i."nsfwLevel" != 0`
-    );
-    const needsReviewOr = [
-      Prisma.sql`i."needsReview" IS NULL`,
-      userId ? Prisma.sql`i."userId" = ${userId}` : null,
-    ].filter(isDefined);
-
-    if (needsReviewOr.length > 0) {
-      AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-    }
-  }
-  AND.push(...imageBlockedForConditions({ userId, isModerator }));
-  AND.push(imageNotRestrictedSql({ viewerId: userId }));
-  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
+  if (!isModerator) AND.push(notHeldForReviewSql());
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -7181,6 +7162,16 @@ function logBlocklistCheckFailed(
   });
 }
 
+/**
+ * The Postgres copy of the CSAM entries, which review routing reads. Throws like the ClickHouse write,
+ * so a block whose copy failed reports failure and is retried. Twin: apps/moderator
+ * image-moderation-effects.ts addImagesToBlocklist.
+ */
+async function mirrorCsamEntries(hashes: bigint[]) {
+  const sql = mirrorBlockedHashesSql(hashes);
+  if (sql) await dbWrite.$executeRawUnsafe(sql);
+}
+
 export function addBlockedImage({
   hash,
   reason,
@@ -7220,19 +7211,24 @@ export async function bulkAddBlockedImages({
 
   const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
   await write(csamRows);
-  const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
-  const others = data.filter(
-    ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
-  );
-  if (!others.length) return;
-  let csam: Set<string>;
   try {
-    csam = await csamBlockedHashes(others.map(({ hash }) => hash));
-  } catch (error) {
-    logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
-    return;
+    const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
+    const others = data.filter(
+      ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
+    );
+    if (!others.length) return;
+    let csam: Set<string>;
+    try {
+      csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+    } catch (error) {
+      logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
+      return;
+    }
+    await write(others.filter(({ hash }) => !csam.has(hash.toString())));
+  } finally {
+    // Last, so a failed copy still leaves the other rows written; it fails the call either way.
+    await mirrorCsamEntries(csamRows.map(({ hash }) => hash));
   }
-  await write(others.filter(({ hash }) => !csam.has(hash.toString())));
 }
 
 /**
@@ -7575,15 +7571,6 @@ export async function createImageResources({
   return resources;
 }
 
-/** `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
-const notHeldForReviewWhere: Prisma.ImageWhereInput = {
-  OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
-};
-
-/** Held to the request's servable levels: a capped request gets no unrated upload either. */
-const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
-  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
-
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
@@ -7688,7 +7675,7 @@ export const getMyImages = async ({
           : {}),
         // The unpublished path has no review gate of its own; these holds stay out of it too,
         // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere, servableLevelWhere(servableLevels)],
+        AND: [notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

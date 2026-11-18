@@ -7,7 +7,8 @@ import {
   type UserWithProfileWhere,
 } from '@civitai/db-queries/hot-reads-9';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
-import { profilePictureOf } from '~/server/services/user-creator.reads';
+import { fallbackUserImage } from '~/server/services/profile-picture.servable';
+import { heldPictureOf, profilePictureOf } from '~/server/services/user-creator.reads';
 
 /**
  * The read behind `kysely-hot-reads-9`: the user profile read (`getUserWithProfile`,
@@ -122,7 +123,7 @@ export async function readUserWithProfileViaKysely(
     id: row.id,
     username: row.username,
     deletedAt: row.deletedAt,
-    image: row.image,
+    image: fallbackUserImage(row.image, heldPictureOf(row)),
     profilePicture: profilePictureOf(row),
     leaderboardShowcase: row.leaderboardShowcase,
     createdAt: row.createdAt,

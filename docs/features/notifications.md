@@ -170,10 +170,14 @@ column or a `pushEnabled` column on `UserNotificationSettings`; the opt-out tabl
 
 ## Email
 
-Only types whose processor sets `defaultEmail` send email (today: the nine `service-deal-*`
-Creator Services notifications), and for those email is ON unless the user opts out.
-`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. The settings control
-shows an Email checkbox for those types only, unavailable while the type itself is Off.
+Only types whose processor sets `defaultEmail` send email (today: the `service-deal-*` Creator
+Services notifications, and the app-review outcomes `app-block-approved`, `app-block-rejected`,
+`app-listing-rejected`, `app-listing-reset-to-pending`, `app-access-request-approved` and
+`app-access-request-declined`), and for those email is ON unless the user opts out.
+`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. A toggleable type shows
+an Email checkbox beside its on-site control, unavailable while the type itself is Off. A type with
+`toggleable: false` has no on-site control, so it is listed under "App review emails" as an
+email-only checkbox (`systemEmailNotificationTypes`); its on-site notice is always sent.
 
 - The fan-out worker (`apps/notifications/src/worker/email.ts`) runs beside push, on the users a
   notification was newly delivered to, so a repeated key sends nothing. It gates on
@@ -185,6 +189,45 @@ shows an Email checkbox for those types only, unavailable while the type itself 
   (`/api/notifications/email-unsubscribe`; GET only shows a confirm button).
 - **Off until switched on:** the `KeyValue` row `notification-email-enabled` must hold JSON `true`.
   Delete it (or set `false`) to stop all notification email within a minute, no deploy needed.
+
+### Weekly missed-notification digest
+
+One email a week listing the notifications a user has not seen (`UserNotification.viewed` false)
+in the last seven days, or since their last digest if that is later: the newest ten, "and N more",
+and a link to `/user/notifications`. Types that send their own email (`defaultEmail`) are left out,
+so the digest never repeats one. Users with nothing unseen get nothing.
+
+- **On by default, with an opt-out.** It is the email opt-out type `missed-notification-digest`
+  (`missed-digest.constants.ts`): a `UserEmailNotificationOptOut` row turns it off. The settings
+  switch ("Weekly email of notifications you missed") and the email's one-click unsubscribe both
+  write that row.
+- **Skipped:** no verified email, opted out, every notification turned off (the same rule the
+  Knights app applies), or sent a digest in the last six days.
+- **Job:** `missed-notification-digest`, hourly. One pass walks every user in id order, resuming
+  where the last run stopped (`KeyValue` `missed-notification-digest:cursor`); a new pass starts a
+  week after the previous one did. Sends are paced at the shared bulk-email interval and capped per
+  run. `UserNotificationDigest` records each send before the email goes out; with that table
+  missing the job sends nothing.
+- **Start floor:** a user's first eligible pass sends nothing. It writes their
+  `UserNotificationDigest` row with `lastSentAt` = that moment, as if a digest had gone out, so
+  their first digest comes a pass later and lists only notifications created after they entered
+  the rollout, never the backlog. Per user: a user added to the rollout later gets their own later
+  floor. A user turned off and back on keeps their old row, so their next digest can reach back up
+  to the seven-day window. So the table holds a row per user started, not only per user sent one:
+  a run adds `skipped.first-pass` rows, and `emailed` users move their existing row's `lastSentAt`.
+- **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user (entity = user id,
+  context = `userId` and `isModerator`, so the `is-zach`, `moderators` and `userId` segments match;
+  tier is not passed). Off, it emails no one.
+  A pass that finished while the flag was off holds the next one back for up to a week; delete the
+  `KeyValue` row `missed-notification-digest:cursor` to start a pass at the next hourly run.
+- **No double send:** each send claims the user's `UserNotificationDigest` row first, and the claim
+  fails if a digest was recorded in the last six days, so overlapping runs cannot both send.
+  Eligibility and the address are re-read on the primary just before the send.
+- **Kill switch:** the `notification-email-enabled` row above stops the digest too. It is read
+  before each run and before each send, so a run already going stops at its next send.
+- **Reads:** the notifications app's `POST /notifications/unseen` (`queryUnseenNotifications`).
+- **Counts:** each run logs `notification-digest` with users considered, emailed, failed and
+  skipped by reason.
 
 ## Debugging
 
