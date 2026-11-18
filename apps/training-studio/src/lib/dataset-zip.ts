@@ -68,3 +68,9 @@ export function saveBlob(blob: Blob, fileName: string) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+/** The trigger word a finished run's dataset download should carry: AI Toolkit keeps it out of the captions
+ *  as `triggerWord`; Kohya runs have none there because their captions already include it. */
+export function runZipTrigger(training: Record<string, unknown>): string {
+  return typeof training.triggerWord === 'string' ? training.triggerWord : '';
+}

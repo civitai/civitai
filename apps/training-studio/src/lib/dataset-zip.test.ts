@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { buildDatasetZip, uniqueBaseNames } from './dataset-zip';
+import { buildDatasetZip, runZipTrigger, uniqueBaseNames } from './dataset-zip';
 import { suggestTrigger } from '../routes/triggerSuggest';
 
 describe('uniqueBaseNames', () => {
@@ -58,5 +58,13 @@ describe('buildDatasetZip', () => {
       { base: 'a', caption: 'x', load: () => Promise.reject(new Error('x')) },
     ]);
     expect(result).toEqual({ blob: null, included: 0, failed: 1 });
+  });
+});
+
+describe('runZipTrigger', () => {
+  it("carries an AI Toolkit run's trigger word into its download, and nothing for runs without one", () => {
+    expect(runZipTrigger({ triggerWord: 'mychar' })).toBe('mychar');
+    expect(runZipTrigger({})).toBe('');
+    expect(runZipTrigger({ triggerWord: 42 })).toBe('');
   });
 });

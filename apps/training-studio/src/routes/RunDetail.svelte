@@ -61,7 +61,7 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, isPairDataset, toReuseItems } from '$lib/reuse';
   import { extOfAir } from '$lib/media';
-  import { buildDatasetZip, saveBlob } from '$lib/dataset-zip';
+  import { buildDatasetZip, runZipTrigger, saveBlob } from '$lib/dataset-zip';
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
@@ -322,8 +322,7 @@
           caption: item.caption,
           load: () => fetchDatasetBlob(item.air),
         })),
-        // AI Toolkit keeps the trigger word out of the captions; Kohya runs already carry it in them.
-        typeof d.settings.training.triggerWord === 'string' ? d.settings.training.triggerWord : ''
+        runZipTrigger(d.settings.training)
       );
       if (!blob) {
         downloadError = "Couldn't fetch the dataset images — nothing to download.";

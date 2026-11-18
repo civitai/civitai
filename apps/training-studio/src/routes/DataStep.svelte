@@ -52,7 +52,7 @@
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
-  import { suggestTrigger } from './triggerSuggest';
+  import { triggerForImport } from './triggerSuggest';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -554,7 +554,8 @@
         }
         if (entries.length === 0) empty.push(file.name);
         // A Remove all while a zip was extracting: the user emptied the dataset this would refill.
-        else if (current()) suggested = (await addImported(entries)) ?? suggested;
+        // One fill per batch: a user who clears it while the next zip unpacks has said no.
+        else if (current()) suggested = (await addImported(entries, suggested === null)) ?? suggested;
       }
     } finally {
       importing = false;
@@ -648,12 +649,18 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  /** Returns the trigger word it filled in from the captions, if the field was empty and one leads them. */
-  async function addImported(entries: { file: File; caption: string; path: string }[]) {
+  // The trigger an import filled in, so Remove all can take it back with the dataset it came from.
+  let importedTrigger: string | null = null;
+  /** Returns the trigger word it filled in from the captions, if any (see triggerForImport). */
+  async function addImported(entries: { file: File; caption: string; path: string }[], mayFill: boolean) {
     if (entries.length === 0) return null;
-    const suggested =
-      labelMode === 'tag' && !trigger.trim() ? suggestTrigger(entries.map((e) => e.caption)) : null;
-    if (suggested) trigger = suggested;
+    const suggested = triggerForImport({
+      labelMode,
+      trigger,
+      mayFill,
+      captions: entries.map((e) => e.caption),
+    });
+    if (suggested) trigger = importedTrigger = suggested;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -709,6 +716,8 @@
     images = kept;
     if (kept.length === 0) {
       epoch.bump();
+      if (importedTrigger !== null && trigger === importedTrigger) trigger = '';
+      importedTrigger = null;
       dupOwnerIds = [];
       labelAllNotice = null;
     }
