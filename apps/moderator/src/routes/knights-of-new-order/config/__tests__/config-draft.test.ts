@@ -60,6 +60,7 @@ describe('seedDraft and changeCount', () => {
       nsfw: '25',
       yesNo: '40',
       yesNoReset: false,
+      maxOpen: '',
     });
     expect(draft.numbers.hiddenCheckRate).toEqual({ text: '5', reset: false });
     expect(draft.numbers.yesNoStretch).toEqual({ text: '', reset: false });
@@ -117,6 +118,22 @@ describe('form data', () => {
     draft.sources.yesNoReset = false;
     draft.sources.yesNo = '0';
     expect(entries(sourcesFormData(seed, draft))).toMatchObject({ yesNoPercent: '0' });
+  });
+
+  it('posts the open-item cap only when it changed, and counts it as a change', () => {
+    const seed = settings({ maxOpen: 18300 });
+    const draft = seedDraft(seed);
+    expect(draft.sources.maxOpen).toBe('18300');
+    draft.sources.maxOpen = ' 18300 ';
+    expect(sourcesFormData(seed, draft)).toBeNull();
+    draft.sources.maxOpen = '60000';
+    expect(changeCount(seed, draft)).toBe(1);
+    expect(entries(sourcesFormData(seed, draft))).toEqual({
+      enabled: 'true',
+      sfwPercent: '50',
+      nsfwPercent: '25',
+      maxOpen: '60000',
+    });
   });
 
   it('posts only changed game settings: percents as 0-1 rates, resets, toggles as stored booleans', () => {
@@ -216,6 +233,15 @@ describe('harvest rows', () => {
 });
 
 describe('changeSummary', () => {
+  it('names a change of the open-item cap', () => {
+    expect(
+      changeSummary(
+        { enabled: true, sfwRate: 0.5, nsfwRate: 0.25, maxOpen: 18300 },
+        { enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 60000 }
+      )
+    ).toBe('SFW rate: 50% to 100%; NSFW rate: 25% to 30%; Open-item cap: 18,300 to 60,000');
+  });
+
   it('names what a recorded change moved, in page terms', () => {
     expect(
       changeSummary(
