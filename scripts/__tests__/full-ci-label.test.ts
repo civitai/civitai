@@ -341,13 +341,18 @@ describe('the full-ci label', () => {
       expect(doc.jobs?.unit?.['continue-on-error']).toBeUndefined();
     });
 
-    // `Upload test timings` is telemetry for an external reader: its failure says nothing about
-    // the suite, and must not red a passing shard (unit-verify would post a false `failure`).
+    // `Upload test timings` is telemetry for an external reader, and `Upload memory samples` a
+    // diagnostic artifact: their failure says nothing about the suite, and must not red a passing
+    // shard (unit-verify would post a false `failure`).
     it('relies on a fail-closed `unit`: continue-on-error only on the named cache-save and telemetry steps', () => {
       const lenient = (doc.jobs?.unit?.steps ?? [])
         .filter((st) => st['continue-on-error'] !== undefined && st['continue-on-error'] !== false)
         .map((st) => st.name ?? st.uses ?? '(unnamed)');
-      expect(lenient).toEqual(['Upload test timings', 'Save Vite pre-bundle cache']);
+      expect(lenient).toEqual([
+        'Upload memory samples',
+        'Upload test timings',
+        'Save Vite pre-bundle cache',
+      ]);
     });
 
     // Evaluate the matrix expression for every `only` a full run can have.
