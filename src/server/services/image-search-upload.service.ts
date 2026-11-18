@@ -164,16 +164,16 @@ export async function withSearchUploadSearch<T>(userId: number, run: () => Promi
     return await run();
   } finally {
     // A failed release must not replace the search's own result or refusal; the hold expires.
-    await redis
-      .eval(RELEASE_IF_OWNER, { keys: [searchingKey(userId)], arguments: [token] })
-      .catch((error: unknown) =>
-        logToAxiom({
-          type: 'error',
-          name: 'search-upload-search-release',
-          userId,
-          message: error instanceof Error ? error.message : String(error),
-        })
-      );
+    try {
+      await redis.eval(RELEASE_IF_OWNER, { keys: [searchingKey(userId)], arguments: [token] });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'search-upload-search-release',
+        userId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 

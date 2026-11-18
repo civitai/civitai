@@ -3,6 +3,7 @@ import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as Upload from '~/server/services/image-search-upload.service';
 import type * as SemanticSearch from '~/server/services/semantic-image-search.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const h = vi.hoisted(() => ({
   flags: { imageSearchUpload: true, moreLikeThis: true },
@@ -159,6 +160,32 @@ describe('imageSearchUpload', () => {
     h.anchor.mockClear();
     await expect(search(MOD)).rejects.toThrow('full');
     expect(h.anchor).not.toHaveBeenCalled();
+  });
+
+  it("runs one of a moderator's searches at a time: a second is refused before it counts", async () => {
+    const holds = new Map<string, unknown>();
+    const isHold = (key: string) => key.includes('search-upload-searching');
+    redisMock.redis.set.mockImplementation(
+      async (key: string, value: unknown, opts?: { NX?: boolean }) => {
+        if (!isHold(key)) return 'OK';
+        if (opts?.NX && holds.has(key)) return null;
+        holds.set(key, value);
+        return 'OK';
+      }
+    );
+    redisMock.redis.eval.mockImplementation(
+      async (_script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) =>
+        holds.get(keys[0]) === args[0] && holds.delete(keys[0]) ? 1 : 0
+    );
+    let finish!: () => void;
+    h.claimDay.mockImplementationOnce(() => new Promise<void>((r) => (finish = r)));
+    const first = search(MOD);
+    await vi.waitFor(() => expect(h.claimDay).toHaveBeenCalledTimes(1));
+    await expect(search(MOD)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(h.claimDay).toHaveBeenCalledTimes(1);
+    finish();
+    await first;
+    await expect(search(MOD)).resolves.toBeDefined();
   });
 
   it('stops before searching when the gate refuses the upload', async () => {
