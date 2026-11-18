@@ -12,7 +12,7 @@ import {
   ensureVotePartitions,
   type QueueDeps,
 } from '../queue/queue.service';
-import { creditWatchOnly } from '../queue/vote-record';
+import { creditLateJudgment, LATE_JUDGMENT_WINDOW_MS } from '../queue/vote-record';
 import { expForLevel } from '../progression/levels';
 import { DAILY, dailyGoldCapOf } from './config';
 import {
@@ -226,28 +226,120 @@ describe('the Daily Watch', () => {
   });
 });
 
-describe('a judgment on an item that settled first', () => {
-  it('counts toward the Watch with no gold or XP, and can complete it with the streak bonus', async () => {
+describe('a judgment on an item that settled while it waited in the buffer', () => {
+  /** An item that settled at `settledAt`, never judged by player 1. */
+  async function settledItem(settledAt: Date) {
+    const id = ++imageId;
+    await seedImage(pg, id);
+    const itemId = await enqueueItem(
+      db,
+      { questionKey: Q, imageId: id, source: 'test', expiresAt: null },
+      settledAt
+    );
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      itemId,
+      settledAt,
+    ]);
+    return itemId;
+  }
+  const late = (itemId: number, now: Date) =>
+    creditLateJudgment(db, { userId: 1, itemId, answer: '4', now });
+  const ledger = async (itemId: number) =>
+    (
+      await pg.query<{ weight: number; gold: number; xp: number; verdict: string }>(
+        `SELECT weight,gold,xp,verdict FROM "KnightsVote" WHERE "playerId"=1 AND "itemId"=$1`,
+        [itemId]
+      )
+    ).rows;
+
+  it('counts toward the Watch with no gold, XP or weight, and can complete it with the streak bonus', async () => {
     await seedPlayer(pg, 1);
     await seedDay(1, D1, { votes: DAILY.watchSize - 2 });
+    const first = await settledItem(NOON(D1));
 
-    await creditWatchOnly(db, { userId: 1, now: NOON(D1) });
+    expect(await late(first, NOON(D1))).toBe(true);
     expect(await dayRow(1, D1)).toMatchObject({ votes: DAILY.watchSize - 1, goldRecorded: 0 });
     expect(await wallet(1)).toEqual({ exp: 0, goldPending: 0, goldEarned: 0 });
+    expect(await ledger(first)).toEqual([{ weight: 0, gold: 0, xp: 0, verdict: 'inconclusive' }]);
 
-    await creditWatchOnly(db, { userId: 1, now: NOON(D1) });
+    expect(await late(await settledItem(NOON(D1)), NOON(D1))).toBe(true);
     expect(await dayRow(1, D1)).toMatchObject({
       votes: DAILY.watchSize,
       bonusGold: DAILY.watchBonusGold,
     });
-    expect((await dayRow(1, D1)).watchCompletedAt).not.toBeNull();
     expect(await wallet(1)).toEqual({ exp: 0, goldPending: 0, goldEarned: DAILY.watchBonusGold });
     expect((await keeper(1)).streak).toBe(1);
   });
 
-  it('credits nothing for someone who is not a player', async () => {
-    await creditWatchOnly(db, { userId: 99, now: NOON(D1) });
-    expect(await dayRow(99, D1)).toBeUndefined();
+  it('counts each item once, however often it is resent', async () => {
+    await seedPlayer(pg, 1);
+    const itemId = await settledItem(NOON(D1));
+
+    expect(await late(itemId, NOON(D1))).toBe(true);
+    expect(await late(itemId, NOON(D1))).toBe(false);
+    expect((await dayRow(1, D1)).votes).toBe(1);
+  });
+
+  it('refuses an image the player already judged, so a paid vote resent after its item settled earns nothing more', async () => {
+    await seedPlayer(pg, 1);
+    const id = ++imageId;
+    await seedImage(pg, id);
+    const itemId = await enqueueItem(
+      db,
+      { questionKey: Q, imageId: id, source: 'test', expiresAt: null },
+      NOON(D1)
+    );
+    await castVote(db, { userId: 1, itemId, answer: '4' }, { applyConsensus, now: () => NOON(D1) });
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Closed', "updatedAt"=$2 WHERE id=$1`, [
+      itemId,
+      NOON(D1),
+    ]);
+
+    expect(await late(itemId, NOON(D1))).toBe(false);
+    expect((await dayRow(1, D1)).votes).toBe(1);
+  });
+
+  it('refuses an item still open, one that settled too long ago, an answer the question has not, and a non-player', async () => {
+    await seedPlayer(pg, 1);
+    const id = ++imageId;
+    await seedImage(pg, id);
+    const open = await enqueueItem(
+      db,
+      { questionKey: Q, imageId: id, source: 'test', expiresAt: null },
+      NOON(D1)
+    );
+    expect(await late(open, NOON(D1))).toBe(false);
+
+    const old = await settledItem(NOON(D1));
+    expect(await late(old, new Date(NOON(D1).getTime() + LATE_JUDGMENT_WINDOW_MS + 1))).toBe(false);
+
+    const recent = await settledItem(NOON(D1));
+    expect(
+      await creditLateJudgment(db, { userId: 1, itemId: recent, answer: 'nonsense', now: NOON(D1) })
+    ).toBe(false);
+    expect(
+      await creditLateJudgment(db, { userId: 99, itemId: recent, answer: '4', now: NOON(D1) })
+    ).toBe(false);
+    expect(await dayRow(1, D1)).toBeUndefined();
+  });
+
+  it('counts on the day of a career reset, whose Watch is read from the ledger', async () => {
+    await seedPlayer(pg, 1);
+    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$1 WHERE "userId"=1`, [
+      new Date(NOON(D1).getTime() - 3600_000),
+    ]);
+    await voteOnFreshItem(1, NOON(D1));
+
+    expect(await late(await settledItem(NOON(D1)), NOON(D1))).toBe(true);
+
+    expect((await dayRow(1, D1)).votes).toBe(2);
+    const status = await getDailyStatus(db, {
+      playerId: 1,
+      rank: 'Knight',
+      level: 20,
+      now: NOON(D1),
+    });
+    expect(status.votes).toBe(2);
   });
 });
 

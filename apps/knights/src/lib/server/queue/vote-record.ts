@@ -11,6 +11,7 @@ import { standingOf } from '../progression/rating';
 import { isRank } from '../ranks';
 import { SMITES } from '../smites/config';
 import { activeSmiteCount } from '../smites/smites.service';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { canVote } from './ranks';
 import { levelForExp, voteWeight } from './resolution';
 
@@ -215,23 +216,78 @@ export async function creditVote(
   }
 }
 
+/** How recently an item must have settled for a judgment that arrives after it to count toward the Daily Watch. */
+export const LATE_JUDGMENT_WINDOW_MS = 10 * 60_000;
+
 /**
- * Counts a judgment toward the Daily Watch when its item settled before the judgment arrived: no ledger row, no gold, no
- * XP, but the day's tally moves and the vote that completes the Watch still pays the streak bonus. The caller makes sure
- * each item is credited once per player. Takes the player row lock `recordVoteDay` relies on.
+ * Counts a rating judgment toward the Daily Watch when its item settled shortly before the judgment arrived (it waited in
+ * the player's prefetch buffer). Writes a ledger row that weighs nothing, pays no gold or XP and is already set aside, so
+ * it never decides, grades or pays, but it is the player's one judgment of that image: a resend, or an image the player
+ * already judged, is refused, and it counts in the ledger-based Watch of a career-reset day. The day's tally moves, and
+ * the judgment that completes the Watch still pays the streak bonus. Under the same locks, in the same order, as
+ * `castVote`. True when it counted.
  */
-export async function creditWatchOnly(
+export async function creditLateJudgment(
   db: Kysely<DB>,
-  { userId, now }: { userId: number; now: Date }
-): Promise<void> {
-  await db.transaction().execute(async (trx) => {
+  { userId, itemId, answer, now }: { userId: number; itemId: number; answer: string; now: Date }
+): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
+    await lockPlayerVoting(trx, userId);
+    const item = await trx
+      .selectFrom('KnightsQueueItem as i')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
+      .select([
+        'i.id',
+        'i.status',
+        'i.questionKey',
+        'i.imageId',
+        'i.minRank',
+        'i.updatedAt',
+        'q.options',
+      ])
+      .where('i.id', '=', itemId)
+      .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+      .executeTakeFirst();
+    if (!item || item.status === 'Open') return false;
+    if (now.getTime() - item.updatedAt.getTime() > LATE_JUDGMENT_WINDOW_MS) return false;
+    const options = (item.options as { value: string }[] | null) ?? [];
+    if (!options.some((option) => option.value === answer)) return false;
+
+    const judged = await trx
+      .selectFrom('KnightsVote')
+      .select(sql<number>`1`.as('one'))
+      .where('playerId', '=', userId)
+      .where('imageId', '=', item.imageId)
+      .where('questionKey', '=', item.questionKey)
+      .executeTakeFirst();
+    if (judged) return false;
+
     const player = await trx
       .selectFrom('NewOrderPlayer')
       .select(['rankType', 'exp', 'startAt'])
       .where('userId', '=', userId)
       .forUpdate()
       .executeTakeFirst();
-    if (!player) return;
+    // Any rank that judges the rating queue: the item may have moved up a stage before it settled.
+    if (!player || !isRank(player.rankType) || !canVote(player.rankType, 'Knight')) return false;
+
+    await trx
+      .insertInto('KnightsVote')
+      .values({
+        itemId: item.id,
+        playerId: userId,
+        createdAt: utc(now),
+        questionKey: item.questionKey,
+        imageId: item.imageId,
+        stage: item.minRank,
+        answer,
+        weight: 0,
+        gold: 0,
+        xp: 0,
+        verdict: 'inconclusive',
+        settledAt: utc(now),
+      })
+      .execute();
     const day = await recordVoteDay(trx, {
       playerId: userId,
       rank: player.rankType,
@@ -247,5 +303,6 @@ export async function creditWatchOnly(
         .set({ goldEarned: sql<number>`"goldEarned" + ${day.bonus}` })
         .where('userId', '=', userId)
         .execute();
+    return true;
   });
 }

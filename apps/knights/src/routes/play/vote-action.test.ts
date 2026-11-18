@@ -6,8 +6,8 @@ const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const voteRefused = vi.hoisted(() => vi.fn());
-const creditWatchOnly = vi.hoisted(() => vi.fn());
-vi.mock('$lib/server/queue/vote-record', () => ({ creditWatchOnly }));
+const creditLateJudgment = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/queue/vote-record', () => ({ creditLateJudgment }));
 vi.mock('$lib/server/metrics', async (original) => {
   const real = await original<typeof import('$lib/server/metrics')>();
   return { ...real, metrics: { ...real.metrics, voteRefused } };
@@ -66,7 +66,7 @@ beforeEach(() => {
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
   voteRefused.mockReset();
-  creditWatchOnly.mockReset();
+  creditLateJudgment.mockReset();
 });
 
 describe('vote action on a yes/no question', () => {
@@ -366,27 +366,40 @@ describe('vote action for a muted player', () => {
 });
 
 describe('a judgment on an item that settled before it arrived', () => {
-  it('counts toward the Daily Watch once per item and says so, however often it is sent', async () => {
+  it('asks to count it toward the Daily Watch and says so when it was counted', async () => {
     castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    creditLateJudgment.mockResolvedValueOnce(true);
 
     expect(await submit({ item: queueItem(501), answer: '4' })).toMatchObject({
       status: 409,
       data: { reason: 'not-open', watchCounted: true },
     });
-    expect(creditWatchOnly).toHaveBeenCalledWith(expect.anything(), {
+    expect(creditLateJudgment).toHaveBeenCalledWith(expect.anything(), {
       userId: 7,
+      itemId: 501,
+      answer: '4',
       now: expect.any(Date),
     });
-
-    const again = await submit({ item: queueItem(501), answer: '4' });
-    expect(again).toMatchObject({ status: 409, data: { reason: 'not-open' } });
-    expect((again as { data: Record<string, unknown> }).data).not.toHaveProperty('watchCounted');
-    expect(creditWatchOnly).toHaveBeenCalledTimes(1);
   });
 
-  it('does not count a refusal that is not about the item moving on', async () => {
+  it('says nothing was counted when the credit is refused or fails', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    creditLateJudgment.mockResolvedValueOnce(false);
+    const refused = (await submit({ item: queueItem(501), answer: '4' })) as { data: object };
+    expect(refused.data).not.toHaveProperty('watchCounted');
+
+    creditLateJudgment.mockRejectedValueOnce(new Error('db down'));
+    const failed = (await submit({ item: queueItem(502), answer: '4' })) as { data: object };
+    expect(failed.data).not.toHaveProperty('watchCounted');
+    expect(log).toHaveBeenCalled();
+  });
+
+  it('does not ask for a refusal that is not about the item moving on, or for a yes/no question', async () => {
     castVote.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
-    await submit({ item: queueItem(502), answer: '4' });
-    expect(creditWatchOnly).not.toHaveBeenCalled();
+    await submit({ item: queueItem(503), answer: '4' });
+    castYesNoVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    await submit({ item: sealItem('secret', 7, { kind: 'yesno', id: 9 }), answer: 'yes' });
+    expect(creditLateJudgment).not.toHaveBeenCalled();
   });
 });
