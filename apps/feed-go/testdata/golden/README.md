@@ -86,8 +86,15 @@ rows Postgres answered. The Go harness fails when a bound value is not among fee
 arguments (so a token both sides receive but read as different instants is caught), when feed-go
 asks for more pages, or fewer.
 The SQL itself is pinned by `internal/modelfeed`'s unit tests and run against Postgres by its
-integration tests. Extra keys: `config` holds the model flag mirrors; `db` holds `paidAccess`,
-`coverImages`, `tags` (by name) and `creators` (by username). Raise `goldenMinModels` with the count.
+integration tests. A page of the official-checkpoint pin (Hot with a base-model filter) also records
+the ids Node binds (`onlyModelIds` on the pinned page, `excludeModelIds` on every other), which the
+harness requires feed-go to bind in the same order. A fixture's `cold` keys (dataForModelsCache,
+modelTagCache) are held out of its cache: the mirror runs the cache's lookup over the world, records
+the rows its queries return (`db.modelDataVersions`, `db.modelHashes`, `db.tagsOnModels`) and what
+the fetch writes (`expect.writes`); the harness runs every served fixture with write-back off (the
+cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
+`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username). Raise
+`goldenMinModels` with the count.
 
 ## v1-models
 
