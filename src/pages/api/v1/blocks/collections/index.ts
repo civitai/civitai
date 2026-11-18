@@ -364,7 +364,6 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  // The VIEWER's level held to the domain cap (the main site's rule), never the domain alone.
   const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   const subjectUser = await hydrateBlockSubject(subjectUserId);

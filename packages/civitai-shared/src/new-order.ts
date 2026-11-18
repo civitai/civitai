@@ -53,7 +53,7 @@ const isFiniteNumber = (value: unknown): value is number =>
 /**
  * Each Knights game setting the moderator Config page can store, with the environment variable it overrides. A field
  * that is not stored leaves Knights on that variable (or its built-in default). Number ranges match the Knights
- * environment readers (`hidden/config.ts`, `yesno/config.ts`), so a stored value is never one the environment would refuse.
+ * environment readers (`hidden/config.ts`, `yesno/config.ts`, `trials/config.ts`), so a stored value is never one the environment would refuse.
  */
 export const KNIGHTS_GAME_SETTINGS = {
   hiddenCheckRate: {
@@ -122,6 +122,14 @@ export const KNIGHTS_GAME_SETTINGS = {
     kind: 'toggle',
     env: 'KNIGHTS_CONVERSION_DISABLED',
     label: 'Gold to Buzz conversion',
+  },
+  harvest: { kind: 'toggle', env: 'KNIGHTS_HARVEST', label: 'Harvest' },
+  harvestHiddenCheckShare: {
+    kind: 'number',
+    env: 'KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE',
+    label: 'Rulings used as skill checks',
+    range: 'from 0 to 1',
+    valid: (n: number) => n >= 0 && n <= 1,
   },
 } as const;
 
