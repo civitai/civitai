@@ -81,7 +81,8 @@ async function reportDailyCap(user: SessionUser, req: NextApiRequest) {
     const first = await checkFixedWindow(
       `training-studio:dataset-rating:daily-cap:${user.id}`,
       1,
-      24 * 60 * 60
+      24 * 60 * 60,
+      { failOpen: false }
     );
     if (!first.allowed) return;
     // The day's one signal is already claimed: log it even when the count can't be read.

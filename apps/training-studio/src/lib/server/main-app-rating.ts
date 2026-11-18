@@ -40,5 +40,8 @@ export async function mainAppRateImage(
     results?: { key?: unknown; mature?: unknown }[];
   } | null;
   const hit = body?.results?.find((r) => r.key === key);
-  return hit ? { mature: typeof hit.mature === 'boolean' ? hit.mature : null } : null;
+  if (!hit) return null;
+  // No `mature` field at all is a main app that predates the bit: nothing usable came back.
+  if (!('mature' in hit)) return { refused: true };
+  return { mature: typeof hit.mature === 'boolean' ? hit.mature : null };
 }

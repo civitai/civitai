@@ -211,14 +211,24 @@ describe('POST /api/training-studio/dataset-rating', () => {
           'daily'
         )
       );
-    // A fixed window per key, as checkFixedWindow counts it.
-    const windows = () => {
+    // A fixed window per key, as checkFixedWindow counts it; with Redis down it answers by failOpen.
+    const windows = (redisDown = false) => {
       const counts = new Map<string, number>();
-      globalCap.check.mockImplementation(async (key: string, max: number) => {
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-        return { allowed: counts.get(key)! <= max, retryAfterSeconds: 1 };
-      });
+      globalCap.check.mockImplementation(
+        async (key: string, max: number, _window: number, opts?: { failOpen?: boolean }) => {
+          if (redisDown) return { allowed: opts?.failOpen !== false, retryAfterSeconds: 1 };
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+          return { allowed: counts.get(key)! <= max, retryAfterSeconds: 1 };
+        }
+      );
     };
+
+    it('logs nothing when the once-a-day check cannot reach Redis', async () => {
+      windows(true);
+      dailyRefusal();
+      expect((await call(body([item(1)]))).statusCode).toBe(429);
+      expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+    });
 
     it('still logs, with no count, when the count cannot be read', async () => {
       windows();

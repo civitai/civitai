@@ -195,6 +195,16 @@ describe('one rating call', () => {
     });
   });
 
+  it('an answer from a main app that predates the bit is refused, so the marker is released', async () => {
+    scan.mockResolvedValueOnce(
+      Response.json({ results: [{ key: 'b.png', output: { ratingV2: { status: 'ok' } } }] })
+    );
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+  });
+
   it("the main app's refusal is no rating, and nothing reached the rater", async () => {
     scan.mockResolvedValueOnce(refused(400));
     expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
