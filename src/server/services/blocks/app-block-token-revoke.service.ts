@@ -3,6 +3,8 @@ import type { Prisma } from '@prisma/client';
 /** The OAuth client the approve provisions for an app (`appblk-<slug>`, publish-request.service). */
 const APP_BLOCK_CLIENT_PREFIX = 'appblk-';
 
+const ORCHESTRATOR_REVOKE_BATCH = 10;
+
 /** The holders of the app tokens a suspension deleted, for the post-commit orchestrator revoke. */
 export type RevokedAppTokens = { clientId: string; userIds: number[] };
 
@@ -49,9 +51,20 @@ export async function forgetRevokedAppTokens(revoked: RevokedAppTokens | null): 
   if (!revoked) return;
   try {
     const { revokeCivitaiUserTokens } = await import('~/server/services/orchestrator/civitai');
-    for (const userId of revoked.userIds)
-      await revokeCivitaiUserTokens({ userId }).catch(() => undefined);
-  } catch {
-    // A failed import leaves only the orchestrator's own cache expiry; the tokens are deleted.
+    // Bounded fan-out: each call may wait up to its timeout on a slow orchestrator.
+    for (let i = 0; i < revoked.userIds.length; i += ORCHESTRATOR_REVOKE_BATCH) {
+      const batch = revoked.userIds.slice(i, i + ORCHESTRATOR_REVOKE_BATCH);
+      await Promise.all(
+        batch.map((userId) => revokeCivitaiUserTokens({ userId }).catch(() => undefined))
+      );
+    }
+  } catch (err) {
+    // The tokens are deleted; only the orchestrator's own cache expiry is left to stop them there.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[app-block-token-revoke] orchestrator token-cache drop did not run for ${
+        revoked.clientId
+      }: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
