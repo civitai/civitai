@@ -25,6 +25,8 @@ import {
   newRun,
   nextImgId,
   numberInputValue,
+  labelModeForCard,
+  labelOptions,
   optimizerLrParams,
   teLocked,
   paramDeviations,
@@ -1009,5 +1011,24 @@ describe('per-image repeats on the submit', () => {
       repeatExt({ name: 'image 3', blobId: 'urn:air:a:b:c:blob@K.webp', mediaType: 'image' })
     ).toBe('webp');
     expect(repeatExt({ name: 'image 3', blobId: 'K', mediaType: 'video' })).toBe('mp4');
+  });
+});
+
+describe('Krea 2 label modes', () => {
+  it('offers captions and tags, with captions as the default', () => {
+    const krea = cardByType('krea2')!;
+    expect(labelOptions(krea)).toEqual(['caption', 'tag']);
+    expect(krea.label).toBe('caption');
+  });
+
+  it('opens a model on its own default label, but keeps a pick made on the same model', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    // the flow's initial mode is 'tag'; first selection of Krea 2 must not inherit it
+    expect(labelModeForCard(null, krea, 'tag')).toBe('caption');
+    // Back/Continue on the same model keeps the user's choice
+    expect(labelModeForCard(krea, krea, 'tag')).toBe('tag');
+    // switching to another model takes that model's default
+    expect(labelModeForCard(krea, anima, 'caption')).toBe('tag');
   });
 });

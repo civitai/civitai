@@ -18,7 +18,7 @@
     expandedCount,
     repeatsOf,
     selectionTakesRepeats,
-    labelOptions,
+    labelModeForCard,
     labelString,
     runCard,
     runParamsKey,
@@ -423,14 +423,11 @@
       initial={selection}
       startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
+        const previous = selection ? runCard(selection.runs[0]!) : null;
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
         selection = sel;
-        // Reset the label mode to the model's default only when the current choice isn't valid for it —
-        // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
-        // single-format model snaps to its format.
-        const card = runCard(sel.runs[0]!);
-        if (!labelOptions(card).includes(labelMode)) labelMode = card.label;
+        labelMode = labelModeForCard(previous, runCard(sel.runs[0]!), labelMode);
         step = 2;
       }}
     />

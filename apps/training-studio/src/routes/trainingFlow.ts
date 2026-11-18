@@ -82,6 +82,18 @@ export function labelOptions(card: ModelCard): LabelType[] {
   return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
 }
 
+/** The label mode to carry into the Data step: the model's default when the model changed (or the current
+ *  mode isn't offered), else the user's current pick — so Back/Continue on the same model keeps a tags↔captions
+ *  choice, but a fresh `bothLabels` card opens on its own default rather than the flow's initial mode. */
+export function labelModeForCard(
+  previous: ModelCard | null,
+  card: ModelCard,
+  current: LabelType
+): LabelType {
+  if (previous?.type !== card.type || !labelOptions(card).includes(current)) return card.label;
+  return current;
+}
+
 // Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
 // prepended to a label that doesn't already contain it, and highlighted in place where it does. Matching
 // is case-insensitive.
