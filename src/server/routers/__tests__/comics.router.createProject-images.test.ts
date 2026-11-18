@@ -6,8 +6,12 @@ import type * as SearchIndex from '~/server/search-index';
 /** `comics.createProject` creates the cover and hero images first, so a refused one leaves no project. */
 
 const mocks = vi.hoisted(() => ({
-  assertUsable: vi.fn(async (_args: { urls: unknown[]; userId: number }) => undefined),
-  assertIssued: vi.fn(async (_args: { urls: unknown[]; userId: number }) => undefined),
+  assertUsable: vi.fn(
+    async (_args: { urls: unknown[]; userId: number }): Promise<void> => undefined
+  ),
+  assertIssued: vi.fn(
+    async (_args: { urls: unknown[]; userId: number }): Promise<void> => undefined
+  ),
   createImage: vi.fn(),
 }));
 
@@ -74,8 +78,7 @@ beforeEach(() => {
     await mocks.assertIssued({ urls: [url], userId });
     return { id: 501 };
   });
-  dbMock.dbWrite.comicProject.create.mockResolvedValue({ id: PROJECT_ID, chapters: [] });
-  dbMock.dbWrite.comicProject.update.mockResolvedValue({ id: PROJECT_ID });
+  dbMock.dbWrite.comicProject.create.mockResolvedValue({ id: PROJECT_ID, chapters: [] } as never);
 });
 
 describe('comics.createProject', () => {
