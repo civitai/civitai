@@ -54,14 +54,14 @@ vi.mock('@civitai/orchestration-client', () => ({
   refreshBlob: (...args: unknown[]) => refresh(...args),
 }));
 vi.mock('./main-app', () => ({ mainAppSessionOrigin: () => 'https://civitai.test' }));
-// The main app's rating endpoint: `scan` answers each request's one item with a step output, or a
-// whole Response (a refusal).
+// The main app's rating endpoint: `scan` answers each request's one item with its mature verdict, or
+// a whole Response (a refusal).
 const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
   const { items } = JSON.parse(String(init.body)) as { items: { key: string; mediaUrl: string }[] };
   const answer: unknown = await scan(items[0]);
   return answer instanceof Response
     ? answer
-    : Response.json({ results: [{ key: items[0]!.key, output: answer }] });
+    : Response.json({ results: [{ key: items[0]!.key, mature: answer }] });
 });
 vi.stubGlobal('fetch', fetchMock);
 
@@ -75,12 +75,10 @@ const {
 } = await import('./dataset-rating');
 
 const user = { id: 7 } as SessionUser;
-const client = { client: {}, cookie: 'session=1' } as Parameters<typeof rateImage>[0];
+const client = { client: {}, cookie: 'session=1', matureLevel: 1 } as Parameters<
+  typeof rateImage
+>[0];
 const signedUrl = (id: string) => `https://orchestration.civitai.com/v2/consumer/blobs/${id}?sig=x`;
-const out = (label: string, restricted = false) => ({
-  nsfwLevel: 'na',
-  ratingV2: { status: 'ok', sexual: { label }, restricted },
-});
 const refused = (status: number, retryAfter?: string) =>
   new Response(null, { status, headers: retryAfter ? { 'retry-after': retryAfter } : {} });
 
@@ -110,13 +108,15 @@ describe('the flag', () => {
     'a level variant (%i) turns it on, reading only well-formed cache entries',
     async (level) => {
       flag.variant = `S${level}`;
-      store.set('rating:radio-alpha:good', { s: 1, r: false });
-      store.set('rating:radio-alpha:junk', { s: 'x', r: false });
+      store.set(`rating:radio-alpha:m${level}:good`, { mature: false });
+      store.set(`rating:radio-alpha:m${level}:junk`, { mature: 'x' });
+      // A verdict made at another level is not this level's verdict.
+      store.set(`rating:radio-alpha:m${(level % 4) + 1}:other`, { mature: true });
       const rating = (await datasetRatingFor(user))!;
       expect(rating.matureLevel).toBe(level);
       // The Flipt flag key is the contract with flag state.
       expect(flagVariant).toHaveBeenCalledWith('trainingStudioDatasetRatingV2', user);
-      const read = await rating.read(['good', 'junk', 'missing']);
+      const read = await rating.read(['good', 'junk', 'other', 'missing']);
       expect([...read.keys()]).toEqual(['good']);
     }
   );
@@ -124,9 +124,9 @@ describe('the flag', () => {
 
 describe('one rating call', () => {
   it("scans the URL the user's token minted on the main app's free path, never with the user's token", async () => {
-    scan.mockResolvedValueOnce(out('S2', true));
+    scan.mockResolvedValueOnce(true);
     const { signal } = new AbortController();
-    expect(await rateImage(client, 'blob-1.png', signal)).toEqual({ rating: { s: 2, r: true } });
+    expect(await rateImage(client, 'blob-1.png', signal)).toEqual({ rating: { mature: true } });
     expect(refresh.mock.calls[0]![0]).toMatchObject({
       client: client.client,
       path: { blobId: 'blob-1.png' },
@@ -137,30 +137,18 @@ describe('one rating call', () => {
     expect(init.headers).toMatchObject({ cookie: 'session=1' });
     expect(JSON.parse(String(init.body))).toEqual({
       items: [{ key: 'blob-1.png', mediaUrl: signedUrl('blob-1.png') }],
+      matureLevel: 1,
     });
     // A scan submitted with the user's own token is charged to them.
     expect(invokeScan).not.toHaveBeenCalled();
   });
 
   it.each([
-    [
-      'a status in another case',
-      { ratingV2: { status: 'OK', sexual: { label: 'S0' }, restricted: false } },
-    ],
-    [
-      'an error status',
-      { ratingV2: { status: 'error', sexual: { label: 'S0' }, restricted: false } },
-    ],
-    ['no ratingV2 block', { nsfwLevel: 'pg' }],
-    ['only a top-level nsfwLevel', { nsfwLevel: 'xxx', ratingV2: null }],
-    [
-      'an unknown label',
-      { ratingV2: { status: 'ok', sexual: { label: 'S7' }, restricted: false } },
-    ],
-    ['no restricted flag', { ratingV2: { status: 'ok', sexual: { label: 'S0' } } }],
-    ['no output (the step had not finished)', null],
-  ])('%s is no rating', async (_name, output) => {
-    scan.mockResolvedValueOnce(output);
+    ['no verdict (null)', null],
+    ['a verdict that is not a boolean', 'true'],
+    ['a level instead of a verdict', 3],
+  ])('%s is no rating', async (_name, verdict) => {
+    scan.mockResolvedValueOnce(verdict);
     expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toBeNull();
   });
 
@@ -182,14 +170,6 @@ describe('one rating call', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('reads a label in either case', async () => {
-    scan.mockResolvedValueOnce(out('s3'));
-    expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toEqual({
-      s: 3,
-      r: false,
-    });
-  });
-
   it("the main app's 429 is no rating, carrying Retry-After", async () => {
     scan.mockResolvedValueOnce(refused(429, '3'));
     expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
@@ -209,11 +189,19 @@ describe('one rating call', () => {
   });
 
   it('an answer without the requested image is no rating, though it may have reached the rater', async () => {
+    scan.mockResolvedValueOnce(Response.json({ results: [{ key: 'other.png', mature: false }] }));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+    });
+  });
+
+  it('an answer from a main app that predates the bit is refused, so the marker is released', async () => {
     scan.mockResolvedValueOnce(
-      Response.json({ results: [{ key: 'other.png', output: out('S0') }] })
+      Response.json({ results: [{ key: 'b.png', output: { ratingV2: { status: 'ok' } } }] })
     );
     expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
       rating: null,
+      notSent: true,
     });
   });
 
@@ -250,7 +238,7 @@ describe('one rating call', () => {
 describe('the rating job', () => {
   it('stores each OK rating and leaves the rest unrated', async () => {
     const rate = vi.fn(async (_c: unknown, key: string) =>
-      key === 'bad.png' ? { rating: null } : { rating: { s: 1, r: false } }
+      key === 'bad.png' ? { rating: null } : { rating: { mature: false } }
     );
     const summary = await runRatingJob(client, ['a.png', 'bad.png', 'c.png'], rate);
     expect(summary).toMatchObject({
@@ -260,12 +248,12 @@ describe('the rating job', () => {
       fallbacks: 1,
       deadlineHit: false,
     });
-    expect(store.get('rating:radio-alpha:a.png')).toEqual({ s: 1, r: false });
-    expect(store.has('rating:radio-alpha:bad.png')).toBe(false);
+    expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false });
+    expect(store.has('rating:radio-alpha:m1:bad.png')).toBe(false);
   });
 
   it('sends only images to the rater, counting the rest as skipped', async () => {
-    const rate = vi.fn(async (_c: unknown, _key: string) => ({ rating: { s: 1, r: false } }));
+    const rate = vi.fn(async (_c: unknown, _key: string) => ({ rating: { mature: false } }));
     const summary = await runRatingJob(
       client,
       ['voice.wav', 'clip.mp4', 'Photo.JPG', 'noextension', 'pic.webp'],
@@ -325,26 +313,26 @@ describe('starting a job', () => {
     scan.mockImplementation(
       () =>
         new Promise((resolve) => {
-          release = () => resolve(out('S0'));
+          release = () => resolve(false);
         })
     );
-    warmDatasetRating('t', 9, ['a.png'], 'c');
-    warmDatasetRating('t', 9, ['b.png'], 'c');
+    warmDatasetRating('t', 9, 1, ['a.png'], 'c');
+    warmDatasetRating('t', 9, 1, ['b.png'], 'c');
     await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
     expect(scan.mock.calls[0]![0].key).toBe('a.png');
     release();
     await vi.waitFor(() =>
-      expect(store.get('rating:radio-alpha:a.png')).toEqual({ s: 0, r: false })
+      expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false })
     );
   });
 
   it('a later view after a call that reached the rater and failed sends nothing again', async () => {
     scan.mockResolvedValue(refused(502));
-    warmDatasetRating('t', 16, ['a.png'], 'c');
+    warmDatasetRating('t', 16, 1, ['a.png'], 'c');
     await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
-    expect(store.has('sent:radio-alpha:a.png')).toBe(true);
+    expect(store.has('sent:radio-alpha:m1:a.png')).toBe(true);
     // Another user's view of the same blob, so this user's running job can't be what stops it.
-    warmDatasetRating('t', 19, ['a.png'], 'c');
+    warmDatasetRating('t', 19, 1, ['a.png'], 'c');
     await new Promise((r) => setTimeout(r, 20));
     expect(scan).toHaveBeenCalledTimes(1);
   });
@@ -352,22 +340,22 @@ describe('starting a job', () => {
   it('an image already sent takes no allowance slot from one that was not', async () => {
     // One send left today, and the first image of the dataset was sent before.
     await claimDaily('calls', 21, DATASET_RATING_DAILY_CALLS - 1);
-    store.set('sent:radio-alpha:a.png', '1');
-    scan.mockResolvedValue(out('S0'));
-    warmDatasetRating('t', 21, ['a.png', 'b.png'], 'c');
+    store.set('sent:radio-alpha:m1:a.png', '1');
+    scan.mockResolvedValue(false);
+    warmDatasetRating('t', 21, 1, ['a.png', 'b.png'], 'c');
     await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
     expect(scan.mock.calls[0]![0].key).toBe('b.png');
   });
 
   it('a view of an already-rated dataset, which has no unrated keys, makes 0 rate calls', async () => {
-    warmDatasetRating('t', 17, [], 'c');
+    warmDatasetRating('t', 17, 1, [], 'c');
     await new Promise((r) => setTimeout(r, 20));
     expect(refresh).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('with no session to call the main app with, rates nothing', async () => {
-    warmDatasetRating('t', 18, ['a.png'], null);
+    warmDatasetRating('t', 18, 1, ['a.png'], null);
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -390,10 +378,10 @@ describe('the daily allowance', () => {
   });
 
   it('claims allowance only for the images in a dataset', async () => {
-    scan.mockResolvedValue(out('S0'));
-    warmDatasetRating('t', 14, ['a.wav', 'b.mp4', 'c.png'], 'c');
+    scan.mockResolvedValue(false);
+    warmDatasetRating('t', 14, 1, ['a.wav', 'b.mp4', 'c.png'], 'c');
     await vi.waitFor(() =>
-      expect(store.get('rating:radio-alpha:c.png')).toEqual({ s: 0, r: false })
+      expect(store.get('rating:radio-alpha:m1:c.png')).toEqual({ mature: false })
     );
     expect(scan).toHaveBeenCalledTimes(1);
     const day = new Date().toISOString().slice(0, 10);
@@ -402,10 +390,10 @@ describe('the daily allowance', () => {
 
   it('a job over the allowance rates only what was granted', async () => {
     await claimDaily('calls', 11, DATASET_RATING_DAILY_CALLS - 1);
-    scan.mockResolvedValue(out('S0'));
-    warmDatasetRating('t', 11, ['a.png', 'b.png', 'c.png'], 'c');
+    scan.mockResolvedValue(false);
+    warmDatasetRating('t', 11, 1, ['a.png', 'b.png', 'c.png'], 'c');
     await vi.waitFor(() =>
-      expect(store.get('rating:radio-alpha:a.png')).toEqual({ s: 0, r: false })
+      expect(store.get('rating:radio-alpha:m1:a.png')).toEqual({ mature: false })
     );
     expect(scan).toHaveBeenCalledTimes(1);
   });
@@ -414,7 +402,7 @@ describe('the daily allowance', () => {
 it('gives back the allowance for images a job did not reach', async () => {
   // Every call is rate-limited past the deadline, so each worker makes one call and the rest go unreached.
   scan.mockImplementation(async () => refused(429, '60'));
-  warmDatasetRating('t', 12, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 'c', 30);
+  warmDatasetRating('t', 12, 1, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 'c', 30);
   const day = new Date().toISOString().slice(0, 10);
   await vi.waitFor(() => expect(store.get(`daily:calls:12:${day}`)).toBe(2));
 });
@@ -429,7 +417,7 @@ it('gives the allowance back to the day it was claimed on, across UTC midnight',
       vi.setSystemTime(new Date('2026-11-13T00:00:00.100Z'));
       return refused(429, '60');
     });
-    warmDatasetRating('t', 13, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 'c', 30);
+    warmDatasetRating('t', 13, 1, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 'c', 30);
     await vi.waitFor(() => expect(store.get('daily:calls:13:2026-11-12')).toBe(2));
     expect(store.has('daily:calls:13:2026-11-13')).toBe(false);
   } finally {

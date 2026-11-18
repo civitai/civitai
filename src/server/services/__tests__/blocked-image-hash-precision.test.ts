@@ -17,6 +17,8 @@ let queryResult: any[] = [];
 let csamQueryResult: any[] = [];
 let csamLookupFails = false;
 let clientAbsent = false;
+/** When set, an insert it matches throws, as a failed ClickHouse write. */
+let insertFails: ((args: { table: string; values: any[] }) => boolean) | undefined;
 
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
@@ -70,6 +72,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 fakeClickhouse.client = makePermissive({
   insert: async (args: { table: string; values: any[] }) => {
+    if (insertFails?.(args)) throw new Error('clickhouse down');
     capturedInserts.push({ table: args.table, values: args.values });
   },
   $query: (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -109,9 +112,8 @@ function liveCsamHashes(rows: TableRow[], query: string) {
 
 const { logToAxiom } = await import('~/server/logging/client');
 const { dbMock } = await import('~/__tests__/mocks/db.mock');
-const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await import(
-  '../image.service'
-);
+const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages, HeldMediaCopyError } =
+  await import('../image.service');
 
 // A real 64-bit pHash: past 2^53, and one whose rounded form is visibly different so a
 // revert prints the wrong value beside the right one rather than timing out.
@@ -384,12 +386,103 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
     expect(copies()).toEqual([]);
   });
 
-  it('a failed copy fails the call, as a failed blocklist write does', async () => {
-    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockRejectedValue(new Error('connection reset'));
+  it('a failed copy fails the call with an error that names the copy and holds no hash', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockRejectedValue(
+      new Error(`statement failed: VALUES (${HASH}, 'CSAM')`)
+    );
+    vi.mocked(logToAxiom).mockClear();
+
+    const error = await bulkAddBlockedImages({
+      data: [{ hash: HASH, reason: 'CSAM' as any }],
+      context: { step: 'block', imageIds: [9], actorUserId: 2 },
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(HeldMediaCopyError);
+    expect((error as Error).message).not.toContain(HASH.toString());
+    expect(String(((error as Error).cause as Error)?.message ?? '')).not.toContain(HASH.toString());
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(3);
+    const logged = vi
+      .mocked(logToAxiom)
+      .mock.calls.map(([entry]) => entry)
+      .filter((entry) => entry.name === 'held-media-copy-failed');
+    expect(logged).toHaveLength(1);
+    expect(logged[0].payload).toMatchObject({
+      step: 'block',
+      imageIds: [9],
+      hashCount: 1,
+      attempts: 3,
+    });
+    expect(JSON.stringify(logged)).not.toContain(HASH.toString());
+  });
+
+  it('starts no attempt once the budget is spent, so the logged error is the driver error', async () => {
+    vi.useFakeTimers();
+    try {
+      const driverError = Object.assign(new Error('connection refused'), {
+        name: 'DriverError',
+        code: 'P1001',
+      });
+      vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockImplementation(
+        () => new Promise((_, reject) => setTimeout(() => reject(driverError), 650)) as never
+      );
+      vi.mocked(logToAxiom).mockClear();
+
+      const call = bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] }).catch(
+        (e: unknown) => e
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(await call).toBeInstanceOf(HeldMediaCopyError);
+      // 0-650 ms, then 750-1400 ms; the backoff then runs out the budget before a third.
+      expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+      const [logged] = vi
+        .mocked(logToAxiom)
+        .mock.calls.map(([entry]) => entry)
+        .filter((entry) => entry.name === 'held-media-copy-failed');
+      expect(logged.payload).toMatchObject({ errorName: 'DriverError', errorCode: 'P1001' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a copy that fails once and then lands passes', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe)
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockResolvedValueOnce(1);
+
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] });
+
+    expect(dbMock.dbWrite.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+  });
+
+  // It runs inside a moderator's request, so a hung database gives up within two seconds.
+  it('a copy that never answers gives up within two seconds', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockImplementation(
+      () => new Promise(() => undefined) as never
+    );
+    const started = Date.now();
 
     await expect(
       bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] })
-    ).rejects.toThrow('connection reset');
+    ).rejects.toBeInstanceOf(HeldMediaCopyError);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it('when the other rows and the copy both fail, the blocklist error is the one thrown', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockRejectedValue(new Error('connection reset'));
+    insertFails = ({ values }) => values.some((v) => v.reason === 'TOS');
+    try {
+      await expect(
+        bulkAddBlockedImages({
+          data: [
+            { hash: HASH, reason: 'CSAM' as any },
+            { hash: OTHER_HASH, reason: 'TOS' as any },
+          ],
+        })
+      ).rejects.toThrow('clickhouse down');
+    } finally {
+      insertFails = undefined;
+    }
   });
 
   it('a failed copy still leaves the other rows of the batch written', async () => {
@@ -402,7 +495,7 @@ describe('a CSAM entry is copied to the table review routing reads', () => {
           { hash: OTHER_HASH, reason: 'TOS' as any },
         ],
       })
-    ).rejects.toThrow('connection reset');
+    ).rejects.toBeInstanceOf(HeldMediaCopyError);
     expect(capturedInserts.map((i) => i.values)).toEqual([
       [{ hash: HASH.toString(), reason: 'CSAM' }],
       [{ hash: OTHER_HASH.toString(), reason: 'TOS' }],
