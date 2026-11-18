@@ -27,9 +27,6 @@ describe('matureSpend', () => {
     });
   });
 
-  // Blue pays for any training, member or not (product decision, 2026-11-18). To
-  // whoever is about to bring back "a non-member's mature run is all Yellow": that was the orchestrator's
-  // rule for allowMatureContent, which training no longer sends.
   it('lets Blue cover a mature dataset in full, so nothing comes out of a paid account', () => {
     expect(matureSpend({ ...base, blue: 5000, mature: true })).toBeNull();
     expect(matureSpend({ ...base, price: 384, mature: true })).toBeNull();

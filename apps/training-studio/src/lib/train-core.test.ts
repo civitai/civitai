@@ -907,9 +907,7 @@ describe('mature charge: Blue first, never Green', () => {
     });
   });
 
-  // Product decision (2026-11-18): training is SFW infrastructure work, so Blue pays for
-  // it whatever the dataset, as the Classic trainer did. To whoever is about to add the unlock back:
-  // allowMatureContent:true makes the orchestrator drop a non-member's Blue and charge Yellow.
+  // Why no unlock: see chargeFields in train-core.ts.
   describe('Blue pays for a mature dataset, member or not', () => {
     const items = [
       { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
@@ -984,6 +982,27 @@ describe('mature charge: Blue first, never Green', () => {
           addEpochs: 5,
           currencies: ['blue', 'green'],
           workflowId: 'wf-blue5',
+          quotedMatureCount: 1,
+        },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    // Unlike a fresh run, a continuation can't tell a clean zero count from a stale cache, so the
+    // Yellow the user was shown wins.
+    it('a quote that showed mature keeps the continuation out of Green even when the submit counts none', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue6'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(() => Promise.resolve(nsfwHead('PG')));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        {
+          fromEpoch: 10,
+          addEpochs: 5,
+          currencies: ['blue', 'green'],
+          workflowId: 'wf-blue6',
           quotedMatureCount: 1,
         },
         { checkText }

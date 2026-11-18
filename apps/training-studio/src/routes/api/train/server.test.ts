@@ -27,7 +27,7 @@ const post = (body: unknown) =>
   } as unknown as Parameters<typeof POST>[0]);
 
 describe('POST /api/train', () => {
-  it('answers 409 with the mature count when the mature confirm is missing', async () => {
+  it('answers 409 with the mature count when a Green-paid run must be repriced as mature', async () => {
     const refusal = new MatureRepriceError(3);
     submitTrainingBatch.mockRejectedValueOnce(refusal);
     await expect(post({ runs: [] })).rejects.toMatchObject({
