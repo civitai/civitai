@@ -2213,8 +2213,10 @@ type Editor = { user: SessionUser; servableLevels: number };
  * The post's images this editor may not move: those it did not list, and those `getPostEditImages`
  * does not serve it (held for review unless a moderator, or rated outside the request's levels)
  * even if it lists them. They keep their index, so a reorder cannot push a hidden image out of the
- * version's first 20 (`imageDerivedVersionLevelSql`). A listed unrated image moves: it is an
- * upload the editor still shows while its scan runs.
+ * version's first 20 (`imageDerivedVersionLevelSql`). A listed unrated image is an upload the
+ * editor shows while its scan runs: it moves, unless the request's levels exclude unrated and an
+ * image is pinned, since the version level skips unrated rows and swapping one for a rated image
+ * would shift the pinned image's rank (a reload would not show the upload either).
  */
 async function editorHiddenImages(
   postId: number,
@@ -2227,12 +2229,12 @@ async function editorHiddenImages(
     select: { id: true, index: true, needsReview: true, nsfwLevel: true },
   });
   const listed = new Set(listedIds);
-  const hidden = images.filter(
-    (image) =>
-      !listed.has(image.id) ||
-      (!user.isModerator && isHeldForReview(image.needsReview)) ||
-      (image.nsfwLevel !== 0 && !isServableLevel(image.nsfwLevel, servableLevels))
-  );
+  const pinned = (image: (typeof images)[number]) =>
+    !listed.has(image.id) ||
+    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    (image.nsfwLevel !== 0 && !isServableLevel(image.nsfwLevel, servableLevels));
+  const pinUnrated = !isServableLevel(0, servableLevels) && images.some(pinned);
+  const hidden = images.filter((image) => pinned(image) || (pinUnrated && image.nsfwLevel === 0));
   return {
     ids: new Set(hidden.map((image) => image.id)),
     indexes: new Set(hidden.map((image) => image.index ?? 0)),

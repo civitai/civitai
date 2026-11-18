@@ -220,20 +220,42 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(await versionLevel()).toBe(XXX | PG);
   });
 
-  it('on a capped request, a listed unrated upload still moves and is placed', async () => {
-    const pgIds = await seedPost();
-    // Image 40 was just uploaded and not yet scanned: level 0, at the end.
-    await harness.pg.exec(
-      `INSERT INTO "Image" (id, "postId", "nsfwLevel", index) VALUES (40, ${POST}, 0, 22)`
-    );
+  it('on a capped request with nothing pinned, a listed unrated upload moves and is placed', async () => {
+    // Images 10..12 are PG; 40 was just uploaded and not yet scanned (level 0).
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index) VALUES
+        (10, ${POST}, ${PG}, 0), (11, ${POST}, ${PG}, 1), (12, ${POST}, ${PG}, 2), (40, ${POST}, 0, 3);
+    `);
     const positions = await reorderPostImages({
       user: { id: OWNER } as SessionUser,
       servableLevels: sfwBrowsingLevelsFlag,
       id: POST,
-      imageIds: [40, ...pgIds],
+      imageIds: [40, 10, 11, 12],
     });
-    expect((await indexes())[40]).toBe(1); // first free index after the pinned XXX image
-    expect(positions).toContainEqual({ type: 'image', id: 40, index: 1 });
+    expect((await indexes())[40]).toBe(0);
+    expect(positions).toContainEqual({ type: 'image', id: 40, index: 0 });
+  });
+
+  it('on a capped request with a pinned image, a listed unrated upload cannot shift its rank', async () => {
+    // 0-18 PG, 19 unrated upload Z (40), 20 XXX (1, above the cap), 21 PG Y (50): XXX is the 20th
+    // rated image. Moving Y above Z would make it the 21st and drop the version level.
+    const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i})`);
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index) VALUES
+        ${pg.join(', ')}, (40, ${POST}, 0, 19), (1, ${POST}, ${XXX}, 20), (50, ${POST}, ${PG}, 21);
+    `);
+    expect(await versionLevel()).toBe(XXX | PG);
+    const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
+    const positions = await reorderPostImages({
+      user: { id: OWNER } as SessionUser,
+      servableLevels: sfwBrowsingLevelsFlag,
+      id: POST,
+      imageIds: [...pgIds, 50, 40, 1],
+    });
+    const after = await indexes();
+    expect([after[40], after[1]]).toEqual([19, 20]);
+    expect(positions.map((p) => p.id)).not.toContain(40);
+    expect(await versionLevel()).toBe(XXX | PG);
   });
 
   // The editor gets every id from post.getImageIds, so a crafted list can name a hidden image.
