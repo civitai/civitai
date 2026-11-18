@@ -98,7 +98,7 @@ export function ServiceOfferingMenu({
         utils.creatorService.getMine.fetch(),
         utils.creatorService.getSellEligibility.fetch(),
       ]);
-      // Manage Services offers Duplicate only to a seller who can sell; so does the card.
+      // Checked on click, so the card loads no eligibility until the owner asks to duplicate.
       if (!eligibility.canSell)
         throw new Error('You can list new services once you meet the requirements to sell.');
       const copyOf = items.find((item) => item.id === offering.id);

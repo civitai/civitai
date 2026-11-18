@@ -70,6 +70,7 @@ describe('ServiceOfferingMenu', () => {
     await open({ isOwner: false, isModerator: false });
     await expect.element(item('Report this service')).toBeVisible();
     expect(document.body.textContent).not.toContain('Delete');
+    expect(document.body.textContent).not.toContain('Duplicate');
     await item('Report this service').click();
     expect(mocks.openReportModal).toHaveBeenCalledTimes(1);
     expect(mocks.openReportModal).toHaveBeenCalledWith(
@@ -90,6 +91,7 @@ describe('ServiceOfferingMenu', () => {
   test('a moderator can report, and takes the service down only with a reason', async () => {
     await open({ isOwner: false, isModerator: true });
     await expect.element(item('Report this service')).toBeVisible();
+    expect(document.body.textContent).not.toContain('Duplicate');
     await item('Delete').click();
     await expect.element(page.getByText('Take down service')).toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Yes, take it down' })).toBeDisabled();

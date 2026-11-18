@@ -58,7 +58,7 @@ const COPY_SUFFIX = ' (copy)';
 
 /**
  * `offering` edits it. `copyOf` starts a NEW offering from another one's wording and terms: not its
- * cover, rating or affirmation, so the copy is declared, affirmed and checked like any new service.
+ * cover, rating or affirmation.
  */
 export function ServiceOfferingFormModal({
   offering,
