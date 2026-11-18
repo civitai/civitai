@@ -32,7 +32,7 @@ import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useRouter } from 'next/router';
 import { useDomainColor } from '~/hooks/useDomainColor';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string }> = {
@@ -82,6 +82,19 @@ export function ManageServicesPanel({
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
   const [requestsTab, setRequestsTab] = useState<string | null>('open');
+
+  // A service card's Manage links here with `?edit=<id>`: open that offering's form once, and drop
+  // the param so a refresh or Back doesn't open it again.
+  const editId = Number(router.query?.edit) || undefined;
+  const openedEdit = useRef<number>();
+  useEffect(() => {
+    if (!editId || isLoading || openedEdit.current === editId) return;
+    openedEdit.current = editId;
+    const { edit: _, ...query } = router.query;
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    const target = offerings.find((offering) => offering.id === editId);
+    if (target && eligibility?.canSell) openForm(target);
+  }, [editId, isLoading, offerings, eligibility?.canSell, router]);
   const requestsStatus = requestsTab === 'closed' ? 'closed' : 'open';
 
   if (isLoading)

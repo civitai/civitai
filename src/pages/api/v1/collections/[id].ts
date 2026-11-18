@@ -20,6 +20,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * GET /api/v1/collections/[id] — public, edge-cacheable collection detail.
@@ -47,7 +48,11 @@ import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], {
+  scope: { anyOf: [TokenScope.CollectionsRead] },
+});
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -117,4 +122,4 @@ export default MixedAuthEndpoint(async function handler(
   } catch (e) {
     return handleEndpointError(res, e);
   }
-});
+}

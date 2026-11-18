@@ -66,7 +66,7 @@ export default PublicEndpoint(
       if (!isDev && !isSameOriginBeacon(req))
         return res.status(400).send({ message: 'invalid request' });
 
-      const session = await getServerAuthSession({ req, res });
+      const session = await getServerAuthSession({ req, res, scope: 'defer' });
       const queryInput = applicationErrorSchema.parse(JSON.parse(req.body));
       if (isProd) {
         const payload = {

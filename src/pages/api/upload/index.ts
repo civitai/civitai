@@ -12,12 +12,16 @@ import type { UploadBackend } from '~/utils/s3-utils';
 import { buildUploadKey } from '~/utils/upload-key';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
   if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {

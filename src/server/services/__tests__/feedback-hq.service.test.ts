@@ -164,6 +164,9 @@ describe('the per-reporter cap', () => {
 
     expect(intakeCalls()).toHaveLength(1);
     expect(loggedStatuses()).toEqual(['filed', 'user-cap']);
+    expect(loggingMock.logToAxiom.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ status: 'user-cap', userId: 42 })
+    );
     expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(KEY, 1);
   });
 
