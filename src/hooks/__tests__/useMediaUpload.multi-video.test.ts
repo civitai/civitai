@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 
-const act = (React as unknown as { act: typeof actType }).act;
+// Our @types/react predates the typing of React 18.3's `act`; see useS3Upload.test.ts.
+type ActFn = (cb: () => unknown) => Promise<void>;
+const act = (React as unknown as { act: ActFn }).act;
+
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
