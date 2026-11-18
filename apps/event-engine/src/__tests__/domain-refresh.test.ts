@@ -2,8 +2,17 @@ import { describe, expect, test, vi } from 'vitest';
 import { startRefreshers } from '@/vector-sync/domain/refresh';
 import type { Domain } from '@/vector-sync/domain/sync';
 
-const domain = (name: string, refresh?: Domain<any>['refresh']) =>
-  ({ name, table: name, refresh } as Domain<any>);
+const domain = (name: string, refresh?: Domain<any>['refresh'], points?: number[]) =>
+  ({
+    name,
+    table: name,
+    refresh,
+    store: points
+      ? () => ({
+          idsInRange: async (lo: number, hi: number) => points.filter((id) => id >= lo && id < hi),
+        })
+      : undefined,
+  } as unknown as Domain<any>);
 
 /** Throws past `max` reads, so a walk whose cursor never wraps fails instead of spinning forever. */
 const bounded =
@@ -14,6 +23,38 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  test('also queues points whose row is gone, inside a batch and past the last row', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const ids = [1, 2, 4, 5];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: ids
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      // 3 sits between rows of the second batch's range, 9 after the last row; 1 and 4 have rows.
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 2 }, [1, 3, 4, 9])],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect([...added].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 9]);
+      expect(added.filter((id) => id === 1 || id === 4)).toHaveLength(2);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('each tick walks the whole table, a batch per read, into the domain lane', async () => {
     vi.useFakeTimers();
     try {
