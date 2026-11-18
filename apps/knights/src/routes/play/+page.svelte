@@ -550,6 +550,10 @@
     else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
   });
   let hearts = $derived(heartsLeft(data.status));
+  // The ruling sits directly above the stage when there is one, so it never covers the image.
+  let stageShown = $derived(
+    data.mode === 'apprentice' ? data.apprentice.kind === 'question' : !data.muted && !data.lockoutSeconds && Boolean(view)
+  );
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
@@ -620,6 +624,36 @@
   </div>
 {/snippet}
 
+{#snippet ruling()}
+  <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
+    <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
+    <div class="toast-body">
+      {#each data.notices as notice (notice.key)}
+        <div class="check-notice" class:close={notice.consequence === 'close'}>
+          {#if notice.imageSrc}
+            <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
+          {/if}
+          <p>
+            <strong>{notice.title}</strong>
+            {notice.message}
+            {#if notice.consequence === 'smite'}
+              <span class="check-answers">
+                You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
+              </span>
+            {/if}
+          </p>
+        </div>
+      {/each}
+      {#if form?.noticeFailed}
+        <p>{form.message}</p>
+      {/if}
+    </div>
+    <form method="POST" action="?/dismissNotices" use:enhance={submit}>
+      <button type="submit" disabled={submitting}>Understood</button>
+    </form>
+  </section>
+{/snippet}
+
 {#snippet levelToast(floating: boolean)}
   {#if levelNotice && levelToastShowing}
     <LevelToast
@@ -679,34 +713,8 @@
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0}
-    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
-      <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
-      <div class="toast-body">
-        {#each data.notices as notice (notice.key)}
-          <div class="check-notice" class:close={notice.consequence === 'close'}>
-            {#if notice.imageSrc}
-              <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
-            {/if}
-            <p>
-              <strong>{notice.title}</strong>
-              {notice.message}
-              {#if notice.consequence === 'smite'}
-                <span class="check-answers">
-                  You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
-                </span>
-              {/if}
-            </p>
-          </div>
-        {/each}
-        {#if form?.noticeFailed}
-          <p>{form.message}</p>
-        {/if}
-      </div>
-      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Understood</button>
-      </form>
-    </section>
+  {#if data.notices.length > 0 && !stageShown}
+    <div class="rulingwrap">{@render ruling()}</div>
   {/if}
 
   {#if data.mode === 'queue' && data.resetPending}
@@ -723,6 +731,7 @@
           </p>
           {@render questionTools()}
         </div>
+        {#if data.notices.length > 0}{@render ruling()}{/if}
         <div class="stagewrap">
           {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
             <ImageStage
@@ -811,6 +820,7 @@
       <span class="vh" role="status" aria-live="polite"
         >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
       >
+      {#if data.notices.length > 0}{@render ruling()}{/if}
       <div class="stagewrap">
         {#key view.item.key}
           {@const itemKey = view.item.key}
@@ -927,18 +937,21 @@
     overflow-y: auto;
   }
 
-  /* The hidden-check warning floats over the stage, so it never moves the stage or the pills. */
+  .rulingwrap {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 1056px;
+    margin: 0 auto;
+    padding: 8px 28px 0;
+  }
   .toast {
-    position: absolute;
-    top: 4.5rem;
-    left: 50%;
-    z-index: 5;
     display: flex;
+    flex: none;
     align-items: center;
     gap: 12px;
-    width: min(34rem, calc(100% - 2rem));
+    box-sizing: border-box;
+    width: 100%;
     padding: 12px 16px;
-    transform: translateX(-50%);
     border: 1px solid var(--io-crimson);
     border-radius: 12px;
     background: #14110dee;
@@ -1330,8 +1343,8 @@
       min-height: 10rem;
       padding: 4px 16px max(8px, env(safe-area-inset-bottom));
     }
-    .toast {
-      top: 3.5rem;
+    .rulingwrap {
+      padding: 4px 16px 0;
     }
     .eyebrow {
       font-size: 12px;
