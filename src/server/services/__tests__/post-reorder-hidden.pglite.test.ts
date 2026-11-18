@@ -322,6 +322,20 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(await versionLevel()).toBe(XXX | PG);
   });
 
+  it('refuses, and writes nothing, when indexes collide so placement would shift a held image', async () => {
+    // Held 1 at 0 and held 2 at 3; rated 10 also at 0, 11 at 1, 12 at 2.
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (1, ${POST}, ${XXX}, 0, 'minor'), (2, ${POST}, ${XXX}, 3, 'minor'),
+        (10, ${POST}, ${PG}, 0, NULL), (11, ${POST}, ${PG}, 1, NULL), (12, ${POST}, ${PG}, 2, NULL);
+    `);
+    const before = await indexes();
+    await expect(
+      reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [10, 11, 12] })
+    ).rejects.toThrow('This order could not be saved.');
+    expect(await indexes()).toEqual(before);
+  });
+
   // The editor gets every id from post.getImageIds, so a crafted list can name a hidden image.
   it.each([
     [

@@ -2254,14 +2254,15 @@ async function editorHiddenImages(
     movable,
     images: images.map((image) => ({
       id: image.id,
-      index: image.index ?? 0,
+      index: image.index,
       counted: countsTowardVersionLevel(image.nsfwLevel),
       pinned: isHidden(image),
     })),
   };
 }
 
-type RankedImage = { id: number; index: number; counted: boolean; pinned: boolean };
+// `index` as stored: the version level sorts a null index after every number.
+type RankedImage = { id: number; index: number | null; counted: boolean; pinned: boolean };
 
 /**
  * Whether writing `positions` would change, for any pinned image, how many images the version
@@ -2279,8 +2280,8 @@ export function shiftsPinnedRank(
       others.filter((image) => at(image) === pinAt).length
     }`;
   };
-  const before = (image: RankedImage) => image.index;
-  const after = (image: RankedImage) => moved.get(image.id) ?? image.index;
+  const before = (image: RankedImage) => image.index ?? Infinity;
+  const after = (image: RankedImage) => moved.get(image.id) ?? image.index ?? Infinity;
   return images.some((pin) => pin.pinned && rank(pin, before) !== rank(pin, after));
 }
 
@@ -2418,7 +2419,7 @@ export const reorderPostImages = async ({
     : await imageOnlyReorder(postId, imageIds, editor);
   // Fail closed: placement is meant to keep this, and a write that breaks it is refused.
   if (shiftsPinnedRank(hidden.images, positions))
-    throw throwBadRequestError('This order could not be saved. Reload the post and try again.');
+    throw throwBadRequestError('This order could not be saved.');
   await dbWrite.$transaction(
     positions.map(({ type, id, index }) =>
       type === 'image'

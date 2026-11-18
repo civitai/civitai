@@ -125,4 +125,14 @@ describe('shiftsPinnedRank', () => {
       ])
     ).toBe(false);
   });
+
+  it('reads a null index as last, as the version level sorts it', () => {
+    // Rated M has no index, so it ranks after pinned P at 2; writing it at 0 moves it ahead of P.
+    const withNull = [
+      { id: 1, index: null, counted: true, pinned: false },
+      { id: 2, index: 2, counted: true, pinned: true },
+    ];
+    expect(shiftsPinnedRank(withNull, [{ type: 'image', id: 1, index: 0 }])).toBe(true);
+    expect(shiftsPinnedRank(withNull, [{ type: 'image', id: 1, index: 3 }])).toBe(false);
+  });
 });
