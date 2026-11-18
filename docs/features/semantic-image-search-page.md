@@ -146,6 +146,11 @@ Qdrant's `score_threshold`, and returns `similarityScores` keyed by visible resu
 cannot pass a cutoff. Scores survive candidate caching; the normal visibility fetch still decides
 which images may be returned. The preview provides loading, empty and retry states.
 
+![Similar images hover preview](../previews/similar-images-hover.png)
+
+UI example using fixture scores. The pictured percentages illustrate the interface; they are not
+measured scores from the hosted Civitai API.
+
 ## Feedback and logging
 
 - Every first page is logged to ClickHouse through `Tracker.search`, with index `images_semantic`.
