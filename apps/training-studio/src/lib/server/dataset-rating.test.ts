@@ -171,9 +171,9 @@ describe('one rating call', () => {
 describe('the rating job', () => {
   it('stores each OK rating and leaves the rest unrated', async () => {
     const rate = vi.fn(async (_c: unknown, key: string) =>
-      key === 'bad' ? { rating: null } : { rating: { s: 1, r: false } }
+      key === 'bad.png' ? { rating: null } : { rating: { s: 1, r: false } }
     );
-    const summary = await runRatingJob(client, ['a', 'bad', 'c'], rate);
+    const summary = await runRatingJob(client, ['a.png', 'bad.png', 'c.png'], rate);
     expect(summary).toMatchObject({
       images: 3,
       calls: 3,
@@ -181,8 +181,19 @@ describe('the rating job', () => {
       fallbacks: 1,
       deadlineHit: false,
     });
-    expect(store.get('rating:radio-alpha:a')).toEqual({ s: 1, r: false });
-    expect(store.has('rating:radio-alpha:bad')).toBe(false);
+    expect(store.get('rating:radio-alpha:a.png')).toEqual({ s: 1, r: false });
+    expect(store.has('rating:radio-alpha:bad.png')).toBe(false);
+  });
+
+  it('sends only images to the rater, counting the rest as skipped', async () => {
+    const rate = vi.fn(async (_c: unknown, _key: string) => ({ rating: { s: 1, r: false } }));
+    const summary = await runRatingJob(
+      client,
+      ['voice.wav', 'clip.mp4', 'Photo.JPG', 'noextension', 'pic.webp'],
+      rate
+    );
+    expect(rate.mock.calls.map(([, key]) => key)).toEqual(['Photo.JPG', 'pic.webp']);
+    expect(summary).toMatchObject({ images: 5, skipped: 3, calls: 2, rated: 2, fallbacks: 0 });
   });
 
   it('stops at the deadline, leaving unreached images unrated', async () => {
@@ -195,7 +206,7 @@ describe('the rating job', () => {
           signal.addEventListener('abort', () => resolve({ rating: null }));
         })
     );
-    const keys = Array.from({ length: 50 }, (_, i) => `k${i}`);
+    const keys = Array.from({ length: 50 }, (_, i) => `k${i}.png`);
     const summary = await runRatingJob(client, keys, rate, 30);
     expect(summary.deadlineHit).toBe(true);
     expect(summary.calls).toBeLessThan(5);
@@ -205,7 +216,7 @@ describe('the rating job', () => {
 
   it('pauses on a 429 instead of hammering the rater', async () => {
     const rate = vi.fn(async () => ({ rating: null, limited: true, retryAfterMs: 10_000 }));
-    const keys = Array.from({ length: 50 }, (_, i) => `k${i}`);
+    const keys = Array.from({ length: 50 }, (_, i) => `k${i}.png`);
     const summary = await runRatingJob(client, keys, rate, 50);
     // Both workers' first calls, then the pause outlasts the deadline.
     expect(rate.mock.calls.length).toBeLessThanOrEqual(2);
@@ -222,12 +233,16 @@ describe('starting a job', () => {
           release = () => resolve(ok('S0'));
         })
     );
-    warmDatasetRating('t', 9, ['a']);
-    warmDatasetRating('t', 9, ['b']);
+    warmDatasetRating('t', 9, ['a.png']);
+    warmDatasetRating('t', 9, ['b.png']);
     await vi.waitFor(() => expect(invokeScan).toHaveBeenCalledTimes(1));
-    expect(invokeScan.mock.calls[0]![0].body.image).toBe('urn:air:other:other:orchestrator:blob@a');
+    expect(invokeScan.mock.calls[0]![0].body.image).toBe(
+      'urn:air:other:other:orchestrator:blob@a.png'
+    );
     release();
-    await vi.waitFor(() => expect(store.get('rating:radio-alpha:a')).toEqual({ s: 0, r: false }));
+    await vi.waitFor(() =>
+      expect(store.get('rating:radio-alpha:a.png')).toEqual({ s: 0, r: false })
+    );
   });
 });
 
@@ -247,11 +262,24 @@ describe('the daily allowance', () => {
     expect(await claimDaily('lookups', 3, 1)).toBe(0);
   });
 
+  it('claims allowance only for the images in a dataset', async () => {
+    invokeScan.mockResolvedValue(ok('S0'));
+    warmDatasetRating('t', 14, ['a.wav', 'b.mp4', 'c.png']);
+    await vi.waitFor(() =>
+      expect(store.get('rating:radio-alpha:c.png')).toEqual({ s: 0, r: false })
+    );
+    expect(invokeScan).toHaveBeenCalledTimes(1);
+    const day = new Date().toISOString().slice(0, 10);
+    expect(store.get(`daily:calls:14:${day}`)).toBe(1);
+  });
+
   it('a job over the allowance rates only what was granted', async () => {
     await claimDaily('calls', 11, DATASET_RATING_DAILY_CALLS - 1);
     invokeScan.mockResolvedValue(ok('S0'));
-    warmDatasetRating('t', 11, ['a', 'b', 'c']);
-    await vi.waitFor(() => expect(store.get('rating:radio-alpha:a')).toEqual({ s: 0, r: false }));
+    warmDatasetRating('t', 11, ['a.png', 'b.png', 'c.png']);
+    await vi.waitFor(() =>
+      expect(store.get('rating:radio-alpha:a.png')).toEqual({ s: 0, r: false })
+    );
     expect(invokeScan).toHaveBeenCalledTimes(1);
   });
 });
@@ -262,7 +290,7 @@ it('gives back the allowance for images a job did not reach', async () => {
     data: undefined,
     response: new Response(null, { status: 429, headers: { 'retry-after': '60' } }),
   });
-  warmDatasetRating('t', 12, ['a', 'b', 'c', 'd', 'e', 'f'], 30);
+  warmDatasetRating('t', 12, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 30);
   const day = new Date().toISOString().slice(0, 10);
   await vi.waitFor(() => expect(store.get(`daily:calls:12:${day}`)).toBe(2));
 });
@@ -280,7 +308,7 @@ it('gives the allowance back to the day it was claimed on, across UTC midnight',
         response: new Response(null, { status: 429, headers: { 'retry-after': '60' } }),
       };
     });
-    warmDatasetRating('t', 13, ['a', 'b', 'c', 'd', 'e', 'f'], 30);
+    warmDatasetRating('t', 13, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png', 'f.png'], 30);
     await vi.waitFor(() => expect(store.get('daily:calls:13:2026-11-12')).toBe(2));
     expect(store.has('daily:calls:13:2026-11-13')).toBe(false);
   } finally {

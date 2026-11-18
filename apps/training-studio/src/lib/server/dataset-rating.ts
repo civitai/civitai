@@ -15,6 +15,7 @@ import {
   type RatingV2ScanInput,
   type StoredRating,
 } from '$lib/dataset-rating';
+import { extOfAir, mediaOfExt } from '$lib/media';
 import type { OrchestratorClient } from '$lib/orchestrator-core';
 
 /** Variant flag: off, or no variant this code knows, means datasets are counted from the upload rating. */
@@ -131,6 +132,14 @@ export const scanImageRef = (blobId: string) => `urn:air:other:other:orchestrato
 /** Blob ids are base32 keys, optionally with a file extension; anything else is never put in an AIR. */
 const BLOB_ID = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9]+)?$/;
 
+/** Whether a dataset blob goes to the rater: only an image extension the uploader accepts. The rater
+ *  refuses audio and video without making a job. A key with no extension is skipped too, since nothing
+ *  says what it holds; a skipped blob keeps its upload rating, like any unrated one. */
+export const isRateableKey = (blobId: string): boolean => {
+  const ext = extOfAir(blobId);
+  return ext !== undefined && mediaOfExt(ext) === 'image';
+};
+
 /** One image through the v2 rater. Anything but a parsed OK rating is null. */
 export async function rateImage(
   client: OrchestratorClient,
@@ -158,6 +167,8 @@ export async function rateImage(
 
 export interface RatingJobSummary {
   images: number;
+  /** Keys never sent because they aren't images (see isRateableKey); not in `calls` or `fallbacks`. */
+  skipped: number;
   calls: number;
   rated: number;
   fallbacks: number;
@@ -166,8 +177,8 @@ export interface RatingJobSummary {
   ms: number;
 }
 
-/** Rate `blobKeys` (all readable by the caller, none rated yet) within the deadline, storing each OK
- *  rating. An image whose call fails, is rate-limited or isn't reached stays unrated. */
+/** Rate the images among `blobKeys` (all readable by the caller, none rated yet) within the deadline,
+ *  storing each OK rating. An image whose call fails, is rate-limited or isn't reached stays unrated. */
 export async function runRatingJob(
   client: OrchestratorClient,
   blobKeys: string[],
@@ -175,6 +186,7 @@ export async function runRatingJob(
   deadlineMs: number = DATASET_RATING_DEADLINE_MS
 ): Promise<RatingJobSummary> {
   const started = Date.now();
+  const images = blobKeys.filter(isRateableKey);
   const deadline = started + deadlineMs;
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), deadlineMs);
@@ -184,12 +196,12 @@ export async function runRatingJob(
   let rateLimited = 0;
   let pausedUntil = 0;
   const worker = async () => {
-    while (next < blobKeys.length && Date.now() < deadline && !abort.signal.aborted) {
+    while (next < images.length && Date.now() < deadline && !abort.signal.aborted) {
       if (pausedUntil > Date.now()) {
         await new Promise((r) => setTimeout(r, Math.min(pausedUntil, deadline) - Date.now()));
         continue;
       }
-      const key = blobKeys[next++]!;
+      const key = images[next++]!;
       calls++;
       const result = await rate(client, key, abort.signal);
       if (result.rating) {
@@ -203,18 +215,19 @@ export async function runRatingJob(
   };
   try {
     await Promise.all(
-      Array.from({ length: Math.min(DATASET_RATING_CONCURRENCY, blobKeys.length) }, worker)
+      Array.from({ length: Math.min(DATASET_RATING_CONCURRENCY, images.length) }, worker)
     );
   } finally {
     clearTimeout(timer);
   }
   return {
     images: blobKeys.length,
+    skipped: blobKeys.length - images.length,
     calls,
     rated,
-    fallbacks: blobKeys.length - rated,
+    fallbacks: images.length - rated,
     rateLimited,
-    deadlineHit: next < blobKeys.length || abort.signal.aborted,
+    deadlineHit: next < images.length || abort.signal.aborted,
     ms: Date.now() - started,
   };
 }
@@ -229,12 +242,13 @@ export function warmDatasetRating(
   blobKeys: string[],
   deadlineMs: number = DATASET_RATING_DEADLINE_MS
 ): void {
-  if (blobKeys.length === 0 || activeJobs.has(userId)) return;
-  const job = claimAllowance('calls', userId, blobKeys.length)
+  const images = blobKeys.filter(isRateableKey);
+  if (images.length === 0 || activeJobs.has(userId)) return;
+  const job = claimAllowance('calls', userId, images.length)
     .then(async ({ granted, key }) => {
       const summary = await runRatingJob(
         orchestratorClient(token),
-        blobKeys.slice(0, granted),
+        images.slice(0, granted),
         rateImage,
         deadlineMs
       );
@@ -246,7 +260,9 @@ export function warmDatasetRating(
         message: 'dataset rating job',
         userId,
         ...summary,
-        overDailyCap: blobKeys.length - granted,
+        images: blobKeys.length,
+        skipped: blobKeys.length - images.length,
+        overDailyCap: images.length - granted,
       });
     })
     .catch((err) => {
