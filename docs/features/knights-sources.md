@@ -26,6 +26,8 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   the [game settings](#game-settings).
 - Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
   `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
+  A triage page: J/K move, 1 to 5 rate PG to XXX, 6 is Blocked, which asks for a reason from the Knights' list (`KNIGHTS_BLOCK_REASONS`, picked by
+  digit) and records it on the image as `metadata.nsfwLevelReason` (`Inquisitor ruling: <reason>`); other levels record no reason.
 - Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
   images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
   `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
