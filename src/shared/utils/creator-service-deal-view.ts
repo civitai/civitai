@@ -152,7 +152,6 @@ export function dealActions(
     gatedAllowed?: boolean;
     /** A moderator took the offering down: a pending request can be declined, never accepted. */
     offeringTakenDown?: boolean;
-    /** The seller cannot work the deal: the buyer may leave at once with a refund. */
     sellerUnavailable?: boolean;
   } = {}
 ) {

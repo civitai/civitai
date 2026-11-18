@@ -252,7 +252,7 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
 export const closeCommentLabel: Record<string, string> = {
   withdrawn: 'Request withdrawn by the buyer',
   late: 'Cancelled by the buyer after the due date',
-  seller_unavailable: 'Cancelled by the buyer with a full refund',
+  buyer_refund: 'Cancelled by the buyer with a full refund',
   overdue: 'Cancelled automatically: nothing delivered in time',
   cancellation_unanswered: 'Cancelled automatically: the cancellation request was not answered',
   payment_refused: 'Cancelled: the payment was refused',

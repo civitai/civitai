@@ -645,10 +645,7 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
 const sellerUnavailable = (sellerId: Prisma.Sql) =>
   Prisma.sql`EXISTS (SELECT 1 FROM "User" s WHERE s."id" = ${sellerId} AND s."muted")`;
 
-/**
- * The buyer leaves at once, refunded, while the seller cannot work the deal. Read from the User row
- * in the same statement, so the rule is the seller's state when the deal closes.
- */
+/** The seller's state is read in the same statement as the transition, so it cannot change between check and close. */
 export const cancelServiceDealSellerUnavailable = ({
   dealId,
   userId,
@@ -662,9 +659,9 @@ export const cancelServiceDealSellerUnavailable = ({
     to: 'Cancelled',
     actorId: userId,
     event: 'Cancelled',
-    comment: 'seller_unavailable',
+    comment: 'buyer_refund',
     where: Prisma.sql`"buyerId" = ${userId}::int AND ${sellerUnavailable(Prisma.sql`"sellerId"`)}`,
-    set: Prisma.sql`, "closeReason" = 'seller_unavailable'`,
+    set: Prisma.sql`, "closeReason" = 'buyer_refund'`,
     refund: true,
   });
 

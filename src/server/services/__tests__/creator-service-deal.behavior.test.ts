@@ -1074,10 +1074,7 @@ describe('working a deal', () => {
       const id = await accepted();
       await unavailable();
       await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
-      expect(await deal(id)).toMatchObject({
-        status: 'Cancelled',
-        closeReason: 'seller_unavailable',
-      });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
       expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     });
 
@@ -1087,11 +1084,11 @@ describe('working a deal', () => {
       await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
       await unavailable();
       await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
-      expect(await deal(id)).toMatchObject({ status: 'Cancelled' });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
       expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     });
 
-    it('refuses it otherwise: the seller is available, the seller asks, or files are waiting', async () => {
+    it('refuses it otherwise: the seller is available, the seller asks, or it was delivered', async () => {
       const id = await accepted();
       await expect(
         deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
