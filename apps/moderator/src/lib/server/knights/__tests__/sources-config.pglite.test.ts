@@ -406,6 +406,58 @@ describe('saveGameSettings', () => {
   });
 });
 
+describe('saveGameSettings harvest fields', () => {
+  const stored = {
+    enabled: true,
+    sfwRate: 0.4,
+    nsfwRate: 0.2,
+    maxOpen: 1200,
+    yesNoShare: 0.5,
+    game: { shopDisabled: true },
+  };
+
+  it('stores an explicit harvest off and a share, carrying every other field over, with no kill switch confirmation', async () => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings({ harvest: false, harvestHiddenCheckShare: 0 }, MOD)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual({
+      ...stored,
+      game: { shopDisabled: true, harvest: false, harvestHiddenCheckShare: 0 },
+    });
+  });
+
+  it('clears each harvest field on request', async () => {
+    redisStore.set(
+      KEY,
+      JSON.stringify({ ...stored, game: { harvest: true, harvestHiddenCheckShare: 0.3 } })
+    );
+    await saveGameSettings({ harvest: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual({ harvestHiddenCheckShare: 0.3 });
+    await saveGameSettings({ harvestHiddenCheckShare: null }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!)).not.toHaveProperty('game');
+  });
+
+  it.each([
+    ['a share above 1', { harvestHiddenCheckShare: 1.5 }],
+    ['a negative share', { harvestHiddenCheckShare: -0.1 }],
+    ['a string share', { harvestHiddenCheckShare: '0.3' }],
+    ['a string switch', { harvest: 'on' }],
+  ])('refuses %s and changes nothing', async (_label, input) => {
+    redisStore.set(KEY, JSON.stringify(stored));
+    expect(await saveGameSettings(input, MOD)).toMatchObject({ ok: false });
+    expect(JSON.parse(redisStore.get(KEY)!)).toEqual(stored);
+  });
+
+  it('keeps stored harvest fields when the sources are saved', async () => {
+    const game = { harvest: false, harvestHiddenCheckShare: 0.2 };
+    redisStore.set(KEY, JSON.stringify({ ...stored, game }));
+    await saveSourcesConfig({ enabled: false, sfwRate: 0.4, nsfwRate: 0.2 }, MOD);
+    expect(JSON.parse(redisStore.get(KEY)!).game).toEqual(game);
+  });
+});
+
 describe('concurrent saves', () => {
   it('does not overwrite a write that lands between the read and the write, and applies on top of it', async () => {
     redisStore.set(KEY, JSON.stringify({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }));

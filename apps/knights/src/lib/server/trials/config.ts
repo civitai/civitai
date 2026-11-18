@@ -1,3 +1,5 @@
+import type { StoredSettings } from '../settings/stored';
+
 export type HarvestConfig = {
   cursorName: string;
   batchSize: number;
@@ -32,13 +34,19 @@ export type HarvestSettings = {
 };
 
 /**
- * Operator switches from the environment (see `.env.example`): `KNIGHTS_HARVEST` runs the harvest when unset or one
- * of `RUN_VALUES`, and pauses it on `PAUSE_VALUES` or anything else, and
+ * A value saved on the moderator Config page wins (`stored`); without one, the environment (see `.env.example`):
+ * `KNIGHTS_HARVEST` runs the harvest when unset or one of `RUN_VALUES`, and pauses it on `PAUSE_VALUES` or anything
+ * else, and
  * `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` (0 to 1) sends that share of new rulings to hidden checks.
  */
-export function harvestSettings(env: Record<string, string | undefined>): HarvestSettings {
+export function harvestSettings(
+  env: Record<string, string | undefined>,
+  stored: StoredSettings = {}
+): HarvestSettings {
   const share = Number(env.KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE?.trim() || NaN);
-  const hiddenCheckShare = share >= 0 && share <= 1 ? share : HARVEST.hiddenCheckShare;
+  const hiddenCheckShare =
+    stored.harvestHiddenCheckShare ?? (share >= 0 && share <= 1 ? share : HARVEST.hiddenCheckShare);
+  if (stored.harvest !== undefined) return { paused: !stored.harvest, hiddenCheckShare };
   const value = env.KNIGHTS_HARVEST?.trim().toLowerCase() ?? '';
   if (RUN_VALUES.includes(value)) return { paused: false, hiddenCheckShare };
   if (PAUSE_VALUES.includes(value)) return { paused: true, hiddenCheckShare };

@@ -17,7 +17,9 @@ ordinary vote in every way a player can see.
 
 - Where checks come from: the ruling harvest (`trials/harvest.service.ts`) sends new rulings to `trials` unless
   `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` sends a share to `hiddenCheck`, and skips rulings from the moderator image queue.
-  `KNIGHTS_HARVEST` set to anything but unset, `on`, `true` or `1` pauses intake (the cursor holds) while references
+  `KNIGHTS_HARVEST` set to anything but unset, `on`, `true` or `1` (or "Paused" saved on the Config page, which wins over
+  the variable, as a saved share wins over `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`; see
+  [game settings](knights-sources.md#game-settings)) pauses intake (the cursor holds) while references
   whose ruling no longer stands are still retired. Rulings that aged past the window during a pause are skipped, logged and
   counted (`knights_harvest_skipped_rulings_total`). A retired reference keeps its image, so that image is never harvested again.
 - `pnpm run rebuild:hidden-checks` (`trials/hidden-rebuild.service.ts`) retires every live harvested check that fewer than
