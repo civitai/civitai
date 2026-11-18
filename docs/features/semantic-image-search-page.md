@@ -130,8 +130,7 @@ put in the URL, so a search by upload cannot be shared.
    like this", and asks the search service's `POST /v1/similar` with the blob URL. Hydration is
    the normal fetch path.
 
-Limits: per user 10 uploads per 10 minutes and 50 per day, one unscanned upload at a time, and a
-site-wide daily cap that refuses when its counter cannot be read.
+Limits: per user 10 uploads per 10 minutes and 50 per day (the router's limits, which moderators skip), plus 100 uploads and 1,000 search pages per day that count moderators too and refuse when their counter cannot be read; one unscanned upload at a time; and a site-wide daily upload cap that also refuses when its counter cannot be read.
 
 ## Feedback and logging
 

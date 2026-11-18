@@ -8,6 +8,7 @@ import {
   prepareImageSearchUploadSchema,
 } from '~/server/schema/semantic-image-search.schema';
 import {
+  claimSearchUploadUserDay,
   getSearchUploadStatus,
   prepareSearchUpload,
   resolveSearchUploadAnchor,
@@ -61,6 +62,9 @@ export const imageSearchUploadRouter = router({
     .use(rateLimit({ limit: 60, period: 60 }))
     .input(imageSearchUploadSearchSchema)
     .query(async ({ input, ctx }) => {
+      // A GET puts the upload URL in the query string, where access logs keep it.
+      if (ctx.req.method === 'GET') throw new TRPCError({ code: 'METHOD_NOT_SUPPORTED' });
+      await claimSearchUploadUserDay({ userId: ctx.user.id, action: 'search', req: ctx.req });
       const views = credentialViews(ctx);
       const uploadAnchor = await resolveSearchUploadAnchor({
         userId: ctx.user.id,

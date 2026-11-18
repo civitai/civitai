@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   status: vi.fn(),
   prepare: vi.fn(),
   anchor: vi.fn(),
+  claimDay: vi.fn(),
   search: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock('~/server/services/image-search-upload.service', async (importOriginal) 
   getSearchUploadStatus: h.status,
   prepareSearchUpload: h.prepare,
   resolveSearchUploadAnchor: h.anchor,
+  claimSearchUploadUserDay: h.claimDay,
 }));
 vi.mock('~/server/services/semantic-image-search.service', async (importOriginal) => ({
   ...(await importOriginal<typeof SemanticSearch>()),
@@ -51,6 +53,7 @@ beforeEach(() => {
   h.status.mockReset().mockResolvedValue({ status: 'pending' });
   h.prepare.mockReset().mockResolvedValue({ uploadId: UPLOAD });
   h.anchor.mockReset().mockResolvedValue(ANCHOR);
+  h.claimDay.mockReset().mockResolvedValue(undefined);
   h.search.mockReset().mockResolvedValue({ items: [], nextCursor: undefined });
 });
 
@@ -129,6 +132,33 @@ describe('imageSearchUpload', () => {
         source: { kind: 'image', id: 9 },
       })
     );
+  });
+
+  it('refuses a search sent as GET, before counting or searching', async () => {
+    const get = imageSearchUploadRouter.createCaller({
+      acceptableOrigin: true,
+      user: MOD,
+      tokenScope: TokenScope.Full,
+      req: { headers: {}, method: 'GET' },
+      features: {},
+      track: {},
+    } as never);
+    await expect(
+      get.search({ uploadId: UPLOAD, uploadUrl: BLOB, browsingLevel: 1 })
+    ).rejects.toMatchObject({ code: 'METHOD_NOT_SUPPORTED' });
+    expect(h.claimDay).not.toHaveBeenCalled();
+    expect(h.anchor).not.toHaveBeenCalled();
+  });
+
+  it("counts each search page against the moderator's daily limit, and stops when it is spent", async () => {
+    await search(MOD);
+    expect(h.claimDay).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 8, action: 'search' })
+    );
+    h.claimDay.mockRejectedValue(Object.assign(new Error('full'), { code: 'TOO_MANY_REQUESTS' }));
+    h.anchor.mockClear();
+    await expect(search(MOD)).rejects.toThrow('full');
+    expect(h.anchor).not.toHaveBeenCalled();
   });
 
   it('stops before searching when the gate refuses the upload', async () => {

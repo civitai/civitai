@@ -31,6 +31,7 @@ vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => ({
 
 import {
   claimSearchUploadSlot,
+  claimSearchUploadUserDay,
   getSearchUploadStatus,
   prepareSearchUpload,
   resolveSearchUploadAnchor,
@@ -39,6 +40,7 @@ import {
   SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
   SEARCH_UPLOAD_SOURCE_MESSAGE,
   SEARCH_UPLOAD_TTL_MS,
+  SEARCH_UPLOAD_USER_DAILY_LIMITS,
 } from '~/server/services/image-search-upload.service';
 
 /** An in-memory stand-in for the cache the upload record lives in. */
@@ -113,6 +115,27 @@ const scanned = (over: Record<string, unknown> = {}) => ({
       },
     },
   ],
+});
+
+describe("the viewer's daily limit", () => {
+  const req = { headers: {} } as never;
+  beforeEach(() => {
+    h.claim.mockReset().mockResolvedValue(async () => undefined);
+  });
+
+  it('counts a moderator by id only, so the moderator exemption does not apply', async () => {
+    await claimSearchUploadUserDay({ userId: 5, action: 'search', req });
+    expect(h.claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: { id: 5 },
+        scope: 'imageSearchUpload.search',
+        rules: [
+          expect.objectContaining({ limit: SEARCH_UPLOAD_USER_DAILY_LIMITS.search, period: 86400 }),
+        ],
+      })
+    );
+    expect(isFailClosedRateLimitScope('imageSearchUpload.search')).toBe(true);
+  });
 });
 
 describe('preparing a search upload', () => {
@@ -200,6 +223,14 @@ describe('preparing a search upload', () => {
       prepare('https://orchestration.civitai.com/v2/consumer/blobs/blob-2')
     ).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(h.claim).not.toHaveBeenCalled();
+  });
+
+  it("counts the upload against the viewer's daily uploads before the site-wide cap", async () => {
+    await prepare();
+    expect(h.claim.mock.calls.map(([a]) => a.keyName)).toEqual([
+      'imageSearchUpload:user-prepare',
+      'imageSearchUpload:global',
+    ]);
   });
 
   it('takes a slot before scanning, and scans nothing once the cap is reached', async () => {

@@ -34,6 +34,8 @@ export const SEARCH_UPLOAD_TTL_MS = 60 * 60 * 1000;
 /** A scan with no answer by now is refused, never left pending. */
 export const SEARCH_UPLOAD_SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 export const SEARCH_UPLOAD_GLOBAL_DAILY_CAP = 5000;
+/** Per user per day, moderators included: generous for case work, a ceiling on scan and embed spend. */
+export const SEARCH_UPLOAD_USER_DAILY_LIMITS = { prepare: 100, search: 1000 } as const;
 // Every viewer draws from one bucket: the rate-limit engine keys a bucket by user id.
 const GLOBAL_BUCKET_USER = { id: 0 } as SessionUser;
 
@@ -113,6 +115,36 @@ async function sourceExists(source: SearchUploadSource) {
   }
 }
 
+/**
+ * One of the viewer's daily uploads or search pages. Unlike the router's limits this counts
+ * moderators, who are the feature's users; the scope is fail-closed, so an unreadable store refuses.
+ */
+export async function claimSearchUploadUserDay({
+  userId,
+  action,
+  req,
+}: {
+  userId: number;
+  action: keyof typeof SEARCH_UPLOAD_USER_DAILY_LIMITS;
+  req: NextApiRequest;
+}) {
+  const record = await claimRateLimitAttempt({
+    rules: [
+      {
+        limit: SEARCH_UPLOAD_USER_DAILY_LIMITS[action],
+        period: 24 * 60 * 60,
+        errorMessage: SEARCH_UPLOAD_CAPACITY_MESSAGE,
+      },
+    ],
+    keyName: `imageSearchUpload:user-${action}`,
+    scope: `imageSearchUpload.${action}`,
+    // Only the id: the moderator exemption must not apply here.
+    user: { id: userId } as SessionUser,
+    req,
+  });
+  await record();
+}
+
 export async function prepareSearchUpload({
   userId,
   url,
@@ -146,6 +178,7 @@ export async function prepareSearchUpload({
 
   let workflowId: string | undefined;
   try {
+    await claimSearchUploadUserDay({ userId, action: 'prepare', req });
     await claimSearchUploadSlot(req);
     workflowId = await submitSearchUploadScan({ blobUrl: url });
   } finally {

@@ -45,7 +45,7 @@ export function readSearchUploadScan(workflow: {
   const output = step?.output;
   const nsfwLevel = output?.nsfwLevel ? orchestratorNsfwLevelMap[output.nsfwLevel] : undefined;
   const age = output?.jointAgeClassification;
-  if (!output || nsfwLevel === undefined || !age) return { state: 'failed' };
+  if (!output || nsfwLevel === undefined || age?.ran !== true) return { state: 'failed' };
 
   return {
     state: 'done',

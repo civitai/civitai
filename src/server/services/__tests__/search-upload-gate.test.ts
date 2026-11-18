@@ -101,10 +101,11 @@ describe('reading the scan workflow', () => {
     expect(readSearchUploadScan(succeeded(out))).toEqual({ state: 'failed' });
   });
 
-  it('reads an age classifier that did not run as not run', () => {
+  it('is failed when the age classifier did not run, so moderators are refused too', () => {
     const age = { ...output().jointAgeClassification, ran: false };
-    const read = readSearchUploadScan(succeeded(output({ jointAgeClassification: age })));
-    expect(read).toMatchObject({ state: 'done', faceScan: { ran: false } });
+    expect(readSearchUploadScan(succeeded(output({ jointAgeClassification: age })))).toEqual({
+      state: 'failed',
+    });
   });
 
   it('reads a block reason, a CSAM signal and the minor and child flags', () => {
