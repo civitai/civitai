@@ -36,11 +36,12 @@ import { getDocStoreRater } from '~/server/services/apps/doc-store-rater.instanc
 import {
   APP_DOC_ENTITY_TYPE,
   appDocTexts,
+  appDocTextScanSubject,
   type AppDocSubjectMeta,
 } from '~/server/services/apps/doc-rater-subject';
 import { syncSubListingRatingFromDoc } from '~/server/services/blocks/app-sub-listing.service';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
-import { textScanTextHash } from '~/server/services/text-scan/prompt';
+import { subjectTextLength, textScanTextHash } from '~/server/services/text-scan/prompt';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-scan/types';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
@@ -170,17 +171,26 @@ async function rateOne(
   // verdict would; shadow rates nothing.
   if ((await getTextScanMode(APP_DOC_ENTITY_TYPE, ratingId)) !== 'active')
     return void out.skipped++;
-  let textLevel: number | null = NsfwLevel.PG;
-  if (scan.reason === 'unchanged') {
-    const row = await dbWrite.entityModeration.findUnique({
-      where: { entityType_entityId: { entityType: APP_DOC_ENTITY_TYPE, entityId: ratingId } },
-      select: { status: true, nsfwLevel: true },
-    });
-    textLevel = row?.status === 'Succeeded' ? textLevelOf({ nsfwLevel: row.nsfwLevel }) : null;
-  }
-  if (textLevel === null) return void out.skipped++;
   const current = await rater.getForRating(appId, PUBLISHED_NS, collection, doc.key);
   if (!current) return void out.skipped++;
+  const address = { appId, ns: PUBLISHED_NS, collection, key: doc.key };
+  const subject = appDocTextScanSubject(address, current);
+  let textLevel: number | null = null;
+  if (scan.reason === 'too-short') {
+    // No text when the scan looked: PG, unless an edit has added text since.
+    if (subjectTextLength(subject) === 0) textLevel = NsfwLevel.PG;
+  } else {
+    const row = await dbWrite.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: APP_DOC_ENTITY_TYPE, entityId: ratingId } },
+      select: { status: true, nsfwLevel: true, result: true },
+    });
+    // The stored verdict counts only for the text it was given for: the document's text now.
+    const scannedHash = (row?.result as { textHash?: string } | null)?.textHash;
+    if (row?.status === 'Succeeded' && scannedHash === textScanTextHash(subject)) {
+      textLevel = textLevelOf({ nsfwLevel: row.nsfwLevel });
+    }
+  }
+  if (textLevel === null) return void out.skipped++;
   const result = await rateAppDoc(
     {
       appId,

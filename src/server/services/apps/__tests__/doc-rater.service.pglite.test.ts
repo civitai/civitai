@@ -232,17 +232,38 @@ describe('🔴 the callback rates the document', () => {
 });
 
 describe('without a submit: a stored verdict for the same text, or no text', () => {
+  /** The stored live verdict: `level`, for the doc's current text unless `textHash` says other. */
+  function storedVerdict(level: number, textHash?: string) {
+    dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async (args: {
+      where: { entityType_entityId: { entityId: number } };
+    }) => {
+      const id = args.where.entityType_entityId.entityId;
+      const subject = (await loadAppDocSubjects([id])).get(id)!;
+      return {
+        status: 'Succeeded',
+        nsfwLevel: level,
+        result: { version: 1, textHash: textHash ?? textScanTextHash(subject) },
+      };
+    }) as never);
+  }
+
   it('🔴 an unchanged text is rated from its stored active verdict', async () => {
     const app = freshApp('RSVSAME');
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'same' });
     h.scanResult = { status: 'skipped', reason: 'unchanged' };
-    dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async () => ({
-      status: 'Succeeded',
-      nsfwLevel: 8,
-    })) as never);
+    storedVerdict(8);
     const out = await rateUnratedDocs([app]);
     expect(out).toMatchObject({ rated: 1 });
     expect((await ratingOf(app, 'b1')).level).toBe(8);
+  });
+
+  it('🔴 a stored verdict for other text (an edit after the scan looked) rates nothing', async () => {
+    const app = freshApp('RSVSAMESTALE');
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'now' });
+    h.scanResult = { status: 'skipped', reason: 'unchanged' };
+    storedVerdict(1, 'the hash of some earlier text');
+    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, skipped: 1 });
+    expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
   it('in shadow a stored verdict rates nothing', async () => {
@@ -250,20 +271,22 @@ describe('without a submit: a stored verdict for the same text, or no text', () 
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'same' });
     h.scanResult = { status: 'skipped', reason: 'unchanged' };
     h.mode = 'shadow';
-    dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async () => ({
-      status: 'Succeeded',
-      nsfwLevel: 8,
-    })) as never);
+    storedVerdict(8);
     expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, skipped: 1 });
     expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
-  it('a text too short to scan rates PG (images can still raise it)', async () => {
+  it('a document with no text rates PG, raised by its images', async () => {
     const app = freshApp('RSVEMPTY');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { n: 1 });
+    // No string value and no object key.
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', {});
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b2', { pic: imageUrl(IMG_R) });
     h.scanResult = { status: 'skipped', reason: 'too-short' };
-    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 1 });
+    const out = await rateUnratedDocs([app]);
     expect((await ratingOf(app, 'b1')).level).toBe(1);
+    // b2 has text (its url), so `too-short` from a scan that looked earlier does not rate it.
+    expect((await ratingOf(app, 'b2')).level).toBeNull();
+    expect(out).toMatchObject({ rated: 1, skipped: 1 });
   });
 
   it('the text scan off (kill switch or rollout) rates nothing: the document stays pending', async () => {
