@@ -29,6 +29,9 @@
  *                                  here (`request-origin.ts`), and logged at startup. Unlike the
  *                                  site, a request with no region (no country header) is held
  *                                  to SFW as well
+ *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
+ *                                  headers; set only once the gateway sets those keys itself
+ *                                  (`request-origin.ts`)
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
  * token is verified as every `/api/v1` route verifies it, and an access token the auth hub issued
