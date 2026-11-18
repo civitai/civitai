@@ -238,8 +238,8 @@ export type ProfilePictureData = {
  * Cache for user profile pictures. A picture that may not be served is looked up as no picture.
  */
 export const profilePictures = createCache<ProfilePictureData>({
-  // v2: entries cached before pictures with no rating were withheld are dropped.
-  redisKey: 'user:profilePicture:v2',
+  // v3: entries cached before minor-held pictures were withheld are dropped.
+  redisKey: 'user:profilePicture:v3',
   idKey: 'userId',
   fieldTypes: {
     userId: 'number',
@@ -269,7 +269,8 @@ export const profilePictures = createCache<ProfilePictureData>({
        WHERE u.id = ANY($1)
          AND i.ingestion <> 'Blocked'
          AND i."nsfwLevel" != 0
-         AND i."needsReview" IS DISTINCT FROM 'csam'
+         -- The main app's notHeldForReviewSql.
+         AND (i."needsReview" IS NULL OR i."needsReview" NOT IN ('csam', 'minor'))
          -- The main app's imageReviewedSql: scanned, or a moderator's rating it may stand on.
          AND (i.ingestion = 'Scanned'
            OR (i."nsfwLevelLocked" = TRUE

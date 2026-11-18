@@ -53,8 +53,8 @@ import { isSearchUploadRow } from '~/server/services/search-upload-rows';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
-  deleteUserProfilePictureCache,
   refreshProfilePicturesForImages,
+  refreshProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
@@ -1205,7 +1205,7 @@ export async function applyIngestionSideEffects({
       typeof image.metadata === 'object' &&
       (image.metadata as MediaMetadata | undefined)?.profilePicture
     ) {
-      await deleteUserProfilePictureCache(image.userId);
+      await refreshProfilePicturesForUsers([image.userId]);
     } else {
       // A rescan of an image picked as an avatar after its upload can change its rating too.
       await refreshProfilePicturesForImages([image.id]);

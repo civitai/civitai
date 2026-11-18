@@ -397,7 +397,7 @@ const K = {
   basic: 'packed:caches:basic-users',
   userCosmetics: 'packed:caches:user-cosmetics',
   cosmetics: 'packed:caches:cosmetics2',
-  profile: 'packed:caches:profile-pictures:v3',
+  profile: 'packed:caches:profile-pictures:v4',
   data: 'packed:caches:data-for-model-2',
   modelTags: 'packed:caches:model-tags',
   basicTags: 'packed:caches:basic-tags',
