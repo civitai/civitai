@@ -4,6 +4,7 @@ import { canAccess } from '$lib/server/access';
 import type { DB as ModeratorDB } from '$lib/server/moderator-db/types';
 import { int4Id } from '$lib/server/query';
 import { LabError } from '$lib/server/text-scan-lab/errors';
+import { INTENT_PUBLISH_PERMISSION, isIntentEvalSet } from '$lib/text-scan-tests/intent-set';
 import { isInt4Id } from '$lib/server/users.service';
 import {
   WORKSPACE_NAMES,
@@ -30,6 +31,27 @@ export const canOpenWorkspace = (user: User, workspace: Workspace) =>
 export function requireWorkspace(user: User, workspace: Workspace): void {
   if (!isWorkspace(workspace)) throw new TestSetError('Test set not found.', 404);
   if (!canOpenWorkspace(user, workspace)) throw new TestSetError(cannotOpen(workspace), 403);
+}
+
+/**
+ * Every change to the pinned intent set needs the grant that publishes the intent prompt, read from the
+ * main app as the signed-in moderator: an editor without it could otherwise drop hard cases or flip
+ * expectations until a draft passes. Any other set passes untouched.
+ */
+export async function requireIntentSetGrant(
+  setId: number,
+  holds?: (permission: string) => Promise<boolean>
+): Promise<void> {
+  if (!isIntentEvalSet(setId)) return;
+  // Loaded here: the harness client reaches SvelteKit's request scope, which this module's other
+  // callers never need.
+  const check =
+    holds ?? (await import('$lib/server/text-scan-lab/harness-client')).holdsMainPermission;
+  if (!(await check(INTENT_PUBLISH_PERMISSION)))
+    throw new TestSetError(
+      `Changing the intent set needs the ${INTENT_PUBLISH_PERMISSION} permission.`,
+      403
+    );
 }
 
 export function refusal(e: unknown) {
