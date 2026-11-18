@@ -64,9 +64,7 @@
  * That failure has no error, no counter and no symptom — the escalation simply never
  * happens, and every gate stays green. It is not hypothetical: it is exactly how the
  * OTel logs bridge shipped delivering 1.3% of records. See
- * `./structured-log-sink.ts`, which carries the full measurement and the same idiom,
- * and `scripts/check-server-graph-singletons.mjs`, which gates it — this module is on
- * that WATCHLIST under the `SHARED_STATE` rule.
+ * `./structured-log-sink.ts`, which carries the full measurement and the same idiom.
  *
  * `globalThis` is the one thing every emitted copy genuinely shares: the real V8
  * global of the single Node process, indifferent to how the bundler splits or

@@ -552,6 +552,27 @@ describe('🔴 the serve decision: off, on, or unknown', () => {
     expect(await degraded('eval_failed')).toBe(before + 1);
   });
 
+  it('a session that does not resolve counts one no_session decision; CONTROL: one that resolves counts none', async () => {
+    const { default: promClient } = await import('prom-client');
+    const noSession = async () => {
+      const metric = promClient.register.getSingleMetric(
+        'civitai_app_block_media_serving_degraded_total'
+      ) as
+        | { get(): Promise<{ values: Array<{ labels: { reason?: string }; value: number }> }> }
+        | undefined;
+      return (
+        (await metric?.get())?.values.find((v) => v.labels.reason === 'no_session')?.value ?? 0
+      );
+    };
+    const before = await noSession();
+    serving.on = true;
+    await viewAs('user:99');
+    expect(await noSession()).toBe(before);
+    unresolvable.add(99);
+    await viewAs('user:99');
+    expect(await noSession()).toBe(before + 1);
+  });
+
   it('a viewer whose session does not resolve is judged by entity id alone, and it is logged', async () => {
     serving.on = true;
     unresolvable.add(99);
@@ -662,6 +683,44 @@ describe('🔴 a viewer whose session does not resolve is anonymous downstream',
       anonymous: true,
     });
     expect(await resolveBlockMediaFetch(ticket)).toEqual({ state: 'hidden', reason: 'owner_only' });
+  });
+
+  describe('a ticket minted while the session resolved, fetched after it stops', () => {
+    const ownTicket = (over: Partial<Parameters<typeof sealBlockMediaTicket>[0]>) =>
+      sealBlockMediaTicket({
+        ...claims,
+        ...over,
+        viewerId: claims.ownerId,
+        viewerBrowsingLevel: R_PLUS,
+      });
+
+    it("the owner's own audio is refused as owner-only: no owner status once signed out", async () => {
+      blobState.mockResolvedValue(rated('pg'));
+      unresolvable.add(claims.ownerId);
+      expect(await resolveBlockMediaFetch(ownTicket({ mediaType: 'audio' }))).toEqual({
+        state: 'hidden',
+        reason: 'owner_only',
+      });
+    });
+
+    it('a clip above the signed-out level is refused, though the ticket carries R+', async () => {
+      blobState.mockResolvedValue(rated('r'));
+      unresolvable.add(claims.ownerId);
+      expect(await resolveBlockMediaFetch(ownTicket({}))).toMatchObject({ state: 'hidden' });
+    });
+
+    it('CONTROL: both are served while the session resolves', async () => {
+      blobState.mockResolvedValue(rated('pg'));
+      expect(await resolveBlockMediaFetch(ownTicket({ mediaType: 'audio' }))).toEqual({
+        state: 'redirect',
+        location: CONTENT,
+      });
+      blobState.mockResolvedValue(rated('r'));
+      expect(await resolveBlockMediaFetch(ownTicket({}))).toEqual({
+        state: 'redirect',
+        location: CONTENT,
+      });
+    });
   });
 
   it('a replayed private ref is refused to its own owner when their session does not resolve', async () => {
