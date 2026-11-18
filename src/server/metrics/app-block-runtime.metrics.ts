@@ -1139,7 +1139,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const mediaServingDegradedTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_media_serving_degraded_total',
-    'App Block host media serve decisions made without a full answer, one per decision. reason = eval_failed (no flag evaluation: an error, or a Flipt client that never started; every media output is restricted and unlocks are refused) | no_session (the viewer session did not resolve; judged as signed out). eval_failed is expected to be zero. Every reason is published at 0 on each scrape, so a missing series means the code is not deployed',
+    'App Block host media serve decisions made without a full answer, one per decision. reason = eval_failed (no flag evaluation: an error, or a Flipt client that never started; every media output is restricted and unlocks are refused) | no_session (the viewer session did not resolve; judged as signed out). eval_failed is expected to be zero. Every reason is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
     ['reason']
   );
 
@@ -1147,7 +1147,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const mediaInputRefusedTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_media_input_refused_total',
-    'App Blocks workflow bodies refused because they carried a host media url or ref as an input, by phase (estimate | submit). One per refused body. Every phase is published at 0 on each scrape, so a missing series means the code is not deployed',
+    'App Blocks workflow bodies refused because they carried a host media url or ref as an input, by phase (estimate | submit). One per refused body. Every phase is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
     ['phase']
   );
 
