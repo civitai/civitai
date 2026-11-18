@@ -260,7 +260,9 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
+  domainBrowsingCeiling,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -3043,16 +3045,15 @@ const getAllImagesUncaptured = async (
         AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${ownerId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
-    if (requiringMeta) {
-      // Blocked until the owner verifies them: ingestion and level read Blocked, so the gates below
-      // would drop every one. `imageBlockedForConditions` keeps them to their owner and moderators.
-      AND.push(Prisma.sql`i."blockedFor" = ${BlockedReason.AiNotVerified}`);
-    } else {
+    // An image blocked until its metadata is verified reads Blocked for ingestion and level, which
+    // these gates drop. Its rating is gone, so a capped domain can't tell it is safe and lists none.
+    if (!requiringMeta || domainBrowsingCeiling(domain) !== allBrowsingLevelsFlag) {
       if (browsingLevel)
         AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
       AND.push(imageReviewedSql());
     }
   }
+  if (requiringMeta) AND.push(Prisma.sql`i."blockedFor" = ${BlockedReason.AiNotVerified}`);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`

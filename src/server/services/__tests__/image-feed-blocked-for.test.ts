@@ -92,7 +92,10 @@ describe('getAllImages blockedFor exclusion', () => {
 });
 
 describe('getAllImages requiringMeta', () => {
-  async function statement(requiringMeta: boolean) {
+  const LEVEL_GATE = '"nsfwLevel" != 0';
+  const INGESTION_GATE = /"ingestion" = \$\d+::"ImageIngestionStatus"/;
+
+  async function statement(requiringMeta: boolean, domain: 'red' | 'green' = 'red') {
     await getAllImages({
       asModerator: true,
       asOwner: true,
@@ -105,22 +108,35 @@ describe('getAllImages requiringMeta', () => {
       user: { id: OWNER, isModerator: false },
       userId: OWNER,
       requiringMeta,
+      domain,
     } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
     return queryWithTimeoutMock.mock.calls[0][2] as { text: string; values: unknown[] };
   }
+  const blockedForAiNotVerified = (stmt: { text: string; values: unknown[] }) => {
+    const match = stmt.text.match(/i\."blockedFor" = \$(\d+)/);
+    return !!match && stmt.values[Number(match[1]) - 1] === 'AiNotVerified';
+  };
 
   // A metadata-blocked image is stored Blocked at the Blocked level, so the feed's own level and
   // ingestion gates would answer this filter with nothing.
   it("lists the owner's images blocked for missing metadata, past the level and ingestion gates", async () => {
     const stmt = await statement(true);
-    const match = stmt.text.match(/i\."blockedFor" = \$(\d+)/);
-    expect(match).not.toBeNull();
-    expect(stmt.values[Number(match![1]) - 1]).toBe('AiNotVerified');
-    expect(stmt.text).not.toContain('"nsfwLevel" != 0');
-    expect(stmt.text).not.toMatch(/"ingestion" = \$\d+::"ImageIngestionStatus"/);
+    expect(blockedForAiNotVerified(stmt)).toBe(true);
+    expect(stmt.text).not.toContain(LEVEL_GATE);
+    expect(stmt.text).not.toMatch(INGESTION_GATE);
   });
 
-  it('keeps the level gate without the filter', async () => {
-    expect((await statement(false)).text).toContain('"nsfwLevel" != 0');
+  it('keeps both gates on a capped domain, where an unrated image may not be listed', async () => {
+    const stmt = await statement(true, 'green');
+    expect(blockedForAiNotVerified(stmt)).toBe(true);
+    expect(stmt.text).toContain(LEVEL_GATE);
+    expect(stmt.text).toMatch(INGESTION_GATE);
+  });
+
+  it('keeps both gates without the filter', async () => {
+    const stmt = await statement(false);
+    expect(blockedForAiNotVerified(stmt)).toBe(false);
+    expect(stmt.text).toContain(LEVEL_GATE);
+    expect(stmt.text).toMatch(INGESTION_GATE);
   });
 });
