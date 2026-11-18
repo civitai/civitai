@@ -475,6 +475,21 @@ describe('account deletion', () => {
     expect(await removed(attachmentId)).toBe(false);
   });
 
+  it("for the buyer, removes their attachments and leaves the seller's final and preview", async () => {
+    const { dealId, finalId, attachmentId } = await closedDeal('Completed', 1);
+    const [preview] = await q<{ id: number }>(
+      `INSERT INTO "ServiceDealFile" ("dealId", kind, "s3Key", "mimeType", size, status, "scanStatus", "malwareScanStatus")
+       VALUES ($1, 'Preview', $2, 'image/png', 10, 'Ready', 'Passed', 'Passed') RETURNING id`,
+      [dealId, `k/${dealId}/preview`]
+    );
+    await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(BUYER));
+    expect(await removed(attachmentId)).toBe(true);
+    expect(await removed(finalId)).toBe(false);
+    expect(await removed(preview.id)).toBe(false);
+    await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
+    expect(await removed(preview.id)).toBe(true);
+  });
+
   it('keeps them under a hold, and while the deal is open', async () => {
     const held = await closedDeal('Completed', 1);
     await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
