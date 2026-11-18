@@ -66,21 +66,33 @@ describe('queueScanSampleForKnights', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
-  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2', async () => {
+  it('queues a safe-looking scan at priority 1 and an NSFW one at priority 2, servable images only', async () => {
     configured({ enabled: true });
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0.99);
     await queueScanSampleForKnights({ imageId: 2, nsfw: true }, () => 0.29);
 
-    expect(enqueue).toHaveBeenNthCalledWith(1, expect.anything(), {
-      source: 'scan-sample',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 1, priority: 1 }],
-    });
-    expect(enqueue).toHaveBeenNthCalledWith(2, expect.anything(), {
-      source: 'scan-sample',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 2, priority: 2 }],
-    });
+    expect(enqueue).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      {
+        source: 'scan-sample',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 1, priority: 1 }],
+      },
+      undefined,
+      { requirePost: true }
+    );
+    expect(enqueue).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      {
+        source: 'scan-sample',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 2, priority: 2 }],
+      },
+      undefined,
+      { requirePost: true }
+    );
   });
 
   it('samples each pool by its configured rate', async () => {
@@ -159,11 +171,16 @@ describe('queueOwnerRatingForKnights', () => {
     clearKnightsSourcesConfigCache();
     configured({ enabled: true, sfwRate: 0, nsfwRate: 0 });
     await queueOwnerRatingForKnights(7);
-    expect(enqueue).toHaveBeenCalledWith(expect.anything(), {
-      source: 'owner-rating',
-      questionKey: 'knights.image.nsfwLevel',
-      items: [{ imageId: 7, priority: 1 }],
-    });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        source: 'owner-rating',
+        questionKey: 'knights.image.nsfwLevel',
+        items: [{ imageId: 7, priority: 1 }],
+      },
+      undefined,
+      { requirePost: true }
+    );
   });
 
   it('swallows a failure', async () => {

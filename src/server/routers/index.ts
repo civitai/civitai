@@ -70,6 +70,8 @@ const routers = {
   resourceReview: () => import('./resourceReview.router').then((m) => m.resourceReviewRouter),
   semanticImageSearch: () =>
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
+  imageSearchUpload: () =>
+    import('./image-search-upload.router').then((m) => m.imageSearchUploadRouter),
   semanticArticleSearch: () =>
     import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
   semanticComicSearch: () =>

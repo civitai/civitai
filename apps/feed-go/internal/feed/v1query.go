@@ -232,7 +232,7 @@ func ParseV1(raw string) (*V1Input, error) {
 		keys = append(keys, p.Key)
 	}
 	if k, ok := v1Schema.Unknown(keys, v1TransportKeys); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
+		return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(k), "%s", k)
 	}
 
 	// The limit's default is not in the projection (numericString's preprocess hides it); it is the

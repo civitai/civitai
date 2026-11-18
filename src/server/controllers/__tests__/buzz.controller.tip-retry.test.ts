@@ -39,7 +39,6 @@ vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async
 vi.mock('~/server/services/entity-collaborator.service', () => ({
   getEntityCollaborators: vi.fn(async () => []),
 }));
-vi.mock('~/server/services/image.service', () => ({ getImageById: vi.fn(async () => null) }));
 const { mockCreateNotification, mockUpdateEntityMetric } = vi.hoisted(() => ({
   mockCreateNotification: vi.fn(),
   mockUpdateEntityMetric: vi.fn(),

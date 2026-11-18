@@ -59,8 +59,11 @@ import {
   imageReviewedSql,
   isMinorMatureImage,
   keepPermanentScanFailureSql,
+  notHeldForReviewSql,
+  notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
+  servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
@@ -256,15 +259,14 @@ import {
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { Flags } from '~/shared/utils/flags';
 import {
-  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  SEARCH_UPLOAD_APP_ID_META_KEY,
   stripBlockProvenanceMetadata,
   type BlockProvenanceMetadataKey,
 } from '~/shared/utils/block-provenance-metadata';
@@ -1908,11 +1910,13 @@ export const ingestImage = async ({
   lowPriority,
   tx,
   userId,
+  forceImageScanning,
 }: {
   image: IngestImageInput;
   lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
   userId?: number;
+  forceImageScanning?: boolean;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
@@ -1968,6 +1972,7 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
+    forceImageScanning,
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {
@@ -5016,6 +5021,8 @@ export const getImagesByEntity = async ({
   }
 
   const AND = entityImageVisibilityConditions({ userId, isModerator });
+  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
+  if (!isModerator) AND.push(notHeldForReviewSql());
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -5381,6 +5388,7 @@ export async function createImage({
         prompt: image?.meta?.prompt,
       },
       userId: image.userId,
+      forceImageScanning: blockProvenance?.key === SEARCH_UPLOAD_APP_ID_META_KEY,
     });
   }
 
@@ -7552,15 +7560,6 @@ export async function createImageResources({
   return resources;
 }
 
-/** `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
-const notHeldForReviewWhere: Prisma.ImageWhereInput = {
-  OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
-};
-
-/** Held to the request's servable levels: a capped request gets no unrated upload either. */
-const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
-  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
-
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
@@ -7665,7 +7664,7 @@ export const getMyImages = async ({
           : {}),
         // The unpublished path has no review gate of its own; these holds stay out of it too,
         // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere, servableLevelWhere(servableLevels)],
+        AND: [notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

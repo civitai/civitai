@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -246,6 +248,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	// The probe's span (as the shadow sample's): ends with the probe, or here when it is not run.
+	_, span := s.startSpan(r.Context(), r.Header, "probe", spec.endpoint)
+	spanHandedOff := false
+	defer func() {
+		if !spanHandedOff {
+			span.End()
+		}
+	}()
 	s.shadowMu.Lock()
 	if s.closing {
 		s.shadowMu.Unlock()
@@ -283,6 +293,7 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 	started = true
+	spanHandedOff = true
 	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
 		defer s.shadows.Done()
 		defer func() { <-s.ProbeQueue }()
@@ -291,10 +302,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 				s.panicked("probe", p, debug.Stack())
 			}
 		}()
+		defer span.End()
 		// Marked as shadow: its feed-service calls carry the shadow headers (feedsvc.WithShadow), so the
 		// probe's load stays out of the feed service's live series.
 		ctx, cancel := context.WithTimeout(feedsvc.WithShadow(s.background()), shadowSampleTimeout)
 		defer cancel()
+		if s.Tracer != nil {
+			ctx = trace.ContextWithSpan(ctx, span)
+		}
 		s.probe(ctx, spec, req)
 	}()
 }
@@ -331,10 +346,12 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		}
 		s.Metrics.GoFirstPages.WithLabelValues(spec.endpoint).Add(float64(pages))
 	}
+	setOutcome(trace.SpanFromContext(ctx), result)
 	if reason := fallback.Reason(err); reason != "" {
 		s.Metrics.Fallbacks.WithLabelValues(spec.endpoint, "probe", reason).Inc()
+		s.noteFallback(ctx, "probe", spec.endpoint, err)
 	} else if err != nil {
-		s.Log.Warn("go-first probe failed", "endpoint", spec.endpoint, "err", err)
+		s.noteError(ctx, slog.LevelWarn, "go-first probe failed", "probe", spec.endpoint, err)
 	}
 }
 

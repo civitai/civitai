@@ -70,6 +70,7 @@
     blockedSelectionMessage,
     filledPrompts,
     paramLockReason,
+    paramNeedsRefundAck,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -191,7 +192,7 @@
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
-    field !== 'epochs' && !advancedAcknowledged(i);
+    paramNeedsRefundAck(field) && !advancedAcknowledged(i);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
   const GUIDANCE_HELP =
@@ -835,8 +836,8 @@
                   </span>
                   <span class="text-xs leading-snug text-dark-2">
                     These defaults are tuned for your selected model. If you change them and the
-                    result is poor, the training is non-refundable. Steps and Checkpoints are not
-                    affected.
+                    result is poor, the training is non-refundable. Steps, Checkpoints and the
+                    negative prompt are not affected.
                   </span>
                   <div class="flex items-center gap-2">
                     <Checkbox

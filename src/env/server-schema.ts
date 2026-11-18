@@ -486,7 +486,17 @@ export const serverSchema = z
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
     // How API routes apply the token scope they declare (`getServerAuthSession`'s `scope`): `off`
     // ignores it, `report` logs each request it would refuse, `enforce` applies it.
-    REST_SCOPE_ENFORCE: z.enum(['off', 'report', 'enforce']).default('off').catch('off'),
+    // Any other value reads as `off`, with a warning when the env is parsed; '' reads as unset.
+    REST_SCOPE_ENFORCE: z
+      .enum(['off', 'report', 'enforce'])
+      .default('off')
+      .catch(({ value }) => {
+        if (value !== '')
+          console.warn(
+            `REST_SCOPE_ENFORCE=${JSON.stringify(value)} is not off, report or enforce; using off.`
+          );
+        return 'off' as const;
+      }),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
@@ -613,6 +623,8 @@ export const serverSchema = z
     // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
     SEARCH_SERVICE_URL: z.url().optional(),
     SEARCH_SERVICE_TOKEN: z.string().optional(),
+    // Set privately; see search-upload-gate.ts.
+    SEARCH_UPLOAD_FACE_ANIME_MIN: z.string().optional(),
     // Entities whose search updates are forwarded to "Outbox" for the semantic search sync, e.g.
     // "Article,Comic". Unset = none. Comic needs its OutboxEntity value applied first.
     SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),

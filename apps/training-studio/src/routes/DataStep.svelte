@@ -52,6 +52,7 @@
   import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
+  import { triggerForImport } from './triggerSuggest';
   import {
     blobAirFromUrl,
     captionTriggerHit,
@@ -88,6 +89,7 @@
     type Selection,
     type TagFilter,
   } from './trainingFlow';
+  import { groupTags } from './tagReplace';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import TagEditor from './TagEditor.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
@@ -112,6 +114,7 @@
     excludeSource = $bindable(true),
     filter = $bindable('all'),
     reuseItems = [],
+    findReplace = false,
     onContinue,
     onBack,
   }: {
@@ -132,6 +135,7 @@
     excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
+    findReplace?: boolean;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];
     onContinue: () => void;
@@ -535,6 +539,7 @@
     importNotice = '';
     const unreadable: string[] = [];
     const empty: string[] = [];
+    let suggested: string | null = null;
     try {
       for (let next = zipQueue.shift(); next; next = zipQueue.shift()) {
         const { file, current } = next;
@@ -548,13 +553,16 @@
         }
         if (entries.length === 0) empty.push(file.name);
         // A Remove all while a zip was extracting: the user emptied the dataset this would refill.
-        else if (current()) await addImported(entries);
+        // One fill per batch: a user who clears it while the next zip unpacks has said no.
+        else if (current()) suggested = (await addImported(entries, suggested === null)) ?? suggested;
       }
     } finally {
       importing = false;
       importNotice = [
         unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
         empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
+        // Not if the user has since changed or cleared it.
+        suggested && trigger === suggested && `Trigger word set to "${suggested}" from the imported tags.`,
       ]
         .filter(Boolean)
         .join(' ');
@@ -619,7 +627,8 @@
             caption: labelString(img, labelMode),
             load: () => imgBytes(img),
           };
-        })
+        }),
+        trigger
       );
       if (!blob) {
         exportNotice = "Couldn't fetch any of the files — nothing to download.";
@@ -640,8 +649,16 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  async function addImported(entries: { file: File; caption: string; path: string }[]) {
-    if (entries.length === 0) return;
+  /** Returns the trigger word it filled in from the captions, if any (see triggerForImport). */
+  async function addImported(entries: { file: File; caption: string; path: string }[], mayFill: boolean) {
+    if (entries.length === 0) return null;
+    const suggested = triggerForImport({
+      labelMode,
+      trigger,
+      mayFill,
+      captions: entries.map((e) => e.caption),
+    });
+    if (suggested) trigger = suggested;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -661,6 +678,7 @@
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file!));
     void maybeAutoLabel();
+    return suggested;
   }
   function onPickZip(e: Event) {
     void importZips(pickedFiles(e));
@@ -914,14 +932,10 @@
     if (next !== undefined) editorId = next;
   }
 
-  // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
-  // and the Manage-tags panel.
-  const tagFreq = $derived.by(() => {
-    const freq = new Map<string, number>();
-    for (const img of images) for (const t of img.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
-    return [...freq.entries()].sort((a, b) => b[1] - a[1]);
-  });
-  const tagVocab = $derived(tagFreq.map(([t]) => t));
+  // This dataset's tags, casings folded and frequency-ranked — feeds the editor's autocomplete and the
+  // Manage-tags panel.
+  const tagGroups = $derived(groupTags(images));
+  const tagVocab = $derived(tagGroups.map((g) => g.tag));
 
   let manageOpen = $state(false);
 
@@ -1295,7 +1309,7 @@
           </label>
         </div>
         {/if}
-        {#if tagFreq.length}
+        {#if tagGroups.length}
           <Button
             variant="outline"
             size="xs"
@@ -1542,7 +1556,7 @@
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          {#if tagFreq.length > 0 || tagFilter}
+          {#if tagGroups.length > 0 || tagFilter}
             <form
               class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2"
               onsubmit={(e) => {
@@ -1917,7 +1931,14 @@
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} onShowTag={showTag} />
+<ManageTagsModal
+  bind:open={manageOpen}
+  {tagGroups}
+  {images}
+  {media}
+  {findReplace}
+  onShowTag={showTag}
+/>
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

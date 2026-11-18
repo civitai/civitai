@@ -202,13 +202,13 @@ func (s *Sources) imageMetasFrom(ctx context.Context, r *metaRead) (map[int]any,
 		return out, nil
 	}
 	if s.Compute == nil {
-		return nil, fallback.Newf("image-meta-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("image-meta-miss", "%d ids", len(miss))
 	}
 	c := s.Compute
 	records, err := c.lookupShared(ctx, MissImageMeta, miss, s.lookupImageMeta)
 	if err != nil {
 		c.observe(MissImageMeta, "error", len(miss))
-		return nil, fallback.Newf("image-meta-miss-failed", "%v", err)
+		return nil, fallback.Wrap("image-meta-miss-failed", err)
 	}
 	c.observe(MissImageMeta, "computed", len(miss))
 	for _, id := range miss {
