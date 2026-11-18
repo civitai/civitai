@@ -165,6 +165,56 @@ describe('the HTTP/SSE binding', () => {
   });
 });
 
+describe('🔴 each HTTP subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const META_DE = `&meta=${encodeURIComponent('{"country":"DE"}')}`;
+
+  /** One subscription from the edge's CA, with meta DE, read to its end; its region lines. */
+  async function lines(trustMeta: string | undefined, query = sub(APPS, META_DE)) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const logged: string[] = [];
+    server = createRegistryServer(adapter(), { onRegion: (line) => logged.push(line) });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${query}`, {
+      headers: {
+        'cf-ipcountry': 'CA',
+        'cf-connecting-ip': '192.0.2.7',
+        'x-forwarded-for': '198.51.100.1',
+      },
+    });
+    await res.text();
+    return { status: res.status, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { status, logged } = await lines('1');
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=DE region=none source=meta restricted=false',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { logged } = await lines(undefined);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=false',
+    ]);
+  });
+
+  it('a request refused before it starts logs nothing', async () => {
+    const { status, logged } = await lines('1', '/subscribe');
+    expect(status).toBe(400);
+    expect(logged).toEqual([]);
+  });
+});
+
 describe('🔴 a snapshot slower than the heartbeat', () => {
   // Like Node's: anything written before writeHead sends default headers, and a writeHead
   // after that throws ERR_HTTP_HEADERS_SENT.

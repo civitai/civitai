@@ -1,7 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import type { Server as HttpServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPollingAdapter } from '~/server/registry-adapter/cursor';
 import { abortableSleep } from '~/utils/errorHandling';
 import {
@@ -65,22 +65,30 @@ type Outcome = {
  */
 async function viaGrpc(
   a: Adapter,
-  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string }>,
+  req: Partial<{ schema: string; cursor: string; urns: string[]; filter: string; meta: Buffer }>,
   until: (events: StreamEvent[]) => boolean = () => false,
-  path: string = SPEC_PATH
+  path: string = SPEC_PATH,
+  extra: { onRegion?: (line: string) => void; metadata?: grpc.Metadata } = {}
 ): Promise<Outcome> {
-  const server = createGrpcServer(a);
+  const server = createGrpcServer(a, { onRegion: extra.onRegion });
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
   const PathClient = clientAt(path);
   const client = new PathClient(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
   const subscribe = (
-    client as unknown as Record<string, (r: unknown) => grpc.ClientReadableStream<StreamEvent>>
+    client as unknown as Record<
+      string,
+      (r: unknown, m: grpc.Metadata) => grpc.ClientReadableStream<StreamEvent>
+    >
   ).Subscribe;
   return new Promise<Outcome>((resolve) => {
     const events: StreamEvent[] = [];
     let cancelled = false;
-    const call = subscribe.call(client, { schema: APPS, cursor: '', urns: [], filter: '', ...req });
+    const call = subscribe.call(
+      client,
+      { schema: APPS, cursor: '', urns: [], filter: '', ...req },
+      extra.metadata ?? new grpc.Metadata()
+    );
     const finish = (outcome: Outcome) => {
       clearTimeout(timer);
       client.close();
@@ -221,6 +229,56 @@ describe('the gRPC binding', () => {
     };
     const res = await viaGrpc(failing, {});
     expect(res.error).toEqual({ code: grpc.status.UNAVAILABLE, reason: 'unavailable' });
+  });
+});
+
+describe('🔴 each gRPC subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** One subscription from the edge's CA, with meta DE, read to live; its region lines. */
+  async function lines(trustMeta: string | undefined) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const metadata = new grpc.Metadata();
+    metadata.set('cf-ipcountry', 'CA');
+    metadata.set('cf-connecting-ip', '192.0.2.7');
+    metadata.set('x-forwarded-for', '198.51.100.1');
+    const logged: string[] = [];
+    const res = await viaGrpc(
+      catalog([[ent('alpha', 'r1')]]),
+      { meta: Buffer.from('{"country":"DE"}', 'utf8') },
+      (e) => e.some((x) => x.type === 'live'),
+      SPEC_PATH,
+      { onRegion: (line) => logged.push(line), metadata }
+    );
+    expect(res.error).toBeUndefined();
+    return logged;
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const logged = await lines('1');
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=DE region=none source=meta restricted=false',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    expect(await lines(undefined)).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=false',
+    ]);
+  });
+
+  it('a request refused before it starts logs nothing', async () => {
+    const logged: string[] = [];
+    const res = await viaGrpc(catalog([[]]), { filter: '{not json' }, undefined, SPEC_PATH, {
+      onRegion: (line) => logged.push(line),
+    });
+    expect(res.error?.reason).toBe('bad_request');
+    expect(logged).toEqual([]);
   });
 });
 

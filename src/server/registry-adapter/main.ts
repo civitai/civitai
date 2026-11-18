@@ -99,7 +99,9 @@ function main() {
       'registry-adapter: WARNING: REGISTRY_ADAPTER_RESOURCE_URL is unset; no hub access token is accepted'
     );
   }
-  const auth = { verifyToken, resource, limiter };
+  // One line per subscription, its region decision, to confirm where the country comes from.
+  const onRegion = (line: string) => console.log('registry-adapter:', line);
+  const auth = { verifyToken, resource, limiter, onRegion };
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
