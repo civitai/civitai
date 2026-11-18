@@ -30,7 +30,9 @@ export const imageSearchUploadRouter = router({
       ])
     )
     .input(prepareImageSearchUploadSchema)
-    .mutation(({ input, ctx }) => prepareSearchUpload({ userId: ctx.user.id, url: input.url })),
+    .mutation(({ input, ctx }) =>
+      prepareSearchUpload({ userId: ctx.user.id, url: input.url, req: ctx.req })
+    ),
 
   status: imageSearchUploadProcedure
     .use(rateLimit({ limit: 120, period: 60 }))

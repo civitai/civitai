@@ -83,7 +83,9 @@ describe('search-upload-sweep', () => {
         (14, 5, NULL, 'Scanned', false, true, ${UPLOAD}, now() - interval '100 minutes'),
         (15, 8, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD}),
         (16, 9, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD}),
-        (17, 5, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD});
+        (17, 5, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD}),
+        (18, 5, NULL, 'Error', false, false, ${UPLOAD}, ${OLD}),
+        (19, 5, NULL, 'Pending', false, false, ${UPLOAD}, now() - interval '2 days');
       UPDATE "Image" SET "blockedFor" = 'Moderated' WHERE id = 17;
       -- Uploader 8 has an unsent CSAM report; uploader 9's was sent.
       INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (8, NULL), (9, now());
@@ -92,12 +94,12 @@ describe('search-upload-sweep', () => {
     `);
   });
 
-  it('deletes only a passed upload older than an hour, a POI match included', async () => {
+  it('deletes a passed or failed upload older than an hour, and one never scanned after a day', async () => {
     await createIndex();
     const deleted: number[] = [];
     const result = await sweepSearchUploads({ deleteImage: async (id) => void deleted.push(id) });
-    expect(deleted.sort((a, b) => a - b)).toEqual([1, 14, 16]);
-    expect(result).toEqual({ swept: 3 });
+    expect(deleted.sort((a, b) => a - b)).toEqual([1, 14, 16, 18, 19]);
+    expect(result).toEqual({ swept: 5 });
   });
 
   it('skips a row held while the batch was running', async () => {

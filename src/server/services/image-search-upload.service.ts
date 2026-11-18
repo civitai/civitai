@@ -1,9 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import type { NextApiRequest } from 'next';
 import { logToAxiom } from '~/server/logging/client';
+import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
+import type { SessionUser } from '~/types/session';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { countSearchUpload } from '~/server/metrics/semantic-search.metrics';
-import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import {
   fitGenerationSourceBounds,
   stageGenerationOutputImage,
@@ -36,46 +38,47 @@ export const SEARCH_UPLOAD_CAPACITY_MESSAGE = 'Search by image is busy right now
 /** A passed upload is kept this long, so later pages can re-embed it, then swept. */
 export const SEARCH_UPLOAD_TTL_MS = 60 * 60 * 1000;
 export const SEARCH_UPLOAD_GLOBAL_DAILY_CAP = 5000;
-const SEARCH_UPLOAD_ALERT_AT = (SEARCH_UPLOAD_GLOBAL_DAILY_CAP * 4) / 5;
 const SEARCH_UPLOAD_WRITE_BUDGET_MS = 30_000;
 // An upload older than this that is still unscanned no longer blocks a new one.
 const UNSCANNED_WINDOW_MS = 10 * 60 * 1000;
 
-const dailyKey = (now: Date) =>
-  `${REDIS_KEYS.SEMANTIC_SEARCH.UPLOADS_DAILY}:${now
-    .toISOString()
-    .slice(0, 10)}` as RedisKeyTemplateCache;
+// Every viewer draws from one bucket: the rate-limit engine keys a bucket by user id.
+const GLOBAL_BUCKET_USER = { id: 0 } as SessionUser;
 
 /**
- * Takes one of the day's site-wide upload slots. Fails closed: an unreadable store refuses, since
- * this cap is what bounds scan and embed spend when per-user limits are not enough.
+ * Takes one of the day's site-wide upload slots. The imageSearchUpload scope is fail-closed, so an
+ * unreadable store refuses: this cap is what bounds scan and embed spend.
  */
-export async function claimSearchUploadSlot(now = new Date()) {
-  let count: number;
-  try {
-    const key = dailyKey(now);
-    count = await redis.incrBy(key, 1);
-    if (count === 1) await redis.expire(key, 2 * 24 * 60 * 60);
-  } catch (error) {
-    logToAxiom({ type: 'error', name: 'search-upload-cap', message: (error as Error).message });
-    throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: SEARCH_UPLOAD_CAPACITY_MESSAGE });
-  }
-  if (count === SEARCH_UPLOAD_ALERT_AT)
-    logToAxiom({
-      type: 'warning',
-      name: 'search-upload-cap',
-      message: 'daily cap 80% used',
-      count,
-    });
-  if (count > SEARCH_UPLOAD_GLOBAL_DAILY_CAP)
-    throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: SEARCH_UPLOAD_CAPACITY_MESSAGE });
+export async function claimSearchUploadSlot(req: NextApiRequest) {
+  const record = await claimRateLimitAttempt({
+    rules: [
+      {
+        limit: SEARCH_UPLOAD_GLOBAL_DAILY_CAP,
+        period: 24 * 60 * 60,
+        errorMessage: SEARCH_UPLOAD_CAPACITY_MESSAGE,
+      },
+    ],
+    keyName: 'imageSearchUpload:global',
+    scope: 'imageSearchUpload.prepare',
+    user: GLOBAL_BUCKET_USER,
+    req,
+  });
+  await record();
 }
 
 /**
  * Copies the uploaded consumer blob into a private, unposted Image row that the normal ingestion
  * scans. Returns at once; the client polls {@link getSearchUploadStatus}.
  */
-export async function prepareSearchUpload({ userId, url }: { userId: number; url: string }) {
+export async function prepareSearchUpload({
+  userId,
+  url,
+  req,
+}: {
+  userId: number;
+  url: string;
+  req: NextApiRequest;
+}) {
   const blobId = uploadedSourceBlobId(url);
   if (!blobId)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'That is not an uploaded image.' });
@@ -86,7 +89,7 @@ export async function prepareSearchUpload({ userId, url }: { userId: number; url
   if (existing) return { uploadId: existing };
   if (await hasUnscannedSearchUpload(userId, new Date(now - UNSCANNED_WINDOW_MS)))
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: SEARCH_UPLOAD_BUSY_MESSAGE });
-  await claimSearchUploadSlot(new Date(now));
+  await claimSearchUploadSlot(req);
 
   const signal = fetchTimeoutSignal(SEARCH_UPLOAD_WRITE_BUDGET_MS);
   let measured: { width: number; height: number } | undefined;

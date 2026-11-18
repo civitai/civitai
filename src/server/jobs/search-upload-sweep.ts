@@ -11,7 +11,10 @@ const SWEEP_INDEX = 'Image_searchUpload_idx';
 const SWEEPABLE = Prisma.sql`
   i."postId" IS NULL AND (i.metadata ? ${Prisma.raw(`'${SEARCH_UPLOAD_APP_ID_META_KEY}'`)})
   AND i."createdAt" < now() - interval '1 hour'
-  AND i.ingestion = 'Scanned'
+  AND (
+    i.ingestion IN ('Scanned', 'Error', 'NotFound')
+    OR (i.ingestion IN ('Pending', 'Rescan') AND i."createdAt" < now() - interval '1 day')
+  )
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i.minor = false
@@ -25,7 +28,8 @@ const SWEEPABLE = Prisma.sql`
 const BATCH = 500;
 
 /**
- * Deletes a search-by-upload row an hour after it passed the scan cleanly. Anything held or flagged
+ * Deletes a search-by-upload row an hour after it passed the scan cleanly or the scan failed (a day
+ * when the scan never answered). Anything held or flagged
  * is kept: deleting an image cascades its pending ScanLabelItem vote, a ToS violation may be
  * moderation evidence, and an uploader with an unsent CSAM report keeps every row.
  */
@@ -41,9 +45,11 @@ export async function sweepSearchUploads({
 }: { deleteImage?: (id: number) => Promise<void> } = {}) {
   // Without the partial index this would scan the whole Image table every run.
   const [index] = await dbWrite.$queryRaw<{ valid: boolean }[]>`
-    SELECT x.indisvalid AS valid
-    FROM pg_index x JOIN pg_class c ON c.oid = x.indexrelid
-    WHERE c.relname = ${SWEEP_INDEX}
+    SELECT (x.indisvalid AND x.indisready) AS valid
+    FROM pg_index x
+    JOIN pg_class c ON c.oid = x.indexrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relname = ${SWEEP_INDEX} AND c.relkind = 'i' AND n.nspname = 'public'
   `;
   if (!index?.valid) {
     log(`${SWEEP_INDEX} is missing or invalid: nothing swept`);

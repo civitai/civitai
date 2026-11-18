@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as RateLimitBucket from '~/server/utils/rate-limit-bucket';
+import { isFailClosedRateLimitScope } from '~/server/utils/rate-limit-bucket';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type * as BlockImageUpload from '~/server/services/blocks/block-image-upload.service';
@@ -26,14 +27,11 @@ vi.mock('~/server/services/blocks/block-image-upload.service', async (importOrig
   ...upload,
 }));
 
-const h = {
-  get incrBy() {
-    return redisMock.redis.incrBy as unknown as ReturnType<typeof vi.fn>;
-  },
-  get expire() {
-    return redisMock.redis.expire as unknown as ReturnType<typeof vi.fn>;
-  },
-};
+const h = vi.hoisted(() => ({ claim: vi.fn() }));
+vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => ({
+  ...(await importOriginal<typeof RateLimitBucket>()),
+  claimRateLimitAttempt: h.claim,
+}));
 
 import {
   claimSearchUploadSlot,
@@ -46,34 +44,30 @@ import {
 } from '~/server/services/image-search-upload.service';
 
 describe('the global daily upload cap', () => {
+  const req = { headers: {} } as never;
   beforeEach(() => {
-    h.incrBy.mockReset();
-    h.expire.mockReset().mockResolvedValue(true);
+    h.claim.mockReset().mockResolvedValue(async () => undefined);
   });
 
-  it('admits the last upload under the cap', async () => {
-    h.incrBy.mockResolvedValue(SEARCH_UPLOAD_GLOBAL_DAILY_CAP);
-    await expect(claimSearchUploadSlot()).resolves.toBeUndefined();
+  it("draws every viewer from one daily bucket of the cap's size", async () => {
+    await claimSearchUploadSlot(req);
+    expect(h.claim).toHaveBeenCalledWith(
+      expect.objectContaining({
+        keyName: 'imageSearchUpload:global',
+        scope: 'imageSearchUpload.prepare',
+        user: { id: 0 },
+        rules: [expect.objectContaining({ limit: SEARCH_UPLOAD_GLOBAL_DAILY_CAP, period: 86400 })],
+      })
+    );
   });
 
-  it('refuses the first upload over the cap', async () => {
-    h.incrBy.mockResolvedValue(SEARCH_UPLOAD_GLOBAL_DAILY_CAP + 1);
-    await expect(claimSearchUploadSlot()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+  it('refuses when the bucket is full', async () => {
+    h.claim.mockRejectedValue(Object.assign(new Error('full'), { code: 'TOO_MANY_REQUESTS' }));
+    await expect(claimSearchUploadSlot(req)).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
   });
 
-  it('refuses when the counter cannot be read', async () => {
-    h.incrBy.mockRejectedValue(new Error('redis down'));
-    await expect(claimSearchUploadSlot()).rejects.toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
-  });
-
-  it('counts per UTC day and expires the day it starts', async () => {
-    h.incrBy.mockResolvedValue(1);
-    await claimSearchUploadSlot(new Date('2026-11-18T23:59:00Z'));
-    await claimSearchUploadSlot(new Date('2026-11-19T00:01:00Z'));
-    const [first, second] = h.incrBy.mock.calls.map(([key]) => key as string);
-    expect(first).toMatch(/:2026-11-18$/);
-    expect(second).toMatch(/:2026-11-19$/);
-    expect(h.expire).toHaveBeenCalledTimes(2);
+  it('is in a fail-closed scope, so an unreadable store refuses', () => {
+    expect(isFailClosedRateLimitScope('imageSearchUpload.prepare')).toBe(true);
   });
 });
 
@@ -177,11 +171,10 @@ describe('search upload status and search anchor', () => {
 
 describe('preparing a search upload', () => {
   const BLOB_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/blob-1';
-  const prepare = (url = BLOB_URL) => prepareSearchUpload({ userId: 5, url });
+  const prepare = (url = BLOB_URL) => prepareSearchUpload({ userId: 5, url, req: {} as never });
 
   beforeEach(() => {
-    h.incrBy.mockReset().mockResolvedValue(1);
-    h.expire.mockReset().mockResolvedValue(true);
+    h.claim.mockReset().mockResolvedValue(async () => undefined);
     rows.findSearchUploadByRef.mockReset().mockResolvedValue(null);
     rows.hasUnscannedSearchUpload.mockReset().mockResolvedValue(false);
     upload.stageGenerationOutputImage.mockReset().mockRejectedValue(new Error('stop at the fetch'));
@@ -192,29 +185,29 @@ describe('preparing a search upload', () => {
       code: 'BAD_REQUEST',
     });
     expect(rows.findSearchUploadByRef).not.toHaveBeenCalled();
-    expect(h.incrBy).not.toHaveBeenCalled();
+    expect(h.claim).not.toHaveBeenCalled();
   });
 
   it("reuses the viewer's upload of the same blob without a slot or a fetch", async () => {
     rows.findSearchUploadByRef.mockResolvedValue(41);
     await expect(prepare()).resolves.toEqual({ uploadId: 41 });
     expect(rows.findSearchUploadByRef).toHaveBeenCalledWith(5, 'upload:blob-1', expect.any(Date));
-    expect(h.incrBy).not.toHaveBeenCalled();
+    expect(h.claim).not.toHaveBeenCalled();
     expect(upload.stageGenerationOutputImage).not.toHaveBeenCalled();
   });
 
   it('refuses while the viewer has an upload still being scanned, without taking a slot', async () => {
     rows.hasUnscannedSearchUpload.mockResolvedValue(true);
     await expect(prepare()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(h.incrBy).not.toHaveBeenCalled();
+    expect(h.claim).not.toHaveBeenCalled();
     expect(upload.stageGenerationOutputImage).not.toHaveBeenCalled();
   });
 
   it('takes a slot before fetching, and fetches nothing once the cap is reached', async () => {
     await expect(prepare()).rejects.toThrow('stop at the fetch');
-    expect(h.incrBy).toHaveBeenCalledTimes(1);
+    expect(h.claim).toHaveBeenCalledTimes(1);
     upload.stageGenerationOutputImage.mockClear();
-    h.incrBy.mockResolvedValue(SEARCH_UPLOAD_GLOBAL_DAILY_CAP + 1);
+    h.claim.mockRejectedValue(Object.assign(new Error('full'), { code: 'TOO_MANY_REQUESTS' }));
     await expect(prepare()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
     expect(upload.stageGenerationOutputImage).not.toHaveBeenCalled();
   });

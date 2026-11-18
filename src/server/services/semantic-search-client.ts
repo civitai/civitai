@@ -17,7 +17,7 @@ export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
 // and payload indexes are on disk), then well under 1 s.
 const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
-// Above the search service's own 30 s orchestrator wait, so a slow image embed is not paid twice.
+// Above the search service's own orchestrator wait, so a slow image embed is not paid twice.
 const SIMILAR_IMAGE_TIMEOUT_MS = 35_000;
 
 /**

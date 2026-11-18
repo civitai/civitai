@@ -128,9 +128,9 @@ in the URL, so a search by upload cannot be shared.
 3. `imageSearchUpload.search` re-checks the gate on every page, refuses an upload above the
    viewer's levels, caps results at the upload's level like "More like this", and asks the search
    service's `POST /v1/similar` with the image's URL. Hydration is the normal fetch path.
-4. `search-upload-sweep` deletes a passed upload an hour after it was written, flag on or off. It
-   never takes a held or flagged row, and it skips its run until the `Image_searchUpload_idx` partial
-   index exists.
+4. `search-upload-sweep` deletes an upload an hour after it was written once its scan passed or
+   failed (a day, if the scan never answered), flag on or off. It never takes a held or flagged row,
+   and it skips its run until the `Image_searchUpload_idx` partial index exists.
 
 Limits: per user 10 uploads per 10 minutes and 50 per day, one unscanned upload at a time, and a
 site-wide daily cap that refuses when its counter cannot be read.
