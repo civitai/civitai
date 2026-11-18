@@ -2214,14 +2214,17 @@ export const removeResourceFromPostImage = async ({
 
 type Editor = { user: SessionUser; servableLevels: number };
 
-/** Whether an image counts toward the version level (`imageDerivedVersionLevelSql`). */
-const countsTowardVersionLevel = (nsfwLevel: number) =>
-  nsfwLevel !== 0 && nsfwLevel !== NsfwLevel.Blocked;
+/**
+ * Whether an image counts, or will once scanned, toward the version level
+ * (`imageDerivedVersionLevelSql`): an unrated image counts as soon as its scan rates it.
+ */
+const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.Blocked;
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
  * `getPostEditImages` does not serve it (held for review unless a moderator, or rated outside the
- * request's levels) even if it lists them. They keep their index. `movable` holds the others the
+ * request's levels) even if it lists them. They keep their index. A listed unrated image moves
+ * even on a capped request: it is an upload the editor shows while its scan runs. `movable` holds the others the
  * editor listed, with their current index and whether the version level counts them.
  */
 async function editorHiddenImages(
@@ -2255,34 +2258,41 @@ async function editorHiddenImages(
     images: images.map((image) => ({
       id: image.id,
       index: image.index,
-      counted: countsTowardVersionLevel(image.nsfwLevel),
+      nsfwLevel: image.nsfwLevel,
       pinned: isHidden(image),
     })),
   };
 }
 
 // `index` as stored: the version level sorts a null index after every number.
-type RankedImage = { id: number; index: number | null; counted: boolean; pinned: boolean };
+type RankedImage = { id: number; index: number | null; nsfwLevel: number; pinned: boolean };
 
 /**
  * Whether writing `positions` would change, for any pinned image, how many images the version
- * level counts sit ahead of it (or level with it). The reorder refuses such a write.
+ * level counts sit ahead of it (or level with it): now, or once unrated images are rated. The
+ * reorder refuses such a write.
  */
 export function shiftsPinnedRank(
   images: RankedImage[],
   positions: Array<{ type: 'image' | 'text'; id: number; index: number }>
 ) {
   const moved = new Map(positions.filter((p) => p.type === 'image').map((p) => [p.id, p.index]));
-  const rank = (pin: RankedImage, at: (image: RankedImage) => number) => {
-    const others = images.filter((image) => image.counted && image.id !== pin.id);
-    const pinAt = at(pin);
-    return `${others.filter((image) => at(image) < pinAt).length}:${
-      others.filter((image) => at(image) === pinAt).length
-    }`;
-  };
   const before = (image: RankedImage) => image.index ?? Infinity;
   const after = (image: RankedImage) => moved.get(image.id) ?? image.index ?? Infinity;
-  return images.some((pin) => pin.pinned && rank(pin, before) !== rank(pin, after));
+  const views = [
+    (image: RankedImage) => image.nsfwLevel !== 0 && countsTowardVersionLevel(image.nsfwLevel),
+    (image: RankedImage) => countsTowardVersionLevel(image.nsfwLevel),
+  ];
+  return views.some((counts) => {
+    const rank = (pin: RankedImage, at: (image: RankedImage) => number) => {
+      const others = images.filter((image) => counts(image) && image.id !== pin.id);
+      const pinAt = at(pin);
+      return `${others.filter((image) => at(image) < pinAt).length}:${
+        others.filter((image) => at(image) === pinAt).length
+      }`;
+    };
+    return images.some((pin) => pin.pinned && rank(pin, before) !== rank(pin, after));
+  });
 }
 
 type Hidden = Awaited<ReturnType<typeof editorHiddenImages>>;

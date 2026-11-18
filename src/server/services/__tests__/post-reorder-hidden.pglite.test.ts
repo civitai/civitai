@@ -86,6 +86,15 @@ async function seedPost() {
   return Array.from({ length: 21 }, (_, i) => 10 + i);
 }
 
+/** 0-18 PG (10..28), 19 unrated upload (40), 20 XXX (1), 21 PG (50). */
+async function seedUnratedLayout() {
+  const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i})`);
+  await harness.pg.exec(`
+    INSERT INTO "Image" (id, "postId", "nsfwLevel", index) VALUES
+      ${pg.join(', ')}, (40, ${POST}, 0, 19), (1, ${POST}, ${XXX}, 20), (50, ${POST}, ${PG}, 21);
+  `);
+}
+
 const indexes = async () =>
   Object.fromEntries(
     (
@@ -236,26 +245,36 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(positions).toContainEqual({ type: 'image', id: 40, index: 0 });
   });
 
-  it('with a pinned image, moving an unrated upload cannot shift its rank among rated images', async () => {
+  it('with a pinned image, an unrated upload moves within its stretch', async () => {
     // 0-18 PG, 19 unrated upload Z (40), 20 XXX (1, above the cap), 21 PG Y (50): XXX is the 20th
-    // rated image. Moving Y above Z would make it the 21st and drop the version level.
-    const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i})`);
-    await harness.pg.exec(`
-      INSERT INTO "Image" (id, "postId", "nsfwLevel", index) VALUES
-        ${pg.join(', ')}, (40, ${POST}, 0, 19), (1, ${POST}, ${XXX}, 20), (50, ${POST}, ${PG}, 21);
-    `);
-    expect(await versionLevel()).toBe(XXX | PG);
+    // rated image now, and Z will count once its scan rates it.
+    await seedUnratedLayout();
     const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
     const positions = await reorderPostImages({
       user: { id: OWNER } as SessionUser,
       servableLevels: sfwBrowsingLevelsFlag,
       id: POST,
-      imageIds: [...pgIds, 50, 40, 1],
+      imageIds: [40, ...pgIds, 50, 1],
     });
     const after = await indexes();
-    expect(after[1]).toBe(20);
-    expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
-    expect(positions.map((p) => p.id)).toContain(40); // the upload is still placed
+    expect([after[40], after[1]]).toEqual([0, 20]);
+    expect(positions.map((p) => p.id)).toContain(40);
+    expect(await versionLevel()).toBe(XXX | PG);
+  });
+
+  it('with a pinned image, refuses trading an unrated upload for a rated image across it', async () => {
+    await seedUnratedLayout();
+    const before = await indexes();
+    const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
+    await expect(
+      reorderPostImages({
+        user: { id: OWNER } as SessionUser,
+        servableLevels: sfwBrowsingLevelsFlag,
+        id: POST,
+        imageIds: [...pgIds, 50, 40, 1],
+      })
+    ).rejects.toThrow('This order could not be saved.');
+    expect(await indexes()).toEqual(before);
     expect(await versionLevel()).toBe(XXX | PG);
   });
 

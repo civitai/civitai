@@ -7,6 +7,7 @@ import { usePrevious } from '@mantine/hooks';
 import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import type { CSSProperties } from 'react';
+import { useRef } from 'react';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { ImageReactionCount } from '~/components/Post/EditV2/PostImageCards/ImageReactionCount';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -274,12 +275,20 @@ export function ReorderImagesButton() {
     },
     onError(error) {
       showErrorNotification({ title: 'Order not saved', error: new Error(error.message) });
+      // Back to the order the server still has.
+      const saved = beforeRearrange.current;
+      if (saved) {
+        setImages(() => saved.images);
+        setTexts(() => saved.texts);
+      }
     },
   });
   const previous = usePrevious({ images, texts });
+  const beforeRearrange = useRef<{ images: typeof images; texts: typeof texts } | null>(null);
   const canReorder = !!images.every((x) => x.type === 'added');
 
   const onClick = () => {
+    if (!isReordering) beforeRearrange.current = { images, texts };
     toggleReordering();
     if (!isReordering || !previous || isEqual(previous, { images, texts }) || !post) return;
     mutate(reorderPayload({ postId: post.id, images, texts, textOn }));
