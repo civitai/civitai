@@ -236,7 +236,9 @@ describe('getAllImagesIndex on the feed service', () => {
 
     it("resolves a scoped key's hub as Public only: no owner id reaches the hub lookup", async () => {
       resolveHubSources.mockResolvedValue(hubSources({ userIds: [7] }));
-      await getAllImagesIndex({ ...hub(), asOwner: false });
+      await getAllImagesIndex({ ...hub(), asOwner: false } as Parameters<
+        typeof getAllImagesIndex
+      >[0]);
       expect(resolveHubSources).toHaveBeenCalledWith(
         expect.objectContaining({ hubId: 12, userId: undefined, isModerator: false })
       );
