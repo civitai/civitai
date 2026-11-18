@@ -22,9 +22,20 @@ let db: Kysely<DB>;
 
 async function closedItem(
   imageId: number,
-  o: { reason: string; resolvedValue: string | null; votes: [string, string][] }
+  o: {
+    reason: string;
+    resolvedValue: string | null;
+    votes: [string, string][];
+    lock?: { reason: string; level: number };
+  }
 ) {
   await seedImage(pg, imageId);
+  if (o.lock) {
+    await pg.query(
+      `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
+      [imageId, o.lock.level, o.lock.reason]
+    );
+  }
   const id = await enqueueItem(
     db,
     { questionKey: 'knights.image.nsfwLevel', imageId, source: 'test', expiresAt: null },
@@ -52,8 +63,8 @@ const resolvedValues = async () =>
   ).rows;
 
 async function dryRun() {
-  const [counts, sample] = await pg.exec(script('dry-run.sql'));
-  return { counts: counts.rows[0], sample: sample.rows };
+  const [result] = await pg.exec(script('dry-run.sql'));
+  return result.rows[0];
 }
 
 async function apply() {
@@ -72,7 +83,7 @@ afterAll(async () => {
 
 describe('backfill-moderator-ruled-verdict', () => {
   it('sets the graded level on contradicted rows only, and a second run changes nothing', async () => {
-    const wrong = await closedItem(10, {
+    const tier1 = await closedItem(10, {
       reason: 'moderator-ruled',
       resolvedValue: '2',
       votes: [
@@ -89,39 +100,84 @@ describe('backfill-moderator-ruled-verdict', () => {
         ['8', 'failed'],
       ],
     });
-    const noCorrectVote = await closedItem(12, {
+    const tier2 = await closedItem(12, {
       reason: 'moderator-ruled',
       resolvedValue: '2',
       votes: [
         ['2', 'failed'],
         ['4', 'failed'],
       ],
+      lock: { reason: 'Moderator rating review', level: 1 },
     });
-    const expired = await closedItem(13, {
+    const levelMatchesAVote = await closedItem(13, {
+      reason: 'moderator-ruled',
+      resolvedValue: '2',
+      votes: [
+        ['2', 'failed'],
+        ['4', 'failed'],
+      ],
+      lock: { reason: 'Moderator rating review', level: 4 },
+    });
+    const knightsLocked = await closedItem(14, {
+      reason: 'moderator-ruled',
+      resolvedValue: '2',
+      votes: [['2', 'failed']],
+      lock: { reason: 'Knights Vote', level: 1 },
+    });
+    const ungraded = await closedItem(15, {
+      reason: 'moderator-ruled',
+      resolvedValue: '2',
+      votes: [['2', 'inconclusive']],
+      lock: { reason: 'Moderator rating review', level: 1 },
+    });
+    const expired = await closedItem(16, {
       reason: 'expired',
       resolvedValue: null,
       votes: [['2', 'correct']],
     });
     const before = await resolvedValues();
+    expect(before.map((row) => row.id)).toEqual([
+      tier1,
+      consistent,
+      tier2,
+      levelMatchesAVote,
+      knightsLocked,
+      ungraded,
+      expired,
+    ]);
+    const leftAlone = {
+      left_several_correct_answers: 0,
+      left_ungraded_votes: 1,
+      left_image_not_ruled: 1,
+      left_level_matches_a_vote: 1,
+      left_contradicted: 2,
+    };
 
-    expect(await dryRun()).toMatchObject({
-      counts: {
-        to_fix: 1,
-        consistent: 1,
-        no_correct_vote: 1,
-        no_correct_vote_contradicted: 1,
-        several_correct_answers: 0,
-      },
-      sample: [{ id: wrong, resolvedValue: '2', truth: '1' }],
+    expect(await dryRun()).toEqual({
+      tier1_to_fix: 1,
+      tier2_to_fix: 1,
+      consistent: 1,
+      ...leftAlone,
+      sample: [
+        { id: tier1, imageId: 10, resolvedValue: '2', truth: '1', tier: 'tier1' },
+        { id: tier2, imageId: 12, resolvedValue: '2', truth: '1', tier: 'tier2' },
+      ],
     });
 
-    expect(await apply()).toBe(1);
+    expect(await apply()).toBe(2);
     expect(await resolvedValues()).toEqual(
-      before.map((row) => (row.id === wrong ? { ...row, resolvedValue: '1' } : row))
+      before.map((row) =>
+        row.id === tier1 || row.id === tier2 ? { ...row, resolvedValue: '1' } : row
+      )
     );
-    expect(before.map((row) => row.id)).toEqual([wrong, consistent, noCorrectVote, expired]);
 
-    expect(await dryRun()).toMatchObject({ counts: { to_fix: 0, consistent: 2 }, sample: [] });
+    expect(await dryRun()).toEqual({
+      tier1_to_fix: 0,
+      tier2_to_fix: 0,
+      consistent: 3,
+      ...leftAlone,
+      sample: [],
+    });
     expect(await apply()).toBe(0);
   });
 });
