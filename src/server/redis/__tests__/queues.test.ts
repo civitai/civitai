@@ -563,7 +563,9 @@ describe('dropped-enqueue parking lot', () => {
         pg = new PGlite();
         await pg.exec('CREATE TABLE "KeyValue" ("key" TEXT PRIMARY KEY, "value" JSONB NOT NULL)');
         await pg.query(`INSERT INTO "KeyValue" VALUES ($1, '[4,5]'::jsonb)`, [PARKED_KEY]);
-        queryRaw.mockImplementation((...call: unknown[]) => run(call).then((r) => r.rows));
+        queryRaw.mockImplementation((...call: unknown[]) =>
+          run(call).then((r) => r.rows as { key: string; value: unknown }[])
+        );
         executeRaw.mockImplementation((...call: unknown[]) =>
           run(call).then((r) => r.affectedRows ?? 0)
         );
