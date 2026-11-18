@@ -14,7 +14,8 @@ import {
   verifyEmailUnsubscribe,
 } from '~/server/services/notification-email.service';
 import { getUserEmailSettings, toggleEmailSetting } from '~/server/services/notification.service';
-import { emailNotificationTypeList } from '~/server/notifications/utils.notifications';
+import { emailOptOutTypeList } from '~/server/notifications/utils.notifications';
+import { MISSED_DIGEST_EMAIL_TYPE } from '~/server/notifications/missed-digest.constants';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
 vi.mock('~/server/email/client', () => ({ sendEmail: vi.fn(), isEmailConfigured: () => true }));
@@ -162,11 +163,12 @@ describe('unsubscribe signature', () => {
 });
 
 describe('getUserEmailSettings', () => {
-  it('a user with no rows gets email for every email type', async () => {
+  it('a user with no rows gets email for every email type, and the weekly digest', async () => {
     dbMock.dbWrite.userEmailNotificationOptOut.findMany.mockResolvedValue([] as never);
     const types = await getUserEmailSettings({ userId: 1 });
     expect(types).toContain(DEAL);
-    expect(types).toHaveLength(emailNotificationTypeList.length);
+    expect(types).toContain(MISSED_DIGEST_EMAIL_TYPE);
+    expect(types).toHaveLength(emailOptOutTypeList.length);
   });
 
   it('an opt-out row turns that one type off', async () => {
@@ -175,7 +177,7 @@ describe('getUserEmailSettings', () => {
     ] as never);
     const types = await getUserEmailSettings({ userId: 1 });
     expect(types).not.toContain(DEAL);
-    expect(types).toHaveLength(emailNotificationTypeList.length - 1);
+    expect(types).toHaveLength(emailOptOutTypeList.length - 1);
   });
 });
 
@@ -184,6 +186,14 @@ describe('toggleEmailSetting', () => {
     await toggleEmailSetting({ userId: 1, type: [DEAL], enabled: false });
     expect(dbMock.dbWrite.userEmailNotificationOptOut.createMany).toHaveBeenCalledWith({
       data: [{ userId: 1, type: DEAL }],
+      skipDuplicates: true,
+    });
+  });
+
+  it('turning the weekly digest off writes its opt-out row', async () => {
+    await toggleEmailSetting({ userId: 1, type: [MISSED_DIGEST_EMAIL_TYPE], enabled: false });
+    expect(dbMock.dbWrite.userEmailNotificationOptOut.createMany).toHaveBeenCalledWith({
+      data: [{ userId: 1, type: MISSED_DIGEST_EMAIL_TYPE }],
       skipDuplicates: true,
     });
   });

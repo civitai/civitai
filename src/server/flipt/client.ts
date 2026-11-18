@@ -233,6 +233,8 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
+  MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -758,6 +760,9 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
   // The App Block media brake: a flip must reach the next media fetch.
   FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
+  // Evaluated once per user in a pass over every user, each entity once a week: cached entries
+  // would never be read again and would push out the ones that are.
+  FLIPT_FEATURE_FLAGS.MISSED_NOTIFICATION_DIGEST,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.

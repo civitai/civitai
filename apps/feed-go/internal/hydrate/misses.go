@@ -412,7 +412,7 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 		if p == nil {
 			c.observe(spec.cache, "error", len(miss))
 		}
-		return fallback.Newf(spec.reason+"-failed", "%v", err)
+		return fallback.Wrap(spec.reason+"-failed", err)
 	}
 	now := c.now()
 	var writes []packedWrite

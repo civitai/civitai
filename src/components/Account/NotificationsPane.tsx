@@ -23,6 +23,7 @@ import { NotificationTypeControl } from '~/components/Notifications/Notification
 import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
 import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
 import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { useDigestEmailSetting } from '~/components/Notifications/useDigestEmailSetting';
 import { SystemEmailSettings } from '~/components/Notifications/SystemEmailSettings';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
@@ -32,6 +33,7 @@ import {
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import { NotificationCategory } from '~/server/common/enums';
+import { MISSED_DIGEST_DISPLAY_NAME } from '~/server/notifications/missed-digest.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   notificationSettingGroups,
@@ -67,6 +69,7 @@ export function NotificationsPane() {
   const updateNotificationSettingMutation = useToggleNotificationSetting();
   const [expanded, setExpanded] = useState<string | null>(null);
   const features = useFeatureFlags();
+  const digest = useDigestEmailSetting();
   const categoryEntries = Object.entries(visibleNotificationSettingGroups(features)).sort(
     byOtherLast
   );
@@ -119,6 +122,17 @@ export function NotificationsPane() {
             />
           )}
         </NewsletterToggle>
+        <SettingRow
+          label={MISSED_DIGEST_DISPLAY_NAME}
+          description="Once a week, the notifications you haven't seen. Sent only when there are some."
+          control={
+            <SkeletonSwitch
+              loading={digest.isLoading}
+              checked={digest.enabled}
+              onChange={(e) => digest.setEnabled(e.target.checked)}
+            />
+          }
+        />
       </SettingsSection>
 
       {!hasNotifications ? (

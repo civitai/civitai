@@ -88,6 +88,7 @@
     type Selection,
     type TagFilter,
   } from './trainingFlow';
+  import { groupTags } from './tagReplace';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import TagEditor from './TagEditor.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
@@ -918,14 +919,10 @@
     if (next !== undefined) editorId = next;
   }
 
-  // This dataset's tags with occurrence counts, frequency-ranked — feeds the editor's autocomplete
-  // and the Manage-tags panel.
-  const tagFreq = $derived.by(() => {
-    const freq = new Map<string, number>();
-    for (const img of images) for (const t of img.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
-    return [...freq.entries()].sort((a, b) => b[1] - a[1]);
-  });
-  const tagVocab = $derived(tagFreq.map(([t]) => t));
+  // This dataset's tags, casings folded and frequency-ranked — feeds the editor's autocomplete and the
+  // Manage-tags panel.
+  const tagGroups = $derived(groupTags(images));
+  const tagVocab = $derived(tagGroups.map((g) => g.tag));
 
   let manageOpen = $state(false);
 
@@ -1302,7 +1299,7 @@
           </label>
         </div>
         {/if}
-        {#if tagFreq.length}
+        {#if tagGroups.length}
           <Button
             variant="outline"
             size="xs"
@@ -1549,7 +1546,7 @@
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
-          {#if tagFreq.length > 0 || tagFilter}
+          {#if tagGroups.length > 0 || tagFilter}
             <form
               class="mt-2 flex flex-wrap items-center gap-2 text-xs text-dark-2"
               onsubmit={(e) => {
@@ -1926,7 +1923,7 @@
 
 <ManageTagsModal
   bind:open={manageOpen}
-  {tagFreq}
+  {tagGroups}
   {images}
   {media}
   {findReplace}
