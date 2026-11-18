@@ -117,6 +117,11 @@ describe('MixedAuthEndpoint — the anonymous arm is preserved', () => {
     expect(headers['Cache-Control']).toBe(PUBLIC_DEFAULT);
   });
 
+  it("never marks a verified crawler's response publicly cacheable", async () => {
+    const headers = await runMixedAuth({ headers: { 'x-civitai-verified-bot': 'googlebot' } });
+    expect(headers['Cache-Control']).toBe(PRIVATE_DEFAULT);
+  });
+
   it('PRESERVES the public edge cache when only unrelated cookies are present', async () => {
     // Negative control: a predicate that answered "credentialed" for any cookie —
     // or unconditionally — fails here while passing every positive case below.

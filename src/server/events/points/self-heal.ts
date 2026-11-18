@@ -179,7 +179,7 @@ function getSelfHeal() {
       const events = (await rosterEvents()).filter((e) => e.name === name);
       return reconcileEventRosters(undefined, events, { deadline });
     },
-    log: (entry) => void logToAxiom(entry).catch(() => undefined),
+    log: (entry) => void logToAxiom(entry),
     now: () => new Date(),
     pod: env.PODNAME,
     retryLater: (fn, ms) => void setTimeout(fn, ms).unref?.(),

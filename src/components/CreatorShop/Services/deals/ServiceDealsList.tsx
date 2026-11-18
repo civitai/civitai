@@ -1,6 +1,10 @@
 import { Anchor, Badge, Button, Center, Group, Loader, Paper, Stack, Text } from '@mantine/core';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { awaitsViewer, dealStatusBadge } from '~/components/CreatorShop/Services/deals/deal-ui';
+import {
+  awaitsViewer,
+  dealStatusBadge,
+  sellerHeldLine,
+} from '~/components/CreatorShop/Services/deals/deal-ui';
 import { useMyServiceDeals } from '~/components/CreatorShop/Services/deals/deal.util';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { pluralize } from '~/components/CreatorShop/Services/creator-service.util';
@@ -82,6 +86,11 @@ export function ServiceDealsList({
                     'MMM D, h:mm A'
                   )}`}
               </Text>
+              {role === 'seller' && sellerHeldLine(deal) && (
+                <Text size="xs" c="dimmed">
+                  {sellerHeldLine(deal)}
+                </Text>
+              )}
             </Stack>
             <Group gap="sm" wrap="nowrap">
               <CurrencyBadge

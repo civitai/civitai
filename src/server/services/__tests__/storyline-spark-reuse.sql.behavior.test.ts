@@ -52,6 +52,8 @@ beforeAll(async () => {
     '20261024140000_storyline_title_moderation',
     '20261024150000_storyline_moderator_takedown',
     '20261024160000_storyline_minor_by_scan',
+    '20261106120000_storyline_rejoin',
+    '20261122120000_storyline_pending_chapter',
     '20261220120000_storyline_spark_image',
   ])
     await db.pg.exec(migration(name));
@@ -102,6 +104,11 @@ describe('the storyline a second start from the same image reuses', () => {
       'chapter 1 was written and then removed',
       `INSERT INTO "StorylineChapter" ("storylineId", "postId", "userId", depth, "removedAt")
          VALUES (${STORY}, 60, ${STARTER}, 0, now())`,
+    ],
+    [
+      'a draft of chapter 1 is waiting',
+      `INSERT INTO "StorylinePendingChapter" ("postId", "storylineId", "userId")
+         VALUES (60, ${STORY}, ${STARTER})`,
     ],
     ['it was taken down', `UPDATE "Storyline" SET "tosViolation" = true`],
   ])('is none when %s', async (_name, sql) => {

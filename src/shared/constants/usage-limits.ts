@@ -258,6 +258,23 @@ export const usageLimitDefs = [
     base: 1500,
   },
   {
+    // One per image the Training Studio rates on the system token.
+    id: 'dataset-rating.submit',
+    area: 'training-studio',
+    kind: 'abuse',
+    label: 'Training dataset images rated per minute',
+    window: rolling(60),
+    base: 60,
+  },
+  {
+    id: 'dataset-rating.daily',
+    area: 'training-studio',
+    kind: 'abuse',
+    label: 'Training dataset images rated per day',
+    window: rolling(DAY),
+    base: 1000,
+  },
+  {
     // Counted by the gift claim itself (a calendar window), not by rateLimit().
     id: 'gifts.monthly',
     area: 'gifts',
@@ -330,6 +347,38 @@ export const usageLimitDefs = [
       bronze: { limit: 2_000 },
       silver: { limit: 5_000 },
       gold: { limit: 10_000 },
+    },
+  },
+  {
+    // Sleeping (hibernated) apps one user may keep. At the limit a new hibernation is refused and
+    // the app stays as it is. The refusal names the user's oldest sleeping app, which is deleted
+    // only if the user confirms ("delete <name> to continue"); nothing is ever deleted on its own.
+    id: 'apps.sleeping-count',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Sleeping apps',
+    window: { type: 'standing' },
+    base: 5,
+    byTier: {
+      founder: { limit: 25 },
+      bronze: { limit: 25 },
+      silver: { limit: 50 },
+      gold: { limit: 100 },
+    },
+  },
+  {
+    // Bytes of sleeping-app archives one user may keep, across all their sleeping apps.
+    id: 'apps.sleeping-bytes',
+    area: 'apps',
+    kind: 'abuse',
+    label: 'Sleeping app storage',
+    window: { type: 'standing' },
+    base: 100 * 1024 * 1024,
+    byTier: {
+      founder: { limit: 500 * 1024 * 1024 },
+      bronze: { limit: 500 * 1024 * 1024 },
+      silver: { limit: 1024 * 1024 * 1024 },
+      gold: { limit: 2 * 1024 * 1024 * 1024 },
     },
   },
 ] as const satisfies readonly UsageLimitDef[];

@@ -78,7 +78,31 @@ export interface SessionSigner {
     claims?: Record<string, unknown>;
     expiresIn?: number; // seconds, default 3600
   }) => Promise<string>;
+  /**
+   * Mint an RFC 9068 access token (`typ: at+jwt`) for one resource. Every claim is the caller's: no
+   * session or id_token defaults are added. Throws when `iss` or `aud` is empty.
+   */
+  mintAccessTokenJwt: (claims: AccessTokenJwtClaims) => Promise<string>;
 }
+
+/** The claims of an RFC 9068 access token. Times are epoch seconds. */
+export interface AccessTokenJwtClaims {
+  iss: string;
+  sub: string;
+  aud: string;
+  client_id: string;
+  scope: string;
+  jti: string;
+  iat: number;
+  exp: number;
+  act?: { sub: string };
+  /** A service token's roles at the resource (RFC 9068 §2.2.3.1). */
+  roles?: string[];
+  /** A service token's user id at the resource. */
+  civitai_uid?: number;
+}
+
+export const ACCESS_TOKEN_JWT_TYP = 'at+jwt';
 
 export function createSessionSigner(config: SessionSignerConfig = {}): SessionSigner {
   const env = loadAuthEnv();
@@ -160,11 +184,32 @@ export function createSessionSigner(config: SessionSignerConfig = {}): SessionSi
       .sign(await privateKey());
   }
 
+  async function mintAccessTokenJwt(claims: AccessTokenJwtClaims): Promise<string> {
+    if (!claims.iss) throw new Error('[@civitai/auth] an access token needs an issuer');
+    if (!claims.aud) throw new Error('[@civitai/auth] an access token needs an audience');
+    return new SignJWT({
+      client_id: claims.client_id,
+      scope: claims.scope,
+      ...(claims.act ? { act: { sub: claims.act.sub } } : {}),
+      ...(claims.roles ? { roles: [...claims.roles] } : {}),
+      ...(claims.civitai_uid !== undefined ? { civitai_uid: claims.civitai_uid } : {}),
+    })
+      .setProtectedHeader({ alg: ALG, kid: cfg.kid, typ: ACCESS_TOKEN_JWT_TYP })
+      .setIssuer(claims.iss)
+      .setSubject(claims.sub)
+      .setAudience(claims.aud)
+      .setIssuedAt(claims.iat)
+      .setExpirationTime(claims.exp)
+      .setJti(claims.jti)
+      .sign(await privateKey());
+  }
+
   return {
     maxAge: cfg.maxAge,
     publicJwks,
     mintSessionToken,
     mintIdToken,
+    mintAccessTokenJwt,
   };
 }
 

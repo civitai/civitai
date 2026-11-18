@@ -12,6 +12,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const config = {
   api: { responseLimit: false },
@@ -153,7 +154,7 @@ export default AuthedEndpoint(
         message: (error as Error).message,
         stack: (error as Error).stack,
         userId: user.id,
-      }).catch(() => undefined);
+      });
 
       if (!res.headersSent)
         return res.status(500).json({ error: 'Could not export transactions right now.' });
@@ -167,5 +168,5 @@ export default AuthedEndpoint(
     return res.end();
   },
   ['GET'],
-  { allowBanned: true }
+  { allowBanned: true, scope: { scope: TokenScope.BuzzRead } }
 );

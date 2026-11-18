@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.utils';
 import { env as clientEnv } from '~/env/client';
@@ -33,13 +34,23 @@ import {
   guardedProcedure,
   guardedProcedureAllowUnverifiedEmail,
   isFlagProtected,
+  middleware,
   moderatorProcedure,
   protectedProcedure,
   router,
 } from '~/server/trpc';
+import { isV1KnightsLive } from '~/server/games/new-order/v1-gate';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+
+// The player-facing v1 procedures refuse once the old game is retired. The moderator procedures below
+// (getPlayers, smitePlayer, cleanseSmite, resetPlayerById, getImageRaters, manageSanityChecks) stay open
+// to drain and settle what players already did.
+const isV1Open = middleware(async ({ next }) => {
+  if (!(await isV1KnightsLive())) throw new TRPCError({ code: 'FORBIDDEN' });
+  return next();
+});
 
 const newGameSchema = z.object({
   themeIds: z.array(z.string()).min(1),
@@ -107,12 +118,14 @@ export const gamesRouter = router({
     join: guardedProcedure
       .meta({ requiredScope: TokenScope.SocialWrite })
       .use(isFlagProtected('newOrderGame'))
+      .use(isV1Open)
       .mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
     // Queries the New Order UI renders from; a refusal here blanks the page rather than
     // refusing an action.
     getPlayer: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
       .use(isFlagProtected('newOrderGame'))
+      .use(isV1Open)
       .query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
     getPlayers: moderatorProcedure
       .input(getPlayersInfiniteSchema)
@@ -121,14 +134,16 @@ export const gamesRouter = router({
     getImagesQueue: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
       .use(isFlagProtected('newOrderGame'))
+      .use(isV1Open)
       .input(getImagesQueueSchema.optional())
       .query(({ input, ctx }) =>
         getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
       ),
     getHistory: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
-      .input(getHistorySchema)
       .use(isFlagProtected('newOrderGame'))
+      .use(isV1Open)
+      .input(getHistorySchema)
       .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
     smitePlayer: moderatorProcedure
       .input(smitePlayerSchema)
@@ -140,8 +155,9 @@ export const gamesRouter = router({
       .mutation(({ input }) => cleanseSmite({ ...input })),
     addRating: guardedProcedure
       .meta({ requiredScope: TokenScope.SocialWrite })
-      .input(addImageRatingSchema)
       .use(isFlagProtected('newOrderGame'))
+      .use(isV1Open)
+      .input(addImageRatingSchema)
       .mutation(({ input, ctx }) =>
         addImageRating({
           ...input,
@@ -153,6 +169,7 @@ export const gamesRouter = router({
     resetCareer: guardedProcedure
       .meta({ requiredScope: TokenScope.SocialWrite })
       .use(isFlagProtected('newOrderGame'))
+      .use(isV1Open)
       .mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
     resetPlayerById: moderatorProcedure
       .input(resetPlayerByIdSchema)

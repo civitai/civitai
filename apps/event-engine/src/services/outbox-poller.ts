@@ -1,7 +1,7 @@
-import { Pool } from 'pg'
-import { logger } from '@/utils/logger'
-import { OutboxRecord } from '@/common/services/outbox'
-import { outboxPollerMetrics } from '@/metrics'
+import { Pool } from 'pg';
+import { logger } from '@/utils/logger';
+import { OutboxRecord } from '@/common/services/outbox';
+import { outboxPollerMetrics } from '@/metrics';
 
 // Two-int advisory-lock key for single-active-poller election. Postgres keeps the
 // (int, int) and single-bigint advisory-lock key spaces SEPARATE, and the main
@@ -9,13 +9,13 @@ import { outboxPollerMetrics } from '@/metrics'
 // `pg_advisory_xact_lock(articleId)` — so a two-int key here can NEVER collide
 // with it, regardless of how large entity ids grow. classid is an "event-engine"
 // namespace; objid distinguishes this lock within it.
-const OUTBOX_POLLER_LOCK_CLASSID = 25974 // 0x6576 ("ev")
-const OUTBOX_POLLER_LOCK_OBJID = 1 // the outbox poller
+const OUTBOX_POLLER_LOCK_CLASSID = 25974; // 0x6576 ("ev")
+const OUTBOX_POLLER_LOCK_OBJID = 1; // the outbox poller
 
 export interface OutboxPollerOptions {
-  intervalMs?: number
-  graceMs?: number
-  batchSize?: number
+  intervalMs?: number;
+  graceMs?: number;
+  batchSize?: number;
 }
 
 /**
@@ -34,8 +34,8 @@ export interface OutboxPollerOptions {
  * via ReplacingMergeTree; feed updates are last-writer-wins).
  */
 export class OutboxPoller {
-  private interval: NodeJS.Timeout | null = null
-  private sweeping = false
+  private interval: NodeJS.Timeout | null = null;
+  private sweeping = false;
 
   constructor(
     private pool: Pool,
@@ -43,26 +43,26 @@ export class OutboxPoller {
     private intervalMs: number = 5 * 60 * 1000,
     private graceMs: number = 5 * 60 * 1000,
     private batchSize: number = 100,
-    private maxAttempts: number = 5,
+    private maxAttempts: number = 5
   ) {}
 
   start(): void {
-    if (this.interval) return
+    if (this.interval) return;
     this.interval = setInterval(() => {
-      this.sweep().catch((err) => logger.error({ err }, 'Outbox poller sweep failed'))
-    }, this.intervalMs)
+      this.sweep().catch((err) => logger.error({ err }, 'Outbox poller sweep failed'));
+    }, this.intervalMs);
     logger.info(
       `Outbox poller started (interval ${this.intervalMs}ms, grace ${this.graceMs}ms, ` +
-        `batch ${this.batchSize}, maxAttempts ${this.maxAttempts})`,
-    )
+        `batch ${this.batchSize}, maxAttempts ${this.maxAttempts})`
+    );
   }
 
   stop(): void {
     if (this.interval) {
-      clearInterval(this.interval)
-      this.interval = null
+      clearInterval(this.interval);
+      this.interval = null;
     }
-    logger.info('Outbox poller stopped')
+    logger.info('Outbox poller stopped');
   }
 
   /**
@@ -70,24 +70,24 @@ export class OutboxPoller {
    * Guards against overlapping sweeps if a slow sweep outruns the interval.
    */
   async sweep(): Promise<void> {
-    if (this.sweeping) return
-    this.sweeping = true
+    if (this.sweeping) return;
+    this.sweeping = true;
 
     // Single-active-poller election via a Postgres advisory lock: only the pod
     // that holds the lock sweeps. Held on a dedicated connection for the sweep's
     // duration, and self-healing — Postgres drops the lock automatically if this
     // pod dies, so another pod takes over on its next tick. Other pods skip.
-    const leader = await this.pool.connect()
+    const leader = await this.pool.connect();
     // A drop of THIS connection releases the lock server-side, so another pod may start sweeping.
     // The pool guard keeps the drop from exiting the process, so stop claiming batches here instead.
-    let leaderLost: Error | null = null
+    let leaderLost: Error | null = null;
     const onLeaderError = (err: Error) => {
-      leaderLost = err
-    }
-    leader.on('error', onLeaderError)
+      leaderLost = err;
+    };
+    leader.on('error', onLeaderError);
     // Set when a lock or unlock query failed or timed out: the connection may still hold the advisory
     // lock (or be mid-query, after pg's query_timeout), so it is destroyed rather than returned.
-    let leaderFailed: Error | undefined
+    let leaderFailed: Error | undefined;
     try {
       const lock = await leader
         .query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [
@@ -95,10 +95,10 @@ export class OutboxPoller {
           OUTBOX_POLLER_LOCK_OBJID,
         ])
         .catch((err: Error) => {
-          leaderFailed = err
-          throw err
-        })
-      if (!lock.rows[0]?.acquired) return // another pod is already sweeping
+          leaderFailed = err;
+          throw err;
+        });
+      if (!lock.rows[0]?.acquired) return; // another pod is already sweeping
 
       try {
         // Cursor pagination by id: every aged row is claimed AT MOST ONCE per
@@ -106,17 +106,17 @@ export class OutboxPoller {
         // advanced past it, so it is NOT re-selected until the next sweep. That
         // gives each row one attempt per sweep (≈one per interval) instead of
         // burning the whole retry budget in a single drain.
-        let cursor = '0'
+        let cursor = '0';
         for (;;) {
           if (leaderLost) {
-            logger.warn('Outbox poller: lost the advisory-lock connection; ending this sweep')
-            break
+            logger.warn('Outbox poller: lost the advisory-lock connection; ending this sweep');
+            break;
           }
-          const { processed, nextCursor } = await this.sweepBatch(cursor)
-          if (processed === 0) break
-          cursor = nextCursor as string
+          const { processed, nextCursor } = await this.sweepBatch(cursor);
+          if (processed === 0) break;
+          cursor = nextCursor as string;
         }
-        await this.updateParkedGauge()
+        await this.updateParkedGauge();
       } finally {
         // Reached only when we acquired the lock, so this never unlocks a lock
         // we don't own.
@@ -126,15 +126,15 @@ export class OutboxPoller {
             OUTBOX_POLLER_LOCK_OBJID,
           ])
           .catch((err) => {
-            leaderFailed = err
-            logger.warn({ err }, 'Outbox poller: advisory unlock failed')
-          })
+            leaderFailed = err;
+            logger.warn({ err }, 'Outbox poller: advisory unlock failed');
+          });
       }
     } finally {
-      leader.removeListener('error', onLeaderError)
+      leader.removeListener('error', onLeaderError);
       // Passing the error makes the pool destroy the client rather than reuse it.
-      leader.release(leaderLost ?? leaderFailed)
-      this.sweeping = false
+      leader.release(leaderLost ?? leaderFailed);
+      this.sweeping = false;
     }
   }
 
@@ -143,22 +143,24 @@ export class OutboxPoller {
     try {
       const { rows } = await this.pool.query(
         `SELECT count(*)::int AS n FROM "Outbox" WHERE attempts >= $1`,
-        [this.maxAttempts],
-      )
-      outboxPollerMetrics.parked.set(rows[0]?.n ?? 0)
+        [this.maxAttempts]
+      );
+      outboxPollerMetrics.parked.set(rows[0]?.n ?? 0);
     } catch (err) {
-      logger.warn({ err }, 'Outbox poller: failed to update parked gauge')
+      logger.warn({ err }, 'Outbox poller: failed to update parked gauge');
     }
   }
 
-  private async sweepBatch(cursor: string): Promise<{ processed: number; nextCursor: string | null }> {
-    const client = await this.pool.connect()
+  private async sweepBatch(
+    cursor: string
+  ): Promise<{ processed: number; nextCursor: string | null }> {
+    const client = await this.pool.connect();
     // Any failure destroys this connection instead of returning it: it may still hold the transaction and
     // its FOR UPDATE locks (the ROLLBACK can fail or time out too), or be running a query pg's
     // query_timeout abandoned client-side.
-    let failed: Error | undefined
+    let failed: Error | undefined;
     try {
-      await client.query('BEGIN')
+      await client.query('BEGIN');
 
       // Claim the next page of aged rows by ascending id (id > cursor). FOR
       // UPDATE SKIP LOCKED holds the locks for this transaction so the fast path
@@ -173,16 +175,16 @@ export class OutboxPoller {
           ORDER BY id
           LIMIT $2
           FOR UPDATE SKIP LOCKED`,
-        [this.graceMs, this.batchSize, this.maxAttempts, cursor],
-      )
+        [this.graceMs, this.batchSize, this.maxAttempts, cursor]
+      );
 
       if (rows.length === 0) {
-        await client.query('COMMIT')
-        return { processed: 0, nextCursor: null }
+        await client.query('COMMIT');
+        return { processed: 0, nextCursor: null };
       }
 
-      const succeeded: string[] = []
-      const failed: string[] = []
+      const succeeded: string[] = [];
+      const failed: string[] = [];
       for (const row of rows) {
         const record: OutboxRecord = {
           // int8 columns arrive as strings from node-pg; entity ids are small
@@ -193,16 +195,16 @@ export class OutboxPoller {
           entityId: Number(row.entityId),
           details: row.details ?? null,
           createdAt: row.createdAt,
-        }
+        };
         try {
-          await this.processRecord(record)
-          succeeded.push(row.id)
+          await this.processRecord(record);
+          succeeded.push(row.id);
         } catch (err) {
-          failed.push(row.id)
-          const nextAttempts = (row.attempts ?? 0) + 1
-          const parked = nextAttempts >= this.maxAttempts
+          failed.push(row.id);
+          const nextAttempts = (row.attempts ?? 0) + 1;
+          const parked = nextAttempts >= this.maxAttempts;
           if (parked) {
-            outboxPollerMetrics.parkedTotal.inc({ entity_type: row.entityType, event: row.event })
+            outboxPollerMetrics.parkedTotal.inc({ entity_type: row.entityType, event: row.event });
           }
           logger.error(
             {
@@ -216,14 +218,14 @@ export class OutboxPoller {
             parked
               ? `Outbox poller: row failed ${nextAttempts}× — parking (>= maxAttempts ${this.maxAttempts}); ` +
                   `it will no longer be retried and needs investigation`
-              : 'Outbox poller: handler failed; incrementing attempts, leaving row for next sweep',
-          )
+              : 'Outbox poller: handler failed; incrementing attempts, leaving row for next sweep'
+          );
         }
       }
 
       if (succeeded.length > 0) {
-        await client.query(`DELETE FROM "Outbox" WHERE id = ANY($1::bigint[])`, [succeeded])
-        outboxPollerMetrics.drained.inc(succeeded.length)
+        await client.query(`DELETE FROM "Outbox" WHERE id = ANY($1::bigint[])`, [succeeded]);
+        outboxPollerMetrics.drained.inc(succeeded.length);
       }
 
       // Bump the retry counter on failed rows so a stuck/poison row is visible
@@ -231,22 +233,22 @@ export class OutboxPoller {
       if (failed.length > 0) {
         await client.query(
           `UPDATE "Outbox" SET attempts = COALESCE(attempts, 0) + 1 WHERE id = ANY($1::bigint[])`,
-          [failed],
-        )
+          [failed]
+        );
       }
 
-      await client.query('COMMIT')
-      logger.debug(`Outbox poller drained ${succeeded.length}/${rows.length} aged rows`)
+      await client.query('COMMIT');
+      logger.debug(`Outbox poller drained ${succeeded.length}/${rows.length} aged rows`);
       // Advance past the highest id in this page (rows are ORDER BY id) so the
       // next page starts strictly after it — failed rows here aren't revisited
       // this sweep.
-      return { processed: rows.length, nextCursor: rows[rows.length - 1].id as string }
+      return { processed: rows.length, nextCursor: rows[rows.length - 1].id as string };
     } catch (err) {
-      failed = err as Error
-      await client.query('ROLLBACK').catch(() => {})
-      throw err
+      failed = err as Error;
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
     } finally {
-      client.release(failed)
+      client.release(failed);
     }
   }
 }

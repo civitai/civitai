@@ -1,0 +1,262 @@
+import type { PGlite } from '@electric-sql/pglite';
+import { freshPglite } from '../../../test/pglite';
+import { Kysely } from 'kysely';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pgliteDialect } from './abuse-detection-pglite.harness';
+
+/**
+ * Which images `/api/retracted-media` serves, and to whom. The SQL is shared with the main app's
+ * route, whose `retracted-media.service.test.ts` pins each leg; this pins this app's read of it and
+ * the CSAM-review tier.
+ */
+
+vi.setConfig({ hookTimeout: 60_000 });
+
+const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
+
+vi.mock('../db', () => ({
+  get dbRead() {
+    throw new Error('eligibility reads the primary');
+  },
+  // Read only: the primary, so a hold the replica has not seen yet still counts.
+  get dbWrite() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+}));
+vi.mock('../blocked-for-patterns', () => ({ blockedForPatterns: () => null }));
+const envMock = vi.hoisted(() => ({ env: {} as Record<string, string | undefined> }));
+vi.mock('$env/dynamic/private', () => envMock);
+const insertModActivity = vi.hoisted(() => vi.fn(async (_row: Record<string, unknown>) => {}));
+vi.mock('../mod-activity', () => ({ insertModActivity }));
+const scanner = vi.hoisted(() => ({ verdict: 'clear' as 'hit' | 'clear' | 'none' | null }));
+vi.mock('../review-batch', () => ({ readScannerVerdict: async () => scanner.verdict }));
+
+const { getRetractedMedia, recordRetractedView, scannerVerdicts } = await import(
+  '../retracted-media'
+);
+beforeEach(() => scannerVerdicts.clear());
+
+const SCHEMA = `
+CREATE TABLE "Image" (
+  id INTEGER PRIMARY KEY, url TEXT NOT NULL, type TEXT NOT NULL DEFAULT 'image', "mimeType" TEXT,
+  ingestion TEXT NOT NULL DEFAULT 'Blocked', "needsReview" TEXT, "blockedFor" TEXT,
+  minor BOOLEAN NOT NULL DEFAULT false, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 4, "pHash" BIGINT, "userId" INTEGER NOT NULL, "postId" INTEGER
+);
+CREATE TABLE "Post" (id INTEGER PRIMARY KEY, metadata JSONB, "modelVersionId" INTEGER);
+CREATE TABLE "ModelVersion" (id INTEGER PRIMARY KEY, meta JSONB, "modelId" INTEGER);
+CREATE TABLE "Model" (id INTEGER PRIMARY KEY, meta JSONB);
+CREATE TABLE "User" (id INTEGER PRIMARY KEY, meta JSONB);
+CREATE TABLE "ImageCdnAccess" (url TEXT PRIMARY KEY, state TEXT NOT NULL);
+CREATE TABLE "ImageCdnModeratorDelete" (
+  "imageId" INTEGER PRIMARY KEY, url TEXT NOT NULL, "userId" INTEGER, "csamReview" BOOLEAN NOT NULL DEFAULT true
+);
+CREATE TABLE "ImageCdnShopTakedown" (url TEXT NOT NULL, "shopItemId" INTEGER NOT NULL, "userId" INTEGER);
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, disabled BOOLEAN NOT NULL DEFAULT false);
+CREATE TABLE "BlockedImage" (hash BIGINT, reason TEXT);
+CREATE TABLE "ScanLabelItem" (id INTEGER PRIMARY KEY, "imageId" INTEGER, "voidReason" TEXT);
+CREATE TABLE "ScanLabelFlag" ("itemId" INTEGER, snapshot JSONB);
+CREATE TABLE "ScanLabelVote" ("itemId" INTEGER, reason TEXT);
+CREATE TABLE "CsamReport" (
+  id SERIAL PRIMARY KEY, "userId" INTEGER, details JSONB, images JSONB, "reportSentAt" TIMESTAMP
+);
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER);
+CREATE TABLE "EvidenceHoldImage" ("imageId" INTEGER PRIMARY KEY);
+`;
+
+let db: PGlite;
+
+beforeAll(async () => {
+  db = await freshPglite();
+  await db.exec(SCHEMA);
+  await db.exec(`
+    INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview", "blockedFor", minor) VALUES
+      (1, 'key-1', 301, 'Blocked', NULL, 'moderated', false),
+      (2, 'key-2', 302, 'Blocked', NULL, 'moderated', true),
+      (3, 'key-3', 303, 'Blocked', NULL, NULL, false),
+      (4, 'key-4', 304, 'Blocked', 'csam', 'moderated', false),
+      (5, 'key-5', 305, 'Scanned', NULL, NULL, false),
+      (6, 'key-6', 306, 'Blocked', NULL, 'tos', false);
+    INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (6);
+
+    -- The CDN-refusal leg. Each differs from 7 (scanned, url retracted, the url's only row) in one fact.
+    INSERT INTO "Image" (id, url, "userId", ingestion, "postId", minor) VALUES
+      (7, 'key-7', 307, 'Scanned', NULL, false),
+      (8, 'key-8', 308, 'Scanned', NULL, false),
+      (9, 'key-9', 309, 'Scanned', NULL, false),
+      (10, 'key-10', 310, 'Pending', NULL, false),
+      (11, 'key-11', 311, 'Error', NULL, false),
+      (12, 'key-12', 312, 'Rescan', NULL, false),
+      (13, 'key-13', 313, 'Scanned', 13, false),
+      (14, 'key-14', 314, 'Scanned', 14, false),
+      (15, 'key-15', 315, 'Scanned', 15, false),
+      (16, 'key-16', 316, 'Scanned', NULL, false),
+      (17, 'key-17', 317, 'Scanned', NULL, false),
+      (18, 'key-18', 318, 'Scanned', NULL, false),
+      (19, 'key-19', 319, 'Scanned', NULL, false),
+      (119, 'key-19', 419, 'Scanned', NULL, true),
+      (20, 'key-20', 320, 'Scanned', 20, false),
+      (21, 'key-21', 321, 'Scanned', NULL, false),
+      (23, 'key-23', 323, 'Scanned', NULL, false),
+      (25, 'key-25', 325, 'Scanned', 25, false),
+      (26, 'key-26', 326, 'Scanned', 26, false),
+      (27, 'key-27', 327, 'Scanned', NULL, false),
+      (24, 'key-24', 324, 'Scanned', NULL, false);
+    INSERT INTO "ImageCdnAccess" (url, state) VALUES
+      ('key-7', 'Retracted'), ('key-8', 'Denied'), ('key-10', 'Retracted'), ('key-11', 'Retracted'),
+      ('key-12', 'Retracted'), ('key-13', 'Retracted'), ('key-14', 'Retracted'),
+      ('key-15', 'Retracted'), ('key-16', 'Retracted'), ('key-17', 'Retracted'),
+      ('key-18', 'Retracted'), ('key-19', 'Retracted'), ('key-20', 'Retracted'),
+      ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted'),
+      ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
+    INSERT INTO "Model" (id, meta) VALUES
+      (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
+      (26, '{"unpublishedReason": "photo-real-underage"}');
+    INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES
+      (14, '{"unpublishedReason": "mature-underage"}', 99), (15, '{}', 15),
+      (25, '{"unpublishedReason": "photo-real-underage"}', 99), (26, '{}', 26);
+    INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES
+      (13, '{"unpublishedReason": "csam-text-hold"}', NULL), (14, '{}', 14), (15, '{}', 15),
+      (20, '{"unpublishedReason": "photo-real-underage"}', NULL), (25, '{}', 25), (26, '{}', 26);
+    INSERT INTO "User" (id, meta) VALUES (321, '{"banDetails": {"reasonCode": "SexualMinor"}}');
+    -- 16: a delete on the url with no owner recorded (held). 17: a delete of a clean owner (not held).
+    -- 23 and 24: a CSAM-review delete whose owner is on a sent report that lists it, verified or not.
+    INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES
+      (916, 'key-16', NULL, true), (917, 'key-17', 417, false),
+      (923, 'key-23', 423, true), (924, 'key-24', 424, true);
+    INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES
+      ('key-18', 1, NULL), ('key-27', 2, 427);
+    INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES
+      (423, '{"evidenceVerifiedAt": "2026-10-20T12:00:00Z"}', '[{"id": 923}]', now()),
+      (424, '{}', '[{"id": 924}]', now());
+  `);
+  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+});
+
+afterAll(async () => {
+  dbHandle.current = null;
+  await db.close();
+});
+
+const tierOf = async (id: number) => {
+  const cleared = await getRetractedMedia(id, { csamReview: true });
+  const answer = await getRetractedMedia(id, { csamReview: false });
+  const anyMod = typeof answer === 'string' ? null : answer;
+  if (!cleared) return anyMod ? 'BROKEN' : 'none';
+  return anyMod ? 'plain' : 'suspect';
+};
+
+describe('retracted media eligibility', () => {
+  it('keeps an image the scanner marks, or cannot read, to moderators cleared for CSAM review', async () => {
+    for (const verdict of ['hit', null] as const) {
+      scanner.verdict = verdict;
+      scannerVerdicts.clear();
+      expect(await tierOf(1)).toBe('suspect');
+    }
+    scanner.verdict = 'clear';
+  });
+
+  it('answers an image with no scanner verdict as needing CSAM-queue access', async () => {
+    scanner.verdict = 'none';
+    expect(await getRetractedMedia(1, { csamReview: false })).toBe('needs-csam-queue');
+    scanner.verdict = 'clear';
+  });
+
+  it('serves a blocked image with a known non-minor reason to any moderator', async () => {
+    expect(await tierOf(1)).toBe('plain');
+    expect(await getRetractedMedia(1, { csamReview: false })).toEqual({
+      url: 'key-1',
+      type: 'image',
+      mimeType: null,
+      tier: 'plain',
+    });
+  });
+
+  it('keeps a minor signal or a block with no reason to moderators cleared for CSAM review', async () => {
+    expect(await tierOf(2)).toBe('suspect');
+    expect(await tierOf(3)).toBe('suspect');
+  });
+
+  it('never serves held media, an unblocked image, an evidence-held one or a missing id', async () => {
+    for (const id of [4, 5, 6, 999])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+});
+
+describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
+  beforeEach(() => {
+    envMock.env.RETRACTED_MEDIA_CDN_LEG = 'true';
+    scanner.verdict = 'clear';
+  });
+  afterAll(() => {
+    envMock.env.RETRACTED_MEDIA_CDN_LEG = undefined;
+  });
+
+  it('serves a scanned image whose url the CDN retracted, the url being its alone', async () => {
+    expect(await tierOf(7)).toBe('plain');
+  });
+
+  it('is off unless the switch is exactly true', async () => {
+    for (const value of [undefined, 'false', 'TRUE']) {
+      envMock.env.RETRACTED_MEDIA_CDN_LEG = value;
+      expect({ value, tier: await tierOf(7) }).toEqual({ value, tier: 'none' });
+    }
+  });
+
+  it('takes only a retracted url: not a denied one, and not one the CDN serves', async () => {
+    expect(await tierOf(8)).toBe('none');
+    expect(await tierOf(9)).toBe('none');
+  });
+
+  it('takes only a finished scan', async () => {
+    for (const id of [10, 11, 12])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+
+  // Each of these is refused by heldUrlSql alone: heldImageSql and the sole-row guards pass them.
+  // Its delete and takedown legs are pinned by the cdn-access parity suite, since a delete or
+  // takedown row on the url is refused here before them.
+  it('refuses a url cdn-access holds', async () => {
+    // A csam-hold post removal; mature-underage on the version, then on the model.
+    for (const id of [13, 14, 15])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+
+  // A deleted or taken-down copy shares the bytes but not this row's signals, so it refuses the url
+  // even when cdn-access would not hold it: deletes with no owner, a clean owner, a covering verified
+  // report and an unverified one; takedowns with no owner and a clean owner.
+  it('refuses a url with a deleted or taken-down copy behind it, held or not', async () => {
+    for (const id of [16, 17, 23, 24, 18, 27])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
+  });
+
+  it('refuses a url another image row shares', async () => {
+    expect(await tierOf(19)).toBe('none');
+  });
+
+  it('keeps a minor unpublish reason or a minor-safety ban of the owner to cleared moderators', async () => {
+    // On the post, on the version, on the model; then the ban.
+    for (const id of [20, 25, 26, 21])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'suspect' });
+  });
+
+  it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
+    expect(await tierOf(7)).toBe('plain');
+    scanner.verdict = 'hit';
+    expect(await getRetractedMedia(7, { csamReview: false })).toBeNull();
+  });
+});
+
+describe('recordRetractedView', () => {
+  // The main app's shown record looks for exactly this activity on the moderator's serve row.
+  it("writes the moderator's serve row under the retracted-media activity", async () => {
+    await recordRetractedView(42, 7);
+    expect(insertModActivity).toHaveBeenCalledWith({
+      userId: 42,
+      entityType: 'image',
+      entityId: 7,
+      activity: 'retractedMedia:view',
+    });
+  });
+});

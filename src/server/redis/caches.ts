@@ -53,6 +53,7 @@ import { visibleReviewSql } from '~/server/services/resourceReview.visibility';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { getImageTagRows } from '~/server/redis/image-tag-rows';
+import { getImageTagGateIds } from '~/server/redis/image-tag-gate-ids';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import {
   basicTagsLocalTtl,
@@ -129,7 +130,7 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageTags = await getImageTagRows(db, imageIds);
 
     const tagIds = imageTags.map((t) => t.tagId);
-    const tags = await tagCache.fetch(tagIds);
+    const [tags, gateTagIds] = await Promise.all([tagCache.fetch(tagIds), getImageTagGateIds()]);
 
     const hasWD: { [p: string]: boolean } = {};
     for (const row of imageTags) {
@@ -145,8 +146,16 @@ export const tagIdsForImagesCache = createCachedObject<{
       if (!tag) return acc;
 
       let canAdd = true;
+      // A Rekognition label is dropped from an image WD14 also tagged, unless a browsing rule can
+      // hide content by it: callers filter on these ids.
       if (source === TagSource.Rekognition && hasWD[imageIdStr as keyof typeof hasWD]) {
-        if (tag.type !== TagType.Moderation && tag.name && !alwaysIncludeTags.includes(tag.name)) {
+        if (
+          tag.type !== TagType.Moderation &&
+          tag.name &&
+          !alwaysIncludeTags.includes(tag.name) &&
+          gateTagIds &&
+          !gateTagIds.has(tagId)
+        ) {
           canAdd = false;
         }
       }

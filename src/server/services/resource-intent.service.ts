@@ -600,17 +600,17 @@ async function writeShadowEvent(event: ShadowEvent): Promise<void> {
       });
     } else {
       // No ClickHouse wiring (dev/build) — the structured log is the fallback.
-      await logToAxiom({ type: 'resource-intent-shadow', ...event }, 'temp-search');
+      logToAxiom({ type: 'resource-intent-shadow', ...event }, 'temp-search');
     }
   } catch (error) {
     // Never fail the request on telemetry.
-    await logToAxiom(
+    logToAxiom(
       {
         type: 'resource-intent-shadow-write-failed',
         error: error instanceof Error ? error.message : String(error),
       },
       'temp-search'
-    ).catch(() => undefined);
+    );
   }
 }
 
@@ -644,7 +644,7 @@ function logDegraded(degradedReason: string, error: unknown, model: string) {
       model,
     },
     'temp-search'
-  ).catch(() => undefined);
+  );
 }
 
 export type ResourceIntentContext = {
@@ -910,7 +910,7 @@ export async function getResourceIntent(
       logToAxiom(
         { type: 'resource-intent-cooc-fallback', reason: coocServing?.fallbackReason ?? '' },
         'temp-search'
-      ).catch(() => undefined);
+      );
     }
   }
 
@@ -1190,7 +1190,7 @@ async function getCheckpointIntent(
       logToAxiom(
         { type: 'resource-intent-cooc-fallback', reason: fallbackReason ?? '', kind: 'checkpoint' },
         'temp-search'
-      ).catch(() => undefined);
+      );
     }
   }
 

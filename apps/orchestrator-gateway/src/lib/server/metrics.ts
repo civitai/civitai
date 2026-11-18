@@ -43,3 +43,19 @@ export const authOutcomesTotal = new Counter({
   labelNames: ['result'] as const,
   registers: [register],
 });
+
+/**
+ * Session revocation checks answered without the session store (its read failed or timed out), by verdict:
+ * `deny_cached` (a revocation marker this process had already read applied, so the session was refused) or
+ * `allow_unknown` (none applied, so the session was allowed).
+ */
+export const revocationDegradedTotal = new Counter({
+  name: 'orchestrator_gateway_session_revocation_degraded_total',
+  help:
+    'Session revocation checks answered without the session store, labeled by verdict ' +
+    '(deny_cached|allow_unknown).',
+  labelNames: ['verdict'] as const,
+  registers: [register],
+});
+for (const verdict of ['deny_cached', 'allow_unknown'] as const)
+  revocationDegradedTotal.inc({ verdict }, 0);

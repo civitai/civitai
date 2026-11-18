@@ -177,8 +177,8 @@ describe('load', () => {
   it('404s on a well-formed id no report has', async () => {
     getFeedbackRow.mockResolvedValue(null);
 
-    expect(await thrownStatus(Promise.resolve(loadReport('999999')))).toBe(404);
-    expect(getFeedbackRow).toHaveBeenCalledWith(999999);
+    expect(await thrownStatus(Promise.resolve(loadReport('990200014')))).toBe(404);
+    expect(getFeedbackRow).toHaveBeenCalledWith(990200014);
   });
 
   /**

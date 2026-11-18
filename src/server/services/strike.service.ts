@@ -493,7 +493,7 @@ export async function evaluateStrikeEscalation(
           message: `Kept moderator mute on user ${userId} — strike de-escalation does not lift it`,
           userId,
           totalPoints,
-          muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null,
+          payload: { muteExpiresAt: user.muteExpiresAt?.toISOString() ?? null },
         });
       }
 

@@ -440,7 +440,6 @@ describe('auditPromptServer — still produces today’s side effects', () => {
     await expect(auditPromptServer({ ...base, isGreen: false })).rejects.toMatchObject({
       code: 'SERVICE_UNAVAILABLE',
     });
-    expect(logToAxiom).toHaveBeenCalledTimes(2);
     expect(logToAxiom).toHaveBeenCalledWith({
       name: 'external-moderation-error',
       type: 'error',

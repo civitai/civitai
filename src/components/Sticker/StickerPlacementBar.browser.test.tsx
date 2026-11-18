@@ -9,6 +9,7 @@ import { TurfSummaryContext } from '~/components/HatTurf/TurfSummaryProvider';
 import type { TurfSummaries } from '~/components/HatTurf/TurfSummaryProvider';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
 /**
  * The invitation is a claim that this image has no stickers. `total` is fed by
@@ -148,7 +149,10 @@ vi.mock('~/components/Sticker/StickerHistoryPanel', () => ({
   StickerHistoryButton: () => null,
   StickerHistoryPanel: () => null,
 }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  // The real module underneath, so an export this file does not override (useOptionalFeatureFlags,
+  // for one) still exists for every module this tree imports.
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({

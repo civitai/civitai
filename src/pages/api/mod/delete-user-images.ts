@@ -20,6 +20,7 @@ import {
   legalHoldMessage,
 } from '~/server/services/legal-hold.service';
 import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { postHoldsHeldTextSql } from '~/server/services/post-text-hold';
 
 const schema = z.object({
   userId: z.coerce.number(),
@@ -52,6 +53,7 @@ export default ModEndpoint(
       for (const batch of chunk(imageIds, batchSize)) {
         const result = await deleteImages(batch, true, {
           onlyWhere: Prisma.sql`${unlessHeld} AND NOT ${captureImageKeptSql('"Image"')}`,
+          moderatorDelete: true,
         });
         deletedImages += result.length;
       }
@@ -64,6 +66,7 @@ export default ModEndpoint(
           WITH doomed AS (
             SELECT id FROM "Post"
             WHERE "userId" = ${userId} AND id = ANY(${postIds}::int[]) AND ${unlessHeld}
+              AND NOT ${postHoldsHeldTextSql(Prisma.raw('"Post".id'))}
           )
           DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;

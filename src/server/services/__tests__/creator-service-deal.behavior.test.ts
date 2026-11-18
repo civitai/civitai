@@ -142,6 +142,7 @@ const LATER_MIGRATIONS = [
   '20261128150000_creator_service_final_malware_scan',
   '20261208120000_creator_service_dispute_review',
   '20261224150000_service_deal_file_removed_at',
+  '20270106120000_service_offering_content_scan',
 ].map((name) =>
   join(process.cwd(), `packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`)
 );
@@ -157,7 +158,13 @@ const SFW_LEVELS = PG | PG13;
 const ALL_LEVELS = 31;
 
 /** The offering a faked Prisma read includes, as the real `include` always does. */
-const OFFERING_ROW = { id: 1, title: 'Cat portraits', coverImageId: null, removedReason: null };
+const OFFERING_ROW = {
+  id: 1,
+  title: 'Cat portraits',
+  coverImageId: null,
+  removedReason: null,
+  ingestion: 'Scanned',
+};
 
 const q = async <T = Record<string, unknown>>(sql: string, params?: unknown[]) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -282,6 +289,10 @@ beforeAll(async () => {
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "Report" (id serial PRIMARY KEY);
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb NOT NULL);
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
+    CREATE TABLE "Image" (id serial PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Pending',
+      "needsReview" text, "nsfwLevel" int NOT NULL DEFAULT 0,
+      "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
   await holder.db.exec(readFileSync(REASON_CODE_MIGRATION, 'utf8'));
@@ -323,11 +334,11 @@ beforeEach(async () => {
   chat.createMessage.mockResolvedValue({});
   shop.assertCreatorShopVisible.mockResolvedValue([]);
   await holder.db.exec(`
-    TRUNCATE "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement" RESTART IDENTITY;
+    TRUNCATE "ServiceDisputeReview", "ServiceDealTransaction", "ServiceDealEvent", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering", "UserEngagement", "Image" RESTART IDENTITY;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${STRANGER});
-    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, "updatedAt")
-      VALUES (${SELLER}, 'Cat portraits', 'desc', ${PRICE}, 3, 1, 'Video', 'Active', now());
+    INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
+      VALUES (${SELLER}, 'Cat portraits', 'desc', ${PRICE}, 3, 1, 'Video', 'Active', 'Scanned', now());
   `);
 });
 
@@ -486,11 +497,32 @@ describe('request', () => {
   it.each([
     ['banned', `"bannedAt" = now()`],
     ['deleted', `"deletedAt" = now()`],
-    ['muted', `muted = true`],
   ])('refuses a request to a %s seller, before any charge', async (_name, set) => {
     await q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
     await expect(request()).rejects.toThrow(/Service not found/);
     expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it("answers a muted seller's offering exactly as a banned one's, before any charge", async () => {
+    const answer = (error: unknown) => {
+      const { name, code, message } = error as { name: string; code: string; message: string };
+      return { name, code, message };
+    };
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    const muted = answer(await request().catch((e) => e));
+    await q(`UPDATE "User" SET muted = false, "bannedAt" = now() WHERE id = $1`, [SELLER]);
+    const banned = answer(await request().catch((e) => e));
+    expect(muted.code).toBeDefined();
+    expect(muted).toEqual(banned);
+    expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(await q(`SELECT id FROM "ServiceDeal"`)).toEqual([]);
+  });
+
+  it('takes the same request once the seller is no longer muted', async () => {
+    await q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    await expect(request()).rejects.toThrow();
+    await q(`UPDATE "User" SET muted = false WHERE id = $1`, [SELLER]);
+    await expect(request()).resolves.toMatchObject({ id: expect.any(Number) });
   });
 
   it('refuses a request when the shop is not visible to the buyer', async () => {
@@ -1025,6 +1057,82 @@ describe('working a deal', () => {
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  describe('while the seller is unavailable', () => {
+    const UNAVAILABLE = [
+      ['banned', `"bannedAt" = now()`],
+      ['deleted', `"deletedAt" = now()`],
+      ['restricted', `muted = true`],
+    ] as const;
+    const makeUnavailable = (set: string) => q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
+    const unavailable = () => makeUnavailable(UNAVAILABLE[2][1]);
+    const viewActions = async (id: number, userId: number) => {
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: OFFERING_ROW, events: [] });
+      return (await deals.getServiceDealView({ dealId: id, userId, servicesEnabled: true }))
+        .actions;
+    };
+
+    it.each(UNAVAILABLE)(
+      'lets the buyer of a %s seller leave at once with a full refund, long before the due date',
+      async (_name, set) => {
+        const id = await accepted();
+        await makeUnavailable(set);
+        expect(await viewActions(id, BUYER)).toEqual(['cancelAndRefund', 'requestCancellation']);
+        await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+        expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
+        expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('pays one refund when the cancel is sent twice', async () => {
+      const id = await accepted();
+      await unavailable();
+      await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('also during a revision', async () => {
+      const id = await accepted();
+      await deliver(id);
+      await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
+      await unavailable();
+      await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses it otherwise: the seller is available, the seller asks, or it was delivered', async () => {
+      const id = await accepted();
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
+      await unavailable();
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: SELLER })
+      ).rejects.toEqual(conflict);
+      await deliver(id);
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    });
+
+    it('offers it to the buyer only, and only while it applies', async () => {
+      const id = await accepted();
+      expect(await viewActions(id, BUYER)).not.toContain('cancelAndRefund');
+      await unavailable();
+      expect(await viewActions(id, BUYER)).toEqual(['cancelAndRefund', 'requestCancellation']);
+      expect(await viewActions(id, SELLER)).not.toContain('cancelAndRefund');
+    });
+  });
+
   it('counts revisions against the snapshot and completes with a 48h dispute window', async () => {
     const id = await accepted();
     await deliver(id);
@@ -1173,7 +1281,7 @@ describe('an overdue deal nothing was delivered for', () => {
       expect.objectContaining({
         userId: -1,
         chatId: 77,
-        content: `This deal was cancelled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
+        content: `This deal was canceled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
       })
     );
   });
@@ -1224,7 +1332,7 @@ describe('an overdue deal nothing was delivered for', () => {
     expect(chat.createMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         chatId: 77,
-        content: `This deal was cancelled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
+        content: `This deal was canceled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
       })
     );
   });
@@ -2432,6 +2540,60 @@ describe('reasons and reason codes', () => {
   });
 });
 
+// An offering is shown, and takes requests, once its content checks and its cover's are done.
+describe('content checks', () => {
+  const setIngestion = (ingestion: string) =>
+    q(`UPDATE "ServiceOffering" SET ingestion = $1::"ServiceOfferingIngestionStatus"`, [ingestion]);
+  const cover = async (
+    ingestion: string,
+    nsfwLevel: number,
+    needsReview: string | null = null,
+    tosViolation = false
+  ) => {
+    await q(
+      `INSERT INTO "Image" (id, ingestion, "nsfwLevel", "needsReview", "tosViolation") VALUES (1, $1::"ImageIngestionStatus", $2, $3, $4)`,
+      [ingestion, nsfwLevel, needsReview, tosViolation]
+    );
+    await q(`UPDATE "ServiceOffering" SET "coverImageId" = 1`);
+  };
+  const dealLevel = async (id: number) =>
+    (
+      await q<{ maxNsfwLevel: number }>(`SELECT "maxNsfwLevel" FROM "ServiceDeal" WHERE id = $1`, [
+        id,
+      ])
+    )[0].maxNsfwLevel;
+
+  it.each(['Pending', 'Error', 'Blocked'])(
+    'takes no request while its check is %s',
+    async (ingestion) => {
+      await setIngestion(ingestion);
+      await expect(request()).rejects.toThrow(/Service not found/);
+      expect(buzz.createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['unscanned', 'Pending', null, false],
+    ['blocked', 'Blocked', null, false],
+    ['held for review', 'Scanned', 'minor', false],
+    ['taken down', 'Scanned', null, true],
+  ] as const)(
+    'takes no request with a cover that is %s',
+    async (_, ingestion, needsReview, tos) => {
+      await cover(ingestion, PG, needsReview, tos);
+      await expect(request()).rejects.toThrow(/Service not found/);
+    }
+  );
+
+  it("rates the deal with a scanned cover's level before the offering is recomputed", async () => {
+    // Stored rating PG-13, cover scanned R: a PG-only buyer is refused, an R buyer gets an R deal.
+    await cover('Scanned', R);
+    await expect(request({ consentLevels: PG })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const { id } = await request({ consentLevels: PG | R });
+    expect(await dealLevel(id)).toBe(R);
+  });
+});
+
 // Mature services (decision, briony 2026-10-15): SFW is always requestable; a mature service only on a
 // domain that serves its level, by a buyer whose own browsing level includes it.
 describe('mature services', () => {
@@ -2712,6 +2874,88 @@ describe('an offering taken down mid-deal', () => {
       await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
       expect((await deal(id)).status).toBe('Accepted');
     });
+  });
+});
+
+describe('a held offering on its deals', () => {
+  const hold = () =>
+    q(
+      `UPDATE "ServiceOffering" SET ingestion = 'Blocked'::"ServiceOfferingIngestionStatus" WHERE id = 1`
+    );
+  const titlesSentTo = (userId: number) =>
+    notifications.createNotification.mock.calls
+      .filter(([n]) => n.userId === userId)
+      .map(([n]) => n.details.offeringTitle);
+  const viewAs = async (id: number, ingestion: string, userId: number, isModerator = false) => {
+    const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+    const offering = { ...OFFERING_ROW, ingestion, coverImageId: 7 };
+    const model = dbMock.dbWrite as unknown as {
+      serviceDeal: { findUnique: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> };
+    };
+    model.serviceDeal.findUnique = vi.fn().mockResolvedValue({ ...row, offering, events: [] });
+    model.serviceDeal.findMany = vi.fn().mockResolvedValue([{ ...row, offering }]);
+    const view = await deals.getServiceDealView({
+      dealId: id,
+      userId,
+      isModerator,
+      servicesEnabled: true,
+    });
+    const { items } = await deals.listMyServiceDeals({
+      userId,
+      role: userId === SELLER ? 'seller' : 'buyer',
+      limit: 20,
+      servicesEnabled: true,
+      servableLevels: ALL_LEVELS,
+    });
+    return { view: view.offering, listed: items[0].offering };
+  };
+
+  it('refuses to accept a request whose offering was held after it, and moves no Buzz', async () => {
+    const { id } = await request();
+    await hold();
+    const buzzCalls = Object.values(buzz).map(
+      (fn) => (fn as ReturnType<typeof vi.fn>).mock.calls.length
+    );
+    await expect(deals.acceptServiceDeal({ dealId: id, userId: SELLER })).rejects.toThrow(
+      'This service is being reviewed, so this request cannot be accepted until that is done.'
+    );
+    expect((await deal(id)).status).toBe('Requested');
+    expect(
+      Object.values(buzz).map((fn) => (fn as ReturnType<typeof vi.fn>).mock.calls.length)
+    ).toEqual(buzzCalls);
+    expect(chat.createMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a held offering's title and cover from the buyer's deal view, list and notices", async () => {
+    const { id } = await request();
+    await hold();
+    notifications.createNotification.mockClear();
+    await deals.declineServiceDeal({ dealId: id, userId: SELLER });
+
+    expect(titlesSentTo(BUYER)).toEqual(['Service under review']);
+    const buyer = await viewAs(id, 'Blocked', BUYER);
+    expect(buyer.view).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
+    expect(buyer.listed).toEqual({ id: 1, title: 'Service under review', coverImageId: null });
+  });
+
+  it('shows the seller and moderators the live title of a held offering', async () => {
+    const { id } = await request();
+    await hold();
+    expect((await viewAs(id, 'Blocked', SELLER)).view.title).toBe('Cat portraits');
+    expect((await viewAs(id, 'Blocked', SELLER)).listed.title).toBe('Cat portraits');
+    expect((await viewAs(id, 'Blocked', STRANGER, true)).view.title).toBe('Cat portraits');
+  });
+
+  it("shows the buyer a checked offering's title and cover", async () => {
+    const { id } = await request();
+    notifications.createNotification.mockClear();
+    await deals.acceptServiceDeal({ dealId: id, userId: SELLER });
+
+    expect(titlesSentTo(BUYER)).toEqual(['Cat portraits']);
+    expect(JSON.stringify(chat.createMessage.mock.calls)).toContain('Cat portraits');
+    const buyer = await viewAs(id, 'Scanned', BUYER);
+    expect(buyer.view).toEqual({ id: 1, title: 'Cat portraits', coverImageId: 7 });
+    expect(buyer.listed).toEqual({ id: 1, title: 'Cat portraits', coverImageId: 7 });
   });
 });
 

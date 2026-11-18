@@ -1,12 +1,14 @@
 import { bustUserCreator } from '~/server/services/user-creator.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
+  addToShowcaseSection,
   getUserContentOverview,
   getUserWithProfile,
   setShowcaseSections,
   updateUserProfile,
 } from '~/server/services/user-profile.service';
 import type {
+  AddToShowcaseSectionSchema,
   GetUserProfileSchema,
   PrivacySettingsSchema,
   ProfileSectionSchema,
@@ -152,6 +154,22 @@ export const setShowcaseSectionsHandler = async ({
   if (ctx.user.muted) throw throwAuthorizationError();
   try {
     return await setShowcaseSections({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const addToShowcaseSectionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddToShowcaseSectionSchema;
+  ctx: ProtectedContext;
+}) => {
+  if (ctx.user.muted) throw throwAuthorizationError();
+  try {
+    return await addToShowcaseSection({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

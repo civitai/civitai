@@ -10,11 +10,13 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import {
   attachPromptOrigin,
+  type AppPromptOrigin,
   type PromptOrigin,
 } from '~/server/services/orchestrator/prompt-origin';
 import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
-import { throwBadRequestError, throwServiceUnavailableError } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 import {
   auditPromptEnriched,
   isBlankAuditInput,
@@ -71,10 +73,6 @@ const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const SEED_MAX_ROWS = 200;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
-
-// The 503 when the prompt check itself could not run (see auditPromptServer).
-const PROMPT_CHECK_UNAVAILABLE_MESSAGE =
-  'The prompt check is temporarily unavailable. Please try again in a moment.';
 
 // Shown for a regex refusal that names neither a trigger nor a reason (see classifyPromptServer).
 const UNSPECIFIED_REGEX_REFUSAL = 'Prompt failed the content audit';
@@ -228,7 +226,7 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
   // error MUST keep propagating so auditPromptServer fails CLOSED (the generation
   // request aborts) rather than silently proceeding — do NOT add a fail-open catch.
   // The deadline only BOUNDS a silent half-open (which would otherwise park each
-  // awaited read ~11min): it rejects at ~2s, preserving the same fail-closed
+  // awaited read ~11min): it rejects at REDIS_SYS_READ_TIMEOUT_MS, preserving the same fail-closed
   // direction. See STEP-6 report's promptAuditing note.
   const exists = await withSysReadDeadline(sysRedis.exists(key));
 
@@ -319,7 +317,12 @@ export interface AuditPromptOptions {
   // deadline and no verdict. Absent ⇒ `other`, so a caller that declares nothing can never inflate
   // the `generate` population. See `~/server/prom/external-moderation.metrics`.
   moderationSource?: ExternalModerationSource;
+  /** An App Block submit: recorded on a stored block's origin so moderators see it came from an app. */
+  appOrigin?: AppPromptOrigin;
 }
+
+/** The `cause` of `auditPromptServer`'s refusal. */
+export type PromptRefusalCause = { softBlock?: boolean; blockedFor: string[] };
 
 export type PromptClassificationOutcome = 'pass' | 'soft' | 'hard';
 export type PromptClassificationSource = 'regex' | 'external';
@@ -569,6 +572,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     orchestratorToken,
     acknowledgedSoftBlock,
     moderationSource,
+    appOrigin,
   } = options;
 
   // Skip auditing only when there is nothing to audit — the prompt AND the negative prompt both
@@ -599,7 +603,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       userId,
       message: (e as Error)?.message,
     }).catch(() => undefined);
-    throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE, e);
+    throw new PromptCheckUnavailableError(e);
   }
 
   // The classifier fails open on an external-moderation error and leaves reporting it to us.
@@ -628,7 +632,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       userId,
       message: verdict.externalError.message,
     }).catch(() => undefined);
-    throw throwServiceUnavailableError(PROMPT_CHECK_UNAVAILABLE_MESSAGE);
+    throw new PromptCheckUnavailableError();
   }
 
   if (verdict.outcome === 'pass') return;
@@ -728,7 +732,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       remixOfId: remixOfId ?? null,
       inputImages,
       inputVideo,
-      origin: { incomplete: true },
+      origin: appOrigin ? { incomplete: true, app: appOrigin } : { incomplete: true },
       time: new Date().toISOString(),
     };
 
@@ -779,8 +783,12 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     }
   }
 
-  // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
-  throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
+  // Flags ride `cause`; trpc.ts's errorFormatter lifts only `softBlock` onto data. `blockedFor` lets
+  // App Blocks rebuild the message without the account-status tail.
+  throw throwBadRequestError(message, {
+    ...(softBlock ? { softBlock: true } : {}),
+    blockedFor: error.blockedFor,
+  } satisfies PromptRefusalCause);
 }
 
 /**

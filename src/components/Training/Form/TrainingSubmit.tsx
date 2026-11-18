@@ -1,3 +1,4 @@
+import { pickAiToolkitOptions } from '@civitai/shared/training-options';
 import {
   Accordion,
   Alert,
@@ -363,6 +364,20 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         lr: selectedRun.params.unetLR,
         textEncoderLr: selectedRun.params.textEncoderLR || null,
         trainTextEncoder: !!selectedRun.params.textEncoderLR,
+        ...pickAiToolkitOptions(
+          {
+            engine: 'ai-toolkit',
+            ecosystem,
+            lrScheduler,
+            steps: features.trainingStepsPricing ? selectedRun.params.targetSteps : undefined,
+          },
+          {
+            lrWarmupSteps: selectedRun.params.lrWarmupSteps,
+            captionDropoutRate: selectedRun.params.captionDropoutRate,
+            rankDropout: selectedRun.params.rankDropout,
+            trainConv: selectedRun.params.trainConv,
+          }
+        ),
         lrScheduler: lrScheduler as any,
         optimizerType: optimizerType as any,
         networkDim: selectedRun.params.networkDim,
@@ -416,6 +431,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     selectedRun.params.numRepeats,
     selectedRun.params.unetLR,
     selectedRun.params.textEncoderLR,
+    selectedRun.params.lrWarmupSteps,
+    selectedRun.params.captionDropoutRate,
+    selectedRun.params.rankDropout,
+    selectedRun.params.trainConv,
     selectedRun.params.lrScheduler,
     selectedRun.params.optimizerType,
     selectedRun.params.networkDim,
@@ -822,6 +841,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         sampleCfgScale: _sampleCfgScale,
         sampleStrength: _sampleStrength,
         saveEvery: _saveEvery,
+        lrWarmupSteps: _warmup,
+        captionDropoutRate: _captionDropout,
+        rankDropout: _rankDropout,
+        trainConv: _trainConv,
         ...legacyEngineParams
       } = paramData;
       let finalParams: any = legacyEngineParams;
@@ -864,6 +887,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           lr: paramData.unetLR,
           textEncoderLr: paramData.textEncoderLR || null,
           trainTextEncoder: !!paramData.textEncoderLR,
+          ...pickAiToolkitOptions(
+            {
+              engine: 'ai-toolkit',
+              ecosystem,
+              lrScheduler,
+              steps: features.trainingStepsPricing ? paramData.targetSteps : undefined,
+            },
+            paramData
+          ),
           lrScheduler: lrScheduler as any,
           optimizerType: optimizerType as any,
           networkDim: paramData.networkDim,
@@ -1404,6 +1436,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
+              {dryRunResult.data?.warnings?.map((warning) => (
+                <Alert key={warning} color="yellow" title="Setting not applied">
+                  {warning}
+                </Alert>
+              ))}
               {(dryRunResult.isLoading || isDefined(dryRunResult.data?.precedingJobs)) && (
                 <>
                   <Badge>

@@ -68,13 +68,13 @@ import {
   constants,
   EARLY_ACCESS_CONFIG,
   isNonCommercialBaseModel,
-  nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { LORA_STRENGTH_BOUNDS } from '~/shared/constants/generation.constants';
 import {
   getBaseModelConfig,
   getEcosystemTurboSettings,
+  isMatureRestricted,
+  matureRestrictedBaseModels,
 } from '~/shared/constants/basemodel.constants';
 import {
   BASE_MODEL_ATTESTATION_STATEMENT,
@@ -909,10 +909,16 @@ export function ModelVersionUpsertForm({
     !editingCountsTowardCap;
   const resourceLabel = getDisplayName(model?.type ?? '');
   const modelDownloadEnabled = !usageControl || usageControl === ModelUsageControl.Download;
+  // Moderator-managed: the server refuses an owner's change to or from these.
+  const usageControlLocked =
+    !currentUser?.isModerator &&
+    !!version?.id &&
+    (version.usageControl === ModelUsageControl.InternalGeneration ||
+      version.usageControl === ModelUsageControl.ExternalGeneration);
 
   // Check if current base model selection violates NSFW restrictions
   const hasNsfwBaseModelViolation =
-    model?.nsfw && baseModel && nsfwRestrictedBaseModels.includes(baseModel as BaseModel);
+    model?.nsfw && baseModel && isMatureRestricted(baseModel, 'models');
 
   const canSave = !hasNsfwBaseModelViolation;
 
@@ -1010,7 +1016,12 @@ export function ModelVersionUpsertForm({
                   <InputSelect
                     name="usageControl"
                     label="Usage Control"
-                    description="Determines what other users can do with your model. Choose On-Site Generation Only to keep your files private: people can generate with this version on Civitai but can't download it. You can change this setting at any time."
+                    description={
+                      usageControlLocked
+                        ? 'Managed by moderators.'
+                        : "Determines what other users can do with your model. Choose On-Site Generation Only to keep your files private: people can generate with this version on Civitai but can't download it. You can change this setting at any time."
+                    }
+                    disabled={usageControlLocked}
                     placeholder="Select how this resource can be used"
                     withAsterisk
                     style={{ flex: 1 }}
@@ -1111,7 +1122,7 @@ export function ModelVersionUpsertForm({
                     model does not permit NSFW content. Please select a different base model.
                   </Text>
                   <Text size="sm" mt="xs">
-                    Restricted base models: {nsfwRestrictedBaseModels.join(', ')}
+                    Restricted base models: {matureRestrictedBaseModels('models').join(', ')}
                   </Text>
                 </Alert>
               )}

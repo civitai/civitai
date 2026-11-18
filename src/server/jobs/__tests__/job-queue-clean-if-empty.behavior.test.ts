@@ -53,13 +53,17 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY,
       "postId" integer UNIQUE REFERENCES "Post"(id) ON DELETE SET NULL
     );
+    CREATE TABLE "PostText" (
+      "id" integer PRIMARY KEY,
+      "postId" integer NOT NULL REFERENCES "Post"(id) ON DELETE CASCADE
+    );
   `);
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
   await holder.db.exec(
-    `TRUNCATE "StorylineChapter", "Image", "Thread", "Post", "ModelVersion", "Model" CASCADE`
+    `TRUNCATE "StorylineChapter", "PostText", "Image", "Thread", "Post", "ModelVersion", "Model" CASCADE`
   );
 });
 
@@ -96,6 +100,18 @@ describe('job-queue-clean-if-empty', () => {
     await holder.db.exec(`
       INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER}), (2, ${OWNER});
       INSERT INTO "StorylineChapter" (id, "postId") VALUES (50, 1);
+    `);
+    queuePosts(1, 2);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([1]);
+  });
+
+  it('keeps a post with text items and no images, such as a chapter draft', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (1, ${OWNER}), (2, ${OWNER});
+      INSERT INTO "PostText" (id, "postId") VALUES (60, 1);
     `);
     queuePosts(1, 2);
 

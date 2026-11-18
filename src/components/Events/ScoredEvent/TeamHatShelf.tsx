@@ -94,12 +94,12 @@ export function TeamHatShelf({ event, team }: { event: string; team: string }) {
       {boxes.map((box) => (
         <Fragment key={box.boxDefinitionId}>
           <MysteryBoxCard
-            event={event}
+            source={{ event }}
             view={box}
             color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
           />
           <MysteryBoxPackCard
-            event={event}
+            source={{ event }}
             view={box}
             color={teamColor(team) ?? 'var(--mantine-color-blue-5)'}
           />

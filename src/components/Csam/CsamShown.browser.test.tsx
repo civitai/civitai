@@ -14,6 +14,14 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
     ),
 }));
 
+// The report page always has a signed-in moderator.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 1, isModerator: true }) }));
+// Off, so a not-held image keeps the CDN copy these tests load; the retracted-media fallback is
+// `CsamHeldMedia.browser.test.tsx`'s.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ modRetractedMedia: false }),
+}));
+
 import { CsamHeldMedia } from '~/components/Csam/CsamHeldMedia';
 import { CsamImageCard } from '~/components/Csam/CsamImageSelection';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';

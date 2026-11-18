@@ -199,7 +199,7 @@ describe('recordAbuseVerdict — which rows move', () => {
     await expect(
       service.recordAbuseVerdict({
         runId: ids.today,
-        findingId: 999_999,
+        findingId: 990100026,
         verdict: 'tp',
         verdictBy: 'mod-a',
       })

@@ -35,7 +35,7 @@
 //     under-moderation of that exact prompt. A failure must cost a retry, every time.
 //   * CACHE ERRORS. A Redis failure resolves to a MISS and the classifier is called. There is no
 //     path from a cache problem to a weaker verdict. The added latency is bounded by
-//     `withSysReadDeadline` (`REDIS_SYS_READ_TIMEOUT_MS`, default 2000 ms) — NOT by the Redis
+//     `withSysReadDeadline` (`REDIS_SYS_READ_TIMEOUT_MS`, default 1000 ms) — NOT by the Redis
 //     client, which has no socket timeout, and NOT by the try/catch, which cannot see a hang.
 import { createHash } from 'node:crypto';
 

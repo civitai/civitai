@@ -52,9 +52,30 @@ export function hasComFaceSql(alias: string) {
   return sql<boolean>`(${m}"sfwName" is not null and not (${m}"meta"->'comFaceRemoved' is not null and ${m}"sfwCoverImageId" is null))`;
 }
 
+// Mirrors the main app's com-face endpoint eligibility; keep in step with it.
+export function comFaceReadySql(alias: string) {
+  const m = sql.raw(`${alias}.`);
+  const intentDetected = sql`coalesce((${m}"meta"->'comFaceIntent'->>'detected')::boolean and not (${m}"meta"->'comFaceIntent' ? 'overturnedAt'), false)`;
+  return sql<boolean>`(${m}"nsfw" and not ('nsfw' = any(coalesce(${m}"lockedProperties", array[]::text[]))) and not ${m}"minor" and not ${m}"poi" and not ${m}"sfwOnly" and ${m}"mode" is distinct from 'TakenDown' and not ${hasComFaceSql(alias)} and not ${intentDetected})`;
+}
+
+/** How many of the creator's live models could be listed on civitai.com with a face. */
+export async function countComFaceReadyModels(userId: number) {
+  const row = await dbRead
+    .selectFrom('Model')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('userId', '=', userId)
+    .where('deletedAt', 'is', null)
+    .where('status', '=', 'Published')
+    .where(comFaceReadySql('"Model"'))
+    .executeTakeFirst();
+  return Number(row?.count ?? 0);
+}
+
 // The SQL twin of `siteListing`: a change to one is a change to both.
 function siteFilterSql(alias: string, site: SiteFilter) {
   if (site === 'com-face') return hasComFaceSql(alias);
+  if (site === 'com-ready') return comFaceReadySql(alias);
   const m = sql.raw(`${alias}.`);
   const listed = sql`${m}"status" = 'Published' and ${m}"availability" != 'Private' and ${m}"mode" is null and ${hasPublicVersionSql(alias)} and not ${m}"poi" and not ${hasTagSql(alias, peopleBrowsingTagIds)} and (${m}"nsfwLevel" & ${sql.lit(allBrowsingLevelsFlag)}) != 0`;
   const onCom = sql`(${m}"nsfwLevel" & ${sql.lit(sfwBrowsingLevelsFlag)}) != 0`;

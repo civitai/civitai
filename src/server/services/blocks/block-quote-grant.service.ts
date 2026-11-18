@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import type { BlockQuoteGrant } from '~/server/middleware/block-scope.middleware';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   BLOCK_STEP_QUOTE_ID_REGEX,
   BLOCK_TRAINING_QUOTE_ID_REGEX,
@@ -54,6 +55,11 @@ export type BlockQuoteGrantRecord = BlockQuoteGrant & {
   bodyHash: string;
   expiresAt: string;
   consentedAt: string | null;
+  /**
+   * Set instead of `consentedBy` when the viewer's standing opt-in, not a click, consented
+   * (step quotes only). A separate field so a server that predates it refuses such a quote.
+   */
+  standingConsentBy?: number | null;
 };
 
 export type BlockQuoteBinding = { userId: number; appBlockId: string; blockInstanceId: string };
@@ -217,11 +223,22 @@ export async function recordQuoteGrantConsent<R extends BlockQuoteGrantRecord>(
   binding: BlockQuoteBinding,
   sessionUserId: number
 ): Promise<R | null> {
+  return writeQuoteGrantConsent<R>(kind, quoteId, binding, sessionUserId, 'click');
+}
+
+async function writeQuoteGrantConsent<R extends BlockQuoteGrantRecord>(
+  kind: BlockQuoteGrantKind,
+  quoteId: string,
+  binding: BlockQuoteBinding,
+  sessionUserId: number,
+  consentKind: 'click' | 'standing'
+): Promise<R | null> {
   const quote = await readQuoteGrant<R>(kind, quoteId, binding);
   if (!quote || quote.userId !== sessionUserId) return null;
   const updated: R = {
     ...quote,
-    consentedBy: sessionUserId,
+    consentedBy: consentKind === 'click' ? sessionUserId : quote.consentedBy,
+    standingConsentBy: consentKind === 'standing' ? sessionUserId : null,
     consentedAt: new Date().toISOString(),
   };
   const written = await sysRedis.set(quoteKey(kind, quoteId), JSON.stringify(updated), {
@@ -255,7 +272,14 @@ export async function claimQuoteGrant<R extends BlockQuoteGrantRecord>(
  * `total` is the orchestrator's FIXED price for exactly the hashed body — never a
  * variable/cap price, never the app's declared `maxBuzz`.
  */
-export type BlockStepQuoteRecord = BlockQuoteGrantRecord & { stepType: string };
+export type BlockStepQuoteRecord = BlockQuoteGrantRecord & {
+  stepType: string;
+  /**
+   * The body's Buzz pool pick, stored only when the body named one, so the consent
+   * dialog can say which pool is tried first. The body hash binds it too.
+   */
+  accountType?: BuzzSpendType;
+};
 
 /** `hashQuotedBody` for a pass-through step body. */
 export function hashPassThroughStepBody(body: PassThroughStepBody): string {
@@ -278,6 +302,24 @@ export function recordStepQuoteConsent(
   sessionUserId: number
 ) {
   return recordQuoteGrantConsent<BlockStepQuoteRecord>('step', quoteId, binding, sessionUserId);
+}
+
+/**
+ * Record that the viewer's standing opt-in consented to this step quote. The caller has
+ * already checked the opt-in, the limit and the burst bound for this session user.
+ */
+export function recordStepQuoteStandingConsent(
+  quoteId: string,
+  binding: BlockQuoteBinding,
+  sessionUserId: number
+) {
+  return writeQuoteGrantConsent<BlockStepQuoteRecord>(
+    'step',
+    quoteId,
+    binding,
+    sessionUserId,
+    'standing'
+  );
 }
 
 export function claimStepQuote(quoteId: string) {

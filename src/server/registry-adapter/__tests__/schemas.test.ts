@@ -123,7 +123,7 @@ function compiled(sets: ReturnType<typeof buildEntities>) {
 
 describe('the schemas of our own entities', () => {
   // The schema stream is the root, JSON Schema 2020-12's own meta-schema, and each schema entity
-  // claims it. Before, the stream was `urn:schema:registry:schema@v1`.
+  // claims it.
   it.each([['https://json-schema.org/draft/2020-12/schema']])(
     '🔴 the live adapter serves them on the schema stream %s, with the registry switch off',
     async (stream) => {

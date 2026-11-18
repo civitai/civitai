@@ -88,6 +88,8 @@ const PAGE_LINK_MESSAGE =
   'This request includes a link to a Civitai page, not an image. Please upload the image instead.';
 
 const CALLER = 7;
+/** The app an App Blocks entry names; `isFlipt` here answers the same for every app. */
+const APP_LOG = { appBlockId: 'apb_1' };
 const OTHER = 8;
 const KEY = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5d';
 const AFTER = new Date(UNRECORDED_KEYS_ACCEPTED_UNTIL.getTime() + 60_000);
@@ -121,11 +123,11 @@ beforeEach(async () => {
   holder.scannedRows = false;
   holder.refuseExternalApp = true;
   holder.clickhouseDown = false;
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     redis.set(key, value);
     return 'OK';
   }) as never);
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
 });
 
@@ -343,6 +345,7 @@ describe('an App Blocks generation source', () => {
       entry,
       isApiCaller: false,
       opaqueInput,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',
@@ -510,7 +513,7 @@ describe('an App Blocks generation source', () => {
 
     it('refuses a row-less key while an issue store is unreadable', async () => {
       await recordUploadKeyOwner(OWN, CALLER);
-      redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+      redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
       loggingMock.logToAxiom.mockClear();
       expect(await check([OWN], 'appBlocksInlineComfy', true)).toBe(unusable);
       logged('store-unreadable');
@@ -537,7 +540,7 @@ describe('an App Blocks generation source', () => {
     await recordUploadKeyOwner(own, CALLER);
     const unusable = `refused: ${APP_SOURCE_UNUSABLE_MESSAGE}`;
 
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
     loggingMock.logToAxiom.mockClear();
     expect(await check([own], 'appBlocksPassThrough', true)).toBe(unusable);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -547,7 +550,7 @@ describe('an App Blocks generation source', () => {
     expect(logged).not.toContain(own);
     expect(logged).not.toContain(own.replace(/-/g, ''));
 
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
     expect(await check([CDN(own)], 'appBlocksPassThrough')).toMatch(/^refused: /);
 
     holder.clickhouseDown = true;
@@ -693,7 +696,7 @@ describe('an App Blocks generation source', () => {
       ]);
       holder.scannedRows = true;
       hostSourceCounter.inc.mockClear();
-      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: {} });
+      await countAppBlockHostSources({ urls: [BLOB], appBlockLog: APP_LOG });
       expect(hostSourceCounter.inc).not.toHaveBeenCalled();
     });
 
@@ -741,6 +744,13 @@ describe('assertStoredImageUrlsUnblocked', () => {
     await givenImage({ url, blockedFor: 'moderated' });
     expect(await stored([url])).toBe('refused');
   });
+
+  it('refuses a url that names no stored object', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    expect(await stored([KEY])).toBe('accepted');
+    expect(await stored([KEY, `blob:https://civitai.com/${KEY}`])).toBe('refused');
+    expect(await stored(['data:image/png;base64,iVBORw0KGgo'])).toBe('refused');
+  });
 });
 
 describe('assertGenerationInputsUsable', () => {
@@ -759,6 +769,7 @@ describe('assertGenerationInputsUsable', () => {
       userId: CALLER,
       entry,
       isApiCaller: false,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',
@@ -923,6 +934,7 @@ describe('assertGenerationInputsUsable', () => {
         entry: 'appBlocksPassThrough',
         isApiCaller: false,
         opaqueInput: true,
+        appBlockLog: APP_LOG,
         now: AFTER,
       }).then(
         () => 'accepted',
@@ -1015,6 +1027,7 @@ describe('assertGenerationInputsUsable', () => {
           entry: 'appBlocksPassThrough',
           isApiCaller: false,
           opaqueInput: true,
+          appBlockLog: APP_LOG,
           now: AFTER,
         })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: TOO_MANY_IDS_MESSAGE });
@@ -1068,7 +1081,14 @@ describe('assertGenerationInputsUsable', () => {
 
   it('refuses an external host with its own message, and anything else with the unavailable one', async () => {
     const message = (urls: string[], entry: 'iterateGenerate' | 'appBlocksPassThrough') =>
-      assertGenerationInputsUsable({ urls, userId: CALLER, entry, isApiCaller: false, now: AFTER })
+      assertGenerationInputsUsable({
+        urls,
+        userId: CALLER,
+        entry,
+        isApiCaller: false,
+        appBlockLog: APP_LOG,
+        now: AFTER,
+      })
         .then(() => 'accepted')
         .catch((e: TRPCError) => `${e.code}: ${e.message}`);
     holder.refuseExternal = true;
@@ -1264,11 +1284,11 @@ describe('assertGenerationInputsUsable', () => {
   it('refuses a key in an allowed external url when neither issue record store can be read', async () => {
     const foreign = `https://replicate.example/pbxt/${KEY}/out.png`;
     // Either store alone being unreadable is not enough.
-    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValueOnce(new Error('redis down'));
     expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
     holder.clickhouseDown = true;
     expect(await gate([foreign], 'generateFromGraph')).toBe('accepted');
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     expect(await gate([foreign], 'generateFromGraph')).toBe('refused');
   });
 
@@ -1778,6 +1798,7 @@ describe('a chat App Block step, with the external-host refusal on', () => {
       entry,
       isApiCaller: false,
       opaqueInput: true,
+      appBlockLog: APP_LOG,
       now: AFTER,
     }).then(
       () => 'accepted',

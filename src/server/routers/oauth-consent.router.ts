@@ -37,7 +37,7 @@ export const oauthConsentRouter = router({
         description: consent.client.description,
         logoUrl: consent.client.logoUrl,
         isVerified: consent.client.isVerified,
-        scope: consent.scope,
+        scope: Number(consent.scope),
         buzzLimit: consent.buzzLimit as BuzzLimit | null,
         authorizedAt: consent.createdAt,
       }));
@@ -79,7 +79,7 @@ export const oauthConsentRouter = router({
           type: 'oauth.bust-cache.failed',
           message: `bust-cache failed for oauth client ${input.clientId} user ${ctx.user.id}`,
           error: safeError(err),
-        }).catch(() => {});
+        });
       }
 
       // Audit trail in ClickHouse `actions`. Fire-and-forget.
@@ -132,7 +132,7 @@ export const oauthConsentRouter = router({
           type: 'oauth.delete-subject.failed',
           message: `delete-subject failed for oauth client ${input.clientId} user ${ctx.user.id}`,
           error: safeError(err),
-        }).catch(() => {});
+        });
       });
 
       // Expire the revoked tokens in the orchestrator's auth cache.

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
@@ -81,7 +82,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt, modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: MODEL_OWNER, name: 'My Model' });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBe(3);
     expect(post.parentModelName).toBe('My Model');
@@ -93,7 +98,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: POST_OWNER });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBe(3);
     expect(post.ownModelId).toBe(3);
@@ -103,7 +112,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: MODEL_OWNER });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(99, true) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(99, true),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBe(3);
     expect(post.ownModelId).toBeNull();
@@ -112,7 +125,11 @@ describe('getPostEditDetail model', () => {
   it('has no model for a post without a version, and asks nothing', async () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: null });
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBeNull();
     expect(post.parentModelName).toBeNull();
@@ -124,7 +141,11 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf(null);
 
-    const post = await getPostEditDetail({ id: 1, user: viewer(POST_OWNER) });
+    const post = await getPostEditDetail({
+      id: 1,
+      user: viewer(POST_OWNER),
+      servableLevels: allBrowsingLevelsFlag,
+    });
 
     expect(post.parentModelId).toBeNull();
   });
@@ -133,7 +154,9 @@ describe('getPostEditDetail model', () => {
     givenPost({ publishedAt: new Date('2026-01-01'), modelVersionId: 5 });
     givenVersionOf({ id: 3, userId: MODEL_OWNER });
 
-    await expect(getPostEditDetail({ id: 1, user: viewer(MODEL_OWNER) })).rejects.toThrow();
+    await expect(
+      getPostEditDetail({ id: 1, user: viewer(MODEL_OWNER), servableLevels: allBrowsingLevelsFlag })
+    ).rejects.toThrow();
     expect(dbMock.dbRead.modelVersion.findUnique).not.toHaveBeenCalled();
   });
 });

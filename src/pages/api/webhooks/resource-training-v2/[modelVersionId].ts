@@ -36,7 +36,7 @@ const logWebhook = (data: MixedObject) => {
       ...data,
     },
     'webhooks'
-  ).catch();
+  );
 };
 
 export default WebhookEndpoint(async (req, res) => {

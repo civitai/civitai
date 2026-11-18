@@ -1,0 +1,19 @@
+# Statement-coverage floors for the unit run (`go test -race -coverprofile`, each package measured by
+# its own tests), checked by ci/coverage_gate.py in .github/workflows/beacon-go.yml.
+#
+# Ratchet: each floor is a measured value rounded DOWN to a whole percent. To raise one, read the
+# measured value the "Coverage floors" step prints (it also says "floor can be raised to N") and set
+# the floor to N. Never lower a floor to get a red run green; a removed package goes off the list in
+# the same change that removes it. Packages without tests (fallback, golden, testkit) are not listed.
+total 79
+cmd/beacon-go 21
+internal/auth 94
+internal/beacon 94
+internal/config 91
+internal/hydrate 85
+internal/jsvalue 92
+internal/safe 100
+internal/server 94
+internal/shadow 96
+internal/sysredis 88
+internal/tracker 91

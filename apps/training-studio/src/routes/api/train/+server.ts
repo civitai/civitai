@@ -3,13 +3,14 @@ import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
 import { submitTrainingBatch, type TrainingRunInput } from '$lib/server/train';
 import {
-  MatureAckRequiredError,
+  MatureRepriceError,
   TrainingBatchValidationError,
   TrainingSubmitError,
   type SubmittedBatch,
 } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
+import { isKohyaAllowed } from '$lib/server/flipt';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
 
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
@@ -27,6 +28,9 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 
   const body = (await request.json().catch(() => null)) as { runs?: TrainingRunInput[] } | null;
   const runs = body?.runs;
+  // A continuation starts only through /api/continue-training, which checks its source run.
+  if (Array.isArray(runs) && runs.some((r) => r && typeof r === 'object' && 'continueFrom' in r))
+    error(400, 'Keep training from a checkpoint on the run itself.');
   let batch: SubmittedBatch;
   try {
     batch = await submitTrainingBatch(
@@ -34,11 +38,12 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       runs,
       locals.user.id,
       textCheckCookie(locals, request),
-      await datasetRatingFor(locals.user)
+      await datasetRatingFor(locals.user),
+      await isKohyaAllowed(locals)
     );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
-    if (err instanceof MatureAckRequiredError)
+    if (err instanceof MatureRepriceError)
       error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);
     if (err instanceof FilesProcessingError)

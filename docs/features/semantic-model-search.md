@@ -18,9 +18,11 @@ only rewrites the payload.
 
 ## Eligibility
 
-Published, not deleted, not `tosViolation`, not `minor`, availability not `Unsearchable`, a
-`publishedAt`, and at least one Published version that is not `Unsearchable`. The site still
-applies access rules when it hydrates results, so the index is a candidate set, not the gate.
+Published, not deleted, not `tosViolation`, not `minor`, availability neither `Unsearchable` nor
+`Private`, a `publishedAt`, and at least one Published version that is neither `Unsearchable` nor
+`Private`. Private versions are left out of the document too. A model that turns Private loses its
+point on its next change event. The site still applies access rules when it hydrates results, so
+the index is a candidate set, not the gate.
 
 ## Collection
 
@@ -28,17 +30,18 @@ applies access rules when it hydrates results, so the index is a candidate set, 
 (`VECTOR_MODEL_ALIAS`): cosine, INT8 scalar quantization in RAM (quantile 0.99), HNSW m 16 /
 ef_construct 128, vectors and payload on disk.
 
-| Payload                                               | Index                                            | Notes                                                                                                                     |
-| ----------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `title_normalized`                                    | keyword                                          | NFKC, lowercase, split on Python `str.isspace` whitespace, joined by one space; must equal the search service's query key |
-| `search_text`                                         | text: word tokenizer, lowercase, phrase matching | the embedded document                                                                                                     |
-| `type`, `checkpointType`                              | keyword                                          |                                                                                                                           |
-| `baseModels`                                          | keyword                                          | from published versions                                                                                                   |
-| `nsfwLevel`                                           | integer                                          | the set bits of `Model.nsfwLevel`; filter with `match.any` of the viewer's levels                                         |
-| `publishedAt`                                         | datetime                                         | RFC 3339 UTC                                                                                                              |
-| `userId`                                              | integer                                          | for hidden-user exclusion                                                                                                 |
-| `versionIds`                                          | integer                                          | the versions the document was built from (up to 8); live sync only                                                        |
-| `name`, `username`, `tags`, `triggerWords`, `docHash` | none                                             | display and the search service's dictionaries                                                                             |
+| Payload                                       | Index                                            | Notes                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `title_normalized`                            | keyword                                          | NFKC, lowercase, split on Python `str.isspace` whitespace, joined by one space; must equal the search service's query key |
+| `search_text`                                 | text: word tokenizer, lowercase, phrase matching | the embedded document                                                                                                     |
+| `type`, `checkpointType`                      | keyword                                          |                                                                                                                           |
+| `baseModels`                                  | keyword                                          | from published versions                                                                                                   |
+| `nsfwLevel`                                   | integer                                          | the set bits of `Model.nsfwLevel`; filter with `match.any` of the viewer's levels                                         |
+| `publishedAt`                                 | datetime                                         | RFC 3339 UTC                                                                                                              |
+| `userId`                                      | integer                                          | for hidden-user exclusion                                                                                                 |
+| `versionIds`                                  | integer                                          | the versions the document was built from (up to 8); live sync only                                                        |
+| `name`                                        | text: word tokenizer, lowercase                  | the site's name-match pass; also display and the dictionaries                                                             |
+| `username`, `tags`, `triggerWords`, `docHash` | none                                             | display and the search service's dictionaries                                                                             |
 
 Collection metadata holds the model stamp (`model`, `modelRevision`, `profile`, `dimensions`) and,
 after a full backfill, `catalogBuiltAt` and `catalogPointsAtBuild`.
@@ -98,13 +101,31 @@ after the writes land.
   or a backfill re-run embeds it.
 - `HEALTH_CHECK_PORT` reports `healthy`, `pending` and whether it is embedding.
 
+## Searching the models feed
+
+Behind `modelFeedSearch` (Flipt `search-v3-models`, dark), the header bar filters `/models` in
+place on Enter or blur, as it does `/images`, and `/search/models` redirects to the feed with its
+query (`modelFeedUrlFromLegacySearch`). Off, the feed's `?query=` stays the Meilisearch search.
+
+- `semanticModelSearch.search` (`semantic-model-search.service.ts`) runs the shared query audit,
+  level clamp and candidate cache, then hydrates each batch through the models feed's own query
+  (`getModelsWithImagesAndModelVersions` with `modelFeedQueryOptions` and `onlyModelIds`), so every
+  feed filter, the private-model rule and moderation apply as on the feed. It never accepts `ids`.
+- The index filters on level, type, checkpoint type, base models, the feed's user and the
+  published range. Period is not applied, as on today's searched feed. Sort is Best match.
+- Name matches rank first (`withWordMatchesFirst`): up to 200 models whose `name` (a word index,
+  lowercase) holds every query word, in similarity order, then the rest of the ranking without
+  them. The service's own exact-title pass still leads. A word in many names (e.g. `WAI`) leaves the model it names wherever similarity puts it among those
+  matches.
+- Hidden models and users are dropped on the server; hidden tags by the feed's client-side
+  preferences. A failed search falls back to the keyword feed with a Retry banner.
+
 ## Caveats
 
 - `title_normalized` is computed with the Unicode version of the Node runtime and the query key
   with Python's. They agree except for characters one version knows and the other does not.
-- Private-availability models are indexed, as on the current search index, with their name and
-  description in the payload. Results must be hydrated through the site's access rules, never
-  returned from the payload.
+- Results must be hydrated through the site's access rules, never returned from the payload. A
+  point can lag its model's state until the model's next event, or the next backfill.
 
 ## Not built yet
 

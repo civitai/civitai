@@ -259,6 +259,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Collection.archivedAt`: `20260831000000_collection_archived_at`
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
+    //   the four `NewOrderPlayer.payout*` columns: `20261209120000_knights_new_order_player_and_link_review`
     //   `StorylineCollaborator.acceptedAt`: `20261215120000_storyline_collaborator_accepted`
     //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     //   `Crucible.ownerRemovalCount`: `20261216120000_crucible_owner_removal_count`
@@ -273,6 +274,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ResourceReview.postId` / `.releasedAt`: `20261231130000_resource_review_post_id`
     //   `BoxOpening.guaranteed`: `20261231000000_box_opening_guaranteed`
     //   `ModActivity.credential`: `20261231180000_mod_activity_credential`
+    //   `ModActivity.reviewBatchId` / `.reviewTier` / `.declaredSuspect`: `20271114200000_mod_activity_review_batch`
     //   `app_listings.issue_tracker_url`: `20270103120000_app_listing_issue_tracker` — drop this
     //     entry once it is applied in every writable environment, together with the probe and
     //     fallback in `app-listing-issue-tracker.service.ts` (see its RETIREMENT note).
@@ -281,9 +283,17 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `Article.systemCategoryId`: `20271112120000_article_system_category`
     //   `Image.nsfwAxes`: `20270105130000_image_nsfw_axes` — no-type, raw SQL in
     //     `image-nsfw-axes.ts`, which degrades while it is unapplied.
+    //   `ApiKey.tokenScopeWide`: `20271117180000_widen_token_scopes_bigint`
+    //   the eight `app_block_publish_requests.actions_run_*` columns:
+    //     `20271117130000_app_block_publish_request_actions_run_source` — no-type, raw SQL in
+    //     `actions-run-source.service.ts`, which degrades while it is unapplied.
     const inFlightColumns = new Set([
+      'ApiKey.tokenScopeWide',
       'BoxOpening.guaranteed',
       'ModActivity.credential',
+      'ModActivity.reviewBatchId',
+      'ModActivity.reviewTier',
+      'ModActivity.declaredSuspect',
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
       'app_blocks.fork_of_app_block_id',
@@ -304,6 +314,13 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ModActivity.host',
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
+      'NewOrderPlayer.payoutBlockedAt',
+      'NewOrderPlayer.payoutBlockReason',
+      'NewOrderPlayer.payoutBlockedBy',
+      'NewOrderPlayer.payoutReleaseFrom',
+      'NewOrderPlayer.goldPending',
+      'NewOrderPlayer.goldEarned',
+      'NewOrderPlayer.goldConverted',
       'StorylineCollaborator.acceptedAt',
       'Crucible.takenDownAt',
       'Crucible.takenDownById',
@@ -326,8 +343,20 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'ResourceReview.releasedAt',
       'Feedback.appSourceCommit',
       'Feedback.appSourceDirty',
+      'ServiceOffering.declaredNsfwLevel',
+      'ServiceOffering.scanWorkflowId',
+      'ServiceOffering.scannedAt',
       'Article.systemCategoryId',
       'Image.nsfwAxes',
+      'app_user_scope_grants.confirm_within_limit_max_job',
+      'app_block_publish_requests.actions_run_repository',
+      'app_block_publish_requests.actions_run_repository_id',
+      'app_block_publish_requests.actions_run_repository_owner_id',
+      'app_block_publish_requests.actions_run_sha',
+      'app_block_publish_requests.actions_run_ref',
+      'app_block_publish_requests.actions_run_workflow_ref',
+      'app_block_publish_requests.actions_run_repository_visibility',
+      'app_block_publish_requests.actions_run_id',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

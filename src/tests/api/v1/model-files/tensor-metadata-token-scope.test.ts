@@ -74,7 +74,7 @@ async function call(user: Record<string, unknown>, context?: Record<string, unkn
   return res.statusCode;
 }
 
-const key = (tokenScope: number) => ({
+const key = (tokenScope: bigint) => ({
   apiKeyId: 5,
   apiKeyType: 'User',
   subject: { type: 'apiKey', id: 5 },

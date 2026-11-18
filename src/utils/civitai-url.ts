@@ -39,20 +39,8 @@ function hostIsOurs(host: string, extraHosts: string[]) {
   });
 }
 
-/**
- * Resolve a Civitai URL to the entity it points at. Returns null for anything
- * unrecognised — including a bare id, which callers handle themselves so that
- * "123" does not silently become a model.
- *
- * Deliberately ignores everything after the id segment. `/models/123/some-slug`,
- * `/models/123/reviews` and `/collections/123/join` all identify the base entity,
- * and stale slugs are rewritten by the model page on arrival, so validating one
- * would only reject links that work.
- */
-export function parseCivitaiUrlSafe(
-  input: string,
-  opts?: { hosts?: string[] }
-): CivitaiEntityRef | null {
+/** The URL and path segments of a link on one of the site's own hosts, or of a host-relative path. */
+function civitaiPath(input: string, hosts: string[]) {
   const trimmed = input?.trim();
   if (!trimmed) return null;
 
@@ -71,7 +59,7 @@ export function parseCivitaiUrlSafe(
   }
 
   const wasRelative = url.origin === RELATIVE_ORIGIN;
-  if (!wasRelative && !hostIsOurs(url.host, opts?.hosts ?? [])) return null;
+  if (!wasRelative && !hostIsOurs(url.host, hosts)) return null;
 
   let segments: string[];
   try {
@@ -81,7 +69,26 @@ export function parseCivitaiUrlSafe(
     return null;
   }
   if (!segments.length) return null;
+  return { url, segments };
+}
 
+/**
+ * Resolve a Civitai URL to the entity it points at. Returns null for anything
+ * unrecognised — including a bare id, which callers handle themselves so that
+ * "123" does not silently become a model.
+ *
+ * Deliberately ignores everything after the id segment. `/models/123/some-slug`,
+ * `/models/123/reviews` and `/collections/123/join` all identify the base entity,
+ * and stale slugs are rewritten by the model page on arrival, so validating one
+ * would only reject links that work.
+ */
+export function parseCivitaiUrlSafe(
+  input: string,
+  opts?: { hosts?: string[] }
+): CivitaiEntityRef | null {
+  const parsed = civitaiPath(input, opts?.hosts ?? []);
+  if (!parsed) return null;
+  const { url, segments } = parsed;
   const [head, second] = segments;
 
   if (head === 'model-versions') {
@@ -134,6 +141,13 @@ export function parseCivitaiUrlSafe(
   }
 
   return null;
+}
+
+/** The image a Civitai image-page link (`/images/<id>`) points at. */
+export function parseCivitaiImageId(input: string, opts?: { hosts?: string[] }) {
+  const parsed = civitaiPath(input, opts?.hosts ?? []);
+  if (!parsed || parsed.segments[0] !== 'images') return undefined;
+  return toInt(parsed.segments[1]);
 }
 
 /** Whether an absolute URL is on one of the site's own hosts (the image CDN is not one). */

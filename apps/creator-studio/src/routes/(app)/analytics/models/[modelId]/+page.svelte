@@ -31,6 +31,7 @@
   import { buzzCurrencyState } from '$lib/state/buzz-currency.svelte';
   import { modelUrl } from '$lib/model-url';
   import AnalyticsHeader from '$lib/components/AnalyticsHeader.svelte';
+  import ReactorsPanel from '$lib/components/ReactorsPanel.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -448,3 +449,12 @@
     </Table.Root>
   </div>
 {/if}
+
+<ReactorsPanel
+  endpoint="/analytics/models/{data.model.modelId}/likers"
+  noun="model"
+  types={['Like']}
+  title="Who liked"
+  verb="Liked"
+  unit="likes"
+/>

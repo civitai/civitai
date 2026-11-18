@@ -16,6 +16,8 @@ const routers = {
   appCollaborators: () =>
     import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter),
   appStorage: () => import('~/server/routers/app-storage.router').then((m) => m.appStorageRouter),
+  appHibernation: () =>
+    import('~/server/routers/app-hibernation.router').then((m) => m.appHibernationRouter),
   blockImageUpload: () =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter),
   blockImagePicker: () =>
@@ -68,10 +70,26 @@ const routers = {
   resourceReview: () => import('./resourceReview.router').then((m) => m.resourceReviewRouter),
   semanticImageSearch: () =>
     import('./semantic-image-search.router').then((m) => m.semanticImageSearchRouter),
+  imageSearchUpload: () =>
+    import('./image-search-upload.router').then((m) => m.imageSearchUploadRouter),
   semanticArticleSearch: () =>
     import('./semantic-article-search.router').then((m) => m.semanticArticleSearchRouter),
   semanticComicSearch: () =>
     import('./semantic-comic-search.router').then((m) => m.semanticComicSearchRouter),
+  semanticChallengeSearch: () =>
+    import('./semantic-challenge-search.router').then((m) => m.semanticChallengeSearchRouter),
+  semanticModelSearch: () =>
+    import('./semantic-model-search.router').then((m) => m.semanticModelSearchRouter),
+  semanticModel3DSearch: () =>
+    import('./semantic-model3d-search.router').then((m) => m.semanticModel3DSearchRouter),
+  semanticStorylineSearch: () =>
+    import('./semantic-storyline-search.router').then((m) => m.semanticStorylineSearchRouter),
+  semanticCollectionSearch: () =>
+    import('./semantic-collection-search.router').then((m) => m.semanticCollectionSearchRouter),
+  semanticBountySearch: () =>
+    import('./semantic-bounty-search.router').then((m) => m.semanticBountySearchRouter),
+  semanticCrucibleSearch: () =>
+    import('./semantic-crucible-search.router').then((m) => m.semanticCrucibleSearchRouter),
   signals: () => import('./signals.router').then((m) => m.signalsRouter),
   stickerBook: () => import('./sticker-book.router').then((m) => m.stickerBookRouter),
   stripe: () => import('./stripe.router').then((m) => m.stripeRouter),

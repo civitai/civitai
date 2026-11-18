@@ -47,6 +47,7 @@ const baseRow = {
   publishedAt: new Date('2024-01-01T00:00:00Z'),
   modelId: 77,
   modelName: 'Test Model',
+  nsfwLevel: 1,
   baseModel: 'SD 1.5',
   status: 'Published',
   modelStatus: 'Published',
@@ -104,7 +105,7 @@ const handler = (await import('~/pages/api/v1/model-versions/mini/[id]')).defaul
 const sessionFor = (
   userId: number,
   isModerator: boolean,
-  { tokenScope = TokenScope.Full, oauth = false }: { tokenScope?: number; oauth?: boolean } = {}
+  { tokenScope = TokenScope.Full, oauth = false }: { tokenScope?: bigint; oauth?: boolean } = {}
 ) => ({
   user: { id: userId, username: 'someone', bannedAt: null, isModerator },
   apiKeyId: 11,

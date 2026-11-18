@@ -6,6 +6,8 @@ import { NotificationTypeControl } from '~/components/Notifications/Notification
 import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
 import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
 import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { useDigestEmailSetting } from '~/components/Notifications/useDigestEmailSetting';
+import { SystemEmailSettings } from '~/components/Notifications/SystemEmailSettings';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
@@ -13,10 +15,13 @@ import {
   useToggleNotificationSetting,
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { MISSED_DIGEST_DISPLAY_NAME } from '~/server/notifications/missed-digest.constants';
 import {
-  notificationCategoryTypes,
+  notificationSettingGroups,
   notificationTypes,
   optInNotificationTypes,
+  visibleNotificationSettingGroups,
 } from '~/server/notifications/utils.notifications';
 
 export default function NotificationsCard() {
@@ -26,6 +31,8 @@ export default function NotificationsCard() {
   const { pushTypes } = usePushNotificationSettings(pushAvailable);
 
   const updateNotificationSettingMutation = useToggleNotificationSetting();
+  const features = useFeatureFlags();
+  const digest = useDigestEmailSetting();
 
   // Asymmetric on purpose. Turning everything OFF must also unsubscribe opt-in types, or a user who
   // silences the site keeps receiving promos with no way back — the aggregates then hide the tree
@@ -36,7 +43,7 @@ export default function NotificationsCard() {
     updateNotificationSettingMutation.mutate({ toggle, type });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    const categoryTypes = notificationCategoryTypes[category]
+    const categoryTypes = notificationSettingGroups[category]
       ?.filter((x) => toggle === false || !x.optIn)
       .map((x) => x.type);
     if (!categoryTypes?.length) return;
@@ -75,42 +82,56 @@ export default function NotificationsCard() {
             </Group>
           ) : (
             <>
-              {Object.entries(notificationCategoryTypes).map(([category, settings]) => (
-                <React.Fragment key={category}>
-                  <Card.Section withBorder inheritPadding py="xs">
-                    <Group justify="space-between">
-                      <Text fw={500}>{category} Notifications</Text>
-                      <SkeletonSwitch
-                        loading={isLoading}
-                        checked={hasCategory[category]}
-                        onChange={(e) => toggleCategory(category, e.target.checked)}
-                      />
-                    </Group>
-                  </Card.Section>
-                  {hasCategory[category] && (
-                    <Card.Section inheritPadding py="md">
-                      <Stack>
-                        {settings.map(({ type, displayName }) => (
-                          <NotificationTypeControl
-                            key={type}
-                            type={type}
-                            displayName={displayName}
-                            checked={notificationSettings[type]}
-                            pushOn={pushTypes.includes(type)}
-                            pushAvailable={pushAvailable}
-                            disabled={isLoading}
-                          />
-                        ))}
-                      </Stack>
+              {Object.entries(visibleNotificationSettingGroups(features)).map(
+                ([category, settings]) => (
+                  <React.Fragment key={category}>
+                    <Card.Section withBorder inheritPadding py="xs">
+                      <Group justify="space-between">
+                        <Text fw={500}>{category} Notifications</Text>
+                        <SkeletonSwitch
+                          loading={isLoading}
+                          checked={hasCategory[category]}
+                          onChange={(e) => toggleCategory(category, e.target.checked)}
+                        />
+                      </Group>
                     </Card.Section>
-                  )}
-                </React.Fragment>
-              ))}
+                    {hasCategory[category] && (
+                      <Card.Section inheritPadding py="md">
+                        <Stack>
+                          {settings.map(({ type, displayName }) => (
+                            <NotificationTypeControl
+                              key={type}
+                              type={type}
+                              displayName={displayName}
+                              checked={notificationSettings[type]}
+                              pushOn={pushTypes.includes(type)}
+                              pushAvailable={pushAvailable}
+                              disabled={isLoading}
+                            />
+                          ))}
+                        </Stack>
+                      </Card.Section>
+                    )}
+                  </React.Fragment>
+                )
+              )}
             </>
           )}
         </Card>
         <Divider label="Email Notifications" />
         <NewsletterToggle />
+        <Group gap="sm" wrap="nowrap" align="flex-start">
+          <SkeletonSwitch
+            loading={digest.isLoading}
+            checked={digest.enabled}
+            onChange={(e) => digest.setEnabled(e.target.checked)}
+          />
+          <Text size="sm">{MISSED_DIGEST_DISPLAY_NAME}</Text>
+        </Group>
+        <Text size="sm" fw={500}>
+          App review emails
+        </Text>
+        <SystemEmailSettings />
       </Stack>
     </Card>
   );

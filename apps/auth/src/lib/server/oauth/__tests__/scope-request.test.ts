@@ -4,7 +4,7 @@ import { parseScopeRequest, SUPPORTED_SCOPE_NAMES } from '../scope';
 
 describe('parseScopeRequest', () => {
   it('reads the decimal bitmask', () => {
-    expect(parseScopeRequest('5')).toEqual({ scope: 5, openid: false });
+    expect(parseScopeRequest('5')).toEqual({ scope: 5n, openid: false });
   });
 
   it('reads TokenScope names, ORed together', () => {
@@ -21,6 +21,14 @@ describe('parseScopeRequest', () => {
     });
   });
 
+  it('reads the Apps scopes by name and as a bitmask past bit 30', () => {
+    expect(parseScopeRequest('AppsRead AppDataRead')).toEqual({
+      scope: 6442450944n,
+      openid: false,
+    });
+    expect(parseScopeRequest('6442450945')).toEqual({ scope: 6442450945n, openid: false });
+  });
+
   it('mixes names and numbers, and tolerates extra whitespace', () => {
     expect(parseScopeRequest('  openid   4 MediaRead ')).toEqual({
       scope: TokenScope.ModelsRead | TokenScope.MediaRead,
@@ -29,15 +37,15 @@ describe('parseScopeRequest', () => {
   });
 
   it('treats missing or blank as no permissions', () => {
-    expect(parseScopeRequest(undefined)).toEqual({ scope: 0, openid: false });
-    expect(parseScopeRequest('')).toEqual({ scope: 0, openid: false });
+    expect(parseScopeRequest(undefined)).toEqual({ scope: 0n, openid: false });
+    expect(parseScopeRequest('')).toEqual({ scope: 0n, openid: false });
   });
 
   it('refuses unknown names, `None`, negatives and values beyond ALL_SCOPES', () => {
     expect(parseScopeRequest('ModelsRead Bogus')).toBeNull();
     expect(parseScopeRequest('None')).toBeNull();
     expect(parseScopeRequest('-1')).toBeNull();
-    expect(parseScopeRequest(String(ALL_SCOPES + 1))).toBeNull();
+    expect(parseScopeRequest(String(ALL_SCOPES + 1n))).toBeNull();
     expect(parseScopeRequest('toString')).toBeNull();
   });
 

@@ -1095,7 +1095,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
           source: refCodeSource,
         },
         'webhooks'
-      ).catch(() => null);
+      );
     }
 
     const stripePaymentIntentId =
@@ -1270,7 +1270,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
               source: attributionSource,
             },
             'webhooks'
-          ).catch(() => null);
+          );
         }
       } catch (attrErr) {
         // Never fail membership provisioning on an attribution write.
@@ -1284,7 +1284,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
             error: (attrErr as Error)?.message,
           },
           'webhooks'
-        ).catch(() => null);
+        );
       }
     }
 
@@ -1584,7 +1584,7 @@ export const getPaymentIntent = async ({
         expectedUnitAmount: metadata.buzzAmount / 10,
       },
       'webhooks'
-    ).catch(() => null);
+    );
 
     throw throwBadRequestError(
       'There was an error while creating your order. Please try again later.'
@@ -1622,7 +1622,7 @@ export const getPaymentIntent = async ({
         derivedBuzzType: buzzType,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   const stripe = await getServerStripe();
@@ -1693,7 +1693,7 @@ export const getPaymentIntentsForBuzz = async ({
         stripePaymentIntentId,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
   const batches = chunk(
     pendingPayments.filter((intent) => intent.metadata.userId),

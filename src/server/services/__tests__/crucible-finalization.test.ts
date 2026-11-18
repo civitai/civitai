@@ -14,6 +14,7 @@ import type * as PrizeService from '~/server/services/prize.service';
 import type * as BradleyTerry from '~/server/services/crucible-bradley-terry';
 import { loggingMock, dbMock, redisMock } from '~/__tests__/mocks';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -218,7 +219,7 @@ describe('finalizeCrucible — guards', () => {
 });
 
 describe('finalizeCrucible — positions', () => {
-  it("ranks every entry except a banned entrant's, a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
+  it("ranks every entry except a banned entrant's, a blocked, held, flagged, unpublished or restricted one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
     const { where } = findMany.mock.calls[0][0];
@@ -226,14 +227,19 @@ describe('finalizeCrucible — positions', () => {
       crucibleId: 1,
       user: { bannedAt: null },
       image: {
-        needsReview: null,
-        tosViolation: false,
-        post: { publishedAt: { not: null } },
-        ingestion: { not: ImageIngestionStatus.Blocked },
-        nsfwLevel: { in: expect.arrayContaining([1, 3]) },
+        AND: [
+          {
+            needsReview: null,
+            tosViolation: false,
+            post: { publishedAt: { not: null } },
+            ingestion: { not: ImageIngestionStatus.Blocked },
+            nsfwLevel: { in: expect.arrayContaining([1, 3]) },
+          },
+          imageNotRestrictedWhere(),
+        ],
       },
     });
-    expect(where.image.nsfwLevel.in).not.toContain(2);
+    expect(where.image.AND[0].nsfwLevel.in).not.toContain(2);
   });
 
   describe('contest-banned entrants', () => {

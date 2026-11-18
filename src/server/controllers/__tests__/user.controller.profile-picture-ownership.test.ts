@@ -14,6 +14,7 @@ const {
   mockIngestImageById,
   mockDeleteImageById,
   mockDeleteImages,
+  mockAnyImageHeld,
 } = vi.hoisted(() => ({
   mockUpdateUserById: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -21,7 +22,10 @@ const {
   mockIngestImageById: vi.fn(),
   mockDeleteImageById: vi.fn(),
   mockDeleteImages: vi.fn(),
+  mockAnyImageHeld: vi.fn(),
 }));
+
+vi.mock('~/server/services/held-image-keys', () => ({ anyImageHeldOrBlocked: mockAnyImageHeld }));
 
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),
@@ -119,11 +123,12 @@ function expectImageUntouched(imageId: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER_ID)] as never);
+  redisMock.redis.mGet.mockResolvedValue([String(CALLER_ID)] as never);
   currentPictureOwnedBy(CALLER_ID);
   mockUpdateUserById.mockResolvedValue({ id: CALLER_ID, profilePictureId: CREATED_PICTURE_ID });
   mockIngestImage.mockResolvedValue(true);
   mockIngestImageById.mockResolvedValue(true);
+  mockAnyImageHeld.mockResolvedValue(false);
 });
 
 describe('profile picture updates are scoped to the caller', () => {
@@ -224,7 +229,7 @@ describe('profile picture updates are scoped to the caller', () => {
   describe('a new picture or `image` whose key was issued to another user', () => {
     beforeEach(() => {
       dbMock.dbWrite.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
-      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER_USER_ID)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(OTHER_USER_ID)] as never);
     });
     afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
 
@@ -257,5 +262,57 @@ describe('profile picture updates are scoped to the caller', () => {
     expect(mockUpdateUserById.mock.calls[0][0].data.profilePicture).toBeUndefined();
     expect(mockIngestImageById).not.toHaveBeenCalled();
     expect(queuedImageIds()).toEqual([]);
+  });
+});
+
+describe('a legacy avatar image', () => {
+  const HELD_KEY = '0d6f3a1c-2b4e-4c8d-9a7f-5e1b3c2d4f60';
+  const saveImage = (image: string) =>
+    updateUserHandler({
+      ctx: { user: { id: CALLER_ID } },
+      input: { id: CALLER_ID, image },
+    } as never);
+  beforeEach(() => {
+    mockAnyImageHeld.mockImplementation(async (_db: unknown, keys: string[]) =>
+      keys.includes(HELD_KEY)
+    );
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      imageUrlOwnersFake([
+        { url: AVATAR_KEY, userId: CALLER_ID },
+        { url: HELD_KEY, userId: CALLER_ID },
+      ])
+    );
+  });
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  it('is refused when its key names an image under an owner-hidden hold', async () => {
+    await expect(saveImage(HELD_KEY)).rejects.toThrow('Invalid avatar URL');
+    expect(mockAnyImageHeld).toHaveBeenCalledWith(expect.anything(), [HELD_KEY]);
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('is refused as a new profile picture upload too', async () => {
+    await expect(
+      updateUserHandler({
+        ctx: { user: { id: CALLER_ID } },
+        input: { id: CALLER_ID, profilePicture: { id: OTHER_USERS_IMAGE_ID, url: HELD_KEY } },
+      } as never)
+    ).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it("is checked only once the caller may use the key, so another user's hold is not told apart", async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      imageUrlOwnersFake([{ url: HELD_KEY, userId: OTHER_USER_ID }])
+    );
+    await expect(saveImage(HELD_KEY)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(saveImage(HELD_KEY)).rejects.not.toThrow('Invalid avatar URL');
+    expect(mockAnyImageHeld).not.toHaveBeenCalled();
+  });
+
+  it('is saved when its key names none', async () => {
+    await saveImage(AVATAR_KEY);
+    expect(mockAnyImageHeld).toHaveBeenCalledWith(expect.anything(), [AVATAR_KEY]);
+    expect(mockUpdateUserById.mock.calls[0][0].data.image).toBe(AVATAR_KEY);
   });
 });

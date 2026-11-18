@@ -1,5 +1,5 @@
 /**
- * Replace every bearer-credential value (`BEARER_KEYS`: `blockToken`, `shareToken`) in a tRPC input
+ * Replace every bearer-credential value (`BEARER_KEYS`: `blockToken`, `shareToken`, `uploadUrl`) in a tRPC input
  * with a fixed marker before the input is logged. Anyone holding one can act on its behalf until
  * it expires, so it must never reach a log line.
  *
@@ -16,8 +16,11 @@
  */
 export const REDACTED_BLOCK_TOKEN = '[redacted]';
 
-/** Input keys that carry a bearer credential: a block token, or an article share token. */
-export const BEARER_KEYS: ReadonlySet<string> = new Set(['blockToken', 'shareToken']);
+/**
+ * Input keys that carry a bearer credential: a block token, an article share token, or a private
+ * upload's blob URL (search by image), which fetches the uploaded file.
+ */
+export const BEARER_KEYS: ReadonlySet<string> = new Set(['blockToken', 'shareToken', 'uploadUrl']);
 
 export function redactBlockTokens<T>(input: T): T {
   return redact(input) as T;

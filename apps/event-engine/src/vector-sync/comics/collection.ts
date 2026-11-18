@@ -1,6 +1,5 @@
-import { QdrantClient } from '@qdrant/js-client-rest';
 import { config } from '@/config';
-import { SITE_REPLICATION, VectorStore, type CollectionSpec } from '../qdrant';
+import { SITE_REPLICATION, VectorStore, qdrantClient, type CollectionSpec } from '../qdrant';
 import type { ComicPayload } from './source';
 
 /**
@@ -33,10 +32,9 @@ export const COMIC_COLLECTION: CollectionSpec<ComicPayload> = {
 };
 
 export function comicVectorStore() {
-  const { qdrantUrl, qdrantApiKey, comicCollection } = config.vectorSync;
   return new VectorStore<ComicPayload>(
-    new QdrantClient({ url: qdrantUrl, apiKey: qdrantApiKey }),
-    comicCollection,
+    qdrantClient(),
+    config.vectorSync.comicCollection,
     COMIC_COLLECTION
   );
 }

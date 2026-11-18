@@ -1,12 +1,13 @@
 import { createKvSnapshotStore, loadFliptTuning } from '@civitai/flipt';
 import { env } from '~/env/server';
 import { setFliptSnapshotStore } from '~/server/flipt/client';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 
-type SnapshotKey = `${typeof REDIS_SYS_KEYS.FLIPT.SNAPSHOT}:${string}`;
+type SnapshotKey = `${typeof REDIS_KEYS.FLIPT.SNAPSHOT}:${string}`;
 
 /**
- * The last-known Flipt flag state, kept in sysRedis, so a pod that starts while Flipt is
+ * The last-known Flipt flag state, kept on the cache cluster, so a pod that starts while Flipt is
  * unreachable evaluates the state its siblings are serving instead of `false` for every flag
  * (which turns the default-on flags OFF on that pod alone).
  *
@@ -16,7 +17,7 @@ type SnapshotKey = `${typeof REDIS_SYS_KEYS.FLIPT.SNAPSHOT}:${string}`;
  * Pods with live state keep it current; createKvSnapshotStore documents the write rate.
  *
  * Its own module, registered from instrumentation.node.ts, because ~/server/flipt/client is in
- * the _app client graph and must not reach sysRedis.
+ * the _app client graph and must not reach the Redis clients.
  */
 export function registerFliptSnapshotStore(): void {
   const tuning = loadFliptTuning();
@@ -24,10 +25,11 @@ export function registerFliptSnapshotStore(): void {
   setFliptSnapshotStore(
     createKvSnapshotStore({
       kv: {
-        get: (key) => withSysReadDeadline(sysRedis.get(key as SnapshotKey)),
-        set: (key, value, ttlMs) => sysRedis.set(key as SnapshotKey, value, { PX: ttlMs }),
+        get: (key) =>
+          boundedClusterCall('fliptSnapshotGet', () => redis.get(key as SnapshotKey)),
+        set: (key, value, ttlMs) => redis.set(key as SnapshotKey, value, { PX: ttlMs }),
       },
-      key: `${REDIS_SYS_KEYS.FLIPT.SNAPSHOT}:${tuning.environment}`,
+      key: `${REDIS_KEYS.FLIPT.SNAPSHOT}:${tuning.environment}`,
       maxAgeMs: tuning.snapshotMaxAgeMs,
       refreshIntervalMs: tuning.snapshotSaveIntervalMs,
     })

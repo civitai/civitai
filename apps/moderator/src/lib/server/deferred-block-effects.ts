@@ -34,7 +34,7 @@ export type DeferredBlockEffect = {
   reportIds: number[];
 };
 
-const log = (data: Record<string, unknown>) => logToAxiom(data).catch(() => undefined);
+const log = (data: Record<string, unknown>) => logToAxiom(data);
 
 /**
  * Deletes these images' deferred block effects and returns them, so each goes to exactly one close.

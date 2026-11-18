@@ -5,17 +5,29 @@ const h = vi.hoisted(() => ({
   params: [] as unknown[][],
   invalidatedAfter: [] as number[],
   bustedPictures: [] as { imageIds: number[]; after: number }[],
+  failRecompute: false,
 }));
 
 vi.mock('../db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
-  const db = capturingDb(h.sql, [], h.params);
+  const db = capturingDb(
+    h.sql,
+    (sql: string) => {
+      if (h.failRecompute && sql.includes('update_nsfw_levels_new'))
+        throw new Error('lock timeout');
+      return [];
+    },
+    h.params
+  );
   return { dbRead: db, dbWrite: db };
 });
 vi.mock('../redis', () => ({ getRedis: () => ({ get: async () => '[]' }) }));
 vi.mock('../search-index', () => ({ syncSearchIndexBulk: vi.fn() }));
 vi.mock('../cache', () => ({ bustImageTagCaches: vi.fn() }));
 vi.mock('../axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
+vi.mock('../image-models-reindex', () => ({
+  queueModelsForImageChildTagChanges: vi.fn(async () => undefined),
+}));
 vi.mock('../thumbnail-cache', () => ({
   invalidateThumbnails: vi.fn(async () => {
     h.invalidatedAfter.push(h.sql.length);
@@ -30,6 +42,7 @@ vi.mock('../profile-picture-cache', () => ({
 const { upsertTagsOnImageNew } = await import('../tags-on-image.service');
 const { bustImageTagCaches } = await import('../cache');
 const { logAxiomError } = await import('../axiom');
+const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
 
 const flat = (i: number) => h.sql[i].replace(/\s+/g, ' ').trim();
 
@@ -89,5 +102,35 @@ describe('upsertTagsOnImageNew', () => {
     expect(h.invalidatedAfter).toEqual([2]);
     expect(h.bustedPictures).toEqual([{ imageIds: [31], after: 2 }]);
     expect(logAxiomError).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('upsertTagsOnImageNew: models index', () => {
+  it('hands the written tags and the re-rated images over', async () => {
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+    await upsertTagsOnImageNew([
+      { imageId: 1, tagId: 2 },
+      { imageId: 3, tagId: 4 },
+    ]);
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      tagWrites: [
+        expect.objectContaining({ imageId: 1, tagId: 2 }),
+        expect.objectContaining({ imageId: 3, tagId: 4 }),
+      ],
+      levelImageIds: [1, 3],
+    });
+  });
+
+  it('still hands them over when the level recompute throws', async () => {
+    h.failRecompute = true;
+    vi.mocked(queueModelsForImageChildTagChanges).mockClear();
+
+    await expect(upsertTagsOnImageNew([{ imageId: 1, tagId: 2 }])).rejects.toThrow('lock timeout');
+    h.failRecompute = false;
+
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ levelImageIds: [1] })
+    );
   });
 });

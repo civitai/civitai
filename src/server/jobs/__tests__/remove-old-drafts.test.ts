@@ -105,8 +105,7 @@ const asCall = (first: unknown, values: unknown[]) =>
     : (first as { strings: string[]; values: unknown[] });
 const isModelDelete = (strings: readonly string[]) =>
   strings.join('?').includes('DELETE FROM "Model"');
-const isLeftLookup = (strings: readonly string[]) =>
-  strings.join('?').includes('SELECT id FROM "Model"');
+const isLeftLookup = (strings: readonly string[]) => strings.join('?').includes(' AS moderated');
 
 /** Model ids handed to a given `DELETE FROM "Model"` call. */
 function deleteBatches() {
@@ -133,7 +132,7 @@ beforeEach(() => {
     return isModelDelete(strings)
       ? write.deleteModels(values[0] as number[])
       : isLeftLookup(strings)
-      ? write.stillThere(values[0] as number[])
+      ? write.stillThere(values.at(-1) as number[])
       : write.versions(values[0] as number[]);
   }) as never);
 });
@@ -156,6 +155,8 @@ describe('removeOldDrafts', () => {
 
       expect(readPredicate()).toBe(
         `WHERE m.status IN ('Draft', 'Deleted') ` +
+          // The shared keep rule, a parameter here: its text is pinned in old-draft-reaper-parity.
+          `AND NOT ? ` +
           `AND m."updatedAt" < now() - INTERVAL '30 days' ` +
           `AND mm."downloadCount" < 10 ` +
           `AND m."availability" != 'Private'::"Availability" ` +

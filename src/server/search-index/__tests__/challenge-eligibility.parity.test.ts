@@ -18,10 +18,15 @@ const SCHEMA = `
   CREATE TYPE "ChallengeSource" AS ENUM ('System', 'Mod', 'User');
   CREATE TYPE "ChallengeIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error');
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
-  CREATE TABLE "Image" (id int PRIMARY KEY, poi boolean, ingestion "ImageIngestionStatus" NOT NULL);
+  CREATE TABLE "Image" (
+    id int PRIMARY KEY, poi boolean, ingestion "ImageIngestionStatus" NOT NULL,
+    "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text,
+    minor boolean NOT NULL DEFAULT false, "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 1
+  );
+  CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   CREATE TABLE "Challenge" (
     id int PRIMARY KEY, status "ChallengeStatus" NOT NULL, source "ChallengeSource" NOT NULL,
-    ingestion "ChallengeIngestionStatus" NOT NULL, "coverImageId" int
+    ingestion "ChallengeIngestionStatus" NOT NULL, "coverImageId" int, "createdById" int
   );
 `;
 
@@ -31,16 +36,29 @@ type Over = {
   ingestion?: string;
   /** The cover's (poi, ingestion) row, or false for no cover. */
   cover?: false | string;
+  /** SQL for the cover's tosViolation, needsReview, minor, blockedFor. Default: not held. */
+  held?: string;
+  /** The owner's bannedAt, deletedAt, or false for no owner row. Default: an active owner. */
+  owner?: false | string;
 };
 
-/** One challenge; its cover image has the same id. */
+/** One challenge; its cover image and its owner have the same id. */
 const challenge = (id: number, name: string, include: boolean, over: Over = {}): ParityRow => {
   const cover = over.cover ?? `false, 'Scanned'`;
   const sql = [
-    ...(cover === false ? [] : [`INSERT INTO "Image" VALUES (${id}, ${cover})`]),
+    ...(cover === false
+      ? []
+      : [
+          `INSERT INTO "Image" VALUES (${id}, ${cover}, ${
+            over.held ?? 'false, NULL, false, NULL'
+          })`,
+        ]),
+    ...(over.owner === false
+      ? []
+      : [`INSERT INTO "User" VALUES (${id}, ${over.owner ?? 'NULL, NULL'})`]),
     `INSERT INTO "Challenge" VALUES (${id}, '${over.status ?? 'Active'}',
       '${over.source ?? 'User'}', '${over.ingestion ?? 'Scanned'}',
-      ${cover === false ? 'NULL' : id})`,
+      ${cover === false ? 'NULL' : id}, ${over.owner === false ? 'NULL' : id})`,
   ];
   return { id, name, include, insert: sql.join(';\n') };
 };
@@ -67,8 +85,49 @@ const spec: ParitySpec = {
     // Ended and upcoming challenges stay searchable; the caller filters status.
     challenge(11, 'completed', true, { status: 'Completed' }),
     challenge(12, 'scheduled', true, { status: 'Scheduled' }),
+    // A held or flagged cover excludes even a System challenge, whose cover is otherwise trusted.
+    challenge(13, 'coverNotTos', false, { source: 'System', held: 'true, NULL, false, NULL' }),
+    challenge(14, 'coverNotInReview', false, { held: `false, 'minor', false, NULL` }),
+    challenge(15, 'coverNotMinor', false, { held: 'false, NULL, true, NULL' }),
+    challenge(16, 'coverNotBlocked', false, { held: `false, NULL, false, 'CSAM'` }),
+    challenge(17, 'ownerNotBanned', false, { owner: 'now(), NULL' }),
+    challenge(18, 'ownerNotDeleted', false, { source: 'System', owner: 'NULL, now()' }),
+    // Blocked by ingestion or level with no reason recorded still counts as blocked.
+    challenge(19, 'coverNotBlockedIngestion', false, {
+      source: 'System',
+      cover: `false, 'Blocked'`,
+    }),
+    challenge(20, 'coverNotBlockedLevel', false, {
+      source: 'Mod',
+      held: 'false, NULL, false, NULL, 32',
+    }),
+    challenge(21, 'userHasOwner', false, { owner: false }),
+    challenge(23, 'userCoverUnrated', false, { held: 'false, NULL, false, NULL, 0' }),
+    // System and Mod covers are trusted, as for the scan.
+    challenge(24, 'systemCoverUnrated', true, {
+      source: 'System',
+      held: 'false, NULL, false, NULL, 0',
+    }),
+    // A System challenge needs no owner row.
+    challenge(22, 'systemNoOwner', true, { source: 'System', owner: false }),
   ],
-  clauses: ['scanned', 'cover', 'coverNotPoi', 'userCoverScanned', 'notCancelled'],
+  clauses: [
+    'scanned',
+    'cover',
+    'coverNotPoi',
+    'userCoverScanned',
+    'notCancelled',
+    'coverNotTos',
+    'coverNotInReview',
+    'coverNotMinor',
+    'coverNotBlocked',
+    'ownerNotBanned',
+    'ownerNotDeleted',
+    'coverNotBlockedIngestion',
+    'coverNotBlockedLevel',
+    'userHasOwner',
+    'userCoverUnrated',
+  ],
   site: async (prisma) =>
     (
       await prisma.$queryRaw<{ id: number }[]>`
@@ -119,9 +178,7 @@ describe("the feed's scan gates for a viewer", () => {
   };
 
   it('lets a creator through every gate but the cover itself, for their own challenges only', async () => {
-    const harness = await startPglitePrisma(
-      SCHEMA.replace(`"coverImageId" int\n`, `"coverImageId" int, "createdById" int\n`)
-    );
+    const harness = await startPglitePrisma(SCHEMA);
     try {
       for (const sql of Object.values(rows)) await harness.pg.exec(sql);
       const visible = async (viewerId?: number) =>

@@ -1,3 +1,4 @@
+import { assertCollectionItemsVisibleToViewer } from '~/server/services/collection-item-visibility';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
@@ -8,7 +9,9 @@ import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  keysIn,
 } from '~/server/services/image-url-ownership';
+import { anyImageHeldOrBlocked } from '~/server/services/held-image-keys';
 import { constants } from '~/server/common/constants';
 import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 import {
@@ -179,6 +182,8 @@ import {
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
+import { avatarAtLevel } from '~/server/utils/public-avatar';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getAllUsersHandler = async ({
   input,
@@ -702,6 +707,13 @@ export const updateUserHandler = async ({
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldOrBlocked(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -968,11 +980,15 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
         // model id per creator just to take `.length`. The only consumer
         // (src/pages/api/v1/creators.ts) reads modelCount, not the model rows.
         _count: { select: { models: { where: { status: 'Published' } } } },
-        image: true,
+        profilePicture: { select: { url: true, nsfwLevel: true, type: true } },
       },
     });
+    const items = results.items.map((item) => ({
+      ...item,
+      profilePicture: avatarAtLevel(item.profilePicture, publicBrowsingLevelsFlag),
+    }));
 
-    return getPagingData(results, take, page);
+    return getPagingData({ ...results, items }, take, page);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1121,6 +1137,15 @@ export async function toggleFavoriteHandler({
   const { id: userId, muted } = ctx.user;
   if (muted) return false;
 
+  // Before the review and notify writes, so a refused favorite leaves nothing half-saved.
+  if (setTo)
+    await assertCollectionItemsVisibleToViewer({
+      itemKey: 'modelId',
+      ids: [modelId],
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
+
   // Toggle review (on/off)
   const reviewResult = await toggleReview({
     modelId,
@@ -1144,6 +1169,7 @@ export async function toggleFavoriteHandler({
       type: 'Model',
       entityId: modelId,
       userId,
+      isModerator: ctx.user.isModerator,
       setTo,
     });
   } else {
@@ -1311,7 +1337,7 @@ export const toggleMuteHandler = async ({
       type: 'error',
       message: (error as Error).message,
       details: { userId: id },
-    }).catch(() => undefined);
+    });
   }
 
   return updatedUser;

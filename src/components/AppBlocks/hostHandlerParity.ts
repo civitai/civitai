@@ -233,6 +233,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // A link to a view of the app: the page host builds the canonical
+  // `/apps/run/<slug>/<subPath>` URL from its own origin and slug, copies it or opens the
+  // share sheet, and replies with `{ url, copied, method }`. REQUEST-style ⇒ an unhandled
+  // one HANGS the block.
+  SHARE_LINK: {
+    request: true,
+    reply: 'SHARE_LINK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    // N/A: a model slot has no route of its own (no `subPath`, no deep-link base), so
+    // there is no app URL to build for it.
+    IframeHost: 'model slot has no app route to link to (no deep-link base); page-only',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   TRACK_EVENT: {
     request: false,
     reply: '',
@@ -375,6 +390,29 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // The app asks the host to offer the viewer a higher daily Buzz limit for it, after a refusal
+  // at that limit. The host sends DAILY_LIMIT_RAISE_ACK { opened } first, then this reply.
+  REQUEST_DAILY_LIMIT_RAISE: {
+    request: true,
+    reply: 'DAILY_LIMIT_RAISE_RESULT',
+    replyKeys: ['raised'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // The app asks the host to unlock ONE restricted workflow output (by workflow and position).
+  // The host's own dialog offers what the server allows; every outcome, a refusal included, is
+  // reported inside `result`, so only the shared dispatcher's NACK carries an `error`.
+  REQUEST_OUTPUT_UNLOCK: {
+    request: true,
+    reply: 'OUTPUT_UNLOCK_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // App generator SUBQUEUE bridges (tag-scoped) — the calling app's OWN slice of
   // the viewer's generation queue: read (image results) + cancel one, both scoped
   // to `app-block:<appId>` server-side (host-forced tag on read; fail-closed
@@ -414,6 +452,21 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Keep ONE of the app's own finished workflow outputs as a PRIVATE, scanned generation
+  // source (`blocks.persistGenerationSource`): no dialog, nothing shared. Page-only, like
+  // OPEN_IMAGE_UPLOAD's `generationSource` purpose; on the model slot the shared dispatcher
+  // NACKs it with a GENERATION_SOURCE_PERSISTED error. Ahead of the published SDK dist union
+  // (the SDK pair lands in the SDK repo).
+  PERSIST_GENERATION_SOURCE: {
+    request: true,
+    reply: 'GENERATION_SOURCE_PERSISTED',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost:
+      'private generation sources are a page-only affordance today, as OPEN_IMAGE_UPLOAD generationSource is; the shared dispatcher NACKs it with a GENERATION_SOURCE_PERSISTED error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   // Model-Benchmarking shared grid — per-viewer gated read of the grid's image
   // ids (the server applies the viewer's browsing-level clamp; above-ceiling /
   // unscanned / flagged come back `hidden` with no url). Host-mediated via the
@@ -425,6 +478,18 @@ export const INVENTORY = {
     errorKeys: ['error'],
     IframeHost:
       'shared-grid gated read is a page-only affordance today; the model slot has no such surface',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Stored workflow media refs → viewer-bound media URLs, judged per viewer
+  // server-side. Advertised as `workflowMedia:v1` in BLOCK_INIT by the page host
+  // only, so the SDK never sends it to a host that would leave it hanging.
+  GET_WORKFLOW_MEDIA: {
+    request: true,
+    reply: 'WORKFLOW_MEDIA_RESULT',
+    replyKeys: ['result'],
+    errorKeys: ['error'],
+    IframeHost: 'not advertised in the model slot; workflow media is a page-app surface today',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
@@ -537,8 +602,9 @@ export const INVENTORY = {
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
-    replyKeys: ['selected?'],
-    errorKeys: ['error'],
+    // `shared` is present only on replies to a `share: true` request (see PageBlockHost).
+    replyKeys: ['selected?', 'shared?'],
+    errorKeys: ['error', 'shared?'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',
@@ -567,6 +633,20 @@ export const INVENTORY = {
     errorKeys: ['error'],
     IframeHost:
       'media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Many files the block holds, uploaded as PRIVATE generation inputs behind one host-chrome
+  // confirm — see `mediaUploadBatchLogic.ts`. `results` is absent on a declined batch; `expiresAt`
+  // is absent when no item was valid (nothing was asked or uploaded). REQUEST-style; ahead of the
+  // published SDK dist union (the SDK pair lands in the SDK repo).
+  OPEN_MEDIA_UPLOAD_BATCH: {
+    request: true,
+    reply: 'MEDIA_UPLOAD_BATCH_RESULT',
+    replyKeys: ['results?', 'expiresAt?'],
+    errorKeys: ['error'],
+    IframeHost:
+      'batch media upload is a page-only affordance today; the shared dispatcher NACKs it with a MEDIA_UPLOAD_BATCH_RESULT error',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
