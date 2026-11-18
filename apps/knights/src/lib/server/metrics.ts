@@ -201,7 +201,8 @@ export const metrics = {
       type: 'info',
       name: 'knights-vote-refused',
       message: `A ${action} was refused`,
-      details: { reason, kind, playerId, itemId, action },
+      details: { reason, playerId },
+      payload: { kind, itemId, action },
     });
   },
   // No table records these three, so each also leaves one Axiom event.
