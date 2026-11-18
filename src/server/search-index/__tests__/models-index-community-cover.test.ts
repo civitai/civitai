@@ -79,41 +79,59 @@ describe('the search document and a community cover', () => {
     expect(images.map((image) => image.id)).toEqual([1, 90]);
   });
 
-  it('hoists a community cover featured on an older version', () => {
-    const images = [
-      owner(1, 10),
-      { id: 90, modelVersionId: 9, availability: 'Public', authorUsername: 'ann' },
-    ] as unknown as Images;
-    const picked = pickModelIndexImages(
-      { coverImageId: 90 },
-      [
-        { id: 10, baseModel: 'SDXL 1.0' },
-        { id: 9, baseModel: 'SDXL 1.0' },
-      ],
-      images
-    );
+  const versions = [
+    { id: 10, baseModel: 'SDXL 1.0' },
+    { id: 9, baseModel: 'SDXL 1.0' },
+  ];
+
+  it('hoists a community cover featured on an older version', async () => {
+    const featured = { id: 90, modelVersionId: 9, availability: 'Public', authorUsername: 'ann' };
+    community.covers = new Map([['5:90', { image: featured, sites: new Set(['red']) }]]);
+    const images = [owner(1, 10)] as unknown as Images;
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images);
+
+    const picked = pickModelIndexImages({ id: 5, coverImageId: 90 }, versions, images);
     expect(picked.map((image) => image.id)).toEqual([90, 1]);
   });
 
-  it('leaves out a community cover that every search document excludes, like any other image', () => {
-    const childTag = childBrowsingTagIds[0];
+  it('leaves out a community cover that every search document excludes, like any other image', async () => {
     const excluded = {
       id: 90,
       modelVersionId: 9,
       availability: 'Public',
       authorUsername: 'ann',
       nsfwLevel: NsfwLevel.R,
-      tags: [childTag],
+      tags: [childBrowsingTagIds[0]],
     };
-    const picked = pickModelIndexImages(
-      { coverImageId: 90 },
-      [
-        { id: 10, baseModel: 'SDXL 1.0' },
-        { id: 9, baseModel: 'SDXL 1.0' },
-      ],
-      [owner(1, 10), excluded] as unknown as Images
-    );
+    community.covers = new Map([['5:90', { image: excluded, sites: new Set(['red']) }]]);
+    const images = [owner(1, 10)] as unknown as Images;
+    await appendCommunityCoverImages([{ id: 5, coverImageId: 90 }], images);
+
+    const picked = pickModelIndexImages({ id: 5, coverImageId: 90 }, versions, images);
     expect(picked.map((image) => image.id)).toEqual([1]);
+  });
+
+  it('hoists a cover only for the models it was checked for, not another one in the batch', async () => {
+    const mature = { id: 90, modelVersionId: 9, availability: 'Public', nsfwLevel: NsfwLevel.R };
+    community.covers = new Map([
+      ['5:90', { image: mature, sites: new Set(['red']) }],
+      ['6:90', { image: mature, sites: new Set(['red']) }],
+    ]);
+    // Model 6 is held at PG and PG-13, so the image is checked and refused for it.
+    heldLevels.byModel = new Map([[6, 1 | 2]]);
+    const images = [owner(1, 10)] as unknown as Images;
+    await appendCommunityCoverImages(
+      [
+        { id: 5, coverImageId: 90 },
+        { id: 6, coverImageId: 90, minor: true },
+      ],
+      images
+    );
+
+    const forModel = (id: number) =>
+      pickModelIndexImages({ id, coverImageId: 90 }, versions, images).map((image) => image.id);
+    expect(forModel(5)).toEqual([90, 1]);
+    expect(forModel(6)).toEqual([1]);
   });
 
   it("doesn't hoist an owner image from an older version, as before", () => {

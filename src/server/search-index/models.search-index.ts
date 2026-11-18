@@ -187,6 +187,10 @@ type PullDataResult = {
  * image list holds only the creator's images, so such a cover's row is added for the hoist below to
  * find. Only the cover: the rest of the community showcase stays out of search.
  */
+// The models each appended community cover was checked for. Kept beside the image so the document
+// itself carries no extra field.
+const featuredForModels = new WeakMap<object, Set<number>>();
+
 export async function appendCommunityCoverImages(
   models: {
     id: number;
@@ -223,13 +227,13 @@ export async function appendCommunityCoverImages(
   for (const cover of missing) {
     const image = isShowcaseCoverImage(community, cover);
     // The document is shared by every searcher: a held model's cover stays within its level.
-    if (
-      image &&
-      withinHeldLevel([image], heldLevels.get(cover.modelId)).length &&
-      !present.has(image.id)
-    ) {
+    if (!image || !withinHeldLevel([image], heldLevels.get(cover.modelId)).length) continue;
+    const appended = images.find((row) => row.id === image.id && featuredForModels.has(row));
+    if (appended) featuredForModels.get(appended)?.add(cover.modelId);
+    else if (!present.has(image.id)) {
       images.push(image);
       present.add(image.id);
+      featuredForModels.set(image, new Set([cover.modelId]));
     }
   }
 }
@@ -246,6 +250,7 @@ export const withheldCoverIds = (model: { mode?: string | null }) =>
  */
 export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
   model: {
+    id?: number;
     mode?: string | null;
     coverImageId?: number | null;
     sfwCoverImageId?: number | null;
@@ -269,10 +274,14 @@ export function pickModelIndexImages<TImage extends ImagesForModelVersions>(
       hoistCoverImage(
         list,
         list.find((image) => image.id === coverId) ??
-          // A featured community cover can sit on any of the model's versions.
+          // A featured community cover can sit on any of the model's versions, and counts only for
+          // the models it was checked for.
           images.find(
             (image) =>
-              image.id === coverId && 'authorUsername' in image && !isTaggedMatureImage(image)
+              image.id === coverId &&
+              model.id !== undefined &&
+              !!featuredForModels.get(image)?.has(model.id) &&
+              !isTaggedMatureImage(image)
           )
       ),
     coveredVersionIds.flatMap((versionId) =>

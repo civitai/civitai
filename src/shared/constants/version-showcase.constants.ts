@@ -3,7 +3,7 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 export const versionShowcaseSites = ['com', 'red'] as const;
 export type VersionShowcaseSite = (typeof versionShowcaseSites)[number];
 
-/** Community images per version per site; the carousel shows at most this many images. */
+/** Community images a creator can feature per version per site. */
 export const VERSION_SHOWCASE_LIMIT = 20;
 
 /** civitai.com serves the green domain; every other domain gets the .red showcase. */

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, CAROUSEL_LIMIT } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -143,8 +143,6 @@ const buildVersionShowcaseCache = () =>
     `;
       if (!community.length) return records;
 
-      // The model's own gallery rules (hidden users and images, the held level of a minor or SFW-only
-      // model) apply here as they do to its gallery.
       const { getGallerySettingsByModelId } = await import('~/server/services/model.service');
       const versionModels = await db.modelVersion.findMany({
         where: { id: { in: withCommunity } },
@@ -243,7 +241,7 @@ function orderVersionShowcase(
     ...[...position.entries()].sort((a, b) => a[1] - b[1]).map(([imageId]) => imageId),
     ...owner.filter((id) => !position.has(id)),
   ];
-  return [...new Set(ordered)].slice(0, VERSION_SHOWCASE_LIMIT);
+  return [...new Set(ordered)].slice(0, CAROUSEL_LIMIT);
 }
 
 /**
