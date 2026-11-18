@@ -246,7 +246,7 @@ export function recommendedCardFor(
 }
 
 /** The card a Kohya run starts on for a LoRA type + media: the recommended card when Kohya trains it,
- *  else the first available Kohya card. Undefined when the media has none (Kohya is image-only). */
+ *  else the first available Kohya card. Undefined when no Kohya card for the media is available. */
 export function kohyaSeedCard(
   loraTypeId: string,
   media: Media,

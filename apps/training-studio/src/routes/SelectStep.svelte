@@ -660,7 +660,6 @@
       {/if}
     </div>
 
-    <!-- base model: featured models first, the rest behind "show more"; Kohya lists only its models -->
     <div>
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
