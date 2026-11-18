@@ -1,7 +1,8 @@
 /**
- * One-off: copy the blocklist's live CSAM entries (ClickHouse `blocked_images`) into Postgres
- * "BlockedImage", the table review routing reads (`suspectImageSql`), for the entries written before
- * the blocklist writers began copying them. Delete once run.
+ * Copies the blocklist's live CSAM entries (ClickHouse `blocked_images`) into Postgres "BlockedImage",
+ * the table review routing reads (`suspectImageSql`), wherever the copy is missing. Kept as the
+ * repair for a copy the blocklist writers failed to make: re-run the dry run, then apply with
+ * --expect.
  *
  * Usage:
  *   pnpm run tsscript scripts/oneoffs/reconcile-held-media-blocked-hashes.ts

@@ -119,12 +119,13 @@ function int64Literal(value: bigint | string): string {
 /**
  * Copies blocklist CSAM entries into "BlockedImage", the table `suspectImageSql` reads; a row of
  * another reason becomes CSAM. Never deletes: no unblock ends a live CSAM entry, and a stale row only
- * sends an image to the CSAM review tier. `null` for no hashes.
+ * sends an image to the CSAM review tier. `null` for no hashes. Starts with @civitai/db's REDACT_LOG_MARKER
+ * marker, so the slow-query log never records the hashes.
  */
 export function mirrorBlockedHashesSql(hashes: (bigint | string)[]): string | null {
   const values = [...new Set(hashes.map(int64Literal))];
   if (!values.length) return null;
-  return `INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
+  return `/* log:redact */ INSERT INTO "BlockedImage" (hash, reason) VALUES ${values
     .map((hash) => `(${hash}, 'CSAM')`)
     .join(', ')} ON CONFLICT (hash) DO UPDATE SET reason = EXCLUDED.reason`;
 }

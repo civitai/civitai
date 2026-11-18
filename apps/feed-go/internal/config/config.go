@@ -132,6 +132,11 @@ type Config struct {
 	// metrics lookup, at most half of RequestBudget. Past it the page falls back. The lookup also holds
 	// it under Node's own budget (hydrate's metricsTimeoutMax), whatever this says.
 	ClickHouseTimeout time.Duration
+	// MetricsLockWait is FEED_GO_METRICS_LOCK_WAIT_MS (default 500): how long the metrics lookup waits
+	// on a populate lock another process holds before the page falls back (`metrics-miss-failed`). It
+	// bounds only that wait, not this service's own ClickHouse read (ClickHouseTimeout). Unset, zero,
+	// negative or not an integer is the default, as for every FEED_GO_*_MS variable.
+	MetricsLockWait time.Duration
 	// ClickHouseMaxInFlight is FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT (default 4): the ClickHouse reads one
 	// pod sends at once; a read past it falls back at once (`metrics-miss-failed`).
 	ClickHouseMaxInFlight int
@@ -226,6 +231,7 @@ func Load() (*Config, error) {
 		c.ClickHousePassword = os.Getenv("FEED_GO_CLICKHOUSE_PASSWORD")
 	}
 	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
+	c.MetricsLockWait = time.Duration(positiveIntEnv("FEED_GO_METRICS_LOCK_WAIT_MS", 500)) * time.Millisecond
 	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
 	c.Tracing = tracing.FromEnv(os.Getenv)

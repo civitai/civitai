@@ -82,7 +82,8 @@ beforeAll(async () => {
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
-       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer
+       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
+       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false
      );`
   );
   await pg.exec(migration('20261210120000_knights_v2_tables'));
