@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import type { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
 import { chatLinkifyOptions } from '~/components/Chat/util';
@@ -473,6 +474,54 @@ export const upsertDealChat = async ({
 /**
  * Create a message (direct)
  */
+const signalNewMessage = (chatId: number, message: ChatAllMessages[number]) =>
+  withSignals(() =>
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(message),
+      }
+    )
+  ).catch(() => undefined);
+
+/**
+ * Moves an Invited sender to Joined and writes the "joined" notice, inside the
+ * send's transaction so the notice takes the lower id. Guarded on Invited: a
+ * concurrent first send posts no second notice, and a member kicked or gone
+ * since the caller's read is refused rather than rejoined.
+ */
+async function joinInvitedSender(
+  tx: Prisma.TransactionClient,
+  { chatId, memberId, username }: { chatId: number; memberId: number; username: string | null }
+) {
+  const joinedAt = new Date();
+  const { count } = await tx.chatMember.updateMany({
+    where: { id: memberId, status: ChatMemberStatus.Invited },
+    data: { status: ChatMemberStatus.Joined, joinedAt },
+  });
+  if (count === 0) {
+    const now = await tx.chatMember.findUnique({
+      where: { id: memberId },
+      select: { status: true },
+    });
+    if (now?.status !== ChatMemberStatus.Joined)
+      throw throwBadRequestError(`Unable to post in this chat`);
+    return null;
+  }
+  return tx.chatMessage.create({
+    data: {
+      chatId,
+      userId: -1,
+      contentType: ChatMessageType.Markdown,
+      content: `${username} joined`,
+      createdAt: joinedAt,
+    },
+    include: { referenceMessage: { select: chatReferenceMessageSelect } },
+  });
+}
+
 export const createMessage = async ({
   userId,
   muted,
@@ -503,6 +552,7 @@ export const createMessage = async ({
           user: {
             select: {
               isModerator: true,
+              username: true,
             },
           },
         },
@@ -648,23 +698,43 @@ export const createMessage = async ({
     }
   }
 
-  const resp = await dbWrite.chatMessage.create({
-    data: { chatId, contentType, content, referenceMessageId, userId },
-    // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
-    // signal payload both carry the quote a reply needs to render immediately.
-    include: { referenceMessage: { select: chatReferenceMessageSelect } },
+  // An Invited member who sends without pressing Join (an API client never sees
+  // the button) is joined by the send, so the history reads "X joined" before
+  // their first message instead of after it.
+  const sender = userId !== -1 ? chat.chatMembers.find((cm) => cm.userId === userId) : undefined;
+  const { resp, joinNotice } = await dbWrite.$transaction(async (tx) => {
+    const joinNotice =
+      sender?.status === ChatMemberStatus.Invited
+        ? await joinInvitedSender(tx, {
+            chatId,
+            memberId: sender.id,
+            username: sender.user.username,
+          })
+        : null;
+    const resp = await tx.chatMessage.create({
+      data: { chatId, contentType, content, referenceMessageId, userId },
+      // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
+      // signal payload both carry the quote a reply needs to render immediately.
+      include: { referenceMessage: { select: chatReferenceMessageSelect } },
+    });
+    return { resp, joinNotice };
   });
 
-  withSignals(() =>
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
-      {
+  if (joinNotice) {
+    // The same side effects as joining through modifyUser: into the realtime
+    // group first, so the joiner receives their own notice and message.
+    await withSignals(() =>
+      outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+        timeoutMs: 10_000,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(resp as ChatAllMessages[number]),
-      }
-    )
-  ).catch(() => undefined);
+        body: JSON.stringify(`chat:${chatId}`),
+      })
+    ).catch(() => undefined);
+    signalNewMessage(chatId, joinNotice);
+  }
+  signalNewMessage(chatId, resp);
+  if (joinNotice) await signalChatMembersUpdated({ chatId, userIds: [userId] });
 
   if (userId !== -1) {
     const links = findLinks(content, chatLinkifyOptions(getOwnHosts(serverDomainMap)));
