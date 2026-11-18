@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LEVEL_AUTO_HIDE_MS, RULING_AUTO_HIDE_MS, createAutoHide } from './auto-hide';
+import {
+  LEVEL_AUTO_HIDE_MS,
+  RULING_AUTO_HIDE_MS,
+  countdownStyle,
+  createAutoHide,
+} from './auto-hide';
 
 describe('createAutoHide', () => {
   beforeEach(() => vi.useFakeTimers());
@@ -14,7 +19,7 @@ describe('createAutoHide', () => {
     expect(hide).toHaveBeenCalledOnce();
   });
 
-  it('waits while hovered or focused, and gives the full time again once left', () => {
+  it('waits while hovered or focused, then runs out the time it had left', () => {
     const hide = vi.fn();
     const timer = createAutoHide(RULING_AUTO_HIDE_MS, hide);
     vi.advanceTimersByTime(5000);
@@ -26,7 +31,7 @@ describe('createAutoHide', () => {
     expect(hide).not.toHaveBeenCalled();
 
     timer.hold('focus', false);
-    vi.advanceTimersByTime(RULING_AUTO_HIDE_MS - 1);
+    vi.advanceTimersByTime(RULING_AUTO_HIDE_MS - 5000 - 1);
     expect(hide).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(hide).toHaveBeenCalledOnce();
@@ -49,7 +54,7 @@ describe('createAutoHide', () => {
   it('waits while the tab is hidden, a dialog is up or a failed dismissal shows its error', () => {
     for (const reason of ['hidden', 'dialog', 'message']) {
       const hide = vi.fn();
-      const timer = createAutoHide(RULING_AUTO_HIDE_MS, hide, [reason]);
+      const timer = createAutoHide(RULING_AUTO_HIDE_MS, hide, { held: [reason] });
       vi.advanceTimersByTime(60_000);
       expect(hide).not.toHaveBeenCalled();
       timer.hold(reason, false);
@@ -65,6 +70,30 @@ describe('createAutoHide', () => {
     timer.hold('focus', false);
     timer.hold('hover', false);
     vi.advanceTimersByTime(RULING_AUTO_HIDE_MS - 5000);
+    expect(hide).toHaveBeenCalledOnce();
+  });
+
+  it("drives the countdown bar: the delay's length, paused exactly while the timer waits", () => {
+    expect(countdownStyle(RULING_AUTO_HIDE_MS, false)).toEqual({
+      '--auto-hide-ms': '8000ms',
+      '--auto-hide-state': 'running',
+    });
+    expect(countdownStyle(LEVEL_AUTO_HIDE_MS, true)['--auto-hide-ms']).toBe('6000ms');
+    expect(countdownStyle(LEVEL_AUTO_HIDE_MS, true)['--auto-hide-state']).toBe('paused');
+
+    const paused: boolean[] = [];
+    const hide = vi.fn();
+    const timer = createAutoHide(RULING_AUTO_HIDE_MS, hide, { onpause: (on) => paused.push(on) });
+    expect(timer.paused).toBe(false);
+    vi.advanceTimersByTime(3000);
+    timer.hold('hover', true);
+    expect(timer.paused).toBe(true);
+    timer.hold('focus', true);
+    timer.hold('hover', false);
+    expect(timer.paused).toBe(true);
+    timer.hold('focus', false);
+    expect(paused).toEqual([true, false]);
+    vi.advanceTimersByTime(RULING_AUTO_HIDE_MS - 3000);
     expect(hide).toHaveBeenCalledOnce();
   });
 });

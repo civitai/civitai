@@ -62,10 +62,13 @@
   <form method="POST" action="?/dismissNotices" use:enhance={submit} bind:this={form}>
     <button type="submit">Understood</button>
   </form>
+  <span class="countdown" aria-hidden="true"></span>
 </section>
 
 <style>
   .toast {
+    position: relative;
+    overflow: hidden;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -95,6 +98,20 @@
   .toast.calm {
     border-color: var(--io-gold);
     color: var(--io-gold);
+  }
+  /* Drains over the auto-hide delay and stops while the timer waits. */
+  .countdown {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--io-crimson);
+    transform-origin: left;
+    animation: mo-countdown var(--auto-hide-ms) linear forwards;
+    animation-play-state: var(--auto-hide-state);
+  }
+  .toast.calm .countdown {
+    background: var(--io-gold);
   }
   .toast-body {
     flex: 1;

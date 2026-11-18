@@ -46,10 +46,13 @@
   <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
     <button type="submit" class="dismiss">Onward</button>
   </form>
+  <span class="countdown" aria-hidden="true"></span>
 </section>
 
 <style>
   .toast {
+    position: relative;
+    overflow: hidden;
     display: flex;
     align-items: center;
     gap: 16px;
@@ -69,6 +72,17 @@
     z-index: 4;
     width: min(500px, calc(100% - 32px));
     transform: translateX(-50%);
+  }
+  /* Drains over the auto-hide delay and stops while the timer waits. */
+  .countdown {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--io-gold);
+    transform-origin: left;
+    animation: mo-countdown var(--auto-hide-ms) linear forwards;
+    animation-play-state: var(--auto-hide-state);
   }
   .toast:not(.floating) {
     margin: 8px auto;

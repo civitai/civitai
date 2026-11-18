@@ -4,28 +4,46 @@ export const RULING_AUTO_HIDE_MS = 8000;
 export const LEVEL_AUTO_HIDE_MS = 6000;
 
 /**
- * Calls `onHide` once, `ms` after the last hold was released (hover, focus, a hidden tab, a dialog, an error shown).
- * Each release starts the full time again; releasing what was not held changes nothing.
+ * Calls `onHide` once the notice has gone `ms` unheld (hover, focus, a hidden tab, a dialog, an error shown). A hold pauses
+ * the time and a release resumes what was left, so the countdown bar, paused alongside, always agrees with it; releasing
+ * what was not held changes nothing. `onpause` hears every switch between running and paused.
  */
-export function createAutoHide(ms: number, onHide: () => void, held: Iterable<string> = []) {
-  const holds = new Set(held);
+export function createAutoHide(
+  ms: number,
+  onHide: () => void,
+  opts: { held?: Iterable<string>; onpause?: (paused: boolean) => void } = {}
+) {
+  const holds = new Set(opts.held ?? []);
+  let remaining = ms;
+  let startedAt = 0;
   let done = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const run = () => {
-    clearTimeout(timer);
-    if (done || holds.size > 0) return;
+  const start = () => {
+    startedAt = Date.now();
     timer = setTimeout(() => {
       done = true;
       onHide();
-    }, ms);
+    }, remaining);
   };
-  run();
+  if (holds.size === 0) start();
   return {
+    get paused() {
+      return holds.size > 0;
+    },
     hold(reason: string, on: boolean) {
-      if (holds.has(reason) === on) return;
+      if (done || holds.has(reason) === on) return;
+      const wasPaused = holds.size > 0;
       if (on) holds.add(reason);
       else holds.delete(reason);
-      run();
+      const paused = holds.size > 0;
+      if (paused === wasPaused) return;
+      if (paused) {
+        clearTimeout(timer);
+        remaining = Math.max(0, remaining - (Date.now() - startedAt));
+      } else {
+        start();
+      }
+      opts.onpause?.(paused);
     },
     stop() {
       done = true;
@@ -33,6 +51,12 @@ export function createAutoHide(ms: number, onHide: () => void, held: Iterable<st
     },
   };
 }
+
+/** The custom properties a countdown bar animates by: the full delay, and paused exactly while the timer is. */
+export const countdownStyle = (ms: number, paused: boolean) => ({
+  '--auto-hide-ms': `${ms}ms`,
+  '--auto-hide-state': paused ? 'paused' : 'running',
+});
 
 type AutoHideOptions = {
   ms: number;
@@ -47,7 +71,8 @@ const MODAL = '[role="dialog"][aria-modal="true"]';
 
 /**
  * Svelte action: hides the notice after `ms` through `onhide` (its dismiss form, so it takes the same path as a click),
- * waiting while the pointer or focus is inside, the tab is hidden, or a dialog covers the page.
+ * waiting while the pointer or focus is inside, the tab is hidden, or a dialog covers the page. It sets `countdownStyle`
+ * on the node for a `.countdown` bar inside it.
  */
 export function autoHide(node: HTMLElement, opts: AutoHideOptions) {
   if (opts.focus && !document.activeElement?.closest('[role="dialog"]')) {
@@ -59,7 +84,12 @@ export function autoHide(node: HTMLElement, opts: AutoHideOptions) {
     ...(document.hidden ? ['hidden'] : []),
     ...(dialogUp() ? ['dialog'] : []),
   ];
-  const timer = createAutoHide(opts.ms, () => opts.onhide(), initial);
+  const paint = (paused: boolean) => {
+    for (const [name, value] of Object.entries(countdownStyle(opts.ms, paused)))
+      node.style.setProperty(name, value);
+  };
+  const timer = createAutoHide(opts.ms, () => opts.onhide(), { held: initial, onpause: paint });
+  paint(timer.paused);
   const enter = () => timer.hold('hover', true);
   const leave = () => timer.hold('hover', false);
   const focusin = () => timer.hold('focus', true);
