@@ -6,7 +6,7 @@ import type { StudioBackend, SubmittedBatch, TrainingRunPayload } from '$lib/bac
 import type { DatasetRatingCount } from '$lib/dataset-rating';
 import type { EpochArchive } from '$lib/orchestrator-core';
 import { FILES_PROCESSING_CODE, FilesProcessingError } from '$lib/files-processing';
-import { MatureAckRequiredError } from '$lib/mature-charge';
+import { MatureRepriceError } from '$lib/mature-charge';
 
 /** A request to one of the Studio's /api routes: `path` is the route's path and query. */
 export type StudioServerFetch = (path: string, init?: RequestInit) => Promise<Response>;
@@ -24,8 +24,8 @@ export async function messageOf(res: Response, fallback: string): Promise<string
   return fallback;
 }
 
-/** A refused training submit; a 409 carrying the server's mature count becomes `MatureAckRequiredError`,
- *  so the caller can show the confirm. */
+/** A refused training submit; a 409 carrying the server's mature count becomes `MatureRepriceError`,
+ *  so the caller can show the repriced spend. */
 async function startFailure(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => null)) as {
     message?: string;
@@ -35,7 +35,7 @@ async function startFailure(res: Response, fallback: string): Promise<Error> {
   } | null;
   if (body?.code === FILES_PROCESSING_CODE) return new FilesProcessingError();
   if (res.status === 409 && typeof body?.matureCount === 'number' && body.matureCount > 0)
-    return new MatureAckRequiredError(body.matureCount);
+    return new MatureRepriceError(body.matureCount);
   const reason = res.status !== 401 && typeof body?.error === 'string' ? body.error : undefined;
   return new Error(body?.message || reason || fallback);
 }
@@ -90,10 +90,10 @@ export function studioServerCalls(
       return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
     },
 
-    continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureAck) => {
+    continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureCount) => {
       const res = await server(
         '/api/continue-training',
-        postJson({ workflowId, fromEpoch, addEpochs, currencies, matureAck })
+        postJson({ workflowId, fromEpoch, addEpochs, currencies, matureCount })
       );
       if (!res.ok) throw await startFailure(res, 'Could not start training.');
       return ((await res.json()) as { workflowId: string }).workflowId;

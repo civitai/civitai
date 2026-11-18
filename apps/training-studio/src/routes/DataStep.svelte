@@ -347,8 +347,6 @@
     const ids = new Set(tagFilter.ids);
     return statusShownImages.filter((i) => ids.has(i.id));
   });
-  // Unknown membership is treated as not a member, as on Review.
-  const isMember = hostConfig().isPaidMember === true;
   // Where the host has no auto-label, none of its actions are offered (the toggle, the Auto-label
   // and Label-all buttons, the editor's Re-run, the switch dialog's Re-label); the guards below back
   // that up for the callers that don't go through a button.
@@ -1008,12 +1006,9 @@
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
             {#if !buzzMode.blueFirst}
               Rated {rating}. Mature content can't be paid with Green Buzz, so it is charged in Yellow.
-            {:else if isMember}
+            {:else}
               Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
               Blue Buzz is charged in Yellow.
-            {:else}
-              Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
-              Buzz. Remove it to pay in Blue.
             {/if}
           </Tooltip.Content>
         </Tooltip.Root>

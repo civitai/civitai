@@ -13,7 +13,7 @@ vi.mock('./service-status', () => ({ getTrainingServiceStatus: async () => null 
 vi.mock('./dataset-rating', () => ({ warmDatasetRating }));
 vi.mock('$lib/train-core', () => ({
   continueTrainingWhatIf: coreQuote,
-  MatureAckRequiredError: class extends Error {},
+  MatureRepriceError: class extends Error {},
 }));
 
 const { continueTrainingWhatIf } = await import('./train');
