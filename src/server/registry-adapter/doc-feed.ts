@@ -142,8 +142,9 @@ type FeedState = {
 };
 
 // The claim set is part of the rev: a mint that makes a document claim one more major changes
-// it, so every stream that carries the document re-sends it with its new label set.
-const docRev = (d: FeedDocument, schemas: readonly string[]) =>
+// it, so every stream that carries the document re-sends it with its new label set. Exported so a
+// record built from the same document (`services/apps/app-record.ts`) carries the same rev.
+export const docRev = (d: Pick<FeedDocument, 'version' | 'data'>, schemas: readonly string[]) =>
   sha256Hex(sortedKeyJson({ version: d.version, data: d.data, schemas })).slice(0, 16);
 
 const emptyState = (schema: string, audience: Audience): FeedState => ({

@@ -63,6 +63,11 @@ export const serverSchema = z
       .regex(HOSTNAME_PATTERN, 'expected a hostname or IPv4 address')
       .optional(),
     APPDATA_DATABASE_PORT: intString(1, 65535).optional(),
+    // App Storage record core (`services/apps/app-record.ts`). OFF by default, and nothing calls it
+    // yet. The key derives every user's owner handle in record URNs: once a URN is published, do not
+    // rotate or unset it, or every user-owned record URN changes. Unset → no record config.
+    APP_RECORD_CORE_ENABLED: zc.booleanString.optional().default(false),
+    APP_RECORD_OWNER_HANDLE_KEY: z.string().optional(),
     DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
     DATABASE_POOL_MAX: z.coerce.number().default(20),
     NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
