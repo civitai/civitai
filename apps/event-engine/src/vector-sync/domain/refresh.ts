@@ -90,6 +90,31 @@ export function startRefreshers(
           vectorSyncMetrics.orphanBrakes.inc({ domain: domain.name });
           orphans = emptyTable ? [] : orphans.filter((id) => heldLastPass.has(id));
         }
+        // A held orphan is released only once a primary-key lookup on the table confirms its row is
+        // gone, so a walk read that keeps missing rows cannot delete them; a failed lookup releases none.
+        const recheck = orphans.filter((id) => heldLastPass.has(id));
+        if (recheck.length) {
+          const present = await pg
+            .query<{ id: number }>(`SELECT id FROM "${domain.table}" WHERE id = ANY($1::int[])`, [
+              recheck,
+            ])
+            .then(({ rows: found }) => new Set(found.map((r) => Number(r.id))))
+            .catch((err) => {
+              logger.error(
+                { err, from },
+                `${domain.name}-sync: held orphan lookup failed; releasing none`
+              );
+              return new Set(recheck);
+            });
+          if (present.size) {
+            logger.error(
+              { present: present.size, from, sample: [...present].slice(0, 10) },
+              `${domain.name}-sync: held orphans still have rows; keeping them held`
+            );
+            for (const id of present) held.add(id);
+            orphans = orphans.filter((id) => !present.has(id));
+          }
+        }
         for (const id of [...ids, ...orphans]) lane.add({ id });
         cursor = next;
       } while (cursor !== 0);

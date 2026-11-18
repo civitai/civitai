@@ -23,6 +23,52 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  /** A walk that drops rows 2-29 every pass; `lookup` answers the primary-key check. */
+  const droppingWalk = async (lookup: (ids: number[]) => Promise<{ rows: { id: number }[] }>) => {
+    const added: number[] = [];
+    const pg = {
+      query: bounded(async (sql: string, args: unknown[]) => {
+        if (sql.includes('ANY(')) return lookup(args[0] as number[]);
+        return { rows: (args[0] as number) === 0 ? [{ id: 1 }, { id: 30 }] : [] };
+      }, 40),
+    };
+    const queue = {
+      lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+      isFull: false,
+    };
+    const points = Array.from({ length: 30 }, (_, i) => i + 1);
+    const timers = startRefreshers(
+      [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+      queue as never,
+      pg as never
+    );
+    await vi.advanceTimersByTimeAsync(3000);
+    for (const t of timers) clearInterval(t);
+    return added.filter((id) => id !== 1 && id !== 30);
+  };
+
+  test('a walk that keeps missing rows the table still has deletes none of them', async () => {
+    vi.useFakeTimers();
+    try {
+      const deleted = await droppingWalk(async (ids) => ({ rows: ids.map((id) => ({ id })) }));
+      expect(deleted).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a failed primary-key lookup releases no held orphan', async () => {
+    vi.useFakeTimers();
+    try {
+      const deleted = await droppingWalk(async () => {
+        throw new Error('connection reset');
+      });
+      expect(deleted).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('an empty read does not exempt the next pass from the brake', async () => {
     vi.useFakeTimers();
     try {
