@@ -24,7 +24,8 @@ import { booleanString } from '~/utils/zod-helpers';
  *
  * Population: `type = 'image'` rows stamped with an App Block provenance key
  * (`blockPublishedAppId` / `blockUploadedAppId`) and no `metadata.hash`. A viewer-picked block
- * upload carries no stamp, so it is not reachable from here.
+ * upload carries no stamp, or (when its app opted in to share it) `blockSharedUploadAppId`, which
+ * this does not select; either way it is not reachable from here.
  *
  * Idempotent: a row that has `metadata.hash` is never selected again. `metadata` is merged (stored keys kept), the `hash` column is set, and
  * the `width`/`height` columns are filled only when either one is missing.
