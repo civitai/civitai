@@ -420,6 +420,7 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
     await edit({ name: 'renamed' });
 
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
     expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 
@@ -455,6 +456,7 @@ describe('upsertModelVersion — trigger-word edits queue the .com face re-check
 
     expect(mockTx.modelVersion.create).toHaveBeenCalled();
     expect(mockQueueComFaceRecheck).toHaveBeenCalledWith(MODEL_ID);
+    expect(mockQueueComFaceVersionText).toHaveBeenCalledTimes(1);
     expect(mockQueueComFaceVersionText).toHaveBeenCalledWith(MODEL_ID);
   });
 

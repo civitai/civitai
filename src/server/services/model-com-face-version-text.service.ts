@@ -4,10 +4,9 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  COM_FACE_RECHECK_FIRST_DELAY_MS,
-  COM_FACE_RECHECK_MAX_DELAY_MS,
   COM_FACE_RESTORE_QUIET_MS,
   COM_FACE_RUN_BUDGET_MS,
+  comFaceRetryDelay,
 } from '~/server/services/model-com-face-recheck.service';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import { previewTextScanEach } from '~/server/services/text-scan/preview';
@@ -18,7 +17,6 @@ import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import type { TextScanField, TextScanLabel } from '~/server/services/text-scan/types';
 import { nsfwLevelFromName } from '~/server/services/text-scan/types';
-import { backoffDelay } from '~/utils/backoff';
 import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
@@ -60,11 +58,8 @@ export const COM_VERSION_TEXT_STEPS_PER_WORKFLOW = 20;
 export const COM_VERSION_TEXT_WORKFLOWS_PER_RUN = 20;
 /** So one model with many strings cannot take a whole run from the others. */
 export const COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN = 5;
-/**
- * One rating per burst of edits: a model is rated once its owner has stopped editing this long.
- * Paced like the .com face restore check, which the same owner edits queue. Its own queue rows,
- * because the restore queue holds only models whose face the re-check removed.
- */
+/** One rating per burst of edits: a model is rated once its owner has stopped editing this long
+ * (same pacing as the .com face restore check). */
 export const COM_VERSION_TEXT_QUIET_MS = COM_FACE_RESTORE_QUIET_MS;
 export const COM_VERSION_TEXT_RUN_BUDGET_MS = COM_FACE_RUN_BUDGET_MS;
 export const COM_VERSION_TEXT_SWEEP_LIMIT = 500;
@@ -364,12 +359,6 @@ function sameVerdicts(a: ComVersionTextVerdicts | undefined, b: ComVersionTextVe
   );
 }
 
-const retryDelay = (attempt: number) =>
-  backoffDelay(attempt - 1, {
-    baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,
-    maxMs: COM_FACE_RECHECK_MAX_DELAY_MS,
-  });
-
 /**
  * Rates the queued models whose edits have gone quiet: owner edits first, then sweep rows, at most
  * {@link COM_VERSION_TEXT_WORKFLOWS_PER_RUN} workflows per run. A model rated in full leaves the
@@ -439,7 +428,7 @@ export async function processComFaceVersionText(
       source: entry.source ?? 'sweep',
       attempt,
       nextAt: new Date(
-        now.getTime() + (Date.now() - startedAt) + retryDelay(attempt)
+        now.getTime() + (Date.now() - startedAt) + comFaceRetryDelay(attempt)
       ).toISOString(),
     };
     await dbWrite
@@ -480,8 +469,7 @@ export const comVersionTextSweepSql = (limit: number, policy: string) => Prisma.
 
 /** Queues every model {@link comVersionTextSweepSql} finds, up to `limit`. Returns the ids queued. */
 export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIMIT) {
-  // The replica: lag can re-queue a model already queued or rated (a no-op) or leave a just-changed
-  // model for the next sweep, whose text stays unrated, never shown, meanwhile.
+  // Replica is fine: lag only re-queues a no-op or defers a just-changed model to the next sweep.
   const found = await dbRead.$queryRaw<{ modelId: number }[]>(
     comVersionTextSweepSql(limit, await getComVersionTextPolicy())
   );

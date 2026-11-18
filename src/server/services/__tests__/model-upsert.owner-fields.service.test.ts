@@ -1273,6 +1273,7 @@ describe('.com face re-check after a listing edit', () => {
       mockStored({ ...withFace, ...unchanged });
       await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwName: '' });
       expect(mockQueueComFaceRecheck).not.toHaveBeenCalled();
+      expect(mockQueueComFaceVersionText).not.toHaveBeenCalled();
     });
   });
 
