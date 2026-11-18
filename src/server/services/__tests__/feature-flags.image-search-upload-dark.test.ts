@@ -40,7 +40,7 @@ describe('imageSearchUpload is dark until Flipt turns it on', () => {
 
   it('is on when its own Flipt key says so', async () => {
     // Key-aware, so a typo in `fliptKey` leaves the flag off and turns this red.
-    mocks.isFliptSync.mockImplementation((key: string) => key === 'image-search-upload' || null);
+    mocks.isFliptSync.mockImplementation((key?: string) => key === 'image-search-upload' || null);
     const mod = { id: 9313, isModerator: true, tier: 'free' } as SessionUser;
     const flags = await getFeatureFlagsAsync({ user: mod });
     expect(flags.imageSearchUpload).toBe(true);
