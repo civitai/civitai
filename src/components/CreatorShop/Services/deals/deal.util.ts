@@ -96,6 +96,7 @@ export function useServiceDealMutations(dealId: number) {
     decline: trpc.creatorServiceDeal.decline.useMutation(options),
     withdraw: trpc.creatorServiceDeal.withdraw.useMutation(options),
     cancelLate: trpc.creatorServiceDeal.cancelLate.useMutation(options),
+    cancelAndRefund: trpc.creatorServiceDeal.cancelAndRefund.useMutation(options),
     requestCancellation: trpc.creatorServiceDeal.requestCancellation.useMutation(options),
     respondCancellation: trpc.creatorServiceDeal.respondCancellation.useMutation(options),
     acceptDelivery: trpc.creatorServiceDeal.acceptDelivery.useMutation(options),

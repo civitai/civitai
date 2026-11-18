@@ -22,6 +22,7 @@ import {
   getTagsFromPrompt,
   includesInappropriate,
   includesMinorAge,
+  includesNsfw,
   includesPoi,
 } from '~/utils/metadata/audit';
 import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
@@ -940,7 +941,10 @@ async function auditScanResults(args: {
     (cartoonTags.length === 0 || minorRestrictedScan);
   let newUserReview = false;
 
-  const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
+  const inappropriate = includesInappropriate(
+    { prompt, negativePrompt },
+    nsfw || !!includesNsfw(normalizeText(args.prompt))
+  );
   if (inappropriate === 'minor') minorReview = true;
   if (inappropriate === 'poi') poiReview = true;
 

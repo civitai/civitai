@@ -492,9 +492,15 @@ export const upsertModelVersionHandler = async ({
       throw throwBadRequestError(`${input.baseModel} is not available for new models yet`);
     }
     const storedUsageControl = storedVersion?.usageControl;
+    // A stored Internal/External control is the service's to judge (assertOwnerUsageControlChange); the
+    // gate coercing it to Download would turn an unrelated owner edit into a refused change.
+    const storedIsModeratorManaged =
+      storedUsageControl === ModelUsageControl.InternalGeneration ||
+      storedUsageControl === ModelUsageControl.ExternalGeneration;
     const grantsGenerationOnly =
       input.usageControl !== ModelUsageControl.Download &&
-      (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
+      (!updatesExistingVersion ||
+        (storedUsageControl !== ModelUsageControl.Generation && !storedIsModeratorManaged));
 
     if (grantsGenerationOnly) {
       const requestedUsageControl = input.usageControl;
@@ -534,12 +540,13 @@ export const upsertModelVersionHandler = async ({
       });
     }
 
-    if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
-      throw throwBadRequestError('Only moderators can manage internal generation models');
-    }
-
-    if (input.usageControl === ModelUsageControl.ExternalGeneration && !ctx.user.isModerator) {
-      throw throwBadRequestError('Only moderators can manage external generation models');
+    // Updates are judged against the stored control in upsertModelVersion, so an owner can resubmit a
+    // moderator-set value unchanged.
+    if (!updatesExistingVersion && !ctx.user.isModerator) {
+      if (input.usageControl === ModelUsageControl.InternalGeneration)
+        throw throwBadRequestError('Only moderators can manage internal generation models');
+      if (input.usageControl === ModelUsageControl.ExternalGeneration)
+        throw throwBadRequestError('Only moderators can manage external generation models');
     }
 
     // Denied/Paused are moderation decisions. Updates are judged against the stored value in

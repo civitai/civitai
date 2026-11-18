@@ -1,4 +1,5 @@
 import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from 'next';
+import type { ParsedUrlQuery } from 'node:querystring';
 // FINAL-CLEANUP: `Session` is the app-wide session return type; replace it with a first-party type when the
 // `next-auth` dependency is dropped. This is the only remaining next-auth reference here, and it's type-only.
 import type { Session } from '~/types/session';
@@ -33,7 +34,13 @@ async function getPreviewCookieSession(req: AuthRequest): Promise<Session | null
   return { user } as unknown as Session;
 }
 
-type ServerAuthSessionArgs = { req: AuthRequest; res: AuthResponse; scope?: SessionScope };
+type ServerAuthSessionArgs = {
+  req: AuthRequest;
+  res: AuthResponse;
+  scope?: SessionScope;
+  /** A page's route params (`GetServerSidePropsContext.query`), for the scope decision log. */
+  query?: ParsedUrlQuery;
+};
 
 /**
  * The request's session, with a bearer credential held to `scope` (see `SessionScope`). The
@@ -44,8 +51,9 @@ export const getServerAuthSession = async ({
   req,
   res,
   scope,
+  query,
 }: ServerAuthSessionArgs): Promise<Session | null> =>
-  applySessionScope(req, await resolveSession(req, res), scope).session;
+  applySessionScope(req, await resolveSession(req, res), scope, query).session;
 
 async function resolveSession(req: AuthRequest, res: AuthResponse): Promise<Session | null> {
   if (req.context?.session) return req.context.session as Session | null;

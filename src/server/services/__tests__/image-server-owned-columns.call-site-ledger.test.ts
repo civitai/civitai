@@ -197,15 +197,20 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
  * Every function calling `createImage`, with what it spreads in and which server-owned
  * columns it passes. Only addPostImage passes a `postId`/`index`, and only after checking
  * the post belongs to the caller.
+ *
+ * `clientUrl`: each call's `clientUrl` value, in source order, `null` where it passes none.
+ * Omitted: no call passes one. A call whose `url` came from the client must pass it, or
+ * `createImage` never checks the url's upload keys were issued to the caller.
  */
 const CREATE_IMAGE_CALLER_LEDGER: Record<
   string,
-  { calls: number; spreads: string[]; serverColumns: string[] }
+  { calls: number; spreads: string[]; serverColumns: string[]; clientUrl?: (string | null)[] }
 > = {
   'src/server/services/post.service.ts#addPostImage': {
     calls: 1,
     spreads: ['imageProps'],
     serverColumns: [],
+    clientUrl: ['serverMintedUrl ? undefined : true'],
   },
   // `productionCoverImageDeps.createImage`, a pass-through counted under the function above it.
   'src/server/services/cover-image.service.ts#logExistenceUnknown': {
@@ -223,12 +228,14 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     calls: 1,
     spreads: ['pickClientImageColumns(customThumbnail)'],
     serverColumns: [],
+    clientUrl: ['{ alsoIssuedTo: userId }'],
   },
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': {
     calls: 1,
     spreads: ['storedObjectEtagMetadata(measured.etag)', 'blurhashMetadata(blur)'],
     serverColumns: [],
+    clientUrl: ['true'],
   },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': {
     calls: 1,
@@ -265,6 +272,7 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     calls: 1,
     spreads: ['storedObjectEtagMetadata(measured.etag)'],
     serverColumns: [],
+    clientUrl: ['true'],
   },
   'src/server/services/orchestrator/handlers/polyGen.handler.ts#ingestThumbnailImage': {
     calls: 1,
@@ -286,6 +294,9 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     calls: 11,
     spreads: [],
     serverColumns: [],
+    // pollPanelStatus, unlockPanelGeneration and selectPanelImage store generation output the
+    // server downloaded itself; every other url here came from the client.
+    clientUrl: ['true', 'true', 'true', 'true', 'true', 'true', null, null, null, 'true', 'true'],
   },
 };
 
@@ -481,7 +492,7 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     },
   },
   'src/server/routers/comics.router.ts#createProject': {
-    writes: ['coverImageId: image.id', 'heroImageId: image.id'],
+    writes: ['coverImageId: cover?.id ?? null', 'heroImageId: hero?.id ?? null'],
     decision: 'server-derived',
   },
   'src/server/routers/comics.router.ts#duplicateChapter': {
@@ -856,6 +867,15 @@ function spreadsOf(region: string): string[] {
 
 const SERVER_COLUMN = /(?<![\w.])(['"]?)(id|postId|index)\1\s*:\s*([^,\n}]+)/g;
 const SERVER_COLUMN_SHORTHAND = /[{,]\s*(id|postId|index)\s*(?=[,}\n])/g;
+/** The call's `clientUrl` value, whitespace-collapsed, or null. */
+function clientUrlOf(region: string): string | null {
+  const text = withoutSelects(region);
+  const m = /(?<![\w.])clientUrl\s*(?::\s*(\{|[^,\n}]+)|(?=[,}\s]))/.exec(text);
+  if (!m) return null;
+  if (m[1] === '{') return collapse(balanced(text, m.index + m[0].length - 1, '{', '}'));
+  return collapse(m[1] ?? 'clientUrl');
+}
+
 function serverColumnsOf(region: string): string[] {
   const text = withoutSelects(region);
   return [
@@ -1028,6 +1048,12 @@ describe('createImage callers', () => {
       calls: countsOf(calls),
       spreads: merged(calls, spreadsOf),
       serverColumns: merged(calls, serverColumnsOf),
+      clientUrl: Object.fromEntries(
+        keysOf(calls).map((k) => [
+          k,
+          calls.filter((s) => s.key === k).map((s) => clientUrlOf(s.region)),
+        ])
+      ),
     }).toEqual({
       calls: Object.fromEntries(
         Object.entries(CREATE_IMAGE_CALLER_LEDGER).map(([k, v]) => [k, v.calls])
@@ -1037,6 +1063,12 @@ describe('createImage callers', () => {
       ),
       serverColumns: Object.fromEntries(
         Object.entries(CREATE_IMAGE_CALLER_LEDGER).map(([k, v]) => [k, v.serverColumns])
+      ),
+      clientUrl: Object.fromEntries(
+        Object.entries(CREATE_IMAGE_CALLER_LEDGER).map(([k, v]) => [
+          k,
+          v.clientUrl ?? Array<null>(v.calls).fill(null),
+        ])
       ),
     });
   });

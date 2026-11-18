@@ -255,7 +255,7 @@ const BASELINE: Counts = {
   'src/server/services/post-planner.service.ts': 7,
   'src/server/services/post-preset.service.ts': 1,
   'src/server/services/post-text.service.ts': 3,
-  'src/server/services/post.service.ts': 16,
+  'src/server/services/post.service.ts': 15,
   'src/server/services/pricing-slot.service.ts': 4,
   'src/server/services/prize.service.ts': 9,
   'src/server/services/promotion.service.ts': 5,

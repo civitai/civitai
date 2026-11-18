@@ -10,6 +10,7 @@ import { BlocklistType } from '~/server/common/enums';
 import {
   auditPromptEnriched,
   includesMinor,
+  includesNsfw,
   includesPoi,
   MAX_AUDIT_PROMPT_LENGTH,
 } from '~/utils/metadata/audit';
@@ -198,7 +199,9 @@ async function auditLeaf(text: string, budget: { remaining: number }): Promise<A
   const mayBeProfane = getProfanityFilter().analyze(normalizeText(input)).isProfane;
   const fullAudit = mayBeProfane && budget.remaining > 0;
   if (fullAudit) budget.remaining -= 1;
-  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit);
+  const { success, triggers, blockedFor } = auditPromptEnriched(input, undefined, fullAudit, {
+    nsfw: !!includesNsfw(normalizeText(text)),
+  });
   if (success) return mayBeProfane && !fullAudit ? AUDIT_BUDGET_EXCEEDED : null;
   const first = triggers[0];
   return {

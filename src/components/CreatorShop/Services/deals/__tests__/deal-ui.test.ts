@@ -20,7 +20,11 @@ import {
   resolveServiceDealPage,
   resolveServiceDealsListPage,
 } from '~/components/CreatorShop/Services/deals/deal-pages.server';
-import { dealActions, type DealTimingFields } from '~/shared/utils/creator-service-deal-view';
+import {
+  dealActions,
+  dealVisibleReason,
+  type DealTimingFields,
+} from '~/shared/utils/creator-service-deal-view';
 
 const BUYER = 1;
 const SELLER = 2;
@@ -68,6 +72,12 @@ describe('deal actions with the flag off', () => {
         false
       )
     ).toEqual(['respondCancellation']);
+  });
+
+  it('keeps the cancel and refund available', () => {
+    const d = deal({ status: 'Accepted', dueAt: new Date('2099-01-01T00:00:00Z') });
+    const actions = dealActions(d, BUYER, undefined, { sellerUnavailable: true }).actions;
+    expect(visibleDealActions(actions, { servicesEnabled: false })).toContain('cancelAndRefund');
   });
 
   it('keeps an overdue late cancel available', () => {
@@ -365,6 +375,12 @@ describe('close comments on the accountability sheet', () => {
       expect(
         sheetEventText({ ...cancelled(code), type: 'Completed' }, 'seller', 'x').comment
       ).not.toBe(code);
+  });
+
+  // A close code that is also a hold reason reaches the parties as null, so its label never shows.
+  it('shows the parties every close code it has a label for', () => {
+    for (const code of Object.keys(closeCommentLabel))
+      expect(dealVisibleReason(code, false)).toBe(code);
   });
 
   it('leaves a typed comment, an unknown code and a code on another event type alone', () => {

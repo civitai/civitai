@@ -49,7 +49,7 @@ describe('GET /api/continue-training', () => {
       request: new Request('http://x'),
       url,
     } as unknown as Parameters<typeof GET>[0]);
-    expect(continueTrainingWhatIf.mock.calls[0]![2]).toMatchObject({
+    expect(continueTrainingWhatIf.mock.calls[0]![1]).toMatchObject({
       workflowId: 'wf-1',
       currencies: ['blue', 'green'],
     });
@@ -79,7 +79,7 @@ describe('POST /api/continue-training', () => {
         url,
       } as unknown as Parameters<typeof GET>[0]);
       await post(body);
-      expect(continueTrainingWhatIf.mock.calls.at(-1)![4]).toBe(allowed);
+      expect(continueTrainingWhatIf.mock.calls.at(-1)![3]).toBe(allowed);
       expect(continueTraining.mock.calls.at(-1)![5]).toBe(allowed);
     }
   });

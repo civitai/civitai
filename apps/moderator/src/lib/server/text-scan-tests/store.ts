@@ -8,6 +8,7 @@ import type {
 import { normaliseLabFields } from '../../text-scan-lab/compose';
 import { LAB_ENTITY_TYPES, type LabEntityType, type LabField } from '../../text-scan-lab/types';
 import { parseExpected, type Expected } from '../../text-scan-tests/expected';
+import { caseLabels, isIntentEvalSet } from '../../text-scan-tests/intent-set';
 import {
   type CaseOrigin,
   type TestCase,
@@ -184,7 +185,17 @@ function validCase(input: CaseInput) {
   const fields = normaliseLabFields(input.fields);
   if (typeof fields === 'string') throw new TestSetError(fields, 400);
   if (!fields.length) throw new TestSetError('A test case needs some text.', 400);
-  const expected = parseExpected(input.expected, input.entityType);
+  // The pinned intent set holds only models imported with the live check's own fields.
+  if (
+    isIntentEvalSet(input.setId) &&
+    (input.origin !== 'import' || input.entityType !== 'Model' || input.entityId === null)
+  )
+    throw new TestSetError('Add models to the intent set with its import.', 409);
+  const expected = parseExpected(
+    input.expected,
+    input.entityType,
+    caseLabels(input.setId, input.entityType)
+  );
   if (typeof expected === 'string') throw new TestSetError(expected, 400);
   return { fields, expected };
 }
@@ -336,7 +347,8 @@ export async function updateExpectation(
     .where('set_id', '=', String(setId))
     .executeTakeFirst();
   if (!existing) throw caseNotFound(caseId);
-  const expected = parseExpected(expectedJson, existing.entity_type as LabEntityType);
+  const entityType = existing.entity_type as LabEntityType;
+  const expected = parseExpected(expectedJson, entityType, caseLabels(setId, entityType));
   if (typeof expected === 'string') throw new TestSetError(expected, 400);
   const row = await db
     .updateTable('text_scan_test_case')
