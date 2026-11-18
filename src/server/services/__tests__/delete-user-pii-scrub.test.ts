@@ -317,4 +317,19 @@ describe('deleteUser — the User row survives', () => {
     expect(dbMock.dbWrite.user.deleteMany).not.toHaveBeenCalled();
     expect(dbWriteCallsMentioning('DELETE FROM "User"')).toEqual([]);
   });
+
+  // The statement itself runs as SQL in creator-service-deal-file-retention.behavior.test.ts.
+  it("marks the user's own deal uploads removed, in the same transaction", async () => {
+    const legal = await import('~/server/services/legal-hold.service');
+    vi.spyOn(legal, 'assertAccountNotUnderLegalHold').mockResolvedValueOnce({
+      markerView: true,
+    } as never);
+    await deleteUser();
+    const rawCall = dbMock.dbWrite.$executeRaw.mock.calls.findIndex((call) =>
+      JSON.stringify(call)?.includes('UPDATE \\"ServiceDealFile\\" f SET \\"removedAt\\"')
+    );
+    expect(rawCall).toBeGreaterThanOrEqual(0);
+    const [ops] = dbMock.dbWrite.$transaction.mock.calls[0] as [unknown[]];
+    expect(ops).toContain(dbMock.dbWrite.$executeRaw.mock.results[rawCall].value);
+  });
 });

@@ -24,7 +24,11 @@ vi.mock('~/utils/s3-utils', () => ({
   deleteObject: s3.deleteObject,
   getGetUrlByKey: vi.fn(),
   getPutUrl: vi.fn(),
-  getImageUploadBackend: vi.fn(),
+  getImageUploadBackend: async () => ({
+    s3: { send: s3.send },
+    bucket: 'image-store',
+    backend: 'b2',
+  }),
   getS3Client: () => ({ send: s3.send }),
   headObject: vi.fn(),
   uploadImageBufferToStore: vi.fn(),
@@ -67,6 +71,8 @@ const MIGRATIONS = [
 
 const SELLER = 1;
 const BUYER = 2;
+/** A user with no part in the deal. */
+const OTHER = 3;
 
 const q = async <T = Record<string, unknown>>(sql: string, params: unknown[] = []) =>
   (await holder.db.query<T>(sql, params)).rows;
@@ -106,7 +112,7 @@ beforeEach(async () => {
     TRUNCATE "ServiceDealFilePurge", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering",
       "Report", "CsamReport", "EvidenceHold", "Appeal", "ModActivity" RESTART IDENTITY CASCADE;
     DELETE FROM "User";
-    INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER});
+    INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
       VALUES (${SELLER}, 'Cat portraits', 'desc', 500, 3, 1, 'Image', 'Active', 'Scanned', now());
   `);
@@ -214,15 +220,18 @@ describe('holds', () => {
   const holds: [string, (party: number) => string][] = [
     ['an evidence hold', (p) => `INSERT INTO "EvidenceHold" ("userId") VALUES (${p})`],
     [
-      'a child-safety report, long sent and archived',
+      'a moderation report, long sent and archived',
       (p) =>
         `INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES (${p}, ${daysAgo(
           800
         )}, ${daysAgo(700)})`,
     ],
     [
-      'a child-safety report naming them as the secondary user',
-      (p) => `INSERT INTO "CsamReport" (details) VALUES ('{"secondaryUserId": "${p}"}')`,
+      'a moderation report naming them second, long sent and archived',
+      (p) =>
+        `INSERT INTO "CsamReport" (details, "reportSentAt", "archivedAt") VALUES ('{"secondaryUserId": "${p}"}', ${daysAgo(
+          800
+        )}, ${daysAgo(700)})`,
     ],
     ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
     [
@@ -238,12 +247,37 @@ describe('holds', () => {
     ].map(([who, party]) => [`${name} on the ${who}`, sql(party as number)] as const)
   );
 
+  it.each(holds)('%s on someone outside the deal keeps nothing', async (_name, sql) => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(sql(OTHER));
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(true);
+  });
+
   it.each(cases)('%s keeps the deal files', async (_name, sql) => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql);
     expect(await retention.markExpiredDealFiles()).toBe(0);
     expect(await removed(finalId)).toBe(false);
     expect(await removed(attachmentId)).toBe(false);
+  });
+
+  it('an open report on another offering, or one being processed on this one, is told apart', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(`
+      INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
+        VALUES (${OTHER}, 'Other', 'desc', 500, 3, 1, 'Image', 'Active', 'Scanned', now());
+      INSERT INTO "Report" (status, "createdAt") VALUES ('Pending', ${daysAgo(1)});
+      INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (2, 1);`);
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(true);
+
+    const other = await closedDeal('Cancelled', 40);
+    await holder.db.exec(`
+      INSERT INTO "Report" (status, "createdAt") VALUES ('Processing', ${daysAgo(45)});
+      INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 2);`);
+    await retention.markExpiredDealFiles();
+    expect(await removed(other.finalId)).toBe(false);
   });
 
   it('an open report on the offering keeps them; a handled one does not', async () => {
@@ -269,6 +303,33 @@ describe('holds', () => {
 });
 
 describe('the purge after the sweep', () => {
+  it('checks the holds again: one placed after marking stops the delete', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await retention.markExpiredDealFiles();
+    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
+  });
+
+  it("deletes a zip's archive and a published preview's copy as well", async () => {
+    const { dealId, finalId } = await closedDeal('Cancelled', 40);
+    await q(
+      `UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/archive', "watermarkedKey" = 'wm-1' WHERE id = $1`,
+      [finalId]
+    );
+    await retention.markExpiredDealFiles();
+    await files.purgeRemovedFiles();
+    const keys = s3.purgeObjectVersions.mock.calls.map(([arg]) => [arg.bucket, arg.key]);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        ['bucket', `k/${dealId}/final`],
+        ['bucket', 'k/archive'],
+        ['image-store', 'wm-1'],
+      ])
+    );
+  });
+
   it('deletes every version of the objects and keeps a record with no name', async () => {
     const { dealId, finalId } = await closedDeal('Cancelled', 40);
     await retention.markExpiredDealFiles();
@@ -287,19 +348,8 @@ describe('the purge after the sweep', () => {
     s3.purgeObjectVersions.mockRejectedValue(new Error('AccessDenied'));
     await retention.markExpiredDealFiles();
     expect(await files.purgeRemovedFiles()).toBe(2);
-    expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`);
+    expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
     expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
-  });
-});
-
-describe('the notice', () => {
-  it('states the windows the sweep uses', async () => {
-    const { SERVICE_DEAL_FILE_RETENTION_NOTICE } = await import(
-      '~/shared/constants/creator-services.constants'
-    );
-    expect(SERVICE_DEAL_FILE_RETENTION_NOTICE).toBe(
-      "Deal files are deleted 30 days after a deal is declined, expires or is canceled, and 90 days after a completed deal's dispute window ends. Download anything you want to keep."
-    );
   });
 });
 

@@ -1269,8 +1269,9 @@ export const deleteUser = async ({
       // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
-      // Their uploads to closed deals go now, under the deal holds; the purge job deletes them.
-      dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id)),
+      // Marks their own uploads on closed deals removed, under the deal holds; purgeRemovedFiles deletes them.
+      // The holds read the marker view; without it, retention reaches these files later instead.
+      ...(markerView ? [dbWrite.$executeRaw(markUserDealUploadsRemovedSql(user.id))] : []),
       ...(removeModels
         ? []
         : [

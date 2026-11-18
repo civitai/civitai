@@ -1,4 +1,4 @@
--- What remains of a deleted deal file: no name or content (deal-file retention).
+-- Deal-file retention: the record of a purged deal file.
 CREATE TABLE "ServiceDealFilePurge" (
   "id" SERIAL NOT NULL,
   "fileId" INTEGER NOT NULL,

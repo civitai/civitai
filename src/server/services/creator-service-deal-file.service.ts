@@ -68,6 +68,7 @@ import {
   uploadImageBufferToStore,
 } from '~/utils/s3-utils';
 import { purgeObjectVersions } from '~/utils/s3-purge-versions';
+import { dealFilesHeld } from '~/server/services/creator-service-deal-file-retention';
 
 /**
  * Delivery files for a Creator Services deal.
@@ -524,7 +525,7 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
     const [file] = await tx.$queryRaw<FileObjects[]>`
       DELETE FROM "ServiceDealFile" f USING "ServiceDeal" d
       WHERE f."id" = ${fileId}::int AND d."id" = f."dealId" AND ${scope}
-      RETURNING f."id", f."s3Key", f."deliveryKey", f."imageId"`;
+      RETURNING f."id", f."s3Key", f."deliveryKey", f."watermarkedKey", f."imageId"`;
     if (!file) throw throwNotFoundError('File not found');
     return { file, copies };
   });
@@ -545,6 +546,8 @@ type FileObjects = {
   id: number;
   s3Key: string;
   deliveryKey: string | null;
+  /** A published preview's copy, in the image store. */
+  watermarkedKey?: string | null;
   imageId: number | null;
 };
 
@@ -555,8 +558,8 @@ async function deleteImages(imageIds: number[]) {
 }
 
 /**
- * The row is the source of truth; an object left behind is unreachable. Every stored version goes,
- * so a versioned bucket keeps no copy; where versions cannot be listed, a plain delete, logged.
+ * The row is the source of truth; an object left behind is unreachable. Every stored version of the
+ * upload, a zip's archive and a published preview's copy goes, so a versioned bucket keeps no copy.
  * Returns the upload's ETag for the purge record.
  */
 async function deleteFileObjects(file: FileObjects) {
@@ -566,11 +569,19 @@ async function deleteFileObjects(file: FileObjects) {
     .send(new HeadObjectCommand({ Bucket: bucket, Key: file.s3Key }))
     .catch(() => null);
   const etag = head?.ETag?.replace(/"/g, '') ?? null;
-  for (const key of [file.s3Key, ...(file.deliveryKey ? [file.deliveryKey] : [])]) {
+  const imageStore = file.watermarkedKey ? await getImageUploadBackend() : null;
+  const targets = [
+    { client, bucket, key: file.s3Key },
+    ...(file.deliveryKey ? [{ client, bucket, key: file.deliveryKey }] : []),
+    ...(imageStore && file.watermarkedKey
+      ? [{ client: imageStore.s3, bucket: imageStore.bucket, key: file.watermarkedKey }]
+      : []),
+  ];
+  for (const { client, bucket, key } of targets) {
     const remaining = await purgeObjectVersions({ client, bucket, key })
       .then((result) => result.remaining)
       .catch(async () => {
-        await deleteObject(bucket, key).catch(() => null);
+        await deleteObject(bucket, key, client).catch(() => null);
         return null;
       });
     if (remaining !== 0)
@@ -607,39 +618,52 @@ const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
 )`;
 
 /**
- * A removed file whose scans finished clean, with an uploader not on a report, has nothing left to
- * keep: it goes as a delete would have, once its scan copies are gone. A removed file that failed stays for the moderators.
+ * A removed file whose scans finished clean, with an uploader not on a report, no hold on its deal,
+ * and its scan copies gone, has nothing left to keep. A removed file that failed stays for the
+ * moderators. `f` names the file row.
  */
+const purgeable = (f: Prisma.Sql) => Prisma.sql`(
+  ${f}."removedAt" IS NOT NULL
+  AND ${f}."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
+  AND NOT ${mustKeep(f)}
+  -- Scan copies of its images go first (deleteEntryScanCopies).
+  AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
+    WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL)
+  AND NOT EXISTS (SELECT 1 FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+    WHERE d."id" = ${f}."dealId" AND ${dealFilesHeld})
+)`;
+
 export async function purgeRemovedFiles({ limit = 50 } = {}) {
-  const purged = await dbWrite.$transaction(async (tx) => {
-    const rows = await tx.$queryRaw<FileObjects[]>`
-      SELECT f."id", f."s3Key", f."deliveryKey", f."imageId" FROM "ServiceDealFile" f
-      WHERE f."removedAt" IS NOT NULL
-        AND f."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"
-        AND NOT ${mustKeep(Prisma.sql`f`)}
-        -- Scan copies of its images go first (deleteEntryScanCopies).
-        AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
-          WHERE e."fileId" = f."id" AND e."imageId" IS NOT NULL)
-      ORDER BY f."id" LIMIT ${limit}::int
-      FOR UPDATE OF f SKIP LOCKED`;
-    if (!rows.length) return rows;
-    const ids = rows.map(({ id }) => id);
-    // What stays of a deleted file: no name or content, only what it was and when it went.
-    await tx.$executeRaw`
-      INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size")
-      SELECT "id", "dealId", "size" FROM "ServiceDealFile" WHERE "id" = ANY(${ids}::int[])
-      ON CONFLICT ("fileId") DO NOTHING`;
-    await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ANY(${ids}::int[])`;
-    await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ANY(${ids}::int[])`;
-    return rows;
-  });
-  for (const file of purged) {
-    const etag = await deleteFileObjects(file);
-    if (etag)
-      await dbWrite.$executeRaw`
-        UPDATE "ServiceDealFilePurge" SET "etag" = ${etag} WHERE "fileId" = ${file.id}::int`;
+  const candidates = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT f."id" FROM "ServiceDealFile" f
+    WHERE ${purgeable(Prisma.sql`f`)}
+    ORDER BY f."id" LIMIT ${limit}::int`;
+  let purged = 0;
+  for (const { id } of candidates) {
+    const done = await dbWrite.$transaction(
+      async (tx) => {
+        // Re-read under the row lock, so a hold that landed since the candidates were read wins.
+        const [file] = await tx.$queryRaw<(FileObjects & { dealId: number; size: number })[]>`
+          SELECT f."id", f."s3Key", f."deliveryKey", f."watermarkedKey", f."imageId", f."dealId", f."size"
+          FROM "ServiceDealFile" f
+          WHERE f."id" = ${id}::int AND ${purgeable(Prisma.sql`f`)}
+          FOR UPDATE OF f SKIP LOCKED`;
+        if (!file) return false;
+        // Objects before the row: a failure here leaves the row for the next run to try again.
+        const etag = await deleteFileObjects(file);
+        await tx.$executeRaw`
+          INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size", "etag")
+          VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${etag})
+          ON CONFLICT ("fileId") DO NOTHING`;
+        await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
+        await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
+        return true;
+      },
+      { timeout: 120_000 }
+    );
+    if (done) purged++;
   }
-  return purged.length;
+  return purged;
 }
 
 /**

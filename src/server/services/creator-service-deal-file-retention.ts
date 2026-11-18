@@ -6,13 +6,8 @@ import {
   SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS,
 } from '~/shared/constants/creator-services.constants';
 
-/**
- * Deal-file retention: a declined, expired or canceled deal's files go 30 days after it closed, a
- * completed deal's 90 days after its dispute window ended. Expired files are marked removed here and
- * deleted by `purgeRemovedFiles`, which keeps its own rules for what must stay.
- *
- * `d` names the deal row and `o` its offering in every fragment below.
- */
+// `d` names the deal row and `o` its offering in every fragment below. This only marks files
+// removed; purgeRemovedFiles deletes them, and re-checks the holds.
 
 const ms = (value: number) => Prisma.sql`(${value}::bigint * interval '1 millisecond')`;
 
@@ -26,9 +21,8 @@ const dealClosedAndSettled = Prisma.sql`(
 )`;
 
 /**
- * When the retention clock starts: the close, or the end of a completed deal's dispute window,
- * restarted by any later moderation of the deal or its offering (a dispute ruling, a takedown, a
- * report or its handling). GREATEST skips nulls, and is null only if all are.
+ * When the retention clock starts, restarted by later moderation of the deal or its offering.
+ * GREATEST skips nulls and is null only if all are, so a deal with no close time never expires.
  */
 const clockStart = Prisma.sql`GREATEST(
   CASE WHEN d."status" = 'Completed' THEN d."releaseAt" ELSE d."closedAt" END,
@@ -47,11 +41,7 @@ const retentionExpired = Prisma.sql`(
 
 const parties = Prisma.sql`(d."buyerId", d."sellerId")`;
 
-/**
- * Anything that keeps a deal's files, from either party or the offering: a legal or evidence hold,
- * any child-safety report sent or not, an open report on the offering, a pending appeal, or a
- * payment dispute lost on their account.
- */
+/** Anything that keeps a deal's files, on either party or the offering. */
 export const dealFilesHeld = Prisma.sql`(
   ${userUnderLegalHoldSql(Prisma.sql`d."buyerId"`)}
   OR ${userUnderLegalHoldSql(Prisma.sql`d."sellerId"`)}
@@ -85,8 +75,8 @@ export async function markExpiredDealFiles({ limit = 200 } = {}) {
 
 /**
  * For a deleted account: marks the files the user uploaded (finals and previews as the seller,
- * attachments as the buyer) on their closed deals as removed, under the same holds. A deal still
- * open keeps them until it closes; the other party's files keep the deal's clock.
+ * attachments as the buyer) on their closed, settled deals as removed, under the same holds. A deal
+ * still open or unsettled keeps them on its own retention clock, as it does the other party's.
  */
 export const markUserDealUploadsRemovedSql = (userId: number) => Prisma.sql`
   UPDATE "ServiceDealFile" f SET "removedAt" = now()
