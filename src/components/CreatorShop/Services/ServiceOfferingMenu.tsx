@@ -94,7 +94,13 @@ export function ServiceOfferingMenu({
   // The card carries only part of the offering; the form copies from the owner's full row.
   const duplicate = async () => {
     try {
-      const { items } = await utils.creatorService.getMine.fetch();
+      const [{ items }, eligibility] = await Promise.all([
+        utils.creatorService.getMine.fetch(),
+        utils.creatorService.getSellEligibility.fetch(),
+      ]);
+      // Manage Services offers Duplicate only to a seller who can sell; so does the card.
+      if (!eligibility.canSell)
+        throw new Error('You can list new services once you meet the requirements to sell.');
       const copyOf = items.find((item) => item.id === offering.id);
       if (!copyOf) throw new Error('This service is no longer in your list.');
       dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });

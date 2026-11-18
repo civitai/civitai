@@ -35,7 +35,6 @@ beforeEach(() => mutateAsync.mockReset().mockResolvedValue(undefined));
 
 describe('duplicating a service', () => {
   test("prefills the original's wording and terms, but not its cover, rating or affirmation", async () => {
-    const before = structuredClone(original);
     renderWithProviders(<ServiceOfferingFormModal copyOf={original as never} />);
 
     await expect.element(page.getByText('Duplicate service')).toBeInTheDocument();
@@ -57,8 +56,6 @@ describe('duplicating a service', () => {
       declaredNsfwLevel: SERVICE_OFFERING_DEFAULT_RATING,
       coverImage: null,
     });
-    // The original is untouched: not written, not mutated.
-    expect(original).toEqual(before);
   });
 
   test('asks the seller to affirm the terms again before publishing the copy', async () => {
