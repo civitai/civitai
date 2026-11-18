@@ -74,6 +74,12 @@
     },
     { id: 'yes-no', title: 'Yes/no questions', numbers: ['yesNoStretch', 'yesNoMaxAgeDays'], toggles: [] },
     { id: 'acolytes', title: 'Acolytes', numbers: [], toggles: ['apprenticeSmites'] },
+    {
+      id: 'harvest',
+      title: 'Harvest',
+      numbers: ['harvestHiddenCheckShare'],
+      toggles: ['harvest'],
+    },
   ];
   const DANGER: ToggleKey[] = ['shopDisabled', 'conversionDisabled'];
 

@@ -212,6 +212,15 @@ export const emailNotificationTypeList = Object.entries(notificationProcessors)
 export const isEmailNotificationType = (type: string) => emailNotificationTypeList.includes(type);
 
 /**
+ * Email types with no on-site toggle (`toggleable: false`, so no settings row and no per-type
+ * control). The settings pages list them on their own as email-only checkboxes, so a user who used
+ * the one-click unsubscribe can find the email again where the email's "Manage" link sends them.
+ */
+export const systemEmailNotificationTypes = Object.entries(notificationProcessors)
+  .filter(([, processor]) => processor.defaultEmail && processor.toggleable === false)
+  .map(([type, { displayName }]) => ({ type, displayName }));
+
+/**
  * The opt-out types whose settings rows say whether a user turned everything off: every type the
  * "all notifications" switch writes a row for, less the ones another app sends. The Knights job reads
  * this over HTTP (`/api/mod/knights/notification-types`) to leave out users who silenced them all.

@@ -38,7 +38,9 @@ The game-tuning variables Knights read from its environment can also be saved un
 `hiddenCheckSevereDistance` (whole number `>0`), `hiddenCheckSettleDelayMinutes` (`>=0`), `hiddenCheckRetireMinAnswers` (whole number
 `>0`), `hiddenCheckRetireFailureRate` (`>0` to 1), `yesNoStretch` (whole number `>0`), `yesNoMaxAgeDays` (`>0`), and the booleans
 `apprenticeSmites` (`KNIGHTS_APPRENTICE_SMITES`), `shopDisabled` (`KNIGHTS_SHOP_DISABLED`) and `conversionDisabled`
-(`KNIGHTS_CONVERSION_DISABLED`). The list, its ranges (the same as the Knights environment readers) and the reader are
+(`KNIGHTS_CONVERSION_DISABLED`), plus the harvest's `harvest` (boolean, true runs it; overrides `KNIGHTS_HARVEST`, which without a
+saved value runs the harvest when unset, `on`, `true` or `1`) and `harvestHiddenCheckShare` (`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, 0-1).
+The harvest job reads both per run. The list, its ranges (the same as the Knights environment readers) and the reader are
 `KNIGHTS_GAME_SETTINGS` / `readKnightsSourcesConfig` in `@civitai/shared/new-order`; a stored field that is out of range is dropped
 on read, so that setting falls back to the environment.
 
@@ -53,11 +55,11 @@ Knights reads them, with `yesNoShare`, through one cached source (`apps/knights/
 The two kill switches follow the same rule, so a store outage never flips the shop or conversion away from the last known state.
 
 The moderator Config page (`/knights-of-new-order/config`) is one column: the queue counts, then cards for Queue sources (switch,
-both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, and a "Shop and conversion" danger-zone card. Each
+both rates, yes/no share), Skill checks, Yes/no questions, Acolytes, Harvest, and a "Shop and conversion" danger-zone card. Each
 setting with a Knights default carries a "Default" or "Custom" badge (its tooltip names the variable behind the default), and a
 custom number has a "Reset" button that removes the saved value. Toggles are segmented with the default first and positive labels:
-Shop Default / Open / Closed, Gold to Buzz conversion Default / On / Off, Acolyte wrong-answer smites Default / On / Off, stored as the
-same booleans. A sticky bar counts unsaved changes and saves them through the page's two
+Shop Default / Open / Closed, Gold to Buzz conversion Default / On / Off, Acolyte wrong-answer smites Default / On / Off, Harvest
+Default / Running / Paused (no confirmation), stored as the same booleans. A sticky bar counts unsaved changes and saves them through the page's two
 actions (`?/save` for the sources, `?/game` for the game settings, each only when its fields changed); Discard restores what is
 stored. The game form posts only the changed fields; `saveGameSettings`
 (`apps/moderator/src/lib/server/knights/sources-config.service.ts`) applies them over what is stored, carries every other field over

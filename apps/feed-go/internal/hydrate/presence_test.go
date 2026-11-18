@@ -250,7 +250,8 @@ func TestMissReason(t *testing.T) {
 	// Not page caches: the model frames', decorations' and version showcases' reasons are their lookup
 	// specs'; the image meta (not probed) has no spec, so none.
 	for name, w := range map[string]string{MissModelFrames: "model-frame-miss", MissModelDecorations: "model-decoration-miss",
-		MissVersionImages: "model-images-miss", MissImageMeta: ""} {
+		MissVersionImages: "model-images-miss", MissImageMeta: "", "model-data": "model-data-miss", "model-tags": "model-tags-miss",
+		"official-models": "official-models-miss"} {
 		if got := plain.MissReason(name); got != w {
 			t.Errorf("no computation: %s = %q, want %q", name, got, w)
 		}
@@ -258,6 +259,7 @@ func TestMissReason(t *testing.T) {
 	want := map[string]string{
 		CacheUserCosmetics: "", CacheImageFrames: "", CacheEventDecorations: "",
 		CacheTagIDs: "", MissModelFrames: "", MissModelDecorations: "", MissVersionImages: "", CacheMetrics: "metrics-miss", CacheBasicUsers: "",
+		"model-data": "", "model-tags": "", "official-models": "",
 	}
 	for name, w := range want {
 		if got := computed.MissReason(name); got != w {
