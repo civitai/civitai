@@ -1281,7 +1281,7 @@ describe('an overdue deal nothing was delivered for', () => {
       expect.objectContaining({
         userId: -1,
         chatId: 77,
-        content: `This deal was cancelled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
+        content: `This deal was canceled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
       })
     );
   });
@@ -1332,7 +1332,7 @@ describe('an overdue deal nothing was delivered for', () => {
     expect(chat.createMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         chatId: 77,
-        content: `This deal was cancelled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
+        content: `This deal was canceled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
       })
     );
   });
