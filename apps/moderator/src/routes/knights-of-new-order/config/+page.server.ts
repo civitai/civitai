@@ -44,6 +44,19 @@ const sourcesForm = z.object({
   sfwPercent: percent('The SFW rate'),
   nsfwPercent: percent('The NSFW rate'),
   yesNoPercent: optionalPercent('The yes/no share'),
+  // A blank or absent box leaves the stored cap as it is; the service checks the range.
+  maxOpen: z
+    .string()
+    .optional()
+    .transform((text, ctx) => {
+      if (text === undefined || text.trim() === '') return undefined;
+      const trimmed = text.trim().replaceAll(',', '');
+      if (!/^\d+$/.test(trimmed)) {
+        ctx.addIssue({ code: 'custom', message: 'The open-item cap must be a whole number.' });
+        return z.NEVER;
+      }
+      return Number(trimmed);
+    }),
   // Ticked: clear the stored share, so Knights uses its environment default; it wins over the box.
   yesNoDefault: z.enum(['true']).optional(),
 });
@@ -69,6 +82,7 @@ export const actions: Actions = {
           enabled: input.enabled,
           sfwRate: input.sfwPercent,
           nsfwRate: input.nsfwPercent,
+          ...(input.maxOpen === undefined ? {} : { maxOpen: input.maxOpen }),
           ...(input.yesNoDefault
             ? { yesNoShare: null }
             : input.yesNoPercent === undefined
