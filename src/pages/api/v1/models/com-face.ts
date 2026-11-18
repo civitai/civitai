@@ -154,6 +154,7 @@ export default AuthedEndpoint(
     } catch (error) {
       // Creator Studio shows the message on the model's card, away from the editor's tabs.
       const message = error instanceof Error ? cardMessages[error.message] : undefined;
+      // The card offers the dispute, which lives in the editor.
       if (error instanceof Error && error.message === COM_FACE_REFUSED_MESSAGE)
         return res
           .status(422)

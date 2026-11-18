@@ -3686,6 +3686,7 @@ function profanityRatingRefusal(
 function applyRaisedRestrictions(
   stored: ContentFlags & { lockedProperties?: string[]; gallerySettings?: Prisma.JsonValue },
   data: ContentFlagWrite & { lockedProperties?: string[] },
+  // A scan's rating carries no lock, but clearing it still has to reach a moderator.
   { scanRated = false }: { scanRated?: boolean } = {}
 ): ModelMeta['ownerFlagOverride'] | undefined {
   const raised = raisedRestrictions(stored, data);

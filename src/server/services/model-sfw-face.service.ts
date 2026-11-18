@@ -327,6 +327,7 @@ export async function assertSfwFaceSafe({
   modelId?: number;
   userId: number;
 }) {
+  // Both checks wait on the orchestrator, so they run together; the listing refusal still wins.
   const triggerWords = modelId ? await getOwnTriggerWords({ modelId, userId }) : [];
   const [allowed, verdicts] = await Promise.allSettled([
     assertComFaceAllowed({ name, description, triggerWords, modelId, userId }),
