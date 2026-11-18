@@ -39,8 +39,9 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *
  * 🔴 THE DECISIVE FACT IS THAT THE TWO CORPORA ARE DISJOINT — not that the two
  * routes DISCLOSE differently. `blocks/images` serves `runImageSearch`
- * (`src/pages/api/v1/blocks/images.ts:218`) over the Meilisearch images index,
- * whose source query hard-filters `i."postId" IS NOT NULL`. THIS route's corpus is exactly the complement —
+ * (`src/pages/api/v1/blocks/images.ts:256`), which answers an `ids` lookup from
+ * `getAllImages`, whose query inner-joins `"Post"` on `i."postId"`: only images with a
+ * post. THIS route's corpus is exactly the complement —
  * `AND i."postId" IS NULL` (`block-gated-images.service.ts:184`), further scoped
  * to `blockPublishedAppId` or `blockSharedUploadAppId` = `claims.appId`. Complementary predicates: an image
  * cannot satisfy both. So `blocks/images?ids=` returns an EMPTY ARRAY for every
