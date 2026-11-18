@@ -611,7 +611,7 @@
 {/snippet}
 
 {#snippet ruling(anchored: boolean)}
-  <!-- Not drawn under a dialog, so its auto-hide never runs unseen; the answers stay held meanwhile. -->
+  <!-- Not drawn under a dialog, so its auto-hide never runs unseen. -->
   {#if rulingNotice.showing && !dialogOpen}
     <RulingToast
       notices={data.notices}

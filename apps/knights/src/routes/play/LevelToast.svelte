@@ -59,7 +59,7 @@
     width: min(500px, 100%);
     padding: 16px 20px;
     border: 1px solid var(--io-gold);
-    border-radius: 8px;
+    border-radius: 12px;
     background: linear-gradient(180deg, #3a2c10, var(--io-surface));
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
     animation: ov-fade var(--motion-base) var(--ease-out-quart);

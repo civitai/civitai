@@ -1,4 +1,4 @@
-/** How long the skill-check ruling stays up untouched; it holds the answers until it goes. */
+/** How long the skill-check ruling stays up untouched. */
 export const RULING_AUTO_HIDE_MS = 8000;
 /** How long the level-up card stays up untouched. */
 export const LEVEL_AUTO_HIDE_MS = 6000;

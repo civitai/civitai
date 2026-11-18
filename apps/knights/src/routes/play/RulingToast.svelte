@@ -92,7 +92,7 @@
     bottom: 16px;
     left: 50%;
     z-index: 5;
-    width: min(480px, calc(100% - 32px));
+    width: min(500px, calc(100% - 32px));
     margin: 0;
     transform: translateX(-50%);
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
