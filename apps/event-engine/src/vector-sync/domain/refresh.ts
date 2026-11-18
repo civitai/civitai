@@ -5,8 +5,8 @@ import type { Domain, DomainRef } from './sync';
 
 /**
  * More points with no row in one batch than this suggests a bad read (a lagging replica, an empty
- * result) rather than deleted rows, so none of them are deleted: more than 10, and more than a tenth
- * of the batch's points.
+ * result) rather than deleted rows, so none of them are deleted that pass: more than 10, and more
+ * than a tenth of the batch's points.
  */
 export const orphanBrake = (orphans: number, points: number) =>
   orphans > 10 && orphans > points / 10;
@@ -53,6 +53,8 @@ export function startRefreshers(
     const lane = queue.lanes.get(domain.name);
     if (!refresh || !lane) return [];
     const store = domain.store?.();
+    // Ranges braked on the last pass, with their orphans: the same orphans a pass later are no lag.
+    const braked = new Map<number, string>();
     let cursor = 0;
     let running = false;
     const pass = async () => {
@@ -61,19 +63,26 @@ export function startRefreshers(
         const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
         // A deleted row is not in the table to walk, so its point is found from the collection
         // side: every point in this batch's id range is queued too, and one with no row is deleted.
+        const from = cursor + 1;
         const points = store
-          ? await store.idsInRange(cursor + 1, next === 0 ? Number.MAX_SAFE_INTEGER : next + 1)
+          ? await store
+              .idsInRange(from, next === 0 ? Number.MAX_SAFE_INTEGER : next + 1)
+              .catch((err) => {
+                logger.error({ err, from }, `${domain.name}-sync: refresh could not read points`);
+                return [] as number[];
+              })
           : [];
         const rows = new Set(ids);
         let orphans = points.filter((id) => !rows.has(id));
-        if (orphanBrake(orphans.length, points.length)) {
+        const key = orphans.join(',');
+        // A range with no rows at all is never let through: that is a bad read, or a cleanup to
+        // run by hand. Otherwise the same orphans on two passes in a row are rows really deleted.
+        const repeat = ids.length > 0 && braked.get(from) === key;
+        braked.delete(from);
+        if (orphanBrake(orphans.length, points.length) && !repeat) {
+          braked.set(from, key);
           logger.error(
-            {
-              orphans: orphans.length,
-              points: points.length,
-              from: cursor + 1,
-              sample: orphans.slice(0, 10),
-            },
+            { orphans: orphans.length, points: points.length, from, sample: orphans.slice(0, 10) },
             `${domain.name}-sync: refresh found too many points with no row in one batch; deleting none`
           );
           vectorSyncMetrics.orphanBrakes.inc({ domain: domain.name });

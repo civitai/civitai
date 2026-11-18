@@ -23,6 +23,36 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  test('a burst of orphans is held one pass, then deleted when the same orphans are still there', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor]: [number, number]) => ({
+          rows: cursor === 0 ? [{ id: 1 }, { id: 30 }] : [],
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      // Rows 2-29 deleted together: 28 orphans of 30 points.
+      const points = Array.from({ length: 30 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([1, 30]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added.slice(2).sort((a, b) => a - b)).toEqual(points);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a failed point read (a missing collection) deletes nothing and leaves other domains walking', async () => {
     vi.useFakeTimers();
     try {
@@ -56,7 +86,8 @@ describe('refresh walk timers', () => {
         pg as never
       );
       await vi.advanceTimersByTimeAsync(1000);
-      expect(added.comic).toEqual([]);
+      // Its rows are still walked; no point is queued, so nothing is deleted on its account.
+      expect(added.comic).toEqual([1, 2]);
       expect([...added.storyline].sort()).toEqual([1, 2, 7]);
       for (const t of timers) clearInterval(t);
     } finally {
@@ -79,7 +110,7 @@ describe('refresh walk timers', () => {
         queue as never,
         pg as never
       );
-      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(3000);
       expect(added).toEqual([]);
       for (const t of timers) clearInterval(t);
     } finally {
