@@ -955,6 +955,9 @@ jobs:
           nohup bash -c 'while :; do free -m | awk "/^Mem:/{m=\$3} /^Swap:/{s=\$3} END{print m, s}" >> "$RUNNER_TEMP/mem.log"; sleep 5; done' >/dev/null 2>&1 &
 
       - name: Unit tests
+        # TRIAL: one fork per vCPU (4) instead of Vitest's default cpus - 1 (3).
+        env:
+          VITEST_MAX_WORKERS: '4'
         run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
 
       - name: Peak memory and swap during the unit run (trial instrument)
