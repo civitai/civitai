@@ -9,8 +9,9 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
  * `prepareMessage`, like the sibling `app-collaborator` family.
  *
  * The `type` strings are free-form text in the notifications app (no DB enum), so adding them needs
- * no migration. Registered in `utils.notifications.ts`. Not `defaultEmail`: email is opted into per
- * type, in lockstep with a list in `@civitai/notifications`, and these stay onsite only.
+ * no migration. Registered in `utils.notifications.ts`. Both are `defaultEmail`, in lockstep with
+ * `emailNotificationTypes` in `@civitai/notifications`: an applicant who is not on the site would
+ * otherwise never learn the answer.
  */
 
 export type AppAccessRequestNotificationDetails = {
@@ -30,6 +31,7 @@ export const appAccessRequestNotifications = createNotificationProcessor({
     displayName: 'App builder access approved',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: () => ({
       message:
         'Your request to build apps was approved and author access is on. Accept the App Developer Terms, then open Build to start your first app.',
@@ -40,6 +42,7 @@ export const appAccessRequestNotifications = createNotificationProcessor({
     displayName: 'App builder access declined',
     category: NotificationCategory.System,
     toggleable: false,
+    defaultEmail: true,
     prepareMessage: (notification) => {
       const details = notification.details as AppAccessRequestNotificationDetails;
       return {

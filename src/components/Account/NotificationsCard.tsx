@@ -7,6 +7,7 @@ import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
 import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
 import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
 import { useDigestEmailSetting } from '~/components/Notifications/useDigestEmailSetting';
+import { SystemEmailSettings } from '~/components/Notifications/SystemEmailSettings';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
@@ -127,6 +128,10 @@ export default function NotificationsCard() {
           />
           <Text size="sm">{MISSED_DIGEST_DISPLAY_NAME}</Text>
         </Group>
+        <Text size="sm" fw={500}>
+          App review emails
+        </Text>
+        <SystemEmailSettings />
       </Stack>
     </Card>
   );

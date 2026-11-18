@@ -170,10 +170,14 @@ column or a `pushEnabled` column on `UserNotificationSettings`; the opt-out tabl
 
 ## Email
 
-Only types whose processor sets `defaultEmail` send email (today: the nine `service-deal-*`
-Creator Services notifications), and for those email is ON unless the user opts out.
-`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. The settings control
-shows an Email checkbox for those types only, unavailable while the type itself is Off.
+Only types whose processor sets `defaultEmail` send email (today: the `service-deal-*` Creator
+Services notifications, and the app-review outcomes `app-block-approved`, `app-block-rejected`,
+`app-listing-rejected`, `app-listing-reset-to-pending`, `app-access-request-approved` and
+`app-access-request-declined`), and for those email is ON unless the user opts out.
+`UserEmailNotificationOptOut` holds the opt-outs: **a row means email OFF**. A toggleable type shows
+an Email checkbox beside its on-site control, unavailable while the type itself is Off. A type with
+`toggleable: false` has no on-site control, so it is listed under "App review emails" as an
+email-only checkbox (`systemEmailNotificationTypes`); its on-site notice is always sent.
 
 - The fan-out worker (`apps/notifications/src/worker/email.ts`) runs beside push, on the users a
   notification was newly delivered to, so a repeated key sends nothing. It gates on
