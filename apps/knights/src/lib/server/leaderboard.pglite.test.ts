@@ -152,6 +152,24 @@ describe('queryBoard', () => {
     ]);
   });
 
+  it('drops a legacy User.image that names its held picture, and keeps any other', async () => {
+    await member(1, 'Knight', 3);
+    await member(2, 'Knight', 2);
+    await member(3, 'Knight', 1);
+    await pg.exec(
+      `INSERT INTO "Image" ("id","url","nsfwLevel","needsReview") VALUES (60,'pic-held',1,'csam'),(61,'pic-minor',1,'minor')`
+    );
+    await pg.exec(
+      `UPDATE "User" SET "profilePictureId"=60, "image"='https://cdn.example/PIC-HELD/width=96' WHERE "id"=1`
+    );
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=61, "image"='pic%2dminor' WHERE "id"=2`);
+    await pg.exec(`UPDATE "User" SET "profilePictureId"=61 WHERE "id"=3`);
+
+    const { rows } = await queryBoard(db, NOW);
+
+    expect(rows.map((r) => r.image)).toEqual([null, null, 'img-3']);
+  });
+
   it('reads each rank badge cosmetic image from the Trophy cosmetics, Paladin included', async () => {
     await pg.exec(`INSERT INTO "Cosmetic" ("id","source","data") VALUES
       (859,'Trophy','{"url":"knight-key"}'),(860,'Purchase','{"url":"not-a-trophy"}'),

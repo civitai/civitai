@@ -182,4 +182,22 @@ describe('produceSessionUser — the profile picture', () => {
     );
     expect((await produceSessionUser(BUILDER))?.image).toBe(image);
   });
+
+  it.each([
+    ['csam', 'https://cdn.example/PIC.JPG/width=96', undefined],
+    ['minor', 'pic.jpg', undefined],
+    ['poi', 'pic.jpg', 'pic.jpg'],
+  ])(
+    'a picture held %s with User.image %s naming it gives the session image %s',
+    async (hold, legacy, image) => {
+      await pg.query(`INSERT INTO "Image" ("id", "url", "needsReview") VALUES (1, 'pic.jpg', $1)`, [
+        hold,
+      ]);
+      await pg.query(`UPDATE "User" SET "profilePictureId" = 1, "image" = $2 WHERE "id" = $1`, [
+        BUILDER,
+        legacy,
+      ]);
+      expect((await produceSessionUser(BUILDER))?.image).toBe(image);
+    }
+  );
 });

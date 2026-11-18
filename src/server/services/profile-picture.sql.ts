@@ -4,6 +4,7 @@ import {
   imageReviewedSql,
   notHeldForReviewSql,
 } from '~/server/common/image-visibility';
+import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 
 /** When a profile picture may be served to anyone but its owner; any other picture is served as none. */
@@ -14,6 +15,20 @@ export const servableProfilePictureSql = Prisma.sql`
   AND ${imageReviewedSql('i')}
   AND ${imageNotRestrictedSql()}
 `;
+
+const heldReviewList = OWNER_HIDDEN_REVIEWS.map((review) => `'${review}'`).join(', ');
+
+/**
+ * `User.image` over `User` aliased `u`, for reads that fall back to it when there is no profile
+ * picture: null when it names the user's profile picture and that picture is under an owner-hidden
+ * review hold, so the fallback follows the same holds. A raw column for `SELECT` lists built as text.
+ */
+export const fallbackUserImageColumn = `CASE WHEN EXISTS (
+    SELECT 1 FROM "Image" held
+    WHERE held.id = u."profilePictureId"
+      AND held."needsReview" IN (${heldReviewList})
+      AND strpos(replace(lower(u.image), '%2d', '-'), lower(held.url)) > 0
+  ) THEN NULL ELSE u.image END`;
 
 export type RawQueryClient = {
   $queryRaw<T = unknown>(

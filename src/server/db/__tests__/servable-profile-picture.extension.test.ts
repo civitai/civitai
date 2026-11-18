@@ -100,6 +100,25 @@ describe('the servable profile picture gate', () => {
     expect(result[3].profilePicture).toEqual(picture('Scanned'));
   });
 
+  it('nulls a sibling image naming a held picture, keeps one naming nothing held', async () => {
+    const held = (needsReview: string) => ({ ...picture('Scanned'), nsfwLevel: 1, needsReview });
+    const rows = [
+      { image: 'https://cdn.example/AVATAR-SCANNED/width=96', profilePicture: held('csam') },
+      { image: 'avatar%2dScanned', profilePicture: held('minor') },
+      { image: 'legacy', profilePicture: held('csam') },
+      { image: 'avatar-Pending', profilePicture: { ...picture('Pending'), nsfwLevel: 1 } },
+    ];
+
+    const result = await gateProfilePictures(
+      { select: simpleUserSelect },
+      queryReturning(rows),
+      vi.fn()
+    );
+
+    expect(result.map((row) => row.image)).toEqual([null, null, 'legacy', 'avatar-Pending']);
+    expect(result.every((row) => row.profilePicture === null)).toBe(true);
+  });
+
   it('nulls a mature picture made with a restricted base model, keeping a SFW one', async () => {
     const query = vi.fn(async (args: unknown) => {
       const sent = (args as { select: { profilePicture: { select: Record<string, boolean> } } })
@@ -195,12 +214,16 @@ describe('the servable profile picture gate', () => {
         throw new Error('unreadable args');
       },
     });
-    const rows = [{ id: 1, user: user('Scanned') }];
+    const rows = [
+      { id: 1, user: { ...user('Scanned'), image: 'avatar-Scanned' } },
+      { id: 2, user: { ...user('Scanned'), image: 'legacy' } },
+    ];
 
     const result = await gateProfilePictures(broken, queryReturning(rows), onError);
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(result[0].user.profilePicture).toBeNull();
+    expect(result.map((row) => row.user.image)).toEqual([null, 'legacy']);
   });
 
   it('nulls every picture when it fails after the query returned', async () => {

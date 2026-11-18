@@ -7,7 +7,10 @@ import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
-import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
+import {
+  fallbackUserImageColumn,
+  servableProfilePictureSql,
+} from '~/server/services/profile-picture.sql';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -391,7 +394,7 @@ export const getUsers = async ({
       END AS status`);
   if (include?.includes('avatar'))
     select.push(
-      'COALESCE(i.url, u.image) AS "avatarUrl"',
+      `COALESCE(i.url, ${fallbackUserImageColumn}) AS "avatarUrl"`,
       'COALESCE(i."nsfwLevel", 0) AS "avatarNsfwLevel"'
     );
 

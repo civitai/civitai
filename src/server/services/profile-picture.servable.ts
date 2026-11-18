@@ -48,3 +48,25 @@ export function servableProfilePicture<
 export function withoutHeldPicture<T>(picture: T | null, needsReview: string | null | undefined) {
   return isHeldForReview(needsReview) ? null : picture;
 }
+
+/**
+ * A user's `User.image` as a fallback avatar: null when it names `picture` (the user's profile
+ * picture, read with its `needsReview`) while that picture is under an owner-hidden review hold.
+ * The TS form of `fallbackUserImageColumn`.
+ */
+export function fallbackUserImage(
+  image: string | null | undefined,
+  picture: { url?: unknown; needsReview?: unknown } | null | undefined
+) {
+  if (!image || !picture || !isHeldForReview(picture.needsReview as string | null)) return image;
+  return namesPicture(image, picture.url) ? null : image;
+}
+
+/** Whether `image` carries `url`, the picture's key, compared as `fallbackUserImageColumn` does. */
+export function namesPicture(image: string, url: unknown) {
+  return (
+    typeof url === 'string' &&
+    url.length > 0 &&
+    image.toLowerCase().replaceAll('%2d', '-').includes(url.toLowerCase())
+  );
+}
