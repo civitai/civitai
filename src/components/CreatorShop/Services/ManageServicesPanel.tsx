@@ -7,15 +7,13 @@ import {
   Group,
   Loader,
   Paper,
-  Progress,
   Stack,
   Tabs,
   Text,
-  ThemeIcon,
   Title,
 } from '@mantine/core';
 import { Menu, Tooltip } from '~/components/MantineOverlays';
-import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
+import { IconDots, IconEyeOff, IconPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ServiceOffering } from '~/components/CreatorShop/Services/creator-service.util';
@@ -29,11 +27,12 @@ import { PublishServiceModal } from '~/components/CreatorShop/Services/SellerAff
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
+import { SellGate } from '~/components/CreatorShop/Services/SellGate';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useRouter } from 'next/router';
 import { useDomainColor } from '~/hooks/useDomainColor';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Currency, ServiceOfferingStatus } from '~/shared/utils/prisma/enums';
 
 const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string }> = {
@@ -62,6 +61,9 @@ const reviewBadge: Record<
 const openForm = (offering?: ServiceOffering) =>
   dialogStore.trigger({ component: ServiceOfferingFormModal, props: { offering } });
 
+const openDuplicateForm = (copyOf: ServiceOffering) =>
+  dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
+
 export type ShopPublishState = { onPublish: () => void; publishing: boolean };
 
 /**
@@ -83,6 +85,19 @@ export function ManageServicesPanel({
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
   const [requestsTab, setRequestsTab] = useState<string | null>('open');
+
+  // A service card's Manage links here with `?edit=<id>`: open that offering's form once, and drop
+  // the param so a refresh or Back doesn't open it again.
+  const editId = Number(router.query?.edit) || undefined;
+  const openedEdit = useRef<number>();
+  useEffect(() => {
+    if (!editId || isLoading || openedEdit.current === editId) return;
+    openedEdit.current = editId;
+    const { edit: _, ...query } = router.query;
+    void router.replace({ pathname: router.pathname, query }, undefined, { shallow: true });
+    const target = offerings.find((offering) => offering.id === editId);
+    if (target && eligibility?.canSell) openForm(target);
+  }, [editId, isLoading, offerings, eligibility?.canSell, router]);
   const requestsStatus = requestsTab === 'closed' ? 'closed' : 'open';
 
   if (isLoading)
@@ -133,7 +148,7 @@ export function ManageServicesPanel({
           emptyText={
             requestsStatus === 'open'
               ? 'No open requests. They show up here when a buyer requests one of your services.'
-              : 'No closed requests yet. Declined, expired, cancelled and completed requests show up here.'
+              : 'No closed requests yet. Declined, expired, canceled and completed requests show up here.'
           }
         />
       </Stack>
@@ -167,39 +182,6 @@ export function ManageServicesPanel({
         </Paper>
       )}
     </Stack>
-  );
-}
-
-function SellGate({
-  eligibility,
-}: {
-  eligibility: NonNullable<ReturnType<typeof useQueryMyServices>['eligibility']>;
-}) {
-  const { current, min } = eligibility.score;
-  return (
-    <Paper withBorder radius="md" p="md">
-      <Group wrap="nowrap" align="flex-start">
-        <ThemeIcon size={44} radius="md" variant="light" color="gray">
-          <IconLock size={22} />
-        </ThemeIcon>
-        <Stack gap={6} className="flex-1">
-          <Text fw={600}>Services unlock at Beacon ({min.toLocaleString()} Creator Score)</Text>
-          {eligibility.standingIssue ? (
-            <Text size="sm" c="dimmed">
-              {eligibility.standingIssue}
-            </Text>
-          ) : (
-            <>
-              <Text size="sm" c="dimmed">
-                Same point you can join the Creator Program. You&apos;re at{' '}
-                {Math.floor(current).toLocaleString()}.
-              </Text>
-              <Progress value={Math.min(100, (current / min) * 100)} color="yellow" size="sm" />
-            </>
-          )}
-        </Stack>
-      </Group>
-    </Paper>
   );
 }
 
@@ -264,6 +246,9 @@ function OfferingRow({
             </Menu.Target>
             <Menu.Dropdown>
               {canSell && <Menu.Item onClick={() => openForm(offering)}>Edit</Menu.Item>}
+              {canSell && (
+                <Menu.Item onClick={() => openDuplicateForm(offering)}>Duplicate</Menu.Item>
+              )}
               {isActive ? (
                 <Menu.Item onClick={() => setStatus.mutate({ id: offering.id, status: 'Paused' })}>
                   Pause

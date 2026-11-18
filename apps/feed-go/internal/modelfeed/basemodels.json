@@ -275,7 +275,8 @@
       "LORA"
     ],
     "MiniMax H3 Image": [
-      "Checkpoint"
+      "Checkpoint",
+      "LORA"
     ],
     "MiniMax Music 3": [
       "Checkpoint"
@@ -285,7 +286,8 @@
       "LORA"
     ],
     "MiniMaxH3Image": [
-      "Checkpoint"
+      "Checkpoint",
+      "LORA"
     ],
     "MiniMaxMusic3": [
       "Checkpoint"
@@ -594,7 +596,6 @@
     "MAI",
     "MageFlow",
     "Ming Image Design 0.1",
-    "MiniMax H3 Image",
     "MiniMax Music 3",
     "Mochi",
     "Muse Image",

@@ -739,15 +739,7 @@ async function assertStoredObjectUnchanged(
     reason: verdict.status === 'unverifiable' ? verdict.reason : null,
     kind,
     imageId: image.id,
-  }).catch(() => null);
-  // 🔴 That `.catch(() => null)` is LOAD-BEARING, not tidiness. Nothing awaits the
-  // call above, so a rejecting sink — `logToAxiom` awaits an ingest that rejects
-  // when Axiom itself is degraded — has nowhere to go but `unhandledRejection`, and
-  // the attach it is merely OBSERVING would be taken down by the observation. Same
-  // reasoning as `~/server/redis/fail-open-log`, `~/server/meilisearch/client` and
-  // `~/server/signals/wrapper`. Pinned by
-  // `./__tests__/listing-asset-integrity-logging.test.ts`, which needs a file of its
-  // own to be falsifiable at all — a `vi.fn()` sink marks the rejection handled.
+  });
 
   if (verdict.status !== 'mismatch') return;
 

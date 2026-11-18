@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -30,7 +31,7 @@ import {
 import { getServableCoverCollectionIds } from '~/server/services/collection-cover-visibility';
 import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { recordBlockCollectionRankingSource } from '~/server/prom/block-collection-ranking.metrics';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionSort } from '~/server/common/enums';
@@ -262,10 +263,10 @@ type PrimaryCoverImage = {
 /**
  * The ids of the collections whose own cover image can be served: it has a url, may be shown
  * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, is not
- * refused by `getAllImages`' restricted base model condition, and, on a minor or SFW-only model's
- * post, is within that model's gallery level. The restricted condition only refuses an image whose
- * own level has a mature bit, so only those candidates are looked up. A collection whose cover
- * fails any of these falls back to `getFallbackCoverImages`.
+ * restricted by its base model (`getModelRestrictedImageIds`), and, on a minor or SFW-only model's
+ * post, is within that model's gallery level. Only an image whose own level has a mature bit can be
+ * restricted, so only those candidates are looked up. A collection whose cover fails any of these
+ * falls back to `getFallbackCoverImages`.
  */
 async function getUsablePrimaryCovers(
   collections: { id: number; userId: number; image?: PrimaryCoverImage | null }[],
@@ -350,13 +351,20 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // hammering this private,no-store route onto the origin.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'collections',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   const subjectUser = await hydrateBlockSubject(subjectUserId);
   if (!subjectUser) {

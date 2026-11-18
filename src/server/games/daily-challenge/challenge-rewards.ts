@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NotificationCategory } from '~/server/common/enums';
+import { imageNotRestrictedSql, imageRestrictedSql } from '~/server/common/image-visibility';
 import {
   createBuzzTransactionMany,
   getTransactionByExternalId,
@@ -43,7 +44,7 @@ export async function promoteChallengeEntries(args: {
     WITH source AS (
       SELECT
         i.id,
-        (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 as "isSafe",
+        (i."nsfwLevel" & ${allowedNsfwLevel}) > 0 AND ${imageNotRestrictedSql()} as "isSafe",
         ${
           hasModelVersionRestriction
             ? Prisma.sql`EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" = ANY(${modelVersionIds}) AND ir."imageId" = i.id AND ir.detected IS TRUE)`
@@ -100,6 +101,7 @@ export async function distributeParticipationPrizes(args: {
     WHERE ci."collectionId" = ${collectionId}
       AND ci.status = 'ACCEPTED'
       AND u."bannedAt" IS NULL
+      AND ${imageNotRestrictedSql()}
     GROUP BY i."userId"
     HAVING COUNT(*) >= ${entryPrizeRequirement}
   `;
@@ -139,8 +141,9 @@ export const challengeReviewRefundTxId = (challengeId: number, imageId: number) 
   `challenge-review-refund-${challengeId}-${imageId}`;
 
 /**
- * Refunds a banned entrant's per-entry paid reviews still waiting at completion, for the purchase's
- * own amount. The entry then leaves the paid-review queue, so a later pass refunds nothing more.
+ * Refunds per-entry paid reviews still waiting at completion that the judge will never run — a banned
+ * entrant's, or an entry restricted by its base model after it was paid for — for the purchase's own
+ * amount. The entry then leaves the paid-review queue, so a later pass refunds nothing more.
  */
 export async function refundBannedEntrantReviews(args: {
   challengeId: number;
@@ -159,7 +162,7 @@ export async function refundBannedEntrantReviews(args: {
       AND ci.status IN ('ACCEPTED', 'REVIEW')
       AND ci."tagId" = ${reviewMeTagId}
       AND ci.note = 'challenge-review-' || ${String(challengeId)} || '-' || ci."imageId"
-      AND u."bannedAt" IS NOT NULL
+      AND (u."bannedAt" IS NOT NULL OR ${imageRestrictedSql()})
     ORDER BY ci."imageId"
   `;
   if (waiting.length === 0) return [];
@@ -226,6 +229,7 @@ export async function reconcileCompletedChallenge(
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${challenge.collectionId} AND ci.status = 'ACCEPTED'
+      AND ${imageNotRestrictedSql()}
     GROUP BY i."userId"
     HAVING COUNT(*) >= ${challenge.entryPrizeRequirement}
   `;

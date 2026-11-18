@@ -20,6 +20,6 @@ export const notifications = createNotificationsClient({
         message: failure.message,
       },
       'notifications'
-    ).catch(() => {});
+    );
   },
 });

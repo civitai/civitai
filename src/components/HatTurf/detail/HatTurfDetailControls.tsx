@@ -5,6 +5,9 @@ import { Popover } from '~/components/MantineOverlays';
 import { useLocalStorage } from '@mantine/hooks';
 import { HatIcon } from '~/components/HatTurf/HatIcon';
 import { HatTurfBadge } from '~/components/HatTurf/HatTurfBadge';
+import { FlagBadge } from '~/components/HatTurf/FlagRace/FlagBadge';
+import { FlagHatButton } from '~/components/HatTurf/FlagRace/FlagHatButton';
+import { useFlag } from '~/components/HatTurf/FlagRace/FlagRaceContext';
 import buttonClasses from '~/components/HatTurf/HatTurfButton.module.css';
 import { HatButtonFace, HatTurfGear } from '~/components/HatTurf/HatTurfButton';
 import { useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
@@ -35,12 +38,18 @@ export function HatTurfDetailControls({
   large?: boolean;
 }) {
   const feed = useTurfFeed();
-  return feed && !feed.hidden?.[imageId] ? (
+  const flag = useFlag(imageId);
+  // Today's flags are hidden from Hat Turf, but they take flag hats.
+  return feed && (flag || !feed.hidden?.[imageId]) ? (
     <div
       className={clsx(classes.group, large && classes.large)}
       data-testid="hat-turf-detail-controls"
     >
-      <HatButton imageId={imageId} />
+      {flag ? (
+        <FlagHatButton imageId={imageId} faceClassName={classes.hat} />
+      ) : (
+        <HatButton imageId={imageId} />
+      )}
     </div>
   ) : null;
 }
@@ -165,6 +174,12 @@ function HatButton({ imageId }: { imageId: number }) {
 
 /** The feed's badge, in the picture's action row after Tip; a tap opens the Hat Turf panel. */
 export function HatTurfDetailBadge({ imageId }: { imageId: number }) {
+  // One of today's flags shows its flag badge to everyone, joined or not, as on the home row.
+  if (useFlag(imageId)) return <FlagBadge imageId={imageId} className={classes.rowBadge} />;
+  return <TurfDetailBadge imageId={imageId} />;
+}
+
+function TurfDetailBadge({ imageId }: { imageId: number }) {
   const feed = useTurfFeed();
   const summary = useTurfSummary(imageId);
   const user = useCurrentUser();

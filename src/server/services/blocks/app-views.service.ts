@@ -359,7 +359,7 @@ export async function getAppViews({
       // Same datastream as every other ClickHouse failure site (tracker.ts), so
       // this lands next to its siblings rather than in a stream of its own.
       'clickhouse'
-    ).catch(() => undefined);
+    );
     return unavailableViews();
   }
 }

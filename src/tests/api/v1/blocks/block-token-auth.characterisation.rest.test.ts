@@ -2470,7 +2470,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       []
     ),
     'token carries an unknown scope': X(
@@ -2478,7 +2478,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       ['made:up:scope']
     ),
     'anonymous subject': X(
@@ -2494,7 +2494,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       []
     ),
     'rate limited': X(
@@ -2510,7 +2510,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       []
     ),
     'missing approval row': X(
@@ -2518,7 +2518,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       []
     ),
     'approval row read throws': X(
@@ -2534,7 +2534,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       ['buzz:read:self']
     ),
     'consent marker unavailable': X(
@@ -2542,7 +2542,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       ['buzz:read:self']
     ),
     'consent marker unavailable AND not approved': X(
@@ -2558,7 +2558,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       []
     ),
     'private-run token, row not approved': X(
@@ -2566,7 +2566,7 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
       { media: [{ status: 'hidden', reason: 'paused' }] },
       true,
       ['checkBlockCatalogRateLimit("bki_char")'],
-      ['hydrate:42'],
+      ['hydrate:42', 'hydrate:42'],
       []
     ),
   },
@@ -2649,7 +2649,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'hub OAuth token': X(
       200,
-      { items: [], maturity: { browsingLevel: 3, sfwOnly: true } },
+      // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
       true,
       ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
       ['getResourceData([1])'],
@@ -3368,7 +3369,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         noneProbability: null,
         model: 'jev-unavailable',
         criteriaVersion: 2,
-        maturity: { browsingLevel: 3, sfwOnly: true },
+        // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+        maturity: { browsingLevel: 1, sfwOnly: true },
       },
       true,
       ['checkBlockLLMRateLimit("page_apb_hubrow")'],

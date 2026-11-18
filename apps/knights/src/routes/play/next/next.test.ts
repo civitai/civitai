@@ -4,6 +4,8 @@ const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
+const burstDue = vi.hoisted(() => vi.fn());
+const servedHistory = vi.hoisted(() => vi.fn());
 const lockoutFor = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const queueDeps = vi.hoisted(() => ({
@@ -21,6 +23,11 @@ vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.
 vi.mock('$lib/server/hidden/hidden.service', () => ({ pickHiddenCheck }));
 vi.mock('$lib/server/queue/queue.service', () => ({ getFeed }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
+vi.mock('$lib/server/yesno/cadence', () => ({
+  burstDue,
+  burstRoller: () => () => 0,
+  servedHistory,
+}));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0.5, stretch: 8 }) }));
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
@@ -71,6 +78,10 @@ beforeEach(() => {
   pickHiddenCheck.mockResolvedValue(null);
   pickYesNo.mockResolvedValue(null);
   skipList.list.mockResolvedValue([]);
+  burstDue.mockReset();
+  burstDue.mockReturnValue(true);
+  servedHistory.mockReset();
+  servedHistory.mockResolvedValue([]);
 });
 
 describe('GET /play/next', () => {
@@ -111,6 +122,27 @@ describe('GET /play/next', () => {
   it('tells the yes/no picker only the yes/no questions named as ahead, so the stretch counts them', async () => {
     await ask([], {}, undefined, [token('yesno', 3), token('queue', 9), token('yesno', 4)]);
     expect(pickYesNo.mock.calls[0][1].ahead).toEqual([3, 4]);
+  });
+
+  it('hands the cadence what was handed out and not yet voted (ahead, every kind), then each one it picks; never after', async () => {
+    skipList.list.mockResolvedValue([{ kind: 'queue', id: 8 }]);
+    // `after` also names settled votes and skips: none of those are the cadence's.
+    await ask([token('queue', 1), token('queue', 2), token('queue', 9), token('yesno', 3)], {}, 2, [
+      token('queue', 9),
+      token('queue', 8),
+      token('yesno', 3),
+    ]);
+    expect(servedHistory.mock.calls.map((call) => call[2])).toEqual([
+      [
+        { kind: 'queue', id: 9 },
+        { kind: 'yesno', id: 3 },
+      ],
+      [
+        { kind: 'queue', id: 9 },
+        { kind: 'yesno', id: 3 },
+        { kind: 'queue', id: 42 },
+      ],
+    ]);
   });
 
   it('does not count a skipped or unloadable yes/no item named in after as ahead: it never gets a vote', async () => {
@@ -204,10 +236,10 @@ describe('GET /play/next', () => {
       expect(ids((await ask([], {}, -2)).body)).toEqual([1]);
     });
 
-    it('serves up to 10 items in one request and no more', async () => {
+    it('serves up to a full buffer (3) in one request and no more', async () => {
       queueOfFive(30);
-      expect(ids((await ask([], {}, 10)).body)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(ids((await ask([], {}, 50)).body)).toHaveLength(10);
+      expect(ids((await ask([], {}, 3)).body)).toEqual([1, 2, 3]);
+      expect(ids((await ask([], {}, 50)).body)).toHaveLength(3);
     });
 
     it('reads as many named items as a full buffer, the item on screen and the votes in flight', async () => {

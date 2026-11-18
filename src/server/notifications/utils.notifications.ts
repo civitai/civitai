@@ -5,6 +5,7 @@ import { articleRatingReviewNotifications } from '~/server/notifications/article
 import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { creatorServiceNotifications } from '~/server/notifications/creator-service.notifications';
+import { appAccessRequestNotifications } from '~/server/notifications/app-access-request.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appBuzzRefundNotifications } from '~/server/notifications/app-buzz-refund.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
@@ -13,6 +14,10 @@ import { appListingNotifications } from '~/server/notifications/app-listing.noti
 import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
+import {
+  MISSED_DIGEST_DISPLAY_NAME,
+  MISSED_DIGEST_EMAIL_TYPE,
+} from '~/server/notifications/missed-digest.constants';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
 import { membershipGiftNotifications } from '~/server/notifications/membership-gift.notifications';
@@ -67,6 +72,7 @@ export const notificationProcessors = {
   ...articleUnpublishNotifications,
   ...creatorServiceNotifications,
   ...appListingNotifications,
+  ...appAccessRequestNotifications,
   ...appBlockNotifications,
   ...appBuzzRefundNotifications,
   ...appCollaboratorNotifications,
@@ -208,6 +214,31 @@ export const emailNotificationTypeList = Object.entries(notificationProcessors)
   .map(([type]) => type);
 
 export const isEmailNotificationType = (type: string) => emailNotificationTypeList.includes(type);
+
+/**
+ * Every type a user can turn email off for: the notification types that email, plus the weekly
+ * digest, which is an email of its own and not a notification type. The opt-out table, the settings
+ * toggle and the one-click unsubscribe accept exactly these; only the first group is ever sent by
+ * the per-notification email path.
+ */
+export const emailOptOutTypeList = [...emailNotificationTypeList, MISSED_DIGEST_EMAIL_TYPE];
+
+export const isEmailOptOutType = (type: string) => emailOptOutTypeList.includes(type);
+
+/** What an email opt-out type is called on the unsubscribe page and in emails. */
+export const emailOptOutDisplayName = (type: string) =>
+  type === MISSED_DIGEST_EMAIL_TYPE
+    ? MISSED_DIGEST_DISPLAY_NAME
+    : notificationProcessors[type]?.displayName ?? type;
+
+/**
+ * Email types with no on-site toggle (`toggleable: false`, so no settings row and no per-type
+ * control). The settings pages list them on their own as email-only checkboxes, so a user who used
+ * the one-click unsubscribe can find the email again where the email's "Manage" link sends them.
+ */
+export const systemEmailNotificationTypes = Object.entries(notificationProcessors)
+  .filter(([, processor]) => processor.defaultEmail && processor.toggleable === false)
+  .map(([type, { displayName }]) => ({ type, displayName }));
 
 /**
  * The opt-out types whose settings rows say whether a user turned everything off: every type the

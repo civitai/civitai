@@ -141,6 +141,11 @@
             you reach on the way, up to level {facts.apprenticeship.knightLevel}, pays
             {facts.apprenticeship.levelGold} gold, once, even if you later restart your career.
           </li>
+          <li>
+            Wrong answers cost hearts: when {facts.apprenticeship.heartWrong} of your last
+            {facts.apprenticeship.heartWindow} answers are wrong you lose one. Reaching a new level gives them
+            all back; lose all {facts.hearts.max} and your career restarts.
+          </li>
         </ul>
       </div>
       <div>
@@ -172,7 +177,8 @@
         <ul>
           <li>
             You have {facts.hearts.max} hearts. Poor judging can cost one. A lost heart comes back after
-            {facts.hearts.returnAfterDays} days, or sooner if you judge well, and restarting your career restores
+            {facts.hearts.returnAfterDays} days, or after {facts.hearts.rightVerdictsBack} right verdicts, whichever
+            comes first, and restarting your career restores
             them all. Lose all {facts.hearts.max} and your career restarts.
           </li>
           <li>Judging very fast pauses you for a short while.</li>
@@ -267,7 +273,7 @@
 
   <section id="fervor" aria-labelledby="fervor-title">
     <p class="kicker">05 · Fervor &amp; leaderboard</p>
-    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your week in the Order</h2>
+    <h2 id="fervor-title" class="with-icon"><Icon name="sparkles" size={26} />Fervor: your last {facts.fervor.windowDays} days in the Order</h2>
     <div class="formula">
       <p class="small-caps">Fervor =</p>
       <p class="expr">correct judgments × {facts.fervor.scale} × accuracy²</p>

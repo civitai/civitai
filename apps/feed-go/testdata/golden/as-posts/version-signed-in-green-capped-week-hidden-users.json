@@ -151,7 +151,7 @@
       },
       "packed": "3gADrGVxdWlwcGVkVG9JZM0fR6hub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
     },
-    "packed:caches:profile-pictures:v2:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -173,7 +173,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaLJVR09MREVOUFJPRklMRTg5MDGmdXNlcklkzQPpqWluZ2VzdGlvbqdTY2FubmVkpHR5cGWlaW1hZ2Wld2lkdGjNAgCmaGVpZ2h0zQIAqG1ldGFkYXRh3gACpXdpZHRozQIApmhlaWdodM0CAKhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v2:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -375,6 +375,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -432,6 +433,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -485,6 +487,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -538,6 +541,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -957,6 +961,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1111,6 +1116,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1221,6 +1227,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {
@@ -1340,6 +1347,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {

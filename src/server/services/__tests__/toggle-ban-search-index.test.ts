@@ -81,6 +81,19 @@ vi.mock('~/server/services/resourceReview.visibility', async (importOriginal) =>
   syncReviewsOfMovedPosts,
 }));
 
+const { refreshShowcases, postServiceLoad } = vi.hoisted(() => ({
+  refreshShowcases: vi.fn(async (_userId: number) => undefined),
+  postServiceLoad: { fail: false },
+}));
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  // A getter so a test can make loading the export throw, as a failed lazy import would.
+  get refreshShowcasesForUserModels() {
+    if (postServiceLoad.fail) throw new Error('post.service failed to load');
+    return refreshShowcases;
+  },
+}));
+
 const { toggleBan, AlreadyBannedError } = await import('~/server/services/user.service');
 const { BanReasonCode } = await import('~/server/common/enums');
 
@@ -292,14 +305,17 @@ describe('toggleBan -> removeMedia', () => {
       removeMedia,
     } as Parameters<typeof toggleBan>[0]);
 
-  // The Moderated block's own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
+  // `blockBannedUserImages`' own shape, so the CSAM block in `softDeleteUser` cannot satisfy it.
   const moderatedBlocks = () =>
-    imageUpdateMany.mock.calls.filter(
-      ([args]) =>
-        JSON.stringify(args?.where) ===
-          JSON.stringify({ userId: USER_ID, ingestion: { not: 'Blocked' } }) &&
-        args?.data?.blockedFor === 'moderated'
-    ).length;
+    dbMock.dbWrite.$executeRaw.mock.calls.filter(([strings, ...values]) => {
+      const text = (strings as unknown as string[]).join('?');
+      return (
+        text.includes('UPDATE "Image"') &&
+        text.includes('WHERE "userId" = ? AND ingestion <>') &&
+        values.includes('moderated') &&
+        values.includes(USER_ID)
+      );
+    }).length;
 
   beforeEach(() => {
     userFindUnique.mockResolvedValue({
@@ -327,6 +343,35 @@ describe('toggleBan -> removeMedia', () => {
     expect(moderatedBlocks()).toBe(n);
   });
 
+  it("requeues the account's own models after the media block, and not without one", async () => {
+    await ban('Harassment', true);
+    expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
+
+    refreshShowcases.mockClear();
+    await ban('Harassment', false);
+    expect(refreshShowcases).not.toHaveBeenCalled();
+  });
+
+  it('finishes the ban when the model requeue fails', async () => {
+    refreshShowcases.mockRejectedValueOnce(new Error('redis down'));
+    await expect(ban('Harassment', true)).resolves.toBeDefined();
+    expect(moderatedBlocks()).toBe(1);
+  });
+
+  it('finishes the ban when loading the model requeue fails', async () => {
+    postServiceLoad.fail = true;
+    try {
+      await expect(ban('Harassment', true)).resolves.toBeDefined();
+    } finally {
+      postServiceLoad.fail = false;
+    }
+    expect(moderatedBlocks()).toBe(1);
+    // A throw here would abort the rest of the content removal (marker clear, avatar refresh).
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'ban-user-remove-content' })
+    );
+  });
+
   // 🔴 Do not delete as redundant with the cases above: `softDeleteUser` applies its own CSAM
   // block right after `toggleBan`, so a Moderated block first is a wasted write over the whole
   // library. It skips it with `mediaBlockedByCaller`, which no request input can set.
@@ -339,6 +384,7 @@ describe('toggleBan -> removeMedia', () => {
       imageUpdateMany.mock.calls.some(([args]) => args?.data?.blockedFor === 'CSAM'),
       'positive control: softDeleteUser never reached its own CSAM block'
     ).toBe(true);
+    expect(refreshShowcases).toHaveBeenCalledWith(USER_ID);
   });
 });
 

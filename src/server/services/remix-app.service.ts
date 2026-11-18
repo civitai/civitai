@@ -6,7 +6,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import {
   assertGenerationInputsUsable,
-  type GenerationInputEntryPoint,
+  type SiteGenerationInputEntryPoint,
 } from '~/server/services/generation-input-urls';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { findTeamRemixWaiver } from '~/server/events/team-remix-waiver';
@@ -310,7 +310,7 @@ async function readSource(imageId: number) {
 export async function assertInputsUsable(
   urls: string[],
   caller: RemixAppCaller,
-  entry: GenerationInputEntryPoint
+  entry: SiteGenerationInputEntryPoint
 ) {
   // The preset submit skips the input gate ('checked-by-caller'), so it runs here.
   await assertGenerationInputsUsable({
@@ -443,7 +443,7 @@ async function quoteBuiltRun(
       type: 'error',
       message: (error as Error).message,
       key,
-    }).catch(() => undefined);
+    });
     return { refusal: PRICE_UNAVAILABLE };
   }
 }

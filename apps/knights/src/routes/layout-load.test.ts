@@ -23,6 +23,7 @@ const feedbackEnabled = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/feedback/enabled', () => ({ feedbackEnabled }));
 const rankBadgeUrls = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/rank-badges', () => ({ rankBadgeUrls }));
+vi.mock('$lib/server/settings/runtime', () => ({ storedSettings: async () => ({}) }));
 
 const { load } = await import('./+layout.server');
 
@@ -60,6 +61,7 @@ beforeEach(() => {
 afterEach(() => {
   playerRow.value = undefined;
   delete process.env.CIVITAI_APP_URL;
+  delete process.env.CIVITAI_SITE_URL;
   delete process.env.KNIGHTS_CONVERSION_DISABLED;
   delete process.env.KNIGHTS_SHOP_DISABLED;
 });
@@ -128,13 +130,14 @@ describe('layout load', () => {
     expect(depends).toHaveBeenCalledWith('knights:header');
   });
 
-  it('points "Back to Civitai" at the configured main app, without a trailing slash', async () => {
-    process.env.CIVITAI_APP_URL = 'https://main.example/';
-    expect(await load(event())).toMatchObject({ civitaiUrl: 'https://main.example' });
+  it('points "Back to Civitai" at the configured site, without a trailing slash', async () => {
+    process.env.CIVITAI_SITE_URL = 'https://site.example/';
+    expect(await load(event())).toMatchObject({ civitaiUrl: 'https://site.example' });
   });
 
-  it('falls back to civitai.com', async () => {
-    expect(await load(event())).toMatchObject({ civitaiUrl: 'https://civitai.com', player: null });
+  it('falls back to civitai.red, not the server-to-server base', async () => {
+    process.env.CIVITAI_APP_URL = 'https://civitai.com';
+    expect(await load(event())).toMatchObject({ civitaiUrl: 'https://civitai.red', player: null });
   });
 
   it('hands the menu the signed-in player', async () => {

@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { moderatorRuledNsfwSince } from '~/server/services/rating-review.entities';
 import {
+  activeComFaceIntentPromptId,
   COM_FACE_INTENT_LOCK_SOURCE,
   type ComFaceIntentListing,
   comFaceIntentFields,
@@ -21,6 +22,7 @@ import {
   readComFaceIntentModel,
   recordComFaceIntent,
   reusableComFaceIntent,
+  suppressComFaceIntentRelock,
 } from '~/server/services/model-com-face-intent.service';
 
 export { getOwnTriggerWords };
@@ -183,10 +185,23 @@ export async function checkComFaceIntentVerdict({
   });
   if (verdict.status !== 'ok') return { status: 'unavailable' };
   const { promptId } = verdict;
-  return verdict.output.detected
-    ? { status: 'detected', reason: verdict.output.reason, promptId }
-    : { status: 'allowed', promptId };
+  if (verdict.output.detected)
+    return { status: 'detected', reason: verdict.output.reason, promptId };
+  // Counted per prompt version, so a publish that shifts how much is allowed shows up.
+  logToAxiom({
+    type: 'info',
+    name: 'model-com-face-intent',
+    message: 'allowed',
+    payload: { promptId },
+  });
+  return { status: 'allowed', promptId };
 }
+
+export type ComFaceIntentWrites = {
+  record: typeof recordComFaceIntent;
+  lock: typeof lockForComFaceIntent;
+  suppress: typeof suppressComFaceIntentRelock;
+};
 
 /**
  * The owner's verdict on this listing text: the stored one while the text is unchanged, else a fresh
@@ -195,19 +210,23 @@ export async function checkComFaceIntentVerdict({
  * rating (`lockForComFaceIntent`), which the owner can dispute; that includes a stored detection
  * first made while the model was not mature, unless a moderator has ruled on its rating since.
  * `disputable`: the nsfw lock is now the intent check's. Nothing is read or stored unless `userId`
- * owns the model.
+ * owns the model. `writes` replaces how the verdict is stored, the lock added and a ruling's
+ * relock suppression kept.
  */
-async function resolveComFaceIntent({
-  modelId,
-  userId,
-  ...listing
-}: ComFaceIntentListing & { modelId?: number; userId?: number }): Promise<
-  ComFaceIntentVerdict & { disputable?: boolean }
-> {
+export async function resolveComFaceIntent(
+  { modelId, userId, ...listing }: ComFaceIntentListing & { modelId?: number; userId?: number },
+  writes: ComFaceIntentWrites = {
+    record: recordComFaceIntent,
+    lock: lockForComFaceIntent,
+    suppress: suppressComFaceIntentRelock,
+  }
+): Promise<ComFaceIntentVerdict & { disputable?: boolean }> {
   const found = modelId && userId ? await readComFaceIntentModel(modelId) : null;
   const model = found && found.userId === userId ? found : null;
   const textHash = comFaceIntentTextHash(listing);
-  const stored = model ? reusableComFaceIntent(model.meta, textHash) : null;
+  const stored = model
+    ? reusableComFaceIntent(model.meta, textHash, await activeComFaceIntentPromptId())
+    : null;
   const storedHash = model
     ? comFaceIntentTextHash({
         name: model.name,
@@ -224,7 +243,7 @@ async function resolveComFaceIntent({
   else {
     verdict = await checkComFaceIntentVerdict(listing);
     if (!model || verdict.status === 'unavailable' || storedHash !== textHash) return verdict;
-    await recordComFaceIntent(model.id, {
+    await writes.record(model.id, {
       detected: verdict.status === 'detected',
       textHash,
       ...(verdict.status === 'detected' && verdict.reason && { reason: verdict.reason }),
@@ -241,11 +260,16 @@ async function resolveComFaceIntent({
 
   // Locked only for the text the model lists now, never for an unsaved edit or a draft.
   if (storedHash !== textHash || !model.nsfw) return verdict;
-  // A stored detection a moderator has ruled past (an unlock from the model form) is not re-applied.
-  const recordedAt = stored && meta?.comFaceIntent?.at ? new Date(meta.comFaceIntent.at) : null;
-  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) return verdict;
+  // A moderator's ruling since this text was last judged (an unlock from the model form, say) is not
+  // undone: neither by the stored detection nor by a fresh one under a new prompt version.
+  const earlier = meta?.comFaceIntent;
+  const recordedAt = earlier?.textHash === textHash && earlier.at ? new Date(earlier.at) : null;
+  if (recordedAt && (await moderatorRuledNsfwSince(model.id, recordedAt))) {
+    await writes.suppress(model.id, textHash);
+    return verdict;
+  }
 
-  const locked = await lockForComFaceIntent(model.id, textHash).catch((error: Error) => {
+  const locked = await writes.lock(model.id, textHash).catch((error: Error) => {
     logToAxiom({
       type: 'error',
       name: 'model-com-face-intent',
@@ -277,7 +301,7 @@ export async function assertComFaceAllowed(
       message: 'refused at save',
       modelId: args.modelId,
       reason: verdict.reason,
-    }).catch(() => undefined);
+    });
     throw throwBadRequestError(
       verdict.disputable ? COM_FACE_REFUSED_MESSAGE : COM_FACE_REFUSED_EDIT_MESSAGE
     );

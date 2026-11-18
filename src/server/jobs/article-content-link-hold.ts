@@ -41,7 +41,7 @@ export async function settleContentLinkHolds(now = new Date()) {
         message: 'Failed to settle a held article',
         articleId,
         error: (error as Error).message,
-      }).catch(() => undefined);
+      });
     }
   }
   return { checked: holds.length };

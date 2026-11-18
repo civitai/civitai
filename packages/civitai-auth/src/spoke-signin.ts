@@ -2,8 +2,11 @@ import { decodeJwt } from 'jose';
 import { SPOKE_AUTHORIZE_PATH } from './constants';
 import {
   deviceCookieNameForSlot,
+  expireCookie,
   isSecureCookie,
+  otherSlotExpiries,
   parseCookieHeader,
+  registrableDomain,
   sessionCookieNameForSlot,
   type CookieSlot,
 } from './cookies';
@@ -11,11 +14,9 @@ import {
   buildAuthorizeRedirect,
   clearBridgeCookie,
   completeFirstPartyCallback,
-  OAUTH_BRIDGE_COOKIE,
   safePath,
 } from './first-party-bridge';
 import { hubBaseUrl } from './hub';
-import { registrableDomain } from './spoke-logout';
 
 // Sign-in handlers for a first-party app on its own host: `GET /api/auth/authorize` and `GET /api/auth/callback`.
 // They write only the host-only slot, which no other host can set; the shared slot belongs to the hub and the main
@@ -75,9 +76,7 @@ function cookie(
   ].join('; ');
 }
 
-function expire(name: string, secure: boolean): string {
-  return `${name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}`;
-}
+const expire = (name: string, secure: boolean): string => expireCookie(name, secure);
 
 function tokenMaxAge(token: string): number | undefined {
   try {
@@ -112,27 +111,6 @@ export function spokeSessionCookies(
     out.push(cookie(device, opts.deviceId, secure, DEVICE_TTL_S, domain));
   }
   out.push(...otherSlotExpiries(slot, opts.requestCookies, secure));
-  return out;
-}
-
-/**
- * Host-only expiries for the other slot's session and device cookies, for those the request carries, so a write
- * to one slot leaves no stale identity in the other.
- */
-export function otherSlotExpiries(
-  slot: CookieSlot,
-  requestCookies: Partial<Record<string, string | undefined>> | undefined,
-  secure: boolean = isSecureCookie()
-): string[] {
-  const other: CookieSlot = slot === 'host' ? 'shared' : 'host';
-  const out: string[] = [];
-  for (const [mine, theirs] of [
-    [sessionCookieNameForSlot(slot, secure), sessionCookieNameForSlot(other, secure)],
-    [deviceCookieNameForSlot(slot, secure), deviceCookieNameForSlot(other, secure)],
-  ]) {
-    // On http dev both slots share the bare name; expiring "the other" would delete what was just written.
-    if (theirs !== mine && requestCookies?.[theirs]) out.push(expire(theirs, secure));
-  }
   return out;
 }
 
@@ -209,11 +187,11 @@ export function spokeAuthorize(request: Request, opts: SpokeSignInOptions = {}):
     cookieOps.push(clearLoginRetryCookie());
   }
 
-  const { location, setCookie } = buildAuthorizeRedirect({
+  const { location, setCookies } = buildAuthorizeRedirect({
     selfOrigin: originOf(request, opts),
     returnUrl: safePath(url.searchParams.get('returnUrl')),
   });
-  return redirect(location, [setCookie, ...cookieOps]);
+  return redirect(location, [...setCookies, ...cookieOps]);
 }
 
 /** `GET /api/auth/callback`: exchange the hub's code for this host's own session cookie. */
@@ -234,7 +212,7 @@ export async function spokeCallback(
       state: url.searchParams.get('state'),
       error: url.searchParams.get('error'),
     },
-    bridgeCookieValue: jar[OAUTH_BRIDGE_COOKIE],
+    cookies: jar,
     clientIp: opts.clientIp,
   });
 
@@ -244,11 +222,11 @@ export async function spokeCallback(
       detail: result.detail,
       cookieCount: Object.keys(jar).length,
     });
-    return problemPage([clearBridgeCookie()]);
+    return problemPage(result.clearCookies);
   }
   opts.onEvent?.('success');
   return redirect(result.returnUrl, [
-    clearBridgeCookie(),
+    ...result.clearCookies,
     ...spokeSessionCookies(result.token, {
       slot: 'host',
       deviceId: result.deviceId,

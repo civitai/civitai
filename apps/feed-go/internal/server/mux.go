@@ -5,11 +5,14 @@ import (
 	"net/http/pprof"
 )
 
-// PublicMux is the public listener's routes: the one procedure, nothing else. It never carries a
-// debug route, whatever the pprof toggle says.
+// PublicMux is the public listener's routes: the gallery procedure, and `model.getAll` — computed only
+// with ServeModelGetAll (FEED_GO_SERVE_MODEL_GETALL), else every request there is proxied to the Node
+// app (ServeModelGetAllHTTP). Nothing else. It never carries a debug route, whatever the pprof toggle
+// says.
 func PublicMux(s *Server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/api/trpc/"+Procedure, s)
+	mux.HandleFunc("/api/trpc/"+ProcedureModelGetAll, s.ServeModelGetAllHTTP)
 	return mux
 }
 
@@ -23,6 +26,8 @@ func InternalMux(s *Server, metrics http.Handler, withPprof bool) *http.ServeMux
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/internal/shadow/"+Procedure, s.ShadowHandler)
 	mux.HandleFunc("/internal/shadow"+V1ImagesPath, s.ShadowV1Handler)
+	mux.HandleFunc("/internal/shadow"+V1ModelsPath, s.ShadowV1ModelsHandler)
+	mux.HandleFunc("/internal/shadow"+V1ModelsPath+"/id", s.ShadowV1ModelsIDHandler)
 	mux.HandleFunc("/internal/shadow/"+ProcedureInfinite, s.ShadowInfiniteHandler)
 	mux.HandleFunc("/internal/shadow/"+ProcedureModelGetAll, s.ShadowModelGetAllHandler)
 	mux.HandleFunc(ProbePathPrefix, s.ProbeHandler)

@@ -458,7 +458,7 @@ export const processScheduledPublishing = createJob(
           message: 'model version cache bust failed',
           modelVersionId: modelVersion.id,
           error: (error as Error)?.message,
-        }).catch(() => undefined)
+        })
       );
     }
 
@@ -473,7 +473,7 @@ export const processScheduledPublishing = createJob(
           type: 'error',
           message: 'Failed to release pending resource reviews',
           error: (error as Error)?.message,
-        }).catch(() => undefined)
+        })
       );
 
     // Process event engagements
@@ -518,12 +518,12 @@ export const processScheduledPublishing = createJob(
     }
 
     if (newlyLivePosts.length === REWARD_SWEEP_LIMIT) {
-      await logToAxiom({
+      logToAxiom({
         name: 'process-scheduled-publishing',
         type: 'warning',
         message: 'Reward sweep hit its row limit; the remainder of this window is dropped',
-        windowStart: rewardWindowStart.toISOString(),
-      }).catch(() => undefined);
+        payload: { windowStart: rewardWindowStart.toISOString() },
+      });
     }
     // A post can reach this sweep already paid for: anything scheduled before the
     // reward moved to publish time was granted at schedule time, and an
@@ -536,7 +536,7 @@ export const processScheduledPublishing = createJob(
         type: 'error',
         message: 'Failed to read prior first daily post rewards; granting unfiltered',
         error: (error as Error)?.message,
-      }).catch(() => undefined);
+      });
       return new Set<number>();
     });
 
@@ -553,7 +553,7 @@ export const processScheduledPublishing = createJob(
           message: 'Failed to apply first daily post reward',
           postId: post.id,
           error: (error as Error)?.message,
-        }).catch(() => undefined)
+        })
       );
     }
 
@@ -599,7 +599,7 @@ export const processScheduledPublishing = createJob(
         type: 'error',
         message: 'scheduled article go-live failed',
         error: (error as Error)?.message,
-      }).catch(() => undefined)
+      })
     );
     // Scanned when scheduled; this re-arms a scan that ran out of retries, and is a no-op otherwise.
     const liveArticleIds = goLive ? [...goLive.published, ...goLive.processing] : [];

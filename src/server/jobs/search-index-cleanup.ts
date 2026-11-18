@@ -51,7 +51,7 @@ export const searchIndexCleanupJob = createJob(
           // `.catch(() => undefined)` and NOT a bare `.catch()`: `catch(undefined)` is
           // `then(undefined, undefined)`, a pass-through that leaves the
           // rejection unhandled. A bare one swallows nothing.
-        }).catch(() => undefined);
+        });
       },
     });
 
@@ -157,7 +157,7 @@ export const searchIndexCleanupJob = createJob(
         skipped: r.idsSkipped,
         rescuedByPrimary: r.rescuedByPrimary,
         indexingAtStart: r.indexingAtStart,
-      }).catch(() => undefined);
+      });
     }
 
     // An index the run never REACHED emits no per-index line at all, because
@@ -179,10 +179,12 @@ export const searchIndexCleanupJob = createJob(
         message:
           `run ENDED BEFORE ${missed.length} of ${CLEANUP_INDEXES.length} configured index(es) ` +
           `were attempted: ${missed.join(', ')}`,
-        indexesConfigured: CLEANUP_INDEXES.length,
-        indexesAttempted: results.length,
-        indexesMissed: missed,
-      }).catch(() => undefined);
+        payload: {
+          indexesConfigured: CLEANUP_INDEXES.length,
+          indexesAttempted: results.length,
+          indexesMissed: missed,
+        },
+      });
     }
 
     return {

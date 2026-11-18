@@ -279,7 +279,7 @@ const { createCachedArray, createCachedObject } = createCacheBuilders({
     void logToAxiom(
       { type: 'error', name: 'cache-refresh-failed', cacheKey, ids, error },
       'civitai-prod'
-    ).catch(() => undefined),
+    ),
   log,
   clearByPattern: (pattern) => clearCacheByPattern(pattern),
 });

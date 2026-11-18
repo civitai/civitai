@@ -12,7 +12,7 @@ import {
 import { createJob } from './job';
 
 const logJob = (data: MixedObject) => {
-  logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks').catch();
+  logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks');
 };
 
 type OldTrainingRow = {

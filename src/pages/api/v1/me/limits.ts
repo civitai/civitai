@@ -35,5 +35,6 @@ export default AuthedEndpoint(
       .status(200)
       .json(await getUsageLimits({ user, req, tokenScope, ids: parsed.data?.ids }));
   },
-  ['GET']
+  ['GET'],
+  { scope: { anyOf: USAGE_LIMITS_SCOPES } }
 );

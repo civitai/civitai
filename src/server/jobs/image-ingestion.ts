@@ -572,7 +572,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       deferredError: deferred.error,
     },
     'webhooks'
-  ).catch(() => null);
+  );
 
   if (failedSends > 0) {
     logToAxiom(
@@ -584,7 +584,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         failedSends,
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return {
@@ -820,7 +820,7 @@ export const removeBlockedImages = createJob(
         message: 'finished',
         ...summary,
         durationMs: Date.now() - startedAt,
-      }).catch(() => undefined);
+      });
       return summary;
     };
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
@@ -880,7 +880,7 @@ export const removeBlockedImages = createJob(
         type: 'warning',
         name: 'remove-blocked-images',
         message: 'hold marker view missing: nothing deleted this run',
-      }).catch(() => undefined);
+      });
       return { skipped: 'hold-marker-view-missing' };
     }
 
@@ -895,7 +895,7 @@ export const removeBlockedImages = createJob(
           name: 'remove-blocked-images',
           message: 'evidence hold sweep failed',
           error: (error as Error)?.message,
-        }).catch(() => undefined)
+        })
       );
 
     // A pending review decides this image's fate, so it is held until a moderator resolves it.
@@ -1071,10 +1071,6 @@ export const removeBlockedImages = createJob(
     //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
     //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
     //       `ModActivity`.
-    //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
-    //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
-    //       and not by a moderator reviewing one. This is the writer that would be most dangerous
-    //       to opt in by default: it is the only queue writer a stranger can aim at your image.
     //     • the Knights of New Order game (`new-order.service`), which calls `handleBlockImages`
     //       with an id but NO `moderatorId`, so no activity row is written. A community rating
     //       consensus is not a staff takedown decision.
@@ -1156,7 +1152,7 @@ export const removeBlockedImages = createJob(
           type: 'error',
           message: 'could not queue takedown retractions; not deleting takedowns this run',
           error: error instanceof Error ? error.message : String(error),
-        }).catch(() => undefined);
+        });
         retractionStoppedBy = 'retry-queue-unavailable';
         retractionDeferred.push(...ids);
         continue;
@@ -1165,6 +1161,7 @@ export const removeBlockedImages = createJob(
         retractPublicBlobs: true,
         onlyWhere,
         retractionGate,
+        moderatorDelete: true,
       });
       deleted.push(...rows.map((x) => x.id));
       // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
@@ -1214,9 +1211,12 @@ export const removeBlockedImages = createJob(
         message: 'retracting deletes stopped for this run; the rest stay queued',
         reason: retractionStoppedBy,
         count: retractionDeferred.length,
-      }).catch(() => undefined);
+      });
     if (deletedWithoutRetraction.length > 0) {
-      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      const rows = await deleteImages(deletedWithoutRetraction, true, {
+        onlyWhere,
+        moderatorDelete: true,
+      });
       deleted.push(...rows.map((x) => x.id));
     }
     const deletedSet = new Set(deleted);

@@ -2,6 +2,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
+import { scopeToColumn } from './scope';
 import {
   DEVICE_ID_TOKEN_TYPE,
   JWT_TOKEN_TYPE,
@@ -101,7 +102,7 @@ export async function createWorkerClient(
         secret: generateSecretHash(secret),
         name: input.name,
         grants: [TOKEN_EXCHANGE_GRANT],
-        allowedScopes: TokenScope.WorkerRegister,
+        allowedScopes: scopeToColumn(TokenScope.WorkerRegister),
         isConfidential: true,
         userId: ownerId,
         updatedAt: new Date(),
@@ -147,7 +148,7 @@ export async function createIntrospectorClient(
       secret: generateSecretHash(secret),
       name: input.name,
       grants: [],
-      allowedScopes: 0,
+      allowedScopes: scopeToColumn(0n),
       isConfidential: true,
       userId: ownerId,
       updatedAt: new Date(),

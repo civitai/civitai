@@ -20,6 +20,7 @@ import {
   IconBolt,
   IconBookmark,
   IconBrandWechat,
+  IconPencil,
   IconBrush,
   IconChevronDown,
   IconChevronUp,
@@ -101,6 +102,8 @@ import {
 } from '~/components/HatTurf/detail/HatTurfDetailProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useSsrDeferredShell } from '~/hooks/useSsrDeferredShell';
 import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
 import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
@@ -124,6 +127,7 @@ import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMen
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { ClientOnlySection } from '~/components/ClientOnlySection/ClientOnlySection';
+import { RESTRICTED_IMAGE_REASON } from '~/shared/utils/restricted-image';
 
 const PREFETCH_THRESHOLD = 5;
 
@@ -154,16 +158,16 @@ const sharedIconProps: IconProps = {
   color: 'white',
 };
 
-export function ImageDetail2() {
+export function ImageDetail2({ deferredSsr }: { deferredSsr?: boolean } = {}) {
   const { images } = useImageDetailContext();
   return (
     <HatTurfDetailProvider images={images}>
-      <ImageDetail2Content />
+      <ImageDetail2Content deferredSsr={deferredSsr} />
     </HatTurfDetailProvider>
   );
 }
 
-function ImageDetail2Content() {
+function ImageDetail2Content({ deferredSsr }: { deferredSsr?: boolean }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const {
@@ -222,6 +226,7 @@ function ImageDetail2Content() {
     items,
     index,
     navigate: navigateTo,
+    carouselIndex: carouselNavigation.index,
     carouselNavigate: carouselNavigation.navigate,
   });
   const handleSettle = (settledIndex: number) => {
@@ -263,6 +268,7 @@ function ImageDetail2Content() {
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
+  const deferredShell = useSsrDeferredShell(deferredSsr);
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
@@ -429,27 +435,43 @@ function ImageDetail2Content() {
 
   const mediaSchema = buildImageMediaSchema({ image, title, baseUrl: env.NEXT_PUBLIC_BASE_URL });
 
+  // One `<Gated>` (rating gate and `<head>`) for the full page and for the shell.
+  const gatedProps = {
+    contentNsfwLevel: imageDetailGateLevel(image, forcedBrowsingLevel),
+    bypassRating: isOwner || !!currentUser?.isModerator,
+    meta: {
+      title,
+      images: image,
+      ogEndpoint: `/api/og?type=image&id=${image.id}`,
+      canonical: `/images/${image.id}`,
+      schema: mediaSchema,
+      breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+        { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
+        { name: title },
+      ]),
+      // Deindexed on every domain, videos included. The only per-page text is the prompt, which
+      // stays out of search snippets, and indexed safe videos earned effectively no search
+      // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
+      // article pages that embed the media — don't re-enable this without new evidence.
+      deIndex: true,
+    },
+  };
+
+  // `ssrSignedInSkipPrefetchImages`: getServerSideProps prefetched the image, its contest details
+  // and the hidden preferences (so a deleted, hidden or blocked image is already NotFound above),
+  // so the server renders the gate and `<head>` with a loader in place of the content. The
+  // hydrating render matches it; the content then renders as it does after a client-side
+  // navigation, with the generation data loading in place.
+  if (deferredShell) {
+    return (
+      <Gated {...gatedProps}>
+        <PageLoader />
+      </Gated>
+    );
+  }
+
   return (
-    <Gated
-      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
-      bypassRating={isOwner || !!currentUser?.isModerator}
-      meta={{
-        title,
-        images: image,
-        ogEndpoint: `/api/og?type=image&id=${image.id}`,
-        canonical: `/images/${image.id}`,
-        schema: mediaSchema,
-        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
-          { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
-          { name: title },
-        ]),
-        // Deindexed on every domain, videos included. The only per-page text is the prompt, which
-        // stays out of search snippets, and indexed safe videos earned effectively no search
-        // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
-        // article pages that embed the media — don't re-enable this without new evidence.
-        deIndex: true,
-      }}
-    >
+    <Gated {...gatedProps}>
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
       <HatTurfDetailReset imageId={image.id} />
       <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
@@ -506,12 +528,27 @@ function ImageDetail2Content() {
                                 the menu, and so is Report image. */}
                             {text ? (
                               <>
+                                {textPost && textPost.user.id === currentUser?.id && (
+                                  <NextLink
+                                    href={`/posts/${text.postId}/edit`}
+                                    aria-label="Edit text"
+                                    data-testid="text-slide-edit"
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconPencil {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </NextLink>
+                                )}
                                 <ShareButton url={imageShareUrl} title={title}>
                                   <LegacyActionIcon {...sharedActionIconProps}>
                                     <IconShare3 {...sharedIconProps} />
                                   </LegacyActionIcon>
                                 </ShareButton>
-                                <TextSlideMenu postId={text.postId}>
+                                <TextSlideMenu
+                                  postId={text.postId}
+                                  textId={text.id}
+                                  authorId={textPost?.user.id}
+                                >
                                   <LegacyActionIcon {...sharedActionIconProps}>
                                     <IconDotsVertical {...sharedIconProps} />
                                   </LegacyActionIcon>
@@ -707,13 +744,27 @@ function ImageDetail2Content() {
                   }`}
                 >
                   <div className="flex items-center gap-1">{renderLeftImageControls(false)}</div>
-                  <LegacyActionIcon
-                    {...sharedActionIconProps}
-                    onClick={toggleInfo}
-                    data-testid="image-detail-chevron"
-                  >
-                    <IconChevron {...sharedIconProps} />
-                  </LegacyActionIcon>
+                  {text ? (
+                    // A text's talk lives in this sheet, so the strip names it.
+                    <Button
+                      variant="light"
+                      size="compact-md"
+                      leftSection={<IconBrandWechat size={16} />}
+                      rightSection={<IconChevron size={16} />}
+                      onClick={toggleInfo}
+                      data-testid="image-detail-chevron"
+                    >
+                      Discussion
+                    </Button>
+                  ) : (
+                    <LegacyActionIcon
+                      {...sharedActionIconProps}
+                      onClick={toggleInfo}
+                      data-testid="image-detail-chevron"
+                    >
+                      <IconChevron {...sharedIconProps} />
+                    </LegacyActionIcon>
+                  )}
                 </div>
                 <ScrollArea className="flex-1 p-3 py-0">
                   <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
@@ -798,6 +849,23 @@ function ImageDetail2Content() {
                       </AlertWithIcon>
                     )}
                     {!text && isOwner && <OwnerBlockedImageNotice image={image} />}
+                    {!text &&
+                      (isOwner || currentUser?.isModerator) &&
+                      'restricted' in image &&
+                      image.restricted === true && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="orange"
+                          iconColor="orange"
+                          title="Restricted"
+                          radius={0}
+                          px="md"
+                        >
+                          {isOwner
+                            ? `Hidden from everyone else, because ${RESTRICTED_IMAGE_REASON}. You still see it on pages built for you, such as your profile.`
+                            : `Hidden from feeds, galleries and search (its uploader still sees it where the page is built for them), because ${RESTRICTED_IMAGE_REASON}. Moderators can still open it by id.`}
+                        </AlertWithIcon>
+                      )}
                     {!text && image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

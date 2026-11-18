@@ -3,6 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { ShownRendition } from '@civitai/shared/held-media';
 import { isNotHeldAnswer, playedFraction, WATCHED_FRACTION } from '@civitai/shared/held-media';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModerationImageModel } from '~/server/services/image.service';
 
 const CAPTURE = { capture: true };
@@ -25,8 +28,9 @@ export function useHeldGridReport(userId: number, count: number) {
 
 /**
  * From storage through `/api/mod/held-media`. A failed load asks the route why: only its explicit
- * not-held answer falls back to the CDN, which still serves an image nobody holds. Any other failure
- * (storage down, an unplayable video, a refused request) shows an error tile, never the CDN copy.
+ * not-held answer falls back, to `/api/mod/retracted-media` for a blocked image (the CDN does not
+ * serve one) and to the CDN for any other. Any other failure (storage down, an unplayable video, a
+ * refused request) shows an error tile, never the CDN copy.
  */
 export function CsamHeldMedia({
   image,
@@ -38,12 +42,18 @@ export function CsamHeldMedia({
   /** Once the file is on screen: an image whose pixels loaded, or a video WATCHED_FRACTION played. */
   onShown?: (rendition: ShownRendition) => void;
 }) {
-  const [state, setState] = useState<'held' | 'cdn' | 'error'>('held');
-  const src = `/api/mod/held-media/${image.id}`;
-  const onError = () =>
+  const [state, setState] = useState<'held' | 'retracted' | 'cdn' | 'error'>('held');
+  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const retractedSrc = features.modRetractedMedia ? retractedMediaUrl(image, currentUser) : null;
+  const src =
+    state === 'retracted' && retractedSrc ? retractedSrc : `/api/mod/held-media/${image.id}`;
+  const onError = () => {
+    if (state === 'retracted') return setState('error');
     fetch(`${src}?probe=1`)
-      .then((res) => setState(isNotHeldAnswer(res) ? 'cdn' : 'error'))
+      .then((res) => setState(!isNotHeldAnswer(res) ? 'error' : retractedSrc ? 'retracted' : 'cdn'))
       .catch(() => setState('error'));
+  };
   const shownRef = useShown(state === 'cdn' ? 'cdn-450' : 'original', onShown);
   // Native controls take clicks on a video, so it is selected by its checkbox only.
   const isVideo = image.type === 'video';

@@ -14,9 +14,13 @@ import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import {
+  applySessionScope,
+  INSUFFICIENT_SCOPE_MESSAGE,
+  type SessionScope,
+} from '~/server/auth/session-scope';
 import { credentialLogFields, getRequestCredential } from '~/server/auth/request-credential';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
@@ -112,7 +116,7 @@ function logRestServerFault(e: unknown, res: NextApiResponse) {
   logToAxiom(
     { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -149,7 +153,7 @@ function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
       ...(route ? { route } : null),
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
 }
 
 /**
@@ -661,6 +665,12 @@ export function PublicEndpoint(
   });
 }
 
+/**
+ * `scope`: the token scope a bearer credential needs (`SessionScope`). Short of it, `AuthedEndpoint`
+ * answers 403 and `MixedAuthEndpoint` serves the request as anonymous.
+ */
+type EndpointAuthOptions = { allowBanned?: boolean; scope?: SessionScope };
+
 export function AuthedEndpoint(
   handler: (
     req: AxiomAPIRequest,
@@ -668,7 +678,7 @@ export function AuthedEndpoint(
     user: SessionUser
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
-  { allowBanned = false }: { allowBanned?: boolean } = {}
+  { allowBanned = false, scope }: EndpointAuthOptions = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const shouldStop = addCorsHeaders(req, res, allowedMethods, { allowCredentials: true });
@@ -679,8 +689,16 @@ export function AuthedEndpoint(
 
     // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
     const session = allowBanned
-      ? await getServerAuthSession({ req, res })
-      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+      ? await getServerAuthSession({ req, res, scope: 'defer' }).then((raw) => {
+          const resolved = applySessionScope(req, raw, scope);
+          if (!resolved.insufficient) return resolved.session;
+          res.status(403).json({ error: INSUFFICIENT_SCOPE_MESSAGE });
+          return false as const;
+        })
+      : await getApiAuthSession(
+          { req, res },
+          { whenBanned: 'refuse', scope, insufficient: 'refuse' }
+        );
     if (session === false) return;
     if (!session?.user) return res.status(401).json({ error: 'Unauthorized' });
     await handler(req, res, session.user);
@@ -694,7 +712,7 @@ export function MixedAuthEndpoint(
     user: Session['user'] | undefined
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
-  { allowBanned = false }: { allowBanned?: boolean } = {}
+  { allowBanned = false, scope }: EndpointAuthOptions = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
@@ -734,8 +752,8 @@ export function MixedAuthEndpoint(
     // Acts as the signed-in user, so a banned session is refused rather than served as anonymous.
     // allowBanned uses are pinned by authed-endpoint-ban-gate.test.ts.
     const session = allowBanned
-      ? await getServerAuthSession({ req, res })
-      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+      ? await getServerAuthSession({ req, res, scope })
+      : await getApiAuthSession({ req, res }, { whenBanned: 'refuse', scope });
     if (session === false) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
@@ -781,9 +799,12 @@ export function PartnerEndpoint(
 
 export function ModEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => Promise<void>,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  /** `noStore`: `private, no-store` on every answer, this wrapper's own refusals included. */
+  { noStore = false }: { noStore?: boolean } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (noStore) res.setHeader('cache-control', 'private, no-store');
     if (!req.method || !allowedMethods.includes(req.method)) {
       res.setHeader('Allow', allowedMethods);
       return res.status(405).json({ error: 'Method not allowed' });
@@ -940,23 +961,23 @@ export function OrchestratorEndpoint(
     token: string
   ) => Promise<void | NextApiResponse>,
   allowedMethods: string[],
-  requiredScope: number
+  requiredScope: bigint
 ) {
-  return AuthedEndpoint(async (req, res, user) => {
+  const scoped = async (req: AxiomAPIRequest, res: NextApiResponse, user: SessionUser) => {
     // Same rule as tRPC's enforceTokenScope: a cookie session and a full-scope key pass.
     const credential = getRequestCredential(req);
     if (
       credential.tokenScope !== TokenScope.Full &&
-      !Flags.hasFlag(credential.tokenScope, requiredScope)
+      !hasScope(credential.tokenScope, requiredScope)
     ) {
       // No user, key or IP.
       logToAxiom({
         name: 'orchestrator-endpoint-scope-refused',
         type: 'info',
         route: req.url?.split('?')[0],
-        requiredScope,
+        requiredScope: Number(requiredScope),
         ...credentialLogFields(credential),
-      }).catch(() => undefined);
+      });
       return res
         .status(403)
         .json({ error: 'Your API key does not have the required scope for this action' });
@@ -971,5 +992,6 @@ export function OrchestratorEndpoint(
       throw error;
     }
     return await handler(req, res, user, token);
-  }, allowedMethods);
+  };
+  return AuthedEndpoint(scoped, allowedMethods, { scope: { scope: requiredScope } });
 }

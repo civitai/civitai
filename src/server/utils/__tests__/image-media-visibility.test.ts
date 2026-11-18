@@ -245,7 +245,7 @@ const KEY_OWNER = 7;
 // A capped (SFW) domain: signed in, without canViewNsfw.
 const green = { features: { canViewNsfw: false }, req: { headers: {} } };
 const mature = { nsfwLevel: NsfwLevel.X, user: { id: KEY_OWNER } };
-const key = (tokenScope: number) => ({
+const key = (tokenScope: bigint) => ({
   apiKeyId: 9,
   apiKeyType: ApiKeyType.User,
   subject: { type: 'apiKey' as const, id: 9 },
@@ -284,5 +284,19 @@ describe('canViewImageMedia owner and moderator exemption from the domain cap', 
   it('holds anyone else to the cap', () => {
     expect(canSee({ user: { id: 6 } })).toBe(false);
     expect(canSee({})).toBe(false);
+  });
+});
+
+describe('canViewImageMedia on a capped domain', () => {
+  const stranger = { ...green, user: { id: 6 } } as never;
+  const rated = (nsfwLevel: number) => ({ nsfwLevel, user: { id: KEY_OWNER } });
+
+  it('keeps a mixed rating wholly inside the cap', () => {
+    expect(canViewImageMedia(stranger, rated(NsfwLevel.PG | NsfwLevel.PG13))).toBe(true);
+  });
+
+  it('withholds an unrated image and a mixed rating that reaches above the cap', () => {
+    expect(canViewImageMedia(stranger, rated(0))).toBe(false);
+    expect(canViewImageMedia(stranger, rated(NsfwLevel.PG | NsfwLevel.R))).toBe(false);
   });
 });

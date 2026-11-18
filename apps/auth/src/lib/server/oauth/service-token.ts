@@ -77,9 +77,7 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
   const ctx: Record<string, string | undefined> = { client: client.id };
 
   const refuse = (error: ServiceTokenError, reason: string, extra?: Record<string, string>) => {
-    void logToAxiom({ event: 'service_token', result: 'refused', error, reason, ...ctx }).catch(
-      () => undefined
-    );
+    void logToAxiom({ event: 'service_token', result: 'refused', error, reason, ...ctx });
     return json(
       { error, error_description: DESCRIPTION[error] },
       { status: STATUS[error], headers: { ...NO_STORE, ...extra } }
@@ -107,20 +105,18 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
     if (body.scope !== undefined) {
       const requested = parseScopeRequest(body.scope);
       if (!requested || requested.openid) return refuse('invalid_scope', 'unparseable scope');
-      if ((requested.scope & ~entry.scopes) !== 0) {
+      if ((requested.scope & ~entry.scopes) !== 0n) {
         return refuse('invalid_scope', 'scope outside entry');
       }
       scope = requested.scope;
     }
-    if (scope === 0) return refuse('invalid_scope', 'empty scope');
+    if (scope === 0n) return refuse('invalid_scope', 'empty scope');
     ctx.scope = scopeNames(scope);
 
     const issuer = env.AUTH_JWT_ISSUER;
     const tokenSigner = getSigner();
     if (!issuer || !tokenSigner) {
-      void logToAxiom({ type: 'error', name: 'service-token-not-configured' }).catch(
-        () => undefined
-      );
+      void logToAxiom({ type: 'error', name: 'service-token-not-configured' });
       return refuse('server_error', 'issuer or signing key not configured');
     }
 
@@ -148,7 +144,7 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
         type: 'error',
         name: 'service-token-sign-failed',
         message: String(err),
-      }).catch(() => undefined);
+      });
       return refuse('server_error', 'signing failed');
     }
 
@@ -170,19 +166,17 @@ export async function handleServiceToken(input: ServiceTokenInput): Promise<Resp
         type: 'error',
         name: 'service-token-record-failed',
         message: String(err),
-      }).catch(() => undefined);
+      });
       return refuse('server_error', 'token record not stored');
     }
 
-    void logToAxiom({ event: 'service_token', result: 'ok', ...ctx }).catch(() => undefined);
+    void logToAxiom({ event: 'service_token', result: 'ok', ...ctx });
     return json(
       { access_token: accessToken, token_type: 'Bearer', expires_in: exp - iat, scope: ctx.scope },
       { headers: NO_STORE }
     );
   } catch (err) {
-    void logToAxiom({ type: 'error', name: 'service-token-error', message: String(err) }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'service-token-error', message: String(err) });
     return refuse('temporarily_unavailable', 'lookup failed', { 'Retry-After': '5' });
   }
 }

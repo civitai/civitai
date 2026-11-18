@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from 'vitest';
  * so it is correctly invisible there. `catalog-cors-wiring.test.ts` covers the
  * no-scope routes — but it covers them as the CATALOG (`models`, `images`,
  * `tools`), and this route is not catalog data: it reads one app's own published
- * rows under one viewer's ceiling. Adding it to that file would make the file's
+ * and shared-upload rows under one viewer's ceiling. Adding it to that file would make the file's
  * own title false, which is the drift that turns a guard into decoration.
  *
  * WHAT WOULD BREAK WITHOUT IT — all of it only in prod, with every other test

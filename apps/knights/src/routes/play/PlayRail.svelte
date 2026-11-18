@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+  import { page } from '$app/state';
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
-  import { belowBarCue, watchStrip, withArticle } from '$lib/chrome';
+  import { belowBarCue, goldToday, heartBackShort, neverBelowToday, watchStrip, withArticle } from '$lib/chrome';
   import { count, percent } from '$lib/format';
   import { nextRankRequirements, pendingSegment } from '$lib/gauge';
-  import { bump } from '$lib/motion';
+  import { bump, tween } from '$lib/motion';
   import type { DailyStatus } from '$lib/server/daily/daily.service';
   import type { PlayerStatus } from '$lib/server/player-status';
   import type { Rail } from '$lib/server/rail';
@@ -15,9 +17,41 @@
     daily,
     rail,
     ladder,
-  }: { status: PlayerStatus; daily: DailyStatus; rail: Rail; ladder: LadderRow[] } = $props();
+    sheet = false,
+  }: {
+    status: PlayerStatus;
+    daily: DailyStatus;
+    rail: Rail;
+    ladder: LadderRow[];
+    /** Rendered inside the phone/tablet sheet: always shown, unframed, and with its own heading ids. */
+    sheet?: boolean;
+  } = $props();
+
+  const id = (name: string) => (sheet ? `sheet-${name}` : name);
 
   const strip = $derived(watchStrip(daily));
+  // Gold today ticks to its new value when a landed vote refreshes the page's data, as the header's gold counter does.
+  let shownGold = $state(untrack(() => daily.goldRecorded));
+  $effect(() => {
+    const to = daily.goldRecorded;
+    const from = untrack(() => shownGold);
+    // Counts up; a fall (a refused vote taken back) lands at once rather than counting down.
+    if (to < from) {
+      shownGold = to;
+      return;
+    }
+    return tween(from, to, 360, (value) => (shownGold = Math.round(value)));
+  });
+  let activitySeen = $state<{ day: string; value: number } | null>(null);
+  const activity = $derived.by(() => {
+    if (rail.activity === null) return null;
+    const next = neverBelowToday(untrack(() => activitySeen), rail.activity, new Date().toISOString().slice(0, 10));
+    return next;
+  });
+  $effect(() => {
+    activitySeen = activity;
+  });
+  const gold = $derived(goldToday({ goldRecorded: shownGold, goldCap: daily.goldCap }));
   const belowBar = $derived(belowBarCue(status));
   const hearts = $derived(Math.max(0, status.maxSmites - status.smites));
   const standing = $derived(rail.standing);
@@ -34,9 +68,9 @@
   const ring = $derived(strip.max > 0 ? strip.value / strip.max : 0);
 </script>
 
-<aside class="rail" aria-label="Your day in the Order">
-  <section aria-labelledby="rail-watch">
-    <h2 id="rail-watch">Today's Watch</h2>
+<aside class="rail" class:sheet aria-label={sheet ? undefined : 'Your day in the Order'}>
+  <section aria-labelledby={id('rail-watch')}>
+    <h2 id={id('rail-watch')}>Today's Watch</h2>
     <div class="watch">
       <span class="ring" role="img" aria-label="{strip.value} of {strip.max} judged" use:bump={strip.value}>
         <svg viewBox="0 0 36 36" aria-hidden="true" focusable="false">
@@ -73,14 +107,34 @@
       </div>
       <div>
         <h3>Hearts</h3>
-        <p class="line"><HeartsRow {hearts} maxHearts={status.maxSmites} /></p>
-        <p class="sub">{hearts} of {status.maxSmites}</p>
+        <p class="line"><HeartsRow {hearts} maxHearts={status.maxSmites} heartBack={status.heartBack} /></p>
+        <p class="sub">
+          {hearts} of {status.maxSmites}{#if status.heartBack}{' · '}{heartBackShort(status.heartBack)} to win a heart back{/if}
+        </p>
       </div>
     </div>
+    {#if gold}
+      <div class="gold-today">
+        <h3>Gold today</h3>
+        <p class="line"><b use:bump={daily.goldRecorded}>{gold.label}</b></p>
+        <div
+          class="bar"
+          role="meter"
+          aria-label="Gold recorded today against the daily cap"
+          aria-valuemin={0}
+          aria-valuemax={daily.goldCap}
+          aria-valuenow={Math.min(daily.goldRecorded, daily.goldCap)}
+          aria-valuetext="{count(daily.goldRecorded)} of {count(daily.goldCap)}"
+        >
+          <div style:width="{gold.ratio * 100}%"></div>
+        </div>
+        <p class="sub">{gold.reached ? 'Cap reached · XP still counts' : 'Daily cap · resets at 00:00 UTC'}</p>
+      </div>
+    {/if}
   </section>
 
-  <section aria-labelledby="rail-fervor">
-    <h2 id="rail-fervor" class="with-icon"><Icon name="sparkles" size={13} />This week's fervor</h2>
+  <section aria-labelledby={id('rail-fervor')}>
+    <h2 id={id('rail-fervor')} class="with-icon"><Icon name="sparkles" size={13} />Fervor · last {page.data.fervorWindowDays} days</h2>
     <p class="big">{count(status.fervor)}</p>
     {#if standing}
       <p class="sub">Board position #{count(standing.position)} of {count(standing.total)}</p>
@@ -108,8 +162,8 @@
     {/if}
   </section>
 
-  <section aria-labelledby="rail-next">
-    <h2 id="rail-next">{next ? `Next rank · ${next.rank}` : 'Rank'}</h2>
+  <section aria-labelledby={id('rail-next')}>
+    <h2 id={id('rail-next')}>{next ? `Next rank · ${next.rank}` : 'Rank'}</h2>
     {#if belowBar}
       <p class="below" role="status">{belowBar} <a href="/codex#ranks">Why?</a></p>
     {/if}
@@ -139,10 +193,10 @@
     {/if}
   </section>
 
-  {#if rail.activity !== null}
-    <section aria-labelledby="rail-activity">
-      <h2 id="rail-activity">Order activity</h2>
-      <p class="ticker"><span class="dot" aria-hidden="true"></span>{count(rail.activity)} {rail.activity === 1 ? 'judgment' : 'judgments'} today</p>
+  {#if activity !== null}
+    <section aria-labelledby={id('rail-activity')}>
+      <h2 id={id('rail-activity')}>Order activity</h2>
+      <p class="ticker"><span class="dot" aria-hidden="true"></span>{count(activity.value)} {activity.value === 1 ? 'judgment' : 'judgments'} today</p>
     </section>
   {/if}
 </aside>
@@ -162,10 +216,20 @@
     background: var(--io-surface);
     font-family: var(--io-font-ui);
   }
-  @media (min-width: 75rem) {
+  @media (min-width: 64rem) {
     .rail {
       display: flex;
     }
+  }
+  .rail.sheet {
+    display: flex;
+    width: auto;
+    margin: 0;
+    padding: 0 20px;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: none;
   }
   section {
     padding: 16px 0;
@@ -267,6 +331,12 @@
   .note .ok {
     margin-right: 4px;
     vertical-align: -2px;
+  }
+  .gold-today {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 16px;
   }
   .pair {
     display: grid;
@@ -389,6 +459,10 @@
     }
   }
   @media (prefers-reduced-motion: no-preference) {
+    .gold-today b:global([data-bump]) {
+      display: inline-block;
+      animation: mo-bump-pop 400ms var(--ease-out-quart);
+    }
     .ring:global([data-bump]) .fill {
       animation: mo-bump-glow 400ms var(--ease-out-quart);
     }

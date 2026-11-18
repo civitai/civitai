@@ -22,7 +22,7 @@ import {
 } from '$lib/server/oauth/constants';
 import type { WorkerGrantRequestContext } from '$lib/server/oauth/worker-grant';
 import { consumeOidcContext } from '$lib/server/oauth/oidc-nonce';
-import { hasScope, parseScopeRequest } from '$lib/server/oauth/scope';
+import { hasScope, parseScopeRequest, stringToScope } from '$lib/server/oauth/scope';
 import { deviceTokenGrant } from '$lib/server/oauth/device-token';
 import { handleUserTokenExchange } from '$lib/server/oauth/user-exchange';
 import { handleServiceToken, serviceTokenClient } from '$lib/server/oauth/service-token';
@@ -266,9 +266,7 @@ export const POST: RequestHandler = async ({ request }) => {
     }
 
     const grantType = body.grant_type;
-    const scopeNum = token.scope
-      ? parseInt(Array.isArray(token.scope) ? token.scope[0] : token.scope, 10)
-      : undefined;
+    const scopeNum = token.scope ? stringToScope(token.scope) : undefined;
     logOAuthEvent({
       type: grantType === 'refresh_token' ? 'token.refreshed' : 'token.issued',
       userId: typeof token.user?.id === 'number' ? token.user.id : undefined,

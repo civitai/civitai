@@ -8,7 +8,7 @@ import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputRules } from '~/server/services/blocks/block-output-mint';
 import {
   BLOCK_GENERATION_SOURCE_APP_ID_META_KEY,
   BLOCK_GENERATION_SOURCE_REF_META_KEY,
@@ -18,6 +18,7 @@ import {
   assertGenerationInputsUsable,
   isAppSourcePendingError,
 } from '~/server/services/generation-input-urls';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 
 /**
  * App Blocks `PERSIST_GENERATION_SOURCE` (`blocks.persistGenerationSource`): an app turns one of
@@ -29,6 +30,12 @@ import {
  * The answer is ready when the SAME gate a generation runs (`assertGenerationInputsUsable`, App
  * Blocks entry) accepts the returned url. That is the definition of `ready`, not an imitation of
  * it, so a `ready: true` url is one a submit accepts.
+ *
+ * `blocks.persistUploadedGenerationSource` is the same writer for a source the viewer PICKED
+ * (`OPEN_IMAGE_UPLOAD { purpose: 'generationSource' }`, a single `OPEN_MEDIA_UPLOAD` image): the
+ * host has already uploaded it as a consumer blob, and {@link persistUploadedGenerationSource}
+ * copies that blob into the same kind of private, scanned row. Only the byte source and the
+ * idempotency ref differ; the fetch, fit, store, row, scan wait and request budget are shared.
  */
 
 /**
@@ -107,13 +114,18 @@ export async function findBlockGenerationSourceImage(input: {
  * it does, `false` while the scan is still pending. Any other refusal (blocked, held for review,
  * unscannable) is thrown as the gate threw it.
  */
-export async function isGenerationSourceUsable(url: string, userId: number): Promise<boolean> {
+export async function isGenerationSourceUsable(
+  url: string,
+  userId: number,
+  appBlockId: string
+): Promise<boolean> {
   try {
     await assertGenerationInputsUsable({
       urls: [url],
       userId,
       entry: 'appBlocksSourcePersist',
       isApiCaller: false,
+      appBlockLog: { appBlockId },
     });
     return true;
   } catch (error) {
@@ -131,10 +143,11 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 export async function waitForGenerationSource(input: {
   url: string;
   userId: number;
+  appBlockId: string;
   deadline: number;
 }): Promise<boolean> {
   for (;;) {
-    if (await isGenerationSourceUsable(input.url, input.userId)) return true;
+    if (await isGenerationSourceUsable(input.url, input.userId, input.appBlockId)) return true;
     const left = input.deadline - Date.now();
     if (left <= 0) return false;
     await sleep(Math.min(GENERATION_SOURCE_POLL_MS, left));
@@ -149,20 +162,36 @@ export async function persistBlockGenerationSource(input: {
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
   /**
-   * The token's output ceiling (`blockOutputCeilingFromClaims(claims)`): decides which
-   * output positions are restricted. `imageIndex` is a position in `AppWorkflow.outputs`.
+   * The token's output rules (`resolveBlockOutputRules(claims)`): decide which output
+   * positions are restricted, as the poll does. `imageIndex` is a position in
+   * `AppWorkflow.outputs`.
    */
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
   /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
   budgetMs?: number;
 }): Promise<PersistedGenerationSource> {
-  const budgetMs = input.budgetMs ?? GENERATION_SOURCE_DEADLINE_MS;
-  const deadline = Date.now() + budgetMs;
-  // A timer, not `AbortSignal.timeout`, so the deadline is one clock with the scan wait's.
+  return withinGenerationSourceBudget(input.budgetMs, (budget) =>
+    persistWithin({ ...input, ...budget })
+  );
+}
+
+type GenerationSourceBudget = { deadline: number; signal: AbortSignal };
+
+/**
+ * Runs `run` under one request budget: a deadline (epoch ms) for the scan wait and a signal that
+ * aborts the fetch and the store when it passes. A timer, not `AbortSignal.timeout`, so the
+ * deadline is one clock with the scan wait's.
+ */
+async function withinGenerationSourceBudget<T>(
+  budgetMs: number | undefined,
+  run: (budget: GenerationSourceBudget) => Promise<T>
+): Promise<T> {
+  const ms = budgetMs ?? GENERATION_SOURCE_DEADLINE_MS;
+  const deadline = Date.now() + ms;
   const expiry = new AbortController();
-  const timer = setTimeout(() => expiry.abort(), budgetMs);
+  const timer = setTimeout(() => expiry.abort(), ms);
   try {
-    return await persistWithin({ ...input, deadline, signal: expiry.signal });
+    return await run({ deadline, signal: expiry.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -175,11 +204,10 @@ async function persistWithin(input: {
   workflowId: string;
   imageIndex: number;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-  ceiling: BlockOutputCeiling;
+  ceiling: BlockOutputRules;
   deadline: number;
   signal: AbortSignal;
 }): Promise<PersistedGenerationSource> {
-  const { deadline, signal } = input;
   // Ownership (the durable user + app + workflow row), the app tag, a FINISHED workflow, and the
   // host allowlist, in that order, before anything is fetched. Slots keep the indexes the app saw.
   const slots = await resolveOwnedWorkflowOutputs({
@@ -222,12 +250,39 @@ async function persistWithin(input: {
     });
   }
 
-  const ref = `${input.workflowId}#${input.imageIndex}`;
-  const existing = await findBlockGenerationSourceImage({
+  return keepGenerationSource({
     userId: input.userId,
     appId: input.appId,
-    ref,
+    appBlockId: input.appBlockId,
+    ref: `${input.workflowId}#${input.imageIndex}`,
+    imageUrl: output.url,
+    width: output.width,
+    height: output.height,
+    deadline: input.deadline,
+    signal: input.signal,
   });
+}
+
+/**
+ * The shared tail of both writers: the row an earlier call already made for this viewer, app and
+ * `ref`, or else the bytes at `imageUrl` fetched, fitted, stored and written as a private row
+ * ({@link persistBlockGenerationSourceImage}); then the delivery url and the scan wait.
+ * `imageUrl` must already be one the caller resolved or checked: the fetch re-checks only its
+ * host allowlist.
+ */
+async function keepGenerationSource(input: {
+  userId: number;
+  appId: string;
+  appBlockId: string;
+  ref: string;
+  imageUrl: string;
+  width: number | null;
+  height: number | null;
+  deadline: number;
+  signal: AbortSignal;
+}): Promise<PersistedGenerationSource> {
+  const { userId, appId, ref, deadline, signal } = input;
+  const existing = await findBlockGenerationSourceImage({ userId, appId, ref });
   let image: { imageId: number; key: string; width: number; height: number };
   if (existing && existing.width != null && existing.height != null) {
     image = {
@@ -238,11 +293,11 @@ async function persistWithin(input: {
     };
   } else {
     const written = await persistBlockGenerationSourceImage({
-      imageUrl: output.url,
-      width: output.width,
-      height: output.height,
-      userId: input.userId,
-      appId: input.appId,
+      imageUrl: input.imageUrl,
+      width: input.width,
+      height: input.height,
+      userId,
+      appId,
       ref,
       signal,
     });
@@ -255,6 +310,76 @@ async function persistWithin(input: {
   }
 
   const url = generationSourceUrl(image.key);
-  const ready = await waitForGenerationSource({ url, userId: input.userId, deadline });
+  const ready = await waitForGenerationSource({
+    url,
+    userId,
+    appBlockId: input.appBlockId,
+    deadline,
+  });
   return { url, width: image.width, height: image.height, imageId: image.imageId, ready };
+}
+
+/** Refusal for a url that is not a consumer blob on a trusted orchestrator host, as uploaded. */
+export const UPLOADED_SOURCE_URL_MESSAGE = 'that url is not an uploaded generation source';
+
+/** A consumer blob's path, whole: `/v<n>/consumer/blobs/<id>` and nothing before or after it. */
+const CONSUMER_BLOB_PATHNAME = /^\/v\d+\/consumer\/blobs\/([A-Za-z0-9_.-]+)$/;
+
+/**
+ * The blob id when `raw` is a consumer blob url as the host's upload returns it, else `null`:
+ * - canonical (a parser would not rewrite it: no dot segments, upper-case host, backslash or
+ *   control bytes), so the host judged here is the host any fetcher sees;
+ * - https on a trusted orchestrator host, the port included, with no userinfo (`@` refused
+ *   anywhere) and no fragment (`isTrustedOrchestratorUrl`);
+ * - a consumer blob path, whole: `/v<n>/consumer/blobs/<id>` with nothing before or after it
+ *   (a query is allowed). Any url of that shape is accepted, the blob of a workflow output
+ *   included: the check is on the url's form, not on how the blob was made. A job asset path
+ *   (`/consumer/jobs/...`) or any other path is refused.
+ *
+ * Its id is the idempotency ref; an output's ref always holds `#`, which an id cannot, so the two
+ * never collide.
+ */
+export function uploadedSourceBlobId(raw: string): string | null {
+  if (!URL.canParse(raw)) return null;
+  const parsed = new URL(raw);
+  if (parsed.href !== raw || parsed.hash || raw.includes('@')) return null;
+  if (!isTrustedOrchestratorUrl(raw)) return null;
+  return CONSUMER_BLOB_PATHNAME.exec(parsed.pathname)?.[1] ?? null;
+}
+
+/**
+ * `blocks.persistUploadedGenerationSource`: a generation source the viewer picked, already
+ * uploaded by the host as a consumer blob, copied into a PRIVATE, scanned row owned by `userId`
+ * through the writer `PERSIST_GENERATION_SOURCE` uses, and returned in the source shape plus
+ * `imageId` and `ready` (see {@link PersistedGenerationSource}).
+ *
+ * The blob is not tied to its uploader: nothing on our side records who uploaded a consumer blob.
+ * That gives the caller nothing they could not already download: the row written is always theirs,
+ * at a fresh key, scanned before the gate accepts it, and never another user's row.
+ */
+export async function persistUploadedGenerationSource(input: {
+  userId: number;
+  appId: string;
+  /** The block token's `appBlockId` claim, for the gate the scan wait asks. */
+  appBlockId: string;
+  url: string;
+  /** The request budget; {@link GENERATION_SOURCE_DEADLINE_MS} unless a test shortens it. */
+  budgetMs?: number;
+}): Promise<PersistedGenerationSource> {
+  const blobId = uploadedSourceBlobId(input.url);
+  if (!blobId) throw new TRPCError({ code: 'BAD_REQUEST', message: UPLOADED_SOURCE_URL_MESSAGE });
+  return withinGenerationSourceBudget(input.budgetMs, ({ deadline, signal }) =>
+    keepGenerationSource({
+      userId: input.userId,
+      appId: input.appId,
+      appBlockId: input.appBlockId,
+      ref: `upload:${blobId}`,
+      imageUrl: input.url,
+      // Measured from the bytes: a blob carries no dimensions we trust.
+      width: null,
+      height: null,
+      deadline,
+      signal,
+    })
+  );
 }

@@ -17,7 +17,8 @@ const SCHEMA = `
   CREATE TABLE "StorylineChapter" (id int PRIMARY KEY, "storylineId" int, "postId" int,
     depth int, "removedAt" timestamp);
   CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int, "postId" int, "needsReview" text,
-    "blockedFor" text);
+    "blockedFor" text, ingestion text DEFAULT 'Scanned', "tosViolation" boolean DEFAULT false,
+    minor boolean DEFAULT false, poi boolean DEFAULT false, "nsfwLevel" int DEFAULT 1);
   CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, details jsonb NOT NULL DEFAULT '{}',
     images jsonb NOT NULL DEFAULT '[]');
   CREATE TABLE "EvidenceHeldUser" ("userId" int);
@@ -77,6 +78,7 @@ describe('storyline payload, against the real query', () => {
         (10, 7, 'Dawn', '<p>She <b>left</b> at dawn</p>', false, 1, '2026-01-01', 'Public'),
         (11, 7, 'Later', 'Not the opening', false, 1, '2026-01-02', 'Public');
       INSERT INTO "StorylineChapter" VALUES (100, 1, 10, 0, NULL), (101, 1, 11, 1, NULL);
+      INSERT INTO "Image" (id, "userId") VALUES (70, 7);
     `);
     try {
       const docs = await getStorylineDocs(
@@ -110,8 +112,8 @@ describe("chapter 1's text above the storyline's ceiling", () => {
   test('is left out of the document, as readers get a tombstone', async () => {
     const { PGlite } = await import('@electric-sql/pglite');
     const pg = new PGlite();
-    // 1: within its ceiling. 2: chapter 1 at X under an R ceiling. 3: chapter 1 at R under an X
-    // ceiling the title scan lowered to the minor ceiling.
+    // 1: within its ceiling. 2: chapter 1 at X under an R ceiling. 3: flagged by the title scan,
+    // so not indexed at all.
     await pg.exec(`${SCHEMA}
       INSERT INTO "User" VALUES (7, 'someone', NULL, NULL);
       INSERT INTO "Storyline" VALUES
@@ -134,7 +136,7 @@ describe("chapter 1's text above the storyline's ceiling", () => {
         'Title: Shown\nCreator: someone\nOpening: Dawn. She left'
       );
       expect(docs.get(2)?.search_text).toBe('Title: Over\nCreator: someone\nOpening: ');
-      expect(docs.get(3)?.search_text).toBe('Title: Minor\nCreator: someone\nOpening: ');
+      expect(docs.has(3)).toBe(false);
     } finally {
       await pg.close();
     }
@@ -146,8 +148,15 @@ describe('storyline removal', () => {
   // point. Storyline 2 (another owner) is the control and keeps its point.
   const leaves: [string, string][] = [
     ['taken down', `UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`],
+    ['row deleted', `DELETE FROM "Storyline" WHERE id = 1`],
     ['owner banned', `UPDATE "User" SET "bannedAt" = now() WHERE id = 7`],
     ['owner deleted', `UPDATE "User" SET "deletedAt" = now() WHERE id = 7`],
+    ['title flagged by the scan', `UPDATE "Storyline" SET "minorByScan" = true WHERE id = 1`],
+    [
+      'cover flagged',
+      `INSERT INTO "Image" (id, "userId", minor) VALUES (900, 7, true);
+       UPDATE "Storyline" SET "coverImageId" = 900 WHERE id = 1`,
+    ],
     ['owner reported', `INSERT INTO "CsamReport" ("userId") VALUES (7)`],
     ['owner under an evidence hold', `INSERT INTO "EvidenceHeldUser" VALUES (7)`],
     ['chapter 1 removed', `UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 10`],

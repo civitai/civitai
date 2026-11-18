@@ -212,6 +212,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -269,6 +270,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -326,6 +328,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6002,
@@ -703,6 +706,7 @@
             "availability": "Public",
             "minor": false,
             "poi": false,
+            "restricted": false,
             "meta": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
@@ -769,6 +773,7 @@
             "availability": "Public",
             "minor": false,
             "poi": false,
+            "restricted": false,
             "meta": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
@@ -835,6 +840,7 @@
             "availability": "Public",
             "minor": false,
             "poi": false,
+            "restricted": false,
             "meta": null,
             "modelVersionIds": [],
             "modelVersionIdsManual": [],
@@ -945,7 +951,7 @@
         "v": 1
       }
     },
-    "cacheable": false,
+    "cacheable": true,
     "writes": {}
   }
 }

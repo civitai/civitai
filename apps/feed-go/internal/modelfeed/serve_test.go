@@ -80,6 +80,17 @@ type fakeSources struct {
 	versionRq [][]int
 	memberRq  [][]int
 	pageErr   error
+	// official is what OfficialModels answers (officialErr fails it); officialCalls counts the calls.
+	official      []hydrate.OfficialModel
+	officialErr   error
+	officialCalls int
+}
+
+func (f *fakeSources) OfficialModels(_ context.Context) ([]hydrate.OfficialModel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.officialCalls++
+	return f.official, f.officialErr
 }
 
 func (f *fakeSources) ModelPage(_ context.Context, _ hydrate.ModelPageRequest) (*hydrate.ModelPage, error) {
@@ -416,8 +427,6 @@ func TestServeLoopBoundAndTrivial(t *testing.T) {
 }
 
 func TestServeFallbacks(t *testing.T) {
-	hot := baseInput()
-	hot.Sort, hot.BaseModels = SortHot, []string{"Pony"}
 	noLevel := baseInput()
 	noLevel.BrowsingLevel = nil
 	named := baseInput()
@@ -429,7 +438,6 @@ func TestServeFallbacks(t *testing.T) {
 		cfg    func(*Config)
 		reason string
 	}{
-		{"Hot with base models (official pin)", hot, nil, nil, "model-official-pin"},
 		{"signed in with no level", noLevel, &Viewer{ID: 1}, nil, "model-level-absent"},
 		{"signed out uncapped with no level", noLevel, nil, nil, "model-level-absent"},
 		{"base-model-feed-metrics off", baseInput(), nil, func(c *Config) { c.BaseModelMetrics = false }, "flag-off-state"},
@@ -892,5 +900,214 @@ func TestParseRankAndPrivacy(t *testing.T) {
 	}
 	if got := hidden(p, def, true, true); got != [3]bool{} {
 		t.Fatal("owner or moderator sees all")
+	}
+}
+
+// testCollection is one Collection row as the permission read sees it, with its contributor rows
+// (user id → permissions).
+type testCollection struct {
+	read         string
+	owner        int
+	contributors map[int][]string
+}
+
+// withCollections answers the collection permission read from cols and records each read's SQL and
+// arguments.
+func withCollections(e *env, cols map[int]testCollection) *[][]any {
+	reads := &[][]any{}
+	var mu sync.Mutex
+	e.db.Routes = append(e.db.Routes, testkit.Route{Match: `FROM "Collection" c`, SQLRows: func(sql string, args []any) (*testkit.Rows, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		*reads = append(*reads, append([]any{norm(sql)}, args...))
+		names := []string{"read", "userId", "permissions"}
+		c, ok := cols[args[0].(int)]
+		if !ok {
+			return testkit.NewRows(names), nil
+		}
+		perms := []string{}
+		if len(args) > 1 {
+			if p, ok := c.contributors[args[1].(int)]; ok {
+				perms = p
+			}
+		}
+		return testkit.NewRows(names, []any{c.read, c.owner, perms}), nil
+	}})
+	return reads
+}
+
+// collectionInput is a parsed model.getAll input over a collection (Highest Rated, two models, PG).
+func collectionInput(t *testing.T, extra string) *Input {
+	t.Helper()
+	in, err := parseJSON(t, `{"json":{"sort":"Highest Rated","limit":2,"browsingLevel":1`+extra+`}}`)
+	if err != nil {
+		t.Fatalf("Parse: %v (reason %q)", err, fallback.Reason(err))
+	}
+	return in
+}
+
+var testCollections = map[int]testCollection{
+	41: {read: "Public", owner: 70},
+	42: {read: "Private", owner: 71, contributors: map[int][]string{72: {"ADD"}, 73: {"VIEW", "ADD"}}},
+	44: {read: "Unlisted", owner: 70},
+}
+
+// Who may read a collection, as getModelsRaw asks getUserCollectionPermissionsById (no moderator
+// branch): a readable one is served with the CollectionItem semi-join, any other is an empty answer
+// with no nextCursor and no page query.
+func TestServeCollectionAccess(t *testing.T) {
+	const (
+		signedOut = `EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1 AND ci."status" = 'ACCEPTED'::"CollectionItemStatus")`
+		viewerFmt = `EXISTS (SELECT 1 FROM "CollectionItem" ci WHERE ci."modelId" = mm."modelId" AND ci."collectionId" = $1 AND (ci."status" = 'ACCEPTED'::"CollectionItemStatus" OR (ci."status" = 'REVIEW'::"CollectionItemStatus" AND ci."addedById" = $2)))`
+	)
+	for _, c := range []struct {
+		name       string
+		collection string
+		viewer     *Viewer
+		served     bool
+		clause     string
+		args       []any // the page query's leading arguments
+	}{
+		{"public, signed out", "41", nil, true, signedOut, []any{41}},
+		{"public, signed in", "41", &Viewer{ID: 72}, true, viewerFmt, []any{41, 72}},
+		{"unlisted, signed out", "44", nil, true, signedOut, []any{44}},
+		{"private, its owner", "42", &Viewer{ID: 71}, true, viewerFmt, []any{42, 71}},
+		{"private, a contributor with VIEW", "42", &Viewer{ID: 73}, true, viewerFmt, []any{42, 73}},
+		{"private, a contributor without VIEW", "42", &Viewer{ID: 72}, false, "", nil},
+		{"private, another viewer", "42", &Viewer{ID: 74}, false, "", nil},
+		{"private, a moderator", "42", &Viewer{ID: 75, IsModerator: true}, false, "", nil},
+		{"private, signed out", "42", nil, false, "", nil},
+		{"no such collection", "49", &Viewer{ID: 71}, false, "", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv([]testRow{{id: 1, owner: 9, cursor: "c1"}})
+			e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{version(10, "Pony", nil)}}
+			e.sources.images[10] = []map[string]any{image(100, 9, 1, nil)}
+			reads := withCollections(e, testCollections)
+			ans, err := serve(t, e, collectionInput(t, `,"collectionId":`+c.collection), c.viewer)
+			if err != nil {
+				t.Fatalf("Serve: %v (reason %q)", err, fallback.Reason(err))
+			}
+			if len(*reads) != 1 {
+				t.Fatalf("%d permission reads, want 1", len(*reads))
+			}
+			// The contributor row is joined exactly when there is a viewer, bound as the second argument.
+			read := (*reads)[0]
+			joined := strings.Contains(read[0].(string), `LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = $2`)
+			if want := c.viewer != nil; joined != want || len(read) != map[bool]int{true: 3, false: 2}[want] {
+				t.Fatalf("permission read %v: contributor join %v, want %v", read, joined, want)
+			}
+			if !c.served {
+				if len(e.queries) != 0 || !ans.Trivial || len(items(t, ans)) != 0 {
+					t.Fatalf("unreadable: %d page queries, trivial %v, %d items; want 0, true, 0", len(e.queries), ans.Trivial, len(items(t, ans)))
+				}
+				if v, _ := ans.Value.Get("nextCursor"); v != (superjson.Undefined{}) {
+					t.Fatalf("nextCursor %#v, want undefined", v)
+				}
+				return
+			}
+			if len(e.queries) != 1 || len(items(t, ans)) != 1 {
+				t.Fatalf("readable: %d page queries, %d items; want 1, 1", len(e.queries), len(items(t, ans)))
+			}
+			if q := norm(e.queries[0]); !strings.Contains(q, c.clause) {
+				t.Fatalf("page query lacks\n %s\nin\n %s", c.clause, q)
+			}
+			if got := e.args[0][:len(c.args)]; !reflect.DeepEqual(got, c.args) {
+				t.Fatalf("leading args %#v, want %#v", got, c.args)
+			}
+		})
+	}
+}
+
+// Across the page loop the permission is read on every page, as Node reads it on every getModelsRaw
+// call, and every page carries the semi-join (with the collection tag); the answer keeps the previous page's cursor as for any feed.
+func TestServeCollectionPagesAndTag(t *testing.T) {
+	e := newEnv(
+		[]testRow{{id: 1, owner: 9, cursor: "c1"}, {id: 2, owner: 9, cursor: "c2"}, {id: 3, owner: 9, cursor: "5|5|3"}},
+		[]testRow{{id: 4, owner: 9, cursor: "c4"}},
+	)
+	for _, id := range []int{1, 4} {
+		e.sources.page.Data[id] = hydrate.ModelData{Versions: []map[string]any{version(id*10, "Pony", nil)}}
+		e.sources.images[id*10] = []map[string]any{image(id*100, 9, 1, nil)}
+	}
+	reads := withCollections(e, testCollections)
+	ans, err := serve(t, e, collectionInput(t, `,"collectionId":42,"collectionTagId":88`), &Viewer{ID: 71})
+	if err != nil {
+		t.Fatalf("Serve: %v (reason %q)", err, fallback.Reason(err))
+	}
+	if got := items(t, ans); len(got) != 2 || field(t, got[0], "id") != int64(1) || field(t, got[1], "id") != int64(4) {
+		t.Fatalf("items %v", got)
+	}
+	if v, _ := ans.Value.Get("nextCursor"); v != "5|5|3" {
+		t.Fatalf("nextCursor %v, want 5|5|3", v)
+	}
+	if len(*reads) != 2 || len(e.queries) != 2 {
+		t.Fatalf("%d permission reads and %d page queries, want 2 and 2", len(*reads), len(e.queries))
+	}
+	for i, q := range e.queries {
+		if !strings.Contains(norm(q), `AND ci."addedById" = $2)) AND ci."tagId" = $3)`) || !reflect.DeepEqual(e.args[i][:3], []any{42, 71, 88}) {
+			t.Fatalf("page %d: %s %v", i+1, norm(q), e.args[i])
+		}
+	}
+	// The second page starts from the first page's lookahead, after the collection's arguments.
+	if !reflect.DeepEqual(e.args[1][3:6], []any{int64(5), int64(5), int64(5)}) {
+		t.Fatalf("second page args %v", e.args[1])
+	}
+	// A collection tag without a collection is no filter (getModelsRaw reads it only inside the
+	// collection branch).
+	e = newEnv([]testRow{})
+	reads = withCollections(e, testCollections)
+	if _, err := serve(t, e, collectionInput(t, `,"collectionTagId":88`), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(*reads) != 0 || strings.Contains(e.queries[0], "CollectionItem") {
+		t.Fatalf("a tag alone: %d permission reads, query %s", len(*reads), norm(e.queries[0]))
+	}
+}
+
+// With a collection, getModelsRaw's hidePrivateModels is off: a Private version is listed (here the
+// first version, so the card shows it).
+func TestServeCollectionShowsPrivateVersions(t *testing.T) {
+	run := func(extra string) any {
+		e := newEnv([]testRow{{id: 1, owner: 9, cursor: "c1"}})
+		e.sources.page.Data[1] = hydrate.ModelData{Versions: []map[string]any{
+			version(10, "Pony", map[string]any{"availability": "Private"}), version(11, "Pony", nil),
+		}}
+		e.sources.images[10] = []map[string]any{image(100, 9, 1, nil)}
+		e.sources.images[11] = []map[string]any{image(110, 9, 1, nil)}
+		withCollections(e, testCollections)
+		ans, err := serve(t, e, collectionInput(t, extra), nil)
+		if err != nil {
+			t.Fatalf("%s: %v (reason %q)", extra, err, fallback.Reason(err))
+		}
+		return field(t, items(t, ans)[0], "version.id")
+	}
+	if got := run(""); got != int64(11) {
+		t.Fatalf("no collection: version %v, want 11 (the Private one hidden)", got)
+	}
+	if got := run(`,"collectionId":41`); got != int64(10) {
+		t.Fatalf("a collection: version %v, want 10 (the Private one listed)", got)
+	}
+}
+
+// Node's order inside getModelsRaw: the creator lookup (a 404 for an unknown name) comes before the
+// collection check, and the cursor is parsed after it, so a bad cursor on an unreadable collection is
+// still the empty answer while on a readable one it is Node's 400.
+func TestServeCollectionCheckOrder(t *testing.T) {
+	e := newEnv()
+	reads := withCollections(e, testCollections)
+	if _, err := serve(t, e, collectionInput(t, `,"collectionId":42,"username":"nobody"`), nil); fallback.Reason(err) != "model-username-miss" || len(*reads) != 0 {
+		t.Fatalf("unknown creator: %v, %d permission reads; want model-username-miss before any", err, len(*reads))
+	}
+	e = newEnv()
+	withCollections(e, testCollections)
+	ans, err := serve(t, e, collectionInput(t, `,"collectionId":42,"cursor":"x|y"`), nil)
+	if err != nil || !ans.Trivial || len(e.queries) != 0 {
+		t.Fatalf("bad cursor, unreadable collection: %v; want the empty answer", err)
+	}
+	e = newEnv()
+	withCollections(e, testCollections)
+	if _, err := serve(t, e, collectionInput(t, `,"collectionId":41,"cursor":"x|y"`), nil); fallback.Reason(err) != "model-cursor" {
+		t.Fatalf("bad cursor, readable collection: %v; want model-cursor", err)
 	}
 }

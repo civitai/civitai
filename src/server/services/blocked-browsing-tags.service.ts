@@ -7,6 +7,9 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { isViewerUsername } from '~/utils/is-viewer';
+import type { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
+import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 
 type AddonTarget = {
   excludedTagIds?: number[];
@@ -176,4 +179,39 @@ export async function getShowcaseImageFilter({
     (!(rules.disablePoi && image.poi) &&
       !(rules.disableMinor && image.minor) &&
       (!excluded.size || (image.tags != null && !image.tags.some((tagId) => excluded.has(tagId)))));
+}
+
+/**
+ * `getShowcaseImageFilter` for a listing of other people's images: the request's viewer, at the
+ * level `relatedPostsBrowsingLevel` resolves. Takes tags as ids or as `{ id }` rows.
+ */
+export async function getRequestImageFilter(
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  requestedBrowsingLevel?: number
+) {
+  const showsImage = await getShowcaseImageFilter({
+    browsingLevel: relatedPostsBrowsingLevel(ctx, requestedBrowsingLevel),
+    viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
+  });
+  // Unread tags stay unread, so `getShowcaseImageFilter` hides the image while any tag is excluded.
+  return (image: Omit<ShowcaseImage, 'tags'> & { tags?: (number | { id: number })[] | null }) =>
+    showsImage({
+      ...image,
+      tags: image.tags?.map((tag) => (typeof tag === 'number' ? tag : tag.id)),
+    });
+}
+
+/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
+export async function isCoverShownByBrowsingRules(
+  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
+) {
+  if (!image) return true;
+  const [showsImage, flags] = await Promise.all([
+    getRequestImageFilter(ctx),
+    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+  ]);
+  // No row means its flags are unread: hidden, as unread tags are.
+  if (!flags) return false;
+  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
 }

@@ -18,7 +18,7 @@ import { carriesNonUserScope } from './scope';
 export interface ExchangeResource {
   resource: string;
   /** Bitmask of the scopes the resource may receive. */
-  scopes: number;
+  scopes: bigint;
   apps: string[];
   relays: string[];
   introspectors: string[];
@@ -29,7 +29,7 @@ export interface ExchangeResource {
 export interface ServiceEntry {
   client: string;
   /** Bitmask, within the resource's scopes. */
-  scopes: number;
+  scopes: bigint;
   /** Passed through to the resource as the token's `roles`, in this order. */
   roles: string[];
   /** The service's user id at the resource: at most -1000, and one service's only. */
@@ -80,22 +80,23 @@ function resourceError(value: unknown): string | null {
   return `resource ${value} must be https`;
 }
 
-function scopesFrom(value: unknown): number | string {
+function scopesFrom(value: unknown): bigint | string {
   if (!Array.isArray(value) || value.length === 0) return 'scopes must be a non-empty list';
-  let bits = 0;
+  let bits = 0n;
   for (const name of value) {
     if (typeof name !== 'string' || name === 'None' || !Object.hasOwn(TokenScope, name)) {
       return `unknown scope ${String(name)}`;
     }
     bits |= TokenScope[name as keyof typeof TokenScope];
   }
-  // A resource never receives UserRead or a scope only a client acting as itself can hold.
-  if (bits & TokenScope.UserRead) return 'scopes may not include UserRead';
+  // A resource never receives UserRead or a scope only a client acting as itself can hold. The Apps
+  // scopes (`AppsRead`, `AppDataRead`) are user scopes, so a resource may list them.
+  if ((bits & TokenScope.UserRead) !== 0n) return 'scopes may not include UserRead';
   if (carriesNonUserScope(bits)) return 'scopes may not include a client-only scope';
   return bits;
 }
 
-function serviceEntryError(value: unknown, resourceScopes: number): string | ServiceEntry {
+function serviceEntryError(value: unknown, resourceScopes: bigint): string | ServiceEntry {
   if (!value || typeof value !== 'object') return 'each service must be an object';
   const e = value as Record<string, unknown>;
   if (typeof e.client !== 'string' || !SERVICE_CLIENT_ID.test(e.client)) {
@@ -103,7 +104,7 @@ function serviceEntryError(value: unknown, resourceScopes: number): string | Ser
   }
   const scopes = scopesFrom(e.scopes);
   if (typeof scopes === 'string') return `service ${e.client}: ${scopes}`;
-  if ((scopes & ~resourceScopes) !== 0) {
+  if ((scopes & ~resourceScopes) !== 0n) {
     return `service ${e.client}: scopes must be within the resource's`;
   }
   const roles = e.roles ?? [];
@@ -241,7 +242,7 @@ async function warnOnServiceClients(resources: ExchangeResource[]): Promise<void
           type: 'warning',
           name: 'oauth-exchange-service-client',
           message: `service client ${id} ${problem}`,
-        }).catch(() => undefined);
+        });
       }
     }
   } catch (err) {
@@ -249,7 +250,7 @@ async function warnOnServiceClients(resources: ExchangeResource[]): Promise<void
       type: 'warning',
       name: 'oauth-exchange-service-client',
       message: `service clients not checked: ${String(err)}`,
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -279,13 +280,11 @@ async function load(raw: string | undefined): Promise<ExchangeResource[]> {
       type: 'error',
       name: 'oauth-exchange-resources-invalid',
       message: parsed.error,
-    }).catch(() => undefined);
+    });
     return [];
   }
   for (const message of parsed.serviceErrors) {
-    void logToAxiom({ type: 'error', name: 'oauth-exchange-services-invalid', message }).catch(
-      () => undefined
-    );
+    void logToAxiom({ type: 'error', name: 'oauth-exchange-services-invalid', message });
   }
   if (parsed.resources.length === 0) return [];
   // A resource string must never also be a client id: an `aud` names one or the other.
@@ -303,7 +302,7 @@ async function load(raw: string | undefined): Promise<ExchangeResource[]> {
       type: 'error',
       name: 'oauth-exchange-resources-invalid',
       message: `resource ${collisions[0].id} is also an OAuth client id`,
-    }).catch(() => undefined);
+    });
     return [];
   }
   void warnOnServiceClients(parsed.resources);

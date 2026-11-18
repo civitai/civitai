@@ -151,6 +151,7 @@ export const ENTITY_JOINS = [
   ['ImageReport', 'imageId', 'image'],
   ['ModelReport', 'modelId', 'model'],
   ['PostReport', 'postId', 'post'],
+  ['PostTextReport', 'postId', 'postText'],
   ['ArticleReport', 'articleId', 'article'],
   ['CommentV3Report', 'commentId', 'commentV3'],
   ['BountyReport', 'bountyId', 'bounty'],

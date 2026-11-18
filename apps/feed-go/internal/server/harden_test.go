@@ -25,10 +25,13 @@ import (
 
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// served is a computeFn that answers at once with a fixed payload.
-func served(payload string, ttl *trpc.CacheTTL) func(context.Context, *http.Request) (*computed, error) {
+// servedPayload is the page served() answers.
+const servedPayload = `{"json":{"items":[]}}`
+
+// served is a computeFn that answers at once with servedPayload.
+func served(ttl *trpc.CacheTTL) func(context.Context, *http.Request) (*computed, error) {
 	return func(context.Context, *http.Request) (*computed, error) {
-		return &computed{payload: []byte(payload), ttl: ttl}, nil
+		return &computed{payload: []byte(servedPayload), ttl: ttl}, nil
 	}
 }
 
@@ -72,16 +75,17 @@ func serveServer(reg *prometheus.Registry, fn func(context.Context, *http.Reques
 	}
 }
 
-func requests(t *testing.T, reg *prometheus.Registry, mode, outcome string) float64 {
+// requests reads feed_go_requests_total{feed_endpoint="as-posts",mode="serve",outcome=<outcome>}.
+func requests(t *testing.T, reg *prometheus.Registry, outcome string) float64 {
 	t.Helper()
-	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": mode, "outcome": outcome})
+	v, _ := metricValue(t, reg, "feed_go_requests_total", map[string]string{"feed_endpoint": EndpointAsPosts, "mode": "serve", "outcome": outcome})
 	return v
 }
 
 func TestServeHTTPServedPath(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	fb := &proxyRecorder{}
-	s := serveServer(reg, served(`{"json":{"items":[]}}`, &trpc.SignedOutTTL), fb)
+	s := serveServer(reg, served(&trpc.SignedOutTTL), fb)
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, publicRequest())
 	if w.Code != 200 || fb.calls != 0 {
@@ -93,15 +97,22 @@ func TestServeHTTPServedPath(t *testing.T) {
 	if got := w.Header().Get("Cache-Control"); got != "public, max-age=60, s-maxage=60, stale-while-revalidate=30" {
 		t.Fatalf("Cache-Control = %q", got)
 	}
-	if requests(t, reg, "serve", "served") != 1 {
+	// tRPC's resolveResponse sets this Vary on every answer; a served one must carry it too.
+	if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != "trpc-accept, accept" {
+		t.Fatalf("Vary = %q, want [\"trpc-accept, accept\"]", got)
+	}
+	if requests(t, reg, "served") != 1 {
 		t.Fatal("served request not counted")
 	}
 	// Signed in (no TTL): private.
-	s.computeFn = served(`{"json":{"items":[]}}`, nil)
+	s.computeFn = served(nil)
 	w = httptest.NewRecorder()
 	s.ServeHTTP(w, publicRequest())
 	if got := w.Header().Get("Cache-Control"); got != "max-age=0, private, no-cache" {
 		t.Fatalf("signed-in Cache-Control = %q", got)
+	}
+	if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != "trpc-accept, accept" {
+		t.Fatalf("signed-in Vary = %q, want [\"trpc-accept, accept\"]", got)
 	}
 }
 
@@ -116,8 +127,13 @@ func TestServeHTTPErrorFallsBack(t *testing.T) {
 	if w.Code != http.StatusTeapot || fb.calls != 1 {
 		t.Fatalf("code=%d proxied=%d, want the proxy's 418 and 1", w.Code, fb.calls)
 	}
-	if fallbackCount(t, reg, "error") != 1 || requests(t, reg, "serve", "error") != 1 {
-		t.Fatalf("error fallback not recorded: reason=%v outcome=%v", fallbackCount(t, reg, "error"), requests(t, reg, "serve", "error"))
+	// A proxied answer carries the app's own headers only: nothing is added here (the recorder proxy
+	// sets no Vary, so any Vary on the response would be this service's).
+	if got := w.Header().Values("Vary"); len(got) != 0 {
+		t.Fatalf("a proxied answer got Vary %q from this service", got)
+	}
+	if fallbackCount(t, reg, "error") != 1 || requests(t, reg, "error") != 1 {
+		t.Fatalf("error fallback not recorded: reason=%v outcome=%v", fallbackCount(t, reg, "error"), requests(t, reg, "error"))
 	}
 }
 
@@ -130,6 +146,10 @@ func TestServeHTTPWithoutFallbackIs503(t *testing.T) {
 	s.ServeHTTP(w, publicRequest())
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("code = %d, want 503", w.Code)
+	}
+	// tRPC sets the same Vary on an error answer as on a result.
+	if got := w.Header().Values("Vary"); len(got) != 1 || got[0] != "trpc-accept, accept" {
+		t.Fatalf("503 Vary = %q, want [\"trpc-accept, accept\"]", got)
 	}
 	// tRPC's error envelope: the superjson-wrapped error shape.
 	var body struct {
@@ -540,46 +560,45 @@ func TestPprofCaptureOutlivesTheInternalWriteTimeout(t *testing.T) {
 	}
 }
 
-func TestFailOpenReporterRateLimitsTheLogNotTheCounter(t *testing.T) {
+func TestRevocationDegradedReporterRateLimitsTheLogNotTheCounter(t *testing.T) {
 	var logs bytes.Buffer
-	counter := prometheus.NewCounter(prometheus.CounterOpts{Name: "x"})
+	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "x"}, []string{"verdict"})
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	f := &FailOpenReporter{Log: slog.New(slog.NewJSONHandler(&logs, nil)), Counter: counter, Every: 10 * time.Second,
+	f := &RevocationDegradedReporter{Log: slog.New(slog.NewJSONHandler(&logs, nil)), Counter: counter, Every: 10 * time.Second,
 		Now: func() time.Time { return now }}
 	for i := 0; i < 5; i++ {
-		f.Report(errors.New("sysredis timeout"))
+		f.Report(errors.New("sysredis timeout"), "allow_unknown")
 	}
 	now = now.Add(9 * time.Second)
-	f.Report(errors.New("sysredis timeout"))
+	f.Report(errors.New("sysredis timeout"), "deny_cached")
 	now = now.Add(time.Second) // 10 s after the first line
-	f.Report(errors.New("sysredis timeout"))
+	f.Report(errors.New("sysredis timeout"), "deny_cached")
 
 	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
 	if len(lines) != 2 {
-		t.Fatalf("%d log lines for 7 fail-opens over 10 s, want 2:\n%s", len(lines), logs.String())
+		t.Fatalf("%d log lines for 7 failed reads over 10 s, want 2:\n%s", len(lines), logs.String())
 	}
 	var second struct {
 		Msg        string `json:"msg"`
 		Suppressed int    `json:"suppressed"`
 		Err        string `json:"err"`
+		Verdict    string `json:"verdict"`
 	}
 	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
 		t.Fatal(err)
 	}
-	if second.Msg != "revocation read failed open" || second.Suppressed != 5 || second.Err != "sysredis timeout" {
-		t.Fatalf("second line = %+v, want 5 suppressed", second)
+	if second.Msg != "revocation read failed; answered from the markers already read" || second.Suppressed != 5 ||
+		second.Err != "sysredis timeout" || second.Verdict != "deny_cached" {
+		t.Fatalf("second line = %+v, want 5 suppressed and verdict deny_cached", second)
 	}
-	if v := testCounterValue(t, counter); v != 7 {
-		t.Fatalf("counter = %v, want 7 (every fail-open counted)", v)
-	}
-}
-
-func testCounterValue(t *testing.T, c prometheus.Counter) float64 {
-	t.Helper()
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(c)
-	v, _ := metricValue(t, reg, "x", map[string]string{})
-	return v
+	reg.MustRegister(counter)
+	if v, _ := metricValue(t, reg, "x", map[string]string{"verdict": "allow_unknown"}); v != 5 {
+		t.Fatalf("allow_unknown = %v, want 5 (every failed read counted)", v)
+	}
+	if v, _ := metricValue(t, reg, "x", map[string]string{"verdict": "deny_cached"}); v != 2 {
+		t.Fatalf("deny_cached = %v, want 2", v)
+	}
 }
 
 // The cache-miss counter is seeded for every cache and result, and ObserveCacheMiss adds ids.
@@ -609,6 +628,12 @@ func TestCacheMissCounter(t *testing.T) {
 		"user-cosmetics/computed": 0, "user-cosmetics/error": 0, "image-frames/computed": 5, "image-frames/error": 0,
 		"event-decorations/computed": 0, "event-decorations/error": 0,
 		"image-meta/computed": 0, "image-meta/error": 0,
+		"tag-ids/computed": 0, "tag-ids/error": 0, "model-frames/computed": 0, "model-frames/error": 0,
+		"version-images/computed": 0, "version-images/error": 0,
+		"model-decorations/computed": 0, "model-decorations/error": 0,
+		"model-data/computed": 0, "model-data/error": 0, "model-tags/computed": 0, "model-tags/error": 0,
+		"official-models/computed": 0, "official-models/error": 0,
+		"metrics/computed": 0, "metrics/error": 0,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("series %v, want %v", got, want)
@@ -644,7 +669,7 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_fail_open_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
+	unlabelled := map[string]bool{"feed_go_panics_total": true, "feed_go_revocation_degraded_total": true, "feed_go_jwks_refresh_total": true, "feed_go_jwks_stale_total": true, "feed_go_fallback_proxy_errors_total": true,
 		// Hydration is shared by both endpoints: the cache-miss counter is per cache, not per endpoint.
 		"feed_go_cache_miss_total": true}
 	checked := 0
@@ -668,8 +693,8 @@ func TestMetricsEndpointLabelIsFeedEndpoint(t *testing.T) {
 			}
 		}
 	}
-	if checked != 17 {
-		t.Fatalf("checked %d per-endpoint families, want 17 (a family was renamed or lost)", checked)
+	if checked != 19 {
+		t.Fatalf("checked %d per-endpoint families, want 19 (a family was renamed or lost)", checked)
 	}
 }
 

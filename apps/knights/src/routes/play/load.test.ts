@@ -11,6 +11,8 @@ const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
 const lockoutFor = vi.hoisted(() => vi.fn());
 const pickYesNo = vi.hoisted(() => vi.fn());
+const burstDue = vi.hoisted(() => vi.fn());
+const servedHistory = vi.hoisted(() => vi.fn());
 const yesNoSettings = vi.hoisted(() => ({ share: 0.7, stretch: 8 }));
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
@@ -18,7 +20,13 @@ const queueDeps = vi.hoisted(() => ({
 const skipList = vi.hoisted(() => ({ add: vi.fn(), list: vi.fn() }));
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({ db: {} }));
-vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
+// Consent has its own tests (membership.test.ts); these cover what /play does once it is given.
+vi.mock('$lib/server/membership', async (original) => ({
+  ...(await original<typeof import('$lib/server/membership')>()),
+  consented: vi.fn(async () => true),
+  requireConsent: vi.fn(async () => undefined),
+}));
+vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key, THUMBNAIL_WIDTH: 192 }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/vote-limits/runtime', () => ({ lockoutFor, voteGate: { guard: vi.fn() } }));
@@ -32,14 +40,22 @@ vi.mock('$lib/server/smites/smites.service', () => ({
 vi.mock('$lib/server/skip-runtime', () => ({ skipStore: skipList }));
 const seenStore = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
 vi.mock('$lib/server/seen-runtime', () => ({ seenStore }));
-vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
+vi.mock('$lib/server/hidden/runtime', () => ({
+  hiddenSettings: () => ({ rate: 0.5, probationShare: 0.25 }),
+}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
   pickHiddenCheck,
   answerHiddenCheck: vi.fn(),
   readHiddenNotices,
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }));
 vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
+vi.mock('$lib/server/yesno/cadence', () => ({
+  burstDue,
+  burstRoller: () => () => 0,
+  servedHistory,
+}));
 vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
 vi.mock('$lib/server/apprenticeship/runtime', () => ({
@@ -66,10 +82,18 @@ vi.mock('$lib/server/standing', async (original) => ({
 
 const { load, actions } = await import('./+page.server');
 
-const run = (user: Record<string, unknown> = {}) =>
-  load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
+const run = (user: Record<string, unknown> = {}) => {
+  // The load reads the player's rating for the gold a vote records; each test gives only the status fields it checks.
+  const given = getPlayerStatus.getMockImplementation();
+  if (given)
+    getPlayerStatus.mockImplementation(async (...args: unknown[]) => {
+      const status = await given(...args);
+      return status && { rating: { belowBar: false }, ...status };
+    });
+  return load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
     Record<string, any>
   >;
+};
 
 beforeEach(() => {
   acolyteLevelGoldSince.mockReset();
@@ -84,7 +108,13 @@ beforeEach(() => {
   skipList.list.mockReset();
   skipList.list.mockResolvedValue([]);
   seenStore.get.mockReset();
-  seenStore.get.mockResolvedValue({ rank: 'Knight', level: 5, guide: true, whatsNew: true });
+  seenStore.get.mockResolvedValue({
+    rank: 'Knight',
+    level: 5,
+    guide: true,
+    whatsNew: true,
+    consent: true,
+  });
   seenStore.set.mockReset();
   getDailyStatus.mockReset();
   getDailyStatus.mockResolvedValue({ votes: 3 });
@@ -99,6 +129,10 @@ beforeEach(() => {
   lockoutFor.mockReset();
   pickYesNo.mockReset();
   pickYesNo.mockResolvedValue(null);
+  burstDue.mockReset();
+  burstDue.mockReturnValue(true);
+  servedHistory.mockReset();
+  servedHistory.mockResolvedValue([]);
   yesNoSettings.share = 0.7;
 });
 
@@ -176,7 +210,20 @@ describe('play load', () => {
     expect((await run()).apprentice.kind).toBe('exhausted');
   });
 
-  it('celebrates levels 5, 10 and 15 for an Acolyte and quietly records every other level', async () => {
+  it('shows a level-up card on every Acolyte level, with the gold for the levels since the last one seen', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
+    getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
+    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true, whatsNew: true });
+    acolyteLevelGoldSince.mockResolvedValue(2000);
+
+    const page = await run();
+    expect(page.progress).toMatchObject({ kind: 'level', level: 11, levelGold: 2000 });
+    expect(page.progress).not.toHaveProperty('milestone');
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 10, 11);
+    expect(seenStore.set).not.toHaveBeenCalled();
+  });
+
+  it('keeps the milestone words for levels 5, 10 and 15', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 10 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
     seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 9, guide: true, whatsNew: true });
@@ -189,19 +236,7 @@ describe('play load', () => {
       milestone: expect.stringMatching(/halfway/),
       levelGold: 100,
     });
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 5, 10);
-    expect(seenStore.set).not.toHaveBeenCalled();
-
-    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 11 });
-    seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 10, guide: true, whatsNew: true });
-    const quiet = await run();
-    expect(quiet.progress).toBeNull();
-    expect(seenStore.set).toHaveBeenCalledWith(7, {
-      rank: 'Acolyte',
-      level: 11,
-      guide: true,
-      whatsNew: true,
-    });
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
   });
 
   it('still celebrates a milestone the player jumped past between loads', async () => {
@@ -217,15 +252,15 @@ describe('play load', () => {
     });
     expect(seenStore.set).not.toHaveBeenCalled();
     // The card's gold stops at the milestone it celebrates, not the level the player has since reached.
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 5, 10);
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 9, 10);
   });
 
-  it('prices a milestone card for the levels since the previous milestone, however long ago the player last looked', async () => {
+  it('prices a card for every level since the player last looked', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 15 });
     getApprentice.mockResolvedValue({ kind: 'exhausted', progress });
     seenStore.get.mockResolvedValue({ rank: 'Acolyte', level: 2, guide: true, whatsNew: true });
     await run();
-    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 10, 15);
+    expect(acolyteLevelGoldSince).toHaveBeenCalledWith(expect.anything(), 7, 2, 15);
   });
 
   it('tells a newly knighted player about the rank, not a summary', async () => {
@@ -274,7 +309,7 @@ describe('play load', () => {
 
     const page = await run();
 
-    expect(page.daily).toEqual({ votes: 3 });
+    expect(page.daily).toEqual({ votes: 3, goldPerVote: 100 });
     expect(page).not.toHaveProperty('recap');
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,
@@ -418,12 +453,27 @@ describe('play load feed', () => {
     expect(page.resetPending).toBe(true);
   });
 
+  it('serves an Acolyte no apprenticeship item while their career reset is due', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 4, smites: 3, maxSmites: 3 });
+    const page = await run();
+    expect(page.mode).toBe('queue');
+    expect(page.item).toBeNull();
+    expect(page.resetPending).toBe(true);
+    expect(getApprentice).not.toHaveBeenCalled();
+  });
+
   it('carries the reset notice and the notices from hidden checks', async () => {
     hasUnseenReset.mockResolvedValue(true);
-    readHiddenNotices.mockResolvedValue([{ title: 'T', message: 'M' }]);
+    readHiddenNotices.mockResolvedValue([
+      { title: 'T', message: 'M', imageKey: 'img-key' },
+      { title: 'T', message: 'M', imageKey: null },
+    ]);
     const page = await run();
     expect(page.resetNotice).toBe(true);
-    expect(page.notices).toEqual([{ title: 'T', message: 'M' }]);
+    expect(page.notices).toEqual([
+      { title: 'T', message: 'M', imageKey: 'img-key', imageSrc: 'img-key' },
+      { title: 'T', message: 'M', imageKey: null, imageSrc: null },
+    ]);
   });
 
   it('shows the reset notice on the apprenticeship page, where a reset player lands', async () => {
@@ -442,7 +492,7 @@ describe('play load feed', () => {
     await run();
     expect(pickHiddenCheck).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ questionKey: 'q', rate: 0.5 })
+      expect.objectContaining({ questionKey: 'q', rate: 0.5, probationShare: 0.25 })
     );
   });
 });
@@ -490,7 +540,7 @@ describe('play load yes/no questions', () => {
     expect(JSON.stringify(page)).not.toContain('90417');
   });
 
-  it('offers a hidden check before rolling for a question, so its rate holds whatever the yes/no share', async () => {
+  it('serves a due question before rolling for a hidden check, and rolls the check only on a rating slot', async () => {
     pickHiddenCheck.mockResolvedValue({
       referenceId: 5,
       question: { key: 'q', kind: 'choice', prompt: 'Rate', options: [] },
@@ -500,12 +550,29 @@ describe('play load yes/no questions', () => {
     });
     pickYesNo.mockResolvedValue(offer);
 
-    const page = await run();
+    expect((await run()).item.src).toBe('key-41');
+    expect(pickHiddenCheck).not.toHaveBeenCalled();
 
+    burstDue.mockReturnValue(false);
+    pickYesNo.mockClear();
+    const page = await run();
     expect(page.item.src).toBe('key-9');
     expect(page.banner).toBeNull();
     expect(page.category).toBeNull();
     expect(pickYesNo).not.toHaveBeenCalled();
+  });
+
+  it('serves the rating while no burst is due, asking the cadence with the player’s history', async () => {
+    const history = [{ yesno: false, key: 'r1' }];
+    servedHistory.mockResolvedValue(history);
+    burstDue.mockReturnValue(false);
+    pickYesNo.mockResolvedValue(offer);
+
+    const page = await run();
+    expect(page.question.key).toBe('q');
+    expect(pickYesNo).not.toHaveBeenCalled();
+    expect(servedHistory).toHaveBeenCalledWith(expect.anything(), 7, undefined);
+    expect(burstDue).toHaveBeenCalledWith(history, expect.any(Function));
   });
 
   it('falls back to the rating, with no banner, when no question is offered', async () => {
@@ -515,7 +582,7 @@ describe('play load yes/no questions', () => {
     expect(page.category).toBeNull();
     expect(pickYesNo).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: 7, rank: 'Knight', share: 0.7, stretch: 8, force: false })
+      expect.objectContaining({ userId: 7, rank: 'Knight', stretch: 8, force: true })
     );
   });
 
@@ -643,6 +710,7 @@ describe('play progress actions', () => {
       level: 12,
       guide: true,
       whatsNew: true,
+      consent: true,
     });
   });
 

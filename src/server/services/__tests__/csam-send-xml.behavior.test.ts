@@ -434,13 +434,17 @@ describe('XML NCMEC would refuse', () => {
     expect(uploadFile).not.toHaveBeenCalled();
     expect(markedSent()).toBe(false);
     expect(lines('send-xml')).toEqual([
-      expect.objectContaining({ type: 'error', reportId: 1, hoursPending: 1 }),
+      expect.objectContaining({ type: 'error', reportId: 1, payload: { hoursPending: 1 } }),
     ]);
+    // Axiom monitors match top-level name + subType on csam-report lines: keep both out of payload.
     expect(lines('send-decision-needed')).toEqual([
       expect.objectContaining({
+        name: 'csam-report',
+        subType: 'send-decision-needed',
         type: 'error',
         reportId: 1,
         message: expect.stringContaining('would not be well-formed XML'),
+        payload: { hoursPending: 1 },
       }),
     ]);
   });

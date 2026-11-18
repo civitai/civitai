@@ -44,11 +44,12 @@ type Config struct {
 	RedisSysSentinelName     string
 	RedisSysSentinelPassword string
 
-	AuthIssuer          string // AUTH_JWT_ISSUER (also the rolling refresh's HUB_ORIGIN)
-	AuthJWKSURI         string // AUTH_JWKS_URI
-	AuthRequireIat0     bool   // AUTH_REQUIRE_IAT0
-	AuthCookieMode      string // AUTH_SESSION_COOKIE_MODE: host | shared
-	AuthLegacyRead      bool   // AUTH_LEGACY_READ
+	AuthIssuer          string            // AUTH_JWT_ISSUER (also the rolling refresh's HUB_ORIGIN)
+	AuthJWKSURI         string            // AUTH_JWKS_URI
+	AuthRequireIat0     bool              // AUTH_REQUIRE_IAT0
+	AuthCookieMode      string            // AUTH_SESSION_COOKIE_MODE: host | shared
+	AuthLegacyRead      bool              // AUTH_LEGACY_READ
+	AuthSiteModes       map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	UpdateAgeMs         float64
 	ModerationAccountID int // CIVITAI_MODERATION_USER_ID
 
@@ -92,6 +93,7 @@ func Load(getenv func(string) string) (*Config, error) {
 		AuthRequireIat0: boolValue(getenv("AUTH_REQUIRE_IAT0"), false),
 		AuthCookieMode:  "shared",
 		AuthLegacyRead:  LegacyReadEnabled(getenv("AUTH_LEGACY_READ")),
+		AuthSiteModes:   SiteModes(getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		UpdateAgeMs:     UpdateAgeMs(getenv("AUTH_SESSION_UPDATE_AGE")),
 
 		ShadowWorkers: positiveInt(getenv("BEACON_GO_SHADOW_WORKERS"), 8),
@@ -136,25 +138,73 @@ func Load(getenv func(string) string) (*Config, error) {
 	return c, nil
 }
 
-// CookieNames are the session cookie names to read, in the order getHubSession reads them
-// (readSlot): the mode's own slot first, the shared slot only when AUTH_LEGACY_READ is on. The
-// `__Secure-`/`__Host-` prefixes apply when the issuer is https (isSecureCookie).
-func (c *Config) CookieNames() []string {
+// CookieNames are the session cookie names to read on a request to reqHost, in the order the main app
+// reads them. The prefixes apply only when the issuer is https.
+func (c *Config) CookieNames(reqHost string) []string {
 	secure := strings.HasPrefix(c.AuthIssuer, "https://")
 	if !secure {
 		return []string{"civ-token"}
 	}
+	mode, legacyRead := c.ModeFor(reqHost)
 	shared, host := "__Secure-civ-token", "__Host-civ-token"
-	if c.AuthCookieMode == "host" {
-		if c.AuthLegacyRead {
+	if mode == "host" {
+		if legacyRead {
 			return []string{host, shared}
 		}
 		return []string{host}
 	}
-	if c.AuthLegacyRead {
+	if legacyRead {
 		return []string{shared, host}
 	}
 	return []string{host}
+}
+
+// SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated
+// `<registrable domain>:<host|shared>` entries; an entry with any other mode is ignored.
+func SiteModes(v string) map[string]string {
+	out := map[string]string{}
+	if v == "" {
+		return out
+	}
+	for _, entry := range strings.Split(v, ",") {
+		parts := strings.Split(entry, ":")
+		if len(parts) < 2 {
+			continue
+		}
+		site, mode := strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
+		if site != "" && (mode == "host" || mode == "shared") {
+			out[site] = mode
+		}
+	}
+	return out
+}
+
+var ipv4 = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
+
+// registrableDomain is registrableDomain (packages/civitai-auth) of a Host header: its last two labels, port
+// ignored; "" for localhost and IPs.
+func registrableDomain(host string) string {
+	h := strings.ToLower(strings.Split(host, ":")[0])
+	if h == "" || h == "localhost" || ipv4.MatchString(h) {
+		return ""
+	}
+	parts := strings.Split(h, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+// ModeFor is sessionCookieMode(host) and legacyCookieReadEnabled(host): a site listed in
+// AUTH_SESSION_COOKIE_MODE_BY_SITE takes its own mode (a `host` site never reads the shared slot), any other
+// AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ.
+func (c *Config) ModeFor(host string) (mode string, legacyRead bool) {
+	if site := registrableDomain(host); site != "" {
+		if m, ok := c.AuthSiteModes[site]; ok {
+			return m, m == "shared"
+		}
+	}
+	return c.AuthCookieMode, c.AuthLegacyRead
 }
 
 var legacyReadOff = regexp.MustCompile(`(?i)^(false|0|off|no)$`)

@@ -106,13 +106,17 @@ func (s *Sources) ImageMetrics(ctx context.Context, imageIDs []int) (map[int]Met
 	b := NewBatch()
 	r := s.queueMetrics(b, Unique(imageIDs))
 	b.Exec(ctx)
-	return r.result()
+	return r.result(ctx, s)
 }
 
 // TagIDs is tagIdsForImagesCache.fetch.
 func (s *Sources) TagIDs(ctx context.Context, imageIDs []int) (map[int]any, error) {
 	imageIDs = Unique(imageIDs)
-	return tagIDsFrom(imageIDs, s.Packed.Get(ctx, KeyTagIDs, imageIDs, 0))
+	got, writable := s.read(ctx, KeyTagIDs, imageIDs, tagIDsTTL)
+	if err := s.fillTagIDs(ctx, imageIDs, got, writable); err != nil {
+		return nil, err
+	}
+	return tagIDsFrom(imageIDs, got)
 }
 
 // ImageResources is imageResourcesCache.fetch for the public images endpoint.

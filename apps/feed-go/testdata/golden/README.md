@@ -1,7 +1,10 @@
 # Golden fixtures
 
 One JSON file per request shape: `as-posts/` for `image.getImagesAsPostsInfinite`, `infinite/` for
-`image.getInfinite`, `v1-images/` for `GET /api/v1/images`, `model-getall/` for `model.getAll`.
+`image.getInfinite`, `v1-images/` for `GET /api/v1/images`, `model-getall/` for `model.getAll`,
+`v1-models/` for `GET /api/v1/models` and `/api/v1/models/[id]` (that directory has its own format and
+harness: see "v1-models" below), and `metrics/populate.json` for the image metric-hash miss path
+(see "metrics" below).
 `internal/server/golden_test.go` loads every file, builds a real `*Server`
 over in-memory fakes (`internal/testkit`) holding exactly what the fixture records, computes the
 request, and compares the answer with the Node answer the fixture expects (`shadow.Compare` for the
@@ -83,5 +86,42 @@ rows Postgres answered. The Go harness fails when a bound value is not among fee
 arguments (so a token both sides receive but read as different instants is caught), when feed-go
 asks for more pages, or fewer.
 The SQL itself is pinned by `internal/modelfeed`'s unit tests and run against Postgres by its
-integration tests. Extra keys: `config` holds the model flag mirrors; `db` holds `paidAccess`,
-`coverImages`, `tags` (by name) and `creators` (by username). Raise `goldenMinModels` with the count.
+integration tests. A page of the official-checkpoint pin (Hot with a base-model filter) also records
+the ids Node binds (`onlyModelIds` on the pinned page, `excludeModelIds` on every other), which the
+harness requires feed-go to bind in the same order. A fixture's `cold` keys (dataForModelsCache,
+modelTagCache) are held out of its cache: the mirror runs the cache's lookup over the world, records
+the rows its queries return (`db.modelDataVersions`, `db.modelHashes`, `db.tagsOnModels`) and what
+the fetch writes (`expect.writes`); the harness runs every served fixture with write-back off (the
+cache untouched) and on (exactly those writes). Extra keys: `config` holds the model flag mirrors;
+`db` holds `paidAccess`, `coverImages`, `tags` (by name) and `creators` (by username). Raise
+`goldenMinModels` with the count.
+
+## v1-models
+
+`gen-v1-models.mjs` writes each fixture's request and `world` (the model statement's rows, every cache
+value, every replica row) and packs the cache values under their real keys (`redis`). It does NOT write
+the expected answer: `src/server/__tests__/feed-go-v1-models.golden.test.ts` runs the real Node route
+handlers over the world and requires `expect.body` (the bytes `res.json` writes) and `expect.sql` (the
+model statement) to equal what that code produces. A new fixture starts with `expect: {body: null}`;
+that test fails with `GOLDEN-ACTUAL <file> <json>`, the real answer, which is copied into the fixture.
+`internal/v1models/golden_test.go` then requires the same bytes and statement from Go.
+
+```bash
+GOLDEN_NODE_MODULES=<clone>/node_modules node apps/feed-go/testdata/golden/gen-v1-models.mjs
+```
+
+## metrics
+
+`metrics/populate.json` is what Node's `MetricService.fetch('Image', ids)` did on a set of cache-miss
+cases (cold images, a timeout-marked image, a server timeout, another ClickHouse error, more than
+100 ids, a populate lock held elsewhere that is or is not filled). `gen-metrics.mjs` imports the REAL
+`event-engine-common/services/metrics.ts` through tsx and runs it over a recording ClickHouse fake
+(the SQL text, its per-query settings) and an in-memory Redis that runs the commands and the two Lua
+scripts it sends (the script texts are recorded too); the clock is fixed. Each case records the
+queries, the answer (or the error fetch threw), and the cache before and after.
+`internal/hydrate/imagemetrics_test.go` (`TestMetricsMissGolden`) requires the same SQL, settings,
+answer and, with write-back on, the same cache afterwards from Go.
+
+```bash
+TZ=UTC node --import tsx apps/feed-go/testdata/golden/gen-metrics.mjs   # from a clone with pnpm install done
+```

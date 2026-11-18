@@ -76,7 +76,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationCtx } from '~/shared/generation/context';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 
 function fakeWorkflow(over: Record<string, unknown> = {}) {
   return {

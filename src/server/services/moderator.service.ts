@@ -33,7 +33,7 @@ type ModelModActivity = {
 
 type ModelVersionModActivity = {
   entityType: 'modelVersion';
-  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}`;
+  activity: TagActivities | 'review' | `trainingData:${'approve' | 'deny'}` | 'revokeEarlyAccess';
 };
 
 type ImageTagModActivity = {
@@ -50,6 +50,7 @@ export type ImageModActivity = {
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
     | 'heldMedia:view'
+    | 'retractedMedia:view'
     | ReturnType<typeof shownActivity>;
 };
 
@@ -187,7 +188,7 @@ export type StorylineModActivity = {
 
 type CrucibleModActivity = {
   entityType: 'crucible';
-  activity: 'takeDown';
+  activity: 'takeDown' | 'updateSettings';
 };
 
 type SiteAlertModActivity = {
@@ -200,6 +201,16 @@ type SearchQueryRuleModActivity = {
   activity: 'dryRun';
 };
 
+type PublishRequestHoldModActivity = {
+  entityType: 'publishRequestHold';
+  activity: 'publishRequestHoldOverride' | 'publishRequestHoldLateResuspend';
+};
+
+type PostTextModActivity = {
+  entityType: 'postText';
+  activity: 'refuse' | 'restore' | 'csamHold';
+};
+
 type CsamReportModActivity = {
   entityType: 'csamReport';
   activity: `generatorEvidence:view:${string}` | 'csamReport:clearUnconfirmedOpen';
@@ -208,6 +219,7 @@ type CsamReportModActivity = {
 type ModActivity = {
   entityId?: number | number[];
 } & (
+  | PublishRequestHoldModActivity
   | CsamReportModActivity
   | ModelModActivity
   | ModelVersionModActivity
@@ -226,6 +238,7 @@ type ModActivity = {
   | HeldMediaGridModActivity
   | StorylineModActivity
   | SearchQueryRuleModActivity
+  | PostTextModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
@@ -259,7 +272,7 @@ export async function trackModActivity(
   if (input.entityId && !Array.isArray(input.entityId)) input.entityId = [input.entityId];
   await client.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
-    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
+    SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId}::int[])
     ON CONFLICT DO NOTHING
   `;
 }

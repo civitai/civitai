@@ -388,7 +388,7 @@ describe('/api/download/[...key] — moderators only', () => {
   });
 
   it.each([
-    ['a scoped API key', { ...fullKey, tokenScope: TokenScope.Full - 1 }],
+    ['a scoped API key', { ...fullKey, tokenScope: TokenScope.Full - 1n }],
     ['an OAuth token', { ...fullKey, subject: { type: 'oauth', id: 'client' } }],
   ])('refuses a moderator using %s with 403 and never resolves it', async (_label, context) => {
     const { req, res } = bearerRequest({ id: 1, isModerator: true }, context);
@@ -403,7 +403,7 @@ describe('/api/download/[...key] — moderators only', () => {
   it('refuses a non-moderator using a scoped API key with the same 404 as any other', async () => {
     const { req, res } = bearerRequest(
       { id: 42, isModerator: false },
-      { ...fullKey, tokenScope: TokenScope.Full - 1 }
+      { ...fullKey, tokenScope: TokenScope.Full - 1n }
     );
 
     await handler(req, res);

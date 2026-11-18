@@ -572,7 +572,7 @@ vi.mock('~/server/services/block-registry.service', () => ({
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     })),
   },
@@ -2415,7 +2415,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -2442,7 +2442,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -3818,7 +3818,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
   }
@@ -3916,7 +3916,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
@@ -4616,7 +4616,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
             status: 'approved',
             manifest: { targets: [{ slotId: 'app.page' }] },
             approvedScopes: ['ai:write:budgeted'],
-            app: { allowedScopes: 33554431 },
+            app: { allowedScopes: 33554431n },
           },
         }
       );
@@ -4899,7 +4899,9 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
       const stepArg = mockCreateStepsFromGraph.mock.calls[0][0];
       expect(stepArg.input.model.id).toBe(500);
       // The block's input urls go through the generation input check as App Blocks input.
-      expect(stepArg.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      expect(stepArg.inputGate).toEqual(
+        expect.objectContaining({ entry: 'appBlocks', isApiCaller: false })
+      );
     });
 
     it('FIX1: non-Checkpoint page body — a LoRA matching the BODY family but NOT the resolved checkpoint is REJECTED', async () => {
@@ -7129,7 +7131,8 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
       // Machine-readable, and marked, so the host may offer the viewer the raise.
       expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
-      expect(mockSysRedis.set).toHaveBeenCalledWith(
+      // The refusal record is a 5-minute flag on the cache cluster.
+      expect(mockRedis.set).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:consent-limit-refused:\d+:/),
         '100',
         { EX: 300 }
@@ -13383,6 +13386,7 @@ describe("blocks workflow — kind:'textToImage' source images and the scan gate
   };
   const pageClaims = () =>
     validClaims({
+      appBlockId: 'apb_page',
       blockInstanceId: 'page_apb_page',
       ctx: { slotId: 'app.page', entityType: 'none' },
     });
@@ -13415,7 +13419,12 @@ describe("blocks workflow — kind:'textToImage' source images and the scan gate
         input: { images?: Array<{ url: string }> };
         inputGate: unknown;
       };
-      expect(opts.inputGate).toEqual({ entry: 'appBlocks', isApiCaller: false });
+      // The token's app: the per-app source flags are read for it inside the step builder.
+      expect(opts.inputGate).toEqual({
+        entry: 'appBlocks',
+        isApiCaller: false,
+        appBlockLog: { appBlockId: 'apb_page', stepTypes: 'textToImage' },
+      });
       expect(opts.input.images?.map((i) => i.url)).toEqual([SOURCE.url]);
     }
   );

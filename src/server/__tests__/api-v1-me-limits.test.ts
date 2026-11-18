@@ -48,7 +48,7 @@ async function call({
   return out;
 }
 
-const token = (tokenScope: number) => ({
+const token = (tokenScope: bigint) => ({
   tokenScope,
   apiKeyId: 3,
   subject: { type: 'apiKey', id: 3 },

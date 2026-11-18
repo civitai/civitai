@@ -1,3 +1,5 @@
+import type { DB } from '@civitai/db-schema/kysely';
+import type { Selectable } from 'kysely';
 import { uniqBy } from 'lodash-es';
 import {
   onStorySparked,
@@ -10,6 +12,7 @@ import {
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   resolveCoverImageId,
 } from '~/server/services/cover-image.service';
+import { semanticImageHeldText } from '~/server/services/semantic-held-content.sql';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
@@ -119,7 +122,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { PlacementSpaceMode } from '~/shared/utils/placement';
 import { effectivePlacementPrice, resolvePlacementSpace } from '~/shared/utils/placement';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 export type Viewer = { id: number; isModerator?: boolean } | undefined;
@@ -258,7 +261,7 @@ async function trackStorylineModEdit({
       storylineId,
       activity,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -890,7 +893,8 @@ export const createRootChapter = (
 export const STORYLINE_SPARK_START_LOCK_CLASS = 0x53544c31;
 
 /**
- * The user's own storyline from this spark that has no chapter 1 yet and is not taken down.
+ * The user's own storyline from this spark that has no chapter 1, nor a draft of one, and is not
+ * taken down.
  */
 export async function findUnwrittenSparkStoryline(
   { userId, sparkImageId }: { userId: number; sparkImageId: number },
@@ -902,6 +906,10 @@ export async function findUnwrittenSparkStoryline(
       AND s."tosViolation" = false
       AND NOT EXISTS (
         SELECT 1 FROM "StorylineChapter" c WHERE c."storylineId" = s.id AND c.depth = 0
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "StorylinePendingChapter" d
+        WHERE d."storylineId" = s.id AND d."parentChapterId" IS NULL
       )
     ORDER BY s.id DESC
     LIMIT 1
@@ -946,8 +954,14 @@ export async function createStoryline({
         // Relies on READ COMMITTED: the lookup's snapshot is taken after the lock, so a waiter sees
         // the row the holder committed.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${STORYLINE_SPARK_START_LOCK_CLASS}::int, hashtext(${userId}::text || ':' || ${sparkImageId}::text)::int)`;
-        const unwritten = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
-        if (unwritten) {
+        const found = await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx);
+        if (found)
+          // Waits out a `setFirstChapter` or `linkPendingChapter` on it, and blocks later ones until
+          // this commits. The second lookup's fresh snapshot then sees a chapter 1 or draft they wrote.
+          await tx.$queryRaw`SELECT id FROM "Storyline" WHERE id = ${found.id} FOR NO KEY UPDATE`;
+        const unwritten =
+          found && (await findUnwrittenSparkStoryline({ userId, sparkImageId }, tx));
+        if (unwritten && unwritten.id === found?.id) {
           // With no chapter yet, nothing depends on the old terms, so the ones just chosen win.
           await tx.storyline.update({
             where: { id: unwritten.id },
@@ -1410,7 +1424,7 @@ export async function deleteStoryline({
         name: 'storyline-delete',
         message: (error as Error)?.message,
         storylineId: id,
-      }).catch(() => undefined);
+      });
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message: STORYLINE_DELETE_REFUSALS.failed,
@@ -4031,7 +4045,7 @@ export async function recordStorylineBranchChoice({
       message: 'fork counts not written through after a choice; marked stale',
       chapterId: fromChapterId,
       error: error instanceof Error ? error.message : String(error),
-    }).catch(() => undefined);
+    });
     await bustFetchThroughCache(key).catch(() => undefined);
   }
 }
@@ -4093,18 +4107,10 @@ export async function getStorylineEarlyAccessStats() {
   return { signups, createClickReaders: clicks?.readers ?? 0, createClicks: clicks?.clicks ?? 0 };
 }
 
-export type StorylineFeedCover = {
-  id: number;
-  url: string;
-  type: MediaType;
-  nsfwLevel: number;
-  hash: string | null;
-  width: number | null;
-  height: number | null;
-  userId: number;
-  minor: boolean;
-  poi: boolean;
-};
+export type StorylineFeedCover = Pick<
+  Selectable<DB['Image']>,
+  'id' | 'url' | 'type' | 'nsfwLevel' | 'hash' | 'width' | 'height' | 'userId' | 'minor' | 'poi'
+>;
 
 export type StorylineImageGate = {
   viewer: Viewer;
@@ -4161,8 +4167,10 @@ function storylineImageVisible(gate: StorylineImageGate) {
   const viewerId = gate.viewer?.id ?? -1;
   return Prisma.sql`i.ingestion = 'Scanned' AND i."tosViolation" = false AND i."needsReview" IS NULL
       AND i."acceptableMinor" = false
-      -- Shown to everyone who sees the card or page, so no minor or real-person image.
-      AND i.minor = false AND i.poi = false
+      -- Shown to everyone who sees the card or page, so no minor, real-person, blocked, held or
+      -- restricted image.
+      AND i.minor = false AND i.poi = false AND i."blockedFor" IS NULL
+      AND NOT ${Prisma.raw(semanticImageHeldText('i'))} AND ${imageNotRestrictedSql()}
       AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
@@ -4584,7 +4592,7 @@ export async function getStorylinesInfinite({
         type: 'warning',
         message: 'continue prices unavailable for a feed page',
         error: error instanceof Error ? error.message : String(error),
-      }).catch(() => undefined);
+      });
       return new Map<number, { max: number }>();
     }),
   ]);

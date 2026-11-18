@@ -18,6 +18,7 @@ import type { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-s
 import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
 import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
@@ -116,6 +117,31 @@ function imageScanSteps({
       },
     },
   ];
+}
+
+/**
+ * Scans a consumer blob with the imageScanning step and nothing else: no Image row, no callback. The
+ * caller reads the result with getWorkflow. Returns the workflow id, or undefined when the submit failed.
+ */
+export async function submitSearchUploadScan({ blobUrl }: { blobUrl: string }) {
+  // Backstop: the caller has already checked it is an uploaded blob; nothing else is scanned here.
+  if (!isTrustedOrchestratorUrl(blobUrl))
+    throw new Error('search upload scan refused: not an orchestrator blob'); // never the URL
+  const body: WorkflowTemplate = {
+    externalId: randomUUID(),
+    metadata: { searchUpload: true },
+    arguments: {},
+    currencies: [],
+    // WorkflowTemplate is @civitai/orchestration-client's, which predates the imageScanning step.
+    steps: [
+      { $type: 'imageScanning', name: 'scan', priority: 'normal', input: { image: blobUrl } },
+    ] as unknown as WorkflowStepTemplate[],
+  };
+  const result = await submitWorkflowWithRetry(
+    { client: internalOrchestratorClient, body },
+    { perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS, source: 'imageIngest' as const }
+  );
+  return result.data?.id ?? undefined;
 }
 
 export async function createImageIngestionRequest({

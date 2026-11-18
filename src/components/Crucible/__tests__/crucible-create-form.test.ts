@@ -334,6 +334,21 @@ describe('crucible edit', () => {
     ).toEqual({ entryCutoffPercent: 0 });
   });
 
+  it('sends a moderator fixing a running crucible its entry cap but never its fee', () => {
+    const fixingRunning = getCrucibleEditableFields({
+      canEditAll: false,
+      canEditContentLevels: false,
+      canFixRunning: true,
+    });
+    expect(
+      getCrucibleUpdateChanges({
+        initial,
+        values: { ...initial, maxTotalEntries: 500, entryFee: initial.entryFee + 10 },
+        editableFields: fixingRunning,
+      })
+    ).toEqual({ maxTotalEntries: 500 });
+  });
+
   it('does not let the late-entry shares change once the crucible has started', () => {
     const whileActive = getCrucibleEditableFields({
       canEditAll: false,

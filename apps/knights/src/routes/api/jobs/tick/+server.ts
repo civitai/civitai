@@ -12,7 +12,11 @@ import { settleHiddenChecks } from '$lib/server/hidden/settle';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { metrics, type TickFailureStep } from '$lib/server/metrics';
-import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
+import {
+  applyPendingResolutions,
+  closeModeratorRuledItems,
+  escalateExpired,
+} from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { resetDeps } from '$lib/server/smites/runtime';
@@ -38,31 +42,40 @@ export const POST: RequestHandler = async ({ request }) => {
   const writeBacks = await settle('rating write-back', () =>
     applyPendingResolutions(db, queueDeps)
   );
+  const moderatorRuled = await settle('moderator-ruled sweep', () =>
+    closeModeratorRuledItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
   );
-  const hidden = await settle('hidden checks', () =>
+  const hidden = await settle('hidden checks', async () =>
     settleHiddenChecks(db, {
       now: new Date(),
-      settings: hiddenSettings(),
+      settings: await hiddenSettings(),
       mirrorXp: queueDeps.mirrorXp,
       ...resetDeps,
     })
   );
-  const yesNo = await settle('yes/no sweep', () =>
+  const yesNo = await settle('yes/no sweep', async () =>
     closeStrandedYesNo(db, {
       now: new Date(),
-      maxAgeDays: yesNoConfig().maxAgeDays,
+      maxAgeDays: (await yesNoConfig()).maxAgeDays,
       mirror: queueDeps.mirrorXp,
     })
   );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
-  const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
-  const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
+  // One read for both steps, so a reset the first leaves due is not lapsed by the second.
+  const acolyteSmites = (await resetDeps.acolyteSmites?.()) ?? true;
+  const resets = await settle('career resets', () =>
+    resetPendingPlayers(db, { ...resetDeps, acolyteSmites: () => acolyteSmites })
+  );
+  const smites = await settle('smite expiry', () =>
+    expireSmites(db, new Date(), { holdAcolyteWrongAnswer: !acolyteSmites })
+  );
   const conversions = await settle('conversion retries', async () => {
-    if (!conversionEnabled()) return { retried: 0, paid: 0, failed: 0 };
+    if (!(await conversionEnabled())) return { retried: 0, paid: 0, failed: 0 };
     if (!buzzConfigured()) {
-      await logToAxiom({
+      logToAxiom({
         type: 'warning',
         name: 'knights-conversion-retries-skipped',
         message: 'BUZZ_ENDPOINT is not configured; unconfirmed conversions were not retried',
@@ -91,6 +104,7 @@ export const POST: RequestHandler = async ({ request }) => {
   if (
     !escalation.ok ||
     !writeBacks.ok ||
+    !moderatorRuled.ok ||
     !progression.ok ||
     !hidden.ok ||
     !yesNo.ok ||
@@ -104,6 +118,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
   const itemFailures: Record<TickFailureStep, number> = {
     writeback: writeBacks.value.failed ?? 0,
+    moderator_ruled: moderatorRuled.value.failed,
     payout: progression.value.failed,
     yesno: yesNo.value.failed,
     reset: resets.value.failed,
@@ -112,7 +127,7 @@ export const POST: RequestHandler = async ({ request }) => {
   const failing = Object.entries(itemFailures).filter(([, count]) => count > 0);
   if (failing.length > 0) {
     for (const [step, count] of failing) metrics.tickItemFailures(step as TickFailureStep, count);
-    await logToAxiom({
+    logToAxiom({
       type: 'warning',
       name: 'knights-tick-item-failures',
       message: 'Some items failed in the tick; the next tick retries them',
@@ -122,6 +137,7 @@ export const POST: RequestHandler = async ({ request }) => {
   return json({
     ...escalation.value,
     ...writeBacks.value,
+    moderatorRuled: moderatorRuled.value.closed,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
     yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,

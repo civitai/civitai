@@ -11,7 +11,7 @@
  *    - vid2vid:interpolate → videoInterpolation step
  *    - vid2vid:upscale → videoUpscaler step
  *    - img2img:upscale → comfy step (img2img-upscale)
- *    - img2img:remove-background → comfy step
+ *    - img2img:remove-background → imageBackgroundRemoval step
  *    - img2img:preprocess → preprocessImage step
  *    - vid2vid:preprocess → preprocessVideo step
  *    - All other workflows → ecosystem discriminator
@@ -22,6 +22,8 @@
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
 import type {
+  ImageBackgroundRemovalModel,
+  ImageBackgroundRemovalStepTemplate,
   PreprocessImageInput,
   PreprocessImageStepTemplate,
   WorkflowCost,
@@ -80,7 +82,7 @@ import {
   assertGenerationInputsUsable,
   generationInputUrlsIn,
 } from '~/server/services/generation-input-urls';
-import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
+import type { GenerationInputCaller } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
 import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
@@ -222,7 +224,7 @@ export type GenerateOptions = {
  * is for server-composed input whose urls the calling route already checked (comics, iterate).
  */
 export type GenerationInputGate =
-  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | (GenerationInputCaller & { isApiCaller: boolean })
   | 'checked-by-caller';
 
 const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;
@@ -646,7 +648,7 @@ type ResourceValidationResult = {
  * Validates and enriches resources from generation graph output.
  *
  * Performs:
- * - Subscription validation for private/epoch resources
+ * - Subscription validation for private resources
  * - Expired epoch check
  * - canGenerate validation
  * - POI resource detection
@@ -696,14 +698,14 @@ async function validateAndEnrichResources(
       : Promise.resolve(),
   ]);
 
-  // Check for private/epoch resources requiring subscription. Raw-AIR resources
-  // ARE epoch resources — same subscription gate as the ModelVersion-backed kind.
+  // Private models need a subscription; epochs (raw-AIR included) only need ownership,
+  // which getResourceData and validateRawAirResources have already enforced.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
   const hasPrivateOrEpoch =
-    rawAirResources.length > 0 ||
-    resources.some((r) => r.availability === Availability.Private || !!r.epochDetails);
+    hasPrivate || rawAirResources.length > 0 || resources.some((r) => !!r.epochDetails);
 
-  if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
-    // Span localizes the gen-path park: subscription lookup for private/epoch use.
+  if (hasPrivate && user?.id && !user?.isModerator) {
+    // Span localizes the gen-path park: subscription lookup for private use.
     const subscription = await withSpan('gen:validateResources:subscription', () =>
       getHighestTierSubscription(user.id!)
     );
@@ -937,7 +939,7 @@ function createVideoInterpolationInput(data: LooseGenerationData): StepInput {
  * Handle vid2vid:upscale workflow
  */
 function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
-  const { video, scaleFactor } = data;
+  const { video, scaleFactor, videoUpscaler } = data;
 
   if (!video?.url) {
     throw throwBadRequestError('Video URL is required for video upscaling');
@@ -948,6 +950,7 @@ function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
     input: {
       video: video.url,
       scaleFactor: scaleFactor,
+      model: videoUpscaler,
     },
   };
 }
@@ -1007,23 +1010,23 @@ async function createImageUpscaleSteps(
 /**
  * Handle img2img:remove-background workflow
  */
-async function createImageRemoveBackgroundInput(
+function createImageRemoveBackgroundInput(
   data: LooseGenerationData,
   sourceCtx?: SourceCtx
-): Promise<StepInput> {
+): StepInput {
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
     throw throwBadRequestError('Image URL is required for background removal');
   }
 
-  const step = await createComfyInput({
-    key: 'img2img-background-removal',
-    params: {
+  const step = {
+    $type: 'imageBackgroundRemoval',
+    input: {
       image: sourceImage.url,
-      width: sourceImage.width,
-      height: sourceImage.height,
+      format: 'png',
+      model: data.backgroundRemovalModel as ImageBackgroundRemovalModel | undefined,
     },
-  });
+  } as ImageBackgroundRemovalStepTemplate as StepInput;
 
   if (!sourceCtx) return step;
   return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
@@ -1110,7 +1113,7 @@ async function createStepInputs(
       break;
 
     case 'img2img:remove-background':
-      rawResult = await createImageRemoveBackgroundInput(
+      rawResult = createImageRemoveBackgroundInput(
         data as LooseGenerationData,
         metadataCtx.sourceCtx
       );
@@ -2743,6 +2746,7 @@ type StepWithOutput = WorkflowStep & {
     // job (e.g. LTX 2.3). Each slot uses Seed + slotIndex.
     additionalVideos?: VideoBlob[] | null;
     blobs?: ImageBlob[];
+    image?: ImageBlob;
     // Audio steps bundle a cover image into a VideoBlob when they have one, so the
     // container type varies per result — discriminate on blob.type, not on $type.
     blob?: ImageBlob | VideoBlob | AudioBlob;
@@ -2804,6 +2808,8 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
     case 'imageUpscaler':
     case 'preprocessImage':
       return output.blob ? [{ ...(output.blob as ImageBlob), type: 'image' as const }] : [];
+    case 'imageBackgroundRemoval':
+      return output.image ? [{ ...output.image, type: 'image' as const }] : [];
     case 'videoGen': {
       // LTX 2.3 batches multiple videos in a single job — primary in `video`,
       // remainder in `additionalVideos` (each slot uses Seed + slotIndex).

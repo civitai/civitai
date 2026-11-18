@@ -66,7 +66,7 @@ import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
 // INHERITED FROM THE `/api/v1/blocks/*` PREFIX. `withBlockScope` gives a route
 // the JWT gate, the opaque-origin CORS, the rate limit and the audit row. It
 // does NOT give it the clamp — `blocks/models.ts` says so in its own words, that
-// `resolveCatalogBrowsingLevel` "remains the whole authority surface". A new
+// `resolveCatalogViewerBrowsingLevel` "remains the whole authority surface". A new
 // route under that prefix that forgets to call it is unclamped while looking
 // exactly as protected as its neighbours.
 //

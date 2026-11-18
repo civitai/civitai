@@ -82,12 +82,28 @@ const articles = (over: ArticleOver = {}) => {
     },
     ...(id === ARTICLE ? rest : {}),
   });
-  // Answers whichever id the code asks for, so reading the wrong article shows up as its title.
+  // Answers whichever id the code asks for, so reading the wrong article shows up as its title. An
+  // image read without `minor` comes back without it, so a select that drops the flag fails here.
+  type ImageSelect = { select?: { minor?: boolean } } | undefined;
+  const asSelected = (image: unknown, select: ImageSelect) => {
+    if (!image || select?.select?.minor) return image;
+    const { minor: _minor, ...unflagged } = image as { minor?: boolean };
+    return unflagged;
+  };
   dbMock.dbWrite.article.findUnique.mockImplementation((async ({
     where,
+    select,
   }: {
     where: { id: number };
-  }) => base(where.id)) as never);
+    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect };
+  }) => {
+    const row = base(where.id) as Record<string, unknown>;
+    return {
+      ...row,
+      coverImage: asSelected(row.coverImage, select?.coverImage),
+      bannerImage: asSelected(row.bannerImage, select?.bannerImage),
+    };
+  }) as never);
 };
 
 const read = (viewerId?: number, articleId = ARTICLE) =>
@@ -323,6 +339,7 @@ describe('getArticleByShareToken: cover and viewer', () => {
     nsfwLevel: 1,
     ingestion: 'Scanned',
     needsReview: null,
+    modelRestricted: false,
     meta: null,
     metadata: null,
     tags: [],
@@ -339,21 +356,42 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && !!result.article.coverImage).toBe(shown);
   });
 
-  // The banner stands in for a missing cover, under the same servable rule.
+  // The banner is its own field, under the same servable rule as the cover.
   it.each([
     ['not scanned', { ingestion: 'Pending' }, undefined],
     ['awaiting review', { needsReview: 'minor' }, undefined],
     ['scanned and clear', {}, 6],
-  ])('with no cover, shows a banner that is %s', async (_, over, shownId) => {
+  ])('returns a banner that is %s as bannerImage: %s', async (_, over, shownId) => {
     articles({ coverImage: null, bannerImage: cover({ id: 6, ...over }) });
     const result = await read();
     expect(result.status).toBe('ok');
-    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(shownId);
+    expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(shownId);
+    // The banner no longer stands in for the cover.
+    expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
   });
 
-  it('shows the cover over the banner', async () => {
+  it('returns the cover and the banner each in its own field', async () => {
     articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
     const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+    expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(6);
+  });
+
+  it('returns no banner for an article without one, and the cover unchanged', async () => {
+    articles({ coverImage: cover({}) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+    expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
+  });
+
+  it('🔴 returns no banner that its model withholds, and still returns the cover', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+        ? [{ id: 6 }]
+        : []) as never);
+    articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
     expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
   });
 
@@ -366,6 +404,48 @@ describe('getArticleByShareToken: cover and viewer', () => {
     const result = await read();
     expect(result.status).toBe('ok');
     expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+  });
+
+  // A minor-flagged image the minor content rule restricts: never to a link holder.
+  describe('a restricted minor cover or banner', () => {
+    // No image is one its model withholds, whatever an earlier test answered.
+    beforeEach(() => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    });
+
+    it('🔴 shows no cover when the cover is a restricted minor image, and still the clear banner', async () => {
+      articles({ coverImage: cover({ minor: true, nsfwLevel: 4 }), bannerImage: cover({ id: 6 }) });
+      const result = await read();
+      expect(result.status).toBe('ok');
+      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+      expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(6);
+    });
+
+    it('🔴 shows no banner that is a restricted minor image', async () => {
+      articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 4 }) });
+      const result = await read();
+      expect(result.status).toBe('ok');
+      expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
+    });
+
+    it('shows a minor-flagged banner rated PG-13, without the flag (control)', async () => {
+      articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 2 }) });
+      const result = await read();
+      const shown = result.status === 'ok' ? result.article.bannerImage : undefined;
+      expect(shown?.id).toBe(6);
+      expect(shown).not.toHaveProperty('minor');
+    });
+
+    it.each([
+      ['a minor-flagged cover rated PG-13', { minor: true, nsfwLevel: 2 }],
+      ['an unflagged cover rated R', { minor: false, nsfwLevel: 4 }],
+    ])('shows %s, without the flag (control)', async (_, over) => {
+      articles({ coverImage: cover(over) });
+      const result = await read();
+      const shown = result.status === 'ok' ? result.article.coverImage : undefined;
+      expect(shown?.id).toBe(5);
+      expect(shown).not.toHaveProperty('minor');
+    });
   });
 
   it('refuses a signed-in viewer the author has blocked', async () => {
@@ -397,7 +477,7 @@ describe('getArticleByShareToken: body images', () => {
       height: 10,
     };
     dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([
-      { image: { ...linked, ingestion: 'Scanned' } },
+      { image: { ...linked, ingestion: 'Scanned', modelRestricted: false } },
     ] as never);
 
     const result = await read();
@@ -429,7 +509,7 @@ describe('getArticleByShareToken: body images', () => {
         n
       ).repeat(12)}`;
     const content =
-      [1, 2, 3, 4, 5]
+      [1, 2, 3, 4, 5, 7, 8, 9]
         .map(
           (n) => `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${uuid(n)}/x.jpeg">`
         )
@@ -448,6 +528,7 @@ describe('getArticleByShareToken: body images', () => {
         ingestion: 'Scanned',
         needsReview: null,
         tosViolation: false,
+        modelRestricted: false,
         ...extra,
       },
     });
@@ -457,6 +538,10 @@ describe('getArticleByShareToken: body images', () => {
       row(3, { ingestion: 'Blocked' }),
       row(4, { needsReview: 'csam' }),
       row(5, { tosViolation: true }),
+      // A minor-flagged image the minor content rule restricts; 8, rated the same unflagged, stays.
+      row(7, { minor: true, nsfwLevel: 4 }),
+      row(8, { minor: false, nsfwLevel: 4 }),
+      row(9, { nsfwLevel: 4, modelRestricted: true }),
     ];
     // Only the fields the service selects come back, as from Prisma.
     dbMock.dbWrite.imageConnection.findMany.mockImplementation((async (args: any) => {
@@ -468,10 +553,13 @@ describe('getArticleByShareToken: body images', () => {
 
     const result = await read(STRANGER);
 
-    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1]);
+    expect(result.status === 'ok' && result.article.contentImages.map((i) => i.id)).toEqual([1, 8]);
     const sent = JSON.stringify(result);
     expect(sent).toContain(uuid(1));
-    for (const n of [2, 3, 4, 5, 6]) expect(sent).not.toContain(uuid(n));
+    expect(sent).toContain(uuid(8));
+    for (const n of [2, 3, 4, 5, 6, 7, 9]) expect(sent).not.toContain(uuid(n));
+    expect(sent).not.toContain('"minor"');
+    expect(sent).not.toContain('"modelRestricted"');
     expect(sent).not.toContain('csam');
   });
 });

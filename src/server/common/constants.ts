@@ -594,10 +594,12 @@ export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
+export const ORCHESTRATOR_HOSTNAME_PATTERN = 'orchestration[a-z0-9-]*\\.civitai\\.com';
+
 export function isOrchestratorUrl(url: string) {
   try {
     const { host } = new URL(url);
-    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+    return new RegExp(`^${ORCHESTRATOR_HOSTNAME_PATTERN}$`, 'i').test(host);
   } catch {
     return false;
   }
@@ -1201,6 +1203,7 @@ export function stopsCreatorEarnings(baseModel?: string | null): boolean {
 }
 
 export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+export const NOT_AVAILABLE_FOR_DOWNLOAD = 'Not available for download';
 
 export function notCommerciallyAvailableMessage(baseModel: string) {
   return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;
@@ -1293,7 +1296,7 @@ export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
 
-export const MODELS_SEARCH_INDEX = 'models_v9';
+export { MODELS_SEARCH_INDEX } from '@civitai/shared/search-index-queue';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';

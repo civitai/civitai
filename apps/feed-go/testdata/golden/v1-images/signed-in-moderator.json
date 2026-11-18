@@ -157,7 +157,7 @@
       },
       "packed": "3gADp2ltYWdlSWTNH0SpcmVzb3VyY2Vzkd4AC6dpbWFnZUlkzR9Erm1vZGVsVmVyc2lvbklkzRdxqHN0cmVuZ3RowKhkZXRlY3RlZMOnbW9kZWxJZM0Tialtb2RlbE5hbWWxR29sZGVuIG1vZGVsIDUwMDGpbW9kZWxUeXBlqkNoZWNrcG9pbnSrdmVyc2lvbk5hbWWldjYwMDGpYmFzZU1vZGVsqFNEWEwgMS4wo3BvacKlbWlub3LCqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v2:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -321,6 +321,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -378,6 +379,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,
@@ -431,6 +433,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6001,

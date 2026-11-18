@@ -53,13 +53,25 @@ beforeEach(() => {
 });
 
 describe('article-category-backfill endpoint', () => {
-  it('an empty body is a dry run, so an omitted flag bills nothing', async () => {
+  it('an empty body is a PG/PG-13 dry run, so an omitted flag bills nothing', async () => {
     expect(await post({})).toBe(200);
     expect(runBackfill).toHaveBeenCalledWith({
       afterId: 0,
       limit: 100,
       concurrency: 2,
       dryRun: true,
+      includeMature: false,
+    });
+  });
+
+  it('includeMature alone is still a dry run', async () => {
+    expect(await post({ includeMature: true })).toBe(200);
+    expect(runBackfill).toHaveBeenCalledWith({
+      afterId: 0,
+      limit: 100,
+      concurrency: 2,
+      dryRun: true,
+      includeMature: true,
     });
   });
 });

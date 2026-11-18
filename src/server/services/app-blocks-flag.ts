@@ -1592,7 +1592,7 @@ function reportSilentStoreGate(user: SessionUser): void {
       message: 'store read scope resolved `none` for a logged-in viewer who holds a store flag',
       userId: user.id,
       heldFlags: [...held],
-    }).catch(() => null);
+    });
   } catch {
     /* never throw from telemetry — a detection net must not break the read path */
   }
@@ -1665,6 +1665,33 @@ export async function isAppDailyLimitRaiseEnabled(opts: {
   try {
     return (
       (await isFlipt(APP_DAILY_LIMIT_RAISE_FLAG, String(user.id), buildFliptContext(user))) === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A viewer may opt in, per app, to running its above-budget confirmed-step jobs without a
+ * per-job confirm while each fits their daily limit for it. Server only: the step preview
+ * offers the opt-in and reports a standing consent, and the standing consent and the submit
+ * each check it again, so turning it off stops unprompted jobs within the flag cache. No
+ * user, an absent flag or an unreachable Flipt: `false`.
+ */
+export const APP_CONFIRMED_STEP_WITHIN_LIMIT_FLAG = 'app-confirmed-step-within-limit';
+
+export async function isAppConfirmedStepWithinLimitEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(
+        APP_CONFIRMED_STEP_WITHIN_LIMIT_FLAG,
+        String(user.id),
+        buildFliptContext(user)
+      )) === true
     );
   } catch {
     return false;

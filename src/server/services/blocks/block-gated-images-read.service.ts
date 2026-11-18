@@ -5,6 +5,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
+import { hasEmptyViewerLevel } from '~/server/services/blocks/block-viewer-ceiling';
 import type { BlockGatedImage } from '~/server/services/blocks/block-gated-images.service';
 
 /**
@@ -71,8 +72,9 @@ import type { BlockGatedImage } from '~/server/services/blocks/block-gated-image
  *      bridge input or the REST query string — so a block cannot widen its own
  *      ceiling by asking. Both transports get the identical number because they
  *      reach this identical line with the identical claim.
- *   4. `getBlockGatedImagesByIds` — the app-scoped read (`blockPublishedAppId` =
- *      this token's `appId`, `postId IS NULL`) plus the per-row projection.
+ *   4. `getBlockGatedImagesByIds` — the app-scoped read (`blockPublishedAppId` or
+ *      `blockSharedUploadAppId` = this token's `appId`, `postId IS NULL`; shared
+ *      uploads held to scanned + SFW) plus the per-row projection.
  *
  * 🔴 AN ANONYMOUS VIEWER GETS `UNAUTHORIZED` (401 over REST), AND THAT IS PARITY
  * WITH THE BRIDGE RATHER THAN A NEW DECISION. `parseSubjectUserId` returns `null`
@@ -117,6 +119,7 @@ export async function resolveGatedImagesForBlockClaims(input: {
   // App-blocks runtime/visibility gate (the token subject) — NOT the author
   // gate: a viewer of the app can read images the app published.
   await assertAppBlocksEnabledForTokenUser(userId);
+  if (hasEmptyViewerLevel(input.claims)) return { images: [] };
 
   // Dynamic, matching how the bridge procedure has always reached this module: it
   // keeps `dbRead` + the image-upload provenance graph off the import graph of
@@ -128,7 +131,7 @@ export async function resolveGatedImagesForBlockClaims(input: {
 
   const browsingLevel = resolveViewerBrowsingLevel(input.claims);
 
-  // Scope the read to THIS app's published images (claims.appId) + bind the
+  // Scope the read to THIS app's published and shared-upload images (claims.appId) + bind the
   // blocked-users/tags clamp to the viewer (userId).
   return getBlockGatedImagesByIds({
     imageIds: input.imageIds,

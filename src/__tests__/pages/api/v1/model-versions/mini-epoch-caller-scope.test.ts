@@ -89,7 +89,7 @@ const PUBLIC_FILE = {
 
 type Caller = { user?: Record<string, unknown>; context?: Record<string, unknown> };
 
-const bearer = (tokenScope: number | undefined, subject: 'apiKey' | 'oauth' = 'oauth') => ({
+const bearer = (tokenScope: bigint | undefined, subject: 'apiKey' | 'oauth' = 'oauth') => ({
   apiKeyId: 6,
   apiKeyType: subject === 'oauth' ? 'Access' : 'User',
   subject: { type: subject, id: subject === 'oauth' ? 'client-abc' : 6 },
@@ -418,7 +418,7 @@ describe('mini/[id], the primary file hidden from the caller', () => {
     const picks = (loggingMock.logToAxiom.mock.calls as unknown as [Record<string, unknown>][])
       .map(([entry]) => entry)
       .filter((entry) => entry?.name === 'mini-epoch-caller')
-      .map((entry) => entry.pick);
+      .map((entry) => (entry.payload as { pick?: unknown } | undefined)?.pick);
     expect(picks).toEqual(['hidden-primary', 'primary']);
   });
 });

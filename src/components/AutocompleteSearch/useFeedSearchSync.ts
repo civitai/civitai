@@ -4,12 +4,14 @@ import {
   nextFeedSearchQuery,
   parseFeedSearch,
 } from '~/components/AutocompleteSearch/autocomplete-query';
+import { isProfileFeedPathname } from '~/components/Search/search-target';
 
 /**
  * Search v3: keeps the header bar and the feed's `?query=` in step, on a feed that answers it. The
  * bar writes the URL only when its text is committed (Enter, blur, the clear button), never as you
  * type: each applied query is a semantic search, and the service can't take one per keystroke. Each
- * commit is a history entry, so Back returns to the previous search. A URL change from elsewhere (first load, Back, the feed's Clear search) re-seeds the bar instead.
+ * commit is a history entry, so Back returns to the previous search. A URL change from elsewhere
+ * (first load, the feed's Clear search) re-seeds the bar instead.
  *
  * Our own writes are told apart by VALUE, against every write still in flight, not just the last:
  * a second write can go out before the router shows the first, and a last-write-only check would
@@ -40,7 +42,12 @@ export function useFeedSearchSync({
   const apply = (text: string) => {
     // An empty bar can't be refused: it is checked against the last text, not its own.
     if (!enabled || (blocked && text)) return;
-    const next = nextFeedSearchQuery(router.query, text, typedUsername.current);
+    const next = nextFeedSearchQuery(
+      router.query,
+      text,
+      typedUsername.current,
+      isProfileFeedPathname(router.pathname)
+    );
     if (!next) return;
     typedUsername.current = parseFeedSearch(text).username;
     inFlight.current.push(typeof next.query === 'string' ? next.query : undefined);

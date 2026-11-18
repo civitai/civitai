@@ -99,6 +99,39 @@ Code: `src/components/Image/Infinite/` (`image-feed-search.ts`, `useImageFeedSea
 `ImageFeedSearchSummary.tsx`), `src/components/AutocompleteSearch/useFeedSearchSync.ts` and
 `src/components/Search/search-refusal.ts`.
 
+Other feeds search in place the same way, each behind its own flag (`FEED_SEARCH` in
+`src/components/Search/search-target.ts`): models (`modelFeedSearch`, see
+`semantic-model-search.md`) and articles (`articleFeedSearch`, Flipt `search-v3-articles`). Articles
+reuse `semanticArticleSearch.search`, which also takes the feed's tags, period (as a published-since
+bound), followed, bookmarks, hidden and collection; /search/articles redirects to /articles. Both
+share `FeedSearchSummary` and `SearchSortLock`. Articles read `?query=` only on their own page
+(`useFeedSearchQuery`), since other pages share the article filter params. Followed narrows the
+index to the viewer's follows, and bookmarks, hidden and collection to their article ids (each up to
+1,000; a longer list applies at hydration only).
+
+## Search by uploaded image
+
+`/search/by-image` (and a file dropped on the Images search bar) finds images like one the viewer
+uploads. Signed in only, session only (no API keys), behind `imageSearchUpload` (dark: Flipt
+`image-search-upload` is its only switch) on top of `moreLikeThis`. Nothing about an upload is
+put in the URL, so a search by upload cannot be shared.
+
+1. The browser uploads the file as a consumer blob. `imageSearchUpload.prepare` submits an
+   orchestrator workflow with one `imageScanning` step on the blob and keeps the upload as a cache
+   record for an hour: owner, blob id and workflow id, never the blob's URL. Nothing is written to
+   the database; the orchestrator expires the blob, as it does for generator uploads.
+2. `imageSearchUpload.status` (polled) reports `pending`, `ready` or `refused`. The scan gate
+   (`search-upload-gate.ts`) reads the workflow and the blob's own verdict. It refuses a scan that
+   failed, or has not answered within ten minutes, and any block or age flag, for moderators too.
+   For non-moderators it applies a further check whose setting is private config. A refusal says
+   only "This image can't be used for search." and is logged with ids only.
+3. `imageSearchUpload.search` takes the upload id and the blob URL, re-checks the gate on every
+   page, refuses an upload above the viewer's levels, caps results at the upload's level like "More
+   like this", and asks the search service's `POST /v1/similar` with the blob URL. Hydration is
+   the normal fetch path.
+
+Limits: per user 10 uploads per 10 minutes and 50 per day (the router's limits, which moderators skip), plus 100 uploads and 1,000 search pages per day that count moderators too and refuse when their counter cannot be read; one unscanned upload at a time; and a site-wide daily upload cap that also refuses when its counter cannot be read.
+
 ## Feedback and logging
 
 - Every first page is logged to ClickHouse through `Tracker.search`, with index `images_semantic`.

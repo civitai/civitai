@@ -221,7 +221,7 @@ beforeEach(async () => {
   textModeration = legacyVerdict(false);
   state.clickhouseDown = false;
   createReport.mockClear();
-  redisMock.sysRedis.set.mockImplementation((async (k: string, v: string) => {
+  redisMock.redis.set.mockImplementation((async (k: string, v: string) => {
     redis.set(k, v);
     return 'OK';
   }) as never);
@@ -259,11 +259,11 @@ async function givenArticle(
   );
 }
 function lookupsDown() {
-  redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+  redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
   state.clickhouseDown = true;
 }
 function lookupsUp() {
-  redisMock.sysRedis.mGet.mockImplementation((async (keys: string[]) =>
+  redisMock.redis.mGet.mockImplementation((async (keys: string[]) =>
     keys.map((k) => redis.get(k) ?? null)) as never);
   state.clickhouseDown = false;
 }
@@ -309,7 +309,7 @@ describe('linking a url whose key cannot be proved', () => {
 
   it('with the issue record alone down, defers a key the request log does not hold', async () => {
     await recordUploadKeyOwner(KEY, OTHER);
-    redisMock.sysRedis.mGet.mockRejectedValue(new Error('redis down'));
+    redisMock.redis.mGet.mockRejectedValue(new Error('redis down'));
     await link();
     expect(await rows()).toEqual([]);
     expect((await hold())?.deferred).toEqual([KEY]);
@@ -554,12 +554,26 @@ describe('an image whose upload did not finish', () => {
     }
   });
 
+  // Deliberate: a blob: url renders only in its uploader's own tab, so it is skipped, not held.
   it('gets no image row when stored content is linked, and holds nothing', async () => {
     await recordUploadKeyOwner(KEY2, AUTHOR);
     await givenArticle({ content });
     await link({ content });
     expect(await rows()).toEqual([KEY2]);
     expect(await hold()).toBeNull();
+  });
+
+  // Deliberate, unlike blob: a data: image renders its bytes, unscanned, to every reader.
+  it('holds the article on a stored data: image, with no image row', async () => {
+    const DATA =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk';
+    const dataContent = `<p><edge-media url="${DATA}" type="image"></edge-media>${img(KEY2)}</p>`;
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    await givenArticle({ content: dataContent });
+    await link({ content: dataContent });
+    expect(await rows()).toEqual([KEY2]);
+    expect((await hold())?.refused).toEqual([DATA]);
+    expect(await ingestion()).toBe('Blocked');
   });
 });
 

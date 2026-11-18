@@ -1,18 +1,15 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { timingSafeEqual } from 'crypto';
 import { env } from '$env/dynamic/private';
+import { isAccessTokenJwt } from '@civitai/auth';
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { db } from '$lib/server/db/db';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { basicCredentials, parseBody } from '$lib/server/oauth/http';
-import { carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
+import { apiKeyRowScope, carriesClientCredentialsOnlyScope } from '$lib/server/oauth/scope';
 import { getClientIp } from '$lib/server/auth/request';
 import { authenticatedConfidentialClient } from '$lib/server/oauth/client-auth';
-import {
-  introspectAccessTokenJwt,
-  isAccessTokenJwt,
-  isAnyIntrospector,
-} from '$lib/server/oauth/jwt-introspection';
+import { introspectAccessTokenJwt, isAnyIntrospector } from '$lib/server/oauth/jwt-introspection';
 
 // POST /api/auth/oauth/introspect — RFC 7662 token introspection.
 //
@@ -102,6 +99,7 @@ export const POST: RequestHandler = async ({ request }) => {
     .select([
       'ApiKey.userId',
       'ApiKey.tokenScope',
+      'ApiKey.tokenScopeWide',
       'ApiKey.clientId',
       'ApiKey.expiresAt',
       'User.username',
@@ -118,7 +116,7 @@ export const POST: RequestHandler = async ({ request }) => {
     .executeTakeFirst();
 
   // A client-credentials token is single-purpose, so it reads as inactive like an unknown one.
-  if (!row || carriesClientCredentialsOnlyScope(row.tokenScope)) {
+  if (!row || carriesClientCredentialsOnlyScope(apiKeyRowScope(row))) {
     return json({ active: false }, { headers: NO_STORE });
   }
 
@@ -129,7 +127,7 @@ export const POST: RequestHandler = async ({ request }) => {
       username: row.username,
       // Decimal bitmask string, not the RFC's space-separated list — this provider has no
       // string scope vocabulary (see lib/server/oauth/scope.ts).
-      scope: String(row.tokenScope),
+      scope: String(apiKeyRowScope(row)),
       client_id: row.clientId ?? undefined,
       ...(row.expiresAt ? { exp: Math.floor(row.expiresAt.getTime() / 1000) } : {}),
       token_type: 'Bearer',
@@ -188,6 +186,7 @@ async function introspectWorkerToken(hash: string, now: Date) {
     .innerJoin('WorkerClient', 'WorkerClient.clientId', 'ApiKey.clientId')
     .select([
       'ApiKey.tokenScope',
+      'ApiKey.tokenScopeWide',
       'ApiKey.clientId',
       'ApiKey.expiresAt',
       'WorkerDevice.issuer',
@@ -207,7 +206,7 @@ async function introspectWorkerToken(hash: string, now: Date) {
     worker_provider: row.provider,
     device_id: row.subject,
     device_issuer: row.issuer,
-    scope: String(row.tokenScope),
+    scope: String(apiKeyRowScope(row)),
     exp: Math.floor(row.expiresAt.getTime() / 1000),
     token_type: 'Bearer',
   };

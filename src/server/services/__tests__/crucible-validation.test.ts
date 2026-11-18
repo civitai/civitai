@@ -620,6 +620,7 @@ const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = nu
   userId: 42,
   type,
   nsfwLevel: 1,
+  modelRestricted: false,
   metadata,
   ingestion: 'Scanned',
   createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000),
@@ -1220,6 +1221,45 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     );
   });
 
+  // The checks before the write read the crucible as it was; a moderator can lower a cap to the
+  // live count between them and this entry's write.
+  const capsAtWrite = (full: { total: boolean; user: boolean; entryLimit?: number }) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('"maxTotalEntries"') ? [full] : []
+    );
+
+  it.each([
+    ['total cap', { total: true, user: false }, 'reached its maximum number of entries'],
+    [
+      'per-user limit',
+      { total: false, user: true, entryLimit: 2 },
+      'reached the maximum of 2 entries',
+    ],
+  ])(
+    'refuses an entry over a %s lowered since its checks, read after the row lock, and refunds it',
+    async (_, full, message) => {
+      capsAtWrite(full);
+
+      await expect(submit()).rejects.toThrow(message);
+
+      const capRead = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+        (strings as TemplateStringsArray).join('?').includes('"maxTotalEntries"')
+      );
+      expect(capRead).toBeGreaterThanOrEqual(0);
+      expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[capRead]
+      );
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+      expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('saves an entry while it is under both caps', async () => {
+    capsAtWrite({ total: false, user: false });
+    await submit();
+    expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalled();
+  });
+
   it("raises the stored prize pool by a paid entry's fee", async () => {
     await submit();
     expect(lockedCheck().values[0]).toBe(50);
@@ -1651,6 +1691,30 @@ describe('submitEntry — who and what may enter', () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
   });
 
+  describe('made with a base model whose license restricts mature images', () => {
+    const enter = (nsfwLevel: number) => {
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+        ...crucibleRow(MediaType.image),
+        nsfwLevel: 1 | 2 | 4,
+      });
+      dbMock.dbRead.image.findUnique.mockResolvedValue({
+        ...imageRow(MediaType.image),
+        nsfwLevel,
+        modelRestricted: true,
+      });
+      return submit();
+    };
+
+    it('refuses a mature entry', async () => {
+      await expect(enter(4)).rejects.toThrow(/doesn't allow mature images/);
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a PG entry', async () => {
+      await expect(enter(1)).resolves.toMatchObject({ id: 5 });
+    });
+  });
+
   it('refuses a user on the contest-ban list', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValueOnce({
       meta: { contestBanDetails: { bannedAt: '2026-10-01T00:00:00.000Z' } },
@@ -1703,8 +1767,8 @@ describe('checkCrucibleEntryEligibility', () => {
   describe('once a required model is held to PG and PG-13', () => {
     const withRequiredModel = (flagged: boolean) => {
       dbMock.dbRead.image.findMany.mockResolvedValue([
-        { id: 1, createdAt: after, nsfwLevel: 1 },
-        { id: 5, createdAt: after, nsfwLevel: 4 },
+        { id: 1, createdAt: after, nsfwLevel: 1, modelRestricted: false },
+        { id: 5, createdAt: after, nsfwLevel: 4, modelRestricted: false },
       ]);
       fetchImageResources.mockResolvedValue({
         1: { resources: [{ modelVersionId: 500 }] },
@@ -1729,6 +1793,26 @@ describe('checkCrucibleEntryEligibility', () => {
 
       await expect(check([5])).resolves.toEqual([{ imageId: 5, eligible: true, reasons: [] }]);
     });
+  });
+
+  it('refuses a mature image whose base model license restricts mature images', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: [],
+      allowedBaseModels: [],
+    });
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after, nsfwLevel: 4, modelRestricted: true },
+      { id: 2, createdAt: after, nsfwLevel: 1, modelRestricted: true },
+      { id: 3, createdAt: after, nsfwLevel: 4, modelRestricted: false },
+    ]);
+
+    await expect(check([1, 2, 3])).resolves.toEqual([
+      { imageId: 1, eligible: false, reasons: ['restricted-model'] },
+      { imageId: 2, eligible: true, reasons: [] },
+      { imageId: 3, eligible: true, reasons: [] },
+    ]);
   });
 
   it("only looks at the caller's own images", async () => {

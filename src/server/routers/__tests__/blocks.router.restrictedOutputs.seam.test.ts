@@ -88,6 +88,14 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById }));
+/** The media-serve flag, off unless a test turns it on. */
+const servingFlag = vi.hoisted(() => ({ on: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string) =>
+    flag === 'app-blocks-workflow-media-serve' ? servingFlag.on : false,
+}));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
@@ -108,6 +116,7 @@ vi.mock('~/server/middleware.trpc', async () => {
   return { rateLimit: () => middleware(({ next }) => next()) };
 });
 
+import type * as FliptClient from '~/server/flipt/client';
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -368,7 +377,11 @@ describe.each(CASES)('restricted outputs never reach %s', (_label, maxBrowsingLe
 describe('🔴 F1 — an output still being rated is held, and naming it is refused', () => {
   /** The middle output has no rating yet; an SFW token's rating could still restrict it. */
   function unratedMiddle() {
-    const workflow = restrictedWorkflow({ allowMatureContent: undefined });
+    // Just finished: inside the rating hold (`isRatingHoldExpired`).
+    const workflow = restrictedWorkflow({
+      allowMatureContent: undefined,
+      completedAt: new Date().toISOString(),
+    });
     const blobs = (workflow.steps[0].output as { blobs: Array<Record<string, unknown>> }).blobs;
     delete blobs[1].nsfwLevel;
     return workflow;
@@ -387,7 +400,26 @@ describe('🔴 F1 — an output still being rated is held, and naming it is refu
       { url: OK_B, nsfwLevel: 'pg13' },
     ]);
     expect(snapshot.ratingPending).toBe(true);
+    // The orchestrator says succeeded; an app is told processing, so an old SDK keeps polling.
+    expect(snapshot.status).toBe('processing');
     expect(JSON.stringify(snapshot)).not.toContain(SECRET);
+  });
+
+  it("pollWorkflow's own bookkeeping keys on the REAL status while the app is told processing", async () => {
+    mockUpdateBlockWorkflowStatus.mockResolvedValue(1 as never);
+    const { snapshot } = await READS.pollWorkflow();
+    expect(snapshot.status).toBe('processing');
+    // The read model records the terminal status and settle runs now, not after the rating.
+    expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledTimes(1);
+    expect(mockUpdateBlockWorkflowStatus).toHaveBeenCalledWith({
+      workflowId: OWN_ID,
+      status: 'succeeded',
+    });
+    expect(mockSettleCustomComfySpend).toHaveBeenCalledTimes(1);
+    expect(mockSettleCustomComfySpend).toHaveBeenCalledWith({
+      workflowId: OWN_ID,
+      actualCost: 17,
+    });
   });
 
   it('publish of the pending position, or of "every output", is refused and writes nothing', async () => {
@@ -543,5 +575,70 @@ describe("🔴 every read and publish judges outputs at the viewer's own level",
         )
       ).toStrictEqual(urls);
     });
+  });
+});
+
+describe('🔴 serving on: publish refuses what the poll restricts', () => {
+  const NA = 'https://blobs.example.test/na.png';
+  const withNa = () =>
+    restrictedWorkflow({
+      allowMatureContent: true,
+      steps: [
+        {
+          $type: 'customComfy',
+          name: 'block-custom-comfy',
+          status: 'succeeded',
+          output: {
+            blobs: [
+              { id: 'a', type: 'image', url: OK_A, available: true, nsfwLevel: 'pg' },
+              { id: 'n', type: 'image', url: NA, available: true, nsfwLevel: 'na' },
+              { id: 'b', type: 'image', url: OK_B, available: true, nsfwLevel: 'pg13' },
+            ],
+          },
+        },
+      ],
+    });
+  const publish = (imageIndexes: number[]) =>
+    caller({ id: VIEWER }).publishGenerationOutputs({
+      blockToken: 'tok',
+      workflowId: OWN_ID,
+      imageIndexes,
+    });
+  const fetched = () =>
+    mockPersistBlockWorkflowOutputImage.mock.calls.map(
+      (c) => (c[0] as { imageUrl: string }).imageUrl
+    );
+
+  beforeEach(() => {
+    servingFlag.on = true;
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ maxBrowsingLevel: 1 | 2 | 4 | 8 | 16 }));
+    mockGetWorkflow.mockResolvedValue(withNa());
+  });
+  afterEach(() => {
+    servingFlag.on = false;
+  });
+
+  it('the poll restricts the `na` output in position', async () => {
+    const { snapshot } = await READS.pollWorkflow();
+    expect(snapshot.outputs?.[1]).toStrictEqual({ restricted: true, reason: 'unrated' });
+  });
+
+  it('publish refuses that position and writes nothing', async () => {
+    await expect(publish([1])).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'output 1 is restricted',
+    });
+    expect(mockPersistBlockWorkflowOutputImage).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: a rated position beside it publishes, from the orchestrator url', async () => {
+    await publish([2]);
+    expect(fetched()).toStrictEqual([OK_B]);
+  });
+
+  it('CONTROL: with serving off the same `na` position publishes', async () => {
+    servingFlag.on = false;
+    await publish([1]);
+    expect(fetched()).toStrictEqual([NA]);
   });
 });

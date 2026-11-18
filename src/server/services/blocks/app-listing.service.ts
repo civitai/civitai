@@ -82,6 +82,7 @@ import {
 } from '~/server/services/blocks/app-listing-source-repo.service';
 // The no-type `issue_tracker_url` column, raw SQL only — see its module header.
 import { readListingIssueTrackerUrlForRender } from '~/server/services/blocks/app-listing-issue-tracker.service';
+import { readLiveActionsRunSourceForListing } from '~/server/services/blocks/actions-run-source.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -933,6 +934,10 @@ export function projectListingDetail(
     // Issue-tracker / support link. A no-type column (raw SQL only), so this projection carries
     // `null` and the callers that read it (`getListingDetail`, the moderator preview) override it.
     issueTrackerUrl: null,
+    // The submitting GitHub Actions run (no-type columns, raw SQL only). `null` here;
+    // `getListingDetail` overrides it for an on-site listing whose serving version has one from a
+    // public repository. The moderator preview shows none.
+    actionsRunSource: null,
     screenshots: gallery.screenshots,
     kindData: detailKindData(row),
     // Fork opt-in + provenance. Not on `row` (manual-apply, no-type columns — raw SQL only), so
@@ -1051,7 +1056,7 @@ export function projectListingDetail(
       row.kind === 'offsite' &&
       Boolean(row.connectClientId) &&
       typeof connectRequestedScopes === 'number'
-        ? tokenScopeMaskToList(connectRequestedScopes).map((s) => s.key)
+        ? tokenScopeMaskToList(BigInt(connectRequestedScopes)).map((s) => s.key)
         : [],
   };
 }
@@ -1442,7 +1447,7 @@ function noteSubListingTableMissing(err: unknown): void {
     name: 'app-sub-listing-table-missing',
     type: 'warning',
     message: err instanceof Error ? err.message : String(err),
-  }).catch(() => null);
+  });
 }
 
 /**
@@ -1897,21 +1902,35 @@ export async function getListingDetail(
   // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
   // The civitai.red overrides are a fourth, read ONLY for a red-capable request (and degrading
   // to "none" on any error, like beta).
-  const [collaborators, sourceRepo, beta, red, forkProvenance, isOfficial, issueTracker] =
-    await Promise.all([
-      loadDisplayedCollaboratorChips(row.id),
-      readListingSourceRepoUrl(row.id, dbRead),
-      readListingBetaForRender(row.id, dbRead),
-      redCapable
-        ? readListingRedMediaManyForRender(dbRead, [row.id])
-        : Promise.resolve(new Map<string, ListingRedMediaImages>()),
-      // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
-      readListingForkProvenanceForRender(row.id, dbRead),
-      // The Official badge (no-type column; degrades to "not official" on any error).
-      readListingOfficialForRender(row.id, dbRead),
-      // The Support link (no-type column; degrades to "no link" on any error).
-      readListingIssueTrackerUrlForRender(row.id, dbRead),
-    ]);
+  const [
+    collaborators,
+    sourceRepo,
+    beta,
+    red,
+    forkProvenance,
+    isOfficial,
+    issueTracker,
+    actionsRunSource,
+  ] = await Promise.all([
+    loadDisplayedCollaboratorChips(row.id),
+    readListingSourceRepoUrl(row.id, dbRead),
+    readListingBetaForRender(row.id, dbRead),
+    redCapable
+      ? readListingRedMediaManyForRender(dbRead, [row.id])
+      : Promise.resolve(new Map<string, ListingRedMediaImages>()),
+    // Fork opt-in + provenance (manual-apply columns; degrades to "not a fork" on any error).
+    readListingForkProvenanceForRender(row.id, dbRead),
+    // The Official badge (no-type column; degrades to "not official" on any error).
+    readListingOfficialForRender(row.id, dbRead),
+    // The Support link (no-type column; degrades to "no link" on any error).
+    readListingIssueTrackerUrlForRender(row.id, dbRead),
+    // The GitHub Actions run that submitted the serving version, public repositories only
+    // (no-type columns; degrades to none on any error). On-site apps only: an off-site
+    // listing has no submitted bundle.
+    row.kind === 'onsite' && row.appBlockId
+      ? readLiveActionsRunSourceForListing(dbRead, row.appBlockId)
+      : Promise.resolve(null),
+  ]);
   // "Forked from …". The parent is resolved through THE SAME gate this read applies to its own
   // row, with this viewer's scope / floor / host — so a parent this viewer could not open in the
   // store yields `{ visible: false }`, indistinguishable from a deleted one, and its name never
@@ -1945,6 +1964,7 @@ export async function getListingDetail(
   return {
     ...detail,
     issueTrackerUrl: issueTracker.value,
+    actionsRunSource,
     forkable: row.kind === 'onsite' && forkProvenance.forkable,
     forkOf,
   };

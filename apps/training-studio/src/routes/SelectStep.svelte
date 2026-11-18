@@ -28,6 +28,7 @@
     loraTypeById,
     releasedLabel,
     typesForMedia,
+    type LabelType,
     type Media,
     type ModelCard,
   } from '$lib/data/trainingModels';
@@ -37,6 +38,7 @@
     cardFromPrice,
     isCustom,
     isValidAir,
+    labelModeForCard,
     labelNoun,
     newRun,
     nextRunId,
@@ -45,6 +47,8 @@
     cardUnavailability,
     versionStatusKey,
     runCard,
+    cardSupportsKohya,
+    kohyaSeedCard,
     runEngine,
     runSupportsKohya,
     withEngine,
@@ -52,7 +56,7 @@
     runVersion,
     runVersionLabel,
     selectionFromTotal,
-    sweepCompatible,
+    sweepLabelMode,
     versionOptions,
     type Run,
     type Selection,
@@ -64,6 +68,8 @@
     enabledModelFlags = [],
     initial = null,
     startInEdit = false,
+    flowLabelMode = 'tag',
+    datasetLabeled = false,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
@@ -75,6 +81,8 @@
     initial?: Selection | null;
     /** Open on the Image edit section (a reused edit dataset) when there is no selection to restore. */
     startInEdit?: boolean;
+    flowLabelMode?: LabelType;
+    datasetLabeled?: boolean;
   } = $props();
 
   // Derived so the seed and lists reflect the prop rather than a captured snapshot.
@@ -102,6 +110,9 @@
     )
   );
   let focus = $state(0);
+  // The last Engine pick, kept apart from the runs: Kohya is image-only, so a trip through Video drops
+  // it from the run, and returning to Image should bring it back.
+  let kohyaPicked = untrack(() => runs.some((r) => runEngine(r) === 'kohya'));
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
   // Until the user touches the base model it tracks the type's recommendation; after that a type
   // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
@@ -128,12 +139,20 @@
   const primary = $derived(runs[0]!);
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
+  // Like the tiles, the Engine choice applies to the highlighted run.
+  const kohyaCards = $derived(
+    editSection ? [] : cardsForMedia(media, enabledFlags).filter(cardSupportsKohya)
+  );
+  const showEngine = $derived(kohyaEnabled && kohyaCards.length > 0);
+  const kohyaMode = $derived(showEngine && runEngine(focused) === 'kohya');
   const recommendedType = $derived(type.recommended[media]);
-  // Undefined when the type has no recommendation for this media, or when the recommended model is gated
-  // off for this user — the banner then simply doesn't show.
+  // Undefined when the type has no recommendation for this media, when the recommended model is gated
+  // off for this user, or when Kohya is on and can't train it — the banner then simply doesn't show.
   const recommendedCard = $derived(
     recommendedType && !editSection
-      ? cardsForMedia(media, enabledFlags).find((c) => c.type === recommendedType)
+      ? cardsForMedia(media, enabledFlags).find(
+          (c) => c.type === recommendedType && (!kohyaMode || cardSupportsKohya(c))
+        )
       : undefined
   );
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
@@ -145,6 +164,7 @@
   };
   const featuredCards = $derived.by(() => {
     if (editSection) return visibleEditCards;
+    if (kohyaMode) return kohyaCards;
     const cards = cardsForMedia(media, enabledFlags);
     const featured = FEATURED[media];
     if (!featured) return cards;
@@ -153,7 +173,7 @@
       .filter((c): c is (typeof cards)[number] => c !== undefined);
   });
   const otherCards = $derived.by(() => {
-    if (editSection) return [];
+    if (editSection || kohyaMode) return [];
     const featured = FEATURED[media];
     if (!featured) return [];
     const featuredSet = new Set(featured);
@@ -164,14 +184,26 @@
   const selectedInOthers = $derived(otherCards.some((c) => c.type === focused.cardType));
   const modelsExpanded = $derived(showAllModels || selectedInOthers);
   const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
-  const labelMode = $derived(runCard(primary).label);
-  const labelModeNoun = $derived(labelNoun(runCard(primary)));
+  const previousCard = $derived(initial ? runCard(initial.runs[0]!) : null);
+  // The mode the Data step will open on for these runs; the flow computes it the same way on Continue.
+  const labelMode = $derived(
+    sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) ??
+      labelModeForCard(previousCard, runCard(primary), flowLabelMode, datasetLabeled)
+  );
+  /** Whether `card` could take run `index`'s place with the other runs staying: the whole selection must
+   *  still share a dataset shape and label mode. */
+  function sweepAllows(card: ModelCard, index: number): boolean {
+    const cards = runs.map((r, i) => (i === index ? card : runCard(r)));
+    return sweepLabelMode(cards, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
   const primaryPairs = $derived(runCard(primary).pairs === true);
   /** Why `card` can't join this sweep — the dataset is shared, so its shape must match. */
   function sweepLockReason(card: ModelCard): string {
     if (!!card.pairs !== primaryPairs)
       return `${card.name} ${card.pairs ? 'trains on before/after pairs' : 'trains on single images'}; your other run doesn't. One dataset can't mix — remove the other run to switch.`;
-    return `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`;
+    if (focus === 0)
+      return `Making ${card.name} the first run would change the dataset's tags/captions format, which your other runs can't use. One dataset can't mix — remove them to switch.`;
+    return `${card.name} can't train on ${labelMode === 'tag' ? 'tags' : 'captions'} like your other run. One dataset can't mix — remove the other run to switch.`;
   }
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
@@ -202,10 +234,17 @@
     media = m;
     // A dataset can't span media, so the MODEL always resets. The type carries over when the new media
     // offers it — switching Image→Video with Style chosen should stay Style, not silently become Character.
+    // So does the engine, when the new media has a Kohya model.
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags)];
+    const kohyaCard =
+      kohyaEnabled && kohyaPicked ? kohyaSeedCard(t.id, m, enabledFlags, serviceStatus.value) : undefined;
+    runs = [
+      kohyaCard
+        ? withEngine(newRun(kohyaCard, enabledFlags, serviceStatus.value), 'kohya', enabledFlags)
+        : newRun(recommendedCardFor(t.id, m, enabledFlags), enabledFlags),
+    ];
     userPickedModel = false;
     focus = 0;
     sweepOpen = false;
@@ -213,7 +252,7 @@
 
   function pickType(id: string) {
     loraType = id;
-    if (runs.length === 1 && !userPickedModel) {
+    if (runs.length === 1 && !userPickedModel && runEngine(primary) !== 'kohya') {
       runs = [newRun(recommendedCardFor(id, media, enabledFlags), enabledFlags)];
       focus = 0;
     }
@@ -222,6 +261,10 @@
   // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
   onMount(() => void serviceStatus.refresh());
   const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
+  // Defensive: not reachable today, but keep it — without it Continue would fall back to a mode some run can't take.
+  const sweepBroken = $derived(
+    multi && sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) === null
+  );
 
   /** Whether a version chip's model is down (Custom has no catalog version: never). */
   function versionDown(card: ModelCard, key: string) {
@@ -250,11 +293,13 @@
   }
 
   function pickBase(card: ModelCard) {
-    if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
+    if (multi && !sweepAllows(card, focus)) return; // dataset-shape lock
     if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
-    runs = runs.map((r, i) =>
-      i === focus ? { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id } : r
-    );
+    runs = runs.map((r, i) => {
+      if (i !== focus) return r;
+      const run = { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id };
+      return kohyaMode ? withEngine(run, 'kohya', enabledFlags) : run;
+    });
     userPickedModel = true;
   }
 
@@ -270,7 +315,38 @@
     if (runs.length === 1) addRun();
   }
 
-  function pickEngine(index: number, engine: string) {
+  /** The first Kohya model the highlighted run can move to: one the sweep's dataset allows, not down. */
+  const kohyaFallbackCard = $derived(
+    kohyaCards.find(
+      (c) =>
+        (!multi || sweepAllows(c, focus)) &&
+        !cardUnavailability(c, enabledFlags, serviceStatus.value)
+    )
+  );
+  const kohyaBlockedReason = $derived(
+    runSupportsKohya(focused) || kohyaFallbackCard
+      ? null
+      : 'No Kohya model is available for this run right now.'
+  );
+
+  /** Kohya on a model it can't train moves the run to the first Kohya model it can join. */
+  function pickEngine(engine: string, index = focus) {
+    if (engine === 'kohya' && !runSupportsKohya(runs[index]!)) {
+      const card = kohyaFallbackCard;
+      if (!card) return;
+      kohyaPicked = true;
+      runs = runs.map((r, i) =>
+        i === index
+          ? withEngine(
+              { ...newRun(card, enabledFlags, serviceStatus.value), id: r.id },
+              'kohya',
+              enabledFlags
+            )
+          : r
+      );
+      return;
+    }
+    kohyaPicked = engine === 'kohya';
     runs = runs.map((run, i) =>
       i !== index || !runSupportsKohya(run) ? run : withEngine(run, engine, enabledFlags)
     );
@@ -327,8 +403,14 @@
     focus = runs.length - 1;
   }
 
+  /** Removing run 1 makes the next run the lead, which can re-pick the dataset's mode and strand the rest. */
+  function removalAllowed(i: number): boolean {
+    const rest = runs.filter((_, k) => k !== i).map(runCard);
+    return rest.length === 0 || sweepLabelMode(rest, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
+
   function removeRun(i: number) {
-    if (runs.length <= 1) return;
+    if (runs.length <= 1 || !removalAllowed(i)) return;
     runs = runs.filter((_, k) => k !== i);
     // Keep focus on the same run: removing one before it shifts every later run down a slot.
     if (i < focus) focus -= 1;
@@ -357,11 +439,12 @@
   }
 </script>
 
-{#snippet enginePicker(run: Run, index: number)}
+
+
+{#snippet rowEnginePicker(run: Run, index: number)}
   {#if kohyaEnabled && runSupportsKohya(run)}
-    <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Training engine</div>
     <div
-      class="mt-1.5 flex gap-2"
+      class="mt-2.5 flex gap-2"
       role="radiogroup"
       tabindex="-1"
       aria-label={`Run ${index + 1} training engine`}
@@ -374,13 +457,12 @@
           role="radio"
           aria-checked={runEngine(run) === engine.value}
           tabindex={runEngine(run) === engine.value ? 0 : -1}
-          onclick={() => pickEngine(index, engine.value)}
+          onclick={() => pickEngine(engine.value, index)}
         >{engine.label}</Button>
       {/each}
     </div>
   {/if}
 {/snippet}
-
 
 {#snippet customIncompleteNote()}
   {#if blockedMessage}
@@ -417,7 +499,7 @@
 {#snippet continueButton(placement: string)}
   <Button
     class="h-11 {placement}"
-    disabled={customIncomplete || !!blockedMessage}
+    disabled={customIncomplete || !!blockedMessage || sweepBroken}
     onclick={continueToData}
   >
     Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
@@ -471,7 +553,7 @@
   </div>
 {/snippet}
 
-<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-6">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">What do you want to train?</h2>
@@ -561,9 +643,51 @@
         </div>
       </div>
       {/if}
+
+      {#if showEngine}
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div id="engine-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
+            Engine
+          </div>
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div
+              class="flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-labelledby="engine-group-label"
+              tabindex="-1"
+              onkeydown={radioKeydown}
+            >
+              {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
+                {@const checked = kohyaMode === (engine.value === 'kohya')}
+                {@const blocked = engine.value === 'kohya' && !checked ? kohyaBlockedReason : null}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={checked}
+                  tabindex={checked ? 0 : -1}
+                  disabled={!!blocked}
+                  title={blocked ?? undefined}
+                  onclick={() => pickEngine(engine.value)}
+                  class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40
+                    {checked
+                    ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                    : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+                >
+                  {#if checked}
+                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+                  {/if}
+                  {engine.label}
+                </button>
+              {/each}
+            </div>
+            <span class="font-mono text-xs text-dark-2">
+              Kohya trains {kohyaCards.map((c) => c.name).join(', ')}
+            </span>
+          </div>
+        </div>
+      {/if}
     </div>
 
-    <!-- base model: every model visible as an equal peer, recommended first; no disclosure -->
     <div>
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
@@ -606,7 +730,7 @@
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
-          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const locked = multi && !selected && !sweepAllows(card, focus)}
           {@const disabled = locked || (!!down && !selected)}
           {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
           {@const cardPrice = price(card.type)}
@@ -723,12 +847,11 @@
                 {runVersionLabel(primary)}
               </div>
               <div class="font-mono text-xs text-dark-2">
-                {labelNoun(card)}{#if isCustom(primary)} · custom{/if}
+                {labelNoun(card)}{isCustom(primary) ? ' · custom' : ''}{runEngine(primary) === 'kohya' ? ' · Kohya' : ''}
               </div>
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
           </div>
-          {@render enginePicker(primary, 0)}
           {#if versions.length > 1}
             <div class="mt-3 font-mono text-xs uppercase tracking-wider text-dark-2">Version</div>
             <div
@@ -813,7 +936,7 @@
                       {runVersionLabel(r)}
                     </div>
                     <div class="font-mono text-xs text-dark-2">
-                      {labelNoun(card)}{#if isCustom(r)} · custom{/if}{focusedRow ? ' · editing' : ''}
+                      {labelNoun(card)}{isCustom(r) ? ' · custom' : ''}{runEngine(r) === 'kohya' ? ' · Kohya' : ''}{focusedRow ? ' · editing' : ''}
                     </div>
                   </div>
                 </button>
@@ -822,17 +945,21 @@
                   <button
                     type="button"
                     aria-label={`Remove run ${ri + 1}`}
+                    disabled={!removalAllowed(ri)}
+                    title={removalAllowed(ri)
+                      ? undefined
+                      : "Removing this run would change the dataset's tags/captions format for your other runs. Remove them first."}
                     onclick={(e) => {
                       e.stopPropagation();
                       removeRun(ri);
                     }}
-                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
+                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-dark-4 disabled:hover:text-dark-2"
                   >
                     <IconX size={14} stroke={2} />
                   </button>
                 {/if}
               </div>
-              {@render enginePicker(r, ri)}
+              {@render rowEnginePicker(r, ri)}
               <div class="mt-2.5 flex flex-wrap gap-2" role="radiogroup" aria-label={`Run ${ri + 1} version`}>
                 {#each versionOptions(card, enabledFlags, runEngine(r)) as v (v.key)}
                   <button
@@ -898,7 +1025,7 @@
         {primaryPairs ? 'Edit pairs' : labelMode === 'tag' ? 'Tags' : 'Captions'}
       </span>
     </div>
-    <div class="mt-1.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
+    <div class="flex items-baseline justify-between border-t border-dark-4 pt-2">
       <span class="text-sm font-semibold text-white">Starting at</span>
       {@render totalTag('text-2xl', 20)}
     </div>

@@ -1,13 +1,14 @@
 {
   "name": "fallback-images-miss",
-  "description": "A version-images miss (Node reads it lag-aware) falls back.",
+  "description": "A version-images miss falls back with the miss computation off (FEED_GO_COMPUTE_MISSES=false; on, it is computed).",
   "now": "2026-06-15T12:00:00.000Z",
   "config": {
     "baseModelMetrics": true,
     "modelImagesSlim": true,
     "coverageNext": true,
     "loadingOpenToAll": true,
-    "decorationEvents": []
+    "decorationEvents": [],
+    "computeMissesOff": true
   },
   "request": {
     "input": "{\"json\":{\"sort\":\"Highest Rated\",\"limit\":1,\"browsingLevel\":1}}",
@@ -104,7 +105,7 @@
       },
       "packed": "3gADp21vZGVsSWTNE5GmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v2:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,

@@ -14,12 +14,15 @@ import {
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { assertBlockWorkflowTaggedForApp } from '~/server/services/blocks/block-workflow-access';
 import { blockWorkflowOwnedByAppUser } from '~/server/services/blocks/block-workflows.service';
-import { projectAppWorkflowWithPositions } from '~/server/services/blocks/workflow.service';
+import {
+  orchestratorBlockStatus,
+  projectAppWorkflowWithPositions,
+} from '~/server/services/blocks/workflow.service';
 import {
   pendingOutputMessage,
   restrictedOutputMessage,
 } from '~/server/services/blocks/block-output-restriction';
-import type { BlockOutputCeiling } from '~/server/services/blocks/block-output-restriction';
+import type { BlockOutputRules } from '~/server/services/blocks/block-output-mint';
 import {
   BLOCK_POST_APP_ID_META_KEY,
   BLOCK_POST_MAX_IMAGES,
@@ -106,11 +109,11 @@ export type BlockPostActor = {
   /** The viewer's resolved browsing ceiling, for the published-image clamp. */
   browsingLevel: number;
   /**
-   * The TOKEN's output ceiling (`blockOutputCeilingFromClaims(claims)`). It decides
-   * which output positions are RESTRICTED (and so refused); it does not change the
-   * index space, which is the stable positions of `AppWorkflow.outputs`.
+   * The TOKEN's output rules (`resolveBlockOutputRules(claims)`). They decide which
+   * output positions are RESTRICTED (and so refused), as the poll does; they do not
+   * change the index space, which is the stable positions of `AppWorkflow.outputs`.
    */
-  outputCeiling: BlockOutputCeiling;
+  outputCeiling: BlockOutputRules;
 };
 
 /** One resolved image, ready to be adopted or materialised. */
@@ -466,8 +469,8 @@ export async function resolveOwnedWorkflowOutputs(input: {
   appBlockId: string;
   workflowId: string;
   getWorkflow: (workflowId: string) => Promise<unknown>;
-  /** The token's output ceiling — see `BlockPostActor.outputCeiling`. */
-  ceiling: BlockOutputCeiling;
+  /** The token's output rules — see `BlockPostActor.outputCeiling`. */
+  ceiling: BlockOutputRules;
 }): Promise<OwnedWorkflowOutputSlot[]> {
   const owned = await blockWorkflowOwnedByAppUser({
     userId: input.userId,
@@ -481,19 +484,20 @@ export async function resolveOwnedWorkflowOutputs(input: {
   >[0];
   assertBlockWorkflowTaggedForApp({ tags: workflow.tags, appId: input.appId });
 
-  const { workflow: projected, positions } = projectAppWorkflowWithPositions(
-    workflow,
-    input.ceiling
-  );
+  // No mint: the post fetches each position's media itself.
+  const { positions } = projectAppWorkflowWithPositions(workflow, {
+    ...input.ceiling,
+    mint: null,
+  });
 
   // 🔴 TERMINALITY GATE — the invariant that makes the preview and the write
   // agree on WHICH IMAGES. A still-running workflow can gain an output between
   // the two phases, so the viewer confirms N thumbnails and gets N+1 images. This
   // refuses the GENERATOR of that divergence rather than detecting the symptom
   // afterwards: a terminal workflow's output set is frozen, so both phases must
-  // see the same set. Free — `projectAppWorkflow` already computed the status on
-  // the projection this function was reading anyway — and it binds every caller,
-  // including any future one that renders no dialog.
+  // see the same set. Free — the status is already on the workflow this function
+  // was reading anyway — and it binds every caller, including any future one that
+  // renders no dialog.
   //
   // BAD_REQUEST, not FORBIDDEN: nothing about the caller is unauthorised. The
   // workflow is simply not finished, and the message says so because the app's
@@ -501,7 +505,11 @@ export async function resolveOwnedWorkflowOutputs(input: {
   // that reads as a permission problem. See
   // `BLOCK_POST_TERMINAL_WORKFLOW_STATUSES` for which statuses count and why
   // `failed`/`expired`/`canceled` are admitted.
-  if (!isTerminalBlockPostWorkflowStatus(projected.status)) {
+  //
+  // The REAL status, not the projection's: an app is told `processing` while an
+  // output waits for its rating (`appWorkflowStatus`), but the output set is already
+  // frozen, and a rated position beside a held one is postable.
+  if (!isTerminalBlockPostWorkflowStatus(orchestratorBlockStatus(workflow))) {
     badRequest('workflow is still running — wait for it to finish before posting');
   }
 

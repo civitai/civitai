@@ -45,7 +45,13 @@ const scanArgs = (entityId: number, detectedLevel: number) =>
     subject: { fields: [], declared: { nsfwLevel: SFW } },
   } as never);
 
-type Viewer = { name: string; viewerId?: number; isGreen?: boolean; browsingLevel?: number };
+type Viewer = {
+  name: string;
+  viewerId?: number;
+  isGreen?: boolean;
+  browsingLevel?: number;
+  ownRowsExempt?: boolean;
+};
 const viewers: Viewer[] = [
   { name: 'signed out', browsingLevel: PG },
   { name: 'signed out, green', isGreen: true },
@@ -109,6 +115,7 @@ describe('crucible escalated by a text scan', () => {
       image: {
         ingestion: 'Scanned',
         nsfwLevel: coverLevel,
+        modelRestricted: false,
         needsReview: null,
         tosViolation: false,
       },
@@ -128,6 +135,7 @@ describe('crucible escalated by a text scan', () => {
       select: { id: true },
       viewerId: viewer.viewerId,
       isGreen: viewer.isGreen,
+      ownRowsExempt: viewer.ownRowsExempt,
     });
     expect(wheres.length).toBeGreaterThan(0);
     return wheres.some((where) => matches(row, where));
@@ -163,6 +171,17 @@ describe('crucible escalated by a text scan', () => {
       'owner at PG': true,
       'owner, green': true,
     });
+  });
+
+  // The semantic search's re-check, after a query is narrowed to the safe levels.
+  it('without the owner exemption, holds the owner to the same gate', async () => {
+    const row = await escalatedRow(X);
+    expect(
+      await sees(row, { name: 'owner', viewerId: OWNER, browsingLevel: PG, ownRowsExempt: false })
+    ).toBe(false);
+    expect(
+      await sees(row, { name: 'owner', viewerId: OWNER, isGreen: true, ownRowsExempt: false })
+    ).toBe(false);
   });
 
   it.each([

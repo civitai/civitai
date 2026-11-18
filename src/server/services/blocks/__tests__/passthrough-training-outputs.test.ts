@@ -25,7 +25,7 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 
 /** Every browsing level, so no fixture output is above the ceiling. */
-const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31 };
+const TEST_OUTPUT_CEILING = { maxBrowsingLevel: 31, serving: false, mint: null };
 
 const CKPT_1 = 'https://blobs.example/ckpt-epoch-1.safetensors';
 const CKPT_2 = 'https://blobs.example/ckpt-epoch-2.safetensors';
@@ -233,18 +233,71 @@ describe('trainedEpochs', () => {
     expect(snap.imageUrls).toBeUndefined();
   });
 
-  it.each(['evaluating', 'underReview', 'rejected', undefined])(
-    'is OMITTED when the run moderationStatus is %s, while samples still surface',
+  it.each(['evaluating', 'underReview', 'UnderReview', 'rejected', undefined])(
+    'is OMITTED, and no sample surfaces, when the run moderationStatus is %s',
     (moderationStatus) => {
       const snap = snapshotFromWorkflow(
         workflow('training', { ...trainingOutput(), moderationStatus }),
         TEST_OUTPUT_CEILING
       );
       expect(snap).not.toHaveProperty('trainedEpochs');
-      expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
-      expect(JSON.stringify(snap)).not.toContain('.safetensors');
+      expect(snap.imageUrls ?? []).toEqual([]);
+      const wire = JSON.stringify(snap);
+      for (const url of [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]) expect(wire).not.toContain(url);
+      expect(wire).not.toContain('.safetensors');
     }
   );
+
+  it('surfaces no legacy sample url on an imageResourceTraining run under review', () => {
+    const snap = snapshotFromWorkflow(
+      workflow('imageResourceTraining', {
+        ...imageResourceTrainingOutput(),
+        moderationStatus: 'underReview',
+      }),
+      TEST_OUTPUT_CEILING
+    );
+    expect(JSON.stringify(snap)).not.toContain(LEGACY_SAMPLE_URL);
+  });
+
+  it('treats the manager-API casing `Approved` as approved', () => {
+    const snap = snapshotFromWorkflow(
+      workflow('training', { ...trainingOutput(), moderationStatus: 'Approved' }),
+      TEST_OUTPUT_CEILING
+    );
+    expect(snap.imageUrls).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
+    expect(snap.trainedEpochs).toHaveLength(2);
+  });
+
+  it.each([
+    ['Training', trainingOutput, [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A, CKPT_1]],
+    ['TRAINING', trainingOutput, [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A, CKPT_1]],
+    ['ImageResourceTraining', imageResourceTrainingOutput, [LEGACY_SAMPLE_URL, LEGACY_CKPT_URL]],
+  ] as const)(
+    'holds a `%s` run under review whatever the `$type` casing',
+    ($type, output, urls) => {
+      const snap = snapshotFromWorkflow(
+        workflow($type, { ...output(), moderationStatus: 'underReview' }),
+        TEST_OUTPUT_CEILING
+      );
+      const wire = JSON.stringify(snap);
+      for (const url of urls) expect(wire).not.toContain(url);
+    }
+  );
+
+  it('forwards no epoch trace url, approved or not', () => {
+    const TRACE = 'https://blobs.example/trace-epoch-1.log';
+    for (const [$type, output] of [
+      ['training', trainingOutput()],
+      ['imageResourceTraining', imageResourceTrainingOutput()],
+    ] as const) {
+      const withTrace = {
+        ...output,
+        epochs: output.epochs.map((e) => ({ ...e, traceUrl: TRACE })),
+      };
+      const snap = snapshotFromWorkflow(workflow($type, withTrace), TEST_OUTPUT_CEILING);
+      expect(JSON.stringify(snap)).not.toContain(TRACE);
+    }
+  });
 
   it('accumulates across two training steps rather than keeping the last', () => {
     const wf = workflow('training', trainingOutput());
@@ -298,14 +351,16 @@ describe('trainedEpochs on AppWorkflow rows', () => {
   });
 
   it.each(['evaluating', 'underReview', 'rejected', undefined])(
-    'is OMITTED when the run moderationStatus is %s',
+    'is OMITTED, with no sample image, when the run moderationStatus is %s',
     (moderationStatus) => {
       const projected = projectAppWorkflow(
         workflow('training', { ...trainingOutput(), moderationStatus }),
         TEST_OUTPUT_CEILING
       );
       expect(projected).not.toHaveProperty('trainedEpochs');
-      expect(projected.images.map((i) => i.url)).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
+      expect(projected.images).toEqual([]);
+      const wire = JSON.stringify(projected);
+      for (const url of [SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]) expect(wire).not.toContain(url);
     }
   );
 

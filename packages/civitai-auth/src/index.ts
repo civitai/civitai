@@ -9,7 +9,7 @@
 //                       session-revocation marker protocol (createSessionRegistry).
 export { loadAuthEnv } from './env';
 export type { AuthEnv } from './env';
-export { createAuthVerifier, createAccessTokenJwtVerifier } from './verify';
+export { createAuthVerifier, createAccessTokenJwtVerifier, isAccessTokenJwt } from './verify';
 export type { AuthVerifier, AuthVerifierConfig, AccessTokenJwtVerifierConfig } from './verify';
 // Server-side consumer→hub clients (each file's header has the detail). All hub interaction goes through these,
 // so app code never hand-rolls a hub fetch.
@@ -50,7 +50,6 @@ export {
   clearPostLoginMarker,
   loginRetryCookie,
   clearLoginRetryCookie,
-  otherSlotExpiries,
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
@@ -105,7 +104,14 @@ export {
   legacySessionCookieName,
   allCookieNames,
   sessionCookieMode,
+  siteCookieMode,
   legacyCookieReadEnabled,
+  hostOnlySite,
+  otherSlotExpiries,
+  siteCookieHeader,
+  siteCookieJar,
+  cookiePairName,
+  expireCookie,
   hostSessionCookieName,
   hostDeviceCookieName,
   sessionCookieNameForSlot,

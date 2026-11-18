@@ -71,7 +71,7 @@
       },
       "packed": "3gADrGVxdWlwcGVkVG9JZM0gbahub3RGb3VuZMOoY2FjaGVkQXTW/2ov6BQ="
     },
-    "packed:caches:profile-pictures:v2:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -183,6 +183,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -236,6 +237,7 @@
         "minor": false,
         "poi": false,
         "acceptableMinor": false,
+        "restricted": false,
         "_resources": [
           {
             "modelVersionId": 6101,
@@ -617,6 +619,7 @@
                 "model3dId": null,
                 "minor": false,
                 "poi": false,
+                "restricted": false,
                 "modelVersionIds": [],
                 "modelVersionIdsManual": [],
                 "user": {

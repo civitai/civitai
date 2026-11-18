@@ -132,19 +132,15 @@ export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'featu
 
 /**
  * A parent's level (a bounty's, an entry's) is its images' combined level, so the cap on the
- * parent does not reach each image: this drops those above the cap, mixed ratings that reach
- * above it, and unrated ones. The owner
- * and moderators keep them, since edit forms are filled from these reads and save back only the
- * images they were shown.
+ * parent does not reach each image: this applies it per image. An edit saved from such a read
+ * keeps the dropped links (`shownImageIds` on `updateEntityImages`).
  */
 export function capNestedImages<T extends { nsfwLevel?: number | null }>(
   images: T[],
-  ctx: Pick<Context, 'user' | 'features' | 'req'>,
-  { ownerId }: { ownerId?: number | null } = {}
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
 ) {
   const cap = requestDomainBrowsingLevelCap(ctx);
-  if (cap === undefined || ctx.user?.isModerator) return images;
-  if (ownerId != null && ctx.user?.id === ownerId) return images;
+  if (cap === undefined) return images;
   return images.filter((image) => isRatingWithinCap(image.nsfwLevel, cap));
 }
 

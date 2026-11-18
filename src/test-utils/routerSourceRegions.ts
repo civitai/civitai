@@ -16,9 +16,8 @@
  * exist while both stay green. One module, one discriminator, one fix site.
  *
  * NOT a `.test.ts` file and not under a guard directory, so it is collected by no
- * project and counted by no ratchet — `no-lint-rules-script-drift` enumerates
- * `src/server/services/__tests__/no-*.test.ts`, which this is not, and neither
- * guard file moves.
+ * project and is not a `src/server/services/__tests__/no-*.test.ts` guard, and
+ * neither guard file moves.
  */
 
 /**

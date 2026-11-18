@@ -15,11 +15,15 @@ const SCHEMA = `
   CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
   CREATE TABLE "Image" (
     id int PRIMARY KEY, ingestion "ImageIngestionStatus" NOT NULL, "needsReview" text,
-    "tosViolation" boolean NOT NULL DEFAULT false
+    "tosViolation" boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false,
+    "blockedFor" text, "nsfwLevel" int NOT NULL DEFAULT 1,
+    poi boolean NOT NULL DEFAULT false
   );
+  CREATE TABLE "User" (id int PRIMARY KEY, "bannedAt" timestamp(3), "deletedAt" timestamp(3));
   CREATE TABLE "Crucible" (
     id int PRIMARY KEY, status "CrucibleStatus" NOT NULL,
-    ingestion "CrucibleIngestionStatus" NOT NULL, "imageId" int, "takenDownAt" timestamp(3)
+    ingestion "CrucibleIngestionStatus" NOT NULL, "imageId" int, "takenDownAt" timestamp(3),
+    "userId" int
   );
 `;
 
@@ -31,18 +35,26 @@ type Over = {
   cover?: false | string;
   /** SQL values for the cover's needsReview, tosViolation, e.g. `'Minor', false`. Default: not held. */
   review?: string;
+  /** SQL values for the cover's minor, blockedFor[, nsfwLevel[, poi]]. Default: neither, PG. */
+  flags?: string;
+  /** The owner's bannedAt, deletedAt. Default: an active owner. */
+  owner?: string;
 };
 
-/** One crucible; its cover image has the same id. */
+/** One crucible; its cover image and its owner have the same id. */
 const crucible = (id: number, name: string, include: boolean, over: Over = {}): ParityRow => {
   const cover = over.cover ?? 'Scanned';
   const sql = [
     ...(cover === false
       ? []
-      : [`INSERT INTO "Image" VALUES (${id}, '${cover}', ${over.review ?? 'NULL, false'})`]),
+      : [
+          `INSERT INTO "Image" VALUES (${id}, '${cover}', ${over.review ?? 'NULL, false'},
+            ${over.flags ?? 'false, NULL'})`,
+        ]),
+    `INSERT INTO "User" VALUES (${id}, ${over.owner ?? 'NULL, NULL'})`,
     `INSERT INTO "Crucible" VALUES (${id}, '${over.status ?? 'Active'}',
       '${over.ingestion ?? 'Scanned'}', ${cover === false ? 'NULL' : id},
-      ${over.takenDownAt ?? 'NULL'})`,
+      ${over.takenDownAt ?? 'NULL'}, ${id})`,
   ];
   return { id, name, include, insert: sql.join(';\n') };
 };
@@ -64,6 +76,13 @@ const spec: ParitySpec = {
     crucible(7, 'blocked', false, { ingestion: 'Blocked' }),
     crucible(10, 'coverNotInReview', false, { review: `'minor', false` }),
     crucible(11, 'coverNotTos', false, { review: `NULL, true` }),
+    crucible(12, 'coverNotMinor', false, { flags: 'true, NULL' }),
+    crucible(13, 'coverNotBlocked', false, { flags: `false, 'CSAM'` }),
+    crucible(14, 'ownerNotBanned', false, { owner: 'now(), NULL' }),
+    crucible(15, 'ownerNotDeleted', false, { owner: 'NULL, now()' }),
+    crucible(16, 'coverNotBlockedLevel', false, { flags: 'false, NULL, 32' }),
+    crucible(17, 'coverNotPoi', false, { flags: 'false, NULL, 1, true' }),
+    crucible(18, 'coverUnrated', false, { flags: 'false, NULL, 0' }),
     // Upcoming and finished crucibles stay searchable; the caller filters status.
     crucible(8, 'pending', true, { status: 'Pending' }),
     crucible(9, 'completed', true, { status: 'Completed' }),
@@ -75,6 +94,13 @@ const spec: ParitySpec = {
     'coverNotTos',
     'notCancelled',
     'notTakenDown',
+    'coverNotMinor',
+    'coverNotBlocked',
+    'ownerNotBanned',
+    'ownerNotDeleted',
+    'coverNotBlockedLevel',
+    'coverNotPoi',
+    'coverUnrated',
   ],
   site: async (prisma) =>
     (

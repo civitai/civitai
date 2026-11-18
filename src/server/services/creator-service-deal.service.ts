@@ -211,7 +211,7 @@ export async function transitionDeal(t: Transition) {
         message: 'refund after close failed; the sweep will retry',
         dealId: t.dealId,
         error: (error as Error)?.message,
-      }).catch(() => null)
+      })
     );
 
   if (moved)
@@ -541,7 +541,7 @@ export async function acceptServiceDeal({ dealId, userId }: { dealId: number; us
       message: 'deal chat could not be opened',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
 }
 
@@ -639,6 +639,29 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
       SERVICE_DEAL_LATE_CANCEL_AFTER_MS
     )} <= now()`,
     set: Prisma.sql`, "closeReason" = 'late'`,
+    refund: true,
+  });
+
+const sellerUnavailable = (sellerId: Prisma.Sql) =>
+  Prisma.sql`NOT ${sellerInGoodStanding(sellerId)}`;
+
+/** The seller's state is read in the same statement as the transition, so it cannot change between check and close. */
+export const cancelServiceDealSellerUnavailable = ({
+  dealId,
+  userId,
+}: {
+  dealId: number;
+  userId: number;
+}) =>
+  requireTransition({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Cancelled',
+    actorId: userId,
+    event: 'Cancelled',
+    comment: 'buyer_refund',
+    where: Prisma.sql`"buyerId" = ${userId}::int AND ${sellerUnavailable(Prisma.sql`"sellerId"`)}`,
+    set: Prisma.sql`, "closeReason" = 'buyer_refund'`,
     refund: true,
   });
 
@@ -782,7 +805,7 @@ async function sweep(
         message: `${label} sweep failed`,
         dealId: id,
         error: (error as Error)?.message,
-      }).catch(() => null);
+      });
     }
   }
   return { considered: due.length, moved };
@@ -886,7 +909,7 @@ async function postOverdueChatLine(dealId: number) {
       message: 'overdue chat line could not be posted',
       dealId,
       error: (error as Error)?.message,
-    }).catch(() => null);
+    });
   }
 }
 
@@ -1002,14 +1025,16 @@ export async function getServiceDealView({
     throw throwNotFoundError('Deal not found');
 
   // From the row, not the session, so a fresh mute shows before the next sign-in.
-  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
-    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean; sellerUnavailable: boolean }[]>`
+    SELECT "muted", ${sellerUnavailable(Prisma.sql`${deal.sellerId}::int`)} AS "sellerUnavailable"
+    FROM "User" WHERE "id" = ${userId}::int`;
   const { removedReason, ...offering } = deal.offering;
   const offeringTakenDown = removedReason != null;
   const seesLiveOffering = isModerator || deal.sellerId === userId;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
+    sellerUnavailable: !!viewer?.sellerUnavailable,
   });
   // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
   const seesTakedown = isModerator || deal.sellerId === userId;
@@ -1136,6 +1161,7 @@ export async function listMyServiceDeals({
       counterparty: role === 'buyer' ? deal.seller : deal.buyer,
       price: deal.price,
       buzzType: deal.buzzType,
+      held: !!deal.heldAt,
       revisionsUsed: deal.revisionsUsed,
       revisionsIncluded: deal.revisionsIncluded,
       requestedAt: deal.requestedAt,
@@ -1250,7 +1276,7 @@ export async function resolveServiceDealDispute({
       dealId,
       resolution,
       error: (error as Error)?.message,
-    }).catch(() => null)
+    })
   );
   // The payout claim re-checks the finals and the seller; if it held the deal again, it is back in
   // the queue and the moderator must not be told it was released.

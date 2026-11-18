@@ -18,6 +18,7 @@ import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { createJob } from './job';
 import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { queueArticlesAndComicsForImages } from '~/server/services/image-models-reindex.service';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -90,6 +91,8 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ids: jobQueueIds.imageIds,
       action: SearchIndexUpdateQueueAction.Update,
     });
+    // Every Image."nsfwLevel" write lands here through the image trigger.
+    await queueArticlesAndComicsForImages(jobQueueIds.imageIds);
 
     const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);
     const articleIds = uniq([...jobQueueIds.articleIds, ...relatedEntities.articleIds]);

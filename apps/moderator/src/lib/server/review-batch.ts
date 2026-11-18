@@ -5,20 +5,19 @@ import {
   imageAuditContentHash,
   imageRoutesHeld,
   isReviewBatchId,
-  parseBlockedForPatterns,
   parseReviewBatchRecord,
   reviewBatchHash,
   SCANNER_HITS_SQL,
-  scannerHeldIds,
+  scannerVerdict,
   type ImageSignalRow,
   type ReviewBatchRecord,
   type ReviewTier,
 } from '@civitai/shared/review-batch';
-import { env } from '$env/dynamic/private';
 import { dbWrite } from './db';
 import { getClickhouse } from './clickhouse';
 import { getSysRedis } from './redis';
 import { HELD_MEDIA_PAGE } from './held-media';
+import { blockedForPatterns } from './blocked-for-patterns';
 
 /** The page whose grant opens a general batch: the image lookup shows any site image already. */
 export const REVIEW_MEDIA_PAGE = '/retool/image-lookup';
@@ -61,6 +60,11 @@ export async function mintingKeyLive(keyId: number): Promise<boolean> {
  * rows. A read that fails answers yes, so the general route answers moved and the held route serves.
  */
 export async function scannerHoldsImage(imageId: number): Promise<boolean> {
+  return (await readScannerVerdict(imageId)) !== 'clear';
+}
+
+/** One image's scanner verdict (`scannerVerdict`), or null when ClickHouse cannot answer. */
+export async function readScannerVerdict(imageId: number) {
   try {
     const result = await getClickhouse().query({
       query: SCANNER_HITS_SQL,
@@ -68,9 +72,9 @@ export async function scannerHoldsImage(imageId: number): Promise<boolean> {
       format: 'JSONEachRow',
       clickhouse_settings: { max_execution_time: 3 },
     });
-    return scannerHeldIds([imageId], await result.json()).has(imageId);
+    return scannerVerdict(imageId, await result.json());
   } catch {
-    return true;
+    return null;
   }
 }
 
@@ -113,15 +117,4 @@ export async function getBatchMedia(
     mimeType: row.mimeType,
     held: imageRoutesHeld(signals, blockedForPatterns()),
   };
-}
-
-let patternsRaw: string | undefined;
-let patterns: ReturnType<typeof parseBlockedForPatterns> = null;
-function blockedForPatterns() {
-  const raw = env.REVIEW_SHEET_BLOCKEDFOR_PATTERNS;
-  if (raw !== patternsRaw) {
-    patternsRaw = raw;
-    patterns = parseBlockedForPatterns(raw);
-  }
-  return patterns;
 }
