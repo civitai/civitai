@@ -939,7 +939,7 @@ function createVideoInterpolationInput(data: LooseGenerationData): StepInput {
  * Handle vid2vid:upscale workflow
  */
 function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
-  const { video, scaleFactor } = data;
+  const { video, scaleFactor, videoUpscaler } = data;
 
   if (!video?.url) {
     throw throwBadRequestError('Video URL is required for video upscaling');
@@ -950,6 +950,7 @@ function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
     input: {
       video: video.url,
       scaleFactor: scaleFactor,
+      model: videoUpscaler,
     },
   };
 }

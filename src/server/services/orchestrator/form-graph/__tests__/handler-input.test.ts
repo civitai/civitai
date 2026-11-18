@@ -601,7 +601,7 @@ describe('minimax-h3-image.handler', () => {
       height: 1568,
       quantity: 3,
       seed: 42,
-      diffusionModel: null,
+      diffusionModel: 'urn:air:test:3463368',
     });
   });
 
@@ -644,6 +644,25 @@ describe('minimax-h3-image.handler', () => {
       height: 2048,
       images: [IMAGE.url, IMAGE2.url],
     });
+  });
+
+  it('a creator checkpoint and its LoRAs reach the orchestrator, on create and edit', async () => {
+    for (const workflow of ['txt2img', 'img2img:edit']) {
+      const steps = await dispatch({
+        workflow,
+        ecosystem: 'MiniMaxH3Image',
+        prompt: 'a cat',
+        images: [IMAGE],
+        model: { id: 424242, baseModel: 'MiniMax H3 Image', model: { type: 'Checkpoint' } },
+        resources: [
+          { id: 111, baseModel: 'MiniMax H3 Image', model: { type: 'LORA' }, strength: 0.8 },
+        ],
+      });
+      expect(firstInput(steps)).toMatchObject({
+        diffusionModel: 'urn:air:test:424242',
+        loras: { 'urn:air:test:111': 0.8 },
+      });
+    }
   });
 
   it('accepts sixteen references and no more', () => {

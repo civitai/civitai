@@ -17,6 +17,7 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       children,
       tooltip,
       joinAlert,
+      unavailableReason,
       ...buttonProps
     },
     ref
@@ -56,6 +57,26 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       </Button>
     );
 
+    // A disabled button swallows hover and tap; the span keeps the reason tooltip reachable.
+    if (unavailableReason)
+      return (
+        <Tooltip
+          label={unavailableReason}
+          withArrow
+          multiline
+          maw={280}
+          events={{ hover: true, focus: true, touch: true }}
+        >
+          <span
+            className={buttonProps.fullWidth ? 'block' : 'inline-block'}
+            tabIndex={0}
+            data-testid="download-unavailable"
+          >
+            {button}
+          </span>
+        </Tooltip>
+      );
+
     return canDownload || (downloadPrice ?? 0) > 0 ? (
       button
     ) : (
@@ -78,6 +99,8 @@ type Props = ButtonProps & {
   modelVersionId?: number;
   tooltip?: string;
   joinAlert?: string;
+  /** Set when no purchase or membership can unlock the download: shown instead of the join prompt. */
+  unavailableReason?: string;
 };
 
 export const DownloadButton = createPolymorphicComponent<'button', Props>(_DownloadButton);

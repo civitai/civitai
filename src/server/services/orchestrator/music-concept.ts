@@ -31,10 +31,18 @@ const SIMPLE_RESPONSE_FORMAT = {
 /** Shared Simple-mode drafting contract for music models requiring description + lyrics. */
 export function createMusicConceptStep(
   prompt: string | undefined,
-  duration: number
+  duration: number,
+  instrumental = false
 ): ChatCompletionStepTemplate {
   const messages = [
-    { role: 'system', content: SIMPLE_SYSTEM_PROMPT },
+    {
+      role: 'system',
+      content:
+        SIMPLE_SYSTEM_PROMPT +
+        (instrumental
+          ? ' This request is instrumental. Return an empty lyrics string. Describe instruments, not singers, and specify no vocals in the caption.'
+          : ''),
+    },
     {
       role: 'user',
       content: `Write a song of at most ${duration} seconds. ${prompt}. Output JSON with caption and lyrics.`,
