@@ -562,7 +562,8 @@
       importNotice = [
         unreadable.length > 0 && `Couldn't read ${unreadable.join(', ')} — not a valid .zip.`,
         empty.length > 0 && `No ${acceptedExtsText} files in ${empty.join(', ')}.`,
-        suggested && `Trigger word set to "${suggested}" from the imported tags.`,
+        // Not if the user has since changed or cleared it.
+        suggested && trigger === suggested && `Trigger word set to "${suggested}" from the imported tags.`,
       ]
         .filter(Boolean)
         .join(' ');
@@ -649,8 +650,6 @@
 
   // Upload zip-imported files, seeding each with its caption (and marking it label-tried so a captioned
   // image isn't re-labeled). Mirrors addFiles, plus the caption seed.
-  // The trigger an import filled in, so Remove all can take it back with the dataset it came from.
-  let importedTrigger: string | null = null;
   /** Returns the trigger word it filled in from the captions, if any (see triggerForImport). */
   async function addImported(entries: { file: File; caption: string; path: string }[], mayFill: boolean) {
     if (entries.length === 0) return null;
@@ -660,7 +659,7 @@
       mayFill,
       captions: entries.map((e) => e.caption),
     });
-    if (suggested) trigger = importedTrigger = suggested;
+    if (suggested) trigger = suggested;
     const added: Img[] = entries.map((e) => {
       const label = e.caption.trim();
       return {
@@ -716,8 +715,6 @@
     images = kept;
     if (kept.length === 0) {
       epoch.bump();
-      if (importedTrigger !== null && trigger === importedTrigger) trigger = '';
-      importedTrigger = null;
       dupOwnerIds = [];
       labelAllNotice = null;
     }
