@@ -145,6 +145,29 @@ export async function claimSearchUploadUserDay({
   await record();
 }
 
+const searchingKey = (userId: number) =>
+  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_SEARCHING}:${userId}` as RedisKeyTemplateCache;
+const SEARCHING_HOLD_SECONDS = 60;
+
+/**
+ * Runs one of the viewer's upload searches at a time: the daily claim reads then writes its count,
+ * so two at once would both pass it. The second is refused while the first runs.
+ */
+export async function withSearchUploadSearch<T>(userId: number, run: () => Promise<T>) {
+  const token = randomUUID();
+  const held = await redis.set(searchingKey(userId), token, {
+    NX: true,
+    EX: SEARCHING_HOLD_SECONDS,
+  });
+  if (held === null)
+    throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: 'A search is already running.' });
+  try {
+    return await run();
+  } finally {
+    if ((await redis.get(searchingKey(userId))) === token) await redis.del(searchingKey(userId));
+  }
+}
+
 export async function prepareSearchUpload({
   userId,
   url,

@@ -3330,6 +3330,9 @@ const REDIS_KEYS_UNPREFIXED = {
     SEARCH_UPLOAD_REF: 'packed:caches:search-upload-ref',
     // `<prefix>:<userId>` — set while the viewer's last upload is still being scanned.
     SEARCH_UPLOAD_PENDING: 'packed:caches:search-upload-pending',
+    // `<prefix>:<userId>` — held while one of the viewer's upload searches runs, so the daily count is
+    // never read and written by two at once.
+    SEARCH_UPLOAD_SEARCHING: 'packed:caches:search-upload-searching',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',

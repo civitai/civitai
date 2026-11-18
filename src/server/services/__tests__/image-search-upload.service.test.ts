@@ -32,6 +32,7 @@ vi.mock('~/server/utils/rate-limit-bucket', async (importOriginal) => ({
 import {
   claimSearchUploadSlot,
   claimSearchUploadUserDay,
+  withSearchUploadSearch,
   getSearchUploadStatus,
   prepareSearchUpload,
   resolveSearchUploadAnchor,
@@ -124,7 +125,10 @@ describe("the viewer's daily limit", () => {
   });
 
   it('counts a moderator by id only, so the moderator exemption does not apply', async () => {
+    const record = vi.fn(async () => undefined);
+    h.claim.mockResolvedValue(record);
     await claimSearchUploadUserDay({ userId: 5, action: 'search', req });
+    expect(record).toHaveBeenCalledTimes(1);
     expect(h.claim).toHaveBeenCalledWith(
       expect.objectContaining({
         user: { id: 5 },
@@ -135,6 +139,23 @@ describe("the viewer's daily limit", () => {
       })
     );
     expect(isFailClosedRateLimitScope('imageSearchUpload.search')).toBe(true);
+  });
+});
+
+describe("one of the viewer's upload searches at a time", () => {
+  it('refuses a second while the first runs, and frees the viewer after', async () => {
+    let release!: () => void;
+    const first = withSearchUploadSearch(5, () => new Promise<void>((r) => (release = r)));
+    await Promise.resolve();
+    await expect(withSearchUploadSearch(5, async () => 'second')).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    await expect(withSearchUploadSearch(6, async () => 'other viewer')).resolves.toBe(
+      'other viewer'
+    );
+    release();
+    await first;
+    await expect(withSearchUploadSearch(5, async () => 'after')).resolves.toBe('after');
   });
 });
 
@@ -361,11 +382,22 @@ describe('search upload status and search anchor', () => {
     await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('refuses an upload whose refusal was kept, whatever the scan now says', async () => {
+    store.set(`packed:caches:search-upload:${uploadId}:refused`, 'blocked');
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(wf.getWorkflow).not.toHaveBeenCalled();
+  });
+
   it('keeps a timed-out refusal even when the scan later succeeds', async () => {
+    // Finished inside the window, so only the kept refusal can refuse it below.
+    const inTime = scanned();
     wf.getWorkflow.mockResolvedValue({ status: 'processing', steps: [] });
     vi.useFakeTimers({ now: Date.now() + SEARCH_UPLOAD_SCAN_TIMEOUT_MS + 1000 });
     await expect(status(true)).resolves.toMatchObject({ status: 'refused' });
-    wf.getWorkflow.mockResolvedValue(scanned());
+    // The refusal is kept under its own key, which every later read checks first.
+    const kept = [...store.entries()].find(([k]) => k.endsWith(':refused'));
+    expect(kept?.[1]).toBe('timed-out');
+    wf.getWorkflow.mockResolvedValue(inTime);
     await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 

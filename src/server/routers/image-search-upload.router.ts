@@ -10,6 +10,7 @@ import {
 import {
   claimSearchUploadUserDay,
   getSearchUploadStatus,
+  withSearchUploadSearch,
   prepareSearchUpload,
   resolveSearchUploadAnchor,
 } from '~/server/services/image-search-upload.service';
@@ -64,24 +65,26 @@ export const imageSearchUploadRouter = router({
     .query(async ({ input, ctx }) => {
       // A GET puts the upload URL in the query string, where access logs keep it.
       if (ctx.req.method === 'GET') throw new TRPCError({ code: 'METHOD_NOT_SUPPORTED' });
-      await claimSearchUploadUserDay({ userId: ctx.user.id, action: 'search', req: ctx.req });
-      const views = credentialViews(ctx);
-      const uploadAnchor = await resolveSearchUploadAnchor({
-        userId: ctx.user.id,
-        uploadId: input.uploadId,
-        url: input.uploadUrl,
-        isModerator: views.asModerator && !!ctx.user.isModerator,
+      return withSearchUploadSearch(ctx.user.id, async () => {
+        await claimSearchUploadUserDay({ userId: ctx.user.id, action: 'search', req: ctx.req });
+        const views = credentialViews(ctx);
+        const uploadAnchor = await resolveSearchUploadAnchor({
+          userId: ctx.user.id,
+          uploadId: input.uploadId,
+          url: input.uploadUrl,
+          isModerator: views.asModerator && !!ctx.user.isModerator,
+        });
+        const started = Date.now();
+        const result = await searchSemanticImages({
+          input: { browsingLevel: input.browsingLevel, limit: input.limit, cursor: input.cursor },
+          user: ctx.user,
+          ...views,
+          domain: getRequestBoardDomainColor(ctx.req),
+          track: ctx.track,
+          uploadAnchor,
+        });
+        if (!input.cursor) countSearchUpload('embedded');
+        return { ...result, latencyMs: Date.now() - started };
       });
-      const started = Date.now();
-      const result = await searchSemanticImages({
-        input: { browsingLevel: input.browsingLevel, limit: input.limit, cursor: input.cursor },
-        user: ctx.user,
-        ...views,
-        domain: getRequestBoardDomainColor(ctx.req),
-        track: ctx.track,
-        uploadAnchor,
-      });
-      if (!input.cursor) countSearchUpload('embedded');
-      return { ...result, latencyMs: Date.now() - started };
     }),
 });
