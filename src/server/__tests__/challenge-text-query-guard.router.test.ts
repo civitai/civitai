@@ -135,6 +135,15 @@ describe('challenge.getInfinite text query guard', () => {
     expect(h.winners.mock.calls[0][0].ownRowsExempt).toBe(false);
   });
 
+  it('a minor verdict holds them to every gate even when the level was already safe', async () => {
+    h.includesInappropriate.mockReturnValue('minor');
+    await caller(VIEWER).getInfinite({ query: 'young', browsingLevel: sfwBrowsingLevelsFlag });
+    expect(h.feed.mock.calls[0][0]).toMatchObject({
+      browsingLevel: sfwBrowsingLevelsFlag,
+      ownRowsExempt: false,
+    });
+  });
+
   it('keeps the owner exemption when nothing narrowed the query', async () => {
     await caller(VIEWER).getInfinite({ query: 'neon', browsingLevel: ALL });
     await caller(VIEWER).getInfinite({ browsingLevel: ALL });

@@ -94,8 +94,9 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * A text query gets the semantic search's audit: 'refuse', or the level to search at, which is the
- * request's own unless a minor verdict narrowed it to the safe levels. A narrowed search holds the
- * viewer's own challenges to that level too (`ownRowsExempt: false`).
+ * request's own unless a minor verdict narrowed it to the safe levels. After such a verdict the
+ * viewer's own challenges are held to every gate too (`ownRowsExempt: false`), even when their level
+ * was already safe.
  */
 async function guardTextQuery(
   input: { query?: string; browsingLevel?: number },
@@ -108,16 +109,15 @@ async function guardTextQuery(
     isLoggedIn: !!ctx.user,
     requested: input.browsingLevel,
   });
-  const level = await challengeTextQueryLevel({
+  const verdict = await challengeTextQueryLevel({
     query,
     level: effective,
     user: ctx.user,
     track: ctx.track,
   });
-  if (level === 'refuse') return 'refuse';
-  return level === effective
-    ? { browsingLevel: input.browsingLevel }
-    : { browsingLevel: level, ownRowsExempt: false };
+  if (verdict === 'refuse') return 'refuse';
+  const browsingLevel = verdict.level === effective ? input.browsingLevel : verdict.level;
+  return verdict.narrowed ? { browsingLevel, ownRowsExempt: false } : { browsingLevel };
 }
 
 // Router definition
