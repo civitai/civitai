@@ -97,6 +97,18 @@ describe('reading the session', () => {
     expect(com.session?.user).toMatchObject({ id: 1 });
   });
 
+  it('with valid sessions for different users in both slots, civitai.red reads the host-only one', async () => {
+    h.getSessionUser.mockImplementation(async (t: string) =>
+      t === 'tok-a' ? { id: 1, username: 'a' } : t === 'tok-x' ? { id: 2, username: 'x' } : null
+    );
+    const jar = { [HOST]: 'tok-a', [SHARED]: 'tok-x' };
+    expect((await session('civitai.red', jar)).session?.user).toMatchObject({ id: 1 });
+    // Control: a site listed shared reads the shared slot first, so the same jar is user X.
+    vi.resetModules();
+    process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE = 'civitai.red:shared';
+    expect((await session('civitai.red', jar)).session?.user).toMatchObject({ id: 2 });
+  });
+
   it('civitai.red rolls its host-only token in place and expires a shared copy at both scopes', async () => {
     const { session: s, setCookies } = await session('civitai.red', {
       [HOST]: stale(),

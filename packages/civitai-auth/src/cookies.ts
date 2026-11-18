@@ -249,6 +249,12 @@ export function otherSlotExpiries(
   return out;
 }
 
+/** The name in a `name=value` cookie pair (a Cookie header part or a Set-Cookie value); a pair with no `=` is all name. */
+export function cookiePairName(pair: string): string {
+  const idx = pair.indexOf('=');
+  return (idx === -1 ? pair : pair.slice(0, idx)).trim();
+}
+
 // The shared slot's session and device names. On http dev both slots share the bare name, which is then a site's own.
 function sharedSlotNames(): Set<string> {
   const own = [sessionCookieNameForSlot('host'), deviceCookieNameForSlot('host')];
@@ -278,7 +284,7 @@ export function siteCookieHeader(header: string, host: string | null | undefined
   const shared = sharedSlotNames();
   return header
     .split(';')
-    .filter((part) => !shared.has(part.slice(0, part.indexOf('=')).trim()))
+    .filter((part) => !shared.has(cookiePairName(part)))
     .join(';')
     .trim();
 }

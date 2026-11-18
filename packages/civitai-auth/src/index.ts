@@ -110,6 +110,7 @@ export {
   otherSlotExpiries,
   siteCookieHeader,
   siteCookieJar,
+  cookiePairName,
   expireCookie,
   hostSessionCookieName,
   hostDeviceCookieName,

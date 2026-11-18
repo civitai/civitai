@@ -214,6 +214,20 @@ describe('oauth shim on a host-only site', () => {
     expect(setCookie).toEqual(['other=1; Path=/']);
   });
 
+  it('drops a session cookie sent with no value', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(hubResponse());
+    await handler(
+      makeReq({
+        url: '/api/auth/oauth/userinfo',
+        query: { path: ['userinfo'] },
+        headers: { host: 'civitai.red', cookie: '__Host-civ-token; other=1' },
+      }),
+      makeRes()
+    );
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(new Headers(init.headers).get('cookie')).toBe('other=1');
+  });
+
   it('civitai.com relays both ways as before', async () => {
     const { forwarded, setCookie } = await relay('civitai.com');
     expect(forwarded).toBe(cookie);

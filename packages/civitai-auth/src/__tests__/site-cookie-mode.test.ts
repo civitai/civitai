@@ -59,6 +59,12 @@ describe('forwarding a host-only site’s cookies', () => {
   const header =
     '__Secure-civ-token=s; __Host-civ-token=h; __Secure-civ-device=sd; __Host-civ-device=hd; x=1';
 
+  it('drops a shared-slot cookie sent with no value, and keeps its neighbours whole', () => {
+    expect(siteCookieHeader('__Secure-civ-token; x=1; __Secure-civ-tokens', 'civitai.red')).toBe(
+      'x=1; __Secure-civ-tokens'
+    );
+  });
+
   it('drops the shared slot on civitai.red only', () => {
     expect(siteCookieHeader(header, 'civitai.red')).toBe(
       '__Host-civ-token=h; __Host-civ-device=hd; x=1'

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   allCookieNames,
+  cookiePairName,
   DEVICE_COOKIE_BASE,
   hostOnlySite,
   SESSION_COOKIE_BASE,
@@ -51,7 +52,6 @@ const SESSION_COOKIE_NAMES = new Set([
   ...allCookieNames(SESSION_COOKIE_BASE),
   ...allCookieNames(DEVICE_COOKIE_BASE),
 ]);
-const cookieName = (pair: string) => pair.slice(0, pair.indexOf('=')).trim();
 
 const STRIP_RESPONSE_HEADERS = new Set([
   'connection',
@@ -99,7 +99,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (hostOnly && key.toLowerCase() === 'cookie') {
         const kept = String(value)
           .split(';')
-          .filter((pair) => !SESSION_COOKIE_NAMES.has(cookieName(pair)))
+          .filter((pair) => !SESSION_COOKIE_NAMES.has(cookiePairName(pair)))
           .join(';')
           .trim();
         if (kept) headers.set(key, kept);
@@ -120,7 +120,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     res.status(hubRes.status);
     // Set-Cookie can be multi-valued — relay it as an array, not a comma-joined string.
     const setCookies = (hubRes.headers.getSetCookie?.() ?? []).filter(
-      (cookie) => !hostOnly || !SESSION_COOKIE_NAMES.has(cookieName(cookie))
+      (cookie) => !hostOnly || !SESSION_COOKIE_NAMES.has(cookiePairName(cookie))
     );
     if (setCookies.length) res.setHeader('set-cookie', setCookies);
     hubRes.headers.forEach((value, key) => {
