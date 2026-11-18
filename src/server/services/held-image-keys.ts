@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
+import { hasBlockMarkerSql } from '~/server/common/image-visibility';
 import {
   servableProfilePictureSql,
   userImageNamesHeldPicture,
@@ -48,7 +49,7 @@ export async function clearHeldUserImages(db: RawQueryClient, userIds: number[])
       UPDATE "User" u
       SET image = NULL,
         meta = CASE
-          WHEN u.meta IS NULL THEN ${heldImageMarker}
+          WHEN u.meta IS NULL OR jsonb_typeof(u.meta) = 'null' THEN ${heldImageMarker}
           WHEN jsonb_typeof(u.meta) = 'object' THEN u.meta || ${heldImageMarker}
           -- A JSON scalar (the system-account marker can be a string) keeps its value and takes no marker.
           ELSE u.meta
@@ -69,10 +70,11 @@ const MARKER_IS_CURRENT = Prisma.raw(
 
 /**
  * For those of `userIds` whose `User.image` a hold cleared (`clearHeldUserImages`), puts it back from
- * the profile picture's own url once the picture is servable again (`servableProfilePictureSql`),
- * is still the user's and `User.image` is still empty. A marker that can no longer apply (another
- * picture, or a `User.image` set since) is dropped; one whose picture is not servable yet is kept,
- * so a later lift still restores. The value is rebuilt, never stored. A write that replaces
+ * the profile picture's own url once the picture is servable again (`servableProfilePictureSql`, and no
+ * block marker survives on it),
+ * is still the user's and `User.image` is still empty. A marker that can no longer apply is dropped by
+ * `dropStaleHeldImageMarkers`; one whose picture is not servable yet is kept, so a later lift still
+ * restores. The value is rebuilt, never stored. A write that replaces
  * `meta` whole drops the marker, and then nothing is restored: the avatar stays empty, not wrong.
  * The picture row is locked for the statement, so a hold landing meanwhile waits and its own
  * clear then sees the restored value. Runs only in the main app: a hold released in the moderator
@@ -84,7 +86,7 @@ export async function restoreClearedUserImages(db: RawQueryClient, userIds: numb
   if (!ids.length) return [];
   const rows = await db.$queryRaw<{ id: number }[]>`
     WITH picture AS (
-      SELECT u.id AS "userId", i.url
+      SELECT u.id AS "userId", i.id AS "pictureId", i.url
       FROM "User" u
       JOIN "Image" i ON i.id = u."profilePictureId" AND i."userId" = u.id
       WHERE u.id IN (${Prisma.join(ids)})
@@ -92,14 +94,25 @@ export async function restoreClearedUserImages(db: RawQueryClient, userIds: numb
         AND ${MARKER_IS_CURRENT}
         AND u.image IS NULL
         AND ${servableProfilePictureSql}
+        AND NOT ${hasBlockMarkerSql('i')}
       FOR SHARE OF i
     )
     UPDATE "User" u
     SET image = picture.url, meta = u.meta - 'heldImageCleared'
     FROM picture
-    WHERE u.id = picture."userId" AND u.image IS NULL
+    WHERE u.id = picture."userId" AND u.image IS NULL AND u."profilePictureId" = picture."pictureId"
     RETURNING u.id
   `;
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Drops `meta.heldImageCleared` where it can no longer apply: the user has another picture or none,
+ * or has set `User.image` since. A marker whose picture is not servable yet is kept.
+ */
+export async function dropStaleHeldImageMarkers(db: RawQueryClient, userIds: number[]) {
+  const ids = [...new Set(userIds)].filter(Number.isInteger);
+  if (!ids.length) return;
   await db.$queryRaw`
     UPDATE "User" u
     SET meta = u.meta - 'heldImageCleared'
@@ -108,5 +121,4 @@ export async function restoreClearedUserImages(db: RawQueryClient, userIds: numb
       AND (u.image IS NOT NULL OR u."profilePictureId" IS NULL OR NOT ${MARKER_IS_CURRENT})
     RETURNING u.id
   `;
-  return rows.map((row) => row.id);
 }

@@ -1,7 +1,11 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { clearHeldUserImages, restoreClearedUserImages } from '~/server/services/held-image-keys';
+import {
+  clearHeldUserImages,
+  dropStaleHeldImageMarkers,
+  restoreClearedUserImages,
+} from '~/server/services/held-image-keys';
 
 let pg: PGlite;
 const db = {
@@ -17,12 +21,12 @@ beforeEach(async () => {
   await pg?.close();
   pg = new PGlite();
   await pg.exec(`
-    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment');
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'NotFound', 'PendingManualAssignment', 'Rescan');
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1, "userId" int NOT NULL,
       ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
       metadata jsonb, "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb,
-      "modelRestricted" boolean NOT NULL DEFAULT false
+      "modelRestricted" boolean NOT NULL DEFAULT false, "blockedFor" text
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int, image text, meta jsonb);
   `);
@@ -82,6 +86,25 @@ describe('a cleared User.image after its hold lifts', () => {
     expect((await user(2)).image).toBeNull();
   });
 
+  it('does not come back for a blocked picture sent for a rescan with its rating locked', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel", "nsfwLevelLocked", "blockedFor")
+        VALUES (1, 'key-1', 1, 'Rescan', 32, true, 'moderated');
+      INSERT INTO "User" VALUES (1, 1, NULL, '${marker(1)}');
+    `);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect(await user(1)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 1 } } });
+  });
+
+  it('marks a stored JSON null meta too', async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId", "needsReview") VALUES (1, 'key-1', 1, 'csam');
+      INSERT INTO "User" VALUES (1, 1, 'key-1', 'null');
+    `);
+    await clearHeldUserImages(db, [1]);
+    expect(await user(1)).toEqual({ image: null, meta: { heldImageCleared: { pictureId: 1 } } });
+  });
+
   it('drops a marker that can no longer apply, and never fails on one it cannot read', async () => {
     await pg.exec(`
       INSERT INTO "Image" (id, url, "userId") VALUES (1, 'key-1', 1), (2, 'key-2', 2), (3, 'key-other', 9),
@@ -95,6 +118,7 @@ describe('a cleared User.image after its hold lifts', () => {
         (6, 6, NULL, '${marker(7)}');
     `);
     expect(await restoreClearedUserImages(db, [1, 2, 3, 4, 5, 6])).toEqual([]);
+    await dropStaleHeldImageMarkers(db, [1, 2, 3, 4, 5, 6]);
     expect(await user(1)).toEqual({ image: null, meta: {} });
     expect(await user(2)).toEqual({ image: 'set-since', meta: {} });
     expect(await user(3)).toEqual({ image: null, meta: {} });

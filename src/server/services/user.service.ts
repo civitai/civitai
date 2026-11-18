@@ -11,7 +11,11 @@ import {
   fallbackUserImageColumn,
   servableProfilePictureSql,
 } from '~/server/services/profile-picture.sql';
-import { clearHeldUserImages, restoreClearedUserImages } from '~/server/services/held-image-keys';
+import {
+  clearHeldUserImages,
+  dropStaleHeldImageMarkers,
+  restoreClearedUserImages,
+} from '~/server/services/held-image-keys';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -2467,6 +2471,7 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
   await step('restore-image', async () => {
     restoredIds = await restoreClearedUserImages(dbWrite, ids);
   });
+  await step('drop-stale-markers', () => dropStaleHeldImageMarkers(dbWrite, ids));
   const imageChangedIds = [...heldIds, ...restoredIds];
   await step('picture-cache', () => profilePictureCache.refresh(ids));
   await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
