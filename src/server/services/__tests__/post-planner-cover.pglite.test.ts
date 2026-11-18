@@ -59,13 +59,23 @@ async function calendar(user: SessionUser, servableLevels = allBrowsingLevelsFla
 }
 
 describe('getScheduledPosts cover', () => {
-  // Ruling for the calendar: the owner's own held image may still be its cover. Only the cap applies.
-  it("keeps the owner's own held image as the cover, and counts it", async () => {
+  it.each(['csam', 'minor'])(
+    "skips the owner's own image held for %s review, for the cover and the count",
+    async (hold) => {
+      await db.exec(`
+        INSERT INTO "Image" (id, "postId", url, index, "needsReview") VALUES
+          (1, ${POST}, 'held', 0, '${hold}'), (2, ${POST}, 'clean', 1, NULL);
+      `);
+      expect(await calendar(owner)).toEqual({ cover: 'clean', imageCount: 1 });
+    }
+  );
+
+  it('control: an image under another review state stays the cover and counts', async () => {
     await db.exec(`
       INSERT INTO "Image" (id, "postId", url, index, "needsReview") VALUES
-        (1, ${POST}, 'held', 0, 'csam'), (2, ${POST}, 'clean', 1, NULL);
+        (1, ${POST}, 'other', 0, 'poi'), (2, ${POST}, 'clean', 1, NULL);
     `);
-    expect(await calendar(owner)).toEqual({ cover: 'held', imageCount: 2 });
+    expect(await calendar(owner)).toEqual({ cover: 'other', imageCount: 2 });
   });
 
   it('a capped request skips a mature image at index 0, moderators included', async () => {
