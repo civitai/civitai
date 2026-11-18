@@ -188,8 +188,8 @@ export type DailyStatus = {
   shieldCoversToday: boolean;
   /** Paid when today's Watch completes; what was paid once it has. */
   bonusGold: number;
-  /** When the current career began; a reset moves it, and with it the Watch. */
-  startAt: Date;
+  /** Names today's Watch in this career: a new day or a career reset starts a new one. */
+  watch: string;
 };
 
 export async function getDailyStatus(
@@ -226,7 +226,7 @@ export async function getDailyStatus(
     shieldCoversToday: shieldCoversToday(state, today),
     bonusGold:
       watchDone && row ? row.bonusGold : streakBonusGold(advanceStreak(state, today).streak),
-    startAt,
+    watch: `${today}:${startAt.toISOString()}`,
   };
 }
 
