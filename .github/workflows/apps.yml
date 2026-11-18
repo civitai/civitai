@@ -236,11 +236,13 @@ jobs:
 
       # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
       # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
-      # own `test-times-` name so no download in this workflow can match it — `unit-verify`
+      # own `test-times-` name so no artifact download can match it — lint.yml's `unit-verify`
       # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
       # missing report is already failed, by name, by this suite's own ledger step.
       - name: Upload test timings
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.scope.outcome == 'success' }}
+        # Telemetry only: a failed upload must never turn a green suite red.
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: test-times-apps-a${{ github.run_attempt }}
