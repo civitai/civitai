@@ -12,6 +12,7 @@
     IconSearch,
   } from '@tabler/icons-svelte';
   import { onMount, untrack } from 'svelte';
+  import '$lib/civitai-elements';
   import { serviceStatus } from '$lib/service-status.svelte';
   import { modelUnavailability, UNAVAILABLE_LABEL } from '$lib/service-status-core';
   import { autoLabelAvailable, pickModel } from '$lib/host';
@@ -497,13 +498,14 @@
 {/snippet}
 
 {#snippet continueButton(placement: string)}
-  <Button
-    class="h-11 {placement}"
+  <civitai-button
+    class={placement}
+    size="lg"
     disabled={customIncomplete || !!blockedMessage || sweepBroken}
     onclick={continueToData}
   >
-    Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
-  </Button>
+    Continue to data<span slot="right"><IconArrowRight size={15} stroke={2} /></span>
+  </civitai-button>
 {/snippet}
 
 <!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
@@ -569,39 +571,19 @@
     </div>
 
     <!-- Media + Type gate everything below (media always resets the model; type does until the user
-         picks one), so they stay full labeled rows rather than a dropdown or a quiet segmented strip
-         that would under-sell them. -->
+         picks one), so they stay labeled rows rather than a dropdown. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div id="media-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Media
         </div>
-        <div
-          class="flex min-w-0 flex-1 flex-wrap gap-2"
-          role="radiogroup"
+        <civitai-segmented-control
+          class="min-w-0"
           aria-labelledby="media-group-label"
-          tabindex="-1"
-          onkeydown={radioKeydown}
-        >
-          {#each sections as m (m.id)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={m.id === activeSection}
-              tabindex={m.id === activeSection ? 0 : -1}
-              onclick={() => pickSection(m.id)}
-              class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
-                {m.id === activeSection
-                ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
-                : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
-            >
-              {#if m.id === activeSection}
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
-              {/if}
-              {m.name}
-            </button>
-          {/each}
-        </div>
+          data={sections.map((m) => ({ value: m.id, label: m.name }))}
+          value={activeSection}
+          onchange={(e: Event) => pickSection((e.currentTarget as HTMLInputElement).value)}
+        ></civitai-segmented-control>
       </div>
 
       {#if editSection}
@@ -615,32 +597,13 @@
         <div id="type-group-label" class="w-full shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2 sm:w-14">
           Type
         </div>
-        <div
-          class="flex min-w-0 flex-1 flex-wrap gap-2"
-          role="radiogroup"
+        <civitai-segmented-control
+          class="min-w-0"
           aria-labelledby="type-group-label"
-          tabindex="-1"
-          onkeydown={radioKeydown}
-        >
-          {#each types as t (t.id)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={t.id === loraType}
-              tabindex={t.id === loraType ? 0 : -1}
-              onclick={() => pickType(t.id)}
-              class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
-                {t.id === loraType
-                ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
-                : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
-            >
-              {#if t.id === loraType}
-                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
-              {/if}
-              {t.name}
-            </button>
-          {/each}
-        </div>
+          data={types.map((t) => ({ value: t.id, label: t.name }))}
+          value={loraType}
+          onchange={(e: Event) => pickType((e.currentTarget as HTMLInputElement).value)}
+        ></civitai-segmented-control>
       </div>
       {/if}
 
@@ -650,36 +613,16 @@
             Engine
           </div>
           <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <div
-              class="flex flex-wrap gap-2"
-              role="radiogroup"
+            <civitai-segmented-control
               aria-labelledby="engine-group-label"
-              tabindex="-1"
-              onkeydown={radioKeydown}
-            >
-              {#each [{ value: 'ai-toolkit', label: 'AI Toolkit' }, { value: 'kohya', label: 'Kohya' }] as engine (engine.value)}
-                {@const checked = kohyaMode === (engine.value === 'kohya')}
-                {@const blocked = engine.value === 'kohya' && !checked ? kohyaBlockedReason : null}
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={checked}
-                  tabindex={checked ? 0 : -1}
-                  disabled={!!blocked}
-                  title={blocked ?? undefined}
-                  onclick={() => pickEngine(engine.value)}
-                  class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40
-                    {checked
-                    ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
-                    : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
-                >
-                  {#if checked}
-                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
-                  {/if}
-                  {engine.label}
-                </button>
-              {/each}
-            </div>
+              title={kohyaBlockedReason ?? undefined}
+              data={[
+                { value: 'ai-toolkit', label: 'AI Toolkit' },
+                { value: 'kohya', label: 'Kohya', disabled: !kohyaMode && !!kohyaBlockedReason },
+              ]}
+              value={kohyaMode ? 'kohya' : 'ai-toolkit'}
+              onchange={(e: Event) => pickEngine((e.currentTarget as HTMLInputElement).value)}
+            ></civitai-segmented-control>
             <span class="font-mono text-xs text-dark-2">
               Kohya trains {kohyaCards.map((c) => c.name).join(', ')}
             </span>
