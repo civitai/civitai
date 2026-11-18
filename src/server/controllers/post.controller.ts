@@ -1,3 +1,4 @@
+import { CollectionSubmissionLimitError } from '~/server/services/collection-submission-limit';
 import { getPostTextsForViewer } from '~/server/services/post-text.service';
 import { assertPostVisibleToViewer } from '~/server/services/post-viewer-visibility.service';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
@@ -70,6 +71,7 @@ import type {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import {
+  afterPostsUnpublish,
   addPostImage,
   addPostTag,
   addResourceToPostImage,
@@ -451,6 +453,21 @@ export const updatePostHandler = async ({
         })
       : undefined;
 
+    const saveCollectionEntry = async (args: Parameters<typeof bulkSaveItems>[0]) => {
+      try {
+        return await bulkSaveItems(args);
+      } catch (error) {
+        if (error instanceof CollectionSubmissionLimitError) {
+          await dbWrite.post.update({
+            where: { id: updatedPost.id },
+            data: { publishedAt: post?.publishedAt ?? null },
+          });
+          await afterPostsUnpublish([{ postId: updatedPost.id, userId: updatedPost.userId }]);
+        }
+        throw error;
+      }
+    };
+
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
       const postTags = await db.postTag.findMany({
@@ -466,14 +483,6 @@ export const updatePostHandler = async ({
       const isScheduled = dayjs(updatedPost.publishedAt).isAfter(minimumScheduleTimeForPublish); // Publishing more than minimum schedule time in the future
       const tags = postTags.map((x) => x.tagName);
 
-      if (!isScheduled) {
-        await sendMessagesToCollaborators({
-          entityId: updatedPost.id,
-          entityType: EntityType.Post,
-          userId: ctx.user.id,
-        });
-      }
-
       // Technically, collectionPosts cannot be scheduled.
       if (!!updatedPost?.collectionId && collection) {
         // Create the relevant collectionItem:
@@ -486,7 +495,7 @@ export const updatePostHandler = async ({
           throw throwAuthorizationError('You cannot post to this collection');
 
         if (collection.type === CollectionType.Post) {
-          await bulkSaveItems({
+          await saveCollectionEntry({
             input: {
               collectionId: updatedPost.collectionId,
               postIds: [updatedPost.id],
@@ -512,7 +521,7 @@ export const updatePostHandler = async ({
             throw throwBadRequestError('No images found for this post');
           }
 
-          const resp = await bulkSaveItems({
+          const resp = await saveCollectionEntry({
             input: {
               collectionId: updatedPost.collectionId,
               imageIds: images.map((i) => i.id),
@@ -534,6 +543,14 @@ export const updatePostHandler = async ({
             });
           }
         }
+      }
+
+      if (!isScheduled) {
+        await sendMessagesToCollaborators({
+          entityId: updatedPost.id,
+          entityType: EntityType.Post,
+          userId: ctx.user.id,
+        });
       }
 
       if (isScheduled) tags.push('scheduled');

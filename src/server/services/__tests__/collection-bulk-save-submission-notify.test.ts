@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ImageVisibility from '~/server/services/image-visibility.service';
+import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -7,10 +8,17 @@ const mockDbWrite = dbMock.dbWrite;
 // `bulkSaveItems` is the wider of the two submit paths (collection "Submit an entry", direct
 // upload, post-publish-into-a-collection) and notified nobody — ClickUp 868m15nne.
 
-const { mockCreateNotification, mockHomeBlockCacheBust, mockQueueUpdate } = vi.hoisted(() => ({
-  mockCreateNotification: vi.fn(),
-  mockHomeBlockCacheBust: vi.fn(),
-  mockQueueUpdate: vi.fn(),
+const { mockCreateNotification, mockHomeBlockCacheBust, mockQueueUpdate, mockChargeEntryFees } =
+  vi.hoisted(() => ({
+    mockCreateNotification: vi.fn(),
+    mockHomeBlockCacheBust: vi.fn(),
+    mockQueueUpdate: vi.fn(),
+    mockChargeEntryFees: vi.fn(),
+  }));
+
+vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeFunding>()),
+  chargeEntryFees: mockChargeEntryFees,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -29,7 +37,9 @@ vi.mock('~/server/services/image-visibility.service', async (importOriginal) => 
   assertImagesVisibleToViewer: vi.fn(async () => undefined),
 }));
 
-const { bulkSaveItems } = await import('~/server/services/collection.service');
+const { bulkSaveItems, saveItemInCollections } = await import(
+  '~/server/services/collection.service'
+);
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
@@ -86,6 +96,45 @@ function submit(permissions = reviewPermissions()) {
   });
 }
 
+function mixedSave(contestIds: number[]) {
+  const targets = [
+    { id: COLLECTION_ID, mode: null, metadata: { maxItemsPerUser: 2 } },
+    ...contestIds.map((id) => ({ id, mode: 'Contest', metadata: {} })),
+  ].map((c) => ({
+    ...c,
+    userId: SUBMITTER_ID,
+    name: 'Collection',
+    type: 'Image',
+    tags: [],
+    read: 'Public',
+    write: 'Private',
+  }));
+  mockDbRead.collection.findMany.mockResolvedValue(targets);
+  mockDbRead.user.findUnique.mockResolvedValue({ id: SUBMITTER_ID, meta: {} });
+  mockDbRead.$queryRaw.mockResolvedValue(targets);
+  mockDbWrite.challenge.findFirst.mockImplementation(
+    async ({ where }: { where: { collectionId: number; source?: string } }) =>
+      where.source === 'User'
+        ? {
+            id: where.collectionId + 100,
+            createdById: OWNER_ID,
+            status: 'Active',
+            entryFee: 10,
+            buzzType: 'yellow',
+          }
+        : null
+  );
+  return saveItemInCollections({
+    input: {
+      imageId: 42,
+      userId: SUBMITTER_ID,
+      canAccessUserChallenges: true,
+      collections: targets.map((c) => ({ collectionId: c.id })),
+      removeFromCollectionIds: [],
+    },
+  });
+}
+
 describe('bulkSaveItems — submission notification', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -94,6 +143,96 @@ describe('bulkSaveItems — submission notification', () => {
     mockDbWrite.collectionItem.createMany.mockResolvedValue({ count: IMAGE_IDS.length });
     mockDbRead.collectionContributor.findMany.mockResolvedValue([]);
     mockDbRead.challengeJudge.findMany.mockResolvedValue([]);
+    mockDbWrite.collectionItem.findMany.mockResolvedValue([]);
+    mockDbWrite.collectionItem.count.mockResolvedValue(0);
+    mockDbWrite.collectionItem.deleteMany.mockResolvedValue({ count: 1 });
+    mockDbWrite.challenge.findFirst.mockResolvedValue(null);
+    mockChargeEntryFees.mockResolvedValue({ paidImageIds: [42], unpaidImageIds: [] });
+  });
+
+  it('charges the contest fee after a successful mixed save', async () => {
+    await expect(mixedSave([20])).resolves.toBe('added');
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(1);
+    expect(mockChargeEntryFees).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 120, imageIds: [42] })
+    );
+  });
+
+  it('settles every contest when one deferred fee fails and rolls back its unpaid entry', async () => {
+    mockChargeEntryFees.mockImplementation(async ({ challengeId }: { challengeId: number }) => ({
+      paidImageIds: challengeId === 120 ? [] : [42],
+      unpaidImageIds: challengeId === 120 ? [42] : [],
+    }));
+    await expect(mixedSave([20, 30])).rejects.toThrow('enough Buzz');
+    expect(mockChargeEntryFees).toHaveBeenCalledTimes(2);
+    expect(mockChargeEntryFees.mock.calls.map(([input]) => input.challengeId)).toEqual([120, 130]);
+    expect(mockDbWrite.collectionItem.deleteMany).toHaveBeenCalledWith({
+      where: { collectionId: 20, addedById: SUBMITTER_ID, imageId: { in: [42] } },
+    });
+  });
+
+  it('refuses a third pending entry in a normal collection without writing it', async () => {
+    arrangeCollection({ metadata: { maxItemsPerUser: 2 } });
+    mockDbWrite.collectionItem.count.mockResolvedValue(2);
+    await expect(
+      bulkSaveItems({
+        input: { collectionId: COLLECTION_ID, imageIds: [42], userId: SUBMITTER_ID },
+        permissions: reviewPermissions(),
+      })
+    ).rejects.toThrow('maximum number');
+    expect(mockDbWrite.collectionItem.createMany).not.toHaveBeenCalled();
+  });
+
+  it('does not charge a contest fee when a mixed save exceeds a normal collection quota', async () => {
+    const targets = [
+      { id: COLLECTION_ID, mode: null, metadata: { maxItemsPerUser: 2 } },
+      { id: 20, mode: 'Contest', metadata: {} },
+    ].map((c) => ({
+      ...c,
+      userId: SUBMITTER_ID,
+      name: 'Collection',
+      type: 'Image',
+      tags: [],
+      read: 'Public',
+      write: 'Private',
+    }));
+    mockDbRead.collection.findMany.mockResolvedValue(targets);
+    mockDbRead.user.findUnique.mockResolvedValue({ id: SUBMITTER_ID, meta: {} });
+    mockDbRead.$queryRaw.mockResolvedValue(targets);
+    mockDbWrite.collectionItem.count.mockResolvedValue(2);
+    mockDbWrite.challenge.findFirst.mockImplementation(
+      async ({ where }: { where: { source?: string } }) =>
+        where.source === 'User'
+          ? { id: 99, createdById: OWNER_ID, status: 'Active', entryFee: 10, buzzType: 'yellow' }
+          : null
+    );
+    try {
+      await expect(
+        saveItemInCollections({
+          input: {
+            imageId: 42,
+            userId: SUBMITTER_ID,
+            canAccessUserChallenges: true,
+            collections: targets.map((c) => ({ collectionId: c.id })),
+            removeFromCollectionIds: [],
+          },
+        })
+      ).rejects.toThrow('maximum number');
+      expect(mockChargeEntryFees).not.toHaveBeenCalled();
+    } finally {
+      mockDbWrite.challenge.findFirst.mockReset();
+    }
+  });
+
+  it('accepts two distinct entries when a bulk request repeats an image', async () => {
+    arrangeCollection({ metadata: { maxItemsPerUser: 2 } });
+    await bulkSaveItems({
+      input: { collectionId: COLLECTION_ID, imageIds: [42, 42, 43], userId: SUBMITTER_ID },
+      permissions: reviewPermissions(),
+    });
+    expect(mockDbWrite.collectionItem.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ imageId: 42 }), expect.objectContaining({ imageId: 43 })],
+    });
   });
 
   it('notifies the owner and MANAGE holders once for the whole batch', async () => {

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { CollectionSubmissionLimitError } from '~/server/services/collection-submission-limit';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as PostService from '~/server/services/post.service';
@@ -84,6 +85,14 @@ const input = {
 const contest = { id: COLLECTION_ID, name: 'C', read: 'Public', mode: 'Contest', metadata: {} };
 
 describe('addSimpleImagePostHandler', () => {
+  it('removes the new post when a normal collection refuses an entry over its quota', async () => {
+    echoPublishedAt();
+    mocks.bulkSaveItems.mockRejectedValue(new CollectionSubmissionLimitError());
+    await expect(addSimpleImagePostHandler({ input, ctx })).rejects.toThrow('maximum number');
+    expect(mocks.deletePost).toHaveBeenCalledWith({ id: NEW_POST_ID, isModerator: false });
+    expect(mocks.applyFirstDailyPost).not.toHaveBeenCalled();
+  });
+
   it('adds each image to the post it just created, at the server-assigned position', async () => {
     const result = await addSimpleImagePostHandler({
       input: {

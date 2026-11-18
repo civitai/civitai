@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { CollectionSubmissionLimitError } from '~/server/services/collection-submission-limit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Publishing a post into an Image collection adds the post's images to it. Staff can publish a
@@ -11,8 +12,9 @@ const STAFF = 22;
 const COLLECTION_ID = 33;
 const IMAGE_ID = 44;
 
-const { mockUpdatePost, fakeDb, mockBulkSave } = vi.hoisted(() => ({
+const { mockUpdatePost, mockAfterUnpublish, fakeDb, mockBulkSave } = vi.hoisted(() => ({
   mockUpdatePost: vi.fn(),
+  mockAfterUnpublish: vi.fn(),
   fakeDb: { post: { findFirst: vi.fn() }, postTag: { findMany: vi.fn() } },
   // Stands in for bulkSaveItems' visibility check: the image is only open to staff here.
   mockBulkSave: vi.fn(
@@ -37,6 +39,7 @@ vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   updatePost: mockUpdatePost,
+  afterPostsUnpublish: mockAfterUnpublish,
 }));
 vi.mock('~/server/services/entity-collaborator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollaboratorService>()),
@@ -99,6 +102,20 @@ beforeEach(() => {
 });
 
 describe('updatePostHandler publishing into an Image collection', () => {
+  it('restores the draft when the normal collection refuses its quota', async () => {
+    mockBulkSave.mockRejectedValueOnce(new CollectionSubmissionLimitError());
+    await expect(
+      updatePostHandler({
+        input: { id: 1, publishedAt: new Date(), collectionId: COLLECTION_ID },
+        ctx,
+      } as unknown as Parameters<typeof updatePostHandler>[0])
+    ).rejects.toThrow('maximum number');
+    expect(dbMock.dbWrite.post.update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { publishedAt: null },
+    });
+    expect(mockAfterUnpublish).toHaveBeenCalledWith([{ postId: 1, userId: POST_OWNER }]);
+  });
   it("adds the post's images when staff publish a post they don't own", async () => {
     // A refused add rejects the handler; it must resolve, with the images written.
     await updatePostHandler({
