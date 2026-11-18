@@ -71,7 +71,7 @@ import {
   UNAVAILABLE_LABEL,
 } from '$lib/service-status-core';
 import { FILES_PROCESSING_PARTIAL_REASON, FilesProcessingError } from '$lib/files-processing';
-import { isMatureRating, type DatasetRating, type StoredRating } from '$lib/dataset-rating';
+import type { DatasetRating, StoredRating } from '$lib/dataset-rating';
 import { slugify } from '$lib/slug';
 import { MatureRepriceError } from '$lib/mature-charge';
 import type { TrainingTextCheck } from '$lib/training-text';
@@ -843,7 +843,7 @@ async function countMatureBlobs(
       const v2 = rating && response?.ok ? stored.get(trainingBlobKey(air)) : undefined;
       if (v2) {
         rated++;
-        if (isMatureRating(v2, rating!.matureLevel)) mature++;
+        if (v2.mature) mature++;
         return;
       }
       if (rating && response?.ok) unratedKeys.push(blobIdFromAir(air));

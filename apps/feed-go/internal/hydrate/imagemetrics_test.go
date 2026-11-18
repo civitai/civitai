@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
+	"github.com/civitai/civitai/apps/feed-go/internal/jspack"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
 )
 
@@ -713,8 +715,8 @@ func TestMetricsMissSlowerThanNodesBudgetFallsBack(t *testing.T) {
 
 // An id whose populate lock another process holds and never fills is not answered as zeros: Node's
 // fetch only answers zeros after 15 × 200 ms of waiting, past its caller's 3 s budget, so Node answers
-// statsUnknown. With the lookup bound (whatever FEED_GO_CLICKHOUSE_TIMEOUT_MS says) and without any
-// bound (the wait exhausted), the page falls back.
+// statsUnknown. Under the lookup bound (whatever FEED_GO_CLICKHOUSE_TIMEOUT_MS says) and without one,
+// the page falls back once the lock-wait bound runs out.
 func TestMetricsMissLockNeverFilledFallsBack(t *testing.T) {
 	t.Run("bounded", func(t *testing.T) {
 		s, r, f := coldSources(false)
@@ -732,8 +734,202 @@ func TestMetricsMissLockNeverFilledFallsBack(t *testing.T) {
 		s, r, _ := coldSources(false)
 		r.SetString(metricLockKey(33), []byte("1"))
 		got, err := s.lookupImageMetrics(context.Background(), []int{33})
-		if err == nil {
-			t.Fatalf("got %v after the wait ran out, want an error (the fallback)", got)
+		if !errors.Is(err, errMetricsWaitExhausted) {
+			t.Fatalf("got %v, %v after the wait ran out, want errMetricsWaitExhausted (the fallback)", got, err)
 		}
 	})
+}
+
+// fakeLockWait replaces s's lock-wait timer with a fake clock: each delay advances it at once and is
+// recorded; at fills (fake time since the wait began) image 33's hash lands, as another process's
+// populate would fill it. It returns the recorded delays.
+func fakeLockWait(s *Sources, r *testkit.Redis, fillAt time.Duration) *[]time.Duration {
+	var delays []time.Duration
+	var now time.Duration
+	s.Compute.waitSleep = func(ctx context.Context, d time.Duration) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		delays = append(delays, d)
+		now += d
+		if fillAt > 0 && now >= fillAt {
+			r.SetHash(metricHashKey(33), map[string]string{"Heart": "8", "_populatedAt": "1"})
+		}
+		return nil
+	}
+	return &delays
+}
+
+// sumDurations is the total of ds.
+func sumDurations(ds []time.Duration) time.Duration {
+	var t time.Duration
+	for _, d := range ds {
+		t += d
+	}
+	return t
+}
+
+// The wait on a populate lock another process holds never fills is bounded by MetricsLockWait
+// (default 500 ms), read every 100 ms with the last delay cut to land on the bound, and ends
+// exhausted (errMetricsWaitExhausted) with one Redis read per delay. Fake clock: the delays are
+// asserted exactly. MetricsTimeout (the lookup's own bound) is set far past every case and does not
+// move them.
+//
+// Fails on: the bound reverted to Node's 15 × 200 ms (15 delays of 200 ms); the poll interval left
+// at 200 ms ([200 200 100] for the default); the last delay not cut (250 ms → [100 100 100]); the
+// default changed (unset → not 500 ms); a non-positive MetricsLockWait taken as is (-1 → no read at
+// all); the bound taken from MetricsTimeout; reads miscounted against delays.
+func TestMetricsLockWaitBounded(t *testing.T) {
+	ms := time.Millisecond
+	for _, c := range []struct {
+		set  time.Duration
+		want []time.Duration
+	}{
+		{0, []time.Duration{100 * ms, 100 * ms, 100 * ms, 100 * ms, 100 * ms}},
+		{-1, []time.Duration{100 * ms, 100 * ms, 100 * ms, 100 * ms, 100 * ms}},
+		{250 * ms, []time.Duration{100 * ms, 100 * ms, 50 * ms}},
+		{70 * ms, []time.Duration{70 * ms}},
+		{1000 * ms, slices.Repeat([]time.Duration{100 * ms}, 10)},
+	} {
+		s, r, f := coldSources(false)
+		s.Compute.MetricsTimeout = 2 * time.Second
+		s.Compute.MetricsLockWait = c.set
+		r.SetString(metricLockKey(33), []byte("1"))
+		delays := fakeLockWait(s, r, 0)
+		out := map[int]jspack.Obj{}
+		polls, err := s.pollMetricHashes(context.Background(), []int{33}, out)
+		if !errors.Is(err, errMetricsWaitExhausted) {
+			t.Fatalf("MetricsLockWait %v: err %v, want errMetricsWaitExhausted", c.set, err)
+		}
+		if !slices.Equal(*delays, c.want) {
+			t.Fatalf("MetricsLockWait %v: delays %v (total %v), want %v", c.set, *delays, sumDurations(*delays), c.want)
+		}
+		if polls != len(c.want) {
+			t.Fatalf("MetricsLockWait %v: %d reads, want %d (one per delay)", c.set, polls, len(c.want))
+		}
+		if len(out) != 0 || len(f.seen()) != 0 {
+			t.Fatalf("MetricsLockWait %v: answered %v, queried %v; want neither", c.set, out, f.seen())
+		}
+	}
+}
+
+// A hash the holder fills inside the bound is taken at the first read after it lands, including a
+// fill landing exactly on the bound (the last read is AT the bound); one landing after it is not
+// waited for.
+//
+// Fails on: the last read dropped or moved before the bound (the 500 ms case exhausts); the wait
+// running past the bound (the 510 ms case fills); a filled hash not taken or the wait not stopping
+// at it (300 ms: 3 reads, Heart 8).
+func TestMetricsLockReleasedInsideBound(t *testing.T) {
+	for _, c := range []struct {
+		fillAt time.Duration
+		polls  int
+		filled bool
+	}{
+		{300 * time.Millisecond, 3, true},
+		{500 * time.Millisecond, 5, true},
+		{510 * time.Millisecond, 5, false},
+	} {
+		s, r, _ := coldSources(false)
+		r.SetString(metricLockKey(33), []byte("1"))
+		fakeLockWait(s, r, c.fillAt)
+		out := map[int]jspack.Obj{}
+		polls, err := s.pollMetricHashes(context.Background(), []int{33}, out)
+		if polls != c.polls {
+			t.Fatalf("fill at %v: %d reads, want %d", c.fillAt, polls, c.polls)
+		}
+		if !c.filled {
+			if !errors.Is(err, errMetricsWaitExhausted) {
+				t.Fatalf("fill at %v (past the bound): err %v, want errMetricsWaitExhausted", c.fillAt, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("fill at %v: %v", c.fillAt, err)
+		}
+		if !reflect.DeepEqual(out, map[int]jspack.Obj{33: {{K: "Heart", V: 8}}}) {
+			t.Fatalf("fill at %v: answered %v, want 33 Heart 8", c.fillAt, out)
+		}
+	}
+}
+
+// End to end on the real clock: a page whose only miss is held by another process past the bound
+// falls back `metrics-miss-failed` with the wait exhausted after about the bound (500 ms), not when
+// the lookup's own 2 s bound (or Node's 3 s) ends. The upper limit, 1.5 s, leaves CI scheduling
+// room and is still under the 2 s the lookup bound ends it at.
+//
+// Fails on: the change reverted (the wait runs until MetricsTimeout, 2 s: too slow, and the class is
+// "deadline", not the exhausted wait); the bound applied to nothing.
+func TestMetricsMissLockHeldPastBoundFallsBack(t *testing.T) {
+	s, r, f := coldSources(false)
+	r.SetString(metricLockKey(33), []byte("1"))
+	s.Compute.MetricsTimeout = 2 * time.Second
+	start := time.Now()
+	got, err := s.ImageMetrics(context.Background(), []int{33})
+	el := time.Since(start)
+	var fe *fallback.Error
+	if !errors.As(err, &fe) || fe.Reason != "metrics-miss-failed" || fe.Detail != errMetricsWaitExhausted.Error() {
+		t.Fatalf("got %v, %v; want the metrics-miss-failed fallback of the exhausted wait", got, err)
+	}
+	if el < 500*time.Millisecond || el >= 1500*time.Millisecond {
+		t.Fatalf("fell back after %v, want about the 500 ms bound (≥ 500 ms, < 1.5 s)", el)
+	}
+	if len(f.seen()) != 0 {
+		t.Fatal("queried an id another process holds the lock of")
+	}
+}
+
+// The lock-wait bound is not the lookup's: this service's own ClickHouse read of the ids it is free
+// to query keeps MetricsTimeout (2 s) and is answered as before when it takes longer than the
+// lock-wait bound, alone and beside an id another process holds and fills during that read (taken at
+// the wait's first read, never queried).
+//
+// Fails on: the lock-wait bound applied to the whole lookup or to the own read (the 800 ms read is
+// cut at 500 ms and the page falls back); the held id queried.
+func TestMetricsLockWaitSparesOwnQuery(t *testing.T) {
+	t.Run("own read only", func(t *testing.T) {
+		s, _, f := coldSources(false)
+		f.delay = 800 * time.Millisecond
+		s.Compute.MetricsTimeout = 2 * time.Second
+		got, err := s.ImageMetrics(context.Background(), []int{32})
+		if err != nil {
+			t.Fatalf("an 800 ms own read under a 2 s lookup bound: %v", err)
+		}
+		if !reflect.DeepEqual(got, map[int]Metrics{32: {"Like": 4}}) {
+			t.Fatalf("got %v", got)
+		}
+	})
+	t.Run("beside a held id", func(t *testing.T) {
+		s, r, f := coldSources(false)
+		f.delay = 800 * time.Millisecond
+		s.Compute.MetricsTimeout = 2 * time.Second
+		r.SetString(metricLockKey(33), []byte("1"))
+		f.onQuery = func() { r.SetHash(metricHashKey(33), map[string]string{"Heart": "8", "_populatedAt": "1"}) }
+		got, err := s.ImageMetrics(context.Background(), []int{32, 33})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, map[int]Metrics{32: {"Like": 4}, 33: {"Heart": 8}}) {
+			t.Fatalf("got %v", got)
+		}
+		if q := f.seen(); len(q) != 1 || q[0].sql != sqlImageMetrics([]int{32}) {
+			t.Fatalf("queries %v, want one over 32 only", q)
+		}
+	})
+}
+
+// metricsLockWait is MetricsLockWait when positive, else 500 ms.
+//
+// Fails on: the default changed; a non-positive value taken as is; the value capped or replaced.
+func TestMetricsLockWaitDefault(t *testing.T) {
+	for set, want := range map[time.Duration]time.Duration{
+		0:                      500 * time.Millisecond,
+		-time.Second:           500 * time.Millisecond,
+		750 * time.Millisecond: 750 * time.Millisecond,
+		5 * time.Second:        5 * time.Second,
+	} {
+		if got := (&MissCompute{MetricsLockWait: set}).metricsLockWait(); got != want {
+			t.Errorf("MetricsLockWait %v: %v, want %v", set, got, want)
+		}
+	}
 }

@@ -24,7 +24,7 @@ vi.mock('@civitai/orchestration-client', () => ({
   invokeImageScanningStepTemplate: vi.fn(),
 }));
 
-const rating = vi.hoisted(() => ({ stored: {} as Record<string, { s: number; r: boolean }> }));
+const rating = vi.hoisted(() => ({ stored: {} as Record<string, { mature: boolean }> }));
 vi.mock('$lib/server/dataset-rating', () => ({
   datasetRatingFor: async () => ({
     matureLevel: 3,
@@ -105,7 +105,7 @@ describe('embed training submit, mature count', () => {
   });
 
   it('refuses a Green run priced as not mature whose dataset the v2 rating calls mature, before anything is submitted', async () => {
-    rating.stored = { 'nude-1': { s: 4, r: false } };
+    rating.stored = { 'nude-1': { mature: true } };
     await expect(elementBackend(host).submitTraining([greenRun('nude-1')])).rejects.toBeInstanceOf(
       MatureRepriceError
     );
@@ -113,7 +113,7 @@ describe('embed training submit, mature count', () => {
   });
 
   it('submits a Green run whose dataset the v2 rating calls safe', async () => {
-    rating.stored = { 'portrait-1': { s: 0, r: false } };
+    rating.stored = { 'portrait-1': { mature: false } };
     await expect(
       elementBackend(host).submitTraining([greenRun('portrait-1')])
     ).resolves.toMatchObject({ workflowIds: ['wf-1'] });

@@ -25,17 +25,33 @@ export const STUDIO_DATASET_RATING_GLOBAL_LIMIT = {
 /** Under the Studio's 30s rating deadline; a step still running then answers no output. */
 const WAIT_SECONDS = 20;
 const IMAGE_PATH = /\.(png|jpe?g|webp|gif|bmp)$/i;
+const SEXUAL_LEVEL = /^s([0-4])$/i;
 
 /** An image the orchestrator hosts: the only media this endpoint sends to the rater. */
 export function isRateableMediaUrl(raw: string): boolean {
   return isCivitaiMediaUrl(raw) && IMAGE_PATH.test(new URL(raw).pathname);
 }
 
+/** Mature or not at `matureLevel`, or null when the output has no v2 rating to trust. Only this bit
+ *  leaves the main app: the level and the restricted flag are classifier detail the Studio does not need. */
+function matureVerdict(output: unknown, matureLevel: number): boolean | null {
+  const block = (output as { ratingV2?: unknown } | null | undefined)?.ratingV2 as
+    | { status?: unknown; sexual?: { label?: unknown }; restricted?: unknown }
+    | null
+    | undefined;
+  if (!block || typeof block !== 'object' || block.status !== 'ok') return null;
+  const label = block.sexual?.label;
+  const match = typeof label === 'string' ? SEXUAL_LEVEL.exec(label) : null;
+  if (!match || typeof block.restricted !== 'boolean') return null;
+  return block.restricted || Number(match[1]) >= matureLevel;
+}
+
 export async function rateStudioDatasetImages({
   userId,
+  matureLevel,
   items,
-}: StudioDatasetRatingInput & { userId: number }): Promise<{
-  results: { key: string; output: unknown }[];
+}: Pick<StudioDatasetRatingInput, 'items'> & { userId: number; matureLevel: number }): Promise<{
+  results: { key: string; mature: boolean | null }[];
 }> {
   if (!items.every((i) => isRateableMediaUrl(i.mediaUrl)))
     throw throwBadRequestError('Dataset rating only accepts images uploaded to Civitai.');
@@ -66,7 +82,10 @@ export async function rateStudioDatasetImages({
   return {
     results: items.map((item, i) => {
       const step = byName.get(`${i}`) as { status?: string; output?: unknown } | undefined;
-      return { key: item.key, output: step?.status === 'succeeded' ? step.output ?? null : null };
+      return {
+        key: item.key,
+        mature: step?.status === 'succeeded' ? matureVerdict(step.output, matureLevel) : null,
+      };
     }),
   };
 }

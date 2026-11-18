@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { FILTER_MAX_BYTES, filterRefusal } from '~/server/registry-adapter/json-schema';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
+import type { ServeOptions } from '~/server/registry-adapter/serve';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
@@ -162,6 +164,93 @@ describe('the HTTP/SSE binding', () => {
   it('a missing schema is bad_request', async () => {
     const res = await get(adapter(), '/subscribe');
     expect([res.status, JSON.parse(res.text).error]).toEqual([400, 'bad_request']);
+  });
+});
+
+describe('🔴 each HTTP subscription logs its region decision once, and no address', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const META_DE = `&meta=${encodeURIComponent('{"country":"DE"}')}`;
+
+  /**
+   * One subscription from the edge's CA, with meta DE, read to its end; its region lines and the
+   * error code it was refused with, if any.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      query = sub(APPS, META_DE),
+      headers = {},
+      opts = {},
+    }: { query?: string; headers?: Record<string, string>; opts?: ServeOptions } = {}
+  ) {
+    vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
+    const logged: string[] = [];
+    server = createRegistryServer(adapter(), { ...opts, onRegion: (line) => logged.push(line) });
+    await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}${query}`, {
+      headers: {
+        'cf-ipcountry': 'CA',
+        'cf-connecting-ip': '192.0.2.7',
+        'x-forwarded-for': '198.51.100.1',
+        ...headers,
+      },
+    });
+    const text = await res.text();
+    const error = res.status === 200 ? undefined : (JSON.parse(text) as { error: string }).error;
+    return { status: res.status, error, logged };
+  }
+
+  it('flag on: the meta country, one line', async () => {
+    const { status, logged } = await lines('1');
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=DE region=none source=meta restricted=false',
+    ]);
+    for (const address of ['192.0.2.7', '198.51.100.1', '127.0.0.1']) {
+      expect(logged[0]).not.toContain(address);
+    }
+  });
+
+  it('flag off: the header country, one line', async () => {
+    const { logged } = await lines(undefined);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=false',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    const { status, logged } = await lines(undefined, { opts: { regionRestricted: () => true } });
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=true',
+    ]);
+  });
+
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { status, error, logged } = await lines('1', { query: '/subscribe' });
+    expect([status, error]).toEqual([400, 'bad_request']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { status, error, logged } = await lines('1', { opts: { limiter } });
+    expect([status, error]).toEqual([503, 'unavailable']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { status, error, logged } = await lines('1', {
+      headers: { authorization: 'Bearer x' },
+    });
+    expect([status, error]).toEqual([401, 'invalid_token']);
+    expect(logged).toEqual([]);
   });
 });
 
