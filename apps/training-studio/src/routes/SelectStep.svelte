@@ -80,8 +80,6 @@
     initial?: Selection | null;
     /** Open on the Image edit section (a reused edit dataset) when there is no selection to restore. */
     startInEdit?: boolean;
-    /** The flow's current label mode and whether the dataset already holds labels: with the restored
-     *  selection they give the mode the Data step will open on (`labelModeForCard`), which a sweep must match. */
     flowLabelMode?: LabelType;
     datasetLabeled?: boolean;
   } = $props();
@@ -252,7 +250,7 @@
   // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
   onMount(() => void serviceStatus.refresh());
   const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
-  // Unreachable through the locks above; Continue refuses it rather than silently picking a mode some run can't take.
+  // Defensive: not reachable today, but keep it — without it Continue would fall back to a mode some run can't take.
   const sweepBroken = $derived(
     multi && sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) === null
   );

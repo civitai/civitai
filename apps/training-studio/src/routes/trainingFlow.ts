@@ -834,10 +834,7 @@ export function submittedPrompts(texts: string[]): string[] {
  *  Select step won't mix them, since the two datasets don't share a shape. */
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
-/** The label mode one dataset can use for every run in `cards` (the sweep), or null when they can't share
- *  one: pairs and single-image models don't mix, and a caption-only model can't take tags (nor a tag-only
- *  model captions). The lead decides the mode as `labelModeForCard` would. Select calls it on the selection a
- *  pick or removal WOULD produce, so a change to the first run is checked against every other run. */
+/** The label mode one dataset can use for every run in `cards`, or null when they can't share one. */
 export function sweepLabelMode(
   cards: ModelCard[],
   previous: ModelCard | null,
