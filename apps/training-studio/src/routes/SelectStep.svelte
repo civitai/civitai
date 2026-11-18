@@ -199,6 +199,8 @@
   function sweepLockReason(card: ModelCard): string {
     if (!!card.pairs !== primaryPairs)
       return `${card.name} ${card.pairs ? 'trains on before/after pairs' : 'trains on single images'}; your other run doesn't. One dataset can't mix — remove the other run to switch.`;
+    if (focus === 0)
+      return `Making ${card.name} the first run would change the dataset's tags/captions format, which your other runs can't use. One dataset can't mix — remove them to switch.`;
     return `${card.name} can't train on ${labelMode === 'tag' ? 'tags' : 'captions'} like your other run. One dataset can't mix — remove the other run to switch.`;
   }
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
@@ -250,6 +252,10 @@
   // The banner refreshes it too; Select reads it on its own so a down model greys out on first paint.
   onMount(() => void serviceStatus.refresh());
   const blockedMessage = $derived(blockedSelectionMessage(runs, serviceStatus.value));
+  // Unreachable through the locks above; Continue refuses it rather than silently picking a mode some run can't take.
+  const sweepBroken = $derived(
+    multi && sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) === null
+  );
 
   /** Whether a version chip's model is down (Custom has no catalog version: never). */
   function versionDown(card: ModelCard, key: string) {
@@ -386,8 +392,14 @@
     focus = runs.length - 1;
   }
 
+  /** Removing run 1 makes the next run the lead, which can re-pick the dataset's mode and strand the rest. */
+  function removalAllowed(i: number): boolean {
+    const rest = runs.filter((_, k) => k !== i).map(runCard);
+    return rest.length === 0 || sweepLabelMode(rest, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
+
   function removeRun(i: number) {
-    if (runs.length <= 1) return;
+    if (runs.length <= 1 || !removalAllowed(i)) return;
     runs = runs.filter((_, k) => k !== i);
     // Keep focus on the same run: removing one before it shifts every later run down a slot.
     if (i < focus) focus -= 1;
@@ -476,7 +488,7 @@
 {#snippet continueButton(placement: string)}
   <Button
     class="h-11 {placement}"
-    disabled={customIncomplete || !!blockedMessage}
+    disabled={customIncomplete || !!blockedMessage || sweepBroken}
     onclick={continueToData}
   >
     Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
@@ -923,11 +935,15 @@
                   <button
                     type="button"
                     aria-label={`Remove run ${ri + 1}`}
+                    disabled={!removalAllowed(ri)}
+                    title={removalAllowed(ri)
+                      ? undefined
+                      : "Removing this run would change the dataset's tags/captions format for your other runs. Remove them first."}
                     onclick={(e) => {
                       e.stopPropagation();
                       removeRun(ri);
                     }}
-                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
+                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-dark-4 disabled:hover:text-dark-2"
                   >
                     <IconX size={14} stroke={2} />
                   </button>

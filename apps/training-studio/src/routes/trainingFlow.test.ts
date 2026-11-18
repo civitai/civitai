@@ -1057,6 +1057,15 @@ describe('Krea 2 label modes', () => {
     expect(sweepLabelMode([pairsCard, krea], null, 'caption', false)).toBeNull();
   });
 
+  it("refuses the selection left by removing run 1 when the next lead would re-pick a mode a later run can't take", () => {
+    const anima = cardByType('anima')!;
+    const krea = cardByType('krea2')!;
+    const sdxl = cardByType('sdxl')!;
+    expect(sweepLabelMode([anima, krea, sdxl], null, 'tag', false)).toBe('tag');
+    // Krea 2 leading a fresh dataset opens on captions, which SDXL can't take
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
   it('checks every run against the mode a new first run would set', () => {
     const krea = cardByType('krea2')!;
     const anima = cardByType('anima')!;
