@@ -86,9 +86,10 @@ func SafeDetail(err error) string {
 	return filter(fe.Safe, " :/,")
 }
 
-// Token makes a client-sent token (an input key name, an enum value) loggable: every byte outside
-// [A-Za-z0-9_.-] becomes '?', and it is cut to 64 bytes. A key name or enum value survives as sent;
-// free text (an e-mail address, a sentence) does not.
+// Token is a charset and length filter for a client-sent key name or enum value: every byte outside
+// [A-Za-z0-9_.-] becomes '?', and it is cut to 64 bytes. It does NOT scrub free text — an e-mail
+// address survives nearly whole (a.b@x.com → a.b?x.com) — so it is for key names and enum values
+// only, never for a field that can hold user data.
 func Token(s string) string { return filter(s, "") }
 
 func filter(s, extra string) string {

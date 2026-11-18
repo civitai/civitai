@@ -73,7 +73,8 @@ func parentCtx(t *testing.T, id string, sampled, remote bool) context.Context {
 }
 
 // ParentBased over the ratio, the ratio applied to remote sampled parents too (Node's
-// remoteParentSampled): a `-01` traceparent cannot force sampling; a remote unsampled parent is
+// remoteParentSampled): a `-01` traceparent alone does not force sampling (a caller-chosen low-XOR
+// trace id does, as in Node); a remote unsampled parent is
 // dropped whatever the ratio says; a local parent's decision is inherited.
 func TestHeadSamplerHonoursTheParentAndTheRatio(t *testing.T) {
 	const in, out = "0577cd69a35d1adc3df3616183b98451", "4bf92f3577b34da6a3ce929d0e0e4736" // in / out of 0.1

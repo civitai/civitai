@@ -123,8 +123,11 @@ func newProvider(cfg Config, sp sdktrace.SpanProcessor) *Provider {
 }
 
 // HeadSampler is the Node app's buildHeadSampling sampler: ParentBased over NodeRatio(ratio), with
-// the ratio applied to remote SAMPLED parents too (a public caller cannot force sampling with a
-// `-01` traceparent); a remote unsampled parent is dropped, a local parent's decision is inherited.
+// the ratio applied to remote SAMPLED parents too, so a `-01` traceparent alone does not force
+// sampling; a remote unsampled parent is dropped, a local parent's decision is inherited. The ratio
+// caps sampling for honest callers only: the decision is a function of the trace id, so a caller who
+// picks a trace id whose words XOR low is sampled every time. Node's buildHeadSampling has the same
+// property (parity, not a defence).
 func HeadSampler(ratio float64) sdktrace.Sampler {
 	r := NodeRatio(ratio)
 	return sdktrace.ParentBased(r, sdktrace.WithRemoteParentSampled(r))

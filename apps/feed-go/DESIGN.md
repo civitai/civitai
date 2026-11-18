@@ -1191,8 +1191,10 @@ configuration drives both and a trace continues browser → feed-go → Node on 
 | `OTEL_TRACES_SAMPLE_RATIO` | Head-sampling ratio, Node's rule: a number in [0, 1], else 0.1. |
 
 - *Sampling* is Node's `buildHeadSampling`: ParentBased over a trace-id ratio, the ratio applied to
-  remote SAMPLED parents too (a public caller cannot force sampling with a `-01` traceparent), a
-  remote unsampled parent dropped, a local parent inherited. The ratio sampler is a port of the JS
+  remote SAMPLED parents too (a `-01` traceparent alone does not force sampling), a remote unsampled
+  parent dropped, a local parent inherited. The ratio caps sampling for honest callers only: the
+  decision is a function of the trace id, so a caller who picks a trace id whose words XOR low is
+  sampled every time — the same as Node's `buildHeadSampling` (parity, not a defence). The ratio sampler is a port of the JS
   `TraceIdRatioBasedSampler` (`tracing.NodeRatio`: the trace id's four 32-bit words XORed, kept below
   `floor(ratio × 0xffffffff)`), NOT the Go SDK's `TraceIDRatioBased`, which reads the low 8 bytes and
   so keeps a different subset for the same ratio: with it, a trace Node kept would continue in
@@ -1209,7 +1211,15 @@ configuration drives both and a trace continues browser → feed-go → Node on 
   pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), and
   the fallback proxy hop (`fallback-proxy <endpoint>`), whose context the proxy injects as the
   outbound `traceparent` so the Node request is its child. With tracing off the proxy passes the
-  inbound `traceparent` through unchanged, as before. No span per row or per hydrated entity; the
+  inbound `traceparent` through unchanged, as before.
+- *The proxy hop carries feed-go's sampling decision to Node.* With tracing on, every proxied request
+  carries feed-go's `traceparent` (sampled flag included), and Node's ParentBased sampler follows a
+  remote parent: an unsampled one is dropped, a sampled one is re-checked against Node's own ratio.
+  Node's traces of proxied requests are therefore capped at min(feed-go ratio, Node ratio). Set
+  feed-go's `OTEL_TRACES_SAMPLE_RATIO` at or above Node's (normally equal; both default 0.1), or Node
+  loses traces of the requests feed-go hands back. Those requests now arrive WITH a `traceparent`, so
+  Node's root pre-sampling (`otel-root-presample`), which applies only to requests without one, does
+  not apply to them. No span per row or per hydrated entity; the
   store spans start only under a recording (sampled) request span.
 - *Shadow and probe spans* are independent roots: the Node samplers do not send a `traceparent` on
   their POSTs, so a sample is not linked to the Node request it describes (an inbound one would be
@@ -1241,8 +1251,9 @@ error, rate-limited or not.
 *What is logged.* Never an error's text, the request input, a cookie, a token or an id. A fallback's
 `Detail` (its `Error()` text) is never logged; its loggable detail (`fallback.SafeDetail`) is opt-in
 at the call site: `fallback.Safef` (counts, status codes, the budget, a type name), `fallback.NewfSafe`
-(a fixed field name, or an input key name / enum value through `fallback.Token`, which turns anything
-outside `[A-Za-z0-9_.-]` into `?`), and `fallback.Wrap` (the error's class). `fallback.Newf` details — cursors, ids, user
+(a fixed field name, or an input key name / enum value through `fallback.Token`, a charset and
+length filter — anything outside `[A-Za-z0-9_.-]` becomes `?`, cut to 64 bytes — that does NOT scrub
+free text: `a.b@x.com` logs as `a.b?x.com`, so it is used for key names and enum values only), and `fallback.Wrap` (the error's class). `fallback.Newf` details — cursors, ids, user
 values, sponsored data — log nothing but the reason.
 
 *Error class* (`fallback.Class`, closed set `fallback.ErrorClasses`, also the counter's `class`

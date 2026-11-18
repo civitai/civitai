@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -344,7 +345,37 @@ func TestFallbackLogLineFieldsAndRedaction(t *testing.T) {
 		if strings.Contains(buf.String(), sentinel) {
 			t.Fatalf("%s: the user value reached the log:\n%s", c.input, buf.String())
 		}
+		// The spans too: attributes, event attributes (feed_go.fallback.detail) and status.
+		seen := spanStrings(rec)
+		for _, v := range seen {
+			if strings.Contains(v, sentinel) {
+				t.Fatalf("%s: the user value reached a span: %q", c.input, v)
+			}
+		}
+		// Positive control: the scan reads event attributes (the safe detail is there when there is one).
+		if d, ok := c.want["detail"].(string); ok && !slices.Contains(seen, "event fallback feed_go.fallback.detail="+d) {
+			t.Fatalf("%s: span scan did not see the fallback event's detail %q in %q", c.input, d, seen)
+		}
 	}
+}
+
+// spanStrings is every string an ended span exports: its name, attributes, event names and event
+// attributes, and status description, each as one "<where> <key>=<value>" entry.
+func spanStrings(rec *tracetest.SpanRecorder) []string {
+	var out []string
+	for _, sp := range rec.Ended() {
+		out = append(out, "name "+sp.Name(), "status "+sp.Status().Description)
+		for _, kv := range sp.Attributes() {
+			out = append(out, "attr "+string(kv.Key)+"="+kv.Value.String())
+		}
+		for _, ev := range sp.Events() {
+			out = append(out, "event "+ev.Name)
+			for _, kv := range ev.Attributes {
+				out = append(out, "event "+ev.Name+" "+string(kv.Key)+"="+kv.Value.String())
+			}
+		}
+	}
+	return out
 }
 
 // Without FEED_GO_FALLBACK_LOG_PER_MIN (0) no fallback line is written; without a span there are no
@@ -394,6 +425,16 @@ func TestServeErrorLogLineHasNoErrorText(t *testing.T) {
 		"trace_id": inTrace, "span_id": serve[0].SpanContext().SpanID().String()})
 	if strings.Contains(buf.String(), sentinel) {
 		t.Fatalf("the error text reached the log:\n%s", buf.String())
+	}
+	seen := spanStrings(rec)
+	for _, v := range seen {
+		if strings.Contains(v, sentinel) {
+			t.Fatalf("the error text reached a span: %q", v)
+		}
+	}
+	// Positive control: the scan reads event attributes.
+	if !slices.Contains(seen, "event error feed_go.error.class=other") {
+		t.Fatalf("span scan did not see the error event's class in %q", seen)
 	}
 	if st := serve[0].Status(); st.Description != "other" {
 		t.Fatalf("span status %+v, want error `other`", st)
