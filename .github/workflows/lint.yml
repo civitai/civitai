@@ -948,8 +948,23 @@ jobs:
       #
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
+      # TRIAL INSTRUMENT: sample used memory and swap every 5 s while the suite runs, so the
+      # worker count is judged against the runner's RAM, not only against wall time.
+      - name: Sample memory during the unit run (trial instrument)
+        run: |
+          nohup bash -c 'while :; do free -m | awk "/^Mem:/{m=\$3} /^Swap:/{s=\$3} END{print m, s}" >> "$RUNNER_TEMP/mem.log"; sleep 5; done' >/dev/null 2>&1 &
+
       - name: Unit tests
         run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      - name: Peak memory and swap during the unit run (trial instrument)
+        if: ${{ !cancelled() }}
+        run: |
+          [ -s "$RUNNER_TEMP/mem.log" ] || { echo "no memory samples"; exit 0; }
+          echo "samples: $(wc -l < "$RUNNER_TEMP/mem.log")"
+          echo "peak used MiB: $(sort -n -k1 "$RUNNER_TEMP/mem.log" | tail -1 | cut -d' ' -f1)"
+          echo "peak swap MiB: $(sort -n -k2 "$RUNNER_TEMP/mem.log" | tail -1 | cut -d' ' -f2)"
+          free -m
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
