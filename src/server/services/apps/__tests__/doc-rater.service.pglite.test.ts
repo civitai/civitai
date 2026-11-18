@@ -6,6 +6,7 @@ import {
   type DocStore,
 } from '~/server/services/apps/doc-store';
 import type { DocStoreDb } from '~/server/services/apps/doc-store';
+import type * as ClientEnv from '~/env/client';
 import type * as DocLevels from '~/server/services/apps/doc-levels';
 import type * as TextScanMode from '~/server/services/text-scan/mode';
 import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
@@ -43,6 +44,10 @@ const h = vi.hoisted(() => ({
   brokenApps: new Set<string>(),
 }));
 
+vi.mock('~/env/client', async (importOriginal) => {
+  const real = await importOriginal<typeof ClientEnv>();
+  return { ...real, env: { ...real.env, NEXT_PUBLIC_IMAGE_LOCATION: 'https://image.example/abc' } };
+});
 vi.mock('~/server/services/apps/doc-store-rater.instance', async () => {
   const { createDocStoreRater: create } = await import('~/server/services/apps/doc-store');
   let rater: ReturnType<typeof create> | undefined;
@@ -250,6 +255,25 @@ describe('a pass submits each unrated shared document’s text scan under its ra
     }
   );
 
+  it('🔴 a shadow scan left failed when the rollout moved to active is not waited on', async () => {
+    const app = freshApp('RSVMOVED');
+    const id = await submitted(app, 'b1', { t: 'x' });
+    await verdictRow(id, { status: 'Failed', retryCount: 3, shadow: true });
+    h.mode = 'active';
+    h.scans.length = 0;
+    expect(await rateUnratedDocs([app])).toMatchObject({ acted: 1, submitted: 1, waiting: 0 });
+  });
+
+  it('🔴 a pass resumes where the last one stopped, so the documents behind are reached', async () => {
+    const app = freshApp('RSVRESUME');
+    for (const k of ['a', 'b', 'c']) await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, k, { k });
+    for (let i = 0; i < 3; i++) await rateUnratedDocs([app], { perPass: 1 });
+    const ids = await Promise.all(
+      ['a', 'b', 'c'].map(async (k) => (await ratingOf(app, k)).rating_id)
+    );
+    expect(h.scans.map((s) => s.entityId)).toEqual(ids);
+  });
+
   it('a failed scan out of retries is submitted again', async () => {
     const app = freshApp('RSVSPENT');
     const id = await submitted(app, 'b1', { t: 'x' });
@@ -355,6 +379,18 @@ describe('🔴 the callback rates the document', () => {
     expect(await callback(bare, 2)).toEqual({ status: 'rated', level: 2 });
   });
 
+  it('🔴 a percent-encoded image url still counts as an image url', async () => {
+    const app = freshApp('RSVENC');
+    const id = await submitted(app, 'b1', { pic: encodeURIComponent(imageUrl(IMG_NO_ROW)) });
+    expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+  });
+
+  it('a uuid in a url on another host adds no level and does not hold the document', async () => {
+    const app = freshApp('RSVOTHER');
+    const id = await submitted(app, 'b1', { link: `https://elsewhere.example/item/${IMG_NO_ROW}` });
+    expect(await callback(id, 2)).toEqual({ status: 'rated', level: 2 });
+  });
+
   it('a text longer than one scan call is never rated from a verdict (it may cover only part)', async () => {
     const app = freshApp('RSVLONG');
     const id = await submitted(app, 'b1', { t: 'x'.repeat(40) });
@@ -373,6 +409,15 @@ describe('without a submit: a stored verdict for the same text, or no text', () 
     expect(await rateUnratedDocs([app])).toMatchObject({ rated: 1, acted: 0 });
     expect(h.scans).toEqual([]);
     expect((await ratingOf(app, 'b1')).level).toBe(8);
+  });
+
+  it('a stored verdict on a text longer than one scan call is not applied either', async () => {
+    const app = freshApp('RSVSAMELONG');
+    const id = await submitted(app, 'b1', { t: 'x'.repeat(40) });
+    await verdictRow(id, { level: 1 });
+    h.maxInputChars = 20;
+    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, skipped: 1 });
+    expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
   it('🔴 a stored verdict for other text (an edit since) is not used: the new text is scanned', async () => {

@@ -51,6 +51,7 @@ import {
   subjectTextLength,
   textScanTextHash,
 } from '~/server/services/text-scan/prompt';
+import { composeUserText } from '~/server/services/text-scan/segment';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type {
   TextScanField,
@@ -131,9 +132,17 @@ export async function applyAppDocTextScan(args: {
   if (textScanTextHash(args.subject) !== args.textHash) return { status: 'stale' };
   const textLevel = textLevelOf(args.outcome);
   if (textLevel === null) return { status: 'no-level' };
-  const { maxInputChars } = await getTextScanConfig();
-  if (subjectTextLength(args.subject) > maxInputChars) return { status: 'too-long' };
+  if (await tooLongForOneCall(args.subject.fields)) return { status: 'too-long' };
   return rateAppDoc(args.subject.meta as AppDocSubjectMeta, args.subject.fields, textLevel);
+}
+
+/**
+ * Whether the text the scan composes from `fields` (headings included) is longer than one scan
+ * call reads: a verdict on it may then cover only part of it, so none is applied.
+ */
+async function tooLongForOneCall(fields: TextScanField[]): Promise<boolean> {
+  const { maxInputChars } = await getTextScanConfig();
+  return composeUserText({ fields, declared: {} }).length > maxInputChars;
 }
 
 /** Documents read per page; scans submitted per pass; documents read per pass at most. */
@@ -142,6 +151,14 @@ export const RATER_PER_PASS = 500;
 export const RATER_READ_CAP = 5_000;
 /** How often the job runs: the app order rotates by one each period. */
 const RATER_PERIOD_MS = 5 * 60_000;
+
+/**
+ * Where the next pass resumes in each collection (`<app>/<coll>` → seq), so a collection with more
+ * waiting documents than one pass reads does not hold the ones behind them back forever. Kept in
+ * this process only: a pass on another process starts from the beginning, and a cursor past the
+ * end wraps to it.
+ */
+const resumeAfter = new Map<string, number>();
 
 export type RatePassResult = {
   ready: boolean;
@@ -210,8 +227,7 @@ async function rateDoc(
   collection: string,
   doc: UnratedDoc,
   rows: Map<string, ScanRow>,
-  out: RatePassResult,
-  canScan: () => boolean
+  out: RatePassResult
 ): Promise<void> {
   const meta: AppDocSubjectMeta = {
     appId,
@@ -225,20 +241,20 @@ async function rateDoc(
   const hash = textScanTextHash({ fields, declared: {} });
   const id = doc.ratingId;
   if (id !== null) {
-    const live = rows.get(`${APP_DOC_ENTITY_TYPE}:${id}`);
-    const shadow = rows.get(`${textScanEmEntityType(APP_DOC_ENTITY_TYPE, 'shadow')}:${id}`);
-    if (owned(live) || owned(shadow)) return void out.waiting++;
     const mode = await getTextScanMode(APP_DOC_ENTITY_TYPE, id);
-    if (mode === 'active' && live?.status === 'Succeeded' && scannedHashOf(live) === hash) {
-      const level = textLevelOf({ nsfwLevel: live.nsfwLevel });
-      if (level === null) return void out.skipped++;
+    if (mode === 'off') return void out.skipped++;
+    // Only the row of the CURRENT mode: the retry job retries a row only while its mode is current,
+    // so a shadow row left failed when the rollout moved to active is no one's to wait for.
+    const row = rows.get(`${textScanEmEntityType(APP_DOC_ENTITY_TYPE, mode)}:${id}`);
+    if (owned(row)) return void out.waiting++;
+    if (row?.status === 'Succeeded' && scannedHashOf(row) === hash) {
+      // A verdict for exactly this text: rate it if active; in shadow there is nothing to do.
+      if (mode !== 'active') return void out.skipped++;
+      const level = textLevelOf({ nsfwLevel: row.nsfwLevel });
+      if (level === null || (await tooLongForOneCall(fields))) return void out.skipped++;
       return count(await rateAppDoc(meta, fields, level), out);
     }
-    if (mode === 'shadow' && shadow?.status === 'Succeeded' && scannedHashOf(shadow) === hash)
-      return void out.skipped++;
-    if (mode === 'off') return void out.skipped++;
   }
-  if (!canScan()) return;
   out.acted++;
   const ratingId =
     id ?? (await getDocStoreRater().assignRatingId(appId, PUBLISHED_NS, collection, doc.key));
@@ -293,10 +309,12 @@ function rotated<T>(items: readonly T[]): T[] {
 /**
  * One rating pass over `appIds`: each shared collection's unrated documents, oldest change first,
  * paged by seq. Submits at most `perPass` scans ({@link RATER_PER_PASS}) and reads at most
- * {@link RATER_READ_CAP} documents; documents that are only waiting cost a read, never the budget,
- * and the app order rotates every period, so neither one app nor documents stuck waiting starve the
- * rest. One app's failure (an unreadable manifest) is logged and the pass moves on. Nothing at all
- * until the rating-id migration is applied (`ready`), or while the text scan cannot scan `AppDoc`.
+ * {@link RATER_READ_CAP} documents. Documents that are only waiting cost a read, never the budget;
+ * the app order rotates every period; and a collection resumes where the last pass on this process
+ * stopped reading it ({@link resumeAfter}), so documents stuck waiting do not hold back the ones
+ * behind them. One app's failure (an unreadable manifest) is logged and the pass moves on. Nothing
+ * at all until the rating-id migration is applied (`ready`), or while the text scan cannot scan
+ * `AppDoc`.
  */
 export async function rateUnratedDocs(
   appIds: readonly string[],
@@ -324,21 +342,31 @@ export async function rateUnratedDocs(
     out.apps++;
     try {
       for (const collection of await sharedCollections(appId)) {
-        let afterSeq = 0;
+        const cursorKey = `${appId}/${collection}`;
+        let afterSeq = resumeAfter.get(cursorKey) ?? 0;
+        let wrapped = afterSeq === 0;
         while (canScan() && out.read < RATER_READ_CAP) {
           const docs = await rater.listUnrated(appId, PUBLISHED_NS, collection, {
             afterSeq,
             limit: RATER_PAGE,
           });
-          if (!docs.length) break;
-          afterSeq = docs[docs.length - 1].seq;
+          if (!docs.length) {
+            // The end: start again from the beginning, once.
+            resumeAfter.delete(cursorKey);
+            if (wrapped) break;
+            wrapped = true;
+            afterSeq = 0;
+            continue;
+          }
           out.read += docs.length;
           const rows = await scanRows(
             docs.map((d) => d.ratingId).filter((id): id is number => id !== null)
           );
           for (const doc of docs) {
+            // The budget is spent: resume at this document next pass.
+            if (!canScan()) break;
             try {
-              await rateDoc(appId, collection, doc, rows, out, canScan);
+              await rateDoc(appId, collection, doc, rows, out);
             } catch (error) {
               out.failed++;
               logToAxiom({
@@ -349,8 +377,14 @@ export async function rateUnratedDocs(
                 error: (error as Error).message,
               });
             }
+            afterSeq = doc.seq;
           }
-          if (docs.length < RATER_PAGE) break;
+          resumeAfter.set(cursorKey, afterSeq);
+          if (!canScan()) break;
+          if (docs.length < RATER_PAGE) {
+            resumeAfter.delete(cursorKey);
+            break;
+          }
         }
       }
     } catch (error) {

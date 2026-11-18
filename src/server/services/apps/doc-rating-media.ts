@@ -12,10 +12,12 @@
  *
  * Fails closed: an image that is not rated yet (no level, or its scan has not finished) leaves the
  * whole document unrated, so it stays hidden from other viewers until the next pass; a Blocked
- * image makes the document Blocked; and a key inside a url (a text holding `://`) that names no
- * `Image` row is treated as an image not rated yet. A key in any other text that names no row (an
- * app's own uuid ids) adds no level.
+ * image makes the document Blocked; and a key inside an image url (an `http(s)://` url on the image
+ * host, `NEXT_PUBLIC_IMAGE_LOCATION`; any host when that is not configured) that names no `Image`
+ * row is treated as an image not rated yet. A key anywhere else that names no row (an app's own
+ * uuid ids, a link to another site) adds no level.
  */
+import { env as clientEnv } from '~/env/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { keysInTextWithin } from '~/server/services/image-url-ownership';
@@ -34,10 +36,48 @@ const DECODE_BUDGET_CHARS = 512_000;
 export type DocMediaKeys =
   | {
       keys: string[];
-      /** The keys found inside a url: one that names no `Image` row keeps the document pending. */
+      /** The keys inside an image url: one that names no `Image` row keeps the document pending. */
       urlKeys: string[];
     }
   | { overflow: 'too-many' | 'decode-budget' };
+
+/** Every http(s) url in a text, up to the first character a url cannot hold unescaped. */
+const URL_IN_TEXT = /https?:\/\/[^\s"'<>\\]+/gi;
+
+/** The image host's name, or null when it is not configured (then any url counts). */
+function imageHostname(): string | null {
+  try {
+    return new URL(clientEnv.NEXT_PUBLIC_IMAGE_LOCATION).hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** A text and each form its `%XX` escapes decode to, one pass at a time (at most 4 passes). */
+function decodedForms(text: string): string[] {
+  const forms = [text];
+  for (let pass = 0; pass < 4; pass++) {
+    const current = forms[forms.length - 1];
+    if (!current.includes('%')) break;
+    const next = current.replace(/%([0-9a-f]{2})/gi, (_m, hex: string) =>
+      String.fromCharCode(parseInt(hex, 16))
+    );
+    if (next === current) break;
+    forms.push(next);
+  }
+  return forms;
+}
+
+/** Whether `url` is on the image host (or a subdomain of it). */
+function onImageHost(url: string, host: string | null): boolean {
+  if (!host) return true;
+  try {
+    const name = new URL(url).hostname.toLowerCase();
+    return name === host || name.endsWith(`.${host}`);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Every image key in a document's texts (its string values and object keys, or its whole stored
@@ -45,15 +85,24 @@ export type DocMediaKeys =
  */
 export function docMediaKeys(texts: readonly string[]): DocMediaKeys {
   const budget = { left: DECODE_BUDGET_CHARS };
+  const host = imageHostname();
   const keys = new Set<string>();
   const urlKeys = new Set<string>();
   for (const text of texts) {
-    const inUrl = text.includes('://');
     for (const key of keysInTextWithin(text, budget)) {
       keys.add(key);
-      if (inUrl) urlKeys.add(key);
       if (keys.size > DOC_MEDIA_MAX_KEYS) return { overflow: 'too-many' };
     }
+    for (const form of decodedForms(text)) {
+      for (const [url] of form.matchAll(URL_IN_TEXT)) {
+        if (!onImageHost(url, host)) continue;
+        for (const key of keysInTextWithin(url, budget)) {
+          urlKeys.add(key);
+          keys.add(key);
+        }
+      }
+    }
+    if (keys.size > DOC_MEDIA_MAX_KEYS) return { overflow: 'too-many' };
     if (budget.left < 0) return { overflow: 'decode-budget' };
   }
   return { keys: [...keys], urlKeys: [...urlKeys] };
