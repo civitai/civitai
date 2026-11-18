@@ -514,8 +514,8 @@ export function propagateMeshRating(
  * terminal in the wire contract, and the unlock dialog answers it as such.
  *
  * 5 minutes: well past the blob scan latency tail
- * (`orchestration_blob_scan_latency_seconds`), and inside `@civitai/blocks-react`
- * `watch`'s default 10 minute timeout, so the hold never outlasts an app's own polling.
+ * (`orchestration_blob_scan_latency_seconds`), and under `@civitai/blocks-react` `watch`'s
+ * default 10 minute timeout, which counts from the watch's start, not from completion.
  */
 export const RATING_HOLD_MAX_MS = 5 * 60_000;
 
