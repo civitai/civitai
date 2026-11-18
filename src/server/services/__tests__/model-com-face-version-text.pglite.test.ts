@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { createHash } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as Preview from '~/server/services/text-scan/preview';
@@ -129,6 +129,11 @@ beforeAll(async () => {
       availability text, meta jsonb
     );
     CREATE TABLE "KeyValue" (key text PRIMARY KEY, value jsonb);
+    CREATE TABLE "TextScanHold" (
+      id serial PRIMARY KEY, "entityType" text, "entityId" int, label text, "textHash" text,
+      "userId" int, text text, reason text, "workflowId" text, "promptId" int,
+      "contentAt" timestamp, meta jsonb, status text NOT NULL DEFAULT 'Pending', "updatedAt" timestamp
+    );
   `);
 });
 afterAll(() => db.close());
@@ -143,14 +148,26 @@ beforeEach(async () => {
   promptIds.nsfw = 2;
   scanEntityInBackground.mockReset();
   rateWith({});
-  await db.exec(`DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "KeyValue";`);
+  await db.exec(
+    `DELETE FROM "Model"; DELETE FROM "ModelVersion"; DELETE FROM "KeyValue"; DELETE FROM "TextScanHold";`
+  );
 
-  const raw = async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).rows;
+  // Called as Prisma.sql values and as tagged templates (the hold writer uses tx.$queryRaw`…`).
+  const toSql = (sql: Prisma.Sql | TemplateStringsArray, values: unknown[]) =>
+    Array.isArray(sql) ? Prisma.sql(sql as TemplateStringsArray, ...values) : (sql as Prisma.Sql);
+  const raw = async (sql: Prisma.Sql | TemplateStringsArray, ...values: unknown[]) => {
+    const { text, values: params } = toSql(sql, values);
+    return (await db.query(text, params)).rows;
+  };
   for (const client of [dbMock.dbWrite, dbMock.dbRead]) {
     client.$queryRaw.mockImplementation(raw as never);
-    client.$executeRaw.mockImplementation(
-      (async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).affectedRows ?? 0) as never
-    );
+    client.$executeRaw.mockImplementation((async (
+      sql: Prisma.Sql | TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const { text, values: params } = toSql(sql, values);
+      return (await db.query(text, params)).affectedRows ?? 0;
+    }) as never);
     client.model.findUnique.mockImplementation(
       (async ({ where }: { where: { id: number } }) =>
         (await rows(`SELECT * FROM "Model" WHERE id = $1`, [where.id]))[0] ?? null) as never
@@ -373,6 +390,46 @@ describe('rateComFaceVersionText', () => {
       shown: ['v1', 'alpha'],
       held: [comVersionTextHitHash('beta')],
     });
+  });
+
+  it('writes a pending csam hold row through the real hold writer, naming positions, not text', async () => {
+    const real = await vi.importActual<typeof CsamHold>(
+      '~/server/services/text-scan/actions/csam-hold'
+    );
+    applyCsamHold.mockImplementation(real.applyCsamHold);
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha', 'beta'] }] });
+    rateWith({ beta: ok({ csam: { detected: true, reason: 'r' } }) });
+    await rateComFaceVersionText(MODEL_ID);
+
+    const holds = await rows<Record<string, unknown>>(`SELECT * FROM "TextScanHold"`);
+    expect(holds).toEqual([
+      expect.objectContaining({
+        entityType: 'Model',
+        entityId: MODEL_ID,
+        label: 'csam',
+        status: 'Pending',
+        textHash: textScanTextHash(modelSubject),
+        text: real.pendingCsamHoldFields(modelSubject).text,
+        userId: 101,
+        reason: 'r',
+        workflowId: 'wf-1',
+        promptId: 5,
+        meta: {
+          comVersionTextHits: [
+            { versionId: 1, field: 'trainedWords', index: 1, hash: comVersionTextHitHash('beta') },
+          ],
+          comVersionTextHoldHash: textScanTextHash(modelSubject),
+        },
+      }),
+    ]);
+    expect(JSON.stringify(holds[0].meta)).not.toContain('beta');
+    expect(scanEntityInBackground).toHaveBeenCalledTimes(1);
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Model',
+      entityId: MODEL_ID,
+      force: true,
+    });
+    expect(await verdicts(1)).toMatchObject({ held: [comVersionTextHitHash('beta')] });
   });
 
   it('names every place a held string sits, version names included, without its text', async () => {
