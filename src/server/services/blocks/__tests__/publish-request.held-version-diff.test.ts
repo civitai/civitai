@@ -79,7 +79,7 @@ async function approve(id: string, lateHoldIds: number[]) {
       findUnique: async () => ({ appId: 'appblk-held-diff', status: 'suspended' }),
       count: async () => 0,
     },
-    apiKey: { deleteMany: async () => ({ count: 0 }) },
+    apiKey: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
     appListing: { updateMany: async () => ({ count: 0 }) },
   };
   return finaliseOnsiteApprove(tx as never, {
