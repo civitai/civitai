@@ -830,7 +830,7 @@
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
         </form>
-        <!-- Hidden, not removed, on yes/no without rules: its slot keeps Skip from shifting. The label never changes, for the same reason. -->
+        <!-- Hidden, not removed, on yes/no without rules, so Skip keeps its position. -->
         <span class="rowtool" class:held={yesNo && !data.ruleGuide}>
           <button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button>
         </span>
@@ -869,7 +869,7 @@
   <GuideDialog
     guide={data.ratingGuide}
     rules={data.ruleGuide}
-    startAtRules={yesNo && !!data.ruleGuide}
+    scrollToRules={yesNo && !!data.ruleGuide}
     first={data.showGuide}
     message={form?.guideFailed ? form.message : null}
     {submitting}

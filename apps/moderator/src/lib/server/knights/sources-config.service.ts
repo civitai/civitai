@@ -262,7 +262,6 @@ export async function saveGameSettings(
 
 const LIMITS = KNIGHTS_RULE_GUIDE_LIMITS;
 
-/** A trimmed string, or an error naming the field when it is missing (if required) or longer than `max`. */
 function text(
   value: unknown,
   label: string,
@@ -278,10 +277,7 @@ function text(
   return { ok: true, value: trimmed };
 }
 
-/**
- * `null` (or no sets) clears the guide. Anything the Knights reader would drop is refused instead, naming the set and level,
- * so what a moderator saves is exactly what players see.
- */
+/** Refuses anything readRuleGuide would drop, so what a moderator saves is what players see. */
 export function validateRuleGuideInput(
   input: unknown
 ): { ok: true; guide: KnightsRuleGuide | null } | { ok: false; error: string } {
@@ -324,7 +320,6 @@ export function validateRuleGuideInput(
   return { ok: true, guide: { ...(intro.value ? { intro: intro.value } : {}), sets } };
 }
 
-/** Replaces the stored rule guide (or removes it) and carries every other stored field over. */
 export async function saveRuleGuide(input: unknown, moderatorId: number): Promise<SaveOutcome> {
   const checked = validateRuleGuideInput(input);
   if (!checked.ok) return checked;

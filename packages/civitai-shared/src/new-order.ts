@@ -45,7 +45,6 @@ export type KnightsSourcesConfig = {
   yesNoShare?: number;
   /** Knights game tuning saved on the moderator Config page. Absent when nothing is stored. */
   game?: KnightsGameSettings;
-  /** The rules yes/no questions test, shown to players in the rating guide. Absent when nothing is stored. */
   ruleGuide?: KnightsRuleGuide;
 };
 
@@ -53,7 +52,7 @@ export type KnightsRuleLevel = { code: string; description: string };
 export type KnightsRuleSet = { title: string; notes?: string; levels: KnightsRuleLevel[] };
 export type KnightsRuleGuide = { intro?: string; sets: KnightsRuleSet[] };
 
-/** Maximum lengths and counts for the rule guide; the moderator page refuses more and the reader drops it. */
+/** Shared by the Config-page validator and the Knights reader; change both together via this object. */
 export const KNIGHTS_RULE_GUIDE_LIMITS = {
   intro: 600,
   sets: 6,

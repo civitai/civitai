@@ -11,7 +11,7 @@
   let {
     guide,
     rules,
-    startAtRules = false,
+    scrollToRules = false,
     first,
     message,
     submitting,
@@ -19,8 +19,7 @@
   }: {
     guide: ComponentProps<typeof RatingGuide>['guide'];
     rules: KnightsRuleGuide | null;
-    /** Opened from a yes/no question: scroll to the question rules. */
-    startAtRules?: boolean;
+    scrollToRules?: boolean;
     /** The first-visit guide says so; a reopened one does not. */
     first: boolean;
     message: string | null;
@@ -29,11 +28,9 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
-  let rulesSection = $state<HTMLElement>();
-
-  $effect(() => {
-    if (startAtRules) rulesSection?.scrollIntoView({ block: 'start' });
-  });
+  const scrollOnOpen = (node: HTMLElement, wanted: boolean) => {
+    if (wanted) node.scrollIntoView({ block: 'start' });
+  };
   // Escape is the same answer as the button: the guide is read.
   const close = () => {
     if (!submitting) form?.requestSubmit();
@@ -58,7 +55,7 @@
       <RatingGuide {guide} />
       {#if rules}
         <div class="rule" aria-hidden="true"><span class="gem"></span></div>
-        <div bind:this={rulesSection}><QuestionRules {rules} /></div>
+        <div use:scrollOnOpen={scrollToRules}><QuestionRules {rules} /></div>
       {/if}
     </div>
     <form class="footer" method="POST" action="?/dismissGuide" use:enhance={submit} bind:this={form}>

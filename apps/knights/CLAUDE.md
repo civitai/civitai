@@ -29,7 +29,7 @@ The game-tuning variables (`KNIGHTS_HIDDEN_CHECK_*`, `KNIGHTS_YESNO_*`, `KNIGHTS
 `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, `KNIGHTS_SHOP_DISABLED`, `KNIGHTS_CONVERSION_DISABLED`) can also be saved on the moderator app's Config page, as the optional `game` (and `yesNoShare`) fields of
 `system:knights-v2-sources` (`KnightsSourcesConfig` in `@civitai/shared/new-order`). Every reader goes through `storedSettings()`
 (`settings/runtime.ts`, one cached read at most every 30 s): a saved value wins, a failed or slow read keeps the last value read, and
-with none read yet the environment applies. Kill switches follow the same rule. The same read carries `ruleGuide`, the question rules the Codex and `/play` guide show (`$lib/QuestionRules.svelte`); its text is entered on the Config page, never committed. Detail: [game settings](../../docs/features/knights-sources.md#game-settings).
+with none read yet the environment applies. Kill switches follow the same rule. The same read carries `ruleGuide`, the question rules shown in the Codex and `/play` guide; its text is entered on the Config page, never committed. Detail: [game settings](../../docs/features/knights-sources.md#game-settings).
 
 ## Queue (`src/lib/server/queue`)
 

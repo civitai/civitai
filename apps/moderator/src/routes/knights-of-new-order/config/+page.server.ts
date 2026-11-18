@@ -100,7 +100,6 @@ export const actions: Actions = {
       return fail(500, { error: 'The config could not be saved. Nothing was changed; try again.' });
     }
   },
-  // The editor posts the whole guide as one JSON field; the service validates its shape.
   rules: async ({ request, locals, url }) => {
     requireAccess(locals.user, url.pathname);
     const raw = (await request.formData()).get('ruleGuide');

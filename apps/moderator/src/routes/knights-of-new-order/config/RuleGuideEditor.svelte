@@ -83,8 +83,8 @@
   <Card.Header>
     <Card.Title>Question rules</Card.Title>
     <Card.Description class="text-dark-2">
-      Shown to players below the rating levels in the Codex and the in-game rating guide, and
-      from yes/no questions. Saved on its own; players see it within about 30 seconds.
+      Shown to players below the rating levels in the Codex and the in-game guide, and from yes/no
+      questions when rules are saved.
     </Card.Description>
   </Card.Header>
   <Card.Content class="flex flex-col gap-4">
@@ -163,8 +163,7 @@
       >
         Add rule set
       </Button>
-      <div class="flex-1"></div>
-      <Button type="button" size="sm" disabled={!dirty || submitting} onclick={save}>
+      <Button type="button" size="sm" class="ml-auto" disabled={!dirty || submitting} onclick={save}>
         {sets.length ? 'Save rules' : 'Save (clears the rules)'}
       </Button>
     </div>

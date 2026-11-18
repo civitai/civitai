@@ -1,30 +1,31 @@
 <script lang="ts">
-  import type { KnightsRuleGuide } from '@civitai/shared/new-order';
+  import type { KnightsRuleGuide, KnightsRuleSet } from '@civitai/shared/new-order';
   import RatingGuide from './RatingGuide.svelte';
 
   let { rules }: { rules: KnightsRuleGuide } = $props();
+
+  const rows = (set: KnightsRuleSet) =>
+    set.levels.map((level, index) => ({
+      level: index,
+      label: level.code,
+      description: level.description,
+    }));
 </script>
 
-<div class="rules" id="question-rules">
+<div class="question-rules" id="question-rules">
   <h3 class="heading">Question rules</h3>
   {#if rules.intro}<p class="intro">{rules.intro}</p>{/if}
   {#each rules.sets as set, i (i)}
     <section class="set" aria-label={set.title}>
       <h4 class="title">{set.title}</h4>
-      <RatingGuide
-        guide={set.levels.map((level, index) => ({
-          level: index,
-          label: level.code,
-          description: level.description,
-        }))}
-      />
+      <RatingGuide guide={rows(set)} plain />
       {#if set.notes}<p class="notes">{set.notes}</p>{/if}
     </section>
   {/each}
 </div>
 
 <style>
-  .rules {
+  .question-rules {
     display: flex;
     flex-direction: column;
     gap: 20px;
