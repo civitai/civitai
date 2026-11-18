@@ -1,7 +1,8 @@
+import { restoreClearedUserImages } from '@civitai/db-queries/held-user-image';
 import { bustEventEngineProfilePictures, REDIS_KEYS } from '@civitai/redis';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
-import type { Kysely } from 'kysely';
+import { CompiledQuery, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { dbWrite } from './db';
 import { getRedis } from './redis';
@@ -28,6 +29,18 @@ export async function bustProfilePictures(
   try {
     const userIds =
       'userIds' in target ? target.userIds : await profilePictureUserIds(target.imageIds);
+    // A hold lifted here puts back the legacy `User.image` the main app cleared for it.
+    const restored = await restoreClearedUserImages(
+      async (text, values) => (await dbWrite.executeQuery(CompiledQuery.raw(text, values))).rows,
+      userIds
+    ).catch((error) => {
+      void logAxiomError(error, { event: 'profile-picture-cache-bust', step: 'restore-image' });
+      return [] as number[];
+    });
+    if (restored.length)
+      await bustCachedObject(REDIS_KEYS.CACHES.BASIC_USERS, restored).catch((error) =>
+        logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'basic-users' })
+      );
     await Promise.all([
       bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust' })

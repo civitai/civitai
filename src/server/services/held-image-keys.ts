@@ -24,8 +24,14 @@ export async function anyImageHeldForReview(db: RawQueryClient, keys: string[]) 
 
 /**
  * Of `userIds`, those whose profile picture is under an owner-hidden hold; for each of them whose
- * `User.image` names that picture, clears `User.image` in the same statement.
+ * `User.image` names that picture, clears `User.image` in the same statement and marks it with
+ * `meta.heldImageCleared = { pictureId }` (no value: the value is the held key), which
+ * `restoreClearedUserImages` reads once the hold lifts. Only an object `meta` takes the marker.
  */
+const heldImageMarker = Prisma.raw(
+  `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`
+);
+
 export async function clearHeldUserImages(db: RawQueryClient, userIds: number[]) {
   if (!userIds.length) return [];
   const rows = await db.$queryRaw<{ id: number }[]>`
@@ -38,7 +44,15 @@ export async function clearHeldUserImages(db: RawQueryClient, userIds: number[])
       WHERE u.id IN (${Prisma.join(userIds)})
         AND picture."needsReview" IN (${Prisma.join(OWNER_HIDDEN_REVIEWS)})
     ), cleared AS (
-      UPDATE "User" u SET image = NULL FROM held WHERE u.id = held.id AND held."namesPicture"
+      UPDATE "User" u
+      SET image = NULL,
+        meta = CASE
+          WHEN u.meta IS NULL THEN ${heldImageMarker}
+          WHEN jsonb_typeof(u.meta) = 'object' THEN u.meta || ${heldImageMarker}
+          -- A JSON scalar (the system-account marker can be a string) keeps its value and takes no marker.
+          ELSE u.meta
+        END
+      FROM held WHERE u.id = held.id AND held."namesPicture"
       RETURNING u.id
     )
     SELECT id FROM held

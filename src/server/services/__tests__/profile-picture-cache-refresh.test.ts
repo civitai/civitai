@@ -177,6 +177,18 @@ describe('a bulk picture refresh', () => {
     expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 4, action: 'Update' }]);
   });
 
+  it('refreshes a user whose cleared User.image a lifted hold put back', async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockResolvedValueOnce([]);
+    dbMock.dbWrite.$queryRawUnsafe.mockResolvedValueOnce([{ id: 9 }] as never);
+
+    await refreshProfilePicturesForUsers([9]);
+
+    expect(String(dbMock.dbWrite.$queryRawUnsafe.mock.calls[0][0])).toContain('heldImageCleared');
+    expect(refreshBasic).toHaveBeenCalledWith([9]);
+    expect(queueUserUpdate).toHaveBeenCalledWith([{ id: 9, action: 'Update' }]);
+  });
+
   it('refreshes every session, never more than the cap at once', async () => {
     const { refreshProfilePicturesForUsers, PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY } =
       await import('../user.service');

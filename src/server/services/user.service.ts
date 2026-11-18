@@ -12,6 +12,7 @@ import {
   servableProfilePictureSql,
 } from '~/server/services/profile-picture.sql';
 import { clearHeldUserImages } from '~/server/services/held-image-keys';
+import { restoreClearedUserImages } from '@civitai/db-queries/held-user-image';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -2443,8 +2444,9 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
 /**
  * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
  * their sessions, whose shape carries the picture's url. For a user whose picture is under an
- * owner-hidden hold, a `User.image` naming it is cleared first (`clearHeldUserImages`), and their
- * basic-user cache entry and search document are refreshed too. The event engine's copy of the
+ * owner-hidden hold, a `User.image` naming it is cleared first (`clearHeldUserImages`); once the hold
+ * lifts it is put back (`restoreClearedUserImages`). Either way their basic-user cache entry and
+ * search document are refreshed too. The event engine's copy of the
  * picture is busted as well. Never throws: the write it follows has committed, and a moderation
  * action must not fail on a cache refill.
  */
@@ -2462,13 +2464,21 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
   await step('clear-image', async () => {
     heldIds = await clearHeldUserImages(dbWrite, ids);
   });
+  let restoredIds: number[] = [];
+  await step('restore-image', async () => {
+    restoredIds = await restoreClearedUserImages(
+      (text, values) => dbWrite.$queryRawUnsafe(text, ...values),
+      ids
+    );
+  });
+  const imageChangedIds = [...heldIds, ...restoredIds];
   await step('picture-cache', () => profilePictureCache.refresh(ids));
   await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
-  if (heldIds.length) {
-    await step('basic-cache', () => userBasicCache.refresh(heldIds));
+  if (imageChangedIds.length) {
+    await step('basic-cache', () => userBasicCache.refresh(imageChangedIds));
     await step('search-index', () =>
       usersSearchIndex.queueUpdate(
-        heldIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        imageChangedIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       )
     );
   }
