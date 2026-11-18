@@ -12,7 +12,7 @@ import type {
   StudioAutoLabelPollInput,
   StudioAutoLabelSubmitInput,
 } from '~/server/schema/training-studio-auto-label.schema';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import { usageLimits, type UsageLimitRef } from '~/shared/constants/usage-limits';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -49,7 +49,13 @@ export const STUDIO_AUTO_LABEL_RATE_LIMITS = {
 } satisfies Record<string, { key: string; rules: UsageLimitRef }>;
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
-type StudioAutoLabelMetadata = { kind: 'studio-auto-label'; userId: number };
+/** `day`: the UTC day whose quota the items were counted against (absent on older workflows). */
+type StudioAutoLabelMetadata = { kind: 'studio-auto-label'; userId: number; day?: string };
+
+const QUOTA_TTL_SECONDS = 2 * 24 * 60 * 60;
+const utcDay = () => new Date().toISOString().slice(0, 10);
+const dailyKey = (userId: number, day: string) =>
+  `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
 
 export type StudioAutoLabelResult = {
   key: string;
@@ -66,7 +72,7 @@ export async function submitStudioAutoLabel({
 }: StudioAutoLabelSubmitInput & { userId: number }) {
   assertSafeMediaUrls(items.map((i) => i.mediaUrl));
   assertCivitaiMediaUrls(items.map((i) => i.mediaUrl));
-  const release = await reserveDailyItems(userId, items.length);
+  const { release, day } = await reserveDailyItems(userId, items.length);
 
   const steps: WorkflowStepTemplate[] = items.map((item, i) => {
     const metadata = { key: item.key };
@@ -103,7 +109,7 @@ export async function submitStudioAutoLabel({
     return step;
   });
 
-  const metadata: StudioAutoLabelMetadata = { kind: 'studio-auto-label', userId };
+  const metadata: StudioAutoLabelMetadata = { kind: 'studio-auto-label', userId, day };
   const { data, error } = await clientSubmitWorkflow({
     client: internalOrchestratorClient,
     body: { tags: ['civitai', 'training-studio', 'auto-label'], metadata, steps, currencies: [] },
@@ -123,10 +129,10 @@ export async function submitStudioAutoLabel({
 /** Counts `count` items against the user's UTC-day quota, refusing past it. Fails closed: if the
  *  counter can't be read, nothing is submitted. Returns a release for a submit that didn't happen. */
 async function reserveDailyItems(userId: number, count: number) {
-  const day = new Date().toISOString().slice(0, 10);
-  const key = `${REDIS_SYS_KEYS.TRAINING.STUDIO_AUTO_LABEL_DAILY}:${userId}:${day}` as const;
+  const day = utcDay();
+  const key = dailyKey(userId, day);
   const total = await sysRedis.incrBy(key, count);
-  if (total === count) await sysRedis.expire(key, 2 * 24 * 60 * 60);
+  if (total === count) await sysRedis.expire(key, QUOTA_TTL_SECONDS);
   const release = async () => {
     await sysRedis.decrBy(key, count).catch(() => undefined);
   };
@@ -136,7 +142,27 @@ async function reserveDailyItems(userId: number, count: number) {
       `You've reached today's auto-label limit (${STUDIO_AUTO_LABEL_DAILY_ITEMS} items). It resets at midnight UTC.`
     );
   }
-  return release;
+  return { release, day };
+}
+
+/** Gives each failed step's item back to the quota it was counted against, once per step however
+ *  often the workflow is polled. Only today's quota: an earlier day's has no use for it, and a
+ *  decrement on an expired key would leave a negative counter with no TTL. Best effort: a poll is
+ *  never failed by it, and a miss only keeps the item counted, as before. */
+async function releaseFailedItems(
+  workflowId: string,
+  { userId, day }: StudioAutoLabelMetadata,
+  failedSteps: string[]
+) {
+  if (!failedSteps.length || day !== utcDay()) return;
+  try {
+    const releasedKey = `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED}:${workflowId}` as const;
+    const added = await redis.sAdd(releasedKey, failedSteps);
+    if (added === failedSteps.length) await redis.expire(releasedKey, QUOTA_TTL_SECONDS);
+    if (added > 0) await sysRedis.decrBy(dailyKey(userId, day), added);
+  } catch (e) {
+    console.warn('[training-studio] auto-label quota release failed', workflowId, e);
+  }
 }
 
 export async function pollStudioAutoLabel({
@@ -157,8 +183,10 @@ export async function pollStudioAutoLabel({
   if (metadata?.kind !== 'studio-auto-label' || metadata.userId !== userId)
     throw throwNotFoundError('Workflow not found');
 
-  const results = (data.steps ?? []).map((raw): StudioAutoLabelResult => {
+  const failedSteps: string[] = [];
+  const results = (data.steps ?? []).map((raw, index): StudioAutoLabelResult => {
     const step = raw as {
+      name?: string | null;
       status: string;
       metadata?: { key?: string };
       output?: {
@@ -185,9 +213,13 @@ export async function pollStudioAutoLabel({
       }
       return { key, status: 'succeeded' };
     }
-    if (TERMINAL_STATUSES.has(step.status)) return { key, status: 'failed' };
+    if (TERMINAL_STATUSES.has(step.status)) {
+      failedSteps.push(step.name ?? String(index));
+      return { key, status: 'failed' };
+    }
     return { key, status: 'pending' };
   });
+  await releaseFailedItems(workflowId, metadata as StudioAutoLabelMetadata, failedSteps);
 
   return { done: TERMINAL_STATUSES.has(data.status ?? ''), results };
 }

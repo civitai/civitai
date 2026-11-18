@@ -71,7 +71,11 @@ describe('Training Studio auto-label', () => {
     ).resolves.toEqual({ workflowId: 'wf-1' });
     const call = orch.submitWorkflow.mock.calls[0][0];
     expect(call.client).toEqual({ system: true });
-    expect(call.body.metadata).toEqual({ kind: 'studio-auto-label', userId: 7 });
+    expect(call.body.metadata).toEqual({
+      kind: 'studio-auto-label',
+      userId: 7,
+      day: expect.any(String),
+    });
     expect(call.body.steps).toHaveLength(1);
     expect(call.body.steps[0]).toMatchObject({ $type: 'wdTagging', metadata: { key: 'a.png' } });
   });
@@ -245,6 +249,71 @@ describe('Training Studio auto-label', () => {
     // One more item still fits.
     await submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items });
     expect(orch.submitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  describe('failed items give their daily quota back', () => {
+    const today = () => new Date().toISOString().slice(0, 10);
+    const sets = new Map<string, Set<string>>();
+    beforeEach(() => {
+      sets.clear();
+      redisMock.redis.sAdd.mockImplementation((async (k: string, m: string | string[]) => {
+        const set = sets.get(k) ?? new Set<string>();
+        sets.set(k, set);
+        let added = 0;
+        for (const v of Array.isArray(m) ? m : [m]) if (!set.has(v) && set.add(v)) added++;
+        return added;
+      }) as never);
+    });
+    const workflow = (day: string | undefined, steps: { name: string; status: string }[]) => ({
+      data: {
+        id: 'wf-q',
+        status: 'failed',
+        metadata: { kind: 'studio-auto-label', userId: 7, ...(day ? { day } : {}) },
+        steps: steps.map((s) => ({ ...s, metadata: { key: `k${s.name}` } })),
+      },
+    });
+
+    it('releases one item per failed step, once, however often it is polled', async () => {
+      counters.set(quotaKey(), 3);
+      orch.getWorkflow.mockResolvedValue(
+        workflow(today(), [
+          { name: '0', status: 'succeeded' },
+          { name: '1', status: 'failed' },
+          { name: '2', status: 'expired' },
+        ])
+      );
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      expect(counters.get(quotaKey())).toBe(1);
+    });
+
+    it('stamps the reservation day on the workflow at submit', async () => {
+      await submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items });
+      expect(orch.submitWorkflow.mock.calls[0]![0].body.metadata).toMatchObject({
+        kind: 'studio-auto-label',
+        userId: 7,
+        day: today(),
+      });
+    });
+
+    it("gives nothing back to today's quota for a workflow reserved on another day", async () => {
+      counters.set(quotaKey(), 3);
+      orch.getWorkflow.mockResolvedValue(workflow('2026-01-01', [{ name: '0', status: 'failed' }]));
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      orch.getWorkflow.mockResolvedValue(workflow(undefined, [{ name: '0', status: 'failed' }]));
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      expect(counters.get(quotaKey())).toBe(3);
+      // A decrement on an expired day's key would leave a negative counter with no TTL.
+      expect([...counters.entries()]).toEqual([[quotaKey(), 3]]);
+    });
+
+    it('still answers the poll when the release bookkeeping fails', async () => {
+      redisMock.redis.sAdd.mockRejectedValue(new Error('redis down'));
+      orch.getWorkflow.mockResolvedValue(workflow(today(), [{ name: '0', status: 'failed' }]));
+      await expect(pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' })).resolves.toMatchObject({
+        results: [{ key: 'k0', status: 'failed' }],
+      });
+    });
   });
 
   it('gives the items back when the submit fails', async () => {

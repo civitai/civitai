@@ -3266,6 +3266,12 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
   },
+  TRAINING: {
+    // Steps of a Studio auto-label workflow whose failure already gave its item back to the daily
+    // quota (set of step names), key :<workflowId>. Lost early, a later poll gives those items
+    // back again: at most one workflow's failed items, and only to today's quota.
+    STUDIO_AUTO_LABEL_RELEASED: 'training:studio-auto-label-released',
+  },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
     DEVICE_CODES: 'packed:oauth:device-codes',
