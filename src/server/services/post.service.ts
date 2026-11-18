@@ -3,7 +3,7 @@ import {
   isHeldForReview,
   isServableLevel,
   notHeldForReviewWhere,
-  servableLevelWhere,
+  servableLevelOrOwnUnratedWhere,
 } from '~/server/common/image-visibility';
 import {
   onStorySparkLost,
@@ -979,7 +979,10 @@ export const getPostEditImages = async ({ id, user, servableLevels }: PostEditIn
   const images = await db.image.findMany({
     where: {
       postId: id,
-      AND: [user.isModerator ? {} : notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
+      AND: [
+        user.isModerator ? {} : notHeldForReviewWhere(),
+        servableLevelOrOwnUnratedWhere(servableLevels, user.id),
+      ],
     },
     select: editPostImageSelect,
   });

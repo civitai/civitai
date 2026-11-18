@@ -151,6 +151,19 @@ export const isServableLevel = (nsfwLevel: number, levels: number) =>
 export const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
   levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
 
+/**
+ * `servableLevelWhere`, but `userId`'s own unrated uploads stay in, so an owner keeps sight of an
+ * upload while its scan runs. Not an `OR` around `servableLevelWhere`: with its uncapped `{}`
+ * inside, Prisma's `OR` returned no rows.
+ */
+export const servableLevelOrOwnUnratedWhere = (
+  levels: number,
+  userId: number
+): Prisma.ImageWhereInput =>
+  levels === allBrowsingLevelsFlag
+    ? {}
+    : { OR: [{ nsfwLevel: { in: Flags.instanceToArray(levels) } }, { userId, nsfwLevel: 0 }] };
+
 type RestrictedImageOptions = { alias?: string; viewerId?: number | null };
 
 /**

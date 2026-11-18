@@ -41,6 +41,8 @@ const HELD_MINOR = 3;
 const OTHER_REVIEW = 4;
 const MATURE = 5;
 const UNRATED = 6;
+const OTHER_UNRATED = 7;
+const HELD_UNRATED = 8;
 
 const owner = { id: OWNER } as SessionUser;
 const moderator = { id: 99, isModerator: true } as SessionUser;
@@ -60,7 +62,9 @@ beforeAll(async () => {
       (${HELD_MINOR}, ${OWNER}, ${POST}, 1, 'minor'),
       (${OTHER_REVIEW}, ${OWNER}, ${POST}, 1, 'poi'),
       (${MATURE}, ${OWNER}, ${POST}, 16, NULL),
-      (${UNRATED}, ${OWNER}, ${POST}, 0, NULL);
+      (${UNRATED}, ${OWNER}, ${POST}, 0, NULL),
+      (${OTHER_UNRATED}, 11, ${POST}, 0, NULL),
+      (${HELD_UNRATED}, ${OWNER}, ${POST}, 0, 'csam');
   `);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: { where: object }) =>
     (await harness.prisma.image.findMany({ where: args.where, select: { id: true } })).map(
@@ -74,7 +78,7 @@ const editorIds = async (user: SessionUser, servableLevels = allBrowsingLevelsFl
 
 describe('getPostEditImages: images held for review', () => {
   it('leaves held images out of the owner’s editor and keeps every other image', async () => {
-    expect(await editorIds(owner)).toEqual([CLEAN, OTHER_REVIEW, MATURE, UNRATED]);
+    expect(await editorIds(owner)).toEqual([CLEAN, OTHER_REVIEW, MATURE, UNRATED, OTHER_UNRATED]);
   });
 
   it('keeps them for a moderator', async () => {
@@ -85,16 +89,18 @@ describe('getPostEditImages: images held for review', () => {
       OTHER_REVIEW,
       MATURE,
       UNRATED,
+      OTHER_UNRATED,
+      HELD_UNRATED,
     ]);
   });
 });
 
 describe('getPostEditImages: the request level cap', () => {
-  it('a capped request gets no image above the cap and no unrated one', async () => {
-    expect(await editorIds(owner, sfwBrowsingLevelsFlag)).toEqual([CLEAN, OTHER_REVIEW]);
+  it('a capped request gets no image above the cap, and no unrated one but the owner’s own', async () => {
+    expect(await editorIds(owner, sfwBrowsingLevelsFlag)).toEqual([CLEAN, OTHER_REVIEW, UNRATED]);
   });
 
-  it('holds a moderator to the cap as well', async () => {
+  it('holds a moderator to the cap as well, unrated images of others included', async () => {
     expect(await editorIds(moderator, sfwBrowsingLevelsFlag)).toEqual([
       CLEAN,
       HELD_CSAM,
