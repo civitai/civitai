@@ -23,6 +23,47 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  test('a failed point read (a missing collection) deletes nothing and leaves other domains walking', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: Record<string, number[]> = { storyline: [], comic: [] };
+      const pg = {
+        query: bounded(async (_sql: string, [cursor]: [number, number]) => ({
+          rows: cursor === 0 ? [{ id: 1 }, { id: 2 }] : [],
+        })),
+      };
+      const lane = (name: string) => ({ add: (r: { id: number }) => void added[name].push(r.id) });
+      const queue = {
+        lanes: new Map([
+          ['storyline', lane('storyline')],
+          ['comic', lane('comic')],
+        ]),
+        isFull: false,
+      };
+      const missing = {
+        ...domain('comic', { everyMs: 1000, batch: 10 }),
+        store: () => ({
+          idsInRange: async () => {
+            throw Object.assign(new Error('Not found: Collection comics does not exist'), {
+              status: 404,
+            });
+          },
+        }),
+      } as unknown as Domain<any>;
+      const timers = startRefreshers(
+        [missing, domain('storyline', { everyMs: 1000, batch: 10 }, [1, 2, 7])],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added.comic).toEqual([]);
+      expect([...added.storyline].sort()).toEqual([1, 2, 7]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a row read that comes back empty over a populated range deletes nothing', async () => {
     vi.useFakeTimers();
     try {
