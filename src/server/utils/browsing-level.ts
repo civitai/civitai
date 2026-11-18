@@ -132,9 +132,8 @@ export function requestDomainBrowsingLevelCap(ctx: Pick<Context, 'user' | 'featu
 
 /**
  * A parent's level (a bounty's, an entry's) is its images' combined level, so the cap on the
- * parent does not reach each image: this drops those above the cap, mixed ratings that reach
- * above it, and unrated ones. An edit saved from such a read keeps the dropped links
- * (`shownImageIds` on `updateEntityImages`).
+ * parent does not reach each image: this applies it per image. An edit saved from such a read
+ * keeps the dropped links (`shownImageIds` on `updateEntityImages`).
  */
 export function capNestedImages<T extends { nsfwLevel?: number | null }>(
   images: T[],

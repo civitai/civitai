@@ -630,6 +630,63 @@ async function frozenFlagResults(event: string, flagDayId: number) {
   return { winners, teamPoints };
 }
 
+/** A flag of a frozen past day, for its badge where past flags show. */
+export type PastFlag = {
+  imageId: number;
+  flagDayId: number;
+  rank: number;
+  cutAt: Date;
+  closesAt: Date;
+  // The teams its freeze paid; none when nobody placed.
+  winners: string[];
+  // Paid across its winners, unvoided.
+  points: number;
+};
+
+/**
+ * Every frozen day's flags and who they paid: the same for every viewer. A flag on two days shows its
+ * later one; a day not frozen yet is left out.
+ */
+export async function getPastFlags(eventName: string): Promise<PastFlag[]> {
+  const { flags: config } = await readFlagRaceConfig(eventName);
+  if (!config) return [];
+  const [days, rows] = await Promise.all([
+    dbRead.$queryRaw<
+      { id: number; cutAt: Date; closesAt: Date; imageIds: number[] }[]
+    >`SELECT id, "cutAt", "closesAt", "imageIds" FROM "FlagDay" WHERE event = ${eventName} ORDER BY "startsAt"`,
+    dbRead.$queryRaw<{ sourceId: string; team: string | null; points: number; voided: boolean }[]>`
+      SELECT "sourceId", team, points, "voidedAt" IS NOT NULL AS voided FROM "EventAwardResult"
+      WHERE event = ${eventName} AND kind = ${FLAG_KIND}
+    `,
+  ]);
+  const paid = new Map<string, { winners: string[]; points: number }>();
+  for (const r of rows) {
+    const [, flagDayId, imageId] = r.sourceId.split(':');
+    const key = `${flagDayId}:${imageId}`;
+    const flag = paid.get(key) ?? { winners: [], points: 0 };
+    if (r.team) flag.winners.push(r.team);
+    if (r.team && !r.voided && r.points > 0) flag.points += Number(r.points);
+    paid.set(key, flag);
+  }
+  const byImage = new Map<number, PastFlag>();
+  for (const day of days) {
+    day.imageIds.forEach((imageId, index) => {
+      const flag = paid.get(`${day.id}:${imageId}`);
+      if (!flag) return;
+      byImage.set(imageId, {
+        imageId,
+        flagDayId: day.id,
+        rank: index + 1,
+        cutAt: day.cutAt,
+        closesAt: day.closesAt,
+        winners: [...flag.winners].sort(),
+        points: flag.points,
+      });
+    });
+  }
+  return [...byImage.values()];
+}
+
 /**
  * Today's flags with their hat counts, for the home row's badges: the same for every viewer, so it
  * is cached briefly here and at the edge. The counts are flagTally's, which the freeze pays from.
@@ -745,8 +802,44 @@ export async function getFlagRaceEventForCollection(collectionId: number): Promi
   for (const event of await loadEvents()) {
     const { flags } = await readFlagRaceConfig(event.name);
     if (flags?.on && flags.homeCollectionId === collectionId) return event.name;
+    if (flags?.on && flags.allTimeCollectionId === collectionId) return event.name;
   }
   return null;
+}
+
+export type FlagRaceTotals = {
+  // Days frozen so far.
+  days: number;
+  // Every team, with the flags it won (a tie counts for each tied team) and the points they paid.
+  teams: { team: string; flags: number; points: number }[];
+};
+
+/** The Flag Race so far, from every frozen day's payouts: the same for every viewer. */
+export async function getFlagRaceTotals(eventName: string): Promise<FlagRaceTotals | null> {
+  const def = (await loadEvents()).find((e) => e.name === eventName);
+  const { flags: config } = await readFlagRaceConfig(eventName);
+  if (!def || !config) return null;
+  const [won, [frozen]] = await Promise.all([
+    dbRead.$queryRaw<{ team: string; flags: number; points: number }[]>`
+      SELECT team, count(*)::int AS flags, coalesce(sum(points), 0)::int AS points
+      FROM "EventAwardResult"
+      WHERE event = ${eventName} AND kind = ${FLAG_KIND} AND team IS NOT NULL AND "voidedAt" IS NULL
+      GROUP BY team
+    `,
+    dbRead.$queryRaw<{ days: number }[]>`
+      SELECT count(DISTINCT split_part("sourceId", ':', 2))::int AS days FROM "EventAwardResult"
+      WHERE event = ${eventName} AND kind = ${FLAG_KIND}
+    `,
+  ]);
+  const byTeam = new Map(won.map((r) => [r.team, r]));
+  const teams = def.teams
+    .map((team) => ({
+      team,
+      flags: byTeam.get(team)?.flags ?? 0,
+      points: byTeam.get(team)?.points ?? 0,
+    }))
+    .sort((a, b) => b.points - a.points || b.flags - a.flags);
+  return { days: frozen?.days ?? 0, teams };
 }
 
 // Longest the reactionEarns answer (a running sync and two Redis reads) takes before answering false.

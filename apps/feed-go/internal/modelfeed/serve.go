@@ -37,6 +37,8 @@ type Sources interface {
 	VersionImages(ctx context.Context, versionIDs []int) (map[int][]map[string]any, error)
 	CreatorMemberships(ctx context.Context, userIDs []int) (map[int]bool, error)
 	UserIDByUsername(ctx context.Context, username string) (int, bool, error)
+	// OfficialModels is getOfficialModelIds (hydrate.Sources.OfficialModels).
+	OfficialModels(ctx context.Context) ([]hydrate.OfficialModel, error)
 }
 
 // Gallery reads the cached gallery settings the showcase hold reads (implemented by
@@ -98,18 +100,14 @@ type Answer struct {
 	Trivial bool
 }
 
-// Serve is getModelsInfiniteHandler for the supported subset: the browsing level resolved, then
-// getModelsFeed's loop of up to three getModelsWithImagesAndModelVersions pages until `limit` items.
+// Serve is getModelsInfiniteHandler for the supported subset, then getModelsFeed. The
+// official-checkpoint pin (Hot with a base-model filter) leads the first page only; pinned items do
+// not count towards `limit` and are excluded from every loop page, so a cursor never re-emits them.
 func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	in := req.Input
 	level, err := resolveLevel(in, req)
 	if err != nil {
 		return nil, err
-	}
-	if in.Sort == SortHot && len(in.BaseModels) > 0 {
-		// Hot with a base-model filter leads page 1 with the official checkpoints and drops them from
-		// every page (getOfficialModelIds): not ported.
-		return nil, fallback.New("model-official-pin")
 	}
 	if c := d.Config; !c.BaseModelMetrics || !c.ImagesSlim || !c.CoverageNext || !c.LoadingOpenToAll {
 		// A flag in the state production does not run: not ported (DESIGN.md §15.3).
@@ -119,16 +117,37 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	if d.Now != nil {
 		now = d.Now()
 	}
-	items := make([]any, 0, in.Limit)
-	var nextCursor any = superjson.Undefined{}
-	cursor := in.Cursor
-	loaded := false
-	for loop := 0; len(items) < in.Limit && loop < maxLoops; {
-		page, err := servePage(ctx, d, in, level, cursor, req.Viewer, now)
+	var pinnedIDs []int
+	if in.Sort == SortHot && len(in.BaseModels) > 0 {
+		official, err := d.Sources.OfficialModels(ctx)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, page.items...)
+		for _, m := range official {
+			if m.Type == "Checkpoint" {
+				pinnedIDs = append(pinnedIDs, m.ID)
+			}
+		}
+	}
+	var pinned []any
+	loaded := false
+	if len(pinnedIDs) > 0 && in.Cursor == "" {
+		page, err := servePage(ctx, d, in, level, "", req.Viewer, now, pageScope{take: len(pinnedIDs), only: pinnedIDs})
+		if err != nil {
+			return nil, err
+		}
+		pinned, loaded = page.items, page.loaded
+	}
+	items := make([]any, 0, len(pinned)+in.Limit)
+	var nextCursor any = superjson.Undefined{}
+	cursor := in.Cursor
+	var results []any
+	for loop := 0; len(results) < in.Limit && loop < maxLoops; {
+		page, err := servePage(ctx, d, in, level, cursor, req.Viewer, now, pageScope{take: in.Limit, exclude: pinnedIDs})
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, page.items...)
 		loaded = loaded || page.loaded
 		if page.next == "" {
 			break
@@ -137,10 +156,18 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 		nextCursor = page.next
 		loop++
 	}
+	items = append(append(items, pinned...), results...)
 	return &Answer{
 		Value:   superjson.Object{{Key: "items", Val: items}, {Key: "nextCursor", Val: nextCursor}},
 		Trivial: !loaded,
 	}, nil
+}
+
+// pageScope is what one getModelsWithImagesAndModelVersions call of getModelsFeed varies: its take
+// (`limit`), and the pin's onlyModelIds / excludeModelIds.
+type pageScope struct {
+	take          int
+	only, exclude []int
 }
 
 // resolveLevel is resolveRequestBrowsingLevels after applyDomainFeature: a signed-in caller with no
@@ -240,7 +267,7 @@ type rawInput struct {
 }
 
 // servePage is one getModelsWithImagesAndModelVersions call.
-func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string, viewer *Viewer, now time.Time) (*page, error) {
+func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string, viewer *Viewer, now time.Time, scope pageScope) (*page, error) {
 	viewerID, isMod := 0, false
 	if viewer != nil {
 		viewerID, isMod = viewer.ID, viewer.IsModerator
@@ -281,10 +308,8 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		targetUserID = id
 	}
 	if in.CollectionID != 0 {
-		// getModelsRaw checks the collection after the tag and creator lookups (so an unknown creator
-		// is still Node's 404) and before the cursor is parsed: a collection the viewer may not read
-		// is an empty page with no lookahead, whatever the cursor says. Read on every page, as Node
-		// reads it on every getModelsRaw call of its loop.
+		// Node checks the collection after the tag/creator lookups (an unknown creator stays a 404)
+		// and before parsing the cursor, on every page of its loop.
 		read, err := collectionReadable(ctx, d.DB, in.CollectionID, viewerID)
 		if err != nil {
 			return nil, err
@@ -294,7 +319,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		}
 	}
 	q := PageQuery{
-		Take: in.Limit, Cursor: cursor, Sort: in.Sort, BrowsingLevel: level, ViewerID: viewerID,
+		Take: scope.take, Cursor: cursor, Sort: in.Sort, BrowsingLevel: level, ViewerID: viewerID,
 		IsModerator: isMod, Archived: in.Archived, DisablePoi: raw.disablePoi, DisableMinor: raw.disableMinor,
 		ExcludedTagIDs: raw.excluded, TagID: tagID, FromPlatform: in.FromPlatform, TargetUserID: targetUserID,
 		Types: in.Types, BaseModels: in.BaseModels,
@@ -303,6 +328,7 @@ func servePage(ctx context.Context, d *Deps, in *Input, level int, cursor string
 		AllowNoCredit: in.AllowNoCredit, EarlyAccess: in.EarlyAccess, PaidAccess: in.PaidAccess,
 		HidePaid: in.HidePaid, OnSale: in.OnSale, ExcludedUserIDs: in.ExcludedUserIDs, FileFormats: in.FileFormats,
 		CollectionID: in.CollectionID, CollectionTagID: in.CollectionTagID,
+		OnlyModelIDs: scope.only, ExcludeModelIDs: scope.exclude,
 	}
 	if in.Period != "AllTime" && in.PeriodMode != "stats" {
 		q.PeriodCutoff = decreaseDate(now, in.Period)

@@ -114,7 +114,7 @@
       </ul>
 
       {#if status.smites > 0}
-        <SmiteNotice smites={status.smites} maxSmites={status.maxSmites} />
+        <SmiteNotice smites={status.smites} maxSmites={status.maxSmites} heartBack={status.heartBack} />
       {/if}
     </section>
 

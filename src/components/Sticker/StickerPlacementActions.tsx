@@ -63,7 +63,7 @@ export function StickerPlacementActions({
   const utils = trpc.useUtils();
 
   const act = trpc.placement.actOnStickers.useMutation({
-    onSuccess: async (result) => {
+    onSuccess: (result) => {
       showSuccessNotification({
         // Deliberately does not promise a retry. Nothing retries a failed owner
         // action; the placement stays pending and reaches expiry, which refunds
@@ -73,13 +73,15 @@ export function StickerPlacementActions({
           ? `Actioned ${result.settled}. ${result.failed.length} didn't go through — try those again.`
           : `Actioned ${result.settled}.`,
       });
-      await utils.placement.invalidate();
+      // Not awaited: the buttons stay disabled while this callback runs, and the
+      // refetches have nothing to do with whether the action went through.
+      void utils.placement.invalidate();
       // The user-menu badge counts these, and it rides on `checkNotifications`,
       // which is `staleTime: Infinity` with no invalidation anywhere — so
       // without this an owner who just cleared their whole queue keeps a badge
       // advertising the number they started the session with, pointing at
       // nothing. Answering a placement is the one event that changes it.
-      await utils.user.checkNotifications.invalidate();
+      void utils.user.checkNotifications.invalidate();
       setConfirming(false);
       setApproving(false);
       onDone?.();

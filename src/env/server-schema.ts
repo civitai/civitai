@@ -484,6 +484,9 @@ export const serverSchema = z
       .catch([])
       .transform((ids) => ids.filter((id) => id !== 0)),
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
+    // How API routes apply the token scope they declare (`getServerAuthSession`'s `scope`): `off`
+    // ignores it, `report` logs each request it would refuse, `enforce` applies it.
+    REST_SCOPE_ENFORCE: z.enum(['off', 'report', 'enforce']).default('off').catch('off'),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
@@ -1282,6 +1285,12 @@ export const serverSchema = z
     // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+    // Build review previews, serve none (PR previews). A passed review build is recorded on the
+    // request (`preview-failed` with `buildOnly: true`) and nothing is deployed: no apply Job into
+    // APPS_KUBE_NAMESPACE and no shared-server publish. Every function that creates a Job in that
+    // namespace refuses (`assertAppsNamespaceWritable`), and review/agent teardowns do nothing.
+    // Unset (production) changes nothing.
+    APPS_REVIEW_BUILD_ONLY: zc.booleanString.optional().default(false),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
     // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.

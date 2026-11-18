@@ -4,8 +4,14 @@ import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
-/** Today's flags and their live counts for an event's Flag Race; null while loading or off. */
-export function useFlagRow(event: string | undefined): FlagRow | null {
+/**
+ * Today's flags and their live counts for an event's Flag Race, and with `past`, past days' results;
+ * null while loading or off.
+ */
+export function useFlagRow(
+  event: string | undefined,
+  { past }: { past?: boolean } = {}
+): FlagRow | null {
   const { data: summary } = trpc.hatTurf.getFlags.useQuery(
     { event: event ?? '' },
     {
@@ -16,7 +22,14 @@ export function useFlagRow(event: string | undefined): FlagRow | null {
       trpc: { context: { skipBatch: true } },
     }
   );
-  return useMemo(() => (event && summary ? { event, summary } : null), [event, summary]);
+  const { data: pastFlags } = trpc.hatTurf.getPastFlags.useQuery(
+    { event: event ?? '' },
+    { enabled: !!event && !!past, staleTime: 5 * 60_000, trpc: { context: { skipBatch: true } } }
+  );
+  return useMemo(
+    () => (event && summary ? { event, summary, past: pastFlags } : null),
+    [event, summary, pastFlags]
+  );
 }
 
 /** The event whose Flag Race this Collection holds (its flags collection), if any. */

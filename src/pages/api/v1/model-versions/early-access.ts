@@ -15,6 +15,7 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Tracker } from '~/server/clickhouse/client';
 import { webhookTokenAuthenticates } from '~/server/prom/webhook-token.metrics';
 import type { SessionUser } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // Narrow cross-app write for a model version's paid-access config — the creator
 // studio (SvelteKit spoke) calls this server-to-server, forwarding the shared
@@ -130,5 +131,6 @@ export default AuthedEndpoint(
       return res.status(status).json({ error: err?.message ?? 'Failed to update early access' });
     }
   },
-  ['POST']
+  ['POST'],
+  { scope: { scope: TokenScope.ModelsWrite } }
 );

@@ -78,7 +78,7 @@ export const load: LayoutServerLoad = async ({ locals, depends }) => {
     userId: locals.user?.id ?? null,
     player: playerBadge(locals.user, civitaiUrl, imageUrl),
     isPlayer: player !== undefined,
-    shopOpen: shopEnabled(),
+    shopOpen: await shopEnabled(),
     feedbackOpen: locals.user ? await feedbackOpen(locals.user) : false,
     // For the header's gold popover, the rank gauge popover and the rank badge on the avatar.
     goldPerBuzz: CONVERSION.goldPerBuzz,
