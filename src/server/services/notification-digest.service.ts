@@ -24,7 +24,10 @@ import {
   getNotificationMessage,
   silenceCheckTypes,
 } from '~/server/notifications/utils.notifications';
-import { getEmailUnsubscribeUrl } from '~/server/services/notification-email.service';
+import {
+  getEmailUnsubscribeUrl,
+  isNotificationEmailEnabled,
+} from '~/server/services/notification-email.service';
 import { sleep as realSleep } from '~/server/utils/concurrency-helpers';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -59,14 +62,14 @@ export type DigestSkipReason = (typeof digestSkipReasons)[number];
 
 export type DigestRunResult = {
   /** Why the run did nothing at all, if it did nothing. */
-  idle: 'cycle-done' | 'table-missing' | null;
+  idle: 'email-disabled' | 'cycle-done' | 'table-missing' | null;
   /** Users read this run (not deleted, not banned). */
   considered: number;
   emailed: number;
   failed: number;
   skipped: Record<DigestSkipReason, number>;
   /** Why the run stopped before the end of the pass. */
-  stopped: 'budget' | 'send-cap' | null;
+  stopped: 'budget' | 'send-cap' | 'email-disabled' | null;
   /** True when this run finished the pass. */
   cycleDone: boolean;
 };
@@ -91,6 +94,8 @@ export type DigestDeps = {
   checkIfCanceled?: () => void;
   /** Whether this user is in the digest's rollout: the Flipt flag, evaluated per user. */
   inRollout?: (userId: number) => Promise<boolean>;
+  /** The notification-email kill switch (KeyValue `notification-email-enabled`). */
+  emailEnabled?: () => Promise<boolean>;
 };
 
 const UNDEFINED_TABLE = '42P01';
@@ -112,6 +117,14 @@ async function readCandidates(db: Kysely<DB>, afterId: number, limit: number) {
     ORDER BY u.id
     LIMIT ${limit}`.execute(db);
   return rows;
+}
+
+/** The opt-out read on the primary, so one written since the replica read already holds. */
+async function optedOutOnPrimary(db: Kysely<DB>, userId: number) {
+  const { rows } = await sql<{ one: number }>`
+    SELECT 1 AS one FROM "UserEmailNotificationOptOut"
+    WHERE "userId" = ${userId} AND "type" = ${MISSED_DIGEST_EMAIL_TYPE}`.execute(db);
+  return rows.length > 0;
 }
 
 async function recordSent(db: Kysely<DB>, userId: number, at: Date) {
@@ -159,6 +172,10 @@ async function renderItems(user: UnseenNotifications): Promise<MissedNotificatio
  * Each send is recorded in `UserNotificationDigest` BEFORE the email goes out, so a run that dies
  * mid-send can skip a user's digest for the week but never send it twice. Sends are spaced by
  * `minIntervalMs` (the shared bulk-email pace) and capped per run.
+ *
+ * Two stops: the Flipt flag, and the notification-email kill switch shared with the
+ * per-notification emails. The switch is read before the run and again before every send, so
+ * turning it off stops a run within the switch's cache lifetime.
  */
 export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promise<DigestRunResult> {
   const {
@@ -173,6 +190,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
     checkIfCanceled = () => undefined,
     inRollout = (userId: number) =>
       isFlipt(FLIPT_FEATURE_FLAGS.MISSED_NOTIFICATION_DIGEST, String(userId)),
+    emailEnabled = isNotificationEmailEnabled,
   } = deps;
   const result: DigestRunResult = {
     idle: null,
@@ -184,6 +202,8 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
     cycleDone: false,
   };
   const startedAt = now().getTime();
+
+  if (!(await emailEnabled())) return { ...result, idle: 'email-disabled' };
 
   let cursor = await dbKV.get<DigestCursor>(DIGEST_CURSOR_KEY);
   if (!cursor || cursor.done) {
@@ -216,6 +236,13 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
   try {
     pages: for (;;) {
       checkIfCanceled();
+      // Also checked here, not only before a send: a run of pages with nobody eligible on them
+      // (the whole table, while the flag is off) would otherwise never stop for the budget.
+      const pageStop = outOfBudget();
+      if (pageStop) {
+        result.stopped = pageStop;
+        break;
+      }
       const page = await readCandidates(read, cursor.lastUserId, batchSize);
       result.considered += page.length;
 
@@ -255,7 +282,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
 
       for (const user of eligible) {
         checkIfCanceled();
-        const stop = outOfBudget();
+        const stop = outOfBudget() ?? ((await emailEnabled()) ? null : ('email-disabled' as const));
         if (stop) {
           result.stopped = stop;
           break pages;
@@ -269,6 +296,11 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
         const items = await renderItems(missed);
         if (items.length === 0) {
           result.skipped['unrenderable']++;
+          continue;
+        }
+
+        if (await optedOutOnPrimary(write, user.id)) {
+          result.skipped['opted-out']++;
           continue;
         }
 

@@ -205,6 +205,8 @@ so the digest never repeats one. Users with nothing unseen get nothing.
   run. `UserNotificationDigest` records each send before the email goes out; with that table
   missing the job sends nothing.
 - **Ramp:** the Flipt flag `missed-notification-digest`, evaluated per user. Off, it emails no one.
+- **Kill switch:** the `notification-email-enabled` row above stops the digest too. It is read
+  before each run and before each send, so a run already going stops at its next send.
 - **Reads:** the notifications app's `POST /notifications/unseen` (`queryUnseenNotifications`).
 - **Counts:** each run logs `notification-digest` with users considered, emailed, failed and
   skipped by reason.

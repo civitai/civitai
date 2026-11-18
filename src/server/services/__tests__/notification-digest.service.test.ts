@@ -165,6 +165,7 @@ const run = (deps: Parameters<typeof runMissedNotificationDigest>[0] = {}) =>
     write: db,
     batchSize: 4,
     inRollout: async () => true,
+    emailEnabled: async () => true,
     ...deps,
   });
 
@@ -265,6 +266,30 @@ describe('who gets the weekly digest', () => {
     expect(mailedTo()).toEqual(['nine@example.com', 'one@example.com']);
   });
 
+  it('stops for the run budget before reading a page, not only before a send', async () => {
+    const result = await run({ budgetMs: 0 });
+    expect(result).toMatchObject({ considered: 0, emailed: 0, stopped: 'budget', cycleDone: false });
+    expect(h.unseen).not.toHaveBeenCalled();
+  });
+
+  it('an opt-out written after the page was read still holds: it is re-read before the send', async () => {
+    // The page is read first, then each user's rollout is checked: user 1 opts out in between.
+    const result = await run({
+      inRollout: async (id) => {
+        if (id === 1)
+          await h.pg.query(
+            `INSERT INTO "UserEmailNotificationOptOut" ("userId", type) VALUES (1, $1)`,
+            [MISSED_DIGEST_EMAIL_TYPE]
+          );
+        return true;
+      },
+    });
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(result.skipped['opted-out']).toBe(2);
+    const rows = await h.pg.query(`SELECT 1 FROM "UserNotificationDigest" WHERE "userId" = 1`);
+    expect(rows.rows).toHaveLength(0);
+  });
+
   it('a failed send is not recorded, so the user is tried again on the next pass', async () => {
     vi.mocked(sendEmail).mockRejectedValueOnce(new Error('boom'));
     const result = await run();
@@ -274,6 +299,56 @@ describe('who gets the weekly digest', () => {
     );
     // User 1 failed (first in id order); 9 was sent; 6 kept its earlier row.
     expect(rows.rows.map((r) => r.userId)).toEqual([6, 9]);
+  });
+});
+
+describe('the notification-email kill switch', () => {
+  it('with the switch off a run sends nothing and leaves the pass where it was', async () => {
+    const result = await run({ emailEnabled: async () => false });
+    expect(result).toMatchObject({ idle: 'email-disabled', considered: 0, emailed: 0 });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(h.unseen).not.toHaveBeenCalled();
+    expect(h.kv.has(DIGEST_CURSOR_KEY)).toBe(false);
+  });
+
+  it('turned off mid-run, the run stops at its next send; turned back on, the next run carries on', async () => {
+    let enabled = true;
+    vi.mocked(sendEmail).mockImplementation(async () => {
+      enabled = false;
+      return undefined as never;
+    });
+    const first = await run({ emailEnabled: async () => enabled });
+    expect(first).toMatchObject({ emailed: 1, stopped: 'email-disabled', cycleDone: false });
+    expect(mailedTo()).toEqual(['one@example.com']);
+
+    enabled = true;
+    vi.mocked(sendEmail).mockReset();
+    const second = await run({ emailEnabled: async () => enabled });
+    expect(second.emailed).toBe(1);
+    expect(mailedTo()).toEqual(['nine@example.com']);
+  });
+
+  it('by default it reads the notification-email-enabled KeyValue row', async () => {
+    const { clearNotificationEmailEnabledCache } = await import(
+      '~/server/services/notification-email.service'
+    );
+    clearNotificationEmailEnabledCache();
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'notification-email-enabled',
+      value: false,
+    } as never);
+    const off = await run({ emailEnabled: undefined });
+    expect(off.idle).toBe('email-disabled');
+    expect(sendEmail).not.toHaveBeenCalled();
+
+    clearNotificationEmailEnabledCache();
+    dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+      key: 'notification-email-enabled',
+      value: true,
+    } as never);
+    const on = await run({ emailEnabled: undefined });
+    expect(on.emailed).toBe(2);
+    clearNotificationEmailEnabledCache();
   });
 });
 
