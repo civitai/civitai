@@ -372,7 +372,7 @@ describe('deal list status badge', () => {
   });
 
   it('leaves deals no moderator settled on their status label', () => {
-    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Cancelled');
+    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Canceled');
     expect(dealStatusBadge({ status: 'Completed' })).toBe('Complete');
   });
 });

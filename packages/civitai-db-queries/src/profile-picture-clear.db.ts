@@ -15,9 +15,9 @@ const run = async (db: Kysely<DB>, statement: Statement) => {
   return rows.map((row) => row.id);
 };
 
-/** Whether `User.image` (aliased `u`) names the key of the image aliased `alias`, in any url form. */
-export const userImageNamesPicture = (alias: string) =>
-  `(length(${alias}.url) > 0 AND strpos(replace(lower(u.image), '%2d', '-'), lower(${alias}.url)) > 0)`;
+/** Whether `User.image` (`User` aliased `user`) names the key of the image aliased `alias`, in any url form. */
+export const userImageNamesPicture = (alias: string, user = 'u') =>
+  `(length(${alias}.url) > 0 AND strpos(replace(lower(${user}.image), '%2d', '-'), lower(${alias}.url)) > 0)`;
 
 const heldImageMarker = `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`;
 
@@ -54,8 +54,8 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
  * Of `userIds`, those whose profile picture is under an owner-hidden hold or carries a block marker.
  * For each of them whose `User.image` names that picture, clears `User.image` in the same statement
  * and marks it with `meta.heldImageCleared = { pictureId }` (no value: the value is the held key),
- * which the main app's `restoreClearedUserImages` reads once the picture is servable again. Only an
- * object `meta` takes the marker. Plain SQL text, so the main app runs it on Prisma and the moderator
+ * which the main app's `restoreClearedUserImages` reads once the picture is servable again. An object,
+ * SQL NULL or JSON null `meta` takes the marker; any other JSON value keeps its value without one. Plain SQL text, so the main app runs it on Prisma and the moderator
  * app on Kysely (`clearHeldUserImages`).
  */
 export const clearHeldUserImagesStatement = (userIds: number[]) => ({

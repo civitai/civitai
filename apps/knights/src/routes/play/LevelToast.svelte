@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { LEVEL_AUTO_HIDE_MS, autoHide } from '$lib/auto-hide';
   import { count } from '$lib/format';
   import '$lib/overlay.css';
 
@@ -23,9 +24,17 @@
     milestone?: string | null;
     gold?: number;
   } = $props();
+
+  let form = $state<HTMLFormElement>();
 </script>
 
-<section class="toast" class:floating role="status" aria-label="Level up">
+<section
+  class="toast"
+  class:floating
+  role="status"
+  aria-label="Level up"
+  use:autoHide={{ ms: LEVEL_AUTO_HIDE_MS, onhide: () => form?.requestSubmit(), held: !!message }}
+>
   <span class="ov-crest crest">{level}</span>
   <div class="body">
     <p class="ov-eyebrow">{milestone ? 'Milestone' : 'Level up'}</p>
@@ -34,20 +43,23 @@
     {#if xpToNext !== null}<p class="sub">{count(xpToNext)} XP to level {level + 1}</p>{/if}
     {#if message}<p class="notice" role="alert">{message}</p>{/if}
   </div>
-  <form method="POST" action="?/dismissProgress" use:enhance={submit}>
-    <button type="submit" class="dismiss">Onward</button>
+  <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
+    <button type="submit" class="ov-ack">Onward</button>
   </form>
+  <span class="countdown" aria-hidden="true"></span>
 </section>
 
 <style>
   .toast {
+    position: relative;
+    overflow: hidden;
     display: flex;
     align-items: center;
     gap: 16px;
     width: min(500px, 100%);
     padding: 16px 20px;
     border: 1px solid var(--io-gold);
-    border-radius: 8px;
+    border-radius: 12px;
     background: linear-gradient(180deg, #3a2c10, var(--io-surface));
     box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
     animation: ov-fade var(--motion-base) var(--ease-out-quart);
@@ -60,6 +72,23 @@
     z-index: 4;
     width: min(500px, calc(100% - 32px));
     transform: translateX(-50%);
+  }
+  /* A faint track for the time used; the bar on it drains over the auto-hide delay and stops while the timer waits. */
+  .countdown {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    height: 4px;
+    background: rgb(255 255 255 / 0.08);
+  }
+  .countdown::before {
+    position: absolute;
+    inset: 0;
+    background: var(--io-gold);
+    content: '';
+    transform-origin: left;
+    animation: mo-countdown var(--auto-hide-ms) linear forwards;
+    animation-play-state: var(--auto-hide-state);
   }
   .toast:not(.floating) {
     margin: 8px auto;
@@ -94,14 +123,6 @@
     color: var(--io-gold);
     font: 600 16px/1.3 var(--io-font-body);
   }
-  .dismiss {
-    min-height: 0;
-    padding: 6px 10px;
-    border-color: var(--io-gold-muted);
-    background: transparent;
-    color: var(--io-gold);
-    font: 600 12px/1.2 var(--io-font-ui);
-  }
 
   @media (max-width: 40rem) {
     .toast.floating {
@@ -121,9 +142,6 @@
     }
     .heading {
       font-size: 14px;
-    }
-    .dismiss {
-      min-height: 36px;
     }
   }
 </style>

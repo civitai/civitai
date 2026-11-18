@@ -1334,8 +1334,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // build takes no resources); LORA training is AI Toolkit only
   { ecosystemId: ECO.MiniMaxH3, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.MiniMaxH3, supportType: 'training', modelTypes: loraOnly },
-  // MiniMax H3 Image - checkpoint only, no training row: LoRAs and training are not wired yet.
-  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointOnly },
+  // MiniMax H3 Image - no training row: training is not wired yet.
+  { ecosystemId: ECO.MiniMaxH3Image, supportType: 'generation', modelTypes: checkpointAndLora },
   // Fibo 2.0 - fine-tunes and LoRAs of `dev` apply to create only; edit runs the official weights.
   { ecosystemId: ECO.Fibo2, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1850,7 +1850,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.MiniMaxH3Image,
     defaults: {
       model: { id: 3463368 },
-      modelLocked: true,
     },
   },
   {
@@ -4166,7 +4165,6 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: "MiniMax's image generation and editing model",
     type: 'image',
     ecosystemId: ECO.MiniMaxH3Image,
-    hidden: true,
     licenseId: 55,
   },
 

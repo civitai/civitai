@@ -71,6 +71,27 @@ describe('Knights of New Order sources config action', () => {
     expect(save).toHaveBeenCalledWith({ enabled: true, sfwRate: 0.05, nsfwRate: 0.125 }, 77);
   });
 
+  it('saves the open-item cap as a number, commas allowed, and leaves it out when blank', async () => {
+    save.mockResolvedValue({ ok: true, changed: true });
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '100', nsfwPercent: '30', maxOpen: '60,000' })
+    );
+    expect(save).toHaveBeenLastCalledWith(
+      { enabled: true, sfwRate: 1, nsfwRate: 0.3, maxOpen: 60000 },
+      77
+    );
+    await actions.save(
+      formEvent({ enabled: 'true', sfwPercent: '100', nsfwPercent: '30', maxOpen: '' })
+    );
+    expect(save).toHaveBeenLastCalledWith({ enabled: true, sfwRate: 1, nsfwRate: 0.3 }, 77);
+    expect(
+      await actions.save(
+        formEvent({ enabled: 'true', sfwPercent: '100', nsfwPercent: '30', maxOpen: '6e4' })
+      )
+    ).toMatchObject({ status: 400 });
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
   it('saves the yes/no share as a 0–1 share, 0 turning questions off', async () => {
     save.mockResolvedValueOnce({ ok: true, changed: true });
     await actions.save(

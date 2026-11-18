@@ -1,10 +1,10 @@
-import { sql } from 'kysely';
 import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
   knightsSourcesMaxOpen,
   parseKnightsSourcesConfig,
   type KnightsSourcesConfig,
 } from '@civitai/shared/new-order';
+import { countOpenServableKnightItems } from '@civitai/db/knights';
 import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -65,26 +65,13 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
 }
 
 /**
- * Open Knight-stage rating items, counted only up to `limit` so the read stays short on the (status, minRank, ...) index. Yes/no
- * questions share the queue table but not this intake, so they are left out: an imported backlog must not stop sampling. The result is
- * cached for a minute whenever the query lands. A failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
+ * Open servable Knight-stage rating items (`countOpenServableKnightItems`), counted only up to `limit`. Yes/no questions share
+ * the queue table but not this intake: an imported backlog must not stop sampling. Cached for a minute whenever the query
+ * lands; a failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
  */
 function startOpenCount(limit: number): Promise<number | null> {
-  const read: Promise<number | null> = kyselyRead
-    .selectFrom(
-      kyselyRead
-        .selectFrom('KnightsQueueItem')
-        .select(sql<number>`1`.as('one'))
-        .where('status', '=', 'Open')
-        .where('minRank', '=', 'Knight')
-        .where('questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
-        .limit(limit)
-        .as('open')
-    )
-    .select((eb) => eb.fn.countAll<string>().as('n'))
-    .executeTakeFirstOrThrow()
-    .then((row) => {
-      const open = Number(row.n);
+  const read: Promise<number | null> = countOpenServableKnightItems(kyselyRead, limit)
+    .then((open) => {
       if (openCountRead === read)
         openCount = { open, limit, expiresAt: Date.now() + OPEN_COUNT_TTL_MS };
       return open;

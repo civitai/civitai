@@ -152,7 +152,7 @@ export const escrowCopy: Record<EscrowState, { title: string; body: string; colo
   },
   held: {
     title: 'Held in escrow',
-    body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is cancelled.',
+    body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is canceled.',
     color: 'yellow',
   },
   awaitingRelease: {
@@ -201,7 +201,7 @@ export const dealStatusLabel: Record<ServiceDealStatus, string> = {
   Declined: 'Declined',
   Expired: 'Expired',
   CancellationRequested: 'Cancellation requested',
-  Cancelled: 'Cancelled',
+  Cancelled: 'Canceled',
   Disputed: 'In dispute',
 };
 
@@ -268,11 +268,11 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
 /** The codes the server writes as the comment of a Cancelled or Completed event it closed itself. */
 export const closeCommentLabel: Record<string, string> = {
   withdrawn: 'Request withdrawn by the buyer',
-  late: 'Cancelled by the buyer after the due date',
-  buyer_refund: 'Cancelled by the buyer with a full refund',
-  overdue: 'Cancelled automatically: nothing delivered in time',
-  cancellation_unanswered: 'Cancelled automatically: the cancellation request was not answered',
-  payment_refused: 'Cancelled: the payment was refused',
+  late: 'Canceled by the buyer after the due date',
+  buyer_refund: 'Canceled by the buyer with a full refund',
+  overdue: 'Canceled automatically: nothing delivered in time',
+  cancellation_unanswered: 'Canceled automatically: the cancellation request was not answered',
+  payment_refused: 'Canceled: the payment was refused',
   auto: 'Completed automatically: the buyer did not respond in time',
 };
 

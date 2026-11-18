@@ -7,9 +7,8 @@
   let {
     smites,
     message,
-    submitting,
     submit,
-  }: { smites: number; message: string | null; submitting: boolean; submit: SubmitFunction } = $props();
+  }: { smites: number; message: string | null; submit: SubmitFunction } = $props();
 </script>
 
 <section class="reset" role="status" aria-labelledby="reset-title">
@@ -28,7 +27,7 @@
       <p class="notice" role="alert">{message}</p>
     {/if}
     <form method="POST" action="?/dismissResetNotice" use:enhance={submit}>
-      <button type="submit" class="ov-primary" disabled={submitting}>Understood</button>
+      <button type="submit" class="ov-primary">Understood</button>
     </form>
   </div>
 </section>
