@@ -1,3 +1,4 @@
+import { BAN_REASONS_ALWAYS_REMOVING_MEDIA } from '@civitai/shared/held-url';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -1381,11 +1382,8 @@ export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
 
 /** Minor-safety bans always remove media: `toggleBan` ignores `removeMedia: false` for these. */
-export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] = [
-  BanReasonCode.SexualMinor,
-  BanReasonCode.SexualMinorGenerator,
-  BanReasonCode.SexualMinorTraining,
-];
+export const banReasonsAlwaysRemovingMedia: readonly BanReasonCode[] =
+  BAN_REASONS_ALWAYS_REMOVING_MEDIA.map((code) => BanReasonCode[code]);
 
 export const banReasonDetails: Record<
   BanReasonCode,

@@ -956,6 +956,9 @@ importers:
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
+      '@civitai/db-queries':
+        specifier: workspace:*
+        version: link:../../packages/civitai-db-queries
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
@@ -965,6 +968,9 @@ importers:
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../../packages/civitai-shared
       '@node-oauth/oauth2-server':
         specifier: ^5.3.0
         version: 5.3.0
@@ -1330,8 +1336,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-notifications
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1488,8 +1494,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-db-schema
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -1614,8 +1620,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
       '@civitai/orchestration-client':
-        specifier: 0.2.4
-        version: 0.2.4
+        specifier: 0.2.6
+        version: 0.2.6
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -2516,10 +2522,6 @@ packages:
     engines: {node: '>=15'}
     peerDependencies:
       next: ^12.1.4 || ^13 || ^14
-
-  '@civitai/orchestration-client@0.2.4':
-    resolution: {integrity: sha512-lzn8T8Z797lxaIP3TAC8M710dYa+++jlBamLKv8PmkHhyGH18x0uGXptasreXP9GdT4C/7wF2Hp3NRu/z6Qu/Q==}
-    engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/orchestration-client@0.2.6':
     resolution: {integrity: sha512-94iQStA5wOW6dm9sL1TaZiYS8DaWGWb45ACSKUsMvURXqg37aCMaNDggPIlto+eEnQj7ouSYXKlfo8pdRKFbxQ==}
@@ -13575,12 +13577,6 @@ snapshots:
     dependencies:
       next: 16.4.5(patch_hash=6abf32f82fe626ed53eff00f56087bb3ce0b569686df1a59e53430d9d6ade0e7)(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(patch_hash=7586662a868adda8986f96d46f105f8e03dae2cfcd130fe7bd27df3154e77b14)(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24)))(react@18.3.1(patch_hash=eb9a0edc26a7b6e89b2d703cb4dd6fff051727f61c7d3939e2181a03531aff24))(sass@1.90.0)
       whatwg-fetch: 3.6.20
-
-  '@civitai/orchestration-client@0.2.4':
-    dependencies:
-      '@hey-api/client-fetch': 0.1.14
-      rfc6902: 5.2.0
-      tslib: 2.8.1
 
   '@civitai/orchestration-client@0.2.6':
     dependencies:
