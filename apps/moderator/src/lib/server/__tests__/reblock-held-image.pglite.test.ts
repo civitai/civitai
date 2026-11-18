@@ -257,11 +257,11 @@ describe('blocking an image already removed with its block reason kept', () => {
     expect(actionedReports()).toEqual([]);
   });
 
-  it('leaves its report open when the review flag is on it too', async () => {
+  it('leaves its report open when the review flag is on it too, and repeats its CSAM entry', async () => {
     await block(HELD_FLAGGED);
 
     expect(await row(HELD_FLAGGED)).toMatchObject({ ingestion: 'Blocked', blockedFor: 'CSAM' });
-    expect(blocklistReasons()).toEqual({});
+    expect(blocklistReasons()).toEqual({ '105': 'CSAM' });
     expect(notifiedImages()).toEqual([]);
     expect(actionedReports()).toEqual([]);
   });
@@ -328,8 +328,8 @@ describe('a bulk block over held and other images', () => {
     expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
     expect(actionedReports()).toEqual([report(OTHER_REASON)]);
     expect(await deferredImages()).toEqual([FLAG_ONLY, FLAGGED_LIVE]);
-    // The image removed with only its flag left is not blocked again, so it adds no entry.
-    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'TOS', '104': 'TOS' });
+    // The image removed with only its flag left repeats only its blocklist entry.
+    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '102': 'TOS', '103': 'TOS', '104': 'TOS' });
   });
 
   it('completes when the blocklist check fails: one notice, reports actioned, the skip logged', async () => {

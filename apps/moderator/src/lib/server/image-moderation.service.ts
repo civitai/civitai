@@ -10,6 +10,7 @@ import {
   applyAcceptSideEffects,
   applyVisibilitySideEffects,
   CsamBlocklistWriteError,
+  writeBlockBlocklistEntry,
   refundAppealFee,
   notifyAppealResolved,
   emailAppealResolution,
@@ -443,7 +444,20 @@ export async function blockImage({
         .execute();
     return { updated: !!updated, state };
   });
-  if (!updated) return state?.held ? { skipped: true } : {};
+  if (!updated) {
+    if (!state?.held) return {};
+    // Already removed and held: a re-block repeats only the blocklist entry, which is how a moderator
+    // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
+    await writeBlockBlocklistEntry(img, {
+      imageId,
+      actorUserId: userId,
+      csam: state.removedForCsam,
+    }).catch((e: unknown) => {
+      if (e instanceof CsamBlocklistWriteError) e.skipped = true;
+      throw e;
+    });
+    return { skipped: true };
+  }
   const blocked = state!;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
