@@ -11,6 +11,17 @@ import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 const now = new Date('2026-11-11T15:42:00Z');
 
 describe('toSemanticImageSearchInput', () => {
+  it('asks to leave out the viewer\'s own images only for "more like this"', () => {
+    const base = { filters: {}, browsingLevel: 1, excludeOwn: true };
+    expect(toSemanticImageSearchInput({ ...base, imageId: 6 }).excludeOwn).toBe(true);
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, query: 'cat' }).excludeOwn
+    ).toBeUndefined();
+    expect(
+      toSemanticImageSearchInput({ ...base, imageId: 6, excludeOwn: false }).excludeOwn
+    ).toBeUndefined();
+  });
+
   it('sends the filters the index can apply and never the ones it cannot', () => {
     const input = toSemanticImageSearchInput({
       query: 'castle',

@@ -265,6 +265,25 @@ describe('a stale index cannot surface a hidden image', () => {
     expect(items.map((x) => x.id)).toEqual([5, 7]);
   });
 
+  it('leaves the viewer\'s own images out of "more like this" when asked, but still finds the source', async () => {
+    const asked: { ids: number[]; excludedUserIds?: number[] }[] = [];
+    h.fakeGetAllImages = async (args) => {
+      asked.push(args as { ids: number[]; excludedUserIds?: number[] });
+      return visibleOnly(new Set([5, 6, 7]))(args as { ids: number[] });
+    };
+    const { source } = rankedSource([5, 6, 7]);
+    await searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: input({ imageId: 6, excludeOwn: true }),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    const anchorCheck = asked.find((call) => call.ids.length === 1 && call.ids[0] === 6);
+    const results = asked.find((call) => call.ids.includes(5));
+    expect(anchorCheck?.excludedUserIds ?? []).not.toContain(VIEWER.id);
+    expect(results?.excludedUserIds).toContain(VIEWER.id);
+  });
+
   // The image query has no per-viewer hidden-image filter, so this one is the search's own job.
   it('drops images the viewer hid, and those hidden through a tag they still hide', async () => {
     h.fakeGetAllImages = visibleOnly(new Set([108, 109, 110, 111]));
