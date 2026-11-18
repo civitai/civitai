@@ -73,13 +73,19 @@
     width: min(500px, calc(100% - 32px));
     transform: translateX(-50%);
   }
-  /* Drains over the auto-hide delay and stops while the timer waits. */
+  /* A faint track for the time used; the bar on it drains over the auto-hide delay and stops while the timer waits. */
   .countdown {
     position: absolute;
     inset-inline: 0;
     bottom: 0;
-    height: 3px;
+    height: 4px;
+    background: rgb(255 255 255 / 0.08);
+  }
+  .countdown::before {
+    position: absolute;
+    inset: 0;
     background: var(--io-gold);
+    content: '';
     transform-origin: left;
     animation: mo-countdown var(--auto-hide-ms) linear forwards;
     animation-play-state: var(--auto-hide-state);

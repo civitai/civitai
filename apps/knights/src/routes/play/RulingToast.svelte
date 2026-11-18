@@ -10,18 +10,31 @@
     notices,
     message,
     submit,
+    nudge = 0,
     anchored,
   }: {
     notices: PageData['notices'];
     /** Why the last dismissal failed, if it did. */
     message: string | null;
     submit: SubmitFunction;
+    /** Bumped when the player tries to answer while the ruling holds the answers. */
+    nudge?: number;
     /** Over the bottom of the image stage; otherwise in the page flow, where no stage is drawn. */
     anchored: boolean;
   } = $props();
 
   let tone = $derived(noticeTone(notices));
   let form = $state<HTMLFormElement>();
+  let section = $state<HTMLElement>();
+
+  // Restarts the pulse on every nudge (the class comes off, a reflow, then on again) and puts Enter back on Understood.
+  $effect(() => {
+    if (nudge === 0 || !section) return;
+    section.querySelector<HTMLElement>('button[type="submit"]')?.focus({ preventScroll: true });
+    section.classList.remove('nudged');
+    void section.offsetWidth;
+    section.classList.add('nudged');
+  });
 </script>
 
 <!-- Understood is focused so Enter dismisses; left alone, it goes by the same form after RULING_AUTO_HIDE_MS. -->
@@ -31,6 +44,7 @@
   class:calm={tone === 'calm'}
   role="status"
   aria-label="The Order's ruling"
+  bind:this={section}
   use:autoHide={{
     ms: RULING_AUTO_HIDE_MS,
     onhide: () => form?.requestSubmit(),
@@ -99,19 +113,29 @@
     border-color: var(--io-gold);
     color: var(--io-gold);
   }
-  /* Drains over the auto-hide delay and stops while the timer waits. */
+  /* A faint track for the time used; the bar on it drains over the auto-hide delay and stops while the timer waits. */
   .countdown {
     position: absolute;
     inset-inline: 0;
     bottom: 0;
-    height: 3px;
-    background: var(--io-crimson);
+    height: 4px;
+    background: rgb(255 255 255 / 0.08);
+  }
+  .countdown::before {
+    position: absolute;
+    inset: 0;
+    background: var(--io-crimson-text);
+    content: '';
     transform-origin: left;
     animation: mo-countdown var(--auto-hide-ms) linear forwards;
     animation-play-state: var(--auto-hide-state);
   }
-  .toast.calm .countdown {
+  .toast.calm .countdown::before {
     background: var(--io-gold);
+  }
+  /* A blocked answer: a short flash, within the play loop's 200ms (mo-smite-flash has its reduced-motion counterpart). */
+  .toast:global(.nudged) {
+    animation: mo-smite-flash 180ms var(--ease-out-quart);
   }
   .toast-body {
     flex: 1;

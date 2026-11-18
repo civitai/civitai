@@ -3,11 +3,11 @@ import { RULING_AUTO_HIDE_MS, createAutoHide } from '$lib/auto-hide';
 import { closeDismiss, dismissShowing, type DismissState } from '$lib/optimistic-dismiss';
 import {
   answerForKey,
+  blockedByRuling,
   answerForKeyPress,
   keyHints,
   optionsOnScreen,
   spaceSkips,
-  swallowsSpace,
 } from './keys';
 
 const options = [
@@ -151,10 +151,33 @@ describe('a ruling left alone', () => {
   });
 });
 
-describe('Space with a ruling up', () => {
-  it('is swallowed, so it does not press the focused Understood; Enter is left to dismiss it', () => {
-    expect(swallowsSpace({ question: { options }, rulingPending: true }, ' ')).toBe(true);
-    expect(swallowsSpace({ question: { options }, rulingPending: true }, 'Enter')).toBe(false);
-    expect(swallowsSpace({ question: { options }, rulingPending: false }, ' ')).toBe(false);
+describe('a key pressed while a ruling holds the answers', () => {
+  const held = { question: { options }, rulingPending: true };
+
+  it('is reported blocked when it would answer or skip, so the page can point at Understood', () => {
+    expect(blockedByRuling(held, '1', false)).toBe(true);
+    expect(blockedByRuling(held, ' ', false)).toBe(true);
+    const yesNo = [
+      { value: 'yes', label: 'Yes' },
+      { value: 'no', label: 'No' },
+    ];
+    expect(blockedByRuling({ question: { options: yesNo }, rulingPending: true }, 'y', true)).toBe(
+      true
+    );
+  });
+
+  it('leaves Enter to dismiss it, and ignores keys that answer nothing', () => {
+    expect(blockedByRuling(held, 'Enter', false)).toBe(false);
+    expect(blockedByRuling(held, '9', false)).toBe(false);
+    expect(blockedByRuling(held, 'Escape', false)).toBe(false);
+  });
+
+  it('reports nothing once no ruling holds the answers', () => {
+    expect(blockedByRuling({ question: { options }, rulingPending: false }, '1', false)).toBe(
+      false
+    );
+    expect(blockedByRuling({ question: { options }, rulingPending: false }, ' ', false)).toBe(
+      false
+    );
   });
 });

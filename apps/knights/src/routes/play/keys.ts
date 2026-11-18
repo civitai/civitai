@@ -29,9 +29,16 @@ export function optionsOnScreen({ question, apprentice, rulingPending }: Screen)
   return apprentice?.kind === 'question' ? apprentice.options ?? null : null;
 }
 
-/** With a ruling up, Space would press its focused Understood; only Enter (or a click) dismisses it. */
-export const swallowsSpace = ({ rulingPending }: Screen, key: string): boolean =>
-  !!rulingPending && key === ' ';
+/**
+ * A key that would answer or skip while a ruling holds the answers: the page swallows it (Space would otherwise press the
+ * focused Understood) and points the player at the ruling. Enter is left to dismiss it.
+ */
+export function blockedByRuling(screen: Screen, key: string, yesNo: boolean): boolean {
+  if (!screen.rulingPending) return false;
+  if (key === ' ') return true;
+  const options = optionsOnScreen({ ...screen, rulingPending: false });
+  return !!options && answerForKeyPress(options, key, yesNo) !== null;
+}
 
 /** Space skips a queue item; in the apprenticeship (no skip) it stays the browser's, pressing a focused button. */
 export const spaceSkips = ({ question, rulingPending }: Screen): boolean =>

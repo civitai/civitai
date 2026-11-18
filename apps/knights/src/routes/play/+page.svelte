@@ -21,7 +21,7 @@
   import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips, swallowsSpace } from './keys';
+  import { answerForKey, answerForKeyPress, blockedByRuling, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
@@ -121,14 +121,16 @@
       rulingPending,
     };
     const options = optionsOnScreen(screen);
-    if (!dialogOpen && swallowsSpace(screen, event.key)) {
+    const target = event.target as HTMLElement | null;
+    const typing = !!target?.closest('input, textarea, select, [contenteditable], header');
+    const modified = event.ctrlKey || event.metaKey || event.altKey;
+    if (!dialogOpen && !typing && blockedByRuling(screen, event.key, yesNo)) {
       event.preventDefault();
+      if (!modified && !event.repeat) nudgeRuling();
       return;
     }
     if (event.repeat || dialogOpen || !options || submitting) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('input, textarea, select, [contenteditable], header')) return;
+    if (modified || typing) return;
     if (event.key === ' ') {
       if (!spaceSkips(screen)) return;
       event.preventDefault();
@@ -138,6 +140,21 @@
     if (imageFailed) return;
     const value = answerForKeyPress(options, event.key, yesNo);
     if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
+  }
+
+  // An answer tried while the ruling holds them: focus Understood and pulse the toast, so the dimmed row is explained.
+  let rulingNudge = $state(0);
+  function nudgeRuling() {
+    if (rulingNotice.showing) rulingNudge += 1;
+  }
+  // Inert controls take no pointer events, so a press on the dimmed answers or Skip lands on the row itself. An action, not
+  // an `onpointerdown` attribute: the row is not a control of its own, and the press only explains the hold.
+  function nudgeFromRow(row: HTMLElement) {
+    const press = (event: PointerEvent) => {
+      if (rulingPending && event.target === row) nudgeRuling();
+    };
+    row.addEventListener('pointerdown', press);
+    return { destroy: () => row.removeEventListener('pointerdown', press) };
   }
 
   function pickReason(reason: BlockReason) {
@@ -624,6 +641,7 @@
       notices={data.notices}
       message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
       submit={rulingNotice.submit}
+      nudge={rulingNudge}
       {anchored}
     />
   {/if}
@@ -715,7 +733,7 @@
         {@render levelToast(true)}
         {@render ruling(true)}
       </div>
-      <div class="controls" class:yesno={yesNo}>
+      <div class="controls" class:yesno={yesNo} use:nudgeFromRow>
         <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers} inert={rulingPending}>
           <input type="hidden" name="kind" value={apprentice.item.kind} />
           <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
@@ -817,7 +835,7 @@
           <p class="nudge cheer" role="status">{cue}</p>
         {/if}
       </div>
-      <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
+      <div class="controls" class:yesno={yesNo} class:failed={imageFailed} use:nudgeFromRow>
         <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers} inert={rulingPending}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
@@ -1071,6 +1089,11 @@
     flex: 1 1 auto;
     gap: 8px;
     min-width: 0;
+  }
+  /* Held by the ruling toast: inert takes the clicks and keys, this shows it. */
+  .answers[inert],
+  .skip[inert] {
+    opacity: 0.45;
   }
   .controls.yesno .answers {
     gap: 12px;
