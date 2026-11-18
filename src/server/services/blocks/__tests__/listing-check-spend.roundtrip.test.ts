@@ -16,8 +16,9 @@ import {
 
 const store = new Map<string, number>();
 
+/** The listing-check spend is a day counter on the cache cluster (the `redis` client). */
 function installRedis() {
-  redisMock.sysRedis.multi.mockImplementation((() => {
+  redisMock.redis.multi.mockImplementation((() => {
     const ops: Array<() => unknown> = [];
     const chain = {
       set: (key: string, value: string, opts?: { NX?: boolean }) => {
@@ -40,7 +41,7 @@ function installRedis() {
     };
     return chain;
   }) as never);
-  redisMock.sysRedis.get.mockImplementation((async (key: string) =>
+  redisMock.redis.get.mockImplementation((async (key: string) =>
     store.has(key) ? String(store.get(key)) : null) as never);
 }
 
