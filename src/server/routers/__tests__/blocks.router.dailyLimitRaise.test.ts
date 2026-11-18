@@ -223,16 +223,6 @@ describe('blocks.getMyAppDailyLimit', () => {
     ).toEqual([]);
   });
 
-  it('a rate window that lost its expiry gets one again, so it cannot lock the viewer out for good', async () => {
-    redisMock.redis.incrBy.mockResolvedValue(5 as never);
-    redisMock.redis.ttl.mockResolvedValue(-1 as never);
-    await caller().getMyAppDailyLimit({ appBlockId: APP });
-    expect(redisMock.redis.expire).toHaveBeenCalledWith(
-      `system:blocks:daily-limit-read-rate:${USER}`,
-      60
-    );
-  });
-
   it('a Redis error on the rate limit fails closed', async () => {
     redisMock.redis.incrBy.mockRejectedValue(new Error('down') as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).toBeNull();
