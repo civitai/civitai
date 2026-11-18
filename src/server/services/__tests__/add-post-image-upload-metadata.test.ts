@@ -223,7 +223,9 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     dbMock.dbRead.image.findFirst.mockResolvedValue(null);
     dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
     dbMock.dbWrite.image.findFirst.mockResolvedValueOnce({ id: 12 } as never);
-    dbMock.dbWrite.image.aggregate.mockResolvedValueOnce({ _max: { index: 2 } } as never);
+    dbMock.dbWrite.image.aggregate
+      .mockResolvedValueOnce({ _max: { index: 2 } } as never) // images that may be hidden
+      .mockResolvedValueOnce({ _max: { index: 2 } } as never); // every image
     const { createImage } = await import('~/server/services/image.service');
 
     await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
@@ -233,6 +235,29 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ index: 3 })
     );
+  });
+
+  it('puts a new image last when the client sends an index ahead of an image that may be hidden', async () => {
+    // A free index (1, a gap) or a negative one would put the upload ahead of the held image at 3.
+    for (const sent of [1, -1]) {
+      vi.clearAllMocks();
+      dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
+      dbMock.dbRead.image.findFirst.mockResolvedValue(null);
+      dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
+      dbMock.dbWrite.image.findFirst.mockResolvedValueOnce(null as never);
+      dbMock.dbWrite.image.aggregate
+        .mockResolvedValueOnce({ _max: { index: 3 } } as never)
+        .mockResolvedValueOnce({ _max: { index: 3 } } as never);
+      const { createImage } = await import('~/server/services/image.service');
+
+      await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: sent } as never).catch(
+        () => null
+      );
+
+      expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ index: 4 })
+      );
+    }
   });
 
   it('keeps the index of each of several parallel uploads to a fresh post', async () => {

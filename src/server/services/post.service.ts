@@ -1776,23 +1776,35 @@ export const addPostImage = async ({
   const { generationWorkflowId, ...imageProps } = props;
   // On a post with storyline text items, a new image goes after the last item whatever index the
   // client sent: an editor without text items counts only images. Without text, the client's index
-  // stands unless another image already holds it (the editor does not count images it is not
-  // served) or there is none; then the image goes last.
+  // stands only when it is free and after every image an editor may not be served (held for review,
+  // or rated above the strictest cap), so an upload cannot move ahead of one; otherwise the image
+  // goes last. The editor does not count images it is not served, so its index can repeat theirs.
   const lastText = await dbWrite.postText.findFirst({
     where: { postId: props.postId },
     orderBy: { index: 'desc' },
     select: { index: true },
   });
   const sentIndex = imageProps.index;
-  const sentTaken =
-    !lastText &&
-    sentIndex != null &&
-    // primary: decides the index this upload is written at
-    !!(await dbWrite.image.findFirst({
-      where: { postId: props.postId, index: sentIndex },
-      select: { id: true },
-    }));
-  if (lastText || sentIndex == null || sentTaken) {
+  const keepSent = async (index: number) => {
+    if (!Number.isInteger(index) || index < 0) return false;
+    const [holder, hiddenEnd] = await Promise.all([
+      // primary: decides the index this upload is written at
+      dbWrite.image.findFirst({ where: { postId: props.postId, index }, select: { id: true } }),
+      // primary: decides the index this upload is written at
+      dbWrite.image.aggregate({
+        where: {
+          postId: props.postId,
+          OR: [
+            { NOT: notHeldForReviewWhere() },
+            { nsfwLevel: { notIn: [0, NsfwLevel.PG, NsfwLevel.PG13] } },
+          ],
+        },
+        _max: { index: true },
+      }),
+    ]);
+    return !holder && index > (hiddenEnd?._max.index ?? -1);
+  };
+  if (lastText || sentIndex == null || !(await keepSent(sentIndex))) {
     const imageEnd = await dbWrite.image.aggregate({
       where: { postId: props.postId },
       _max: { index: true },
