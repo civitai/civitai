@@ -132,6 +132,10 @@ ARG CIVITAI_SKIP_BUILD_TYPECHECK=""
 RUN --mount=type=cache,target=/app/.next/cache \
     SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=${NODE_BUILD_MEM}" pnpm run build
 
+# Server output size, so a jump in emitted server code shows up in the PR's build log.
+# `[root-of-the-server]__*.js` are Turbopack's per-entry loader chunks for server dynamic imports.
+RUN node -e 'const fs=require("fs"),p=require("path");const t={js:[0,0],root:[0,0]};(function w(d){for(const e of fs.readdirSync(d,{withFileTypes:true})){const f=p.join(d,e.name);if(e.isDirectory())w(f);else if(e.name.endsWith(".js")){const n=fs.statSync(f).size;t.js[0]++;t.js[1]+=n;if(e.name.startsWith("[root-of-the-server]__")){t.root[0]++;t.root[1]+=n}}}})("/app/.next/server");console.log(`server-output: js_files=${t.js[0]} js_bytes=${t.js[1]} root_files=${t.root[0]} root_bytes=${t.root[1]}`)'
+
 # Bundle-size budget (report-only during the soak). Next 16 (Turbopack) emits
 # opaque hashed chunks and removed per-route build stats, so scripts/bundle-budget.mjs
 # parses .next/build-manifest.json to reconstruct per-page First Load JS (brotli)
