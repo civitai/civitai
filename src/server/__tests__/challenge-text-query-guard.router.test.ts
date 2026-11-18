@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
     nextCursor: undefined,
   })),
   includesInappropriate: vi.fn<(input: { prompt?: string }, nsfw?: boolean) => unknown>(),
+  includesNsfw: vi.fn<(text: string) => boolean>(),
 }));
 vi.mock('~/server/services/challenge.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -31,6 +32,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
   includesInappropriate: h.includesInappropriate,
+  includesNsfw: h.includesNsfw,
   includesPoi: () => false,
   includesMinor: () => false,
 }));
@@ -68,6 +70,7 @@ beforeEach(() => {
   h.feed.mockClear();
   h.winners.mockClear();
   h.includesInappropriate.mockReset().mockReturnValue(false);
+  h.includesNsfw.mockReset().mockReturnValue(false);
 });
 
 describe('challenge.getInfinite text query guard', () => {
@@ -142,6 +145,25 @@ describe('challenge.getInfinite text query guard', () => {
       browsingLevel: sfwBrowsingLevelsFlag,
       ownRowsExempt: false,
     });
+  });
+
+  it('an NSFW-worded query at a safe level is audited as NSFW, and its minor verdict narrows', async () => {
+    h.includesNsfw.mockReturnValue(true);
+    h.includesInappropriate.mockImplementation((_input, nsfw) => (nsfw ? 'minor' : false));
+    await caller(VIEWER).getInfinite({ query: 'young', browsingLevel: sfwBrowsingLevelsFlag });
+    expect(h.feed.mock.calls[0][0]).toMatchObject({ ownRowsExempt: false });
+  });
+
+  it('a check that throws refuses the query rather than serving it', async () => {
+    h.includesNsfw.mockImplementation(() => {
+      throw new Error('audit unavailable');
+    });
+    const result = await caller(VIEWER).getInfinite({
+      query: 'young',
+      browsingLevel: sfwBrowsingLevelsFlag,
+    });
+    expect(result.items).toEqual([]);
+    expect(h.feed).not.toHaveBeenCalled();
   });
 
   it('keeps the owner exemption when nothing narrowed the query', async () => {
