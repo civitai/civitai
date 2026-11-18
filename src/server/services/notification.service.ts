@@ -12,8 +12,8 @@ import {
   imageReactionMilestones,
 } from '~/server/notifications/reaction.notifications';
 import {
-  emailNotificationTypeList,
-  isEmailNotificationType,
+  emailOptOutTypeList,
+  isEmailOptOutType,
   isPushableNotificationType,
 } from '~/server/notifications/utils.notifications';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
@@ -277,14 +277,17 @@ export const togglePushSetting = async ({
   }
 };
 
-/** The email-capable types this user gets email for: all of them except the ones opted out of. */
+/**
+ * The email-capable types (and the weekly digest) this user gets email for: all of them except the
+ * ones opted out of.
+ */
 export const getUserEmailSettings = async ({ userId }: { userId: number }) => {
   const optOuts = await dbWrite.userEmailNotificationOptOut.findMany({
     where: { userId },
     select: { type: true },
   });
   const off = new Set(optOuts.map((x) => x.type));
-  return emailNotificationTypeList.filter((type) => !off.has(type));
+  return emailOptOutTypeList.filter((type) => !off.has(type));
 };
 
 export const toggleEmailSetting = async ({
@@ -295,7 +298,7 @@ export const toggleEmailSetting = async ({
   if (enabled) {
     await dbWrite.userEmailNotificationOptOut.deleteMany({ where: { userId, type: { in: type } } });
   } else {
-    const invalid = type.filter((t) => !isEmailNotificationType(t));
+    const invalid = type.filter((t) => !isEmailOptOutType(t));
     if (invalid.length > 0)
       throw throwBadRequestError(`Not an email-capable notification type: ${invalid.join(', ')}`);
     await dbWrite.userEmailNotificationOptOut.createMany({
