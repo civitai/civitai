@@ -5,6 +5,11 @@ const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
+const voteRefused = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/metrics', async (original) => {
+  const real = await original<typeof import('$lib/server/metrics')>();
+  return { ...real, metrics: { ...real.metrics, voteRefused } };
+});
 vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
@@ -24,6 +29,7 @@ vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: feedSecretMock, reset
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
+  hiddenItemId: (id: number) => -id,
   answerHiddenCheck,
   pickHiddenCheck: vi.fn(),
   readHiddenNotices: vi.fn(),
@@ -57,6 +63,7 @@ beforeEach(() => {
   castVote.mockReset();
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
+  voteRefused.mockReset();
 });
 
 describe('vote action on a yes/no question', () => {
@@ -119,6 +126,14 @@ describe('vote action', () => {
     expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
       status: 409,
       data: { message: expect.stringMatching(/already judged/i) },
+    });
+  });
+
+  it('names the refusal reason, so the page can tell an item that moved on from a mistake', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
+      status: 409,
+      data: { reason: 'not-open', message: expect.stringMatching(/settled/i) },
     });
   });
 
@@ -186,6 +201,55 @@ describe('vote action', () => {
       expect.anything()
     );
     expect(castVote).toHaveBeenCalledTimes(1);
+  });
+
+  it('grades a hidden check in the request and returns what it cost', async () => {
+    const check = { verdict: 'failed', consequence: 'smite', smites: 1, reset: false };
+    answerHiddenCheck.mockResolvedValue({ status: 'recorded', check });
+
+    expect(await submit({ item: hiddenItem(5), answer: '8' })).toEqual({ success: true, check });
+    expect(answerHiddenCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ grade: expect.objectContaining({ settings: { rate: 1 } }) })
+    );
+  });
+
+  it('records why each refused vote was refused, with its kind and the player', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    answerHiddenCheck.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
+
+    await submit({ item: queueItem(3), answer: '4' });
+    await submit({ item: hiddenItem(5), answer: '8' });
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'not-open', 'rating', 7, 3, 'vote');
+    // A hidden check is logged under its ledger id, the negative of its reference id.
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'already-voted', 'hidden_check', 7, -5, 'vote');
+  });
+
+  it('records a vote the Redis gate turns away, busy or limited', async () => {
+    guard.mockResolvedValueOnce({ until: new Date('2026-12-15T12:01:00Z'), busy: true });
+    await submit({ item: queueItem(3), answer: '4' });
+    guard.mockResolvedValueOnce({ until: new Date('2026-12-15T12:01:00Z') });
+    await submit({ item: hiddenItem(5), answer: '4' });
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'busy', 'rating', 7, 3, 'vote');
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'limited', 'hidden_check', 7, -5, 'vote');
+  });
+
+  it('records a muted player and a token that does not open', async () => {
+    getStanding.mockResolvedValueOnce({ banned: false, muted: true });
+    await submit({ item: queueItem(3), answer: '4' });
+    await submit({ item: 'not-a-token', answer: '4' });
+
+    expect(voteRefused).toHaveBeenNthCalledWith(1, 'muted', 'unknown', 7, null, 'vote');
+    expect(voteRefused).toHaveBeenNthCalledWith(2, 'bad-token', 'unknown', 7, null, 'vote');
+  });
+
+  it('records nothing for a vote that was recorded', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    await submit({ item: queueItem(3), answer: '4' });
+    expect(voteRefused).not.toHaveBeenCalled();
   });
 
   it('refuses a hidden check with the same message and status as a vote', async () => {

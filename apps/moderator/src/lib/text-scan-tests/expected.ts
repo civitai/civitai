@@ -7,7 +7,7 @@ import {
   type NsfwLevelName,
 } from '../text-scan-lab/types';
 
-export const FLAG_LABELS = ['poi', 'minor', 'scam', 'csam'] as const;
+export const FLAG_LABELS = ['poi', 'minor', 'scam', 'csam', 'model-com-face-intent'] as const;
 export type FlagLabel = (typeof FLAG_LABELS)[number];
 
 export type NsfwRange = { min: NsfwLevelName; max: NsfwLevelName };
@@ -18,9 +18,17 @@ export type Expected = {
   minor?: boolean;
   scam?: boolean;
   csam?: boolean;
+  'model-com-face-intent'?: boolean;
 };
 
-export const LABEL_ORDER: readonly LabLabel[] = ['nsfw', 'poi', 'minor', 'scam', 'csam'];
+export const LABEL_ORDER: readonly LabLabel[] = [
+  'nsfw',
+  'poi',
+  'minor',
+  'scam',
+  'csam',
+  'model-com-face-intent',
+];
 const MALFORMED = 'The expectation is malformed.';
 
 export const levelRank = (level: NsfwLevelName) => NSFW_LEVEL_NAMES.indexOf(level);
@@ -41,11 +49,16 @@ export const expectedSchema = z.object({
   minor: z.boolean().optional(),
   scam: z.boolean().optional(),
   csam: z.boolean().optional(),
+  'model-com-face-intent': z.boolean().optional(),
 });
 
-export function parseExpected(json: unknown, entityType: LabEntityType): Expected | string {
+/** `labels`: what the case is scored on; the pinned intent set passes its own (`caseLabels`). */
+export function parseExpected(
+  json: unknown,
+  entityType: LabEntityType,
+  labels: readonly LabLabel[] = LAB_LABELS[entityType]
+): Expected | string {
   if (!json || typeof json !== 'object' || Array.isArray(json)) return MALFORMED;
-  const labels = LAB_LABELS[entityType];
   const outside = Object.keys(json).filter((key) => !(labels as readonly string[]).includes(key));
   if (outside.length)
     return `${entityType} cases score ${labels.join(', ')}, not ${outside.join(', ')}.`;

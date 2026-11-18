@@ -6,6 +6,8 @@ import {
   getTurfStock,
   getFlagRaceEventForCollection,
   getFlagSummary,
+  getFlagRaceTotals,
+  getPastFlags,
   getOpenFlagCrucible,
   getTurfSummaries,
   placeFlagHats,
@@ -97,6 +99,16 @@ export const hatTurfRouter = router({
     .input(turfEventSchema)
     .use(edgeCacheIt({ ttl: 10 }))
     .query(({ input }) => getFlagSummary(input.event)),
+  // Each team's flags won and points across the frozen days, for the event page's Flag Race.
+  getFlagRaceTotals: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: 60 }))
+    .query(({ input }) => getFlagRaceTotals(input.event)),
+  // Past days' frozen flags, for their badges on the all-time collection and image detail.
+  getPastFlags: publicProcedure
+    .input(turfEventSchema)
+    .use(edgeCacheIt({ ttl: 300 }))
+    .query(({ input }) => getPastFlags(input.event)),
   // The flag Crucible taking entries now, for the row's "Enter the race" button.
   getOpenFlagCrucible: publicProcedure
     .input(turfEventSchema)

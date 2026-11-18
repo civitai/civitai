@@ -485,9 +485,9 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
 // every one of our chunks is spelled `https://<our-host>/_next/static/chunks/<hash>.js`; the
 // `turbopack:///[project]/…` paths that `DEPENDENCY_PATH_RE`, `GLOBAL_FETCH_WRAPPER_PATH_RES`
 // and `FIRST_PARTY_CLIENT_LIB_RES` match are a source-map `sources` spelling, produced by the
-// COLLECTOR after this function has returned (`normalizeSourcePath` in
-// `src/server/utils/errorHandling.ts` is the repo's other consumer of that spelling, and it
-// reads `.js.map` files to get it). Precisely:
+// COLLECTOR after this function has returned, and only if the collector has the build's maps:
+// nothing in this repo uploads them, and the build serves none while
+// `productionBrowserSourceMaps` is off. Precisely:
 //   - exclusions 1 and 2 (the `node_modules` path test, the wrapper named by file path) cannot
 //     fire at all on a browser-produced frame; and
 //   - exclusion 3 (the `ABSOLUTE_URL_RE` → `FIRST_PARTY_ASSET_PATH_RE` branch) DOES fire, and

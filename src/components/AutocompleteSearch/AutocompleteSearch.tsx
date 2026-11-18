@@ -95,6 +95,10 @@ import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
 import { imageIdFromDrop, mayCarryImage } from '~/components/AutocompleteSearch/image-drop';
+import {
+  searchUploadFileFromDrop,
+  setPendingSearchUpload,
+} from '~/components/Search/ImageSearchUpload/pending-search-upload';
 import { moreLikeThisHref, offersMoreLikeThis } from '~/components/Image/MoreLikeThisButton';
 
 const meilisearch = createInstantMeiliSearch({ primaryKey: 'id' });
@@ -586,15 +590,24 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const dropsImages =
     offersMoreLikeThis(features) && isImageSearchIndex(searchIndexMap[indexNameProp]);
+  const dropsFiles = dropsImages && features.imageSearchUpload && !!currentUser;
   const handleDragOver = (event: React.DragEvent) => {
     if (dropsImages && mayCarryImage(event.dataTransfer.types)) event.preventDefault();
+    else if (dropsFiles && event.dataTransfer.types.includes('Files')) event.preventDefault();
   };
   const handleDrop = (event: React.DragEvent) => {
     if (!dropsImages) return;
     const imageId = imageIdFromDrop(event.dataTransfer, [window.location.host]);
-    if (!imageId) return;
+    if (imageId) {
+      event.preventDefault();
+      void router.push(moreLikeThisHref(features, imageId));
+      return;
+    }
+    const file = dropsFiles ? searchUploadFileFromDrop(event.dataTransfer) : undefined;
+    if (!file) return;
     event.preventDefault();
-    void router.push(moreLikeThisHref(features, imageId));
+    setPendingSearchUpload(file);
+    void router.push('/search/by-image');
   };
 
   // Off a feed, blur empties the input as it always has but leaves the carried copy alone; on a feed

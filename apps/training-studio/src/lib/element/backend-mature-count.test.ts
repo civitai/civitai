@@ -45,7 +45,7 @@ vi.mock('$lib/server/signals', () => ({ workflowSignalCallbacks: () => undefined
 vi.mock('$lib/server/axiom', () => ({ logToAxiom: () => undefined, safeError: (e: unknown) => e }));
 
 import { elementBackend, type StudioElementHost } from './backend';
-import { MatureAckRequiredError } from '$lib/mature-charge';
+import { MatureRepriceError } from '$lib/mature-charge';
 import type { TrainingRunPayload } from '$lib/backend';
 import { POST as trainPost } from '../../routes/api/train/+server';
 
@@ -104,10 +104,10 @@ describe('embed training submit, mature count', () => {
     }));
   });
 
-  it('refuses an unconfirmed Green run whose dataset the v2 rating calls mature, before anything is submitted', async () => {
+  it('refuses a Green run priced as not mature whose dataset the v2 rating calls mature, before anything is submitted', async () => {
     rating.stored = { 'nude-1': { s: 4, r: false } };
     await expect(elementBackend(host).submitTraining([greenRun('nude-1')])).rejects.toBeInstanceOf(
-      MatureAckRequiredError
+      MatureRepriceError
     );
     expect(orch.submitWorkflow).not.toHaveBeenCalled();
   });

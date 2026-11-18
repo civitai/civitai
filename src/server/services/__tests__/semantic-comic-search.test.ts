@@ -14,7 +14,11 @@ const h = vi.hoisted(() => ({
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
   evalBoolean: vi.fn<() => { enabled: unknown }>(),
-  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+  fliptClient: null as null | {
+    evaluateBoolean: (req: { entityId: string; context: Record<string, string> }) => {
+      enabled: unknown;
+    };
+  },
 }));
 
 vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
@@ -33,6 +37,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -214,6 +219,41 @@ describe('semantic comic search', () => {
     const viewer = { id: 500, isModerator: false } as SessionUser;
     expect(ids(await search([11, 10], { browsingLevel: PG | R, user: viewer }))).toEqual([11, 10]);
     expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
+  });
+
+  describe('a segment that lifts the switch for one account', () => {
+    const EXEMPT = { id: 500, isModerator: false } as SessionUser;
+    const OTHER = { id: 502, isModerator: false } as SessionUser;
+    const asked: { entityId: string; context: Record<string, string> }[] = [];
+    beforeEach(() => {
+      asked.length = 0;
+      // Flipt matches segments on the context, never the entity id.
+      h.fliptClient = {
+        evaluateBoolean: (req) => {
+          asked.push(req);
+          return { enabled: req.context.userId !== String(EXEMPT.id) };
+        },
+      };
+    });
+
+    it('keeps every other signed-in non-moderator clamped', async () => {
+      await search([], { browsingLevel: PG | R, user: OTHER });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+    });
+
+    it('searches the exempt account at its own level', async () => {
+      await search([], { browsingLevel: PG | R, user: EXEMPT });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
+      expect(asked).toEqual([
+        { flagKey: expect.any(String), entityId: '500', context: { userId: '500' } },
+      ]);
+    });
+
+    it('keeps a signed-out visitor clamped, asking with no user', async () => {
+      await search([], { browsingLevel: PG | R, user: undefined });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+      expect(asked).toEqual([{ flagKey: expect.any(String), entityId: 'global', context: {} }]);
+    });
   });
 
   it('holds the clamp when the switch cannot be read', async () => {

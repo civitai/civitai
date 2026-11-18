@@ -82,12 +82,28 @@ const articles = (over: ArticleOver = {}) => {
     },
     ...(id === ARTICLE ? rest : {}),
   });
-  // Answers whichever id the code asks for, so reading the wrong article shows up as its title.
+  // Answers whichever id the code asks for, so reading the wrong article shows up as its title. An
+  // image read without `minor` comes back without it, so a select that drops the flag fails here.
+  type ImageSelect = { select?: { minor?: boolean } } | undefined;
+  const asSelected = (image: unknown, select: ImageSelect) => {
+    if (!image || select?.select?.minor) return image;
+    const { minor: _minor, ...unflagged } = image as { minor?: boolean };
+    return unflagged;
+  };
   dbMock.dbWrite.article.findUnique.mockImplementation((async ({
     where,
+    select,
   }: {
     where: { id: number };
-  }) => base(where.id)) as never);
+    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect };
+  }) => {
+    const row = base(where.id) as Record<string, unknown>;
+    return {
+      ...row,
+      coverImage: asSelected(row.coverImage, select?.coverImage),
+      bannerImage: asSelected(row.bannerImage, select?.bannerImage),
+    };
+  }) as never);
 };
 
 const read = (viewerId?: number, articleId = ARTICLE) =>
@@ -340,21 +356,42 @@ describe('getArticleByShareToken: cover and viewer', () => {
     expect(result.status === 'ok' && !!result.article.coverImage).toBe(shown);
   });
 
-  // The banner stands in for a missing cover, under the same servable rule.
+  // The banner is its own field, under the same servable rule as the cover.
   it.each([
     ['not scanned', { ingestion: 'Pending' }, undefined],
     ['awaiting review', { needsReview: 'minor' }, undefined],
     ['scanned and clear', {}, 6],
-  ])('with no cover, shows a banner that is %s', async (_, over, shownId) => {
+  ])('returns a banner that is %s as bannerImage: %s', async (_, over, shownId) => {
     articles({ coverImage: null, bannerImage: cover({ id: 6, ...over }) });
     const result = await read();
     expect(result.status).toBe('ok');
-    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(shownId);
+    expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(shownId);
+    // The banner no longer stands in for the cover.
+    expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
   });
 
-  it('shows the cover over the banner', async () => {
+  it('returns the cover and the banner each in its own field', async () => {
     articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
     const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+    expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(6);
+  });
+
+  it('returns no banner for an article without one, and the cover unchanged', async () => {
+    articles({ coverImage: cover({}) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
+    expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
+  });
+
+  it('🔴 returns no banner that its model withholds, and still returns the cover', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('?').includes('JOIN "Post" p ON p.id = i."postId"')
+        ? [{ id: 6 }]
+        : []) as never);
+    articles({ coverImage: cover({}), bannerImage: cover({ id: 6 }) });
+    const result = await read();
+    expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
     expect(result.status === 'ok' && result.article.coverImage?.id).toBe(5);
   });
 
@@ -376,18 +413,27 @@ describe('getArticleByShareToken: cover and viewer', () => {
       dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
     });
 
-    it('🔴 shows no cover, and not the banner, when the cover is a restricted minor image', async () => {
+    it('🔴 shows no cover when the cover is a restricted minor image, and still the clear banner', async () => {
       articles({ coverImage: cover({ minor: true, nsfwLevel: 4 }), bannerImage: cover({ id: 6 }) });
       const result = await read();
       expect(result.status).toBe('ok');
       expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+      expect(result.status === 'ok' && result.article.bannerImage?.id).toBe(6);
     });
 
-    it('🔴 with no cover, shows no banner that is a restricted minor image', async () => {
+    it('🔴 shows no banner that is a restricted minor image', async () => {
       articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 4 }) });
       const result = await read();
       expect(result.status).toBe('ok');
-      expect(result.status === 'ok' && result.article.coverImage).toBeUndefined();
+      expect(result.status === 'ok' && result.article.bannerImage).toBeUndefined();
+    });
+
+    it('shows a minor-flagged banner rated PG-13, without the flag (control)', async () => {
+      articles({ coverImage: null, bannerImage: cover({ id: 6, minor: true, nsfwLevel: 2 }) });
+      const result = await read();
+      const shown = result.status === 'ok' ? result.article.bannerImage : undefined;
+      expect(shown?.id).toBe(6);
+      expect(shown).not.toHaveProperty('minor');
     });
 
     it.each([
@@ -399,18 +445,6 @@ describe('getArticleByShareToken: cover and viewer', () => {
       const shown = result.status === 'ok' ? result.article.coverImage : undefined;
       expect(shown?.id).toBe(5);
       expect(shown).not.toHaveProperty('minor');
-    });
-
-    it('reads the flag for the cover and the banner', async () => {
-      articles({ coverImage: cover({}) });
-      await read();
-      const select = vi.mocked(dbMock.dbWrite.article.findUnique).mock.calls.at(-1)?.[0]
-        ?.select as {
-        coverImage: { select: { minor?: boolean } };
-        bannerImage: { select: { minor?: boolean } };
-      };
-      expect(select.coverImage.select.minor).toBe(true);
-      expect(select.bannerImage.select.minor).toBe(true);
     });
   });
 

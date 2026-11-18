@@ -30,7 +30,7 @@ export async function pickItem(
   const feed = await getFeed(db, userId, { limit: 1, exclude: skipped?.queue });
   const secret = feedSecret();
 
-  const yesNo = yesNoConfig();
+  const yesNo = await yesNoConfig();
   const due =
     yesNo.share > 0 &&
     (!feed || burstDue(await servedHistory(db, userId, served), burstRoller(secret, userId)));
@@ -68,12 +68,14 @@ export async function pickItem(
   }
   if (!feed) return null;
 
+  const hiddenConfig = await hiddenSettings();
   const hidden = await pickHiddenCheck(db, {
     userId,
     rank,
     secret,
     questionKey: feed.question.key,
-    rate: hiddenSettings().rate,
+    rate: hiddenConfig.rate,
+    probationShare: hiddenConfig.probationShare,
     exclude: skipped?.hidden,
     slot,
   });

@@ -36,6 +36,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import type { SessionScope } from '~/server/auth/session-scope';
 import type { ChatAuditRow } from '~/server/common/chat-audit.constants';
 import { CHAT_AUDIT_FLAG } from '~/server/common/chat-audit.constants';
 import type { EntityChangeRow } from '~/server/common/entity-change.constants';
@@ -451,12 +452,14 @@ export class Tracker {
   private async fetchSession() {
     if (this.req && this.res) {
       try {
-        await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
-          this.session = session;
-          this.sessionResolved = true;
-          this.actor.userId = session?.user?.id ?? this.actor.userId;
-          return session;
-        });
+        await getServerAuthSession({ req: this.req, res: this.res, scope: 'defer' }).then(
+          (session) => {
+            this.session = session;
+            this.sessionResolved = true;
+            this.actor.userId = session?.user?.id ?? this.actor.userId;
+            return session;
+          }
+        );
       } catch (e) {
         const error = e as Error;
         logToAxiom(
@@ -474,9 +477,10 @@ export class Tracker {
   }
 
   // The request's session, resolved once and shared with every track() call on this Tracker.
-  public async getSession() {
+  public async getSession(scope?: SessionScope) {
     await this.resolveSession();
-    return this.session;
+    if (scope === undefined || !this.session || !this.req || !this.res) return this.session;
+    return getServerAuthSession({ req: this.req, res: this.res, scope });
   }
 
   constructor(

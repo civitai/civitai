@@ -16,11 +16,12 @@
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { FILES_PROCESSING_MESSAGE, FilesProcessingError } from '$lib/files-processing';
   import { holdsStart, readinessMessage, type ReadinessView } from './uploadReadiness';
-  import { MatureAckRequiredError, matureAckKey, matureAckMissing } from '$lib/mature-charge';
+  import { MatureRepriceError } from '$lib/mature-charge';
   import { serviceStatus } from '$lib/service-status.svelte';
   import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import BlueFirstToggle from '$lib/components/BlueFirstToggle.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
-  import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
+  import { backend, hostConfig, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
@@ -69,6 +70,7 @@
     blockedSelectionMessage,
     filledPrompts,
     paramLockReason,
+    paramNeedsRefundAck,
     withTrigger,
     type LaunchedRun,
     type NumericInput,
@@ -135,8 +137,6 @@
       prompts: SamplePrompt[],
       name: string,
       currencies: string[],
-      /** The user ticked the mature-dataset Yellow confirm. */
-      matureAck: boolean,
       matureCount: number
     ) => Promise<void>;
     onBack: () => void;
@@ -168,9 +168,6 @@
     if (!needsAttestation) attestSfw = false;
   });
 
-  // A mature dataset is never charged in Green: the orchestrator refunds that part seconds after submit and
-  // charges Yellow instead (and Blue too, without a membership). Users read that silent switch as a billing
-  // bug, so it is warned here and confirmed with a tick before Start. Unknown membership warns, hedged.
   const membership = hostConfig().isPaidMember;
   // The server's own check can find mature images the upload scan hasn't rated yet; its refusal sets this.
   let refusedMature = $state(0);
@@ -193,7 +190,7 @@
   const advancedAcknowledged = (i: number) =>
     acknowledgedAdvanced[runParamsKey(selection.runs[i]!)] === true;
   const fieldLocked = (i: number, field: ParamField) =>
-    field !== 'epochs' && !advancedAcknowledged(i);
+    paramNeedsRefundAck(field) && !advancedAcknowledged(i);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
   const GUIDANCE_HELP =
@@ -255,12 +252,7 @@
     return sum;
   });
   const total = $derived(runTotal);
-  const spend = $derived(
-    nonBlueSpend(total, buzzMode.value, { mature, member: membership === true })
-  );
-  const ackKey = $derived(matureAckKey(total, spend?.amount, matureCount));
-  let ackedFor = $state<string | null>(null);
-  const ackMissing = $derived(matureAckMissing(ackedFor, ackKey));
+  const spend = $derived(nonBlueSpend(total, buzzMode.value, { mature }));
   const runCostLabel = (i: number) => {
     const cost = runCostAt(i);
     return cost == null ? null : cost.toLocaleString();
@@ -509,7 +501,6 @@
       !!blockedMessage ||
       total == null ||
       (needsAttestation && !attestSfw) ||
-      ackMissing ||
       !!imagesProblem ||
       uploadingImage ||
       holdsStart(readiness)
@@ -523,7 +514,7 @@
 
   function start() {
     if (startBlocked) return;
-    if (spend && !spend.matureYellow) {
+    if (spend) {
       confirmSpend = spend;
       spendDialogOpen = true;
       return;
@@ -543,11 +534,10 @@
         prompts,
         name,
         buzzMode.currencies,
-        ackKey !== null && !ackMissing,
         matureCount
       );
     } catch (e) {
-      if (e instanceof MatureAckRequiredError) refusedMature = e.matureCount;
+      if (e instanceof MatureRepriceError) refusedMature = e.matureCount;
       if (e instanceof FilesProcessingError) filesProcessing = true;
       else startError = e instanceof Error ? e.message : 'Could not start training';
     } finally {
@@ -700,13 +690,6 @@
   </div>
 {/snippet}
 
-{#snippet membershipLink()}
-  {@const pricing = hostConfig().pricingUrl}
-  {#if pricing}
-    <a {...hostLink(pricing)} class="font-semibold text-primary hover:underline">View plans</a>
-  {/if}
-{/snippet}
-
 <div class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-5">
     <div>
@@ -851,8 +834,8 @@
                   </span>
                   <span class="text-xs leading-snug text-dark-2">
                     These defaults are tuned for your selected model. If you change them and the
-                    result is poor, the training is non-refundable. Steps and Checkpoints are not
-                    affected.
+                    result is poor, the training is non-refundable. Steps, Checkpoints and the
+                    negative prompt are not affected.
                   </span>
                   <div class="flex items-center gap-2">
                     <Checkbox
@@ -1067,49 +1050,22 @@
               See which
             </button>.
           {/if}
-          {#if membership === true}
-            Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
-            {#if buzzMode.blueFirst}
-              <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
-              charged in <span class="text-yellow-400">Yellow</span> Buzz.
-            {:else}
-              It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
-            {/if}
+          Mature content can't be paid with <span class="text-emerald-400">Green</span> Buzz.
+          {#if buzzMode.blueFirst}
+            <span class="text-blue-400">Blue</span> Buzz pays first, and anything beyond it is
+            charged in <span class="text-yellow-400">Yellow</span> Buzz.
           {:else}
-            <span class="text-blue-400">Blue</span> and <span class="text-emerald-400">Green</span> Buzz
-            can't pay for mature content without a membership, so {membership === undefined
-              ? 'unless you have one, '
-              : ''}this {multi ? 'training' : 'run'} is charged in full in
-            <span class="text-yellow-400">Yellow</span> Buzz.
-            {@render membershipLink()}
+            It is charged in <span class="text-yellow-400">Yellow</span> Buzz.
+          {/if}
+          {#if membership !== true && buzzMode.blueFirst}
+            Without a membership, mature sample images from runs paid with
+            <span class="text-blue-400">Blue</span> Buzz are blurred. Turn off Spend Blue first to pay
+            in <span class="text-yellow-400">Yellow</span> and see them.
           {/if}
         </span>
       </div>
-      {#if ackKey}
-        <div
-          class="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-snug text-dark-1"
-        >
-          <Checkbox
-            id="ack-mature-yellow"
-            bind:checked={() => ackedFor === ackKey, (v) => (ackedFor = v ? ackKey : null)}
-            class="mt-0.5 shrink-0"
-          />
-          <label for="ack-mature-yellow" class="cursor-pointer">
-            {#if spend}
-              I understand {spend.uncertain ? 'up to ' : ''}<strong
-                >{spend.amount.toLocaleString()} Yellow Buzz</strong
-              >
-              will be charged because this dataset has mature images.
-            {:else if buzzMode.blueFirst}
-              I understand this dataset has mature images, so anything beyond my
-              <span class="text-blue-400">Blue</span> Buzz is charged in
-              <span class="text-yellow-400">Yellow</span> Buzz.
-            {:else}
-              I understand this dataset has mature images, so it is charged in
-              <span class="text-yellow-400">Yellow</span> Buzz.
-            {/if}
-          </label>
-        </div>
+      {#if buzzMode.locked}
+        <BlueFirstToggle class="mt-3" />
       {/if}
     {:else}
       <BlueFirstNote class="mt-3" />

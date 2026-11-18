@@ -113,7 +113,7 @@ export async function searchSemanticArticles({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData, namedUserIds, namedTagIds, follows, listedIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),

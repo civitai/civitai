@@ -15,6 +15,7 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 
 import { applyIngestionSideEffects, type ScanImage } from '../image-scan-pipeline';
 import { thumbnailCache } from '~/server/redis/caches';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 const image = (metadata: Record<string, unknown>) =>
@@ -49,5 +50,14 @@ describe('applyIngestionSideEffects: custom video thumbnails', () => {
     await applyIngestionSideEffects({ image: image({}), outcome: scanned });
 
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyIngestionSideEffects: an image uploaded as a profile picture', () => {
+  it("refreshes its owner's session once scanned, so a hold it lands is not served from the session", async () => {
+    vi.mocked(refreshSession).mockClear();
+    await applyIngestionSideEffects({ image: image({ profilePicture: true }), outcome: scanned });
+
+    expect(refreshSession).toHaveBeenCalledWith(2, expect.objectContaining({ caller: 'profile' }));
   });
 });

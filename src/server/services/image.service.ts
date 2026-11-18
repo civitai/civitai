@@ -59,13 +59,17 @@ import {
   imageReviewedSql,
   isMinorMatureImage,
   keepPermanentScanFailureSql,
+  notHeldForReviewSql,
+  notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
+  servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
+  entityImageVisibilityConditions,
   imageBlockedForConditions,
   imageVisibilityConditions,
 } from '~/server/services/image-visibility.service';
@@ -255,15 +259,14 @@ import {
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { Flags } from '~/shared/utils/flags';
 import {
-  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  SEARCH_UPLOAD_APP_ID_META_KEY,
   stripBlockProvenanceMetadata,
   type BlockProvenanceMetadataKey,
 } from '~/shared/utils/block-provenance-metadata';
@@ -1907,11 +1910,13 @@ export const ingestImage = async ({
   lowPriority,
   tx,
   userId,
+  forceImageScanning,
 }: {
   image: IngestImageInput;
   lowPriority?: boolean;
   tx?: Prisma.TransactionClient;
   userId?: number;
+  forceImageScanning?: boolean;
 }): Promise<boolean> => {
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
@@ -1967,6 +1972,7 @@ export const ingestImage = async ({
     type,
     callbackUrl,
     priority: lowPriority ? 'low' : undefined,
+    forceImageScanning,
   });
   const lane = useImageScanning ? 'imageScanning' : 'new';
   if (!workflowResponse) {
@@ -2162,11 +2168,10 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   holdExempt?: boolean;
   // Server-only: the viewer a hub still shows their own taken-down models to (session or full key).
   galleryOwnerId?: number;
-  // Server-only: whether the request may act as a moderator (a session or full-scope key);
-  // defaults to the user's.
+  // Server-only: whether the request reads with a moderator's view, and with the owner's view of
+  // the user's own unpublished, private and held images. Both default to false, so a caller that
+  // names neither reads as a plain viewer; pass `credentialViews(ctx)`.
   asModerator?: boolean;
-  // Server-only: whether the request may see the user's own unpublished, private and held images;
-  // default true. False for a narrow-scope key.
   asOwner?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
@@ -2322,11 +2327,11 @@ function feedViewer(input: {
   asModerator?: boolean;
   asOwner?: boolean;
 }) {
-  const owner = input.asOwner !== false;
+  const owner = input.asOwner === true;
   return {
     id: owner ? input.user?.id : undefined,
     username: owner ? input.user?.username ?? undefined : undefined,
-    isModerator: input.asModerator ?? input.user?.isModerator ?? false,
+    isModerator: input.asModerator === true && !!input.user?.isModerator,
   };
 }
 
@@ -2447,8 +2452,8 @@ const getAllImagesUncaptured = async (
   let cacheTime = 0;
   let isPersonalized = false;
   const userId = user?.id;
-  const isModerator = input.asModerator ?? user?.isModerator ?? false;
-  const ownerId = input.asOwner === false ? undefined : userId;
+  const isModerator = input.asModerator === true && !!user?.isModerator;
+  const ownerId = input.asOwner === true ? userId : undefined;
   // Moderators opting into the "pending review" collection filter get the same
   // unscanned-content visibility as the existing `pending` flag (nsfwLevel = 0 allowed).
   const effectivePending = pending || (isModerator && !!pendingReviewOnly);
@@ -2637,7 +2642,7 @@ const getAllImagesUncaptured = async (
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
-  // Whatever the viewer's settings; also the feed service's hydrate, which reads through here.
+  // Whatever the viewer's settings.
   AND.push(minorMatureImageVisibleSql({ userId: ownerId, isModerator }));
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -3635,10 +3640,8 @@ export async function getImagesFromFeedServiceForRest(
   if (searchInput.limit < 1) return { items: [], nextCursor: undefined };
 
   const input = withoutUnservedFilters(searchInput);
-  const prepared = await prepareImageFeedRequest(input, {
-    id: input.currentUserId,
-    isModerator: input.isModerator,
-  });
+  // The hydrate's viewer and views: an own-scoped feed keeps its exclusions off only for the owner.
+  const prepared = await prepareImageFeedRequest(input, feedViewer(hydrateInput));
   if (prepared.blocked) return { items: [], nextCursor: undefined };
   const { userId } = prepared;
   // An unknown username is an empty page, not a 404, as the search index answered it.
@@ -3766,6 +3769,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
+  asOwner?: boolean;
   holdExempt?: boolean;
   galleryOwnerId?: number;
   offset?: number;
@@ -3828,7 +3832,8 @@ async function resolveHubForFeed(searchInput: CapturableSearchInput) {
   if (!input.hubId) return undefined;
   const sources = await resolveHubSources({
     hubId: input.hubId,
-    userId: input.currentUserId,
+    // Only the owner's view opens the viewer's own private hubs; a scoped key sees Public ones.
+    userId: input.asOwner === true ? input.currentUserId : undefined,
     isModerator: input.isModerator,
     holdExempt: input.holdExempt,
     galleryOwnerId: input.galleryOwnerId,
@@ -5015,33 +5020,9 @@ export const getImagesByEntity = async ({
     return [];
   }
 
-  const AND: Prisma.Sql[] = !isModerator
-    ? [
-        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
-          userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
-        })`,
-      ]
-    : [];
-
-  if (!isModerator) {
-    // An unrated image is its owner's and moderators' alone, as in the image feeds.
-    AND.push(
-      userId
-        ? Prisma.sql`(i."nsfwLevel" != 0 OR i."userId" = ${userId})`
-        : Prisma.sql`i."nsfwLevel" != 0`
-    );
-    const needsReviewOr = [
-      Prisma.sql`i."needsReview" IS NULL`,
-      userId ? Prisma.sql`i."userId" = ${userId}` : null,
-    ].filter(isDefined);
-
-    if (needsReviewOr.length > 0) {
-      AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-    }
-  }
-  AND.push(...imageBlockedForConditions({ userId, isModerator }));
-  AND.push(imageNotRestrictedSql({ viewerId: userId }));
-  AND.push(minorMatureImageVisibleSql({ userId, isModerator }));
+  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
+  if (!isModerator) AND.push(notHeldForReviewSql());
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -5407,6 +5388,7 @@ export async function createImage({
         prompt: image?.meta?.prompt,
       },
       userId: image.userId,
+      forceImageScanning: blockProvenance?.key === SEARCH_UPLOAD_APP_ID_META_KEY,
     });
   }
 
@@ -7578,15 +7560,6 @@ export async function createImageResources({
   return resources;
 }
 
-/** `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
-const notHeldForReviewWhere: Prisma.ImageWhereInput = {
-  OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
-};
-
-/** Held to the request's servable levels: a capped request gets no unrated upload either. */
-const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
-  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
-
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
@@ -7691,7 +7664,7 @@ export const getMyImages = async ({
           : {}),
         // The unpublished path has no review gate of its own; these holds stay out of it too,
         // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere, servableLevelWhere(servableLevels)],
+        AND: [notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

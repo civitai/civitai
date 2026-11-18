@@ -12,12 +12,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
@@ -67,15 +69,17 @@ const (
 	CacheBlockedTags     = "blocked-tags" // image.getInfinite only
 )
 
-// model.getAll's caches (internal/hydrate/models.go). Its probe runs the serving path itself and
-// reports the cache its fallback names; a miss Go computes (the model frames and decorations, the
-// version showcases, hydrate.MissCaches) is recorded instead (hydrate.WithPresence).
+// model.getAll's caches (internal/hydrate/models.go, official.go). Its probe runs the serving path
+// itself and reports the cache its fallback names; a miss Go computes (the model data and tags, the
+// model frames and decorations, the version showcases, the official models: hydrate.MissCaches) is
+// recorded instead (hydrate.WithPresence).
 const (
-	CacheModelData          = "model-data"
-	CacheModelTags          = "model-tags"
+	CacheModelData          = hydrate.MissModelData
+	CacheModelTags          = hydrate.MissModelTags
 	CacheModelFrames        = hydrate.MissModelFrames
 	CacheModelDecorations   = hydrate.MissModelDecorations
 	CacheVersionImages      = hydrate.MissVersionImages
+	CacheOfficialModels     = hydrate.MissOfficialModels
 	CacheCreatorMemberships = "creator-memberships"
 )
 
@@ -86,8 +90,9 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
-	// model.getAll's hydration falls back on each of these cache misses (on a frame, decoration or
-	// showcase miss only without the miss computation).
+	// model.getAll's hydration falls back on each of these cache misses (on a model data, model tags,
+	// frame, decoration, showcase or official-models miss only without the miss computation).
+	"official-models-miss":  CacheOfficialModels,
 	"model-data-miss":       CacheModelData,
 	"model-tags-miss":       CacheModelTags,
 	"model-frame-miss":      CacheModelFrames,
@@ -116,13 +121,13 @@ func fallbackMissCache(reason string) string {
 
 // probeCaches is every `cache` label value, in report order.
 func probeCaches() []string {
-	out := make([]string, 0, 9+len(hydrate.PageCaches))
+	out := make([]string, 0, 10+len(hydrate.PageCaches))
 	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags)
 	for _, c := range hydrate.PageCaches {
 		out = append(out, c.Name)
 	}
 	return append(out, CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations,
-		CacheVersionImages, CacheCreatorMemberships)
+		CacheVersionImages, CacheOfficialModels, CacheCreatorMemberships)
 }
 
 // ProbeRequest is what the Node app posts at the start of a sampled request.
@@ -243,6 +248,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
+	// The probe's span (as the shadow sample's): ends with the probe, or here when it is not run.
+	_, span := s.startSpan(r.Context(), r.Header, "probe", spec.endpoint)
+	spanHandedOff := false
+	defer func() {
+		if !spanHandedOff {
+			span.End()
+		}
+	}()
 	s.shadowMu.Lock()
 	if s.closing {
 		s.shadowMu.Unlock()
@@ -280,6 +293,7 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusAccepted)
 	started = true
+	spanHandedOff = true
 	go func() { //nolint:contextcheck // runs after the 202 on the server's background context (Close cancels it): it must outlive the request
 		defer s.shadows.Done()
 		defer func() { <-s.ProbeQueue }()
@@ -288,10 +302,14 @@ func (s *Server) probeHandler(w http.ResponseWriter, r *http.Request) {
 				s.panicked("probe", p, debug.Stack())
 			}
 		}()
+		defer span.End()
 		// Marked as shadow: its feed-service calls carry the shadow headers (feedsvc.WithShadow), so the
 		// probe's load stays out of the feed service's live series.
 		ctx, cancel := context.WithTimeout(feedsvc.WithShadow(s.background()), shadowSampleTimeout)
 		defer cancel()
+		if s.Tracer != nil {
+			ctx = trace.ContextWithSpan(ctx, span)
+		}
 		s.probe(ctx, spec, req)
 	}()
 }
@@ -328,10 +346,12 @@ func (s *Server) probe(ctx context.Context, spec probeSpec, req ProbeRequest) {
 		}
 		s.Metrics.GoFirstPages.WithLabelValues(spec.endpoint).Add(float64(pages))
 	}
+	setOutcome(trace.SpanFromContext(ctx), result)
 	if reason := fallback.Reason(err); reason != "" {
 		s.Metrics.Fallbacks.WithLabelValues(spec.endpoint, "probe", reason).Inc()
+		s.noteFallback(ctx, "probe", spec.endpoint, err)
 	} else if err != nil {
-		s.Log.Warn("go-first probe failed", "endpoint", spec.endpoint, "err", err)
+		s.noteError(ctx, slog.LevelWarn, "go-first probe failed", "probe", spec.endpoint, err)
 	}
 }
 

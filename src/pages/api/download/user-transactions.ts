@@ -12,6 +12,7 @@ import { getFeatureFlagsAsync } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { TransactionType, buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const config = {
   api: { responseLimit: false },
@@ -167,5 +168,5 @@ export default AuthedEndpoint(
     return res.end();
   },
   ['GET'],
-  { allowBanned: true }
+  { allowBanned: true, scope: { scope: TokenScope.BuzzRead } }
 );

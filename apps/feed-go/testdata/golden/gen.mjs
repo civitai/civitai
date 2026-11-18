@@ -383,7 +383,7 @@ const K = {
   basic: 'packed:caches:basic-users',
   userCosmetics: 'packed:caches:user-cosmetics',
   cosmetics: 'packed:caches:cosmetics2',
-  profile: 'packed:caches:profile-pictures:v3',
+  profile: 'packed:caches:profile-pictures:v4',
   frames: 'packed:caches:cosmetics2:Image',
   events: 'packed:caches:cosmetics2:event:v2:Image',
   thumbs: 'packed:caches:thumbnails',
