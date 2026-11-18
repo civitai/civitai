@@ -115,7 +115,8 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     ctx: {},
     // No catalog:read (retired): the endpoint accepts ANY valid block token
     // (withBlockScope with no requiredScope). The handler never reads `scopes` —
-    // its only authority is the maturity clamp on claims.maxBrowsingLevel.
+    // its only authority is the maturity clamp on claims.maxBrowsingLevel and
+    // claims.viewerBrowsingLevel.
     scopes: [],
     ...viewer,
     ...over,

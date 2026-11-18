@@ -95,7 +95,7 @@ describe('ServiceOfferingCard', () => {
     viewer.current = { id: 7 };
     const html = render({ sellerId: 7, sellerUsername: 'mei' });
     viewer.current = null;
-    expect(html).toContain('href="/user/mei/shop/manage?tab=services"');
+    expect(html).toContain('href="/user/mei/shop/manage?tab=services&amp;edit=3"');
     expect(html).not.toContain('Request');
   });
 });

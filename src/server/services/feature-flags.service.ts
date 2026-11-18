@@ -427,6 +427,8 @@ const featureFlags = createFeatureFlags({
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
+  // Classic trainer kill switch: dark until the Flipt flag exists.
+  classicTrainerOff: { availability: [], fliptKey: 'classic-trainer-off' },
   trainingAutoLabelOrchestrator: {
     availability: ['public'],
     fliptKey: 'training-auto-label-orchestrator',
@@ -1845,6 +1847,10 @@ export function computeUserFeatureFlagsOverlay(
       delete result[key];
     }
   }
+
+  // A stored opt-back can't reopen a retired classic trainer.
+  if (hostFeatures.classicTrainerOff && 'trainingStudioUi' in result)
+    result.trainingStudioUi = true;
 
   return result;
 }

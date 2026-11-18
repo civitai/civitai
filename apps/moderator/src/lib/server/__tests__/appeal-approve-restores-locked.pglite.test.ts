@@ -59,6 +59,7 @@ vi.mock('../thumbnail-cache', () => ({ invalidateThumbnails: vi.fn(async () => u
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ query: chQuery, insert: chInsert }) }));
 
 const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
+const { refundAppealFee, notifyAppealResolved } = await import('../image-moderation-effects');
 const { queueModelsForImageChildTagChanges } = await import('../image-models-reindex');
 
 // The stand-in keeps the real function's skip of nsfwLevelLocked rows; without it the reset assertions pass vacuously.
@@ -110,7 +111,10 @@ let db: PGlite;
 
 beforeEach(async () => {
   chQuery.mockReset();
-  chQuery.mockResolvedValue({ json: async () => [{ hash: PHASH, reason: 'TOS' }] });
+  // The CSAM-entry lookup finds none; the live-row read finds the TOS entry.
+  chQuery.mockImplementation(async ({ query }: { query: string }) => ({
+    json: async () => (query.includes("= 'CSAM'") ? [] : [{ hash: PHASH, reason: 'TOS' }]),
+  }));
   chInsert.mockClear();
   db = await freshPglite();
   await db.exec(SCHEMA);
@@ -167,6 +171,21 @@ describe('approving an appeal on a rating-locked Blocked image', () => {
     await approve();
 
     expect(unblocklisted()).toEqual([{ hash: PHASH, reason: 'TOS', disabled: true }]);
+  });
+
+  it('still refunds and notifies when the blocklist check fails, leaving the entry in place', async () => {
+    chQuery.mockImplementation(async ({ query }: { query: string }) => {
+      if (query.includes("= 'CSAM'")) throw new Error('Socket hang up');
+      return { json: async () => [{ hash: PHASH, reason: 'TOS' }] };
+    });
+    vi.mocked(refundAppealFee).mockClear();
+    vi.mocked(notifyAppealResolved).mockClear();
+
+    await expect(approve()).resolves.toBeDefined();
+
+    expect(unblocklisted()).toEqual([]);
+    expect(refundAppealFee).toHaveBeenCalledTimes(1);
+    expect(notifyAppealResolved).toHaveBeenCalledTimes(1);
   });
 
   it('restores the same row acceptImage does', async () => {

@@ -146,8 +146,16 @@ export function EmblaCarouselProvider({
   const onSlideChangeRef = useRef(onSlideChange);
   onSlideChangeRef.current = onSlideChange;
 
-  const onSelect = useCallback((emblaApi: EmblaCarouselType) => {
-    onSlideChangeRef.current?.(emblaApi.selectedScrollSnap());
+  // A reInit keeps embla's selected slide, so it only reaches `onSlideChange` when the slide moved
+  // (fewer slides, or a new `startIndex`). Re-announcing an unchanged one on every resize or slide
+  // insert writes a stale index back over a controlled carousel's newer one.
+  const announcedIndexRef = useRef<number>();
+  const onSelect = useCallback((emblaApi: EmblaCarouselType, event?: string) => {
+    const selectedIndex = emblaApi.selectedScrollSnap();
+    if (event !== 'reInit' || selectedIndex !== announcedIndexRef.current) {
+      announcedIndexRef.current = selectedIndex;
+      onSlideChangeRef.current?.(selectedIndex);
+    }
     if (storeRef.current) {
       storeRef.current.setState({
         canScrollNext: emblaApi.canScrollNext(),

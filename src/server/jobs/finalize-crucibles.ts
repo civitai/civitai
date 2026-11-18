@@ -8,6 +8,7 @@ import {
 } from '~/server/services/crucible.service';
 import { logToAxiom } from '~/server/logging/client';
 import { CrucibleRankingDeferredError } from '~/server/services/crucible-bradley-terry';
+import { freezeAllFlagDays } from '~/server/events/turf/flag-freeze';
 import { swapAllFlagDays } from '~/server/events/turf/turf.service';
 
 const log = createLogger('finalize-crucibles', 'yellow');
@@ -40,6 +41,9 @@ export const finalizeCruciblesJob = createJob(
 
     const activated = await activateScheduledCrucibles();
     if (activated > 0) log(`Activated ${activated} scheduled crucibles`);
+
+    // Every minute, not only when a crucible finalizes: a cut flag day shows "Counting…" until frozen.
+    await freezeAllFlagDays().catch((error) => log(`Flag freeze failed: ${error}`));
 
     // Get all crucibles that need finalization
     const crucibleIds = await getCruciblesForFinalization();

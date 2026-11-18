@@ -158,9 +158,9 @@ describe('validateConnectScopeJustifications', () => {
 
 describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
   // The auditable expected set — money (BuzzRead/SocialTip + buzz-spending writes),
-  // private-data reads (UserRead PII, NotificationsRead, VaultRead), and every
-  // cross-user/account write+delete. Reads of PUBLIC data and the opt-in App-Block
-  // scopes are NOT sensitive.
+  // private-data reads (UserRead PII, NotificationsRead, VaultRead, AppDataRead), and
+  // every cross-user/account write+delete. Reads of PUBLIC data (the AppsRead catalog
+  // included) and the opt-in App-Block scopes are NOT sensitive.
   const EXPECTED_SENSITIVE =
     TokenScope.UserRead |
     TokenScope.UserWrite |
@@ -180,7 +180,8 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     TokenScope.NotificationsRead |
     TokenScope.NotificationsWrite |
     TokenScope.VaultRead |
-    TokenScope.VaultWrite;
+    TokenScope.VaultWrite |
+    TokenScope.AppDataRead;
 
   it('is EXACTLY the expected sensitive bitmask', () => {
     expect(SENSITIVE_TOKEN_SCOPES).toBe(EXPECTED_SENSITIVE);
@@ -205,6 +206,7 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       'NotificationsWrite',
       'VaultRead',
       'VaultWrite',
+      'AppDataRead',
     ]);
   });
 
@@ -230,6 +232,7 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
       TokenScope.AppBlocksSubmit,
       TokenScope.AppBlocksDevTunnel,
       TokenScope.LinkConnect,
+      TokenScope.AppsRead,
     ]) {
       expect(SENSITIVE_TOKEN_SCOPES & bit).toBe(0n);
     }
@@ -249,6 +252,14 @@ describe('SENSITIVE_TOKEN_SCOPES (OAuth sensitive taxonomy)', () => {
     expect(isSensitiveTokenScope(TokenScope.AppBlocksSubmit)).toBe(false);
     expect(isSensitiveTokenScope(TokenScope.LinkConnect)).toBe(false);
     expect(isSensitiveTokenScope(0n)).toBe(false);
+  });
+
+  it('AppDataRead (a private-data read) is sensitive; AppsRead (the public catalog) is not', () => {
+    // Literal bits, not the enum: AppDataRead = 2^32, AppsRead = 2^31.
+    expect(isSensitiveTokenScope(4294967296n)).toBe(true);
+    expect(isSensitiveTokenScope(2147483648n)).toBe(false);
+    expect(SENSITIVE_TOKEN_SCOPES & 4294967296n).toBe(4294967296n);
+    expect(SENSITIVE_TOKEN_SCOPES & 2147483648n).toBe(0n);
   });
 
   it('isSensitiveTokenScope — a mask is sensitive iff it intersects the set', () => {
