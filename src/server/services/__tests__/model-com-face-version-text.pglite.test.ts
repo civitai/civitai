@@ -303,6 +303,14 @@ describe('rateComFaceVersionText', () => {
     });
   });
 
+  it('a csam hit and a refusal in one run queue the forced Model scan once', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha', 'beta'] }] });
+    rateWith({ alpha: { status: 'refused' }, beta: ok({ csam: { detected: true, reason: 'r' } }) });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(applyCsamHold).toHaveBeenCalledTimes(1);
+    expect(scanEntityInBackground).toHaveBeenCalledTimes(1);
+  });
+
   it('queues no Model scan when nothing was refused or held (control)', async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
     rateWith({ alpha: mature });
@@ -355,6 +363,7 @@ describe('rateComFaceVersionText', () => {
       comVersionTextHoldHash: textScanTextHash(modelSubject),
     });
     expect(JSON.stringify(hold.subject.meta)).not.toContain('beta');
+    expect(scanEntityInBackground).toHaveBeenCalledTimes(1);
     expect(scanEntityInBackground).toHaveBeenCalledWith({
       entityType: 'Model',
       entityId: MODEL_ID,
@@ -638,6 +647,22 @@ describe('processComFaceVersionText', () => {
     expect(previewTextScanEach).not.toHaveBeenCalled();
   });
 
+  it(`retries, not parks, a model one attempt short of ${COM_VERSION_TEXT_MAX_ATTEMPTS}`, async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: { status: 'unavailable' } });
+    await db.query(`INSERT INTO "KeyValue" VALUES ($1, $2)`, [
+      comVersionTextQueueKey(MODEL_ID),
+      JSON.stringify({
+        editAt: new Date(0).toISOString(),
+        source: 'edit',
+        attempt: COM_VERSION_TEXT_MAX_ATTEMPTS - 1,
+      }),
+    ]);
+    await processComFaceVersionText(new Date());
+    expect(await queued()).toMatchObject({ attempt: COM_VERSION_TEXT_MAX_ATTEMPTS });
+    expect(await queued()).not.toHaveProperty('gaveUpAt');
+  });
+
   it(`parks a model after ${COM_VERSION_TEXT_MAX_ATTEMPTS} attempts, so neither the job nor the sweep spends on it again until an owner edit`, async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
     rateWith({ alpha: { status: 'unavailable' } });
@@ -765,6 +790,23 @@ describe('sweepComFaceVersionText', () => {
     expect(
       await rows(`SELECT key FROM "KeyValue" WHERE key = 'com-face-version-text:v:1x'`)
     ).toEqual([]);
+  });
+
+  it('drops the verdicts of a private version and of a model that lost its face', async () => {
+    await seed({
+      versions: [
+        { id: 1, name: 'v1', words: ['alpha'] },
+        { id: 2, name: 'v2', words: ['beta'] },
+      ],
+    });
+    await rateComFaceVersionText(MODEL_ID);
+    await db.query(`UPDATE "ModelVersion" SET availability = 'Private' WHERE id = 2`);
+    await sweepComFaceVersionText();
+    expect(await verdicts(1)).toBeDefined();
+    expect(await verdicts(2)).toBeUndefined();
+    await db.query(`UPDATE "Model" SET "sfwName" = NULL WHERE id = $1`, [MODEL_ID]);
+    await sweepComFaceVersionText();
+    expect(await verdicts(1)).toBeUndefined();
   });
 
   it('drops every verdict of a deleted model', async () => {
