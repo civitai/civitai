@@ -2,17 +2,19 @@ import {
   getWorkflow,
   queryWorkflows,
   submitWorkflow,
+  type ModelAnalysisInput,
+  type ModelAnalysisStep,
+  type ModelAnalysisStepTemplate,
   type Workflow,
-  type WorkflowTemplate,
 } from '@civitai/orchestration-client';
 import { dbRead } from './db';
-import { getOrchestratorClient } from './orchestrator';
+import { getOrchestratorClient, isGoneStatus } from './orchestrator';
 import {
+  mergeAir,
   parseModelLink,
   type AnalysisState,
   type MergeAnalysis,
   type MergeAnalysisLabels,
-  type MergeReport,
   type ModelRole,
   type ResolveResponse,
   type ResolvedVersion,
@@ -22,8 +24,11 @@ import {
 const TAG = 'moderator:model-merge-analysis';
 const ORCHESTRATOR_TIMEOUT_MS = 15_000;
 const LORA_TYPES = new Set(['LORA', 'LoCon', 'DoRA']);
-const MODEL_FILE_TYPES = new Set(['Model', 'Diffusion Model']);
+// Ranked: a version's full file is preferred over its pruned one.
+const MODEL_FILE_TYPES = ['Model', 'Diffusion Model', 'Pruned Model'];
 const PRECISIONS = new Set(['fp32', 'fp16', 'bf16']);
+
+export const isWorkflowId = (value: string) => /^[\w-]{1,100}$/.test(value);
 
 const wrongType = (role: ModelRole) =>
   role === 'lora'
@@ -32,13 +37,16 @@ const wrongType = (role: ModelRole) =>
 
 type FileRow = { id: number; name: string; type: string; metadata: unknown };
 
+const isPrimary = (file: FileRow) =>
+  (file.metadata as { primary?: unknown } | null)?.primary === true;
+
 /** The file the detector can read: a full-precision safetensors weights file, the primary one first. */
 function analysableFile(files: FileRow[], fileId: number | undefined): FileRow | undefined {
   return files
     .filter((file) => {
-      const metadata = (file.metadata ?? {}) as { fp?: unknown; primary?: unknown };
+      const metadata = (file.metadata ?? {}) as { fp?: unknown };
       return (
-        MODEL_FILE_TYPES.has(file.type) &&
+        MODEL_FILE_TYPES.includes(file.type) &&
         (fileId === undefined || file.id === fileId) &&
         file.name.toLowerCase().endsWith('.safetensors') &&
         typeof metadata.fp === 'string' &&
@@ -47,8 +55,8 @@ function analysableFile(files: FileRow[], fileId: number | undefined): FileRow |
     })
     .sort(
       (a, b) =>
-        Number((b.metadata as { primary?: unknown })?.primary === true) -
-        Number((a.metadata as { primary?: unknown })?.primary === true)
+        Number(isPrimary(b)) - Number(isPrimary(a)) ||
+        MODEL_FILE_TYPES.indexOf(a.type) - MODEL_FILE_TYPES.indexOf(b.type)
     )[0];
 }
 
@@ -86,22 +94,23 @@ export async function resolveModelLink(input: string, role: ModelRole): Promise<
     return { error: wrongType(role) };
 
   const files = await dbRead
-    .selectFrom('ModelFile')
-    .select(['id', 'name', 'type', 'metadata', 'modelVersionId'])
+    .selectFrom('ModelFile as mf')
+    .leftJoin('ModelFileHash as h', (join) =>
+      join.onRef('h.fileId', '=', 'mf.id').on('h.type', '=', 'SHA256')
+    )
+    .select(['mf.id', 'mf.name', 'mf.type', 'mf.metadata', 'mf.modelVersionId', 'h.hash'])
     .where(
-      'modelVersionId',
+      'mf.modelVersionId',
       'in',
       versions.map((v) => v.versionId)
     )
-    .where('replacedAt', 'is', null)
+    .where('mf.replacedAt', 'is', null)
     .execute();
 
   return {
     versions: versions.map((v): ResolvedVersion => {
-      const file = analysableFile(
-        files.filter((f) => f.modelVersionId === v.versionId),
-        link.fileId
-      );
+      const versionFiles = files.filter((f) => f.modelVersionId === v.versionId);
+      const file = analysableFile(versionFiles, link.fileId);
       return {
         modelId: v.modelId,
         modelName: v.modelName,
@@ -109,8 +118,8 @@ export async function resolveModelLink(input: string, role: ModelRole): Promise<
         versionName: v.versionName,
         baseModel: v.baseModel,
         fileName: file?.name ?? null,
-        // The detector needs no ecosystem, and the dashboard's links send `unknown` too.
-        air: file ? `urn:air:unknown:${role}:civitai:${v.modelId}@${v.versionId}+${file.id}` : null,
+        air: file ? mergeAir(role, v.modelId, v.versionId, file.id) : null,
+        sha256: (file && versionFiles.find((f) => f.id === file.id)?.hash) ?? null,
         problem: file
           ? null
           : 'This version has no file the analysis can read. Choose a version with an FP16, BF16 or FP32 safetensors file.',
@@ -119,39 +128,26 @@ export async function resolveModelLink(input: string, role: ModelRole): Promise<
   };
 }
 
-export type AnalysisRequest = {
-  baseModel: string;
-  checkpoint: string;
-  loras: { model: string; strength?: number }[];
-  labels: MergeAnalysisLabels;
-};
+export type AnalysisRequest = ModelAnalysisInput & { labels: MergeAnalysisLabels };
 
 export async function submitMergeAnalysis(
-  request: AnalysisRequest,
+  { labels, ...input }: AnalysisRequest,
   moderatorId: number
 ): Promise<{ workflowId: string } | { error: string }> {
-  const { data, error } = await submitWorkflow({
+  const step: ModelAnalysisStepTemplate = { $type: 'modelAnalysis', name: 'analysis', input };
+  const { data, error, response } = await submitWorkflow({
     client: getOrchestratorClient(),
-    body: {
-      tags: [TAG],
-      metadata: { moderatorId, labels: request.labels },
-      steps: [
-        {
-          $type: 'modelAnalysis',
-          name: 'analysis',
-          input: {
-            baseModel: request.baseModel,
-            checkpoint: request.checkpoint,
-            loras: request.loras,
-          },
-        },
-      ],
-    } as unknown as WorkflowTemplate,
+    body: { tags: [TAG], metadata: { moderatorId, labels }, steps: [step] },
     signal: AbortSignal.timeout(ORCHESTRATOR_TIMEOUT_MS),
   });
   if (data?.id) return { workflowId: data.id };
   console.error('[merge-analysis] submit refused', error);
-  return { error: 'The check could not be started. Try again shortly.' };
+  // No response is a timeout or transport failure: the orchestrator may have accepted it anyway.
+  return {
+    error: response
+      ? 'The check could not be started. Try again shortly.'
+      : 'No answer from the orchestrator; the check may have started. Look under Recent checks before trying again.',
+  };
 }
 
 const stateOf = (status: string): AnalysisState =>
@@ -161,11 +157,11 @@ const stateOf = (status: string): AnalysisState =>
     ? 'failed'
     : 'running';
 
-type AnalysisStep = { output?: { report?: MergeReport; blob?: { url?: string | null } } | null };
-const analysisStep = (workflow: Workflow) => workflow.steps?.[0] as AnalysisStep | undefined;
+const analysisOutput = (workflow: Workflow) =>
+  (workflow.steps?.[0] as ModelAnalysisStep | undefined)?.output;
 
 function toAnalysis(workflow: Workflow): MergeAnalysis {
-  const output = analysisStep(workflow)?.output;
+  const output = analysisOutput(workflow);
   const metadata = workflow.metadata as { labels?: MergeAnalysisLabels } | null;
   return {
     workflowId: workflow.id ?? '',
@@ -184,7 +180,7 @@ async function readTaggedWorkflow(workflowId: string): Promise<Workflow | null |
     signal: AbortSignal.timeout(ORCHESTRATOR_TIMEOUT_MS),
   });
   if (data) return data.tags?.includes(TAG) ? data : null;
-  return response?.status === 404 || response?.status === 400 ? null : undefined;
+  return response && (isGoneStatus(response.status) || response.status === 400) ? null : undefined;
 }
 
 /** `null`: no such check. `undefined`: the orchestrator could not be asked. */
@@ -206,7 +202,7 @@ export async function recentMergeAnalyses(): Promise<MergeAnalysis[]> {
 /** The original report file, fetched server-side so its signed address never reaches the browser. */
 export async function fetchMergeReportFile(workflowId: string): Promise<Response | null> {
   const workflow = await readTaggedWorkflow(workflowId);
-  const url = workflow && analysisStep(workflow)?.output?.blob?.url;
+  const url = workflow && analysisOutput(workflow)?.blob?.url;
   if (!url) return null;
   const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
   return res.ok ? res : null;

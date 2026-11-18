@@ -2,15 +2,16 @@ import { error, fail, redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { requiresGrant } from '$lib/server/access';
 import {
+  isWorkflowId,
   readMergeAnalysis,
   recentMergeAnalyses,
   submitMergeAnalysis,
 } from '$lib/server/model-merge-analysis.service';
-import { MAX_CANDIDATE_LORAS, MERGE_ANALYSIS_PATH } from '$lib/model-merge-analysis';
+import { MAX_CANDIDATE_LORAS, MERGE_ANALYSIS_PATH, isMergeAir } from '$lib/model-merge-analysis';
 import type { Actions, PageServerLoad } from './$types';
 
-const checkpointAir = z.string().regex(/^urn:air:unknown:checkpoint:civitai:\d+@\d+\+\d+$/);
-const loraAir = z.string().regex(/^urn:air:unknown:lora:civitai:\d+@\d+\+\d+$/);
+const checkpointAir = z.string().refine((v) => isMergeAir('checkpoint', v));
+const loraAir = z.string().refine((v) => isMergeAir('lora', v));
 const label = z.string().trim().min(1).max(300);
 
 const requestSchema = z
@@ -21,6 +22,7 @@ const requestSchema = z
     checkpointLabel: label,
     loras: z.array(loraAir).min(1).max(MAX_CANDIDATE_LORAS),
     loraLabels: z.array(label),
+    loraHashes: z.array(z.string().transform((v) => v || null)),
     // Blank means "not given": the backend then assumes 1.
     strengths: z.array(
       z
@@ -30,16 +32,19 @@ const requestSchema = z
         .pipe(z.number().min(-10).max(10).optional())
     ),
   })
-  .refine((r) => r.loras.length === r.strengths.length && r.loras.length === r.loraLabels.length);
+  .refine(
+    (r) =>
+      r.loras.length === r.strengths.length &&
+      r.loras.length === r.loraLabels.length &&
+      r.loras.length === r.loraHashes.length
+  );
 
-const workflowId = z.string().regex(/^[\w-]{1,100}$/);
-
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, depends }) => {
+  depends('app:merge-analysis');
   const requested = url.searchParams.get('workflow');
   let current = null;
   if (requested !== null) {
-    const id = workflowId.safeParse(requested);
-    current = id.success ? await readMergeAnalysis(id.data) : null;
+    current = isWorkflowId(requested) ? await readMergeAnalysis(requested) : null;
     if (current === null) error(404, 'This check was not found.');
   }
   return {
@@ -63,6 +68,7 @@ export const actions: Actions = {
       checkpointLabel: form.get('checkpointLabel'),
       loras: form.getAll('lora'),
       loraLabels: form.getAll('loraLabel'),
+      loraHashes: form.getAll('loraHash'),
       strengths: form.getAll('strength'),
     });
     if (!parsed.success)
@@ -70,7 +76,9 @@ export const actions: Actions = {
         error:
           'Choose a version for the checkpoint, the original base and every candidate LoRA, and keep strengths between -10 and 10.',
       });
-    const { baseModel, checkpoint, loras, loraLabels, strengths } = parsed.data;
+    const { baseModel, checkpoint, loras, loraLabels, loraHashes, strengths } = parsed.data;
+    if (new Set(loras).size !== loras.length)
+      return fail(400, { error: 'The same LoRA is listed twice. Remove the duplicate.' });
 
     const submitted = await submitMergeAnalysis(
       {
@@ -82,7 +90,7 @@ export const actions: Actions = {
         labels: {
           baseModel: parsed.data.baseModelLabel,
           checkpoint: parsed.data.checkpointLabel,
-          loras: loraLabels,
+          loras: loraLabels.map((label, i) => ({ label, sha256: loraHashes[i] })),
         },
       },
       locals.user!.id

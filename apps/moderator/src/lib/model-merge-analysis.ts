@@ -1,3 +1,7 @@
+import type { LoraEvidence, MergeReport } from '@civitai/orchestration-client';
+
+export type { LoraEvidence, MergeReport };
+
 export const MERGE_ANALYSIS_PATH = '/models/merge-analysis';
 export const MAX_CANDIDATE_LORAS = 8;
 
@@ -47,6 +51,12 @@ export function parseModelLink(raw: string): ParsedModelLink | { error: string }
     : { error: 'The link’s model version is invalid. Copy the link from Civitai again.' };
 }
 
+// The detector needs no ecosystem, and the dashboard's links send `unknown` too.
+export const mergeAir = (role: ModelRole, modelId: number, versionId: number, fileId: number) =>
+  `urn:air:unknown:${role}:civitai:${modelId}@${versionId}+${fileId}`;
+export const isMergeAir = (role: ModelRole, value: string) =>
+  new RegExp(`^urn:air:unknown:${role}:civitai:\\d+@\\d+\\+\\d+$`).test(value);
+
 /** One version a link can resolve to. `air` is null when the version cannot be analysed (`problem`). */
 export type ResolvedVersion = {
   modelId: number;
@@ -56,6 +66,7 @@ export type ResolvedVersion = {
   baseModel: string;
   fileName: string | null;
   air: string | null;
+  sha256: string | null;
   problem: string | null;
 };
 
@@ -65,36 +76,13 @@ export type ResolveResponse = { versions: ResolvedVersion[] } | { error: string 
 export type MergeAnalysisLabels = {
   checkpoint: string;
   baseModel: string;
-  loras: string[];
+  /** `sha256` pairs each LoRA with its report candidate; null when the file has no recorded hash. */
+  loras: { label: string; sha256: string | null }[];
 };
 
 // The backend's verdict strings. Anything else is shown as inconclusive, never as an answer.
 export const SUPPORTING = 'Supporting evidence';
 export const NO_SIGNAL = 'No signal detected';
-
-export type LoraEvidence = {
-  name: string;
-  verdict: string;
-  expectedStrength: number;
-  fittedStrength: number | null;
-  verificationStrength: number | null;
-  partialCosine: number | null;
-  signalToRounding: number | null;
-  supportingLayers: number;
-  resolvableLayers: number;
-  matchedLayers: number;
-  totalLayers: number;
-  unmappedLayers: string[];
-  adapterKinds?: string[] | null;
-};
-
-export type MergeReport = {
-  explainedFraction: number | null;
-  expectedExplainedFraction: number;
-  verificationSamples: number;
-  candidates: LoraEvidence[];
-  warnings: string[];
-};
 
 export type AnalysisState = 'running' | 'succeeded' | 'failed';
 
@@ -121,9 +109,33 @@ export const verdictExplanation = (verdict: string) =>
     ? 'No detectable match for this LoRA against this base. Small merges or later changes may go undetected.'
     : 'The evidence is not strong enough either way. This is not a yes or a no.';
 
-export function reportTitle(report: MergeReport): string {
+const sameHash = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
+/**
+ * Names each candidate by the LoRA it was submitted as, matched on file hash: the report's order and
+ * count are not a promise, and a verdict under the wrong LoRA's name is the worst thing this page can
+ * show. A candidate with no match keeps the backend's own name.
+ */
+export function labelCandidates(report: MergeReport, labels: MergeAnalysisLabels | null) {
+  const loras = labels?.loras ?? [];
+  return {
+    candidates: report.candidates.map((candidate) => ({
+      candidate,
+      label: loras.find((l) => sameHash(l.sha256, candidate.sha256))?.label ?? candidate.name,
+    })),
+    missing: loras.length > report.candidates.length,
+  };
+}
+
+/** `submitted`: how many LoRAs were sent. A report covering fewer cannot say "no match" for all. */
+export function reportTitle(report: MergeReport, submitted: number): string {
   if (report.candidates.some((c) => c.verdict === SUPPORTING)) return 'Merge evidence found';
-  if (report.candidates.length && report.candidates.every((c) => c.verdict === NO_SIGNAL))
+  if (
+    report.candidates.length &&
+    report.candidates.length >= submitted &&
+    report.candidates.every((c) => c.verdict === NO_SIGNAL)
+  )
     return 'No match found for the selected LoRAs';
   return 'Inconclusive';
 }

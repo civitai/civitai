@@ -1,8 +1,20 @@
 <script lang="ts">
   import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  } from '@civitai/ui/components/ui/table/index.js';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import WarningAlert from '$lib/components/WarningAlert.svelte';
+  import { LINK_CLASS } from '$lib/format';
+  import {
     MERGE_ANALYSIS_PATH,
     NO_SIGNAL,
     SUPPORTING,
+    labelCandidates,
     reportTitle,
     verdictExplanation,
     verdictLabel,
@@ -29,7 +41,9 @@
       <dt class="text-dark-2">Original base</dt>
       <dd class="break-words text-white">{analysis.labels.baseModel}</dd>
       <dt class="text-dark-2">Candidate LoRA{analysis.labels.loras.length > 1 ? 's' : ''}</dt>
-      <dd class="break-words text-white">{analysis.labels.loras.join(', ')}</dd>
+      <dd class="break-words text-white">
+        {analysis.labels.loras.map((l) => l.label).join(', ')}
+      </dd>
     </dl>
   {/if}
 
@@ -40,55 +54,62 @@
       this page; the check keeps running and stays under Recent checks.
     </p>
   {:else if analysis.state === 'failed' || !analysis.report}
-    <p class="text-red-300">The check could not be completed.</p>
+    <ErrorAlert message="The check could not be completed." />
     <p class="text-sm text-dark-2">
       A model may be unavailable for download or in a format the analysis cannot read. Check the links and
       try again; if it keeps failing, ask an engineer with workflow ID {analysis.workflowId}.
     </p>
   {:else}
     {@const report = analysis.report}
-    <h2 class="text-lg text-white">{reportTitle(report)}</h2>
+    {@const labelled = labelCandidates(report, analysis.labels)}
+    <h2 class="text-lg text-white">{reportTitle(report, analysis.labels?.loras.length ?? 0)}</h2>
     <p class="text-sm text-dark-2">
       This is evidence, not proof of who made the model, and not a probability. A “no match” only concerns
       the base and LoRAs selected here.
     </p>
+    {#if labelled.missing}
+      <WarningAlert
+        message="The report covers {report.candidates.length} of the {analysis.labels?.loras
+          .length} LoRAs submitted. The others were not checked."
+      />
+    {/if}
     <div class="grid gap-3 sm:grid-cols-2">
-      {#each report.candidates as candidate, i (`${i}:${candidate.name}`)}
+      {#each labelled.candidates as { candidate, label }, i (`${i}:${candidate.name}`)}
         <article class="rounded-lg border p-4 {tone(candidate.verdict)}">
           <h3 class="text-white">{verdictLabel(candidate.verdict)}</h3>
-          <p class="break-words text-sm text-white">{analysis.labels?.loras[i] ?? candidate.name}</p>
+          <p class="break-words text-sm text-white">{label}</p>
           <p class="mt-1 text-sm text-dark-2">{verdictExplanation(candidate.verdict)}</p>
         </article>
       {/each}
     </div>
 
     <details class="rounded-lg border border-dark-4 p-3 text-sm">
-      <summary class="text-dark-1">Technical details</summary>
+      <summary class="cursor-pointer text-dark-2">Technical details</summary>
       <div class="mt-3 overflow-x-auto">
-        <table class="w-full text-left text-xs">
-          <thead class="text-dark-2">
-            <tr>
-              <th class="p-1">LoRA</th><th class="p-1">Verdict</th><th class="p-1">Expected</th>
-              <th class="p-1">Fitted</th><th class="p-1">Verified</th><th class="p-1">Similarity</th>
-              <th class="p-1">Signal/rounding</th><th class="p-1">Supporting layers</th>
-              <th class="p-1">Matched layers</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table class="text-xs">
+          <TableHeader>
+            <TableRow>
+              <TableHead>LoRA</TableHead><TableHead>Verdict</TableHead><TableHead>Expected</TableHead>
+              <TableHead>Fitted</TableHead><TableHead>Verified</TableHead><TableHead>Similarity</TableHead>
+              <TableHead>Signal/rounding</TableHead><TableHead>Supporting layers</TableHead>
+              <TableHead>Matched layers</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {#each report.candidates as c, i (`${i}:${c.name}`)}
-              <tr class="border-t border-dark-4">
-                <td class="p-1">{c.name}</td><td class="p-1">{c.verdict}</td>
-                <td class="p-1">{fixed(c.expectedStrength, 3)}</td>
-                <td class="p-1">{fixed(c.fittedStrength, 4)}</td>
-                <td class="p-1">{fixed(c.verificationStrength, 4)}</td>
-                <td class="p-1">{fixed(c.partialCosine, 3)}</td>
-                <td class="p-1">{fixed(c.signalToRounding, 1)}</td>
-                <td class="p-1">{c.supportingLayers} / {c.resolvableLayers}</td>
-                <td class="p-1">{c.matchedLayers} / {c.totalLayers}</td>
-              </tr>
+              <TableRow>
+                <TableCell>{c.name}</TableCell><TableCell>{c.verdict}</TableCell>
+                <TableCell>{fixed(c.expectedStrength, 3)}</TableCell>
+                <TableCell>{fixed(c.fittedStrength, 4)}</TableCell>
+                <TableCell>{fixed(c.verificationStrength, 4)}</TableCell>
+                <TableCell>{fixed(c.partialCosine, 3)}</TableCell>
+                <TableCell>{fixed(c.signalToRounding, 1)}</TableCell>
+                <TableCell>{c.supportingLayers} / {c.resolvableLayers}</TableCell>
+                <TableCell>{c.matchedLayers} / {c.totalLayers}</TableCell>
+              </TableRow>
             {/each}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
       <p class="mt-2 text-dark-2">
         Explained fraction {fixed(report.explainedFraction, 3)} (expected {fixed(
@@ -97,16 +118,16 @@
         )}), {report.verificationSamples} verification samples.
       </p>
       {#if report.warnings.length}
-        <ul class="mt-2 list-disc pl-5 text-yellow-200">
+        <div class="mt-2 flex flex-col gap-1">
           {#each report.warnings as warning, i (i)}
-            <li>{warning}</li>
+            <WarningAlert message={warning} />
           {/each}
-        </ul>
+        </div>
       {/if}
       <p class="mt-2 text-dark-2">Workflow {analysis.workflowId}</p>
       {#if analysis.hasReportFile}
         <a
-          class="mt-2 inline-block text-blue-400 underline"
+          class="mt-2 inline-block {LINK_CLASS}"
           href="{MERGE_ANALYSIS_PATH}/report/{encodeURIComponent(analysis.workflowId)}"
           download>Download the full report</a
         >

@@ -1,9 +1,13 @@
 <script lang="ts">
   import { browser } from '$app/environment';
+  import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import { modelVersionUrl } from '$lib/entity-url';
   import { fetchJson } from '$lib/fetch-json';
+  import { LINK_CLASS } from '$lib/format';
   import { MERGE_ANALYSIS_PATH, type ModelRole, type ResolveResponse } from '$lib/model-merge-analysis';
 
   let {
@@ -13,24 +17,27 @@
     role,
     name,
     labelName,
+    hashName,
   }: {
     id: string;
     label: string;
     hint: string;
     role: ModelRole;
-    /** Form field carrying the chosen AIR, and the one carrying its display name. */
+    /** Form fields carrying the chosen AIR, its display name and, when given, its file hash. */
     name: string;
     labelName: string;
+    hashName?: string;
   } = $props();
 
   let link = $state('');
   let lookedUp = $state('');
+  let version = $state(0);
   let chosen = $state<number | null>(null);
 
   const lookup = $derived(
     browser && lookedUp
       ? fetchJson<ResolveResponse>(
-          `${MERGE_ANALYSIS_PATH}/resolve?${new URLSearchParams({ link: lookedUp, role })}`
+          `${MERGE_ANALYSIS_PATH}/resolve?${new URLSearchParams({ link: lookedUp, role, v: String(version) })}`
         )
       : null
   );
@@ -40,6 +47,7 @@
   function look() {
     chosen = null;
     lookedUp = link.trim();
+    version++;
   }
 </script>
 
@@ -65,7 +73,7 @@
 
   {#if lookup && current}
     {#await lookup}
-      <p class="text-sm text-dark-2">Looking up…</p>
+      <p class="text-sm text-dark-2">Looking up the link…</p>
     {:then res}
       {#if 'error' in res}
         <p class="text-sm text-red-300" role="alert">{res.error}</p>
@@ -75,26 +83,31 @@
           res.versions.find((v) => v.air) ??
           res.versions[0]}
         <div class="rounded-md border border-dark-4 bg-dark-7 p-3 text-sm">
-          <p class="text-white">
+          <p>
             <a
-              class="underline-offset-2 hover:underline"
-              href="https://civitai.com/models/{picked.modelId}?modelVersionId={picked.versionId}"
+              class={LINK_CLASS}
+              href={modelVersionUrl(page.data.civitaiUrl, picked.modelId, picked.versionId)}
               target="_blank"
               rel="noreferrer">{picked.modelName}</a
             >
           </p>
           {#if res.versions.length > 1}
-            <label class="mt-2 flex flex-wrap items-center gap-2 text-dark-2">
-              Version
-              <select
-                class="rounded bg-dark-5 px-2 py-1 text-dark-0"
-                bind:value={() => picked.versionId, (v) => (chosen = v)}
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-dark-2">
+              <Label for="{id}-version" class="text-dark-2">Version</Label>
+              <Select.Root
+                type="single"
+                bind:value={() => String(picked.versionId), (v) => (chosen = v ? Number(v) : null)}
               >
-                {#each res.versions as v (v.versionId)}
-                  <option value={v.versionId}>{v.versionName}{v.air ? '' : ' (no readable file)'}</option>
-                {/each}
-              </select>
-            </label>
+                <Select.Trigger id="{id}-version" class="w-64">{picked.versionName}</Select.Trigger>
+                <Select.Content>
+                  {#each res.versions as v (v.versionId)}
+                    <Select.Item value={String(v.versionId)}
+                      >{v.versionName}{v.air ? '' : ' (no readable file)'}</Select.Item
+                    >
+                  {/each}
+                </Select.Content>
+              </Select.Root>
+            </div>
           {:else}
             <p class="text-dark-2">Version: {picked.versionName}</p>
           {/if}
@@ -103,7 +116,14 @@
           </p>
           {#if picked.air}
             <input type="hidden" {name} value={picked.air} />
-            <input type="hidden" name={labelName} value="{picked.modelName} — {picked.versionName}" />
+            <input
+              type="hidden"
+              name={labelName}
+              value={`${picked.modelName} — ${picked.versionName}`.slice(0, 300)}
+            />
+            {#if hashName}
+              <input type="hidden" name={hashName} value={picked.sha256 ?? ''} />
+            {/if}
           {:else}
             <p class="mt-1 text-red-300" role="alert">{picked.problem}</p>
           {/if}

@@ -1,12 +1,13 @@
 <script lang="ts">
   import { applyAction, enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
+  import { invalidate } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import { MAX_CANDIDATE_LORAS, MERGE_ANALYSIS_PATH, reportTitle } from '$lib/model-merge-analysis';
+  import { MAX_CANDIDATE_LORAS } from '$lib/model-merge-analysis';
   import AnalysisResult from './AnalysisResult.svelte';
   import ModelLinkInput from './ModelLinkInput.svelte';
+  import RecentChecks from './RecentChecks.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -19,7 +20,7 @@
 
   $effect(() => {
     if (!running) return;
-    const timer = setInterval(() => invalidateAll(), 10_000);
+    const timer = setInterval(() => void invalidate('app:merge-analysis'), 10_000);
     return () => clearInterval(timer);
   });
 
@@ -41,15 +42,15 @@
 
 <svelte:head><title>Model merge analysis</title></svelte:head>
 
-<div class="flex max-w-4xl flex-col gap-5">
-  <div>
-    <h1 class="text-xl text-white">Model merge analysis</h1>
-    <p class="text-sm text-dark-2">
-      Checks whether a checkpoint contains one or more LoRAs merged into its original base. Paste links;
-      the models are downloaded and compared by the orchestrator, nothing is uploaded from here.
-    </p>
-  </div>
+<header class="page-header">
+  <h1>Model merge analysis</h1>
+  <p>
+    Checks whether a checkpoint contains one or more LoRAs merged into its original base. Paste links;
+    the models are downloaded and compared by the orchestrator, nothing is uploaded from here.
+  </p>
+</header>
 
+<div class="flex max-w-4xl flex-col gap-5">
   {#if data.currentUnavailable}
     <ErrorAlert message="Could not reach the orchestrator to read this check. Reload to try again." />
   {:else if data.current}
@@ -98,9 +99,10 @@
             role="lora"
             name="lora"
             labelName="loraLabel"
+            hashName="loraHash"
           />
           <details class="text-sm">
-            <summary class="text-dark-2">Advanced</summary>
+            <summary class="cursor-pointer text-dark-2">Advanced</summary>
             <label class="mt-2 flex flex-wrap items-center gap-2 text-dark-2">
               Suspected strength (optional)
               <Input name="strength" type="number" step="0.05" min="-10" max="10" placeholder="1" class="w-28" />
@@ -142,8 +144,8 @@
     <p class="text-sm text-dark-2">You can view checks here, but you do not hold the grant to run one.</p>
   {/if}
 
-  <details class="rounded-xl border border-dark-4 p-4 text-sm">
-    <summary class="text-dark-1">Examples to try</summary>
+  <details class="rounded-xl border border-dark-4 bg-dark-6 p-5 text-sm">
+    <summary class="cursor-pointer text-dark-2">Examples to try</summary>
     {#each EXAMPLES as example (example.name)}
       <div class="mt-3">
         <p class="text-white">{example.name}</p>
@@ -156,41 +158,5 @@
     {/each}
   </details>
 
-  <section class="flex flex-col gap-2">
-    <h2 class="text-white">Recent checks</h2>
-    {#await data.recent}
-      <p class="text-sm text-dark-2">Loading…</p>
-    {:then recent}
-      {#if recent === null}
-        <ErrorAlert message="Could not load recent checks." />
-      {:else}
-        <ul class="flex flex-col gap-1 text-sm">
-          {#each recent as check (check.workflowId)}
-            <li>
-              <a
-                class="flex flex-wrap gap-x-3 rounded px-2 py-1 hover:bg-dark-5"
-                href="{MERGE_ANALYSIS_PATH}?workflow={encodeURIComponent(check.workflowId)}"
-              >
-                <span class="text-white">{check.labels?.checkpoint ?? check.workflowId}</span>
-                <span class="text-dark-2">
-                  {check.state === 'running'
-                    ? 'Checking…'
-                    : check.state === 'failed' || !check.report
-                      ? 'Could not complete'
-                      : reportTitle(check.report)}
-                </span>
-                {#if check.createdAt}
-                  <span class="text-dark-2">{new Date(check.createdAt).toLocaleString()}</span>
-                {/if}
-              </a>
-            </li>
-          {:else}
-            <li class="text-dark-2">No checks yet.</li>
-          {/each}
-        </ul>
-      {/if}
-    {:catch}
-      <ErrorAlert message="Could not load recent checks." />
-    {/await}
-  </section>
+  <RecentChecks checks={data.recent} />
 </div>
