@@ -319,7 +319,11 @@ function rotated<T>(items: readonly T[]): T[] {
  */
 export async function rateUnratedDocs(
   appIds: readonly string[],
-  opts: { perPass?: number } = {}
+  opts: {
+    perPass?: number;
+    /** Throws when the job running the pass was canceled; asked before each page. */
+    checkIfCanceled?: () => void;
+  } = {}
 ): Promise<RatePassResult> {
   const out: RatePassResult = {
     ready: false,
@@ -338,6 +342,7 @@ export async function rateUnratedDocs(
   if (!(await appDocScanOn())) return out;
   const budget = opts.perPass ?? RATER_PER_PASS;
   const canScan = () => out.acted < budget;
+  let canceled = false;
   for (const appId of rotated(appIds)) {
     if (!canScan() || out.read >= RATER_READ_CAP) break;
     out.apps++;
@@ -347,6 +352,12 @@ export async function rateUnratedDocs(
         let afterSeq = resumeAfter.get(cursorKey) ?? 0;
         let wrapped = afterSeq === 0;
         while (canScan() && out.read < RATER_READ_CAP) {
+          try {
+            opts.checkIfCanceled?.();
+          } catch (error) {
+            canceled = true;
+            throw error;
+          }
           const docs = await rater.listUnrated(appId, PUBLISHED_NS, collection, {
             afterSeq,
             limit: RATER_PAGE,
@@ -389,6 +400,8 @@ export async function rateUnratedDocs(
         }
       }
     } catch (error) {
+      // A canceled job ends the pass; anything else ends only this app.
+      if (canceled) throw error;
       out.failed++;
       logToAxiom({
         name: 'app-doc-rater',

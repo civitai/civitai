@@ -114,6 +114,7 @@ const MANIFEST = {
 const IMG_R = '11111111-2222-4333-8444-555555555555';
 const IMG_UNSCANNED = '66666666-7777-4888-9999-aaaaaaaaaaaa';
 const IMG_NO_ROW = '12345678-90ab-4cde-8f01-234567890abc';
+const IMG_FLAGGED = 'abcdef01-2345-4678-89ab-cdef01234567';
 const imageUrl = (key: string) => `https://image.example/abc/${key}/width=450/${key}.jpeg`;
 
 let harness: Harness;
@@ -149,6 +150,8 @@ beforeEach(() => {
     [
       { url: IMG_R, nsfwLevel: 4, ingestion: 'Scanned' },
       { url: IMG_UNSCANNED, nsfwLevel: 0, ingestion: 'Pending' },
+      // Scanned at PG, but under moderator review: the site's image gate hides it at every level.
+      { url: IMG_FLAGGED, nsfwLevel: 1, ingestion: 'Scanned', needsReview: 'minor' },
     ].filter((r) => args.where.url.in.includes(r.url))) as never);
   dbMock.dbWrite.entityModeration.findMany.mockImplementation((async (args: {
     where: { entityId: { in: number[] } };
@@ -304,6 +307,19 @@ describe('a pass submits each unrated shared document’s text scan under its ra
     expect(out).toMatchObject({ apps: 2, failed: 1, submitted: 1 });
   });
 
+  it('a canceled job ends the pass at the next page', async () => {
+    const app = freshApp('RSVCANCEL');
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'x' });
+    await expect(
+      rateUnratedDocs([app], {
+        checkIfCanceled: () => {
+          throw new Error('Job was canceled');
+        },
+      })
+    ).rejects.toThrow('Job was canceled');
+    expect(h.scans).toEqual([]);
+  });
+
   it('with the text scan unable to scan AppDoc (kill switch), nothing is read or submitted', async () => {
     const app = freshApp('RSVKILL');
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'x' });
@@ -377,6 +393,13 @@ describe('🔴 the callback rates the document', () => {
     expect(await callback(inUrl, 1)).toEqual({ status: 'media-pending' });
     const bare = await submitted(app, 'u2', { id: IMG_NO_ROW });
     expect(await callback(bare, 2)).toEqual({ status: 'rated', level: 2 });
+  });
+
+  it('🔴 an image carrying a moderation flag leaves it pending, whatever the image’s level', async () => {
+    const app = freshApp('RSVFLAG');
+    const id = await submitted(app, 'b1', { pic: imageUrl(IMG_FLAGGED) });
+    expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+    expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
   it('🔴 a percent-encoded image url still counts as an image url', async () => {

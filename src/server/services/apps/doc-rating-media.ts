@@ -12,14 +12,15 @@
  *
  * Fails closed: an image that is not rated yet (no level, or its scan has not finished) leaves the
  * whole document unrated, so it stays hidden from other viewers until the next pass; a Blocked
- * image makes the document Blocked; and a key inside an image url (an `http(s)://` url on the image
- * host, `NEXT_PUBLIC_IMAGE_LOCATION`; any host when that is not configured) that names no `Image`
- * row is treated as an image not rated yet. A key anywhere else that names no row (an app's own
- * uuid ids, a link to another site) adds no level.
+ * image makes the document Blocked; an image carrying a moderation flag (under review, flagged
+ * minor or POI, a ToS violation, hard-blocked: what the site's own image gate hides at every level)
+ * leaves it pending too; and a key inside an image url (an `http(s)://` url on a civitai image CDN
+ * host, `imageCdnHosts`) that names no `Image` row is treated as an image not rated yet. A key
+ * anywhere else that names no row (an app's own uuid ids, a link to another site) adds no level.
  */
-import { env as clientEnv } from '~/env/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { imageCdnHosts } from '~/server/services/generation-input-urls';
 import { keysInTextWithin } from '~/server/services/image-url-ownership';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -44,15 +45,6 @@ export type DocMediaKeys =
 /** Every http(s) url in a text, up to the first character a url cannot hold unescaped. */
 const URL_IN_TEXT = /https?:\/\/[^\s"'<>\\]+/gi;
 
-/** The image host's name, or null when it is not configured (then any url counts). */
-function imageHostname(): string | null {
-  try {
-    return new URL(clientEnv.NEXT_PUBLIC_IMAGE_LOCATION).hostname.toLowerCase() || null;
-  } catch {
-    return null;
-  }
-}
-
 /** A text and each form its `%XX` escapes decode to, one pass at a time (at most 4 passes). */
 function decodedForms(text: string): string[] {
   const forms = [text];
@@ -68,12 +60,10 @@ function decodedForms(text: string): string[] {
   return forms;
 }
 
-/** Whether `url` is on the image host (or a subdomain of it). */
-function onImageHost(url: string, host: string | null): boolean {
-  if (!host) return true;
+/** Whether `url` is on a civitai image CDN host (`imageCdnHosts`, shared with generation inputs). */
+function onImageHost(url: string, hosts: readonly string[]): boolean {
   try {
-    const name = new URL(url).hostname.toLowerCase();
-    return name === host || name.endsWith(`.${host}`);
+    return hosts.includes(new URL(url).host.toLowerCase());
   } catch {
     return false;
   }
@@ -85,7 +75,7 @@ function onImageHost(url: string, host: string | null): boolean {
  */
 export function docMediaKeys(texts: readonly string[]): DocMediaKeys {
   const budget = { left: DECODE_BUDGET_CHARS };
-  const host = imageHostname();
+  const hosts = imageCdnHosts();
   const keys = new Set<string>();
   const urlKeys = new Set<string>();
   for (const text of texts) {
@@ -95,7 +85,7 @@ export function docMediaKeys(texts: readonly string[]): DocMediaKeys {
     }
     for (const form of decodedForms(text)) {
       for (const [url] of form.matchAll(URL_IN_TEXT)) {
-        if (!onImageHost(url, host)) continue;
+        if (!onImageHost(url, hosts)) continue;
         for (const key of keysInTextWithin(url, budget)) {
           urlKeys.add(key);
           keys.add(key);
@@ -114,10 +104,33 @@ export type DocMediaLevel =
   /** At least one referenced image has no rating yet. */
   | { status: 'pending' };
 
-type ImageRow = { url: string; nsfwLevel: number; ingestion: ImageIngestionStatus };
+type ImageRow = {
+  url: string;
+  nsfwLevel: number;
+  ingestion: ImageIngestionStatus;
+  needsReview: string | null;
+  poi: boolean;
+  minor: boolean;
+  tosViolation: boolean;
+  acceptableMinor: boolean;
+  blockedFor: string | null;
+};
 
-/** The single level an image contributes, or null while it is not rated. */
-export function imageLevel(row: Pick<ImageRow, 'nsfwLevel' | 'ingestion'>): NsfwLevel | null {
+/**
+ * The single level an image contributes, or null while it cannot be rated. A moderation flag reads
+ * as not rated, whatever the level: the same flags the site's image gate hides an image for
+ * (`classifyGatedImageForViewer`), decided first, as there.
+ */
+export function imageLevel(row: Omit<ImageRow, 'url'>): NsfwLevel | null {
+  if (
+    row.needsReview != null ||
+    row.poi ||
+    row.minor ||
+    row.tosViolation ||
+    row.acceptableMinor ||
+    row.blockedFor != null
+  )
+    return null;
   if (row.ingestion === ImageIngestionStatus.Blocked) return NsfwLevel.Blocked;
   if (row.ingestion !== ImageIngestionStatus.Scanned) return null;
   const bit = getHighestBrowsingLevelBit(row.nsfwLevel);
@@ -132,7 +145,17 @@ export async function resolveDocMediaLevel(
   if (keys.length === 0) return { status: 'rated', level: NsfwLevel.PG };
   const rows = await dbRead.image.findMany({
     where: { url: { in: [...keys] } },
-    select: { url: true, nsfwLevel: true, ingestion: true },
+    select: {
+      url: true,
+      nsfwLevel: true,
+      ingestion: true,
+      needsReview: true,
+      poi: true,
+      minor: true,
+      tosViolation: true,
+      acceptableMinor: true,
+      blockedFor: true,
+    },
   });
   const found = new Set(rows.map((r) => r.url));
   if (urlKeys.some((key) => !found.has(key))) return { status: 'pending' };
