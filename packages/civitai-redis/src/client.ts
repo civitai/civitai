@@ -3632,6 +3632,11 @@ const REDIS_KEYS_UNPREFIXED = {
       key = `${CANDIDATES}:${collection}:${sha256({ query, qdrantFilter, sort, start, viewerClass })}`, TTL 10m.
      */
     CANDIDATES: 'semantic-search:candidates',
+    /*
+      Use: search-by-upload uploads accepted site-wide on one UTC day; the global daily cap.
+      Structure: integer (INCR), key = `${UPLOADS_DAILY}:<YYYY-MM-DD>`, TTL 2 days set on the first.
+     */
+    UPLOADS_DAILY: 'semantic-search:uploads-daily',
   },
 } as const;
 

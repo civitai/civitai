@@ -98,6 +98,8 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'feedback',
   'hatTurf',
   'hiddenPreferences',
+  // Its own global daily cap refuses when its store is unreadable; see image-search-upload.service.
+  'imageSearchUpload',
   'model',
   'placement',
   'platformFeedback',

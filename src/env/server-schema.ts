@@ -613,6 +613,8 @@ export const serverSchema = z
     // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
     SEARCH_SERVICE_URL: z.url().optional(),
     SEARCH_SERVICE_TOKEN: z.string().optional(),
+    // Set privately; see search-upload-gate.ts.
+    SEARCH_UPLOAD_FACE_ANIME_MIN: z.string().optional(),
     // Entities whose search updates are forwarded to "Outbox" for the semantic search sync, e.g.
     // "Article,Comic". Unset = none. Comic needs its OutboxEntity value applied first.
     SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
