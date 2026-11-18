@@ -202,3 +202,15 @@ func FuzzDecode(f *testing.F) {
 		}
 	})
 }
+
+// The replayed request keeps the host the browser addressed, which picks the site's session cookie names.
+func TestRequestKeepsHost(t *testing.T) {
+	s, err := Decode([]byte(`{"method":"POST","target":"/api/internal/ping","query":"","headers":{"host":"civitai.red"},"body":"","bodyIsString":true,"node":{"status":200,"headers":{},"body":"","writes":[]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Request(context.Background())
+	if err != nil || r.HTTP.Host != "civitai.red" {
+		t.Fatalf("host %q (%v)", r.HTTP.Host, err)
+	}
+}

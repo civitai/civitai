@@ -20,7 +20,7 @@ const eventLabel: Record<ServiceDealEventType, string> = {
   CancellationRequested: 'Asked to cancel',
   CancellationAccepted: 'Agreed to cancel',
   CancellationDeclined: 'Refused to cancel',
-  Cancelled: 'Deal cancelled',
+  Cancelled: 'Deal canceled',
   Disputed: 'Opened a dispute',
   DisputeResolved: 'Dispute resolved',
   DeadlineExtended: 'Deadline extended',

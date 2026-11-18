@@ -395,3 +395,27 @@ describe('_app getInitialProps — SSR-only props are absent on a client-side na
     }
   });
 });
+
+describe('on a site listed host in AUTH_SESSION_COOKIE_MODE_BY_SITE', () => {
+  const ctxFor = (host: string) => {
+    const ctx = makeCtx();
+    (ctx.ctx.req as unknown as { headers: { host: string } }).headers.host = host;
+    return ctx;
+  };
+
+  it('a shared-slot cookie is not an auth cookie, though the lookup gave no answer', async () => {
+    // Cookie names carry their __Secure-/__Host- prefixes only on an https deploy.
+    vi.stubEnv('NEXT_PUBLIC_BASE_URL', 'https://civitai.red');
+    vi.stubEnv('AUTH_SESSION_COOKIE_MODE_BY_SITE', 'civitai.red:host');
+    try {
+      fail(new Error('lookup unavailable'));
+      const red = (await getInitialProps(ctxFor('civitai.red'))).pageProps;
+      expect(red.hasAuthCookie).toBe(false);
+      expect(red.sessionCookie).toBe('none');
+      const com = (await getInitialProps(ctxFor('civitai.com'))).pageProps;
+      expect(com.hasAuthCookie).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});

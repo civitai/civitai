@@ -50,7 +50,6 @@ export {
   clearPostLoginMarker,
   loginRetryCookie,
   clearLoginRetryCookie,
-  otherSlotExpiries,
   SESSION_REAUTH_HEADER,
 } from './spoke-signin'; // a first-party app's own sign-in routes
 export type { SpokeSignInEvent, SpokeSignInOptions, SpokeCallbackOptions } from './spoke-signin';
@@ -105,7 +104,14 @@ export {
   legacySessionCookieName,
   allCookieNames,
   sessionCookieMode,
+  siteCookieMode,
   legacyCookieReadEnabled,
+  hostOnlySite,
+  otherSlotExpiries,
+  siteCookieHeader,
+  siteCookieJar,
+  cookiePairName,
+  expireCookie,
   hostSessionCookieName,
   hostDeviceCookieName,
   sessionCookieNameForSlot,
