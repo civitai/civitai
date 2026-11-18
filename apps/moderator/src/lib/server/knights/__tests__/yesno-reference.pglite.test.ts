@@ -80,7 +80,6 @@ beforeAll(async () => {
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
       "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "minor" BOOLEAN NOT NULL DEFAULT false,
       "poi" BOOLEAN NOT NULL DEFAULT false,
-      "minor" BOOLEAN NOT NULL DEFAULT false,
       "postId" INTEGER
     );`);
   await db.exec(
