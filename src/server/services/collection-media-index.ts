@@ -518,9 +518,7 @@ export async function enqueueCollectionRebuild({
 /**
  * Collections whose document is affected by hard-deleting a post.
  *
- * Not just the post's own item row. `deletePost` raw-`DELETE`s the post's images inside
- * its transaction instead of calling `deleteImageById`, so the image-side enqueue never
- * fires for them; images it declines to delete survive with `postId` nulled
+ * Not just the post's own item row. Images `deletePost` declines to delete survive with `postId` nulled
  * (`Image.postId` is `ON DELETE SET NULL`), dropping them from the `postItemImage` and
  * `modelItemImage` CTEs.
  *
@@ -621,9 +619,9 @@ export async function getCollectionIdsForPostCascade({
  * involve no `CollectionItem` change, so the trigger cannot see them.)
  *
  * Only the one leg: the article's cover and content images are removed through
- * `deleteImageById`, which resolves and enqueues on its own. What nothing observes is
+ * `deleteImages`, which resolves and enqueues on its own. What nothing observes is
  * `CollectionItem.articleId` cascading when the Article row goes — and it goes FIRST,
- * so by the time `deleteImageById` runs, the image path's article leg
+ * so by the time `deleteImages` runs, the image path's article leg
  * (`WHERE a."coverId" IN (…)`) can no longer match. Resolve before the transaction.
  */
 export async function getCollectionIdsForArticle({

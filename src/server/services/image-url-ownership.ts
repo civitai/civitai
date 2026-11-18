@@ -1,3 +1,4 @@
+import { storedKeySql } from '@civitai/db-queries/content-deletion';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { NextApiResponse } from 'next';
@@ -168,15 +169,8 @@ export function keysInTextWithin(text: string, budget?: DecodeBudget): string[] 
   return [...new Set(keysInForms(forms))];
 }
 
-/**
- * The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url: shop
- * columns hold whatever the client sent. 🔴 Must match the expression indexes in migration
- * `20261211120000_shop_artwork_key_indexes` exactly, or every image create scans these tables.
- */
-export const keyIn = (column: string) =>
-  Prisma.raw(
-    `substring(replace(translate(lower(${column}), E'\\t\\r\\n', ''), '%2d', '-') from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')`
-  );
+/** The key a stored shop artwork value names, normalised as `storedUrlsFor` normalises a url. */
+export const keyIn = (column: string) => Prisma.raw(storedKeySql(column));
 
 /** Cosmetics outside the shop (event badges and the like) hold no artwork a buyer paid for. */
 const soldInShop = Prisma.sql`EXISTS (SELECT 1 FROM "CosmeticShopItem" s WHERE s."cosmeticId" = "Cosmetic".id)`;

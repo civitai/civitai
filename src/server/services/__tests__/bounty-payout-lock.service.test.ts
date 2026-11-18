@@ -198,6 +198,8 @@ function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
         if (gone) events.push('delete');
         return [{ gone }];
       }
+      // An entry delete unlinks its images; these entries have none.
+      if (sql.includes('DELETE FROM "ImageConnection"')) return [];
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);
       // No row, no lock: Postgres has nothing to hold for a bounty that is gone.
       if (!bounty) return [];
@@ -366,8 +368,6 @@ function transactionClient(held: (() => void)[], locked: { rows?: Rows } = {}) {
         return { count: 1 };
       },
     },
-    imageConnection: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
-    image: { deleteMany: async () => ({ count: 0 }) },
   };
 }
 
