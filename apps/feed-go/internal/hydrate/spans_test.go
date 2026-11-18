@@ -72,8 +72,8 @@ func joinRace(leaderCtx, joinerCtx context.Context, t *testing.T, c *MissCompute
 	lookup := l.lookup
 	if err != nil {
 		lookup = func(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-			_, _ = l.lookup(ctx, ids)
-			return nil, err
+			recs, _ := l.lookup(ctx, ids)
+			return recs, err
 		}
 	}
 	var wg sync.WaitGroup
