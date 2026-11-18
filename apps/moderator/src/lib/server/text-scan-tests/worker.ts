@@ -249,7 +249,6 @@ async function drive(deps: WorkerDeps, run: RunRow, launch: boolean): Promise<vo
   const recorded = run.prompt_ids as Record<string, number>;
   const overrides: LabOverrides = {
     prompts: (run.prompt_overrides as Record<string, string> | null) ?? undefined,
-    // The pinned intent set asks for the intent label alone (`setLabels`); other sets keep the profile's.
     ...(isIntentEvalSet(Number(run.set_id)) ? { labels: INTENT_LABELS } : {}),
   };
   let launchFirstRequest = launch && firstStart(run);

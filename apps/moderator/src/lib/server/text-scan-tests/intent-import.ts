@@ -41,11 +41,7 @@ export function parseIntentRows(raw: string): IntentRow[] | string {
 
 export type IntentImportSummary = { created: number; updated: number; notFound: number[] };
 
-/**
- * Adds or updates one case per model in the pinned intent set, with the fields the live intent
- * check reads (`compose`, the main app's `comFaceIntentFields`), never the Model profile's text.
- * The caller checks the grants; this refuses any other set.
- */
+/** `compose` is the main app's `comFaceIntentFields`, never the Model profile's text. */
 export async function importIntentCases(
   deps: { db: Kysely<ModeratorDB>; compose: (ids: number[]) => Promise<LabIntentListing[]> },
   setId: number,

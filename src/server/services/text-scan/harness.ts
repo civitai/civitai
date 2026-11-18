@@ -826,10 +826,6 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
   return { entityType, results };
 }
 
-/**
- * The fields the live intent check reads for each model (`comFaceIntentFields` over its listing and
- * its owner's trigger words), so a lab case built from them is the text production judges.
- */
 async function composeComFaceIntent(modelIds: number[]) {
   const { comFaceIntentFields, getOwnTriggerWords } = await import(
     '~/server/services/model-com-face-intent.service'

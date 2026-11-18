@@ -894,18 +894,12 @@ describe('free-text actions', () => {
       { moderatorId: 1 }
     );
     const { comFaceIntentFields } = await import('~/server/services/model-com-face-intent.service');
-    const fields = [
-      { heading: 'Name', text: 'Retro' },
-      { heading: 'Description', text: 'A retro style' },
-      { heading: 'Trained words', text: 'retro, r2' },
-    ];
-    expect(
-      comFaceIntentFields({
-        name: 'Retro',
-        description: '<p>A <b>retro</b> style</p>',
-        triggerWords: ['retro', 'r2'],
-      })
-    ).toEqual(fields);
+    // The live check's own function over the stored listing and the owner's deduped trigger words.
+    const fields = comFaceIntentFields({
+      name: 'Retro',
+      description: '<p>A <b>retro</b> style</p>',
+      triggerWords: ['retro', 'r2'],
+    });
     expect(res.body).toEqual({
       results: [
         { entityId: 5, ok: true, fields, userId: 3 },

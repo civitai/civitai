@@ -325,7 +325,6 @@ function toLabIntent(r: LabIntentListing): LabIntentListing {
   return { ...r, fields };
 }
 
-/** The fields the live intent check reads for each model, as the pinned intent set stores them. */
 export async function composeComFaceIntent(ids: number[]): Promise<LabIntentListing[]> {
   const results: LabIntentListing[] = [];
   for (const modelIds of chunk(ids, HARNESS_LIMITS.textsPerRequest)) {

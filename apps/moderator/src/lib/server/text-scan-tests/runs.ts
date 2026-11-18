@@ -92,7 +92,6 @@ async function record(audit: RunAudit, event: RunAuditEvent) {
   }
 }
 
-/** The pinned intent set asks for the intent label alone; any other set for its entity types' labels. */
 export async function setLabels(db: Db, setId: number): Promise<LabLabel[]> {
   if (isIntentEvalSet(setId)) return [...INTENT_LABELS];
   const rows = await runnableCases(db, setId).select('c.entity_type').distinct().execute();

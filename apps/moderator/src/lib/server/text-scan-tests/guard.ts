@@ -33,11 +33,7 @@ export function requireWorkspace(user: User, workspace: Workspace): void {
   if (!canOpenWorkspace(user, workspace)) throw new TestSetError(cannotOpen(workspace), 403);
 }
 
-/**
- * Every change to the pinned intent set needs the grant that publishes the intent prompt, read from the
- * main app as the signed-in moderator: an editor without it could otherwise drop hard cases or flip
- * expectations until a draft passes. Any other set passes untouched.
- */
+/** Read from the main app as the signed-in moderator; a failed read refuses. */
 export async function requireIntentSetGrant(
   setId: number,
   holds?: (permission: string) => Promise<boolean>
