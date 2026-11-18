@@ -17,7 +17,6 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { keysInTextWithin } from '~/server/services/image-url-ownership';
-import type { SharedDataLeaf } from '~/server/services/apps/shared-data-leaves';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -32,12 +31,15 @@ const DECODE_BUDGET_CHARS = 512_000;
 
 export type DocMediaKeys = { keys: string[] } | { overflow: 'too-many' | 'decode-budget' };
 
-/** Every image key in a document's text leaves, deduplicated, in first-seen order. */
-export function docMediaKeys(leaves: readonly SharedDataLeaf[]): DocMediaKeys {
+/**
+ * Every image key in a document's texts (its string values and object keys, or its whole stored
+ * JSON text when those cannot all be read), deduplicated, in first-seen order.
+ */
+export function docMediaKeys(texts: readonly string[]): DocMediaKeys {
   const budget = { left: DECODE_BUDGET_CHARS };
   const keys = new Set<string>();
-  for (const leaf of leaves) {
-    for (const key of keysInTextWithin(leaf.raw, budget)) {
+  for (const text of texts) {
+    for (const key of keysInTextWithin(text, budget)) {
       keys.add(key);
       if (keys.size > DOC_MEDIA_MAX_KEYS) return { overflow: 'too-many' };
     }

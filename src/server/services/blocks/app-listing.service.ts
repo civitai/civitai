@@ -1146,11 +1146,11 @@ export function listingSortKeyExpr(
 }
 
 /**
- * Maturity gate — hide each mature rating (r/x) this request may not see: both off a
+ * Maturity gate — hide each mature rating (r/x/xxx) this request may not see: all off a
  * red-capable host, and on one whichever the viewer's browsing level leaves out
  * (`matureRatingsAllowed`). Mirrors the AppBlock `matureHostSqlFilter`. Fail-closed: a
  * null/unknown rating is treated as SFW (kept); the direction is fail-closed for the MATURE
- * rows we must hide. G / PG / PG-13 are never filtered here.
+ * rows we must hide. G / PG / PG-13 are never filtered here. Only item cards carry `xxx`.
  */
 export function listingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sql {
   return matureFilterFor(Prisma.sql`al.content_rating`, allowed);
@@ -1162,10 +1162,9 @@ export function subListingMatureFilter(allowed: MatureRatingsAllowed): Prisma.Sq
 }
 
 function matureFilterFor(column: Prisma.Sql, allowed: MatureRatingsAllowed): Prisma.Sql {
-  if (allowed.r && allowed.x) return Prisma.sql`TRUE`;
-  if (allowed.r) return Prisma.sql`COALESCE(LOWER(${column}), '') <> 'x'`;
-  if (allowed.x) return Prisma.sql`COALESCE(LOWER(${column}), '') <> 'r'`;
-  return Prisma.sql`COALESCE(LOWER(${column}), '') NOT IN ('r', 'x')`;
+  const hidden = (['r', 'x', 'xxx'] as const).filter((rating) => !allowed[rating]);
+  if (!hidden.length) return Prisma.sql`TRUE`;
+  return Prisma.sql`COALESCE(LOWER(${column}), '') NOT IN (${Prisma.join(hidden)})`;
 }
 
 /**
@@ -1432,7 +1431,7 @@ function catalogPageCache(
     dbRead,
     `listAvailableAppListings:${scope}:${floor}:${redCapable ? 'red' : 'sfw'}:${
       withSubListings ? 'sl' : 'nosl'
-    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}`,
+    }:m${mature.r ? 'r' : '-'}${mature.x ? 'x' : '-'}${mature.xxx ? 'X' : '-'}`,
     'v1'
   );
 }

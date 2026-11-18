@@ -15,3 +15,4 @@ import './storyline.profile';
 import './image-caption.profile';
 import './service-offering.profile';
 import './post-text.profile';
+import './app-doc.profile';

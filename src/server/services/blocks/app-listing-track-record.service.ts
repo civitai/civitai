@@ -52,6 +52,8 @@ export async function getDeveloperTrackRecord(args: {
   /** The viewer's browsing level: an r/x app counts only when it includes that rating. */
   viewerBrowsingLevel: number | null | undefined;
 }): Promise<DeveloperTrackRecord> {
+  // Keyed on r and x only: `xxx` is an item-card rating no app listing carries, so it never
+  // changes what this counts.
   const mature = matureRatingsAllowed(args.redCapable, args.viewerBrowsingLevel);
   const cached = queryCache(
     dbRead,

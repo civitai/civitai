@@ -9,7 +9,7 @@
 // `appdata.app_id` / `appdata.ns` (set at the top of every transaction in
 // `withTx`) is the second, independent layer.
 //
-// There are THREE exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
+// There are FOUR exceptions. The first is review maintenance (`purgeReview`, `listReviewAppIds`):
 // statements keyed on `app_id = $1 AND ns LIKE 'rev:%'` (the listing: `ns LIKE 'rev:%'`
 // on `usage_app` and `doc`), run only inside `maintenanceTx`, whose transaction-local
 // `appdata.review_maintenance` setting is what the migration's review policies
@@ -28,6 +28,12 @@
 // `appPurgeTx`, whose transaction-local `appdata.app_purge_id` setting the app-purge migration's
 // policy admits for that ONE app's rows of those two tables, read only. It returns namespaces;
 // the purge of each runs in ordinary `withTx` transactions, like the account wipe.
+//
+// The fourth is the RATER LOOKUP (`findByRatingId`, content levels): one SELECT keyed on
+// `rating_id = $1::int` over `doc`, returning one shared document's address only, run only inside
+// `raterLookupTx`, whose transaction-local `appdata.rater_lookup_id` setting the rating-id
+// migration's policy admits for that ONE row, read only. The rater then reads and rates the
+// document in an ordinary `withTx`, keyed and scoped like any other call.
 //
 // Row-level security does not bind a superuser or BYPASSRLS role, so the store
 // requires its own least-privilege connection (`APPDATA_DATABASE_URL`, see
@@ -1812,6 +1818,25 @@ function buildDocStore(deps: DocStoreDeps) {
       `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.app_purge_id', ${escapeLiteral(
         appId
       )}, true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
+      fn
+    );
+  }
+
+  /**
+   * A RATER LOOKUP transaction: no app or namespace bound, and `appdata.rater_lookup_id` set to one
+   * validated rating id — which the rating-id migration's policy admits for the ONE shared `doc`
+   * row carrying it, read only. Transaction-local like every other setting. 🔴 Called by the
+   * rater's `findByRatingId` and `ready` ONLY (pinned by `doc-store.sql-isolation.test.ts`).
+   */
+  async function raterLookupTx<T>(
+    ratingId: number,
+    fn: (c: DocStoreClient) => Promise<T>
+  ): Promise<T> {
+    if (!Number.isSafeInteger(ratingId) || ratingId < 0 || ratingId > 2_147_483_647) {
+      throw new Error('doc-store: malformed rating id');
+    }
+    return runTx(
+      `BEGIN; SELECT set_config('appdata.app_id', '', true), set_config('appdata.ns', '', true), set_config('appdata.rater_lookup_id', '${ratingId}', true), set_config('lock_timeout', '${LOCK_TIMEOUT}', true)`,
       fn
     );
   }
@@ -3621,7 +3646,7 @@ function buildDocStore(deps: DocStoreDeps) {
     lookup: { findSharedByKey },
     feed: { feedHead, feedChanges, feedDocuments, feedWitness },
     moderation: createModeration({ withTx, charge }),
-    rater: createRater({ withTx, charge }),
+    rater: createRater({ withTx, charge, raterLookupTx }),
     maintenance: { purgeReview, listReviewAppIds, wipeAccount, purgeApp, migrateDocuments },
     viewerData: { listViewerUsage, viewerHoldings, emptyViewerData, limits },
   };
@@ -3910,7 +3935,7 @@ const SQL_MOD_LOCK = `SELECT d.version, d.seq, d.author_uid, d.size_bytes, d.hid
 // seq cursor. Counter documents hold no `data` to rate, and a hidden one waits for a moderator.
 // Read server-side to be rated; never returned to a viewer. Uses `doc_feed_shared_seq_idx`.
 // $1 app, $2 ns, $3 coll, $4 seq cursor (exclusive), $5 limit
-const SQL_RATER_UNRATED = `SELECT d.key, d.data, d.version, d.seq
+const SQL_RATER_UNRATED = `SELECT d.key, d.data, d.version, d.seq, d.rating_id
   FROM appdata.doc d
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0
     AND d.seq > $4::bigint AND d.author_kind <> 'counter' AND d.hidden_at IS NULL
@@ -3933,6 +3958,30 @@ const SQL_RATER_APPLY = `UPDATE appdata.doc d
     seq = $6::bigint
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
   RETURNING ${CURRENT_LEVEL} AS current_level`;
+
+// Whether the rating-id migration (`20261118120000_appdata_doc_rating_id.sql`) is applied: its
+// lookup policy is on `doc`. Until it is, the rater does nothing (`ready`). A catalog read.
+const SQL_RATER_POLICY = `SELECT count(*)::int AS n FROM pg_catalog.pg_policies pp
+  WHERE pp.policyname = 'appdata_rater_lookup' AND pp.tablename = 'doc'`;
+
+// The one shared document a rating id names, by address only. Run only inside `raterLookupTx`,
+// whose policy admits that one row. $1 rating id
+const SQL_RATER_LOOKUP = `SELECT rl.app_id, rl.ns, rl.coll, rl.key FROM appdata.doc rl
+  WHERE rl.rating_id = $1::int AND rl.scope_uid = 0`;
+
+// Give a shared document its rating id the first time it is rated; an existing id is kept.
+// $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_ASSIGN_ID = `UPDATE appdata.doc d
+  SET rating_id = COALESCE(d.rating_id, nextval('appdata.doc_rating_id_seq')::int)
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
+  RETURNING d.rating_id`;
+
+// One shared document as the rater reads it to rate it. Read server-side; never returned to a
+// viewer. $1 app, $2 ns, $3 coll, $4 key
+const SQL_RATER_GET = `SELECT d.data, d.version, d.seq, d.author_uid, d.author_kind,
+    d.hidden_at IS NOT NULL AS hidden, d.rating_id
+  FROM appdata.doc d
+  WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4`;
 
 function assertModTarget(collection: string, key: string): void {
   if (!B.collectionName.test(collection)) throw invalid('invalid collection name');
@@ -4204,6 +4253,8 @@ export type UnratedDoc = {
   version: number;
   /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
   seq: number;
+  /** Its rating id, once the rater has given it one. */
+  ratingId: number | null;
 };
 
 export type ApplyRatingResult =
@@ -4213,7 +4264,99 @@ export type ApplyRatingResult =
 /** The levels a rating may carry: one NsfwLevel bit (the CHECK `doc_level_bit`). */
 const RATING_LEVEL_BITS = new Set([1, 2, 4, 8, 16, 32]);
 
-function createRater({ withTx, charge }: ModerationDeps) {
+/** A shared document's address: what a rating id names. */
+export type RatedDocAddress = { appId: string; ns: string; collection: string; key: string };
+
+/** One shared document as the rater reads it. */
+export type DocForRating = {
+  data: unknown;
+  version: number;
+  /** The revision a rating of this read is bound to (`applyRating`'s `seq`). */
+  seq: number;
+  authorUid: number | null;
+  authorKind: string;
+  hidden: boolean;
+  ratingId: number | null;
+};
+
+const MAX_RATING_ID = 2_147_483_647;
+
+function createRater({
+  withTx,
+  charge,
+  raterLookupTx,
+}: ModerationDeps & {
+  raterLookupTx: <T>(ratingId: number, fn: (c: DocStoreClient) => Promise<T>) => Promise<T>;
+}) {
+  let migrated = false;
+
+  /**
+   * Whether the rating-id migration is applied (its lookup policy exists). Found once and kept;
+   * while absent, asked again on every call, which is once per rater pass.
+   */
+  async function ready(): Promise<boolean> {
+    if (migrated) return true;
+    const n = await raterLookupTx(0, async (c) =>
+      Number((await c.query(SQL_RATER_POLICY)).rows[0]?.n ?? 0)
+    );
+    migrated = n > 0;
+    return migrated;
+  }
+
+  /** The shared document `ratingId` names, or null when no document carries it any more. */
+  async function findByRatingId(ratingId: number): Promise<RatedDocAddress | null> {
+    if (!Number.isSafeInteger(ratingId) || ratingId < 1 || ratingId > MAX_RATING_ID) return null;
+    const row = await raterLookupTx(
+      ratingId,
+      async (c) => (await c.query(SQL_RATER_LOOKUP, [ratingId])).rows[0]
+    );
+    if (!row) return null;
+    return {
+      appId: row.app_id as string,
+      ns: row.ns as string,
+      collection: row.coll as string,
+      key: row.key as string,
+    };
+  }
+
+  /** The shared document's rating id, given on first use; null when the document is gone. */
+  async function assignRatingId(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<number | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) => (await c.query(SQL_RATER_ASSIGN_ID, [appId, ns, collection, key])).rows[0]
+    );
+    return row ? Number(row.rating_id) : null;
+  }
+
+  /** One shared document as the rater rates it, or null when it is gone. */
+  async function getForRating(
+    appId: string,
+    ns: string,
+    collection: string,
+    key: string
+  ): Promise<DocForRating | null> {
+    assertModTarget(collection, key);
+    const row = await withTx(
+      { appId, ns, viewerUid: null },
+      async (c) => (await c.query(SQL_RATER_GET, [appId, ns, collection, key])).rows[0]
+    );
+    if (!row) return null;
+    return {
+      data: row.data,
+      version: Number(row.version),
+      seq: Number(row.seq),
+      authorUid: row.author_uid === null ? null : Number(row.author_uid),
+      authorKind: row.author_kind as string,
+      hidden: row.hidden === true,
+      ratingId: row.rating_id === null ? null : Number(row.rating_id),
+    };
+  }
   /**
    * Up to `limit` shared documents of one collection that need a rating, oldest change first,
    * after the seq cursor `afterSeq` (exclusive; 0 from the start).
@@ -4243,6 +4386,7 @@ function createRater({ withTx, charge }: ModerationDeps) {
       data: r.data,
       version: Number(r.version),
       seq: Number(r.seq),
+      ratingId: r.rating_id === null || r.rating_id === undefined ? null : Number(r.rating_id),
     }));
   }
 
@@ -4283,5 +4427,5 @@ function createRater({ withTx, charge }: ModerationDeps) {
     });
   }
 
-  return { listUnrated, applyRating };
+  return { ready, findByRatingId, assignRatingId, getForRating, listUnrated, applyRating };
 }

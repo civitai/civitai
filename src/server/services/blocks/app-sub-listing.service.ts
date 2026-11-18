@@ -35,6 +35,7 @@ import {
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
   effectiveSubListingRating,
+  subListingRatingFromNsfwLevel,
   isAppSubListingId,
   isRatingAtLeastAsStrict,
   isValidSubListingExternalId,
@@ -46,7 +47,6 @@ import type { SessionUser } from '~/types/session';
 import { NsfwLevel } from '~/server/common/enums';
 import type { DocRating } from '~/server/services/apps/doc-store.types';
 import { isSharedDocLevelsOn } from '~/server/services/apps/doc-levels';
-import { contentRatingFromNsfwLevel } from '~/shared/constants/browsingLevel.constants';
 import type {
   ListSubListingQueueInput,
   ModerateSubListingInput,
@@ -108,7 +108,7 @@ function cardRatingFromItem(rating: DocRating, chosen: string | null): string | 
   if (rating.level == null || rating.level & NsfwLevel.Blocked) {
     throw new SubListingError(404, 'item_not_found', 'Item not found');
   }
-  return effectiveSubListingRating(contentRatingFromNsfwLevel(rating.level), chosen);
+  return effectiveSubListingRating(subListingRatingFromNsfwLevel(rating.level), chosen);
 }
 
 /**
@@ -142,7 +142,7 @@ export async function syncSubListingRatingFromDoc(args: {
       });
       return;
     }
-    const rating = contentRatingFromNsfwLevel(args.level);
+    const rating = subListingRatingFromNsfwLevel(args.level);
     // Through `effectiveSubListingRating`, as publishing is: a card the author rated stricter
     // than its item keeps that rating (picked `x`, re-rated `r`: stays `x`).
     const rows = await dbWrite.appSubListing.findMany({
