@@ -79,8 +79,15 @@ beforeAll(async () => {
       id int PRIMARY KEY, url text NOT NULL, type "MediaType" NOT NULL DEFAULT 'image',
       "mimeType" text, ingestion text NOT NULL, "needsReview" text, "blockedFor" text,
       minor boolean NOT NULL DEFAULT false, "nsfwLevel" int NOT NULL DEFAULT 4, "userId" int NOT NULL,
-      "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint
+      "acceptableMinor" boolean NOT NULL DEFAULT false, "pHash" bigint, "postId" int
     );
+    CREATE TABLE "Post" (id int PRIMARY KEY, metadata jsonb, "modelVersionId" int);
+    CREATE TABLE "ModelVersion" (id int PRIMARY KEY, meta jsonb, "modelId" int);
+    CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
+    CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
     CREATE TABLE "BlockedImage" (hash bigint, reason text);
     CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);
@@ -110,6 +117,7 @@ beforeAll(async () => {
     );
   await pg.exec(`
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (18);
+    INSERT INTO "ImageCdnAccess" (url, state) VALUES ('key-12', 'Retracted');
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId") VALUES (26, ${childBrowsingTagIds[0]});
     INSERT INTO "TagsOnImageDetails" ("imageId", "tagId", disabled) VALUES (1, ${childBrowsingTagIds[0]}, true);
     INSERT INTO "BlockedImage" (hash, reason) VALUES (777, 'CSAM');
@@ -217,6 +225,11 @@ describe('getRetractedMedia', () => {
 
   it('refuses an image that is not blocked, and a missing id', async () => {
     await expectTiers('none', [12, 999]);
+  });
+
+  // The CDN-refusal leg is the moderator app's alone: this app's client only asks for blocked images.
+  it('refuses a scanned image even while the image CDN has retracted its url', async () => {
+    await expectTiers('none', [12]);
   });
 
   it('refuses an image under an evidence hold', async () => {
