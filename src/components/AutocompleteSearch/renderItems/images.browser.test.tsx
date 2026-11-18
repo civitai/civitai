@@ -52,6 +52,13 @@ describe('ImagesSearchItem in the showcase picker', () => {
     expect(thumbnail()).toBe(0);
   });
 
+  test('keeps a mature image blurred, with its rating, when the viewer chose to blur it', async () => {
+    renderRow(R, { pickerRow: true, viewerLevel: PG | PG13 | R, blurLevels: R | X });
+
+    await expect.element(page.getByText('R', { exact: true })).toBeInTheDocument();
+    expect(thumbnail()).toBe(0);
+  });
+
   test('a PG image carries no rating badge', async () => {
     renderRow(PG, { pickerRow: true, viewerLevel: PG | PG13 });
 

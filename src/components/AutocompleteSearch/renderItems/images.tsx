@@ -27,8 +27,10 @@ export const ImagesSearchItem = forwardRef<
      */
     pickerRow?: boolean;
     viewerLevel?: number;
+    /** The viewer's blur preference (`useBrowsingLevelContext`): levels they keep blurred. */
+    blurLevels?: number;
   }
->(({ value, hit, pickerRow, viewerLevel, ...props }, ref) => {
+>(({ value, hit, pickerRow, viewerLevel, blurLevels, ...props }, ref) => {
   const colorScheme = useComputedColorScheme('dark');
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
@@ -52,7 +54,11 @@ export const ImagesSearchItem = forwardRef<
   };
 
   const mature = !getIsSafeBrowsingLevel(hit.nsfwLevel);
-  const nsfw = pickerRow ? mature && !Flags.intersects(viewerLevel ?? 0, hit.nsfwLevel) : mature;
+  const nsfw = pickerRow
+    ? mature &&
+      (!Flags.intersects(viewerLevel ?? 0, hit.nsfwLevel) ||
+        Flags.hasFlag(blurLevels ?? 0, hit.nsfwLevel))
+    : mature;
   const ratingBadge = pickerRow && mature;
 
   return (

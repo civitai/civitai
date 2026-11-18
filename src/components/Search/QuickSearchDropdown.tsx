@@ -41,6 +41,7 @@ import {
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -399,6 +400,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
 }) {
   // const currentUser = useCurrentUser();
   const { browsingLevel: viewerLevel } = useBrowsingSettingsAddons();
+  const { blurLevels } = useBrowsingLevelContext();
   const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const [search, setSearch] = useCarriedSearchText(carriedSearchText, query);
@@ -473,9 +475,9 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
 
       const RenderItem = IndexRenderItem[indexName] ?? ModelSearchItem;
       const pickerRow = ownerPicker && indexName === 'images';
-      return <RenderItem {...item} {...(pickerRow && { pickerRow, viewerLevel })} />;
+      return <RenderItem {...item} {...(pickerRow && { pickerRow, viewerLevel, blurLevels })} />;
     },
-    [getItemFromValue, indexName, ownerPicker, viewerLevel]
+    [getItemFromValue, indexName, ownerPicker, viewerLevel, blurLevels]
   );
 
   useEffect(() => {
