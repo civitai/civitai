@@ -121,9 +121,11 @@ export function countryKnown(region: Pick<RegionInfo, 'countryCode'>): boolean {
  *     (`countryKnown`); a value that is not a code is never echoed;
  *   - `region`: the region code beside a known country, when it is one to three letters or
  *     digits (`NY`); otherwise `undefined`;
- *   - `source`: where the country value judged came from: `meta` whenever meta supplied it
- *     (only with {@link metaTrusted}), even a value that names no country (`""`, `XX`);
- *     otherwise `header`, or `none` when no header carried one;
+ *   - `source`: where the country value judged came from: `meta` when meta supplied it (only
+ *     with {@link metaTrusted}) and nothing overrode it, even a value that names no country
+ *     (`""`, `XX`); otherwise `header` when the value judged is non-empty (the `cf-ipcountry`
+ *     header, or the `GB` that `x-isuk` sets, which overrides a different meta country), or
+ *     `none` when it is missing or empty;
  *   - `restricted`: whether the request is held to SFW (see the file comment).
  */
 export type RegionDecision = {
