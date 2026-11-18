@@ -7,14 +7,8 @@ import {
 } from '~/utils/trpc-go-transport';
 
 /**
- * Client-side Go-vs-Node latency for the ported feed procedures: each request of
- * `image.getImagesAsPostsInfinite` / `model.getAll` is pushed to Faro as ONE `feed_transport`
- * measurement, tagged with the transport it ACTUALLY left on (`go` = the `/api/trpc-go` link,
- * `node` = `/api/trpc`), so real-user latency is comparable across the ramp cohort.
- *
- * Drives the real `trpcVanilla` link chain over a stubbed `fetch` (as trpc-go-transport.test.ts
- * does) and asserts on the URL requested AND the measurement pushed, so the tag is pinned to the
- * wire, not to a predicate. Every expectation is a literal.
+ * Drives the real trpcVanilla link chain over a stubbed fetch (as trpc-go-transport.test.ts does)
+ * and asserts on both the URL requested and the measurement pushed.
  */
 
 const h = vi.hoisted(() => ({
@@ -301,8 +295,47 @@ describe('feed_transport measurement: outcome', () => {
 
     expect(sent[0].url).toContain('/api/trpc-go/model.getAll?');
     expect(pushes()).toHaveLength(0);
-    // Negative control for this case: a fetch that rejects WITHOUT an abort is recorded
-    // (`network_error`, the case above), so the zero here is the abort rule, not a dead link.
+  });
+});
+
+describe('feed_transport measurement: never on the request path', () => {
+  it('a throwing Faro push still resolves the query with its data', async () => {
+    browser(true);
+    setFeedGoTransportModelGetAllEnabled(true);
+    h.pushMeasurement.mockImplementation(() => {
+      throw new Error('faro transport exploded');
+    });
+
+    await expect(trpcVanilla.model.getAll.query(MODELS_INPUT as never)).resolves.toEqual({
+      items: [],
+      nextCursor: null,
+    });
+    expect(h.pushMeasurement).toHaveBeenCalledTimes(1);
+  });
+
+  it('the node arm is unbatched in the batch cohort, so both arms time one request each', async () => {
+    // Invariant guard (holds on the pre-change code too): both ported procedures are in
+    // NEVER_BATCH_PROCEDURES, so a node-arm timing never includes a batch window or siblings.
+    browser(true);
+    setTrpcBatchingEnabled(true);
+    await Promise.all([
+      callQuery(MODELS, MODELS_INPUT),
+      callQuery('model.getById', { id: MODEL_ID }),
+    ]);
+
+    const models = sent.filter((r) => r.url.includes('model.getAll'));
+    expect(models).toHaveLength(1);
+    expect(models[0].url).toContain('/api/trpc/model.getAll?');
+    expect(models[0].url).not.toContain('batch=1');
+    expect(models[0].url).not.toContain(',');
+    // Positive control: batching IS on for this client (the sibling went out batched).
+    expect(sent.some((r) => r.url.includes('model.getById') && r.url.includes('batch=1'))).toBe(
+      true
+    );
+    expect(pushes()).toHaveLength(1);
+    expect(pushes()[0][1]).toMatchObject({
+      context: { procedure: 'model.getAll', transport: 'node' },
+    });
   });
 });
 

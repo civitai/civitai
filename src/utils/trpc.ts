@@ -402,7 +402,6 @@ function terminatingLink({
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
   });
-  // A timing link inside each branch: its transport tag is the branch taken (feedTransport.ts).
   return splitLink({
     condition: shouldUseGoTransport,
     true: [

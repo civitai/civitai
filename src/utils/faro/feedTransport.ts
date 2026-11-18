@@ -11,7 +11,8 @@ import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
  *
  * `transport` is STRUCTURAL: `~/utils/trpc` puts this link inside each branch of its
  * `shouldUseGoTransport` split, so the tag is the link the request left on, never a re-derived
- * predicate. Not recorded: a signed-out request (it can never take the Go path, so it is in
+ * predicate. Both arms time one unbatched request: the procedures are in `NEVER_BATCH_PROCEDURES`
+ * (`~/utils/trpc`), so a node timing never includes a batch window or sibling queries. Not recorded: a signed-out request (it can never take the Go path, so it is in
  * neither arm), and an aborted one (a cancel is neither arm's latency).
  */
 
