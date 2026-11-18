@@ -38,9 +38,10 @@ export const semanticImageSearchSchema = baseQuerySchema
   .refine((x) => !!x.query || !!x.imageId, { message: 'Enter a query' });
 
 export const prepareImageSearchUploadSchema = z.object({ url: z.string().max(2048) });
-export const imageSearchUploadStatusSchema = z.object({ uploadId: z.number().int().positive() });
+export const imageSearchUploadStatusSchema = z.object({ uploadId: z.string().uuid() });
 export const imageSearchUploadSearchSchema = baseQuerySchema.extend({
-  uploadId: z.number().int().positive(),
+  uploadId: z.string().uuid(),
+  url: z.string().max(2048),
   limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
   cursor: z.number().int().min(0).optional(),
 });

@@ -62,8 +62,8 @@ export function ImageSearchUpload() {
           </Button>
         </Group>
       )}
-      {upload.readyUploadId !== undefined ? (
-        <UploadResults uploadId={upload.readyUploadId} />
+      {upload.ready ? (
+        <UploadResults uploadId={upload.ready.uploadId} url={upload.ready.url} />
       ) : (
         !busy &&
         !upload.error && (
@@ -93,11 +93,11 @@ function Status({ text }: { text: string }) {
   );
 }
 
-function UploadResults({ uploadId }: { uploadId: number }) {
+function UploadResults({ uploadId, url }: { uploadId: string; url: string }) {
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, isFetching, hasNextPage, fetchNextPage, error } =
     trpc.imageSearchUpload.search.useInfiniteQuery(
-      { uploadId, browsingLevel },
+      { uploadId, url, browsingLevel },
       { getNextPageParam: (page) => page.nextCursor, gcTime: 0, staleTime: 0 }
     );
   const items = (data?.pages ?? []).flatMap((page) => page.items);

@@ -31,6 +31,8 @@ import { imageSearchUploadRouter } from '~/server/routers/image-search-upload.ro
 
 const USER = { id: 7, username: 'Fox', isModerator: false, muted: false, onboarding: 0x1f };
 const MOD = { ...USER, id: 8, isModerator: true };
+const UPLOAD = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+const BLOB = 'https://orchestration.civitai.com/v2/consumer/blobs/b1';
 const caller = (user: typeof USER | undefined, credential: object = {}) =>
   imageSearchUploadRouter.createCaller({
     acceptableOrigin: true,
@@ -42,26 +44,26 @@ const caller = (user: typeof USER | undefined, credential: object = {}) =>
     track: {},
   } as never);
 const status = (user: typeof USER | undefined, credential?: object) =>
-  caller(user, credential).status({ uploadId: 40 });
+  caller(user, credential).status({ uploadId: UPLOAD });
 
 beforeEach(() => {
   h.flags = { imageSearchUpload: true, moreLikeThis: true };
   h.status.mockReset().mockResolvedValue({ status: 'pending' });
-  h.prepare.mockReset().mockResolvedValue({ uploadId: 40 });
+  h.prepare.mockReset().mockResolvedValue({ uploadId: UPLOAD });
   h.anchor.mockReset().mockResolvedValue(ANCHOR);
   h.search.mockReset().mockResolvedValue({ items: [], nextCursor: undefined });
 });
 
 const ANCHOR = { nsfwLevel: 1, imageUrl: 'https://image.test/u.jpeg' };
 const search = (user: typeof USER, credential?: object) =>
-  caller(user, credential).search({ uploadId: 40, browsingLevel: 1 });
+  caller(user, credential).search({ uploadId: UPLOAD, url: BLOB, browsingLevel: 1 });
 
 describe('imageSearchUpload', () => {
   it("passes the moderator view only for a moderator's session", async () => {
     await status(USER);
     await status(MOD);
     expect(h.status.mock.calls.map(([args]) => args.isModerator)).toEqual([false, true]);
-    expect(h.status).toHaveBeenCalledWith({ userId: 8, uploadId: 40, isModerator: true });
+    expect(h.status).toHaveBeenCalledWith({ userId: 8, uploadId: UPLOAD, isModerator: true });
   });
 
   it("refuses an API key, a moderator's included", async () => {
@@ -88,8 +90,8 @@ describe('imageSearchUpload', () => {
     await search(USER);
     await search(MOD);
     expect(h.anchor.mock.calls.map(([args]) => args)).toEqual([
-      { userId: 7, uploadId: 40, isModerator: false },
-      { userId: 8, uploadId: 40, isModerator: true },
+      { userId: 7, uploadId: UPLOAD, url: BLOB, isModerator: false },
+      { userId: 8, uploadId: UPLOAD, url: BLOB, isModerator: true },
     ]);
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ uploadAnchor: ANCHOR }));
   });

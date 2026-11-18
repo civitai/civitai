@@ -1,33 +1,23 @@
 import { TRPCError } from '@trpc/server';
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { randomUUID } from 'crypto';
 import type { NextApiRequest } from 'next';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
-import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
-import type { SessionUser } from '~/types/session';
-import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { countSearchUpload } from '~/server/metrics/semantic-search.metrics';
-import {
-  fitGenerationSourceBounds,
-  stageGenerationOutputImage,
-} from '~/server/services/blocks/block-image-upload.service';
+import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { uploadedSourceBlobId } from '~/server/services/blocks/block-generation-source.service';
 import { readBlobState } from '~/server/services/orchestrator/blobRatings';
+import { submitSearchUploadScan } from '~/server/services/orchestrator/orchestrator.service';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import {
+  readSearchUploadScan,
   searchUploadFaceAnimeMin,
   searchUploadVerdict,
+  type SearchUploadScan,
   type SearchUploadVerdict,
 } from '~/server/services/search-upload-gate';
-import {
-  findOwnedSearchUpload,
-  findSearchUploadByRef,
-  hasUnscannedSearchUpload,
-  SEARCH_UPLOAD_REF_META_KEY,
-  type SearchUploadRecord,
-} from '~/server/services/search-upload-rows';
-import {
-  SEARCH_UPLOAD_APP_ID,
-  SEARCH_UPLOAD_APP_ID_META_KEY,
-} from '~/shared/utils/block-provenance-metadata';
+import { claimRateLimitAttempt } from '~/server/utils/rate-limit-bucket';
+import type { SessionUser } from '~/types/session';
 
 /** The only thing a refused upload's owner is told. */
 export const SEARCH_UPLOAD_REFUSED_MESSAGE = "This image can't be used for search.";
@@ -35,15 +25,33 @@ export const SEARCH_UPLOAD_BUSY_MESSAGE =
   'Your last image is still being checked. Try again shortly.';
 export const SEARCH_UPLOAD_CAPACITY_MESSAGE = 'Search by image is busy right now. Try again later.';
 
-/** A passed upload is kept this long, so later pages can re-embed it, then swept. */
+/** An upload can be searched from this long after it was prepared; the orchestrator expires the blob. */
 export const SEARCH_UPLOAD_TTL_MS = 60 * 60 * 1000;
+/** A scan with no answer by now is refused, never left pending. */
+export const SEARCH_UPLOAD_SCAN_TIMEOUT_MS = 10 * 60 * 1000;
 export const SEARCH_UPLOAD_GLOBAL_DAILY_CAP = 5000;
-const SEARCH_UPLOAD_WRITE_BUDGET_MS = 30_000;
-// An upload older than this that is still unscanned no longer blocks a new one.
-const UNSCANNED_WINDOW_MS = 10 * 60 * 1000;
-
 // Every viewer draws from one bucket: the rate-limit engine keys a bucket by user id.
 const GLOBAL_BUCKET_USER = { id: 0 } as SessionUser;
+
+/** What is kept of an upload: ids only, never the blob's URL. */
+export type SearchUploadRecord = {
+  userId: number;
+  blobId: string;
+  workflowId: string;
+  createdAt: number;
+  /** The scan once it ended, so later pages do not read the workflow again. */
+  scan?: Exclude<SearchUploadScan, { state: 'pending' }>;
+};
+
+const recordKey = (uploadId: string) =>
+  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD}:${uploadId}` as RedisKeyTemplateCache;
+const refKey = (userId: number, blobId: string) =>
+  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_REF}:${userId}:${blobId}` as RedisKeyTemplateCache;
+const pendingKey = (userId: number) =>
+  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_PENDING}:${userId}` as RedisKeyTemplateCache;
+
+const secondsLeft = (createdAt: number) =>
+  Math.max(1, Math.ceil((createdAt + SEARCH_UPLOAD_TTL_MS - Date.now()) / 1000));
 
 /**
  * Takes one of the day's site-wide upload slots. The imageSearchUpload scope is fail-closed, so an
@@ -67,8 +75,9 @@ export async function claimSearchUploadSlot(req: NextApiRequest) {
 }
 
 /**
- * Copies the uploaded consumer blob into a private, unposted Image row that the normal ingestion
- * scans. Returns at once; the client polls {@link getSearchUploadStatus}.
+ * Scans the uploaded consumer blob with the imageScanning step. Nothing is written to the database:
+ * the upload is a cache record for an hour, and the orchestrator expires the blob. Returns at once;
+ * the client polls {@link getSearchUploadStatus}.
  */
 export async function prepareSearchUpload({
   userId,
@@ -82,70 +91,89 @@ export async function prepareSearchUpload({
   const blobId = uploadedSourceBlobId(url);
   if (!blobId)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'That is not an uploaded image.' });
-  const ref = `upload:${blobId}`;
-  const now = Date.now();
 
-  const existing = await findSearchUploadByRef(userId, ref, new Date(now - SEARCH_UPLOAD_TTL_MS));
-  if (existing) return { uploadId: existing };
-  if (await hasUnscannedSearchUpload(userId, new Date(now - UNSCANNED_WINDOW_MS)))
+  const existing = await redis.packed.get<string>(refKey(userId, blobId));
+  if (existing && (await redis.packed.get<SearchUploadRecord>(recordKey(existing))))
+    return { uploadId: existing };
+  if (await redis.exists(pendingKey(userId)))
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: SEARCH_UPLOAD_BUSY_MESSAGE });
   await claimSearchUploadSlot(req);
 
-  const signal = fetchTimeoutSignal(SEARCH_UPLOAD_WRITE_BUDGET_MS);
-  let measured: { width: number; height: number } | undefined;
-  const staged = await stageGenerationOutputImage({
-    imageUrl: url,
-    width: null,
-    height: null,
-    source: 'search-upload',
-    signal,
-    transform: async (bytes) => {
-      const fitted = await fitGenerationSourceBounds(bytes);
-      measured = fitted.size;
-      return fitted.bytes;
-    },
-  });
-  if (!measured)
-    throw new TRPCError({ code: 'BAD_REQUEST', message: SEARCH_UPLOAD_REFUSED_MESSAGE });
+  const workflowId = await submitSearchUploadScan({ blobUrl: url });
+  if (!workflowId)
+    throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: SEARCH_UPLOAD_CAPACITY_MESSAGE });
 
-  const { createImage } = await import('~/server/services/image.service');
-  const image = await createImage({
-    url: staged.url,
-    type: 'image',
-    mimeType: staged.mimeType,
-    hash: staged.hash,
-    width: measured.width,
-    height: measured.height,
-    metadata: { ...staged.metadata, [SEARCH_UPLOAD_REF_META_KEY]: ref },
-    blockProvenance: { key: SEARCH_UPLOAD_APP_ID_META_KEY, appId: SEARCH_UPLOAD_APP_ID },
-    userId,
-  });
+  const uploadId = randomUUID();
+  const record: SearchUploadRecord = { userId, blobId, workflowId, createdAt: Date.now() };
+  const ttl = secondsLeft(record.createdAt);
+  await Promise.all([
+    redis.packed.set(recordKey(uploadId), record, { EX: ttl }),
+    redis.packed.set(refKey(userId, blobId), uploadId, { EX: ttl }),
+    redis.packed.set(pendingKey(userId), uploadId, {
+      EX: Math.ceil(SEARCH_UPLOAD_SCAN_TIMEOUT_MS / 1000),
+    }),
+  ]);
   countSearchUpload('prepared');
-  return { uploadId: image.id };
+  return { uploadId };
 }
 
-async function verdictFor(row: SearchUploadRecord, isModerator: boolean) {
-  const ref = row.metadata?.[SEARCH_UPLOAD_REF_META_KEY];
-  const blobId = typeof ref === 'string' && ref.startsWith('upload:') ? ref.slice(7) : undefined;
-  if (!blobId) return 'refused' as const;
-  const blob = await readBlobState(blobId);
-  return searchUploadVerdict(
-    row,
-    blob.verdict === 'rated'
-      ? { verdict: 'rated', blockedReason: blob.blockedReason }
-      : { verdict: 'pending' },
-    { isModerator, faceAnimeMin: searchUploadFaceAnimeMin() }
-  );
-}
-
-async function ownedUpload(userId: number, uploadId: number) {
-  const row = await findOwnedSearchUpload(userId, uploadId);
-  if (!row || Date.now() - row.createdAt.getTime() > SEARCH_UPLOAD_TTL_MS)
+async function ownedUpload(userId: number, uploadId: string) {
+  const record = await redis.packed.get<SearchUploadRecord>(recordKey(uploadId));
+  if (!record || record.userId !== userId || Date.now() - record.createdAt > SEARCH_UPLOAD_TTL_MS)
     throw new TRPCError({
       code: 'NOT_FOUND',
       message: 'Upload not found. Upload the image again.',
     });
-  return row;
+  return record;
+}
+
+/** The scan's result, read from the workflow until it ends and then kept on the record. */
+async function scanFor(uploadId: string, record: SearchUploadRecord): Promise<SearchUploadScan> {
+  if (record.scan) return record.scan;
+  const workflow = await getWorkflow({
+    token: env.ORCHESTRATOR_ACCESS_TOKEN,
+    path: { workflowId: record.workflowId },
+  });
+  const scan = readSearchUploadScan(workflow);
+  if (scan.state !== 'pending') {
+    await Promise.all([
+      redis.packed.set(
+        recordKey(uploadId),
+        { ...record, scan },
+        { EX: secondsLeft(record.createdAt) }
+      ),
+      redis.del(pendingKey(record.userId)),
+    ]);
+  }
+  return scan;
+}
+
+async function decide(uploadId: string, record: SearchUploadRecord, isModerator: boolean) {
+  const scan = await scanFor(uploadId, record);
+  const blob =
+    scan.state === 'done' ? await readBlobState(record.blobId) : { verdict: 'pending' as const };
+  const decision = searchUploadVerdict(
+    scan,
+    blob.verdict === 'rated'
+      ? { verdict: 'rated', blockedReason: blob.blockedReason }
+      : { verdict: 'pending' },
+    {
+      isModerator,
+      faceAnimeMin: searchUploadFaceAnimeMin(),
+      timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
+    }
+  );
+  if (decision.verdict === 'refused') {
+    countSearchUpload('refused');
+    logToAxiom({
+      type: 'info',
+      name: 'search-upload-refused',
+      userId: record.userId,
+      workflowId: record.workflowId,
+      reason: decision.reason,
+    });
+  }
+  return { scan, decision };
 }
 
 export async function getSearchUploadStatus({
@@ -154,41 +182,40 @@ export async function getSearchUploadStatus({
   isModerator,
 }: {
   userId: number;
-  uploadId: number;
+  uploadId: string;
   isModerator: boolean;
 }): Promise<{ status: SearchUploadVerdict; message?: string }> {
-  const row = await ownedUpload(userId, uploadId);
-  const status = await verdictFor(row, isModerator);
-  if (status === 'refused') {
-    countSearchUpload('refused');
-    logToAxiom({ type: 'info', name: 'search-upload-refused', userId, imageId: row.id });
-    return { status, message: SEARCH_UPLOAD_REFUSED_MESSAGE };
-  }
-  return { status };
+  const record = await ownedUpload(userId, uploadId);
+  const { decision } = await decide(uploadId, record, isModerator);
+  if (decision.verdict === 'refused')
+    return { status: 'refused', message: SEARCH_UPLOAD_REFUSED_MESSAGE };
+  return { status: decision.verdict };
 }
 
-/** The image to search from: re-checked on every page, so a row flagged after it passed stops. */
+/** The image to search from: re-checked on every page. */
 export async function resolveSearchUploadAnchor({
   userId,
   uploadId,
+  url,
   isModerator,
 }: {
   userId: number;
-  uploadId: number;
+  uploadId: string;
+  /** The blob's URL, sent again by the client: only the blob id is kept, so it must match. */
+  url: string;
   isModerator: boolean;
 }) {
-  const row = await ownedUpload(userId, uploadId);
-  const status = await verdictFor(row, isModerator);
-  if (status !== 'ready')
+  const record = await ownedUpload(userId, uploadId);
+  if (uploadedSourceBlobId(url) !== record.blobId)
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'That is not the uploaded image.' });
+  const { scan, decision } = await decide(uploadId, record, isModerator);
+  if (decision.verdict !== 'ready' || scan.state !== 'done')
     throw new TRPCError({
-      code: status === 'pending' ? 'PRECONDITION_FAILED' : 'FORBIDDEN',
+      code: decision.verdict === 'pending' ? 'PRECONDITION_FAILED' : 'FORBIDDEN',
       message:
-        status === 'pending' ? 'The image is still being checked.' : SEARCH_UPLOAD_REFUSED_MESSAGE,
+        decision.verdict === 'pending'
+          ? 'The image is still being checked.'
+          : SEARCH_UPLOAD_REFUSED_MESSAGE,
     });
-  return { nsfwLevel: row.nsfwLevel, imageUrl: searchUploadEmbedUrl(row.url) };
-}
-
-/** The variant the vector sync embeds indexed images from (event-engine `EMBED_IMAGE_PARAMS`). */
-export function searchUploadEmbedUrl(key: string) {
-  return getEdgeUrl(key, { anim: false, width: 800, optimized: true, type: 'image' });
+  return { nsfwLevel: scan.nsfwLevel, imageUrl: url };
 }

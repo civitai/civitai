@@ -121,7 +121,6 @@ const STAMPER_FUNCTIONS: string[] = [
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
-  'src/server/services/image-search-upload.service.ts#prepareSearchUpload',
   'src/server/services/image.service.ts#createImage',
 ];
 
@@ -626,11 +625,6 @@ const UPDATE_SITE_LEDGER: Record<string, { decision: UpdateDecision; sites: numb
   },
   'src/server/services/judge-collection-rescan.service.ts#queueNeverScannedRescan': {
     decision: 'raw-legacy-judge-rating-seed',
-    sites: 1,
-  },
-  // Merges the scan's server-owned record (SEARCH_UPLOAD_FACE_SCAN_META_KEY) into a search upload.
-  'src/server/services/search-upload-rows.ts#writeSearchUploadFaceScan': {
-    decision: 'raw-server-keys',
     sites: 1,
   },
   'src/server/services/collection.service.ts#setCollectionItemNsfwLevel': {

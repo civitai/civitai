@@ -118,6 +118,28 @@ function imageScanSteps({
   ];
 }
 
+/**
+ * Scans a consumer blob with the imageScanning step and nothing else: no Image row, no callback. The
+ * caller reads the result with getWorkflow. Returns the workflow id, or undefined when the submit failed.
+ */
+export async function submitSearchUploadScan({ blobUrl }: { blobUrl: string }) {
+  const body: WorkflowTemplate = {
+    externalId: randomUUID(),
+    metadata: { searchUpload: true },
+    arguments: {},
+    currencies: [],
+    // WorkflowTemplate is @civitai/orchestration-client's, which predates the imageScanning step.
+    steps: [
+      { $type: 'imageScanning', name: 'scan', priority: 'normal', input: { image: blobUrl } },
+    ] as unknown as WorkflowStepTemplate[],
+  };
+  const result = await submitWorkflowWithRetry(
+    { client: internalOrchestratorClient, body },
+    { perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS, source: 'imageIngest' as const }
+  );
+  return result.data?.id ?? undefined;
+}
+
 export async function createImageIngestionRequest({
   imageId,
   url,
@@ -125,7 +147,6 @@ export async function createImageIngestionRequest({
   wait,
   priority = 'normal',
   type = 'image',
-  forceImageScanning = false,
 }: {
   imageId: number;
   url: string;
@@ -133,8 +154,6 @@ export async function createImageIngestionRequest({
   wait?: number;
   priority?: Priority;
   type?: MediaType;
-  /** Only the imageScanning lane reports face detections, which a search upload's gate needs. */
-  forceImageScanning?: boolean;
 }) {
   // 🔴 This is the funnel for the image-scan INGESTION path. `getEdgeUrl` forwards
   // absolute http(s)/blob: URLs through unmodified, so without this guard every path that
@@ -159,9 +178,10 @@ export async function createImageIngestionRequest({
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
   const externalId = randomUUID();
-  const useImageScanning =
-    forceImageScanning ||
-    (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING, String(imageId)));
+  const useImageScanning = await isFlipt(
+    FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING,
+    String(imageId)
+  );
   const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
 
   const steps =
