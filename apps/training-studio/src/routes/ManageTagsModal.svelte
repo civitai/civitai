@@ -100,7 +100,9 @@
   function applyTagRename() {
     const from = renameFrom;
     renameFrom = null;
-    if (from) renameEverywhere(from, splitTags(renameDraft), 'Renamed');
+    const to = splitTags(renameDraft);
+    // Saving the name unchanged is a cancel; merging casings is the Merge button's job.
+    if (from && !(to.length === 1 && to[0] === from)) renameEverywhere(from, to, 'Renamed');
   }
   function renameEverywhere(from: string, to: string[], verb: string) {
     if (to.length === 0) return;
@@ -115,8 +117,7 @@
     for (const img of touched) img.tags = after.get(img.id)!;
   }
   function removeTagEverywhere(tag: string) {
-    const key = tag.toLowerCase();
-    const touched = images.filter((img) => img.tags.some((t) => t.toLowerCase() === key));
+    const touched = images.filter((img) => removeTag(img.tags, tag).length !== img.tags.length);
     record(`Removed "${tag}" from ${mediaCount(touched.length, media)}`, touched);
     for (const img of touched) img.tags = removeTag(img.tags, tag);
   }

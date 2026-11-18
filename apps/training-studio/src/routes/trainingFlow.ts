@@ -942,18 +942,24 @@ export function withFilterTags(filter: TagFilter, text: string, side: keyof TagF
 /** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present in any casing. */
 export function withTags(tags: string[], text: string): string[] {
   const have = new Set(tags.map((t) => t.toLowerCase()));
-  const additions = splitTags(text).filter((t) => !have.has(t.toLowerCase()));
+  const additions = splitTags(text).filter((t) => {
+    const key = t.toLowerCase();
+    if (have.has(key)) return false;
+    have.add(key);
+    return true;
+  });
   return additions.length ? [...tags, ...additions] : tags;
 }
 
 /** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
  *  like a comma), and Backspace in an empty box removes the last tag. */
 export function tagEntryKey(
-  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing'>,
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode'>,
   draft: string,
   tagCount: number
 ): 'commit' | 'removeLast' | null {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) return 'commit';
+  // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
   if (e.key === 'Backspace' && draft === '' && tagCount > 0) return 'removeLast';
   return null;
 }

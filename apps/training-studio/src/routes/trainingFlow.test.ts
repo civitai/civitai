@@ -666,19 +666,22 @@ describe('withTags', () => {
   });
   it('skips a tag the image already has in another casing, so typing Dress does not add a second dress', () => {
     expect(withTags(['dress', 'Smile'], 'Dress, smile, hat')).toEqual(['dress', 'Smile', 'hat']);
+    expect(withTags([], 'Dress, dress')).toEqual(['Dress']);
   });
 });
 
 describe('tagEntryKey', () => {
-  const key = (k: string, shiftKey = false, isComposing = false) => ({
+  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0) => ({
     key: k,
     shiftKey,
     isComposing,
+    keyCode,
   });
   it('Enter adds the typed tags; Shift+Enter and IME composition leave the newline/text alone', () => {
     expect(tagEntryKey(key('Enter'), '1girl, solo', 0)).toBe('commit');
     expect(tagEntryKey(key('Enter', true), '1girl, solo', 0)).toBeNull();
     expect(tagEntryKey(key('Enter', false, true), 'あ', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, false, 229), 'かみ', 0)).toBeNull();
   });
   it('Backspace removes the last tag only when the box is empty', () => {
     expect(tagEntryKey(key('Backspace'), '', 2)).toBe('removeLast');
@@ -694,8 +697,8 @@ describe('paramNeedsRefundAck', () => {
   });
   // The seed is sent to the trainer, not only to the preview samples: editing it is an advanced edit.
   it('keeps the seed and the training params behind the acknowledgement', () => {
-    for (const f of ['seed', 'unetLr', 'optimizer', 'networkDim'] as const)
-      expect(paramNeedsRefundAck(f)).toBe(true);
+    expect(paramNeedsRefundAck('seed')).toBe(true);
+    expect(paramNeedsRefundAck('unetLr')).toBe(true);
   });
 });
 

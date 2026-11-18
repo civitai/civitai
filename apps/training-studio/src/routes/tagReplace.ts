@@ -128,9 +128,10 @@ export function groupTags(images: { tags: string[] }[]): TagGroup[] {
 
 /** `tags` with every casing of `from` replaced in place by `to`. Deduped case-insensitively, keeping the
  *  first position; a tag named in `to` takes the casing typed there, so renaming a group to its own name
- *  merges its casings into that one. */
+ *  merges its casings into that one. Tags without `from` come back as the same array, untouched. */
 export function renameTag(tags: string[], from: string, to: string[]): string[] {
   const fromKey = from.toLowerCase();
+  if (!tags.some((t) => t.toLowerCase() === fromKey)) return tags;
   const typed = new Map(to.map((t) => [t.toLowerCase(), t]));
   const seen = new Set<string>();
   const next: string[] = [];

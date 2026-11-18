@@ -158,6 +158,10 @@ describe('renameTag', () => {
       renameTag(['Orange hair', 'solo', 'orange hair'], 'orange hair', ['orange hair'])
     ).toEqual(['orange hair', 'solo']);
   });
+  it('leaves an image without the renamed tag alone, even when it carries the target in another casing', () => {
+    const tags = ['Bar', 'solo'];
+    expect(renameTag(tags, 'foo', ['bar'])).toBe(tags);
+  });
   it('folds a rename target the image already carries in another casing into the typed casing', () => {
     expect(renameTag(['dress', 'skirt'], 'skirt', ['Dress'])).toEqual(['Dress']);
   });
