@@ -197,16 +197,21 @@ describe('feed_transport measurement: transport tag follows the link the request
     expect(pushes()).toHaveLength(1);
   });
 
-  it('an input too large for a GET goes as POST on /api/trpc: transport=node', async () => {
+  it('a POST-sized signed-in request is NOT measured (the go arm can never contain one)', async () => {
     browser(true);
+    const large = { ...FEED_INPUT, excludedTagIds: Array.from({ length: 800 }, (_, i) => i) };
+    await callQuery(FEED, large); // flag off: the plain node arm
     setFeedGoTransportEnabled(true);
-    await callQuery(FEED, {
-      ...FEED_INPUT,
-      excludedTagIds: Array.from({ length: 800 }, (_, i) => i),
-    });
+    await callQuery(FEED, large); // flag on: still POST on /api/trpc
 
-    expect(sent[0].method).toBe('POST');
-    expect(sent[0].url).not.toContain('/api/trpc-go');
+    expect(sent.map((r) => r.method)).toEqual(['POST', 'POST']);
+    expect(sent.every((r) => !r.url.includes('/api/trpc-go'))).toBe(true);
+    expect(pushes()).toHaveLength(0);
+
+    // Positive control: the same procedure GET-sized, flag off, is measured on the node arm.
+    setFeedGoTransportEnabled(false);
+    await callQuery(FEED, FEED_INPUT);
+    expect(sent[2].method).toBe('GET');
     expect(pushes()).toHaveLength(1);
     expect(pushes()[0][1]).toMatchObject({ context: { transport: 'node' } });
   });
@@ -300,6 +305,7 @@ describe('feed_transport measurement: outcome', () => {
 
 describe('feed_transport measurement: never on the request path', () => {
   it('a throwing Faro push still resolves the query with its data', async () => {
+    // Invariant guard: passes on pre-change code too (no push existed); red only on a mutant.
     browser(true);
     setFeedGoTransportModelGetAllEnabled(true);
     h.pushMeasurement.mockImplementation(() => {
