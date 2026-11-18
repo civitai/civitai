@@ -201,3 +201,37 @@ describe('getInfiniteChallenges — content level filter', () => {
     expect(text).not.toContain(COVER_LEVEL_PREDICATE);
   });
 });
+
+// The semantic search hydrates through getInfiniteChallenges with ownRowsExempt: false, so a
+// narrowed query can't show the viewer their own challenge above its level (the rule itself is
+// run as SQL in challenge-visibility-own-rows.behavior.test.ts).
+describe('getInfiniteChallenges — the owner exemption', () => {
+  const OWNER_EXEMPTION = 'OR c."createdById" =';
+  const query = (ownRowsExempt?: boolean) =>
+    getInfiniteChallenges({
+      limit: 20,
+      includeEnded: false,
+      excludeEventChallenges: false,
+      canAccessUserChallenges: true,
+      currentUserId: 5,
+      isGreen: false,
+      browsingLevel: 1,
+      ownRowsExempt,
+    } as Parameters<typeof getInfiniteChallenges>[0]);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbRead.$queryRaw.mockResolvedValue([]);
+    mockDbRead.image.findMany.mockResolvedValue([]);
+  });
+
+  it("lets the viewer's own challenges past the gates by default", async () => {
+    await query();
+    expect(captureQuery().text).toContain(OWNER_EXEMPTION);
+  });
+
+  it('holds them to every gate with ownRowsExempt: false', async () => {
+    await query(false);
+    expect(captureQuery().text).not.toContain(OWNER_EXEMPTION);
+  });
+});
