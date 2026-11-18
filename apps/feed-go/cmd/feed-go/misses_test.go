@@ -10,12 +10,15 @@ import (
 	"testing"
 	"time"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
-	"github.com/civitai/civitai/apps/feed-go/internal/chread"
 	"github.com/civitai/civitai/apps/feed-go/internal/config"
 	"github.com/civitai/civitai/apps/feed-go/internal/feed"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 	"github.com/civitai/civitai/apps/feed-go/internal/testkit"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
 // The deployment's miss computation follows the config: none with FEED_GO_COMPUTE_MISSES off; write-back
@@ -168,51 +171,54 @@ func TestAttachMetricsReader(t *testing.T) {
 	}
 }
 
-// countingTracer is a chread.Tracer that counts the calls it sees.
-type countingTracer struct {
-	mu           sync.Mutex
-	starts, ends int
-	rows         int
-}
-
-func (c *countingTracer) QueryStart(ctx context.Context, _ string) context.Context {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.starts++
-	return ctx
-}
-
-func (c *countingTracer) QueryEnd(_ context.Context, rows int, _ error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.ends++
-	c.rows += rows
-}
-
-var _ chread.Tracer = (*countingTracer)(nil)
-
-// The tracer run() hands attachMetricsReader (tracing.ClickHouseTracer when tracing is on) is the one
-// the miss computation's reader calls on every read.
-func TestAttachMetricsReaderTracesItsReads(t *testing.T) {
+// What run() hands attachMetricsReader decides the tracing of the miss computation: with tracing on
+// (a provider) the reader's reads are `clickhouse query` spans under the request's and the
+// computation carries the provider's tracer (its wait spans); with it off (nil, run()'s tp when
+// FEED_GO_OTEL_ENABLED is unset) neither, even under a recording request span.
+func TestAttachMetricsReaderTracing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("{\"entityId\":32,\"metricType\":\"Like\",\"value\":4}\n{\"entityId\":33,\"metricType\":\"Cry\",\"value\":2}\n"))
 	}))
 	t.Cleanup(srv.Close)
+	rec := tracetest.NewSpanRecorder()
+	sdk := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	t.Cleanup(func() { _ = sdk.Shutdown(context.Background()) })
+	tracer := sdk.Tracer("test")
 	cfg := loadConfig(t, map[string]string{"FEED_GO_CLICKHOUSE_HOST": srv.URL, "FEED_GO_CLICKHOUSE_USERNAME": "feed-go-reader"})
-	c := missCompute(cfg, &testkit.DB{}, nil, &feed.BlockedTags{Cache: testkit.NewRedis()}, nil)
-	if c == nil {
-		t.Fatal("no miss computation")
+	compute := func() *hydrate.MissCompute {
+		c := missCompute(cfg, &testkit.DB{}, nil, &feed.BlockedTags{Cache: testkit.NewRedis()}, nil)
+		if c == nil {
+			t.Fatal("no miss computation")
+		}
+		return c
 	}
-	tr := &countingTracer{}
-	if err := attachMetricsReader(cfg, c, tr); err != nil || c.ClickHouse == nil {
-		t.Fatalf("reader %v, %v; want one", c.ClickHouse, err)
-	}
-	if _, err := c.ClickHouse.Query(context.Background(), "SELECT 1", nil); err != nil {
-		t.Fatal(err)
-	}
-	tr.mu.Lock()
-	defer tr.mu.Unlock()
-	if tr.starts != 1 || tr.ends != 1 || tr.rows != 2 {
-		t.Fatalf("tracer saw %d starts, %d ends, %d rows; want 1, 1, 2", tr.starts, tr.ends, tr.rows)
+
+	for _, on := range []bool{true, false} {
+		rec.Reset()
+		var tp *tracing.Provider
+		if on {
+			tp = &tracing.Provider{Tracer: tracer}
+		}
+		c := compute()
+		if err := attachMetricsReader(cfg, c, tp); err != nil || c.ClickHouse == nil {
+			t.Fatalf("tracing %v: reader %v, %v; want one", on, c.ClickHouse, err)
+		}
+		if (c.Tracer != nil) != on || (on && c.Tracer != tracer) {
+			t.Fatalf("tracing %v: the computation's tracer is %v", on, c.Tracer)
+		}
+		ctx, parent := tracer.Start(context.Background(), "serve as-images")
+		if rows, err := c.ClickHouse.Query(ctx, "SELECT 1", nil); err != nil || len(rows) != 2 {
+			t.Fatalf("tracing %v: %d rows, %v", on, len(rows), err)
+		}
+		parent.End()
+		var reads []string
+		for _, s := range rec.Ended() {
+			if s.Name() == "clickhouse query" && s.Parent().SpanID() == parent.SpanContext().SpanID() {
+				reads = append(reads, s.Name())
+			}
+		}
+		if want := map[bool]int{true: 1, false: 0}[on]; len(reads) != want || len(rec.Ended()) != want+1 {
+			t.Fatalf("tracing %v: %d read spans under the request (%d spans in all), want %d", on, len(reads), len(rec.Ended()), want)
+		}
 	}
 }

@@ -93,10 +93,18 @@ func metricsReader(cfg *config.Config, tracer chread.Tracer) (hydrate.ClickHouse
 }
 
 // attachMetricsReader hands c (the miss computation, nil when off) the metrics reader and its bound,
-// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader), its reads spanned by tracer (nil:
-// tracing off). The error is metricsReader's.
-func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tracer chread.Tracer) error {
-	reader, err := metricsReader(cfg, tracer)
+// when one is configured (FEED_GO_CLICKHOUSE_*; metricsReader). With tracing on (tp set) the reader's
+// reads are spanned (tracing.ClickHouseTracer) and so are c's waits (MissCompute.Tracer); tp nil
+// leaves both untraced. The error is metricsReader's.
+func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing.Provider) error {
+	var chTracer chread.Tracer
+	if tp != nil {
+		chTracer = tracing.ClickHouseTracer{Tracer: tp.Tracer}
+		if c != nil {
+			c.Tracer = tp.Tracer
+		}
+	}
+	reader, err := metricsReader(cfg, chTracer)
 	if c != nil && reader != nil {
 		c.ClickHouse = reader
 		c.MetricsTimeout = cfg.ClickHouseTimeout
@@ -187,11 +195,7 @@ func run(log *slog.Logger) error {
 	blocked := &feed.BlockedTags{Cache: cache, Prefix: cfg.CacheKeyPrefix}
 	addons := &feed.AddonSource{Sys: sys}
 	sources.Compute = missCompute(cfg, primary, metrics.ObserveCacheMiss, blocked, addons.Addons)
-	var chTracer chread.Tracer
-	if tp != nil {
-		chTracer = tracing.ClickHouseTracer{Tracer: tp.Tracer}
-	}
-	if err := attachMetricsReader(cfg, sources.Compute, chTracer); err != nil {
+	if err := attachMetricsReader(cfg, sources.Compute, tp); err != nil {
 		log.Error("clickhouse reader not configured; metric-hash misses fall back", "err", err)
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
