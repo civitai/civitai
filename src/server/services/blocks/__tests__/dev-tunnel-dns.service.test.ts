@@ -410,11 +410,13 @@ describe('getDevTunnelDnsReadiness', () => {
 
   /** Seeds the tunnel store: `index` is the (user, block) → session pointer the lookup starts from. */
   function seed(index: { userId: number; blockId: string }, session: typeof SESSION) {
-    redisMock.sysRedis.get.mockImplementation(async (key: string) => {
-      if (key.endsWith(`:user:${index.userId}:${index.blockId}`)) return session.sessionId;
-      if (key.endsWith(`:session:${session.sessionId}`)) return JSON.stringify(session);
-      return null;
-    });
+    // The pointer is on the cache cluster (tagged with the user id), the session in system Redis.
+    redisMock.redis.get.mockImplementation(async (key: string) =>
+      key.endsWith(`:user:{${index.userId}}:${index.blockId}`) ? session.sessionId : null
+    );
+    redisMock.sysRedis.get.mockImplementation(async (key: string) =>
+      key.endsWith(`:session:${session.sessionId}`) ? JSON.stringify(session) : null
+    );
   }
 
   it("reports the caller's own live tunnel", async () => {
