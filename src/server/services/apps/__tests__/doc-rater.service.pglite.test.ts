@@ -408,6 +408,14 @@ describe('🔴 the callback rates the document', () => {
     expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
   });
 
+  it('🔴 an image url split by a character a url parser drops (a tab) still counts', async () => {
+    const app = freshApp('RSVTAB');
+    const id = await submitted(app, 'b1', {
+      pic: `https://image.example/abc/\t${IMG_NO_ROW}/width=450/x.jpeg`,
+    });
+    expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+  });
+
   it('a uuid in a url on another host adds no level and does not hold the document', async () => {
     const app = freshApp('RSVOTHER');
     const id = await submitted(app, 'b1', { link: `https://elsewhere.example/item/${IMG_NO_ROW}` });

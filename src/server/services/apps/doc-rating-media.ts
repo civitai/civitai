@@ -21,7 +21,7 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { imageCdnHosts } from '~/server/services/generation-input-urls';
-import { keysInTextWithin } from '~/server/services/image-url-ownership';
+import { decodedForms, keysInTextWithin } from '~/server/services/image-url-ownership';
 import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -44,21 +44,6 @@ export type DocMediaKeys =
 
 /** Every http(s) url in a text, up to the first character a url cannot hold unescaped. */
 const URL_IN_TEXT = /https?:\/\/[^\s"'<>\\]+/gi;
-
-/** A text and each form its `%XX` escapes decode to, one pass at a time (at most 4 passes). */
-function decodedForms(text: string): string[] {
-  const forms = [text];
-  for (let pass = 0; pass < 4; pass++) {
-    const current = forms[forms.length - 1];
-    if (!current.includes('%')) break;
-    const next = current.replace(/%([0-9a-f]{2})/gi, (_m, hex: string) =>
-      String.fromCharCode(parseInt(hex, 16))
-    );
-    if (next === current) break;
-    forms.push(next);
-  }
-  return forms;
-}
 
 /** Whether `url` is on a civitai image CDN host (`imageCdnHosts`, shared with generation inputs). */
 function onImageHost(url: string, hosts: readonly string[]): boolean {
@@ -83,7 +68,7 @@ export function docMediaKeys(texts: readonly string[]): DocMediaKeys {
       keys.add(key);
       if (keys.size > DOC_MEDIA_MAX_KEYS) return { overflow: 'too-many' };
     }
-    for (const form of decodedForms(text)) {
+    for (const form of decodedForms(text, budget)) {
       for (const [url] of form.matchAll(URL_IN_TEXT)) {
         if (!onImageHost(url, hosts)) continue;
         for (const key of keysInTextWithin(url, budget)) {
