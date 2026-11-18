@@ -190,9 +190,8 @@ shows an Email checkbox for those types only, unavailable while the type itself 
 
 One email a week listing the notifications a user has not seen (`UserNotification.viewed` false)
 in the last seven days, or since their last digest if that is later: the newest ten, "and N more",
-and a link to `/user/notifications`. Types that send their own email (`defaultEmail`) are listed
-too, because that email can be skipped (kill switch, caps, a failed send) and the item is still
-unseen. Users with nothing unseen get nothing.
+and a link to `/user/notifications`. Types that send their own email (`defaultEmail`) are left out,
+so the digest never repeats one. Users with nothing unseen get nothing.
 
 - **On by default, with an opt-out.** It is the email opt-out type `missed-notification-digest`
   (`missed-digest.constants.ts`): a `UserEmailNotificationOptOut` row turns it off. The settings

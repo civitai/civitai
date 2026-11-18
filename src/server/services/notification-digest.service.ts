@@ -20,6 +20,7 @@ import {
   silencedUsersAmong,
 } from '~/server/notifications/silence-check-ages';
 import {
+  emailNotificationTypeList,
   getNotificationMessage,
   silenceCheckTypes,
 } from '~/server/notifications/utils.notifications';
@@ -189,9 +190,10 @@ async function renderItems(user: UnseenNotifications): Promise<MissedNotificatio
  * Who is emailed: a user with a verified email, who has not opted out of the digest, is in the
  * flag's rollout (evaluated per user, so a percentage rollout ramps it), has not turned
  * every notification off, was not sent a digest in the last six days, and has at least one
- * notification they have not seen in the window. Types with their own email (`defaultEmail`) are
- * listed too: that email may never have gone out, and the item is still unseen. Eligibility is
- * read again on the primary just before each send, and the send goes to the address read there.
+ * notification they have not seen in the window. Types that send their own email when they happen
+ * (`defaultEmail`) are left out of both the list and the count, so the digest never repeats one.
+ * Eligibility is read again on the primary just before each send, and the send goes to the address
+ * read there.
  *
  * Each send is claimed in `UserNotificationDigest` BEFORE the email goes out, and the claim only
  * lands when no digest was recorded in the last six days, so a run that dies mid-send can skip a
@@ -299,10 +301,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
               userId: user.id,
               since: new Date(Math.max(windowStart, user.lastSentAt?.getTime() ?? 0)),
             })),
-            // Nothing is left out for having had its own email: that email can be skipped (kill
-            // switch, per-user or per-type cap, a failed send), and an item still unseen a week
-            // later is still missed.
-            excludeTypes: [],
+            excludeTypes: emailNotificationTypeList,
             limit: DIGEST_ITEM_LIMIT,
           })
         : [];

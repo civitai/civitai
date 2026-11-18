@@ -206,7 +206,7 @@ describe('who gets the weekly digest', () => {
     });
   });
 
-  it('asks only about eligible users, leaves no type out, and never re-lists a sent item', async () => {
+  it('asks only about eligible users, leaves out the types already emailed, and never re-lists a sent item', async () => {
     await run();
     const asked = h.unseen.mock.calls.flatMap(
       ([input]) => (input as UnseenNotificationsInput).users
@@ -216,8 +216,8 @@ describe('who gets the weekly digest', () => {
     expect(asked.find((u) => u.userId === 1)!.since).toEqual(daysAgo(7));
     expect(asked.find((u) => u.userId === 9)!.since).toEqual(daysAgo(6.5));
     const excluded = (h.unseen.mock.calls[0]![0] as UnseenNotificationsInput).excludeTypes;
-    // A type with its own email is listed too: that email may have been capped or switched off.
-    expect(excluded).toEqual([]);
+    expect(excluded).toContain('service-deal-requested');
+    expect(excluded).not.toContain('system-message');
   });
 
   it('skips users outside the flag rollout before asking about them', async () => {
