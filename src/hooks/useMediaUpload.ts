@@ -72,7 +72,15 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   const fileUploadContext = useFileUploadContext();
   const uploadSettings = useMediaUploadSettingsContext();
   // How many more files can be added: a pick past this is cut short.
-  const remaining = Math.max(0, uploadSettings.maxItems - count);
+  // Files accepted but not yet completed. count only includes a file once its upload completes,
+  // so without this a slow upload lets later picks pass the limit.
+  const [reserved, setReserved] = useState(0);
+  const reservedRef = useRef(0);
+  const adjustReserved = (delta: number) => {
+    reservedRef.current = Math.max(0, reservedRef.current + delta);
+    setReserved(reservedRef.current);
+  };
+  const remaining = Math.max(0, uploadSettings.maxItems - count - reserved);
   const canAdd =
     remaining > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
@@ -118,6 +126,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
         const job = jobQueueRef.current.shift()!;
         if (job.aborted) {
           URL.revokeObjectURL(job.processing.objectUrl);
+          adjustReserved(-1);
           release();
           continue;
         }
@@ -142,6 +151,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             console.error(e);
           }
         } finally {
+          adjustReserved(-1);
           release();
         }
       }
@@ -150,8 +160,9 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     }
   }
 
+  /** Returns how many jobs it took on; each releases its own reservation when it ends. */
   function enqueueJobs(jobs: UploadJob[]) {
-    if (!jobs.length) return;
+    if (!jobs.length) return 0;
 
     // Dedupe against anything currently queued or already uploading.
     // Guards against accidental double-enqueue (rapid re-drops, effect re-fires,
@@ -171,7 +182,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     const uniqueJobs = jobs.filter((j) => !inFlight.has(pickOriginal(j.processing.file)));
     for (const job of jobs)
       if (!uniqueJobs.includes(job)) URL.revokeObjectURL(job.processing.objectUrl);
-    if (!uniqueJobs.length) return;
+    if (!uniqueJobs.length) return 0;
 
     // Pre-register pending entries so the UI reflects queued items.
     if (fileUploadContext) {
@@ -211,6 +222,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
         console.error('runWorker unexpectedly threw', e);
       });
     }
+    return uniqueJobs.length;
   }
   // #endregion
 
@@ -221,6 +233,8 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   ) {
     setLoading(true);
     hold();
+    let reservedHere = 0;
+    let handedToJobs = 0;
     try {
       const start = Math.max(count, lastIndexRef.current) + 1;
       const { maxSize } = uploadSettings;
@@ -238,8 +252,13 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       }
 
       // remove extra files that would exceed the max
-      const sliced = data.slice(0, remaining);
+      const sliced = data.slice(
+        0,
+        Math.max(0, uploadSettings.maxItems - count - reservedRef.current)
+      );
       if (sliced.length) lastIndexRef.current = start + sliced.length - 1;
+      reservedHere = sliced.length;
+      adjustReserved(reservedHere);
 
       // process media metadata
       const mapped = (
@@ -345,10 +364,11 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           jobs.push({ processing, index, context, aborted: false });
         }
       }
-      enqueueJobs(jobs);
+      handedToJobs = enqueueJobs(jobs);
     } catch (error: any) {
       setError(error);
     } finally {
+      adjustReserved(handedToJobs - reservedHere);
       release();
     }
     setLoading(false);
@@ -373,6 +393,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   return {
     canAdd,
     remaining,
+    reserved,
     upload: processFiles,
     error,
     files,
