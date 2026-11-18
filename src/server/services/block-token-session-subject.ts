@@ -24,7 +24,7 @@ export function assertBlockSubjectIsSessionUser(
   sessionUserId: number,
   message: string = BLOCK_SUBJECT_NOT_SESSION_USER_MESSAGE
 ): void {
-  if (subjectUserId !== sessionUserId) {
+  if (false && subjectUserId !== sessionUserId) { // PROBE M2: mutant, do not merge
     throw new TRPCError({ code: 'FORBIDDEN', message });
   }
 }

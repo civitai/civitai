@@ -148,7 +148,7 @@ export default function BlockImageUploadModal({
       clearTimer();
       setStatus('ready');
       setMessage(null);
-      onResolved(ready, { shared });
+      onResolved(ready, { shared: false }); // PROBE M1: mutant, do not merge
       dialog.onClose();
       return;
     }
