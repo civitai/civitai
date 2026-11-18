@@ -23,12 +23,11 @@ export function boundedClusterCall<T>(
  *
  * `SET NX EX` + `INCR`/`INCRBY` in one single-key MULTI, so the key always carries its TTL: a
  * crash between the two cannot strand a TTL-less counter, and a release that lands after the key
- * was evicted or expired re-creates it with the TTL rather than as an immortal negative. Bounded
+ * was evicted or expired re-creates it with the TTL, clamped at zero. Bounded
  * by {@link boundedClusterCall}. A reply that is not a number answers `NaN`. Each caller decides
  * what a throw or `NaN` means (fail open or closed).
  *
- * Not claimRateLimitAttempt: these callers count their own subject (an app, a provider, a day's
- * spend), not a request's caller, and pick their own failure policy.
+ * Not claimRateLimitAttempt: counts any subject, not a request's caller.
  */
 export async function takeClusterWindowCount(
   fn: string,
@@ -46,5 +45,12 @@ export async function takeClusterWindowCount(
         : redis.multi().set(key, '0', created).incrBy(key, by).exec(),
     callOpts
   );
-  return Number((reply as unknown[] | null)?.[1]);
+  const total = Number((reply as unknown[] | null)?.[1]);
+  // A release that lands after the key was evicted would leave a negative total, which admits
+  // that much over the limit for the rest of the window: clamp it to zero, keeping the TTL.
+  if (by !== undefined && by < 0 && total < 0) {
+    await boundedClusterCall(fn, () => redis.set(key, '0', { KEEPTTL: true }), callOpts);
+    return 0;
+  }
+  return total;
 }

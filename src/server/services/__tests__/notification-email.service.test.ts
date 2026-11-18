@@ -23,6 +23,8 @@ const DEAL = 'service-deal-requested';
 const deal = { type: DEAL, details: { dealId: 7, offeringTitle: 'Portrait' } };
 
 const counters = new Map<string, number>();
+/** Every `SET` the cap MULTIs sent: `[key, value, options]`. */
+let capSets: unknown[][] = [];
 let redisDown: false | 'all' | 'user-quota' = false;
 
 beforeEach(() => {
@@ -45,6 +47,24 @@ beforeEach(() => {
     const next = (counters.get(key) ?? 0) + by;
     counters.set(key, next);
     return next;
+  }) as never);
+  // A cap is counted by SET NX EX + INCR in one MULTI; its INCR lands on the counter above.
+  capSets = [];
+  redisMock.redis.multi.mockImplementation((() => {
+    const queued: Array<() => unknown> = [];
+    const chain = {
+      set: (...a: unknown[]) => {
+        capSets.push(a);
+        queued.push(() => 'OK');
+        return chain;
+      },
+      incr: (key: string) => {
+        queued.push(() => redisMock.redis.incrBy(key, 1));
+        return chain;
+      },
+      exec: async () => Promise.all(queued.map((op) => op())),
+    };
+    return chain;
   }) as never);
 });
 
@@ -123,13 +143,20 @@ describe('sendNotificationEmails', () => {
     expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
   });
 
-  it('re-arms a cap key that lost its expiry', async () => {
-    redisMock.redis.expire.mockClear();
-    redisMock.redis.ttl.mockResolvedValue(-1 as never);
-    redisMock.redis.incrBy.mockResolvedValue(5 as never);
+  it('creates each cap key with its TTL in the same MULTI as the count', async () => {
     await sendNotificationEmails({ ...deal, userIds: [1] });
-    // Both keys (type and user) are past their first hit and report no TTL.
-    expect(redisMock.redis.expire).toHaveBeenCalledTimes(2);
+    expect(capSets).toEqual([
+      [
+        expect.stringMatching(/^system:notification-email-type-quota:/),
+        '0',
+        { NX: true, EX: 7200 },
+      ],
+      [
+        expect.stringMatching(/^system:notification-email-user-quota:1:/),
+        '0',
+        { NX: true, EX: 172800 },
+      ],
+    ]);
   });
 
   it('sends nothing when only the per-user cap cannot be read', async () => {

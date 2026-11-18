@@ -18,8 +18,6 @@ type SnapshotKey = `${typeof REDIS_KEYS.FLIPT.SNAPSHOT}:${string}`;
  *
  * Its own module, registered from instrumentation.node.ts, because ~/server/flipt/client is in
  * the _app client graph and must not reach the Redis clients.
- *
- * A cache: any pod with live state rebuilds it, so losing it costs nothing until Flipt is down.
  */
 export function registerFliptSnapshotStore(): void {
   const tuning = loadFliptTuning();

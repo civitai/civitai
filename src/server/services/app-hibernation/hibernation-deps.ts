@@ -27,8 +27,6 @@ async function cacheRedisClient() {
   return { redis, keys: REDIS_KEYS.BLOCKS };
 }
 
-// A lost attempt answers its commit `unknown-attempt`: the sandbox keeps the app and the upload is
-// swept as an orphan.
 const redisAttempts: AttemptStore = {
   async claim(rec, ttlSeconds) {
     const { redis, keys } = await cacheRedisClient();

@@ -29,8 +29,7 @@ const RATE_KEYS = {
 
 /**
  * One window's count after this take, and its TTL on the 429 path, from the store the family
- * lives in. The push window is on the cache cluster: it bounds build and alert churn and fails
- * open anyway, so starting empty costs at most one window of pushes.
+ * lives in.
  */
 function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
   if (family === 'push') {

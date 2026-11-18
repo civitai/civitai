@@ -10,8 +10,8 @@ import {
   isEmailNotificationType,
   notificationProcessors,
 } from '~/server/notifications/utils.notifications';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { boundedClusterCall } from '~/server/utils/cluster-window-count';
+import { REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 
@@ -69,17 +69,9 @@ export async function optOutOfNotificationEmail(userId: number, type: string) {
     ON CONFLICT DO NOTHING`;
 }
 
-/**
- * INCR with a first-hit expiry; re-arms a key that lost its TTL, which would otherwise hold a user
- * at the cap for good. Throws on a Redis error.
- */
-async function bump(key: `${string}:${string}`, ttlSeconds: number) {
-  return boundedClusterCall('notificationEmailQuota', async () => {
-    const count = await redis.incrBy(key as never, 1);
-    if (count === 1 || (await redis.ttl(key as never)) < 0)
-      await redis.expire(key as never, ttlSeconds);
-    return count;
-  });
+/** One more send in the key's window. Throws on a Redis error. */
+async function bump(key: RedisKeyTemplateCache, ttlSeconds: number) {
+  return takeClusterWindowCount('notificationEmailQuota', key, ttlSeconds);
 }
 
 /** False once the type has sent its hourly ceiling. */

@@ -134,12 +134,7 @@ function seedRegistry() {
 }
 
 const REGISTRY_TTL = CacheTTL.hour;
-/**
- * Bounds how long the generation key is kept between mod writes. Correctness does not depend on
- * it: a reader that finds no key (expired, evicted, or never set) starts a fresh generation
- * rather than falling back to a fixed one, so no entry filled before a mod write can be served
- * after it.
- */
+/** Bounds how long an idle generation key lives; a missing key just starts a new generation. */
 const GENERATION_TTL_SECONDS = 24 * 60 * 60;
 
 /**

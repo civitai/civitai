@@ -121,11 +121,33 @@ function caller(apiKeyId: number | null = null) {
   } as never);
 }
 
+/** Every `SET` the read limiter's MULTI sent: `[key, value, options]`. */
+let readRateSets: unknown[][] = [];
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.raiseFlag.mockResolvedValue(true);
   appBlockFindUnique.mockResolvedValue({ status: 'approved' } as never);
   redisMock.redis.incrBy.mockResolvedValue(1 as never);
+  // The read limiter counts with SET NX EX + INCR in one MULTI; its INCR answers from the
+  // `redis.incrBy` mock, so a test sets the count there.
+  readRateSets = [];
+  redisMock.redis.multi.mockImplementation((() => {
+    const queued: Array<() => unknown> = [];
+    const chain = {
+      set: (...a: unknown[]) => {
+        readRateSets.push(a);
+        queued.push(() => 'OK');
+        return chain;
+      },
+      incr: (key: string) => {
+        queued.push(() => redisMock.redis.incrBy(key, 1));
+        return chain;
+      },
+      exec: async () => Promise.all(queued.map((op) => op())),
+    };
+    return chain;
+  }) as never);
   redisMock.redis.get.mockResolvedValue(null as never);
   m.readLimit.mockResolvedValue({ limit: 1000, spentToday: 980, remaining: 20, exceeds: false });
   m.raise.mockResolvedValue({ previousLimit: 1000 });
@@ -186,10 +208,12 @@ describe('blocks.getMyAppDailyLimit', () => {
 
   it('the 30th read in a minute still reads', async () => {
     redisMock.redis.incrBy.mockResolvedValue(30 as never);
-    redisMock.redis.ttl.mockResolvedValue(40 as never);
     expect(await caller().getMyAppDailyLimit({ appBlockId: APP })).not.toBeNull();
     expect(m.readLimit).toHaveBeenCalled();
-    expect(redisMock.redis.expire).not.toHaveBeenCalled();
+    // The window is created with its one-minute TTL in the same MULTI as the count.
+    expect(readRateSets).toEqual([
+      [`system:blocks:daily-limit-read-rate:${USER}`, '0', { NX: true, EX: 60 }],
+    ]);
     // The rate window and the refusal record are on the cache cluster, not in system Redis.
     expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
     expect(

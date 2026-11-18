@@ -156,8 +156,8 @@ const states = () => rows.map((r) => r.deployState);
 
 /** A MULTI whose INCR answers `count` (or throws). */
 /**
- * Today's agent-review auto-start reservation, in cents: a real counter shared by the MULTI's
- * INCRBY and the plain INCRBY that releases it, so concurrent starts see each other.
+ * Today's agent-review auto-start reservation, in cents: one counter behind the MULTI that takes
+ * and releases it, so concurrent starts see each other.
  */
 const reservation = { cents: 0, fail: false };
 
@@ -183,14 +183,9 @@ function budgetCounter(count: number | Error) {
     }),
   };
   // The build budget's MULTI is in system Redis; the reservation's MULTI and its release are on the
-  // cache cluster. The release is wired on the cluster only, so a release sent to system Redis
-  // would leave the reservation taken and refuse the next start.
+  // cache cluster.
   redisMock.sysRedis.multi.mockImplementation(() => chain);
   redisMock.redis.multi.mockImplementation(() => chain);
-  redisMock.redis.incrBy.mockImplementation(async (_k: string, cents: number) => {
-    reservation.cents += cents;
-    return reservation.cents;
-  });
   return chain;
 }
 
