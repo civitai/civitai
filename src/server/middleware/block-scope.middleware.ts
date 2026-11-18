@@ -44,7 +44,6 @@ import {
   USER_SUB_RE,
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
-import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 import {
   resolvePerCallBuzzBudget,
   isKnownBlockScope,
@@ -1498,7 +1497,7 @@ async function resolveDevTunnelHubClaims(args: {
 
 const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
 
-/** A hub OAuth token of an app block's own client whose block is not approved. */
+/** A hub OAuth token of a suspended app block's own client. */
 const HUB_TOKEN_REFUSED = 'refused' as const;
 
 async function resolveHubTokenClaims(
@@ -1530,13 +1529,12 @@ async function resolveHubTokenClaims(
       apiKeyId: session.apiKeyId,
     });
     if (devClaims) return devClaims;
-    // A suspended, pending or deprecated app's token is refused here rather than handed on as an
-    // ordinary OAuth session. Remix rows share one client and are not app lifecycles.
-    const lifecycleBlock = await dbRead.appBlock.findFirst({
-      where: { appId: clientId, status: { notIn: REMIX_STATUSES } },
+    // A suspended app's token is refused here rather than handed on as an ordinary OAuth session.
+    const suspended = await dbRead.appBlock.findFirst({
+      where: { appId: clientId, status: 'suspended' },
       select: { id: true },
     });
-    return lifecycleBlock ? HUB_TOKEN_REFUSED : null;
+    return suspended ? HUB_TOKEN_REFUSED : null;
   }
 
   const { getGrantedScopes, partitionByConsent } = await import(

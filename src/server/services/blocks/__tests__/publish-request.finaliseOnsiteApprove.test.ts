@@ -25,7 +25,7 @@ function fakeTx() {
     appBlockPublishRequest: { update: vi.fn(async () => ({})) },
     appBlock: {
       update: vi.fn(async () => ({})),
-      findUnique: vi.fn(async () => ({ appId: 'appblk-app-a' })),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-app-a', status: 'suspended' })),
       count: vi.fn(async () => 0),
     },
     apiKey: { deleteMany: vi.fn(async () => ({ count: 1 })) },

@@ -108,7 +108,11 @@ const { mockRead, mockWrite, mockNotify, mockLogToAxiom, ids } = vi.hoisted(() =
     appBlock: {
       updateMany: vi.fn(async () => ({ count: 1 })),
       // Restoring a block reads its slug to check the app's open review holds.
-      findUnique: vi.fn(async () => ({ blockId: 'held-app', appId: 'appblk-held-app' })),
+      findUnique: vi.fn(async () => ({
+        blockId: 'held-app',
+        appId: 'appblk-held-app',
+        status: 'suspended',
+      })),
       count: vi.fn(async () => 0),
     },
     apiKey: { deleteMany: vi.fn(async () => ({ count: 2 })) },
@@ -264,6 +268,7 @@ beforeEach(() => {
   mockWrite.appBlock.findUnique.mockResolvedValue({
     blockId: 'held-app',
     appId: 'appblk-held-app',
+    status: 'suspended',
   });
   mockWrite.appBlock.count.mockResolvedValue(0);
   mockWrite.apiKey.deleteMany.mockResolvedValue({ count: 2 });
@@ -328,6 +333,9 @@ describe('delistListing', () => {
     });
     // No linked report → the report table is untouched.
     expect(mockWrite.appListingReport.updateMany).not.toHaveBeenCalled();
+    // No backing block → no token revoke.
+    expect(mockWrite.appBlock.findUnique).not.toHaveBeenCalled();
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
     // OFF-SITE hide → the owner is notified (post-commit), carrying the reason.
     expect(mockNotify).toHaveBeenCalledTimes(1);
     expect(mockNotify).toHaveBeenCalledWith(
@@ -387,6 +395,30 @@ describe('delistListing', () => {
    * mutant that hardcodes either kind's payload (or re-notifies the wrong owner) cannot
    * satisfy both assertions.
    */
+  it('🔴 ON-SITE delist revokes the app tokens through the transaction, not outside it', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    const txDeleteMany = vi.fn(async () => ({ count: 2 }));
+    mockWrite.$transaction.mockImplementationOnce(async (cb: (tx: WriteMock) => Promise<unknown>) =>
+      cb({ ...mockWrite, apiKey: { deleteMany: txDeleteMany } })
+    );
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(txDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockWrite.apiKey.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('ON-SITE delist of an already-suspended block (0-count flip) still revokes its tokens', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(onsiteListing('approved'));
+    mockWrite.appBlock.updateMany.mockResolvedValueOnce({ count: 0 });
+    await delistListing({
+      input: { appListingId: APP_ID, reason: GOOD_REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockWrite.apiKey.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
   describe('🔴 the owner is notified on delist — for BOTH kinds', () => {
     const ONSITE_ID = 'apl_onsite_target';
     const ONSITE_SLUG = 'hosted-widget';

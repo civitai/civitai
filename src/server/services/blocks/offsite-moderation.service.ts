@@ -565,7 +565,7 @@ async function flipBackingBlockStatus(
     where: { id: opts.appBlockId, status: opts.from },
     data: { status: opts.to },
   });
-  // On a 0-count too: the block is suspended either way, and its tokens must not outlive that.
+  // On a 0-count too: an already-suspended block keeps no tokens. The helper checks the status.
   if (opts.to === 'suspended') await revokeAppBlockOauthTokens(tx, opts.appBlockId);
   return flip.count > 0;
 }

@@ -40,7 +40,7 @@ const { mockRead, mockWrite, mockNotify, ids } = vi.hoisted(() => {
     appListing: { updateMany: vi.fn(async () => ({ count: 1 })) },
     appBlock: {
       updateMany: vi.fn(async () => ({ count: 1 })),
-      findUnique: vi.fn(async () => ({ appId: 'appblk-reset' })),
+      findUnique: vi.fn(async () => ({ appId: 'appblk-reset', status: 'suspended' })),
       count: vi.fn(async () => 0),
     },
     apiKey: { deleteMany: vi.fn(async () => ({ count: 1 })) },
@@ -134,7 +134,9 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: WriteMock) => Promise<unknown>) => cb(mockWrite));
   mockWrite.appListing.updateMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlock.updateMany.mockReset().mockResolvedValue({ count: 1 });
-  mockWrite.appBlock.findUnique.mockReset().mockResolvedValue({ appId: 'appblk-reset' });
+  mockWrite.appBlock.findUnique
+    .mockReset()
+    .mockResolvedValue({ appId: 'appblk-reset', status: 'suspended' });
   mockWrite.appBlock.count.mockReset().mockResolvedValue(0);
   mockWrite.apiKey.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appBlockPublishRequest.create

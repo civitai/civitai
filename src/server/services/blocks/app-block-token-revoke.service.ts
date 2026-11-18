@@ -1,12 +1,13 @@
 import type { Prisma } from '@prisma/client';
 
 /**
- * Deletes the OAuth app tokens of a block's own OAuth client, so suspending the block stops
+ * Deletes the OAuth app tokens of a suspended block's own OAuth client, so the suspension stops
  * them at once instead of when they expire: general bearer routes check the token, not the
- * block's status. Runs in the suspending transaction.
+ * block's status. Runs in the suspending transaction, after the block row is suspended.
  *
- * A client that backs other blocks too (the shared remix client) is left alone, so suspending
- * one block never signs out the rest. Returns the number of tokens deleted.
+ * Does nothing unless the block now reads `suspended`, so a drifted flip (pending, deprecated) and
+ * the shared remix client's rows (their own statuses) revoke nothing. A client with another block
+ * still approved keeps its tokens. Returns the number of tokens deleted.
  */
 export async function revokeAppBlockOauthTokens(
   tx: Prisma.TransactionClient,
@@ -14,13 +15,13 @@ export async function revokeAppBlockOauthTokens(
 ): Promise<number> {
   const block = await tx.appBlock.findUnique({
     where: { id: appBlockId },
-    select: { appId: true },
+    select: { appId: true, status: true },
   });
-  if (!block?.appId) return 0;
-  const siblings = await tx.appBlock.count({
-    where: { appId: block.appId, NOT: { id: appBlockId } },
+  if (!block?.appId || block.status !== 'suspended') return 0;
+  const approvedSiblings = await tx.appBlock.count({
+    where: { appId: block.appId, status: 'approved', NOT: { id: appBlockId } },
   });
-  if (siblings > 0) return 0;
+  if (approvedSiblings > 0) return 0;
   const { count } = await tx.apiKey.deleteMany({
     where: { clientId: block.appId, type: { in: ['Access', 'Refresh'] } },
   });
