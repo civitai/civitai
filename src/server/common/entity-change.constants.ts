@@ -25,7 +25,7 @@ export const watchedEntityFields = {
     'allowCommercialUse',
     'allowDerivatives',
     'allowDifferentLicense',
-    // Rollback restores covers from these fields.
+    // Cover changes, including the version showcase's, are audited through these fields.
     'coverImageId',
     'sfwCoverImageId',
   ],

@@ -474,6 +474,27 @@ describe('a version merge', () => {
       { modelVersionId: VERSION, site: 'red', imageId: 2, position: 2 },
     ]);
   });
+
+  it("keeps a removal from any merged version, over a newer live row and the target's own", async () => {
+    await db.exec(`
+      INSERT INTO "ModelVersion" VALUES (201, ${MODEL}), (202, ${MODEL}) ON CONFLICT DO NOTHING;
+      INSERT INTO "ModelVersionShowcaseItem" ("modelVersionId", site, "imageId", source, position, removed, "addedById") VALUES
+        (${VERSION}, 'red', 5, 'Community', 0, false, ${CREATOR}),
+        (201, 'red', 5, 'Community', NULL, true, ${CREATOR}),
+        (201, 'red', 6, 'Community', NULL, true, ${CREATOR}),
+        (202, 'red', 6, 'Community', 1, false, ${CREATOR});
+    `);
+
+    await repointVersionShowcases(VERSION, [201, 202]);
+
+    const { rows } = await db.query<{ imageId: number; removed: boolean }>(
+      `SELECT "imageId", removed FROM "ModelVersionShowcaseItem" ORDER BY "imageId"`
+    );
+    expect(rows).toEqual([
+      { imageId: 5, removed: true },
+      { imageId: 6, removed: true },
+    ]);
+  });
 });
 
 // showcaseImageConditions restates the owner showcase's own filters for someone else's image. The

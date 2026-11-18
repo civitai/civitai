@@ -1114,8 +1114,10 @@ export async function repointVersionShowcases(targetVersionId: number, sourceVer
           s."removed", s."addedById", s."createdAt"
         FROM "ModelVersionShowcaseItem" s
         WHERE s."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
-        ORDER BY s.site, s."imageId", s."modelVersionId" DESC
-        ON CONFLICT ("modelVersionId", site, "imageId") DO NOTHING
+        -- A removal on any merged version holds on the target.
+        ORDER BY s.site, s."imageId", s."removed" DESC, s."modelVersionId" DESC
+        ON CONFLICT ("modelVersionId", site, "imageId") DO UPDATE SET removed = TRUE, position = NULL
+          WHERE EXCLUDED."removed" AND "ModelVersionShowcaseItem".source = 'Community'
       `,
       dbWrite.$executeRaw`
         DELETE FROM "ModelVersionShowcaseItem"
