@@ -19,6 +19,7 @@ const EXIT_ACTIONS: readonly DealAction[] = [
   'decline',
   'withdraw',
   'cancelLate',
+  'cancelAndRefund',
   'requestCancellation',
   'respondCancellation',
   'acceptDelivery',
@@ -202,6 +203,7 @@ export const dealActionLabel: Record<DealAction, string> = {
   decline: 'Decline',
   withdraw: 'Withdraw request',
   cancelLate: 'Cancel (overdue)',
+  cancelAndRefund: 'Cancel and refund',
   requestCancellation: 'Request cancellation',
   respondCancellation: 'Respond to cancellation',
   acceptDelivery: 'Accept delivery',
@@ -250,6 +252,7 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
 export const closeCommentLabel: Record<string, string> = {
   withdrawn: 'Request withdrawn by the buyer',
   late: 'Cancelled by the buyer after the due date',
+  seller_unavailable: 'Cancelled by the buyer with a full refund',
   overdue: 'Cancelled automatically: nothing delivered in time',
   cancellation_unanswered: 'Cancelled automatically: the cancellation request was not answered',
   payment_refused: 'Cancelled: the payment was refused',

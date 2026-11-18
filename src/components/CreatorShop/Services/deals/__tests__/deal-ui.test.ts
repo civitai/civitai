@@ -70,6 +70,12 @@ describe('deal actions with the flag off', () => {
     ).toEqual(['respondCancellation']);
   });
 
+  it('keeps the cancel and refund available', () => {
+    const d = deal({ status: 'Accepted', dueAt: new Date('2099-01-01T00:00:00Z') });
+    const actions = dealActions(d, BUYER, undefined, { sellerUnavailable: true }).actions;
+    expect(visibleDealActions(actions, { servicesEnabled: false })).toContain('cancelAndRefund');
+  });
+
   it('keeps an overdue late cancel available', () => {
     const d = deal({ status: 'Accepted', dueAt: new Date('2026-10-02T00:00:00Z') });
     expect(rendered(d, BUYER, false)).toEqual(['cancelLate', 'requestCancellation']);

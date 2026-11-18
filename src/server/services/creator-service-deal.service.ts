@@ -642,6 +642,32 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
     refund: true,
   });
 
+const sellerUnavailable = (sellerId: Prisma.Sql) =>
+  Prisma.sql`EXISTS (SELECT 1 FROM "User" s WHERE s."id" = ${sellerId} AND s."muted")`;
+
+/**
+ * The buyer leaves at once, refunded, while the seller cannot work the deal. Read from the User row
+ * in the same statement, so the rule is the seller's state when the deal closes.
+ */
+export const cancelServiceDealSellerUnavailable = ({
+  dealId,
+  userId,
+}: {
+  dealId: number;
+  userId: number;
+}) =>
+  requireTransition({
+    dealId,
+    from: ['Accepted', 'InRevision'],
+    to: 'Cancelled',
+    actorId: userId,
+    event: 'Cancelled',
+    comment: 'seller_unavailable',
+    where: Prisma.sql`"buyerId" = ${userId}::int AND ${sellerUnavailable(Prisma.sql`"sellerId"`)}`,
+    set: Prisma.sql`, "closeReason" = 'seller_unavailable'`,
+    refund: true,
+  });
+
 export const requestServiceDealCancellation = async ({
   dealId,
   userId,
@@ -1002,14 +1028,16 @@ export async function getServiceDealView({
     throw throwNotFoundError('Deal not found');
 
   // From the row, not the session, so a fresh mute shows before the next sign-in.
-  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean }[]>`
-    SELECT "muted" FROM "User" WHERE "id" = ${userId}::int`;
+  const [viewer] = await dbWrite.$queryRaw<{ muted: boolean; sellerUnavailable: boolean }[]>`
+    SELECT "muted", ${sellerUnavailable(Prisma.sql`${deal.sellerId}::int`)} AS "sellerUnavailable"
+    FROM "User" WHERE "id" = ${userId}::int`;
   const { removedReason, ...offering } = deal.offering;
   const offeringTakenDown = removedReason != null;
   const seesLiveOffering = isModerator || deal.sellerId === userId;
   const { actions, primaryAction } = dealActions(deal, userId, new Date(), {
     gatedAllowed: servicesEnabled && !viewer?.muted,
     offeringTakenDown,
+    sellerUnavailable: !!viewer?.sellerUnavailable,
   });
   // Decision (briony, 2026-10-15): the seller's moderation status is not the buyer's to see.
   const seesTakedown = isModerator || deal.sellerId === userId;
