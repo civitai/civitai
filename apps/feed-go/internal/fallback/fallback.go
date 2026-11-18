@@ -156,3 +156,6 @@ func Type(err error) string {
 		err = next
 	}
 }
+
+// ErrorClasses: API STUB (the next commit implements it).
+func ErrorClasses() []string { return nil }

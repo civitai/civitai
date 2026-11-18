@@ -203,7 +203,7 @@ func TestPgxTracer(t *testing.T) {
 		}
 	}
 	e := ended[1]
-	if e.Name() != "pgx WITH" || e.Status().Code != codes.Error || e.Status().Description != "pg:22P02" || attrs(e)["error.type"] != "*pgconn.PgError" {
+	if e.Name() != "pgx WITH" || e.Status().Code != codes.Error || e.Status().Description != "pg_22" || attrs(e)["error.type"] != "*pgconn.PgError" {
 		t.Fatalf("error span %q status %+v attrs %v", e.Name(), e.Status(), attrs(e))
 	}
 	for _, s := range ended {

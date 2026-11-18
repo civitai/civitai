@@ -65,7 +65,8 @@ func endedNamed(rec *tracetest.SpanRecorder, name string) []sdktrace.ReadOnlySpa
 	return out
 }
 
-// A public request carrying a traceparent is served under a server span that is the caller's child:
+// The go-arm path: a public :8080 request carrying a traceparent (the browser's, which the Faro
+// frontend sends same-origin, or an edge's) is served under a server span that is the caller's child:
 // same trace id, the caller's span as remote parent, the endpoint, mode and outcome as attributes.
 // The sampler honours the parent: an unsampled parent, or a sampled one whose trace id the ratio
 // drops, records nothing (and the request is answered the same).
@@ -154,9 +155,9 @@ func TestFallbackProxyHopIsAChildSpan(t *testing.T) {
 	}
 }
 
-// An internal shadow sample carrying the Node request's traceparent is compared under a span that
-// is that request's child, ended when the comparison is, with its outcome and result; the shadow
-// phase histogram gets the trace id as an exemplar.
+// An inbound traceparent on the internal shadow endpoint is honoured if present (the Node samplers do
+// not send one: their samples are independent roots), and the span ends when the comparison does,
+// with its outcome and result; the shadow phase histogram gets the trace id as an exemplar.
 func TestShadowSpanContinuesTheSamplersTrace(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	s := newPhaseServer(reg, 1, func(context.Context, *http.Request) (*computed, error) {
@@ -412,7 +413,7 @@ func TestNoteProxyErrorLine(t *testing.T) {
 		t.Fatalf("%d lines, want 2:\n%s", len(lines), buf.String())
 	}
 	checkLine(t, lines[0], map[string]any{"level": "WARN", "msg": "fallback proxy: the Node app did not answer",
-		"endpoint": "model-getall", "reason": "upstream", "err_class": "net:dial", "err_type": "*errors.errorString",
+		"endpoint": "model-getall", "reason": "upstream", "err_class": "net_dial", "err_type": "*errors.errorString",
 		"trace_id": inTrace, "span_id": "0000000000000007"})
 	checkLine(t, lines[1], map[string]any{"level": "DEBUG", "msg": "fallback proxy: the Node app did not answer",
 		"endpoint": "model-getall", "reason": "canceled", "err_class": "canceled", "err_type": "*errors.errorString",
@@ -432,7 +433,8 @@ func mustTraceID(t *testing.T, hex string) trace.TraceID {
 }
 
 // The limiter: PerMinute lines per key at once, refilled continuously; a dropped line is counted on
-// the key's next line and in FlushSuppressed's line; keys are independent.
+// the key's next line (there is no separate flush line: feed_go_errors_total and feed_go_fallback_total
+// count every event); keys are independent.
 func TestEventLogRateLimitsPerKey(t *testing.T) {
 	var buf bytes.Buffer
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -448,19 +450,10 @@ func TestEventLogRateLimitsPerKey(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("%d lines, want 2 + 1 + 1:\n%s", len(lines), buf.String())
 	}
-	buf.Reset()
-	l.FlushSuppressed()
-	lines = logLines(t, &buf)
-	if len(lines) != 1 {
-		t.Fatalf("flush: %d lines, want 1:\n%s", len(lines), buf.String())
+	if _, ok := lines[1]["suppressed"]; ok {
+		t.Fatalf("second line carries suppressed before anything was dropped: %v", lines[1])
 	}
-	checkLine(t, lines[0], map[string]any{"level": "INFO", "msg": "log lines suppressed", "kind": "fallback", "mode": "serve",
-		"endpoint": "as-posts", "reason": "feed-status", "suppressed": float64(3)})
 	buf.Reset()
-	l.FlushSuppressed()
-	if buf.Len() != 0 {
-		t.Fatalf("a second flush wrote:\n%s", buf.String())
-	}
 	l.Fallback(ctx, "serve", EndpointAsPosts, status)
 	l.Fallback(ctx, "serve", EndpointAsPosts, status)
 	now = now.Add(30 * time.Second) // one token back (2 per minute)
@@ -470,8 +463,19 @@ func TestEventLogRateLimitsPerKey(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("after 30 s: %d lines, want 1:\n%s", len(lines), buf.String())
 	}
+	// 3 dropped at the start, 2 more before the refill.
 	checkLine(t, lines[0], map[string]any{"level": "INFO", "msg": "fallback", "mode": "serve", "endpoint": "as-posts",
-		"reason": "feed-status", "detail": "503", "suppressed": float64(2)})
+		"reason": "feed-status", "detail": "503", "suppressed": float64(5)})
+	buf.Reset()
+	now = now.Add(30 * time.Second)
+	l.Fallback(ctx, "serve", EndpointAsPosts, status)
+	lines = logLines(t, &buf)
+	if len(lines) != 1 {
+		t.Fatalf("after 60 s: %d lines, want 1", len(lines))
+	}
+	if _, ok := lines[0]["suppressed"]; !ok || lines[0]["suppressed"] != float64(1) {
+		t.Fatalf("line after the refill: suppressed = %v, want 1 (the one dropped after the last line)", lines[0]["suppressed"])
+	}
 
 	// Errors: the default 60 per minute per key.
 	buf.Reset()

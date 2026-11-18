@@ -247,3 +247,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, serveInFlight)
 	return m
 }
+
+// API STUBS (the next commit implements them).
+var ErrorModes []string
+
+const EndpointUnknown = ""
+
+func (m *Metrics) ObserveError(string, string, error) {}
