@@ -16,6 +16,8 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
   getOrchestratorToken: async () => 'owner-token',
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
+  isHiddenFromNonModerators: vi.fn(() => false),
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));

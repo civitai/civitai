@@ -11,7 +11,9 @@ import { isNonCommercialBaseModel, stopsCreatorEarnings } from '~/server/common/
 import { dbRead, dbWrite } from '~/server/db/client';
 import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import {
+  getGateRuleState,
   getShouldChargeForResources,
+  isHiddenFromNonModerators,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
@@ -584,6 +586,7 @@ export default MixedAuthEndpoint(async function handler(
   }
   const { format } = targetFile.metadata;
 
+  const gateRuleState = await getGateRuleState();
   const genStates = await resolveCanGenerateForVersions(
     [
       {
@@ -604,7 +607,13 @@ export default MixedAuthEndpoint(async function handler(
       user: { id: user?.id, isModerator: user?.isModerator },
       sfwOnly: false,
       wildcardsEnabled: false,
+      gateRuleState,
     }
+  );
+  // An alias generates with its target, so a rule naming the target hides the alias too.
+  const modsOnly = [modelVersion.id, modelVersion.generationAlias?.versionId].some(
+    (id) =>
+      !!id && isHiddenFromNonModerators({ id, baseModel: modelVersion.baseModel }, gateRuleState)
   );
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,
@@ -808,6 +817,8 @@ export default MixedAuthEndpoint(async function handler(
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
+    poi: modelVersion.poi,
+    modsOnly,
     fees,
     payoutEnabled,
     tipsEnabled,

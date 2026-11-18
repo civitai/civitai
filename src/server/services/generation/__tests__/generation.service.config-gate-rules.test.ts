@@ -26,7 +26,14 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { getGenerationConfig, saveGateRule } from '~/server/services/generation/generation.service';
+import {
+  __resetGenerationConfigLastKnownForTests,
+  getGateRuleState,
+  getGenerationConfig,
+  isHiddenFromNonModerators,
+  saveGateRule,
+} from '~/server/services/generation/generation.service';
+import { baseModelByName, ecosystemById } from '~/shared/constants/basemodel.constants';
 import {
   experimentalTargets,
   gateMessage,
@@ -151,5 +158,55 @@ describe('getGenerationConfig gate rules', () => {
     });
     expect(experimentalTargets(config.gateRules).ecosystems.get('EcoNew')).toBe('Early build.');
     expect(allStrings(config).filter((s) => s.startsWith('NAME-'))).toEqual([]);
+  });
+});
+
+describe('isHiddenFromNonModerators', () => {
+  const [baseModel, ecosystemKey] = [...baseModelByName]
+    .map(([name, bm]) => [name, ecosystemById.get(bm.ecosystemId)?.key] as const)
+    .find(([, key]) => !!key)!;
+
+  const hidden = async (id: number) =>
+    isHiddenFromNonModerators({ id, baseModel }, await getGateRuleState());
+
+  it('is true for a version a moderators-only hidden rule names', async () => {
+    expect(await hidden(101)).toBe(true);
+  });
+
+  it("is true for any version in a hidden rule's ecosystem", async () => {
+    await saveGateRule({
+      ...rules[0],
+      id: 'rule-eco',
+      ecosystems: [ecosystemKey!],
+      modelVersionIds: [],
+    });
+    expect(await hidden(999)).toBe(true);
+  });
+
+  it('is false for a version only a disabled rule names', async () => {
+    expect(await hidden(202)).toBe(false);
+  });
+
+  it('counts a hidden testers rule, not a hidden members rule', async () => {
+    await saveGateRule({
+      ...rules[0],
+      id: 'rule-t',
+      availableTo: 'testers',
+      modelVersionIds: [303],
+    });
+    await saveGateRule({
+      ...rules[0],
+      id: 'rule-m',
+      availableTo: 'members',
+      modelVersionIds: [404],
+    });
+    expect(await hidden(303)).toBe(true);
+    expect(await hidden(404)).toBe(false);
+  });
+
+  it('is true while the rules have never been read', async () => {
+    __resetGenerationConfigLastKnownForTests();
+    redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
+    expect(await hidden(999)).toBe(true);
   });
 });

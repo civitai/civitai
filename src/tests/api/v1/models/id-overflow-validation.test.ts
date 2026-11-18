@@ -67,6 +67,8 @@ vi.mock('~/server/utils/model-helpers', () => ({
   getEpochJobAndFileName: () => ({}),
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
+  isHiddenFromNonModerators: vi.fn(() => false),
   getShouldChargeForResources: vi.fn(async () => ({})),
   resolveCanGenerateForVersions: vi.fn(async () => []),
 }));

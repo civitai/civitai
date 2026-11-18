@@ -50,6 +50,11 @@
   membership is ignored (no tier lookup — `isMember: true` drops member rules),
   so model pages / search / the API hard-block a resource only when a rule hides
   its ecosystem or version.
+- **Orchestrator marker** — `/api/v1/model-versions/mini/[id]` also returns
+  `modsOnly` (`isHiddenFromNonModerators`): the same `hidden` rules read as a
+  non-moderator, non-tester, whoever calls, and `true` while the rules are
+  unknown. `canGenerate` answers for the caller, so it cannot tell the
+  orchestrator that a hidden model is still open to moderators.
 - **Pickers** — `BaseModelInput` / `WorkflowPicker` read one per-item state;
   `FormFooter` resolves the selected ecosystem's state (members-only reuses the
   existing upsell + CTA).

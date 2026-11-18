@@ -1205,12 +1205,15 @@ const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => par
  * moderator / tester / kill-switch rules, which need only the (already-resolved)
  * testing-access flag + mod status.
  */
-export async function getCanGenerateHiddenGates(user: {
-  id?: number;
-  isModerator?: boolean;
-}): Promise<CanGenerateBlockedTargets> {
+export async function getCanGenerateHiddenGates(
+  user: {
+    id?: number;
+    isModerator?: boolean;
+  },
+  gateRuleState?: LastKnownRead<GateRule[]>
+): Promise<CanGenerateBlockedTargets> {
   const [ruleState, hasTestingAccess] = await Promise.all([
-    getGateRuleState(),
+    gateRuleState ?? getGateRuleState(),
     resolveTestingAccess(user),
   ]);
   // Display only (the model page's canGenerate); a submit is refused while the rules are unknown.
@@ -1274,18 +1277,42 @@ export function getResourceCanGenerate({
 
   if (isBaseModelGenerationDisabled(resource.baseModel)) canGenerate = false;
 
-  if (canGenerate) {
-    const baseModel = baseModelByName.get(resource.baseModel);
-    const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
-    if (
-      hiddenGates.versionIds.has(resource.id) ||
-      (ecosystemKey && hiddenGates.ecosystems.has(ecosystemKey))
-    ) {
-      canGenerate = false;
-    }
-  }
+  if (canGenerate && isHiddenByGates(resource, hiddenGates)) canGenerate = false;
 
   return canGenerate;
+}
+
+function isHiddenByGates(
+  resource: { id: number; baseModel: string },
+  hiddenGates: CanGenerateBlockedTargets
+): boolean {
+  const baseModel = baseModelByName.get(resource.baseModel);
+  const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
+  return (
+    hiddenGates.versionIds.has(resource.id) ||
+    (!!ecosystemKey && hiddenGates.ecosystems.has(ecosystemKey))
+  );
+}
+
+/**
+ * Whether a hidden gate rule for moderators, testers or nobody covers this version, whoever is
+ * asking (a members-only rule does not count). `canGenerate`
+ * answers for the caller, so it cannot tell the orchestrator that moderators may still use it. True
+ * while the rules are unknown, so a rule-store outage does not release every hidden model.
+ */
+export function isHiddenFromNonModerators(
+  resource: { id: number; baseModel: string },
+  ruleState: LastKnownRead<GateRule[]>
+): boolean {
+  if (!ruleState.known) return true;
+  const hiddenGates = canGenerateBlockedTargets(
+    applicableRulesFor(ruleState.value, {
+      isModerator: false,
+      isMember: true,
+      hasTestingAccess: false,
+    })
+  );
+  return isHiddenByGates(resource, hiddenGates);
 }
 
 /**
@@ -1331,6 +1358,7 @@ export type ResolveCanGenerateContext = {
   user: { id?: number; isModerator?: boolean };
   sfwOnly: boolean;
   wildcardsEnabled: boolean;
+  gateRuleState?: LastKnownRead<GateRule[]>;
 };
 
 export type VersionGenerationState = {
@@ -1350,7 +1378,7 @@ export async function resolveCanGenerateForVersions(
   const [visibleWildcardSetIdByVersionId, hiddenGates] = await Promise.all([
     getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
     needsStandardGate
-      ? getCanGenerateHiddenGates(ctx.user)
+      ? getCanGenerateHiddenGates(ctx.user, ctx.gateRuleState)
       : Promise.resolve<CanGenerateBlockedTargets>({
           ecosystems: new Set(),
           versionIds: new Set(),
