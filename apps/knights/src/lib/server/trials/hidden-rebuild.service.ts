@@ -17,6 +17,9 @@ export const KEEP_MIN_PLAYERS = 5;
 
 type Executor = Kysely<DB>;
 const LIVE = [REFERENCE_STATUS.active, REFERENCE_STATUS.pending];
+/** A pending trials reference waits for a moderator's blind spot-check and is never answered, so a trials run leaves it alone. */
+const liveFor = (pool: RebuildPool) =>
+  pool === REFERENCE_POOL.trials ? [REFERENCE_STATUS.active] : LIVE;
 
 /** The pool a run cleans: hidden checks are answered by Knights (KnightsVote), trials by Acolytes (KnightsApprenticeAnswer). */
 export type RebuildPool = typeof REFERENCE_POOL.hiddenCheck | typeof REFERENCE_POOL.trials;
@@ -69,7 +72,7 @@ function agreedHiddenChecks(db: Executor, excludeImageIds: number[]) {
 
 export type RebuildInput = { now: Date; excludeImageIds: number[]; pool?: RebuildPool };
 
-/** The ids a run would retire: every live harvested hidden check outside the agreed set. Reads only. */
+/** The ids a run would retire: every live harvested reference of the pool outside the agreed set. Reads only. */
 export function retirableIdsQuery(
   db: Executor,
   {
@@ -82,13 +85,13 @@ export function retirableIdsQuery(
     .select('id')
     .where('pool', '=', pool)
     .where('source', '=', REFERENCE_SOURCE.harvested)
-    .where('status', 'in', LIVE)
+    .where('status', 'in', liveFor(pool))
     .where('id', 'not in', agreed(db, excludeImageIds, pool))
     .orderBy('id');
 }
 
 /**
- * Retires exactly `ids`, and only those still live, harvested, hidden and outside the agreed set, so answers that
+ * Retires exactly `ids`, and only those still live, harvested, in the pool and outside the agreed set, so answers that
  * arrive after the plan can only shrink what it touches. Status only; never deletes.
  */
 export function retireIdsQuery(
@@ -101,7 +104,7 @@ export function retireIdsQuery(
     .where('id', 'in', ids)
     .where('pool', '=', pool)
     .where('source', '=', REFERENCE_SOURCE.harvested)
-    .where('status', 'in', LIVE)
+    .where('status', 'in', liveFor(pool))
     .where('id', 'not in', agreed(db, excludeImageIds, pool));
 }
 
@@ -127,7 +130,7 @@ export function checkedRetireSql(db: Executor, input: RebuildInput & { ids: numb
   return ['BEGIN;', `${update};`, `${check};`, 'COMMIT;'].join('\n');
 }
 
-/** Live harvested hidden checks, and how many a run would keep and retire. Reads only. */
+/** Live harvested references of the pool, and how many a run would keep and retire. Reads only. */
 export async function planHiddenRebuild(
   db: Executor,
   input: Pick<RebuildInput, 'excludeImageIds' | 'pool'>
@@ -138,7 +141,7 @@ export async function planHiddenRebuild(
     .select((eb) => eb.fn.countAll<string>().as('n'))
     .where('pool', '=', pool)
     .where('source', '=', REFERENCE_SOURCE.harvested)
-    .where('status', 'in', LIVE)
+    .where('status', 'in', liveFor(pool))
     .executeTakeFirstOrThrow();
   const ids = (await retirableIdsQuery(db, input).execute()).map((r) => r.id);
   return { live: Number(live.n), keep: Number(live.n) - ids.length, retire: ids.length, ids };
@@ -154,9 +157,7 @@ export async function retireUnagreedHiddenChecks(db: Executor, input: RebuildInp
       retired = Number(result.numUpdatedRows);
     }
     if (retired !== ids.length) {
-      throw new Error(
-        `Planned to retire ${ids.length} hidden checks, the update matched ${retired}.`
-      );
+      throw new Error(`Planned to retire ${ids.length} references, the update matched ${retired}.`);
     }
     const { ids: _left, ...after } = await planHiddenRebuild(trx, input);
     return { before, retired, after };

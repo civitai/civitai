@@ -48,12 +48,14 @@ async function main() {
   try {
     if (!args.apply) {
       const { ids, ...counts } = await planHiddenRebuild(db, input);
-      console.log(JSON.stringify(counts));
+      console.log(JSON.stringify({ pool: args.pool, ...counts }));
       console.log(`Would retire: ${ids.join(',')}`);
       console.log('Dry run: nothing written.');
       return;
     }
-    console.log(JSON.stringify(await retireUnagreedHiddenChecks(db, input)));
+    console.log(
+      JSON.stringify({ pool: args.pool, ...(await retireUnagreedHiddenChecks(db, input)) })
+    );
   } finally {
     await db.destroy();
   }

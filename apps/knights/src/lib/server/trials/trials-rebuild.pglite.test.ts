@@ -100,6 +100,15 @@ describe('the trials pool', () => {
     expect(await statusOf(queue)).toBe('retired');
   });
 
+  it('leaves a pending reference, which waits for a moderator spot-check, alone', async () => {
+    const pending = await reference(1, []);
+    await pg.query(`UPDATE "KnightsReferenceImage" SET status='pending' WHERE id=$1`, [pending]);
+    const active = await reference(2, []);
+    await run();
+    expect(await statusOf(pending)).toBe('pending');
+    expect(await statusOf(active)).toBe('retired');
+  });
+
   it('leaves hidden checks and core references alone, and reads Acolyte answers, not Knight votes', async () => {
     const hidden = await reference(1, [], { pool: 'hiddenCheck' });
     const core = await reference(2, [], { source: 'core' });
