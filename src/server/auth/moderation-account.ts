@@ -58,6 +58,6 @@ export function refuseModerationAccountSession(who: Who, source: string): boolea
   logToAxiom(
     { name: 'moderation-account-session-refused', type: 'error', source, userId: user.id },
     'auth'
-  ).catch(() => undefined);
+  );
   return true;
 }

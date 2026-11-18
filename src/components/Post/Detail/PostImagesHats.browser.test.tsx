@@ -50,7 +50,8 @@ vi.mock('~/components/ImageGuard/ImageGuard2', () => {
   ImageGuard2.BlurToggle = function BlurToggle() {
     return <span data-testid="blur-toggle" />;
   };
-  return { ImageGuard2 };
+  const ImageGuardContent = ({ children }: any) => <>{children(true)}</>;
+  return { ImageGuard2, ImageGuardContent };
 });
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<object>()),

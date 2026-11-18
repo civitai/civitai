@@ -2,6 +2,9 @@ import { useEffect, useMemo } from 'react';
 import { HatTurfCardProvider, useHatTurfCard } from '~/components/HatTurf/HatTurfCardProvider';
 import { TurfSummaryProvider } from '~/components/HatTurf/TurfSummaryProvider';
 import { useHatTurfDetail } from '~/components/HatTurf/detail/useHatTurfDetail';
+import { FlagRaceContext } from '~/components/HatTurf/FlagRace/FlagRaceContext';
+import { useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type DetailImage = { id: number; type: string };
 
@@ -23,10 +26,16 @@ export function HatTurfDetailProvider({
 }) {
   const gate = useHatTurfDetail();
   const imageIds = useMemo(() => images.filter(takesHats).map((image) => image.id), [images]);
+  // Today's flags, so a flag shows its flag badge and takes stacked hats here as on the home row, and
+  // past days', so an old flag shows who won it.
+  const features = useFeatureFlags();
+  const flagRow = useFlagRow(features.flagRace ? gate?.event : undefined, { past: true });
   return (
-    <TurfSummaryProvider imageIds={imageIds} gate={gate}>
-      <HatTurfCardProvider>{children}</HatTurfCardProvider>
-    </TurfSummaryProvider>
+    <FlagRaceContext.Provider value={flagRow}>
+      <TurfSummaryProvider imageIds={imageIds} gate={gate}>
+        <HatTurfCardProvider>{children}</HatTurfCardProvider>
+      </TurfSummaryProvider>
+    </FlagRaceContext.Provider>
   );
 }
 

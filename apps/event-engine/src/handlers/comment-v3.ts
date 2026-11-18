@@ -43,6 +43,11 @@ const SURFACES: Record<string, { metric?: string; ownerSql: string }> = {
     ownerSql: `SELECT p."userId" AS "ownerId" FROM "ComicChapter" c
       JOIN "ComicProject" p ON p.id = c."projectId" WHERE c.id = $1`,
   },
+  // No metric: a storyline text has no metrics row.
+  postText: {
+    ownerSql: `SELECT p."userId" AS "ownerId" FROM "PostText" t
+      JOIN "Post" p ON p.id = t."postId" WHERE t.id = $1`,
+  },
 };
 
 export const commentV3Handler = createEventHandler<CommentV3Record>({

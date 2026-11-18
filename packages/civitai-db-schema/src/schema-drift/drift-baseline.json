@@ -1482,6 +1482,19 @@
       "model": "ImageResource",
       "reason": "Pre-existing at the 2026-10-20 production capture; accepted wholesale when the baseline was created, not reviewed entry by entry.",
       "ref": "#6323"
+    },
+    {
+      "fingerprint": "missing-foreign-key|ServiceOffering|coverImageId|ServiceOffering|coverImage|Image",
+      "kind": "missing-foreign-key",
+      "tier": "enforced",
+      "table": "ServiceOffering",
+      "columns": [
+        "coverImageId"
+      ],
+      "model": "ServiceOffering",
+      "field": "coverImage",
+      "reason": "The coverImageId foreign key is added by the hand-applied migration 20270106120000_service_offering_content_scan; enforced once that migration is applied.",
+      "ref": "#8729"
     }
   ]
 }

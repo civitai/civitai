@@ -44,7 +44,9 @@ vi.mock('@civitai/auth/secret-hash', () => ({
 
 import {
   SYSTEM_USER_ID,
+  createServiceClient,
   createSystemClient,
+  rotateServiceSecret,
   moveClientToSystem,
   parseSystemClientInput,
   updateSystemClient,
@@ -131,6 +133,58 @@ describe('createSystemClient', () => {
         isVerified: true,
       },
     });
+  });
+});
+
+describe('service clients', () => {
+  it('registers a system-owned client holding only the service grant, storing only the secret hash', async () => {
+    const { clientId, clientSecret } = await createServiceClient('Image cacher', 1);
+    expect(clientSecret).toBe('the-secret');
+    expect(clientId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    );
+    expect(h.writes[0]).toEqual({
+      table: 'OauthClient',
+      wheres: [],
+      values: {
+        id: clientId,
+        secret: 'hash:the-secret',
+        name: 'Image cacher',
+        description: '',
+        redirectUris: [],
+        allowedOrigins: [],
+        grants: ['urn:civitai:grant:service'],
+        isConfidential: true,
+        // The bigint column, written as its decimal string.
+        allowedScopes: '1',
+        userId: SYSTEM_USER_ID,
+        isVerified: true,
+      },
+    });
+    expect(vi.mocked(logOAuthEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'client.created', userId: 1, clientId })
+    );
+  });
+
+  it('rotates the secret of a service client only, and logs it', async () => {
+    expect(await rotateServiceSecret('svc-1', 1)).toEqual({ clientSecret: 'the-secret' });
+    expect(h.writes[0].values).toEqual({ secret: 'hash:the-secret' });
+    expect(h.writes[0].wheres).toEqual(
+      expect.arrayContaining([
+        ['id', '=', 'svc-1'],
+        ['userId', '=', SYSTEM_USER_ID],
+        ['grants', '=', ['urn:civitai:grant:service']],
+      ])
+    );
+    expect(vi.mocked(logOAuthEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'client.secret_rotated', userId: 1, clientId: 'svc-1' })
+    );
+  });
+
+  it('rotates nothing, and logs nothing, when no service client matches', async () => {
+    h.updateResult = undefined;
+    expect(await rotateServiceSecret('app-1', 1)).toBeNull();
+    expect(vi.mocked(logOAuthEvent)).not.toHaveBeenCalled();
   });
 });
 
@@ -322,6 +376,28 @@ describe('/admin/access actions', () => {
     h.writes[0].wheres.some(([col, , v]) => col === column && v === value);
   const systemOnly = () => hasWhere('userId', SYSTEM_USER_ID);
   const confidentialOnly = () => hasWhere('isConfidential', true);
+
+  it('registers a service client and shows its secret once', async () => {
+    const res = await run('createServiceClient', { name: 'Image cacher' });
+    expect(res).toMatchObject({
+      action: 'createServiceClient',
+      success: true,
+      clientSecret: 'the-secret',
+      name: 'Image cacher',
+    });
+    expect(await run('createServiceClient', { name: ' ' })).toMatchObject({ status: 400 });
+  });
+
+  it('answers 404 to rotating a client that is not a service client', async () => {
+    h.updateResult = undefined;
+    expect(await run('rotateServiceSecret', { id: 'app-1' })).toMatchObject({ status: 404 });
+    h.updateResult = { id: 'svc-1' };
+    expect(await run('rotateServiceSecret', { id: 'svc-1' })).toMatchObject({
+      action: 'rotateServiceSecret',
+      success: true,
+      clientSecret: 'the-secret',
+    });
+  });
 
   it('only turns on skip consent or a token limit for a confidential system app', async () => {
     await run('setSkipConsent', { id: 'c1', skipConsent: 'true' });

@@ -30,6 +30,9 @@ type ViewerKey = keyof typeof VIEWERS;
 async function run(viewer: ViewerKey, poi: boolean) {
   dbMock.dbRead.modelVersion.findUnique.mockResolvedValue({ model: { poi, userId: OWNER } });
   return getPostsInfinite({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 10,
     sort: PostSort.Newest,
     period: MetricTimeframe.AllTime,

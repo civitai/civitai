@@ -1,12 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { publicApiContext2 } from '~/server/public-api-context';
+import { publicAvatarUrl } from '~/server/utils/public-avatar';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPaginationLinks } from '~/server/utils/pagination-helpers';
 
 type CreatorItem = {
   username: string | null;
-  image?: string | null;
+  profilePicture?: { url: string; nsfwLevel: number; type: MediaType } | null;
   // Published-model count is computed in the DB via Prisma `_count` (see
   // getCreatorsHandler) instead of fetching every model row.
   _count?: { models?: number } | null;
@@ -18,12 +20,15 @@ type CreatorItem = {
  * Next API handler harness. Keeps the historical shape: modelCount is omitted
  * (undefined) when zero/absent.
  */
-export function mapCreatorItem({ _count, username, image }: CreatorItem, baseUrlOrigin: string) {
+export function mapCreatorItem(
+  { _count, username, profilePicture }: CreatorItem,
+  baseUrlOrigin: string
+) {
   return {
     username,
     modelCount: _count?.models ? _count.models : undefined,
     link: `${baseUrlOrigin}/api/v1/models?username=${username}`,
-    image: image ? getEdgeUrl(image, { width: 96, name: username ?? undefined }) : undefined,
+    image: publicAvatarUrl({ username, profilePicture }, publicBrowsingLevelsFlag) ?? undefined,
   };
 }
 

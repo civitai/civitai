@@ -80,8 +80,9 @@ import {
   assertGenerationInputsUsable,
   generationInputUrlsIn,
 } from '~/server/services/generation-input-urls';
-import type { GenerationInputEntryPoint } from '~/server/services/generation-input-urls';
+import type { GenerationInputCaller } from '~/server/services/generation-input-urls';
 import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
+import { withoutTrainingWeightHandles } from '~/server/services/orchestrator/training/workflow-epoch-urls';
 import {
   getWorkflow,
   setWorkflowDownloadPriority,
@@ -221,7 +222,7 @@ export type GenerateOptions = {
  * is for server-composed input whose urls the calling route already checked (comics, iterate).
  */
 export type GenerationInputGate =
-  | { entry: GenerationInputEntryPoint; isApiCaller: boolean }
+  | (GenerationInputCaller & { isApiCaller: boolean })
   | 'checked-by-caller';
 
 const ecosystemOf = (data: unknown) => (data as { ecosystem?: string }).ecosystem;
@@ -645,7 +646,7 @@ type ResourceValidationResult = {
  * Validates and enriches resources from generation graph output.
  *
  * Performs:
- * - Subscription validation for private/epoch resources
+ * - Subscription validation for private resources
  * - Expired epoch check
  * - canGenerate validation
  * - POI resource detection
@@ -695,14 +696,14 @@ async function validateAndEnrichResources(
       : Promise.resolve(),
   ]);
 
-  // Check for private/epoch resources requiring subscription. Raw-AIR resources
-  // ARE epoch resources — same subscription gate as the ModelVersion-backed kind.
+  // Private models need a subscription; epochs (raw-AIR included) only need ownership,
+  // which getResourceData and validateRawAirResources have already enforced.
+  const hasPrivate = resources.some((r) => r.availability === Availability.Private);
   const hasPrivateOrEpoch =
-    rawAirResources.length > 0 ||
-    resources.some((r) => r.availability === Availability.Private || !!r.epochDetails);
+    hasPrivate || rawAirResources.length > 0 || resources.some((r) => !!r.epochDetails);
 
-  if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
-    // Span localizes the gen-path park: subscription lookup for private/epoch use.
+  if (hasPrivate && user?.id && !user?.isModerator) {
+    // Span localizes the gen-path park: subscription lookup for private use.
     const subscription = await withSpan('gen:validateResources:subscription', () =>
       getHighestTierSubscription(user.id!)
     );
@@ -1344,7 +1345,7 @@ export async function createWorkflowStepsFromGraph({
   tags: string[];
   hasTipEligibleResource: boolean;
   boostRequired: boolean;
-  /** A base model in the submit restricts mature generation. */
+  /** The submit's ecosystem, or a resource's base model, restricts mature generation. */
   capOutput: boolean;
 }> {
   data = expandAvatarData(data);
@@ -1418,6 +1419,17 @@ export async function createWorkflowStepsFromGraph({
     // as Nullable<Int32>, so a generated seed above 2^31-1 fails orchestrator
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
+    // Handlers branch on the checkpoint's base model, so prefer the stored one over the client's.
+    ...('model' in data && data.model
+      ? {
+          model: {
+            ...data.model,
+            baseModel:
+              enrichedResources.find((r) => r.id === data.model?.id)?.baseModel ??
+              data.model.baseModel,
+          },
+        }
+      : {}),
   };
 
   // Convert graph output to legacy {resources, params} format for storage.
@@ -1620,6 +1632,7 @@ export async function createWorkflowStepsFromGraph({
  * with its token-derived `isGreen`/`isModerator` in the router). Resource
  * enrichment, canGenerate/availability gating, and POI detection still run
  * (inside `createWorkflowStepsFromGraph`), so the resource belt is intact.
+ * Callers must apply `capOutput` to the submit body.
  */
 export async function createWorkflowStepsFromGraphInput({
   input,
@@ -2349,6 +2362,7 @@ import type * as z from 'zod';
 import type { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
 import { queryWorkflows } from './workflows';
 import { parseAIR } from '~/shared/utils/air';
+import { getModel3DPreviewNsfwLevel } from '~/shared/orchestrator/model3d-output';
 import {
   exceedsNsfwLevel,
   isMature,
@@ -2844,22 +2858,9 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
   }
 }
 
-/**
- * Max rating across a workflow's `model3DPreview` render images. The
- * orchestrator never rates the mesh blob itself (`nsfwLevel: null`) — the
- * chained 2D preview render carries the result's effective rating, so it must
- * be propagated onto the `model3d` output for the client's NSFW gates
- * (yellow-Buzz unlock, enableNsfw, siteRestricted) to apply.
- */
-export function getModel3DPreviewNsfwLevel(
-  steps: WorkflowStep[] | null | undefined
-): NsfwLevel | undefined {
-  const previews = (steps ?? []).filter((s) => s.$type === 'model3DPreview') as Array<{
-    output?: { images?: ImageBlob[] };
-  }>;
-  if (!previews.length) return undefined;
-  return maxNsfwLevel(previews.flatMap((s) => (s.output?.images ?? []).map((i) => i?.nsfwLevel)));
-}
+// `getModel3DPreviewNsfwLevel` lives in `~/shared/orchestrator/model3d-output` so the App
+// Blocks producers apply the same propagation; re-exported for existing importers.
+export { getModel3DPreviewNsfwLevel };
 
 /**
  * Formats step outputs into normalized images array
@@ -3324,7 +3325,7 @@ export async function updateWorkflow({
 }
 
 export async function formatGenerationResponse2(
-  workflows: Workflow[],
+  rawWorkflows: Workflow[],
   user?: { id?: number; isModerator?: boolean; tier?: string },
   {
     acceptBoostRequired = false,
@@ -3336,6 +3337,10 @@ export async function formatGenerationResponse2(
     skipResourceEnrichment?: boolean;
   } = {}
 ): Promise<NormalizedWorkflow[]> {
+  // A training run's weights are moderators-only on every workflow read (`withoutTrainingWeightHandles`).
+  const workflows = rawWorkflows.map((workflow) =>
+    withoutTrainingWeightHandles(workflow, { isModerator: user?.isModerator })
+  );
   // Collect all resource IDs from all steps AND workflow metadata
   // getResourceRefsFromStep handles both regular format and video format (AIR strings)
   const allResourceRefs: Array<{ id: number; epoch?: number }> = [];
@@ -3720,11 +3725,14 @@ export type WorkflowStatusUpdate = Awaited<ReturnType<typeof getWorkflowStatusUp
 export async function getWorkflowStatusUpdate({
   token,
   workflowId,
+  isModerator,
 }: {
   token: string;
   workflowId: string;
+  isModerator?: boolean;
 }) {
-  const result = await getWorkflow({ token, path: { workflowId } });
+  const fetched = await getWorkflow({ token, path: { workflowId } });
+  const result = fetched && withoutTrainingWeightHandles(fetched, { isModerator });
   if (result) {
     const wfMeta = (result.metadata ?? {}) as Record<string, unknown>;
     const wfParams = (wfMeta.params ?? {}) as Record<string, unknown>;

@@ -1,3 +1,4 @@
+import { aiToolkitOptionSchema } from '@civitai/shared/training-options';
 import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
@@ -23,6 +24,7 @@ const aiToolkitMaxEpochs = 50;
 const prodigyOptimizers = ['prodigy', 'prodigy8bit'];
 const maxLrForNonProdigy = 0.1;
 const aiToolkitBaseParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   engine: z.literal(OrchEngineTypes.AiToolkit),
   // Steps-based pricing: `steps` is the primary length knob; `epochs` is the saved
   // checkpoint count. Both optional — `epochs`-only keeps legacy flat pricing.
@@ -206,6 +208,7 @@ const whatIfKohyaParams = z.object({
 });
 
 const whatIfAiToolkitParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   model: z.string(),
   priority: z.enum(OrchPriorityTypes),
   engine: z.literal(OrchEngineTypes.AiToolkit),

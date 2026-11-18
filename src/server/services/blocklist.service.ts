@@ -78,12 +78,17 @@ function remember(type: string, dto: BlocklistDTO) {
   lastKnown.set(type, { dto, at: Date.now() });
 }
 
-async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<BlocklistDTO> {
+/** Where a read was answered from: the database row, or a cached copy (Redis or last-known). */
+export type BlocklistReadSource = 'db' | 'cache';
+type SourcedBlocklist = { dto: BlocklistDTO; source: BlocklistReadSource };
+
+async function readBlocklistCacheUnavailable(type: BlocklistType): Promise<SourcedBlocklist> {
   const known = lastKnown.get(type);
-  if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000) return known.dto;
+  if (known && Date.now() - known.at < BLOCKLIST_CACHE_TTL * 1000)
+    return { dto: known.dto, source: 'cache' };
   const row = await readBlocklistRow(type);
   remember(type, row);
-  return row;
+  return { dto: row, source: 'db' };
 }
 
 /**
@@ -122,7 +127,7 @@ async function bustCache(type: string) {
         blocklistType: type,
         error: error instanceof Error ? error.message : String(error),
       },
-    }).catch(() => undefined);
+    });
   }
 }
 
@@ -255,7 +260,7 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
         ignoredIds: rows.slice(1).map((row) => row.id),
         ignoredEntryCounts: rows.slice(1).map((row) => row.data.length),
       },
-    }).catch(() => undefined);
+    });
   }
 
   // The absent-row fallback deliberately carries NO `id`: `getClientBenignLists` reads that as
@@ -265,6 +270,10 @@ async function readBlocklistRow(type: BlocklistType): Promise<BlocklistDTO> {
 }
 
 export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
+  return (await readBlocklistWithSource(type)).dto;
+}
+
+export async function readBlocklistWithSource(type: BlocklistType): Promise<SourcedBlocklist> {
   let cached: string | null;
   try {
     cached = await clusterCacheGuard.call('blocklist.getBlocklistDTO', () =>
@@ -283,14 +292,14 @@ export async function getBlocklistDTO({ type }: { type: BlocklistType }) {
     const parsed = JSON.parse(cached) as BlocklistDTO;
     const dto = { ...parsed, data: parsed.data ?? [] };
     remember(type, dto);
-    return dto;
+    return { dto, source: 'cache' };
   }
 
   const result = await readBlocklistRow(type);
   remember(type, result);
 
   await setCache({ type: result.type, data: result });
-  return result;
+  return { dto: result, source: 'db' };
 }
 
 export async function getBlocklistData(type: BlocklistType) {
@@ -418,7 +427,7 @@ export async function getClientBenignLists(): Promise<ClientBenignLists> {
       type: 'warning',
       message: 'Serving empty benign lists to the client; search gates will not strip',
       details: { error: error instanceof Error ? error.message : String(error) },
-    }).catch(() => undefined);
+    });
     return { prompt: [], profanityWords: null, available: false };
   }
 }
@@ -818,7 +827,7 @@ export async function throwOnBlockedUserContent(
           ? 'Blocked pattern found in user content; write rejected'
           : 'Blocked pattern found in user content; not enforced on this surface yet',
         details: { surface, entityType, entityId, userId, patternId, enforced: enforce },
-      }).catch(() => undefined);
+      });
 
       if (enforce) {
         reject('pattern', 'Content blocked by content filter');
@@ -954,7 +963,7 @@ export async function assertEmailAllowed(input: string) {
         blocklistType,
         error: result.reason instanceof Error ? result.reason.message : String(result.reason),
       },
-    }).catch(() => undefined);
+    });
     return [] as string[];
   };
 

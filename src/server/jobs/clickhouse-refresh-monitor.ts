@@ -340,7 +340,7 @@ export const clickhouseRefreshMonitorJob = createJob(
 
     const unhealthy = observations.filter((o) => o.breached || o.errored || !o.present);
     if (unhealthy.length > 0) {
-      await logToAxiom({
+      logToAxiom({
         type: 'clickhouse-refresh-monitor',
         name: 'view-refresh-health',
         // Alerting lives on the gauges. This exists so the on-call has the exception
@@ -350,7 +350,7 @@ export const clickhouseRefreshMonitorJob = createJob(
           .map((o) => o.view)
           .join(', ')}`,
         error: JSON.stringify(unhealthy),
-      }).catch(() => undefined);
+      });
     }
 
     return {

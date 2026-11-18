@@ -8,8 +8,17 @@ import { Flags } from '~/shared/utils/flags';
 export const SFW_NAME_TOO_LONG_MESSAGE = `Title must be ${MODEL_NAME_MAX_LENGTH} characters or fewer.`;
 export const SFW_DESCRIPTION_MAX_LENGTH = 50_000;
 export const SFW_DESCRIPTION_TOO_LONG_MESSAGE = 'Description is too long.';
-export const COM_FACE_REFUSED_MESSAGE =
+/** The refusal when there is no lock to dispute: a model not marked mature, or a moderator's ruling. */
+export const COM_FACE_REFUSED_EDIT_MESSAGE =
   "Your civitai.red listing can't be shown on civitai.com. We check its title, description and trigger words, not the civitai.com fields. Edit those on the civitai.red tab and save again.";
+/** The refusal while the listing check's lock is on, which the owner can dispute. */
+export const COM_FACE_REFUSED_MESSAGE =
+  "Your civitai.red listing can't be shown on civitai.com. We check its title, description and trigger words, not the civitai.com fields. Edit those on the civitai.red tab and save again, or dispute this on the civitai.com tab if you think it's wrong.";
+/** Shown on the civitai.com tab while the listing intent check's lock is on. */
+export const COM_FACE_INTENT_LOCK_MESSAGE =
+  "We read this model's civitai.red title, description and trigger words as made for sexual content, so it can't have a civitai.com version and its mature rating is locked. If that's wrong, dispute it and we'll take another look.";
+export const COM_FACE_INTENT_DISPUTE_PENDING_MESSAGE =
+  "Your dispute is being reviewed. We'll let you know when it's done.";
 export const COM_FACE_CHECK_UNAVAILABLE_MESSAGE =
   "We couldn't check your civitai.red listing just now, so nothing was saved. Try again in a few minutes.";
 

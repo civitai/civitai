@@ -8,18 +8,22 @@ import { CrucibleJudgeNextButton } from '~/components/Crucible/CrucibleJudgeNext
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
+import { useFeedSearchQuery } from '~/components/Filters/FeedSearchInput';
 import { SortFilter } from '~/components/Filters/SortFilter';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
 import { useCrucibleFilters } from '~/components/Crucible/crucible.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 function CruciblesPage() {
   const filters = useCrucibleFilters();
   const currentUser = useCurrentUser();
+  const { semanticCrucibleSearch } = useFeatureFlags();
+  const query = useFeedSearchQuery();
 
   return (
     <>
@@ -62,12 +66,13 @@ function CruciblesPage() {
               Discover Crucibles
             </Text>
             <Group gap={8} wrap="nowrap">
-              <SortFilter type="crucibles" />
+              {/* Search results come in rank order, so a sort would do nothing. */}
+              {!(semanticCrucibleSearch && query) && <SortFilter type="crucibles" />}
               <CrucibleFiltersDropdown />
             </Group>
           </Group>
 
-          <CruciblesInfinite filters={filters} />
+          <CruciblesInfinite filters={{ ...filters, query }} />
         </Stack>
       </MasonryContainer>
     </>

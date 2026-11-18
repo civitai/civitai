@@ -10,7 +10,7 @@ import { TokenScope } from '@civitai/auth/token-scope';
 
 const h = vi.hoisted(() => ({
   user: { id: 7 } as { id: number } | null,
-  consent: undefined as { scope: number } | undefined,
+  consent: undefined as { scope: number | bigint } | undefined,
   rateLimitAllowed: true,
   firstParty: false,
   skipConsent: false,

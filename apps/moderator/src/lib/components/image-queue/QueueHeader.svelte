@@ -6,6 +6,8 @@
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
   import { clearPaging } from '$lib/paging';
+  import AgentReportFilter from '$lib/components/AgentReportFilter.svelte';
+  import { setAgentReportParam, type AgentReportFilter as AgentFilter } from '$lib/agent-reports';
 
   let {
     title,
@@ -15,6 +17,7 @@
     tagOptions,
     itemKeys,
     selected,
+    agentFilter = null,
     meta,
   }: {
     title: string;
@@ -25,6 +28,8 @@
     /** Every card key on screen — the select-all set. */
     itemKeys: (string | number)[];
     selected: SvelteSet<string | number>;
+    /** The reported queue's `?agents=` filter; `null` hides the control. */
+    agentFilter?: AgentFilter | null;
     /** A line under the title. */
     meta?: Snippet;
   } = $props();
@@ -37,6 +42,12 @@
     clearPaging(url.searchParams);
     goto(url.pathname + url.search);
   };
+
+  function setAgents(filter: AgentFilter) {
+    const url = new URL(page.url);
+    setAgentReportParam(url.searchParams, filter);
+    go(url);
+  }
 
   function toggleLevel(bit: number) {
     const url = new URL(page.url);
@@ -81,6 +92,9 @@
       >
         {allSelected ? 'Deselect all' : `Select all ${itemKeys.length}`}
       </button>
+    {/if}
+    {#if agentFilter}
+      <AgentReportFilter value={agentFilter} onselect={setAgents} />
     {/if}
     {#each filterLevels as bit (bit)}
       <button

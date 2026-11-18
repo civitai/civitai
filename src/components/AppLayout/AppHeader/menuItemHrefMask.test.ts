@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * A menu row whose `href` carries a query string must not also set `as`: `as` replaces the
  * address bar, so "open in new tab" and "copy link" lose the filter ("My Bounties" opened
- * unfiltered, Freshdesk 74820). Parsed from the real `hooks.tsx`, since the menu table lives
+ * unfiltered). Parsed from the real `hooks.tsx`, since the menu table lives
  * inside a hook that is too heavy to mount.
  */
 const source = fs.readFileSync(path.resolve(__dirname, 'hooks.tsx'), 'utf8');

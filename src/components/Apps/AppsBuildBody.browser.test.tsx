@@ -109,7 +109,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 
-const { AppsBuildBody } = await import('./AppsBuildBody');
+const { AppsBuildBody, AppsBuildRequestView } = await import('./AppsBuildBody');
 
 const SKELETON = 'apps-build-skeleton';
 const FIRST_APP = 'apps-build-first-app';
@@ -397,5 +397,27 @@ describe('AppsBuildBody — the view event is unchanged by the skeleton', () => 
     expect(mocks.tracked).toEqual([
       { type: 'AppsBuild_Action', details: { action: 'view', state: 'pitch' } },
     ]);
+  });
+});
+
+describe('AppsBuildRequestView — /apps/build for a viewer the build gate refuses', () => {
+  test('🔴 renders the pitch and Request access, and never asks for build-surface data', async () => {
+    // An ordinary account: no store, no author, no get-started.
+    mocks.flags = {};
+    mocks.user = { id: 31, username: 'ordinary', isModerator: false };
+    await renderBody(<AppsBuildRequestView />);
+    await expect.element(page.getByTestId('apps-build-request-view')).toBeInTheDocument();
+    await expect.element(page.getByTestId(PITCH)).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-build-request-access')).toBeInTheDocument();
+    // `getNavSummary` was never called (the mock records `enabled` on every call), and no
+    // author state rendered.
+    expect(mocks.lastEnabled).toBeUndefined();
+    expect(seen(FIRST_APP)).toBe(0);
+    expect(seen(WORKBENCH_CTA)).toBe(0);
+  });
+
+  test('positive control: AppsBuildBody DOES call getNavSummary, so the spy can see it', async () => {
+    await renderBody();
+    expect(mocks.lastEnabled).toBeDefined();
   });
 });

@@ -1,0 +1,1652 @@
+{
+  "description": "Cases where the newest Flipt clients evaluate differently from the pinned pair in expected.json. Asserted by parity/go (FLIPT_PARITY_EXPECT=latest) and parity/js-client-check.mjs.",
+  "regenerate": "CI artifact flipt-parity-latest-divergences (job flipt-parity in .github/workflows/feed-go.yml)",
+  "baseline": {
+    "js": "0.2.0",
+    "go": "v1.1.1"
+  },
+  "latest": {
+    "js": "0.7.0",
+    "go": "v1.6.0"
+  },
+  "divergenceCount": 97,
+  "divergences": [
+    {
+      "id": "bool-disabled-no-rollouts|boolean|anonymous",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|free-42",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|no-tier-1001",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|gold-7",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|silver-999",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|bronze-1000",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|moderator-123456",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|moderator-gold-5",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|early-adopter-77",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|app-builder-88",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|creator-99",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|not-creator-100",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|canary-2024",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|stable-2025",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|string-id-31337",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-empty",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-logged-in-only",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-True",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-TRUE",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-1",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-yes",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-space",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-empty",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-moderator-false",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-tier-Gold",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-tier-empty",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-abc",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-negative",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-leading-zeros",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-plus",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-exponent",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-decimal",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-userId-overflow",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-creator-anonymous",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-app-builder-TRUE",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|raw-deployment-only",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|random-0-5054085",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|random-1-6169248",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|random-2-9607035",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "bool-disabled-no-rollouts|boolean|random-3-5351729",
+      "baseline": {
+        "enabled": false,
+        "reason": "DEFAULT_EVALUATION_REASON"
+      },
+      "latest": {
+        "enabled": false,
+        "reason": "FLAG_DISABLED_EVALUATION_REASON"
+      }
+    },
+    {
+      "id": "variant-thirds|variant|bucket-666-1418",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "three"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "two"
+      }
+    },
+    {
+      "id": "variant-thirds|variant|bucket-666-1479",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "three"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "two"
+      }
+    },
+    {
+      "id": "variant-thirds|variant|bucket-999-55",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "three"
+      }
+    },
+    {
+      "id": "variant-thirds|variant|bucket-999-312",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "three"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|anonymous",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|free-42",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|no-tier-1001",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|silver-999",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|moderator-123456",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|early-adopter-77",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|creator-99",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|not-creator-100",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|canary-2024",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|stable-2025",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|string-id-31337",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-empty",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-logged-in-only",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-moderator-True",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-moderator-1",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-moderator-yes",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-moderator-space",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-moderator-empty",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-moderator-false",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-tier-Gold",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-tier-empty",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-userId-abc",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-userId-exponent",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-userId-decimal",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-userId-overflow",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-creator-anonymous",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|raw-deployment-only",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|random-1-535991",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|random-2-8669622",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|random-3-273507",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-300-2760",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-300-3512",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-301-1802",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-301-2062",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-499-1642",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-499-4222",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-500-2051",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-500-2244",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-501-874",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-501-933",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-599-4449",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-599-4674",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "a"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-600-250",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-600-610",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-601-268",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-601-2256",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-999-203",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-under-100|variant|bucket-999-1815",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "b"
+      }
+    },
+    {
+      "id": "variant-uneven|variant|raw-moderator-false",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "large"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "small"
+      }
+    },
+    {
+      "id": "variant-uneven|variant|bucket-100-561",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "large"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "small"
+      }
+    },
+    {
+      "id": "variant-uneven|variant|bucket-100-757",
+      "baseline": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "large"
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "small"
+      }
+    },
+    {
+      "id": "variant-uneven|variant|bucket-999-4358",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "large"
+      }
+    },
+    {
+      "id": "variant-uneven|variant|bucket-999-4952",
+      "baseline": {
+        "match": false,
+        "reason": "UNKNOWN_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": ""
+      },
+      "latest": {
+        "match": true,
+        "reason": "MATCH_EVALUATION_REASON",
+        "segmentKeys": [
+          "everyone"
+        ],
+        "variantAttachment": "",
+        "variantKey": "large"
+      }
+    }
+  ]
+}

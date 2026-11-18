@@ -53,7 +53,7 @@ import {
 //   POST ?action=abort&session=<id>
 //
 // 🔴 The storage key and uploadId never leave the server before `complete`: `session` is an
-// opaque id bound to the caller's userId in sysRedis (see image-upload-relay-session.service).
+// opaque id bound to the caller's userId on the cache cluster (see image-upload-relay-session.service).
 
 export const config = {
   api: {
@@ -281,7 +281,7 @@ async function completeSession(
     trackImageUpload(req, res, key, userId);
     res.status(200).json({ id: key });
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 'image-upload-relayed',
         userId,
         bytes: session.size,

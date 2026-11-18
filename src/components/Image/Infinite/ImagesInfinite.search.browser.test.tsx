@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
   refusal: undefined as string | undefined,
   searchInputs: [] as unknown[],
   feedEnabled: [] as (boolean | undefined)[],
+  features: {} as Record<string, boolean>,
   periodWrites: [] as unknown[],
 }));
 
@@ -45,7 +46,8 @@ const savedFilters = vi.hoisted(() => {
   };
 });
 const useSavedFilters = () => useSyncExternalStore(savedFilters.subscribe, savedFilters.get);
-const useUrlQuery = () => useRouter().query as { query?: string; period?: string };
+const useUrlQuery = () =>
+  useRouter().query as { query?: string; period?: string; similarTo?: string };
 
 const result = (ids: number[], extra: Record<string, unknown> = {}) => ({
   images: ids.map((id) => ({ id, width: 100, height: 100 })),
@@ -89,7 +91,7 @@ vi.mock('~/components/Search/useSearchRefusal', () => ({
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsModule>()),
-  useFeatureFlags: () => ({}),
+  useFeatureFlags: () => state.features,
 }));
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevel>()),
@@ -123,6 +125,7 @@ describe('ImagesInfinite with a search', () => {
     state.refusal = undefined;
     state.searchInputs = [];
     state.feedEnabled = [];
+    state.features = {};
     state.periodWrites = [];
     savedFilters.reset();
     localStorage.clear();
@@ -136,6 +139,54 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon' });
     expect(page.getByText('image 1', { exact: true }).query()).toBeNull();
     expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('shows the images like ?similarTo= and keeps the plain feed switched off', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    await expect.element(page.getByRole('link', { name: 'this image' })).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ imageId: 42, query: undefined });
+    expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('ignores ?similarTo= without feedSearch', async () => {
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('ignores ?similarTo= without moreLikeThis', async () => {
+    state.features = { feedSearch: true };
+    useRouter().query = { similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 1', { exact: true })).toBeVisible();
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('a refused query never falls back to ?similarTo=', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
+    state.refusal = 'illegal';
+    useRouter().query = { query: 'bad words', similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('Warning')).toBeVisible();
+    expect(state.searchInputs.length).toBeGreaterThan(0);
+    expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
+  });
+
+  test('a typed query replaces ?similarTo=', async () => {
+    state.features = { feedSearch: true, moreLikeThis: true };
+    useRouter().query = { query: 'red dragon', similarTo: '42' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', imageId: undefined });
   });
 
   const postedAfters = () =>
@@ -197,5 +248,22 @@ describe('ImagesInfinite with a search', () => {
     expect(state.searchInputs.length).toBeGreaterThan(0);
     expect(state.searchInputs.every((input) => input === undefined)).toBe(true);
     expect(state.feedEnabled.at(-1)).toBe(false);
+  });
+
+  test('ignores ?searchSort=newest without the Newest sort flag', async () => {
+    useRouter().query = { query: 'red dragon', searchSort: 'newest' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', sort: undefined });
+  });
+
+  test('asks for newest first with the Newest sort flag on', async () => {
+    state.features = { imageSearchNewestSort: true };
+    useRouter().query = { query: 'red dragon', searchSort: 'newest' };
+    renderWithProviders(<ImagesInfiniteContent searchable />);
+
+    await expect.element(page.getByText('image 101')).toBeVisible();
+    expect(state.searchInputs.at(-1)).toMatchObject({ query: 'red dragon', sort: 'newest' });
   });
 });

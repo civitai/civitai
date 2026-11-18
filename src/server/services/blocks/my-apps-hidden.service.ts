@@ -83,12 +83,11 @@ export async function isMyAppHidden(args: { userId: number; slug: string }): Pro
   try {
     return openingClearsHide(await getMyHiddenApps(args.userId), args.slug);
   } catch (err) {
-    // Logged, not swallowed; the `.catch` keeps a failed log off `unhandledRejection`.
     logToAxiom({
       name: 'my-apps-hidden-read-degraded',
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-    }).catch(() => null);
+    });
     return false;
   }
 }

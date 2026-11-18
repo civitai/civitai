@@ -14,19 +14,22 @@
  *     wire contracts (edge-url composed, maturity already clamped upstream).
  *
  * NOTE the maturity clamp itself is NOT applied here — the caller resolves the
- * token ceiling via `resolveCatalogBrowsingLevel(claims)` and passes the clamped
- * `browsingLevel` into the collection item service, so items are filtered at the
- * source (identical authority surface to /api/v1/blocks/images). Discovery
+ * viewer's level held to the token's domain ceiling via
+ * `resolveCatalogViewerBrowsingLevel(claims, { regionRestricted })` and passes it
+ * into the collection item service, so items are filtered at the source (the
+ * same clamp /api/v1/blocks/images uses). Discovery
  * additionally drops collections whose own `nsfwLevel` exceeds the ceiling.
  */
 
 import { Prisma } from '@prisma/client';
+import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
 import { Flags } from '~/shared/utils/flags';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { imageNotRestrictedSql, imageRestrictedSql } from '~/server/common/image-visibility';
+import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 
@@ -185,10 +188,7 @@ export function isPublicCollectionImage(
 }
 
 /**
- * Of `imageIds`, the ones `getAllImages` refuses on its restricted base model condition:
- * a mature level on an image linked to a license-restricted base model. The column is
- * written by raw SQL only and is not in the Prisma schema, so a cover select cannot read
- * it. `getFallbackCoverImages` applies the same condition in its own WHERE.
+ * Of `imageIds`, the ones restricted by their base model (`imageRestrictedSql`).
  */
 export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Set<number>> {
   if (imageIds.length === 0) return new Set();
@@ -196,8 +196,7 @@ export async function getModelRestrictedImageIds(imageIds: number[]): Promise<Se
     SELECT i."id" as "id"
     FROM "Image" i
     WHERE i."id" IN (${Prisma.join(imageIds)})
-      -- The exact complement of getAllImages' condition, so a NULL refuses as it does there.
-      AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted") IS NOT TRUE
+      AND ${imageRestrictedSql()}
   `;
   return new Set(rows.map((r) => r.id));
 }
@@ -235,19 +234,28 @@ export async function getFallbackCoverImages(
 ): Promise<Map<number, { url: string | null; type: string | null; nsfwLevel: number }>> {
   if (collectionIds.length === 0) return new Map();
   const rows = await dbRead.$queryRaw<
-    { collectionId: number; url: string | null; type: string | null; nsfwLevel: number | null }[]
+    {
+      collectionId: number;
+      url: string | null;
+      type: string | null;
+      nsfwLevel: number | null;
+      postId: number | null;
+    }[]
   >`
     SELECT
       c."collectionId" as "collectionId",
       cover."url" as "url",
       cover."type" as "type",
-      cover."nsfwLevel" as "nsfwLevel"
+      cover."nsfwLevel" as "nsfwLevel",
+      cover."postId" as "postId"
     FROM unnest(ARRAY[${Prisma.join(collectionIds)}]::int[]) AS c("collectionId")
     CROSS JOIN LATERAL (
-      SELECT i."url", i."type"::text as "type", i."nsfwLevel"
+      SELECT i."url", i."type"::text as "type", i."nsfwLevel", i."postId"
       FROM "CollectionItem" ci
       JOIN "Image" i ON i."id" = ci."imageId"
       JOIN "Post" p ON p."id" = i."postId"
+      LEFT JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
+      LEFT JOIN "Model" m ON m."id" = mv."modelId"
       WHERE ci."collectionId" = c."collectionId"
         AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
         AND (i."nsfwLevel" & ${browsingLevel}) != 0
@@ -260,16 +268,20 @@ export async function getFallbackCoverImages(
         AND i."blockedFor" IS NULL
         AND p."publishedAt" < now()
         AND p."availability" != 'Private'
-        -- Same restricted-base-model condition getAllImages applies to every row.
-        AND ((i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 OR NOT i."modelRestricted")
+        AND ${imageNotRestrictedSql()}
+        AND ${heldGalleryImageSql()}
       -- Walks CollectionItem_collectionId_status_covered ("createdAt" DESC) and stops at
       -- the first item that passes, per collection.
       ORDER BY ci."createdAt" DESC
       LIMIT 1
     ) cover
   `;
+  const levelOf = await getCoverBrowsingLevels(rows, browsingLevel);
   const map = new Map<number, { url: string | null; type: string | null; nsfwLevel: number }>();
   for (const r of rows) {
+    // The SQL read the stored gallery level; the cached one can be stricter until it is rebuilt,
+    // and then the tile is a placeholder rather than the next item.
+    if (r.nsfwLevel != null && !Flags.intersects(levelOf(r), r.nsfwLevel)) continue;
     if (r.collectionId != null && r.url) {
       // An unrated image stores 0; a null column read is the same "unrated" claim.
       map.set(r.collectionId, { url: r.url, type: r.type ?? null, nsfwLevel: r.nsfwLevel ?? 0 });

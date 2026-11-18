@@ -157,7 +157,7 @@ type PromotedPostImage = {
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
   nsfwLevelReason: string | null;
-  scanFailureClass: string | null;
+  scanJobs: unknown;
   needsReview: string | null;
   minor: boolean;
   acceptableMinor: boolean;
@@ -175,7 +175,7 @@ async function loadPromotedPost(postId: number) {
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
     SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
            i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
-           i."scanJobs"->'error'->>'failureClass' AS "scanFailureClass",
+           i."scanJobs",
            i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"
     FROM "Image" i
     WHERE i."postId" = ${postId}
@@ -454,7 +454,7 @@ async function createPromotionPlacement({
         message: 'compensating settle failed; escrow may be held for a rejected promotion',
         placementId: placement.id,
         error: settleError instanceof Error ? settleError.message : String(settleError),
-      }).catch(() => undefined)
+      })
     );
     throw error;
   }

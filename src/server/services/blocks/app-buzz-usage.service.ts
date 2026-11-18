@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { sysRedis } from '~/server/redis/client';
+import { redis, sysRedis } from '~/server/redis/client';
 import {
   isAppBlocksEnabled,
   isAppLimitsUpgradePromptEnabled,
@@ -26,7 +26,7 @@ async function readUsedToday(userId: number): Promise<number> {
 
 /** The cap today's daily-cap refusal was at (`markDailyCapRefused`), or null for none. */
 async function readRefusedCap(userId: number): Promise<number | null> {
-  const raw = await sysRedis.get(buzzCapRefusedRedisKey(userId));
+  const raw = await redis.get(buzzCapRefusedRedisKey(userId));
   const cap = raw === null || raw === undefined ? NaN : Number(raw);
   return Number.isFinite(cap) ? cap : null;
 }
@@ -122,7 +122,7 @@ export async function optInAppBuzzToday(user: SessionUser): Promise<MyAppBuzzCap
   if (!(await isAppBlocksEnabled({ user })) || !(await isAppLimitsUpgradePromptEnabled({ user }))) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'not available' });
   }
-  await sysRedis.set(buzzOptInRedisKey(user.id), '1', { EX: BUZZ_OPT_IN_TTL_SECONDS });
+  await redis.set(buzzOptInRedisKey(user.id), '1', { EX: BUZZ_OPT_IN_TTL_SECONDS });
   // The refusal that paused the app was at the plan cap; the raised cap has not refused anything.
   // Best-effort is enough: a record left behind is at the plan cap, which no longer equals the
   // raised cap, so the notice reads as not paused either way.

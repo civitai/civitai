@@ -131,13 +131,13 @@ const ROUTES: [
   ],
 ];
 
-const personalKey = (tokenScope: number | undefined) => ({
+const personalKey = (tokenScope: bigint | undefined) => ({
   apiKeyId: 5,
   apiKeyType: 'User',
   subject: { type: 'apiKey', id: 5 },
   ...(tokenScope === undefined ? {} : { tokenScope }),
 });
-const oauthToken = (tokenScope: number) => ({
+const oauthToken = (tokenScope: bigint) => ({
   apiKeyId: 6,
   apiKeyType: 'Access',
   subject: { type: 'oauth', id: 'client-abc' },
@@ -324,8 +324,9 @@ describe('the scope gate flag on models/[modelVersionId]', () => {
       expect.objectContaining({
         mode: 'log',
         route: '/api/download/models/[modelVersionId]',
-        requiredScope: TokenScope.ModelsRead,
-        tokenScope: TokenScopePresets.AIServices,
+        // JSON numbers in the log line.
+        requiredScope: Number(TokenScope.ModelsRead),
+        tokenScope: Number(TokenScopePresets.AIServices),
         apiKeyType: 'User',
       }),
     ]);
@@ -336,6 +337,12 @@ describe('the scope gate flag on models/[modelVersionId]', () => {
     const { status } = await download(route, aiServicesOwner);
     expect(status).toBe(403);
     expect(scopeLog()).toEqual([expect.objectContaining({ mode: 'enforce' })]);
+  });
+
+  it('off, under REST_SCOPE_ENFORCE=enforce: refuses', async () => {
+    holder.variant = null;
+    setEnv({ REST_SCOPE_ENFORCE: 'enforce' });
+    expect((await download(route, aiServicesOwner)).status).toBe(403);
   });
 });
 

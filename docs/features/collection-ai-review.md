@@ -128,8 +128,8 @@ prechecks, including checking the quota before charging entry fees or publishing
 Moderators retain their quota exemption. The collection page shows the configured entry limit
 in either mode.
 
-Submission windows still depend on contest entry validation, so review those settings before
-changing an existing collection's mode. The board's expiry job is independent of collection mode.
+Review configured submission dates before changing an existing collection's mode. The board's
+expiry job is independent of collection mode.
 
 ## Operational notes
 

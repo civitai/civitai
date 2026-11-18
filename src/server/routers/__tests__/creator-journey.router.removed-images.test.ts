@@ -18,7 +18,7 @@ import { creatorJourneyRouter } from '../creator-journey.router';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-function callerFor(user: { id: number } | undefined, tokenScope: number = TokenScope.Full) {
+function callerFor(user: { id: number } | undefined, tokenScope: bigint = TokenScope.Full) {
   return creatorJourneyRouter.createCaller({
     user,
     acceptableOrigin: true,
@@ -63,7 +63,7 @@ describe('creatorJourney.getMyRemovedImages', () => {
 
   it('needs the profile-read scope on a scoped token', async () => {
     await expect(
-      callerFor({ id: 7 }, TokenScope.UserRead << 1).getMyRemovedImages()
+      callerFor({ id: 7 }, TokenScope.UserRead << 1n).getMyRemovedImages()
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await callerFor({ id: 7 }, TokenScope.UserRead).getMyRemovedImages();
     expect(mockGetMyRemovedImages).toHaveBeenCalledExactlyOnceWith(7);

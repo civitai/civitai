@@ -38,7 +38,12 @@ const baseInput = {
 };
 
 async function run(input: Partial<Parameters<typeof getPostsInfinite>[0]>) {
-  return getPostsInfinite({ ...baseInput, ...input } as Parameters<typeof getPostsInfinite>[0])
+  return getPostsInfinite({
+    asModerator: true,
+    asOwner: true,
+    ...baseInput,
+    ...input,
+  } as Parameters<typeof getPostsInfinite>[0])
     .then((result) => ({ result }))
     .catch((error) => {
       if (error instanceof QueryIssued) return { result: undefined };
@@ -101,7 +106,8 @@ describe('getPostsInfinite user scope', () => {
     await run({ username: 'Alice', user: viewer, query: 'Cat' });
 
     expect(issued[0]).toContain('p.title ILIKE ?');
-    expect(bound[0]).toContain('Cat%');
+    // One creator's posts: the words anywhere in the title.
+    expect(bound[0]).toContain('%Cat%');
   });
 
   it('keeps the public feed unscoped and public when no username is given', async () => {
@@ -149,5 +155,20 @@ describe('getPostsInfinite user scope', () => {
       expect(issued[0]).toContain(`AND p."publishedAt" <= NOW()`);
       expect(issued[0]).not.toContain(`AND p."publishedAt" IS NULL`);
     });
+  });
+});
+
+describe('getPostsInfinite title search', () => {
+  it("matches the words anywhere in a title within one creator's posts", async () => {
+    findFirst.mockResolvedValue({ id: 99 });
+    await run({ username: 'alice', query: '50% off_now' });
+    expect(issued[0]).toContain('p.title ILIKE ?');
+    expect(bound[0]).toContain('%50\\% off\\_now%');
+  });
+
+  it('keeps a title-prefix match across every creator', async () => {
+    await run({ query: 'neon' });
+    expect(bound[0]).toContain('neon%');
+    expect(bound[0]).not.toContain('%neon%');
   });
 });

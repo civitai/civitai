@@ -37,7 +37,9 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 
 await import('~/server/services/text-scan/profiles/article.profile');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
-const { handleTextCategoryCallback } = await import('~/server/services/text-scan/category');
+const { handleTextCategoryCallback, submitTextCategoryScan } = await import(
+  '~/server/services/text-scan/category'
+);
 const { handleTextScanCallback } = await import('~/server/services/text-scan/callback');
 const { textScanTextHash, getActiveTextScanPrompts } = await import(
   '~/server/services/text-scan/prompt'
@@ -148,6 +150,27 @@ describe('scanEntity: the article category call', () => {
     expect(await scanEntity({ entityType: 'Article', entityId: 5 })).toEqual(baseline);
     expect(baseline).toEqual({ status: 'submitted', workflowId: 'wf-1' });
     expect(JSON.stringify(record())).toBe(baselineRecord);
+  });
+
+  it('tells the caller whether the call went out, since it never throws for a failure', async () => {
+    const profile = getTextScanProfile('Article')!;
+    const subject = (await profile.load([5])).get(5)!;
+    const submit = (over: Partial<typeof subject> = {}) =>
+      submitTextCategoryScan({
+        entityType: 'Article',
+        entityId: 5,
+        subject: { ...subject, ...over },
+        hook: profile.category!,
+        model: 'm',
+        maxInputChars: 4000,
+        scanCallbackUrl: 'https://example.com/cb?token=t',
+      });
+    expect(await submit()).toBe('submitted');
+    vi.mocked(submitWorkflow).mockResolvedValueOnce({ error: 'bad request' } as any);
+    expect(await submit()).toBe('failed');
+    expect(await submit({ fields: [] })).toBe('empty');
+    vi.mocked(getCategoryTags).mockResolvedValueOnce([]);
+    expect(await submit()).toBe('no-categories');
   });
 
   it('clears the category, and sends no call, when the text is now empty', async () => {

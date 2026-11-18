@@ -31,6 +31,7 @@ export const CONTENT_CDC_TABLES = [
   'public.TagsOnModel3D',
   'public.Storyline',
   'public.StorylineChapter',
+  'public.Collection',
 ];
 
 /**
@@ -53,6 +54,7 @@ export const CONTENT_EXCLUDED_COLUMNS = {
   ChallengeEvent: ['description'],
   Crucible: ['description', 'prizePositions', 'allowedResources', 'takedownReason'],
   Model3D: ['description', 'licenseDetails', 'generationParams', 'meta', 'gallerySettings'],
+  Collection: ['description', 'metadata'],
 };
 
 export const config = {
@@ -139,8 +141,6 @@ export const config = {
     nodeEnv: process.env.NODE_ENV ?? 'development',
     logLevel: process.env.LOG_LEVEL ?? 'info',
     batchInsertIntervalMs: parseInt(process.env.BATCH_INSERT_INTERVAL ?? '30') * 1000,
-    indexUpdateIntervalMs: parseInt(process.env.INDEX_UPDATE_INTERVAL ?? '300') * 1000,
-    indexUpdateEnabled: process.env.INDEX_UPDATE_ENABLED !== 'false',
     workerPoolSize: parseInt(process.env.WORKER_POOL_SIZE ?? '10'),
     healthCheckPort: parseInt(process.env.HEALTH_CHECK_PORT ?? '3000'),
     // Outbox reconciliation poller. Drains rows a live CDC event never
@@ -226,6 +226,14 @@ export const config = {
     crucibleAlias: process.env.VECTOR_CRUCIBLE_ALIAS ?? 'crucibles_semantic',
     challengeCollection: process.env.VECTOR_CHALLENGE_COLLECTION ?? 'challenges_wemm2b_256_v1',
     challengeAlias: process.env.VECTOR_CHALLENGE_ALIAS ?? 'challenges_semantic',
+    storylineCollection: process.env.VECTOR_STORYLINE_COLLECTION ?? 'storylines_wemm2b_256_v1',
+    storylineAlias: process.env.VECTOR_STORYLINE_ALIAS ?? 'storylines_semantic',
+    model3dCollection: process.env.VECTOR_MODEL3D_COLLECTION ?? 'models3d_wemm2b_256_v1',
+    model3dAlias: process.env.VECTOR_MODEL3D_ALIAS ?? 'models3d_semantic',
+    collectionCollection: process.env.VECTOR_COLLECTION_COLLECTION ?? 'collections_wemm2b_256_v1',
+    collectionAlias: process.env.VECTOR_COLLECTION_ALIAS ?? 'collections_semantic',
+    bountyCollection: process.env.VECTOR_BOUNTY_COLLECTION ?? 'bounties_wemm2b_256_v1',
+    bountyAlias: process.env.VECTOR_BOUNTY_ALIAS ?? 'bounties_semantic',
     // Image CDN base the edge URLs are built on (the main app's NEXT_PUBLIC_IMAGE_LOCATION).
     imageLocation: process.env.VECTOR_IMAGE_LOCATION ?? '',
     orchestratorEndpoint: process.env.ORCHESTRATOR_ENDPOINT ?? '',

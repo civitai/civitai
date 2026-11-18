@@ -1,7 +1,9 @@
 import {
+  SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_CANCELLATION_REASON_CODES,
   SERVICE_DEAL_DECLINE_REASON_CODES,
   SERVICE_DEAL_DISPUTE_REASON_CODES,
+  SERVICE_DEAL_DISPUTE_WINDOW_MS,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealCancellationReasonCode,
@@ -19,6 +21,7 @@ const EXIT_ACTIONS: readonly DealAction[] = [
   'decline',
   'withdraw',
   'cancelLate',
+  'cancelAndRefund',
   'requestCancellation',
   'respondCancellation',
   'acceptDelivery',
@@ -105,6 +108,21 @@ export type EscrowState =
   | 'released';
 
 const REFUND_STATUSES: ServiceDealStatus[] = ['Declined', 'Expired', 'Cancelled'];
+
+const SELLER_HELD_STATUSES: ServiceDealStatus[] = [
+  'Requested',
+  'Accepted',
+  'InRevision',
+  'Delivered',
+];
+
+export function sellerHeldLine(deal: { status: ServiceDealStatus; held: boolean; price: number }) {
+  if (!deal.held || !SELLER_HELD_STATUSES.includes(deal.status)) return null;
+  const hours = (ms: number) => ms / 3_600_000;
+  const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
+  const unanswered = hours(SERVICE_DEAL_AUTO_COMPLETE_MS) + dispute;
+  return `${deal.price.toLocaleString()} Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you ${dispute} hours after the buyer accepts, or ${unanswered} hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled.`;
+}
 
 /**
  * Never says "held" until the hold is confirmed. A closed deal whose hold never confirmed took no
@@ -202,6 +220,7 @@ export const dealActionLabel: Record<DealAction, string> = {
   decline: 'Decline',
   withdraw: 'Withdraw request',
   cancelLate: 'Cancel (overdue)',
+  cancelAndRefund: 'Cancel and refund',
   requestCancellation: 'Request cancellation',
   respondCancellation: 'Respond to cancellation',
   acceptDelivery: 'Accept delivery',
@@ -250,6 +269,7 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
 export const closeCommentLabel: Record<string, string> = {
   withdrawn: 'Request withdrawn by the buyer',
   late: 'Cancelled by the buyer after the due date',
+  buyer_refund: 'Cancelled by the buyer with a full refund',
   overdue: 'Cancelled automatically: nothing delivered in time',
   cancellation_unanswered: 'Cancelled automatically: the cancellation request was not answered',
   payment_refused: 'Cancelled: the payment was refused',

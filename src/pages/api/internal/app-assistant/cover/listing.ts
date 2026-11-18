@@ -40,7 +40,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       userId: grant.userId,
       grantId: grant.grantId,
       error: safeError(err),
-    }).catch(() => undefined);
+    });
     return res.status(503).json({ error: COVER_LISTING_UNREADABLE, code: 'unavailable' });
   }
 });

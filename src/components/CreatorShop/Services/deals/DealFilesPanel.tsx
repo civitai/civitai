@@ -25,8 +25,10 @@ import {
   sellerFileStatus,
   serviceDealDownloadHref,
   sortPicked,
+  previewAccept,
   uploadSlotsLeft,
 } from '~/components/CreatorShop/Services/deals/deal-files';
+import { isVideoPreviewMime } from '~/shared/constants/creator-services.constants';
 import { DEAL_FRESHNESS } from '~/components/CreatorShop/Services/deals/deal.util';
 import type { ServiceDealView } from '~/components/CreatorShop/Services/deals/deal.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -110,7 +112,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
     // So the same file can be picked again after a failed attempt.
     (kind === 'Preview' ? resetPreview : resetFinal).current?.();
     const slots = uploadSlotsLeft(kind, deal.previewKind, files, round);
-    const { send, refused, overflow } = sortPicked(kind, picked, slots);
+    const { send, refused, overflow } = sortPicked(kind, picked, slots, deal.previewKind);
     for (const { name, reason } of refused)
       showErrorNotification({ title: `Can't upload ${name}`, error: { message: reason } });
     if (overflow > 0)
@@ -153,7 +155,7 @@ function SellerUploader({ deal, files }: { deal: ServiceDealView; files: DealFil
           <FileButton
             onChange={(picked) => upload('Preview', picked)}
             resetRef={resetPreview}
-            accept="image/jpeg,image/png,image/webp,image/gif"
+            accept={previewAccept(deal.previewKind)}
             multiple
           >
             {(props) => (
@@ -298,9 +300,7 @@ function PartyFiles({
                     {file.failReason}
                   </Text>
                 )}
-                {file.previewUrl && (
-                  <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={256} />
-                )}
+                {file.previewUrl && <PreviewMedia file={file} maw={256} />}
               </Stack>
             );
           })}
@@ -308,6 +308,26 @@ function PartyFiles({
       ))}
     </Stack>
   );
+}
+
+function PreviewMedia({ file, maw }: { file: DealFile; maw?: number }) {
+  if (!file.previewUrl) return null;
+  // EdgeVideo builds its URL from a key; previewUrl is already the finished edge URL.
+  if (isVideoPreviewMime(file.mimeType))
+    return (
+      <video
+        src={file.previewUrl}
+        aria-label="Watermarked preview"
+        className="w-full rounded-sm"
+        style={maw ? { maxWidth: maw } : undefined}
+        controls
+        muted
+        loop
+        playsInline
+        preload="metadata"
+      />
+    );
+  return <Image src={file.previewUrl} alt="Watermarked preview" radius="sm" maw={maw} />;
 }
 
 /** The buyer sees ready, watermarked previews, and final files only as the server unlocks them. */
@@ -333,12 +353,7 @@ function BuyerFiles({ deal, files }: { deal: ServiceDealView; files: DealFile[] 
             {previews.length > 0 && (
               <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="xs">
                 {previews.map((file) => (
-                  <Image
-                    key={file.id}
-                    src={file.previewUrl}
-                    alt="Watermarked preview"
-                    radius="sm"
-                  />
+                  <PreviewMedia key={file.id} file={file} />
                 ))}
               </SimpleGrid>
             )}

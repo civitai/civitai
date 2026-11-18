@@ -1,9 +1,11 @@
+import { HQ_TASK_ID_PATTERN } from '@civitai/shared/clickup-url';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import type { CreateFeedbackInput } from '~/server/schema/feedback.schema';
 import type { FeedbackServerStamp } from '~/server/services/feedback.service';
 import type { FeedbackCaptureResult } from '~/server/services/feedback-capture.service';
@@ -48,14 +50,24 @@ type HqLogStatus =
   | 'bad-response'
   | 'filed';
 
-// Id and outcome only — never the token, the report or HQ's reply.
+// Ids and outcome only — never the token, the report or HQ's reply.
 const log = (feedbackId: number, status: HqLogStatus) =>
   logToAxiom({
     name: 'feedback-hq-intake',
     type: status === 'filed' ? 'info' : 'warning',
     feedbackId,
     status,
-  }).catch(() => undefined);
+  });
+
+// A cap refusal also names the reporter, so refusals can be counted per reporter.
+const logUserCap = (feedbackId: number, userId: number) =>
+  logToAxiom({
+    name: 'feedback-hq-intake',
+    type: 'warning',
+    feedbackId,
+    status: 'user-cap' satisfies HqLogStatus,
+    userId,
+  });
 
 const INVISIBLE_RE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
 const INLINE_MARKUP_RE = /[[\]()<>*_`#|!~\\]/g;
@@ -243,12 +255,13 @@ export function buildHqBody(
 }
 
 async function claimHqFilingSlot(userId: number): Promise<boolean> {
-  const key = `${REDIS_SYS_KEYS.FEEDBACK.HQ_FILING}:${userId}` as const;
+  const key = `${REDIS_KEYS.FEEDBACK.HQ_FILING}:${userId}` as const;
   try {
-    const count = await sysRedis.incrBy(key, 1);
-    if (count === 1) await sysRedis.expire(key, HQ_FILING_USER_CAP.windowSeconds);
-    else if ((await sysRedis.ttl(key)) < 0)
-      await sysRedis.expire(key, HQ_FILING_USER_CAP.windowSeconds);
+    const count = await takeClusterWindowCount(
+      'claimHqFilingSlot',
+      key,
+      HQ_FILING_USER_CAP.windowSeconds
+    );
     return count <= HQ_FILING_USER_CAP.max;
   } catch {
     return false;
@@ -375,8 +388,6 @@ export async function captureAttachGate(
   }
 }
 
-const HQ_TASK_ID_PATTERN = /^[\w-]{1,100}$/;
-
 /** The task HQ returned, or null unless its link is on the same origin we posted to. */
 function parseHqReply(reply: unknown, hqOrigin: string): { id: string; url: string } | null {
   if (!reply || typeof reply !== 'object') return null;
@@ -413,7 +424,7 @@ export async function fileFeedbackToHq(input: FeedbackHqFilingInput): Promise<vo
     const token = env.HQ_INTAKE_TOKEN;
     if (!baseUrl || !token) return void (await log(input.feedbackId, 'unconfigured'));
     if (!(await claimHqFilingSlot(input.userId)))
-      return void (await log(input.feedbackId, 'user-cap'));
+      return void (await logUserCap(input.feedbackId, input.userId));
 
     const screenshotId = input.context?.screenshotId;
     const considered =

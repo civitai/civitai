@@ -20,7 +20,7 @@
   import TicketAppeals from './TicketAppeals.svelte';
   import TicketBounties from './TicketBounties.svelte';
   import TicketContentReports from './TicketContentReports.svelte';
-  import TicketEscalate from './TicketEscalate.svelte';
+  import TicketHandOff from './TicketHandOff.svelte';
   import TicketGeneratorRestrictions from './TicketGeneratorRestrictions.svelte';
   import TicketHistory from './TicketHistory.svelte';
   import TicketLoraRuns from './TicketLoraRuns.svelte';
@@ -36,6 +36,7 @@
     view,
     canReply,
     canEscalate,
+    canPrivacy,
     canAccountAct,
     canUnban,
     onleave,
@@ -44,6 +45,7 @@
     view: TicketView;
     canReply: boolean;
     canEscalate: boolean;
+    canPrivacy: boolean;
     canAccountAct: boolean;
     canUnban: boolean;
     /** The ticket no longer belongs in this list (another view, or resolved): move to the next one. */
@@ -74,9 +76,14 @@
   function done(what: string, data: Record<string, unknown> | undefined, status: number | null) {
     const moved = data?.moved;
     const warning = typeof data?.warning === 'string' ? data.warning : null;
-    const left = moved === 'moderation' || moved === 'support';
+    const left = moved === 'moderation' || moved === 'support' || moved === 'legal';
     if (left || closedOut(data, status)) {
-      const where = left ? `${what}; it is now in the ${moved} view` : `${what}; it is closed out`;
+      const where =
+        moved === 'legal'
+          ? `${what}; Legal has it now`
+          : left
+          ? `${what}; it is now in the ${moved} view`
+          : `${what}; it is closed out`;
       if (warning) toast.warning(`${where}. ${warning}`);
       else toast.success(where);
       onleave(row.id);
@@ -249,11 +256,11 @@
     {@render cards(row.civitaiUserId, row.requesterName, undefined, undefined, {})}
   {/if}
   {#if view === 'moderation'}
-    <TriageCard title="Send to support" dense>
+    <TriageCard title="Hand off" dense>
       <p class="m-0 mb-2 text-dark-2">
-        Not a moderation issue, or needs the support team? Send it to support.
+        Not a moderation issue? Send it to the team that owns it.
       </p>
-      <TicketEscalate ticketId={row.id} {canEscalate} ondone={done} />
+      <TicketHandOff ticketId={row.id} {canEscalate} {canPrivacy} ondone={done} />
     </TriageCard>
   {/if}
 {/snippet}

@@ -2,6 +2,7 @@ import type { SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import { publicAvatarUrl } from '~/server/utils/public-avatar';
 import { dbRead } from '~/server/db/client';
 import { trainingDataListing } from '~/server/services/training-data-restricted.service';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
@@ -365,18 +366,7 @@ export async function runModelSearch(
     creator: modelUser
       ? {
           username: modelUser.username,
-          // A rated picture above the served level is dropped, not swapped for the unrated one.
-          image: modelUser.profilePicture
-            ? !Flags.intersects(modelUser.profilePicture.nsfwLevel, browsingLevel)
-              ? null
-              : getEdgeUrl(modelUser.profilePicture.url, {
-                  width: 96,
-                  name: modelUser.username,
-                  type: modelUser.profilePicture.type,
-                })
-            : modelUser.image
-            ? getEdgeUrl(modelUser.image, { width: 96, name: modelUser.username })
-            : null,
+          image: publicAvatarUrl(modelUser, browsingLevel),
         }
       : undefined,
     tags: tagsOnModels.map(({ name }) => name),

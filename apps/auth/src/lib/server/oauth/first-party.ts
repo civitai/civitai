@@ -28,7 +28,7 @@ export interface FirstPartyClient {
   clientId: string;
   origin: string; // e.g. https://civitai.red
   redirectUri: string; // e.g. https://civitai.red/api/auth/callback (exact)
-  allowedScopes: number; // first-party mints a full session → Full
+  allowedScopes: bigint; // first-party mints a full session → Full
   grants: string[];
   isConfidential: boolean;
 }

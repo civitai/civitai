@@ -76,11 +76,4 @@ describe('auth axiom binding', () => {
     expect(line).toContain('handler error');
     expect(line).toContain('invalid_grant');
   });
-
-  it('swallows a logToAxiom rejection — logging can never break the caller', async () => {
-    h.logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
-    await expect(
-      logAxiomError(new Error('boom'), { event: 'unhandled server error' })
-    ).resolves.toBeUndefined();
-  });
 });

@@ -27,7 +27,9 @@ const {
   queueImageSearchIndexUpdate,
   bustCachesForPosts,
   trackReview,
+  refreshProfilePicturesForImagesLazy,
 } = vi.hoisted(() => ({
+  refreshProfilePicturesForImagesLazy: vi.fn(),
   trackReview: vi.fn(),
   reviewImage: vi.fn(),
   updateCollectionItemsStatus: vi.fn(),
@@ -38,6 +40,10 @@ const {
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   bustCachesForPosts,
+}));
+
+vi.mock('~/server/services/refresh-profile-pictures-lazy', () => ({
+  refreshProfilePicturesForImagesLazy,
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -405,6 +411,8 @@ describe('reviewCollection: a minor-related escalation', () => {
       });
       // A held image must also leave the cached model-version showcase and post galleries.
       expect(bustCachesForPosts).toHaveBeenCalledWith([postOf(IMAGE_ID)]);
+      // And stop being served as a profile picture.
+      expect(refreshProfilePicturesForImagesLazy).toHaveBeenCalledWith([IMAGE_ID]);
       expect(statusWrites()).toEqual(collectionStatus ? [collectionStatus] : []);
     }
   );

@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import type * as AppDeveloperTermsService from '~/server/services/blocks/app-developer-terms.service';
 // Publish paths here run as a developer who accepted the App Developer Terms; a test that needs the
@@ -83,6 +83,15 @@ const { db, s3, holder } = vi.hoisted(() => {
     },
   });
   const db = { read: makeDb(), write: makeDb() };
+  // approveRequest's final step runs in a transaction that writes the request and the block.
+  db.write.$transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+    fn({
+      ...db.write,
+      $queryRaw: async () => [],
+      $executeRaw: async () => 0,
+      $executeRawUnsafe: async () => 0,
+    })
+  );
   const s3 = {
     send: vi.fn(async () => ({
       Body: { transformToByteArray: async () => holder.zipBytes },
@@ -206,7 +215,7 @@ function existingAppBlock() {
     appId: 'app_1',
     repoUrl: 'https://forgejo.example/cool-app',
     trustTier: 'unverified',
-    app: { allowedScopes: 0, allowedOrigins: ['https://cool-app.apps.example'] },
+    app: { allowedScopes: 0n, allowedOrigins: ['https://cool-app.apps.example'] },
   };
 }
 
@@ -243,6 +252,8 @@ beforeEach(() => {
   db.write.appBlock.updateMany.mockResolvedValue({ count: 0 });
   db.write.appBlock.findUnique.mockResolvedValue(appBlockRow());
   db.write.oauthClient.update.mockResolvedValue({});
+  // The ceiling a late hold would put back, read on the primary before step (3).
+  db.write.oauthClient.findUnique.mockResolvedValue({ allowedScopes: 0n });
   db.write.appListing.create.mockResolvedValue({ id: 'apl_created' });
   db.write.appListing.updateMany.mockResolvedValue({ count: 0 });
   db.write.appListing.findFirst.mockResolvedValue(null);
@@ -558,8 +569,8 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     id: string,
     media: { iconId: number | null; coverId: number | null } = { iconId: 11, coverId: 22 }
   ) {
-    return async (args: { where?: Record<string, unknown> }) => {
-      const w = args?.where ?? {};
+    return async (...a: unknown[]) => {
+      const w = (a[0] as { where?: Record<string, unknown> } | undefined)?.where ?? {};
       if (w.status === 'draft' && w.appBlockId === null) return { id, ...media };
       return null;
     };
@@ -747,8 +758,8 @@ describe('approveRequest — its re-rate lookups are the shared where-builders',
 describe('approveRequest — on-site publish floor (icon + cover)', () => {
   /** A findFirst that answers ONE of approve's two go-live lookups with `row`. */
   function answer(which: 'draft' | 'reset', row: Record<string, unknown>) {
-    return async (args: { where?: Record<string, unknown> }) => {
-      const w = args?.where ?? {};
+    return async (...a: unknown[]) => {
+      const w = (a[0] as { where?: Record<string, unknown> } | undefined)?.where ?? {};
       if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
       if (which === 'reset' && w.status === 'pending' && w.appBlockId === 'apb_1') return row;
       return null;
@@ -834,6 +845,110 @@ describe('approveRequest — on-site publish floor (icon + cover)', () => {
     expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
       where: { id: 'apb_1', status: 'suspended' },
       data: { status: 'approved' },
+    });
+  });
+
+  describe('the re-approve after a late hold on a live app is cleared', () => {
+    /**
+     * One stored on-site listing, in the status the late-hold rollback left it
+     * (publish-request.finaliseOnsiteApprove.test.ts pins which). Lookups and the reset flip
+     * match it on their plain where-fields, as the database would.
+     */
+    function storedListing(status: string) {
+      const row: Record<string, unknown> = {
+        id: 'apl_live',
+        status,
+        kind: 'onsite',
+        appBlockId: 'apb_1',
+        iconId: 53,
+        coverId: 47,
+        contentRating: 'pg',
+      };
+      const matches = (where: Record<string, unknown> = {}) =>
+        Object.entries(where).every(
+          ([k, v]) => (v !== null && typeof v === 'object') || row[k] === v
+        );
+      db.read.appBlock.findFirst.mockResolvedValue({
+        ...existingAppBlock(),
+        currentVersionSha: 'a'.repeat(40),
+      });
+      db.write.appListing.findFirst.mockImplementation(async (...a: unknown[]) =>
+        matches((a[0] as { where?: Record<string, unknown> } | undefined)?.where) ? row : null
+      );
+      db.write.appListing.updateMany.mockImplementation(async (...a: unknown[]) => {
+        const args = a[0] as { where?: Record<string, unknown>; data?: object } | undefined;
+        if (!matches(args?.where)) return { count: 0 };
+        Object.assign(row, args?.data);
+        return { count: 1 };
+      });
+      return row;
+    }
+    const unsuspend = {
+      where: { id: 'apb_1', status: 'suspended' },
+      data: { status: 'approved' },
+    };
+
+    it('🔴 a delisted app stays removed and suspended', async () => {
+      const listing = storedListing('removed');
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+      expect(listing.status).toBe('removed');
+      expect(db.write.appBlock.updateMany).not.toHaveBeenCalledWith(unsuspend);
+    });
+
+    it('an app that was live publishes again and is un-suspended', async () => {
+      const listing = storedListing('pending');
+      await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
+      expect(listing.status).toBe('approved');
+      expect(db.write.appBlock.updateMany).toHaveBeenCalledWith(unsuspend);
+    });
+  });
+
+  describe('a first version re-approved after a late hold (its hold since cleared)', () => {
+    /** A first version a late hold left: no current sha, and a late-resuspend on record. */
+    function lateHeldFirstVersion({ late = true, currentVersionSha = null as string | null } = {}) {
+      db.read.appBlock.findFirst.mockResolvedValue({ ...existingAppBlock(), currentVersionSha });
+      db.write.$queryRaw.mockImplementation(async (strings: unknown) =>
+        Array.isArray(strings) && strings.join('').includes('publishRequestHoldLateResuspend')
+          ? [{ late }]
+          : []
+      );
+      db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    }
+    afterEach(() => {
+      db.write.$queryRaw.mockImplementation(async () => []);
+    });
+
+    it('🔴 re-runs the floor: media now below it refuses, and the app stays suspended', async () => {
+      lateHeldFirstVersion();
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_held', iconId: 53, coverId: null, contentRating: 'pg' })
+      );
+      await expectRefusedBeforeAnyWrite('cover');
+      expect(db.write.appBlock.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('passes the floor with an icon and a cover, and un-suspends the app', async () => {
+      lateHeldFirstVersion();
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_held', iconId: 53, coverId: 47, contentRating: 'pg' })
+      );
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
+      expect(db.write.appBlock.updateMany).toHaveBeenCalledWith({
+        where: { id: 'apb_1', status: 'suspended' },
+        data: { status: 'approved' },
+      });
+    });
+
+    it('a version that already went live stays exempt, late hold or not', async () => {
+      lateHeldFirstVersion({ currentVersionSha: 'a'.repeat(40) });
+      db.write.appListing.findFirst.mockImplementation(
+        answer('reset', { id: 'apl_live', iconId: null, coverId: null, contentRating: 'pg' })
+      );
+      await expect(
+        approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+      ).resolves.toMatchObject({ publishRequestId: 'req_1' });
     });
   });
 

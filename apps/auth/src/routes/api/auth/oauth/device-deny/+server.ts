@@ -6,6 +6,7 @@ import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { resolvePendingDeviceCode, normalizeUserCode } from '$lib/server/oauth/device-codes';
 import { hSetWithTTL, type EvalCapableClient } from '$lib/server/oauth/redis-atomic';
 import { parseBody } from '$lib/server/oauth/http';
+import { stringToScope } from '$lib/server/oauth/scope';
 
 // POST /api/auth/oauth/device-deny — session-gated refusal of a device user_code. Marks the device
 // code denied so the polling device gets `access_denied` instead of waiting out the full expiry.
@@ -58,7 +59,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress, locals }
     type: 'authorization.denied',
     userId: locals.user.id,
     clientId: data.clientId,
-    scope: parseInt(data.scope, 10),
+    scope: stringToScope(data.scope),
     ip: getClientAddress(),
     metadata: { grant_type: 'device_code' },
   });

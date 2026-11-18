@@ -1,18 +1,30 @@
 import type { Pool } from 'pg';
 import { normalizeTitle } from '../models/document';
+import { coverImageCleanSql, heldImageSql, heldUserSql } from '../held';
 import { comicDocument } from './document';
 
 /**
  * Which comics get a point: the site's `comicSearchEligibleWhere` (comics.search-index.ts) as SQL.
  * The site's comic-eligibility parity test runs both against one database and fails when they keep
  * different comics, so a change to either has to change both. ComicProject has no availability or
- * unlisted column; the owner-not-banned clause is already part of the rule.
+ * unlisted column, so a chapter's availability decides it.
  */
 export const COMIC_ELIGIBLE_SQL = `cp."status" = 'Active' AND cp."tosViolation" = FALSE AND cp."userId" != -1
-  AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = cp."userId" AND u."bannedAt" IS NULL)
+  AND cp."nsfwLevel" NOT IN (0, 32)
+  AND EXISTS (SELECT 1 FROM "User" u WHERE u.id = cp."userId" AND u."bannedAt" IS NULL
+    AND u."deletedAt" IS NULL)
+  AND NOT ${heldUserSql('cp."userId"')}
+  AND ${coverImageCleanSql('cp."coverImageId"')}
+  AND NOT EXISTS (SELECT 1 FROM "ComicPanel" hp JOIN "Image" hi ON hi.id = hp."imageId"
+    WHERE hp."projectId" = cp.id AND ${heldImageSql('hi')})
+  AND NOT EXISTS (SELECT 1 FROM "ComicChapter" fc
+    JOIN "ComicPanel" fp ON fp."projectId" = fc."projectId" AND fp."chapterPosition" = fc."position"
+    JOIN "Image" fi ON fi.id = fp."imageId"
+    WHERE fc."projectId" = cp.id AND fc."status" = 'Published' AND fc.availability = 'Public'
+      AND fp."status" = 'Ready' AND (fi."blockedFor" IS NOT NULL OR fi.minor OR fi.poi))
   AND EXISTS (
     SELECT 1 FROM "ComicChapter" cc
-    WHERE cc."projectId" = cp.id AND cc."status" = 'Published'
+    WHERE cc."projectId" = cp.id AND cc."status" = 'Published' AND cc.availability = 'Public'
     AND EXISTS (
       SELECT 1 FROM "ComicPanel" cpn JOIN "Image" i ON i.id = cpn."imageId"
       WHERE cpn."projectId" = cc."projectId" AND cpn."chapterPosition" = cc."position"
@@ -24,7 +36,8 @@ export const COMIC_ELIGIBLE_SQL = `cp."status" = 'Active' AND cp."tosViolation" 
       WHERE cpn."projectId" = cc."projectId" AND cpn."chapterPosition" = cc."position"
       AND cpn."status" = 'Ready'
       AND (i.id IS NULL OR i."ingestion" != 'Scanned' OR i."needsReview" IS NOT NULL
-        OR i."tosViolation" = TRUE)
+        OR i."tosViolation" = TRUE OR i."blockedFor" IS NOT NULL OR i.minor OR i.poi
+        OR i."nsfwLevel" IN (0, 32))
     )
   )`;
 

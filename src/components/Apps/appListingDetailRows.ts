@@ -69,14 +69,15 @@ export type ListingDetailRow = {
     | 'installs'
     | 'updated'
     | 'source'
-    | 'support';
+    | 'support'
+    | 'actions-run';
   /** Dimmed left-hand label. */
   label: string;
   /** Right-hand display value. */
   value: string;
   /**
    * When set, the row's value renders as an ANCHOR to this URL rather than as plain
-   * text. Only the `source` row sets it.
+   * text. The `source`, `support` and `actions-run` rows set it.
    *
    * 🔴 THE RENDERER MUST EMIT `target="_blank"` + `rel="noopener noreferrer"` for it.
    * `noopener` is the load-bearing half — without it the opened page gets a live
@@ -137,6 +138,14 @@ export type ListingDetailRow = {
 };
 
 /**
+ * The Submitted-by row's text: `GitHub Actions run of <owner/repo> @ <tag> (<sha7>)`. Exported so
+ * the test pins the whole string.
+ */
+export function actionsRunRowValue(run: { repository: string; tag: string; sha: string }): string {
+  return `GitHub Actions run of ${run.repository} @ ${run.tag} (${run.sha.slice(0, 7)})`;
+}
+
+/**
  * Human label for the store kind. Mirrors `getListingBadge`'s wording — and now
  * actually does: off-site used to fork here into "Connect app" / "Off-site link"
  * while the badge said "Connect app" / "Off-site", so the two surfaces disagreed
@@ -167,7 +176,7 @@ export function buildListingDetailRows(
     | 'installCount'
     | 'updatedAt'
   > &
-    Partial<Pick<ListingDetail, 'sourceRepoUrl' | 'issueTrackerUrl'>>,
+    Partial<Pick<ListingDetail, 'sourceRepoUrl' | 'issueTrackerUrl' | 'actionsRunSource'>>,
   opts: { preview?: boolean; formatDate: (iso: string) => string }
 ): ListingDetailRow[] {
   const rows: ListingDetailRow[] = [];
@@ -241,6 +250,34 @@ export function buildListingDetailRows(
       value: detail.issueTrackerUrl.replace(/^https:\/\//, '').replace(/\/$/, ''),
       href: detail.issueTrackerUrl,
       rel: SUPPORT_LINK_REL,
+    });
+  }
+
+  // SUBMITTED BY — the GitHub Actions run that submitted the version this app is serving, when
+  // the server checked that run's OIDC token at submit and its repository is public (the server
+  // sets `actionsRunSource` only then, so a private repository's name never arrives here).
+  //
+  // 🔴 THE COPY SAYS EXACTLY WHAT WAS CHECKED, AND NO MORE. GitHub signed a token naming the run's
+  // repository, tag and commit; the developer's own workflow built and uploaded the bundle. So this
+  // is "submitted by a GitHub Actions run of <repo> @ <tag> (<sha7>)": not "verified", not
+  // "secure", not "built by Civitai", and not a security review. Do not reword it into a badge.
+  //
+  // Runtime-guarded for the cast-producer reason the rows above give.
+  const run = detail.actionsRunSource;
+  if (
+    run &&
+    typeof run.repository === 'string' &&
+    typeof run.tag === 'string' &&
+    typeof run.sha === 'string' &&
+    run.sha.length >= 7
+  ) {
+    rows.push({
+      key: 'actions-run',
+      label: 'Submitted by',
+      value: actionsRunRowValue(run),
+      // The commit, not the tag: a tag can be moved afterwards, the commit cannot. `repository`
+      // and `sha` are shape-checked server-side (`publicActionsRunSource`).
+      href: `https://github.com/${run.repository}/commit/${run.sha}`,
     });
   }
 

@@ -1,3 +1,5 @@
+import { FLAG_HAT_MAX } from '~/server/schema/turf.schema';
+
 /** The single team with the most hats, or null when none or tied. */
 export function flagLeader(hatsByTeam: Record<string, number>) {
   const entries = Object.entries(hatsByTeam).filter(([, n]) => n > 0);
@@ -20,3 +22,47 @@ export function flagGap(hatsByTeam: Record<string, number>, team: string | null 
     .map(([, n]) => n);
   return mine - Math.max(0, ...others);
 }
+
+/**
+ * What the flag hat picker offers a player with `available` hats: 1, 5 and FLAG_HAT_MAX, each capped
+ * at what they have, without repeats. 8 hats gives 1, 5, 8; 4 gives 1, 4; none gives nothing.
+ */
+export function flagHatChoices(available: number) {
+  const have = Math.floor(available);
+  return [...new Set([1, 5, FLAG_HAT_MAX].map((n) => Math.min(n, have)))].filter((n) => n > 0);
+}
+
+const FINAL_HOUR_MS = 60 * 60 * 1000;
+
+export const finalHourAt = (closesAt: Date | string | number) =>
+  new Date(new Date(closesAt).getTime() - FINAL_HOUR_MS);
+
+/**
+ * Cut, but not yet paid: the freeze runs at the first hourly settle after the cut. A summary cached
+ * before `frozen` existed has no field and reads as paid, as it did then.
+ */
+export const flagCounting = (summary: { closed: boolean; frozen?: boolean }) =>
+  summary.closed && summary.frozen === false;
+
+/**
+ * Where a flag day's race stands for its clocks. The cut is a secret moment in the final hour, so the
+ * clock counts to the start of that hour, then the race "could end any moment" until it closes.
+ */
+export function flagClock(nowMs: number, closesAt: Date | string, closed: boolean) {
+  if (closed) return { phase: 'closed' as const, secondsLeft: 0 };
+  const finalAt = finalHourAt(closesAt).getTime();
+  if (nowMs >= finalAt) return { phase: 'final' as const, secondsLeft: 0 };
+  return { phase: 'counting' as const, secondsLeft: Math.ceil((finalAt - nowMs) / 1000) };
+}
+
+/** Per team, how many flags it alone leads; a tied or empty flag counts for nobody. Most first. */
+export function flagsHeld(flags: { hatsByTeam: Record<string, number> }[]) {
+  const held = new Map<string, number>();
+  for (const flag of flags) {
+    const leader = flagLeader(flag.hatsByTeam);
+    if (leader) held.set(leader, (held.get(leader) ?? 0) + 1);
+  }
+  return [...held].sort(([, a], [, b]) => b - a);
+}
+
+export const flagsPot = (flags: { pot: number }[]) => flags.reduce((sum, f) => sum + f.pot, 0);

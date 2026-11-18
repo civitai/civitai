@@ -32,7 +32,7 @@ type Call = { url: string; init: RequestInit };
 let calls: Call[];
 let respond: () => Response;
 
-const INPUT = { userId: 8675309, amount: 250, reason: 'Contest judge' };
+const INPUT = { userId: 990100034, amount: 250, reason: 'Contest judge' };
 
 beforeEach(() => {
   vi.unstubAllGlobals();
@@ -118,7 +118,7 @@ describe('grantCreatorScore', () => {
 });
 
 describe('revokeCreatorScoreGrant', () => {
-  const REVOKE = { userId: 8675309, grantId: 7, reason: 'Wrong account' };
+  const REVOKE = { userId: 990100034, grantId: 7, reason: 'Wrong account' };
 
   it('posts the account, grant and reason to the revoke endpoint as the moderator', async () => {
     respond = () =>

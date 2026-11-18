@@ -8,6 +8,9 @@ const BLOCKED_USER = 2;
 const FLAGGED_USER = 3;
 const PENDING_USER = 4;
 const OTHER_REVIEW_USER = 5;
+const UNRATED_USER = 6;
+const MOD_RATED_USER = 7;
+const MINOR_USER = 8;
 
 let pg: PGlite;
 
@@ -34,7 +37,8 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       id int PRIMARY KEY, url text NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1, hash text,
       type text NOT NULL DEFAULT 'image', width int, height int, metadata jsonb,
-      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text
+      ingestion "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned', "needsReview" text,
+      "nsfwLevelLocked" boolean NOT NULL DEFAULT false, "scanJobs" jsonb
     );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int);
     INSERT INTO "Image" (id, url, ingestion, "needsReview") VALUES
@@ -43,8 +47,11 @@ beforeAll(async () => {
       (30, 'flagged', 'Scanned', 'csam'),
       (40, 'pending', 'Pending', NULL),
       (50, 'other-review', 'Scanned', 'other-review');
+    INSERT INTO "Image" (id, url, ingestion, "nsfwLevel") VALUES (60, 'unrated', 'Scanned', 0);
+    INSERT INTO "Image" (id, url, ingestion, "nsfwLevelLocked") VALUES (70, 'pending-mod-rated', 'Pending', true);
+    INSERT INTO "Image" (id, url, ingestion, "needsReview") VALUES (80, 'minor', 'Scanned', 'minor');
     INSERT INTO "User" (id, "profilePictureId") VALUES
-      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40), (${OTHER_REVIEW_USER}, 50);
+      (${CLEAN_USER}, 10), (${BLOCKED_USER}, 20), (${FLAGGED_USER}, 30), (${PENDING_USER}, 40), (${OTHER_REVIEW_USER}, 50), (${UNRATED_USER}, 60), (${MOD_RATED_USER}, 70), (${MINOR_USER}, 80);
   `);
 });
 afterAll(() => pg.close());
@@ -57,12 +64,20 @@ describe('profilePictures cache', () => {
       FLAGGED_USER,
       PENDING_USER,
       OTHER_REVIEW_USER,
+      UNRATED_USER,
+      MOD_RATED_USER,
+      MINOR_USER,
     ]);
 
     expect(result[CLEAN_USER]).toMatchObject({ id: 10, url: 'clean' });
-    expect(result[PENDING_USER]).toMatchObject({ id: 40, url: 'pending' });
+    // A moderator's rating stands in for a scan, as in the main app.
+    expect(result[MOD_RATED_USER]).toMatchObject({ id: 70, url: 'pending-mod-rated' });
     expect(result[OTHER_REVIEW_USER]).toMatchObject({ id: 50, url: 'other-review' });
     expect(result).not.toHaveProperty(String(BLOCKED_USER));
     expect(result).not.toHaveProperty(String(FLAGGED_USER));
+    expect(result).not.toHaveProperty(String(MINOR_USER));
+    expect(result).not.toHaveProperty(String(UNRATED_USER));
+    // Rated but not yet scanned: its scan's checks have not run.
+    expect(result).not.toHaveProperty(String(PENDING_USER));
   });
 });

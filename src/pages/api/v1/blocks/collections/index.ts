@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { recordBlockClaimsRateLimitRefusal } from '~/server/services/blocks/rate-limit-refusal.service';
 import { withAxiom } from '@civitai/next-axiom';
 import * as z from 'zod';
 
@@ -28,8 +29,9 @@ import {
   isWindowedPeriod,
 } from '~/server/services/blocks/block-collection-popularity.service';
 import { getServableCoverCollectionIds } from '~/server/services/collection-cover-visibility';
+import { getCoverBrowsingLevels } from '~/server/utils/public-cover-image';
 import { recordBlockCollectionRankingSource } from '~/server/prom/block-collection-ranking.metrics';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { CollectionSort } from '~/server/common/enums';
@@ -252,14 +254,19 @@ const CH_HYDRATE_MAX = 1000;
  */
 const chHydrateWidth = (limit: number) => Math.min(limit * 24 + 1, CH_HYDRATE_MAX);
 
-type PrimaryCoverImage = { id: number; url: string | null } & PublicCollectionImageFields;
+type PrimaryCoverImage = {
+  id: number;
+  url: string | null;
+  postId: number | null;
+} & PublicCollectionImageFields;
 
 /**
  * The ids of the collections whose own cover image can be served: it has a url, may be shown
- * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, and is not refused by `getAllImages`' restricted base model
- * condition. That condition only refuses an image whose own level has a mature bit, so
- * only those candidates are looked up. Every other collection falls back to
- * `getFallbackCoverImages`, which applies the same rule in SQL.
+ * to a stranger (`getServableCoverCollectionIds`), passes `isPublicCollectionImage`, is not
+ * restricted by its base model (`getModelRestrictedImageIds`), and, on a minor or SFW-only model's
+ * post, is within that model's gallery level. Only an image whose own level has a mature bit can be
+ * restricted, so only those candidates are looked up. A collection whose cover fails any of these
+ * falls back to `getFallbackCoverImages`.
  */
 async function getUsablePrimaryCovers(
   collections: { id: number; userId: number; image?: PrimaryCoverImage | null }[],
@@ -276,10 +283,21 @@ async function getUsablePrimaryCovers(
   const matureIds = candidates
     .filter((c) => Flags.intersects(c.image!.nsfwLevel, nsfwBrowsingLevelsFlag))
     .map((c) => c.image!.id);
-  const restricted = matureIds.length
-    ? await getModelRestrictedImageIds(matureIds)
-    : new Set<number>();
-  return new Set(candidates.filter((c) => !restricted.has(c.image!.id)).map((c) => c.id));
+  const [restricted, levelOf] = await Promise.all([
+    matureIds.length ? getModelRestrictedImageIds(matureIds) : new Set<number>(),
+    getCoverBrowsingLevels(
+      candidates.map((c) => c.image),
+      browsingLevel
+    ),
+  ]);
+  return new Set(
+    candidates
+      .filter(
+        (c) =>
+          !restricted.has(c.image!.id) && Flags.intersects(levelOf(c.image), c.image!.nsfwLevel)
+      )
+      .map((c) => c.id)
+  );
 }
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -333,13 +351,20 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // hammering this private,no-store route onto the origin.
   const rateLimit = await checkBlockCatalogRateLimit(claims.blockInstanceId);
   if (!rateLimit.allowed) {
+    recordBlockClaimsRateLimitRefusal({
+      claims,
+      surface: 'rest',
+      bucket: 'catalog',
+      endpoint: 'collections',
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
     res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
     res.status(429).json({ error: 'Rate limit exceeded, please retry shortly.' });
     return;
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
 
   const subjectUser = await hydrateBlockSubject(subjectUserId);
   if (!subjectUser) {
@@ -483,6 +508,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
               acceptableMinor: true,
               tosViolation: true,
               blockedFor: true,
+              postId: true,
             },
           },
         },
