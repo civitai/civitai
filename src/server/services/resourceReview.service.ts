@@ -404,7 +404,13 @@ export const upsertResourceReview = async ({
       modelVersionId: ret.modelVersionId,
     }).catch();
     if (data.details) queueScamScan({ entityType: 'ResourceReview', entityId: ret.id });
-    return ret;
+    // The post editor tells an edit's result from a create's by the fields it lacks.
+    return {
+      id: ret.id,
+      modelId: ret.modelId,
+      modelVersionId: ret.modelVersionId,
+      userId: ret.userId,
+    };
   }
 };
 
