@@ -93,3 +93,72 @@ export function planReplace(
   }
   return { error: null, changes, emptied };
 }
+
+/** A dataset tag with its casings folded together (`Orange hair`, `orange hair`). `tag` is the most-used
+ *  casing (first seen on a tie) and `count` the images carrying any of `variants`. */
+export interface TagGroup {
+  tag: string;
+  count: number;
+  variants: string[];
+}
+
+/** The dataset's tags grouped case-insensitively, most-used first — so one tag typed two ways is one row. */
+export function groupTags(images: { tags: string[] }[]): TagGroup[] {
+  const groups = new Map<string, { count: number; casings: Map<string, number> }>();
+  for (const img of images) {
+    const seen = new Set<string>();
+    for (const t of img.tags) {
+      const key = t.toLowerCase();
+      let g = groups.get(key);
+      if (!g) groups.set(key, (g = { count: 0, casings: new Map() }));
+      g.casings.set(t, (g.casings.get(t) ?? 0) + 1);
+      if (!seen.has(key)) {
+        seen.add(key);
+        g.count++;
+      }
+    }
+  }
+  return [...groups.values()]
+    .map(({ count, casings }) => {
+      const variants = [...casings.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+      return { tag: variants[0]!, count, variants };
+    })
+    .sort((a, b) => b.count - a.count);
+}
+
+/** `tags` with every casing of `from` replaced in place by `to`. Deduped case-insensitively, keeping the
+ *  first position; a tag named in `to` takes the casing typed there, so renaming a group to its own name
+ *  merges its casings into that one. */
+export function renameTag(tags: string[], from: string, to: string[]): string[] {
+  const fromKey = from.toLowerCase();
+  const typed = new Map(to.map((t) => [t.toLowerCase(), t]));
+  const seen = new Set<string>();
+  const next: string[] = [];
+  for (const t of tags) {
+    for (const mapped of t.toLowerCase() === fromKey ? to : [t]) {
+      const key = mapped.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      next.push(typed.get(key) ?? mapped);
+    }
+  }
+  return next;
+}
+
+/** `tags` without any casing of `tag`. */
+export function removeTag(tags: string[], tag: string): string[] {
+  const key = tag.toLowerCase();
+  return tags.filter((t) => t.toLowerCase() !== key);
+}
+
+/** `tags` with each of `add` it lacks in every casing prepended — where a trigger-like tag belongs. */
+export function prependTags(tags: string[], add: string[]): string[] {
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const missing = add.filter((t) => {
+    const key = t.toLowerCase();
+    if (have.has(key)) return false;
+    have.add(key);
+    return true;
+  });
+  return missing.length ? [...missing, ...tags] : tags;
+}

@@ -1,29 +1,35 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { IconArrowBackUp, IconFilter, IconPencil, IconPlus, IconX } from '@tabler/icons-svelte';
+  import {
+    IconArrowBackUp,
+    IconArrowMerge,
+    IconFilter,
+    IconPencil,
+    IconPlus,
+    IconX,
+  } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
   import { mediaCount, type Media } from '$lib/data/trainingModels';
   import { splitTags, type Img } from './trainingFlow';
-  import { planReplace } from './tagReplace';
+  import { planReplace, prependTags, removeTag, renameTag, type TagGroup } from './tagReplace';
 
   // Dataset-wide edits: add/rename/remove one tag, and find-and-replace inside tags. `images` is the flow's
   // own state proxy, so mutating a tile's tags here applies live to the grid (the label editor's contract).
-  // The per-tag rows use exact-string identity — they come from the stored tags themselves. Every change is undoable once: a
-  // dataset-wide edit that lands wrong has no other way back.
+  // A per-tag row is every casing of that tag, so its rename and remove apply to all of them. Every change
+  // is undoable once: a dataset-wide edit that lands wrong has no other way back.
   let {
     open = $bindable(false),
-    tagFreq,
+    tagGroups,
     images,
     media,
     findReplace = false,
     onShowTag,
   }: {
     open: boolean;
-    /** [tag, occurrence count], frequency-ranked (DataStep's tagFreq). */
-    tagFreq: [string, number][];
+    tagGroups: TagGroup[];
     images: Img[];
     media: Media;
     /** Show the find-and-replace row (its Flipt gate; off by default). */
@@ -93,30 +99,26 @@
   }
   function applyTagRename() {
     const from = renameFrom;
-    const to = splitTags(renameDraft);
     renameFrom = null;
-    if (!from || to.length === 0 || (to.length === 1 && to[0] === from)) return;
-    const touched = images.filter((img) => img.tags.includes(from));
-    record(`Renamed "${from}" to "${to.join(', ')}" on ${mediaCount(touched.length, media)}`, touched);
-    for (const img of touched) {
-      // Map in place (keeps the tag's position) and dedupe in case a target already exists.
-      const seen = new Set<string>();
-      const next: string[] = [];
-      for (const t of img.tags) {
-        for (const mapped of t === from ? to : [t]) {
-          if (!seen.has(mapped)) {
-            seen.add(mapped);
-            next.push(mapped);
-          }
-        }
-      }
-      img.tags = next;
+    if (from) renameEverywhere(from, splitTags(renameDraft), 'Renamed');
+  }
+  function renameEverywhere(from: string, to: string[], verb: string) {
+    if (to.length === 0) return;
+    const after = new Map<number, string[]>();
+    for (const img of images) {
+      const next = renameTag(img.tags, from, to);
+      if (next.length !== img.tags.length || next.some((t, i) => t !== img.tags[i])) after.set(img.id, next);
     }
+    if (after.size === 0) return;
+    const touched = images.filter((img) => after.has(img.id));
+    record(`${verb} "${from}" to "${to.join(', ')}" on ${mediaCount(touched.length, media)}`, touched);
+    for (const img of touched) img.tags = after.get(img.id)!;
   }
   function removeTagEverywhere(tag: string) {
-    const touched = images.filter((img) => img.tags.includes(tag));
+    const key = tag.toLowerCase();
+    const touched = images.filter((img) => img.tags.some((t) => t.toLowerCase() === key));
     record(`Removed "${tag}" from ${mediaCount(touched.length, media)}`, touched);
-    for (const img of touched) img.tags = img.tags.filter((t) => t !== tag);
+    for (const img of touched) img.tags = removeTag(img.tags, tag);
   }
   // Prepended — where a trigger-like tag belongs. Unlabeled images are skipped: a tag alone is not a
   // label, and auto-label would overwrite it.
@@ -125,14 +127,11 @@
     addDraft = '';
     if (tags.length === 0) return;
     const touched = images.filter(
-      (img) => img.tags.length > 0 && tags.some((t) => !img.tags.includes(t))
+      (img) => img.tags.length > 0 && prependTags(img.tags, tags) !== img.tags
     );
     if (touched.length === 0) return;
     record(`Added "${tags.join(', ')}" to ${mediaCount(touched.length, media)}`, touched);
-    for (const img of touched) {
-      const missing = tags.filter((t) => !img.tags.includes(t));
-      img.tags = [...missing, ...img.tags];
-    }
+    for (const img of touched) img.tags = prependTags(img.tags, tags);
   }
 </script>
 
@@ -221,11 +220,11 @@
         {/if}
       </form>
     {/if}
-    {#if tagFreq.length === 0}
+    {#if tagGroups.length === 0}
       <p class="font-mono text-xs text-dark-2">No tags in this dataset.</p>
     {:else}
       <ul class="m-0 flex max-h-[50vh] list-none flex-col gap-1 overflow-y-auto p-0">
-        {#each tagFreq as [tag, count] (tag)}
+        {#each tagGroups as { tag, count, variants } (tag)}
           <li class="flex items-center gap-2 rounded border border-dark-4 bg-dark-7 px-2.5 py-1.5">
             {#if renameFrom === tag}
               <form
@@ -246,8 +245,14 @@
                 </Button>
               </form>
             {:else}
-              <span class="min-w-0 flex-1 truncate font-mono text-xs text-dark-0" title={tag}>
+              <span
+                class="min-w-0 flex-1 truncate font-mono text-xs text-dark-0"
+                title={variants.join(', ')}
+              >
                 {tag}
+                {#if variants.length > 1}
+                  <span class="text-dark-2">+{variants.length - 1} casing{variants.length > 2 ? 's' : ''}</span>
+                {/if}
               </span>
               <span class="shrink-0 font-mono text-xs text-dark-2">
                 {count} / {trainableWithTags}
@@ -265,6 +270,17 @@
               >
                 <IconFilter size={13} stroke={2} />
               </button>
+              {#if variants.length > 1}
+                <button
+                  type="button"
+                  aria-label="Merge {variants.join(', ')} into {tag}"
+                  title="Write every casing as {tag}"
+                  onclick={() => renameEverywhere(tag, [tag], 'Merged casings of')}
+                  class="grid h-6 w-6 shrink-0 place-items-center rounded text-dark-2 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  <IconArrowMerge size={13} stroke={2} />
+                </button>
+              {/if}
               <button
                 type="button"
                 aria-label="Rename {tag} everywhere"

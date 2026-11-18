@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { compileFind, planReplace, type ReplaceOptions } from './tagReplace';
+import {
+  compileFind,
+  groupTags,
+  planReplace,
+  prependTags,
+  removeTag,
+  renameTag,
+  type ReplaceOptions,
+} from './tagReplace';
 
 const opts = (o: Partial<ReplaceOptions>): ReplaceOptions => ({
   find: '',
@@ -120,5 +128,48 @@ describe('planReplace guards', () => {
 
   it('accepts the same text in plain mode where it is not a pattern', () => {
     expect(compileFind(opts({ find: 'a*' })).error).toBeNull();
+  });
+});
+
+describe('groupTags', () => {
+  it('shows one row per tag across casings, named by the most-used casing, counting images not occurrences', () => {
+    const groups = groupTags([
+      { tags: ['orange hair', 'solo'] },
+      { tags: ['Orange hair', 'solo'] },
+      { tags: ['orange hair', 'Orange Hair'] },
+      { tags: [] },
+    ]);
+    expect(groups).toEqual([
+      { tag: 'orange hair', count: 3, variants: ['orange hair', 'Orange hair', 'Orange Hair'] },
+      { tag: 'solo', count: 2, variants: ['solo'] },
+    ]);
+  });
+});
+
+describe('renameTag', () => {
+  it('renames every casing in place', () => {
+    expect(renameTag(['Orange hair', 'solo'], 'orange hair', ['ginger hair'])).toEqual([
+      'ginger hair',
+      'solo',
+    ]);
+  });
+  it('renaming a group to its own name merges its casings into that casing, at the first position', () => {
+    expect(
+      renameTag(['Orange hair', 'solo', 'orange hair'], 'orange hair', ['orange hair'])
+    ).toEqual(['orange hair', 'solo']);
+  });
+  it('folds a rename target the image already carries in another casing into the typed casing', () => {
+    expect(renameTag(['dress', 'skirt'], 'skirt', ['Dress'])).toEqual(['Dress']);
+  });
+});
+
+describe('removeTag / prependTags', () => {
+  it('remove takes every casing off', () => {
+    expect(removeTag(['Smile', 'solo', 'smile'], 'smile')).toEqual(['solo']);
+  });
+  it('add skips an image that already has the tag in another casing', () => {
+    const tags = ['Mychar', 'solo'];
+    expect(prependTags(tags, ['mychar'])).toBe(tags);
+    expect(prependTags(['solo'], ['mychar', 'MyChar'])).toEqual(['mychar', 'solo']);
   });
 });

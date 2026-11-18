@@ -435,6 +435,11 @@ export interface RunParams {
   flipAugmentation: boolean;
 }
 
+/** Review-step params editable without the refund-forfeit acknowledgement: Checkpoints (a price knob) and
+ *  the negative prompt, which only shapes the preview samples. The seed also seeds training, so it stays locked. */
+const ACK_FREE_PARAMS: ReadonlySet<keyof RunParams> = new Set(['epochs', 'negativePrompt']);
+export const paramNeedsRefundAck = (field: keyof RunParams) => !ACK_FREE_PARAMS.has(field);
+
 /** What a `type="number"` input's binding hands back: the number, or '' when cleared. Stored as-is —
  *  round-tripping through `String()` makes Svelte rewrite the field on every keystroke, and a
  *  decimal being typed (`0.0`) collapses to `0` before the next digit lands. */
@@ -934,10 +939,23 @@ export function withFilterTags(filter: TagFilter, text: string, side: keyof TagF
   } as TagFilter;
 }
 
-/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
+/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present in any casing. */
 export function withTags(tags: string[], text: string): string[] {
-  const additions = splitTags(text).filter((t) => !tags.includes(t));
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const additions = splitTags(text).filter((t) => !have.has(t.toLowerCase()));
   return additions.length ? [...tags, ...additions] : tags;
+}
+
+/** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
+ *  like a comma), and Backspace in an empty box removes the last tag. */
+export function tagEntryKey(
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing'>,
+  draft: string,
+  tagCount: number
+): 'commit' | 'removeLast' | null {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) return 'commit';
+  if (e.key === 'Backspace' && draft === '' && tagCount > 0) return 'removeLast';
+  return null;
 }
 
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */
