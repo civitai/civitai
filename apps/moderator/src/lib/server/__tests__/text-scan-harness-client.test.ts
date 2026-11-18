@@ -4,15 +4,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../user-actions.service', () => ({
   callModEndpoint: vi.fn(),
   callModEndpointAs: vi.fn(),
+  readModEndpoint: vi.fn(),
 }));
 
-const { callModEndpoint, callModEndpointAs } = await import('../user-actions.service');
+const { callModEndpoint, callModEndpointAs, readModEndpoint } = await import(
+  '../user-actions.service'
+);
 const { restErrorReason } = await import('../rest-error-reason');
 const {
   LabHarnessError,
   StalePromptError,
+  composeComFaceIntent,
   composeEntities,
   getPrompts,
+  holdsMainPermission,
   isRefused,
   isRejected,
   putPrompt,
@@ -465,6 +470,57 @@ describe('scanTexts — what a run sent', () => {
   it('reads a run without a system prompt as having none', async () => {
     call.mockResolvedValue({ ok: true, body: { results: [scannedOk('t0')] } });
     expect(await scanTexts('Model', texts(1))).toMatchObject({ system: null });
+  });
+
+  it("sends a labels override as given, and none when the run keeps the profile's", async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+    }));
+    await scanTexts('Model', texts(1), { labels: ['model-com-face-intent'] });
+    expect(call.mock.calls[0][1]).toMatchObject({ labels: ['model-com-face-intent'] });
+    await scanTexts('Model', texts(1), { prompts: { base: 'B' } });
+    expect(call.mock.calls[1][1]).not.toHaveProperty('labels');
+  });
+});
+
+describe('composeComFaceIntent', () => {
+  it("keeps the main app's intent fields as sent and names a missing model", async () => {
+    const fields = [
+      { heading: 'Name', text: 'Retro' },
+      { heading: 'Trained words', text: 'retro, r2' },
+    ];
+    call.mockResolvedValue({
+      ok: true,
+      body: {
+        results: [
+          { entityId: 5, ok: true, fields, userId: 3 },
+          { entityId: 6, ok: false, error: 'entity not found' },
+        ],
+      },
+    });
+    expect(await composeComFaceIntent([5, 6])).toEqual([
+      { entityId: 5, ok: true, fields, userId: 3 },
+      { entityId: 6, ok: false, error: 'not found' },
+    ]);
+    expect(call.mock.calls[0][1]).toEqual({ action: 'composeComFaceIntent', modelIds: [5, 6] });
+  });
+});
+
+describe('holdsMainPermission', () => {
+  const read = vi.mocked(readModEndpoint);
+
+  it("reads the moderator's main-app permissions from whoami", async () => {
+    read.mockResolvedValue({ ok: true, body: { permissions: ['textScanPromptPublishIntent'] } });
+    expect(await holdsMainPermission('textScanPromptPublishIntent')).toBe(true);
+    expect(read.mock.calls[0][0]).toBe('whoami');
+    read.mockResolvedValue({ ok: true, body: { permissions: ['textScanPromptPublish'] } });
+    expect(await holdsMainPermission('textScanPromptPublishIntent')).toBe(false);
+  });
+
+  it('a failed read is a refusal', async () => {
+    read.mockResolvedValue({ ok: false, error: 'down', status: 502 } as never);
+    expect(await holdsMainPermission('textScanPromptPublishIntent')).toBe(false);
   });
 });
 

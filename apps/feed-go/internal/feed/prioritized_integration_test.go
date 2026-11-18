@@ -49,6 +49,10 @@ import (
 //	2106025  X     2106504  1      1     acceptableMinor        210650401
 //	2106026  O     2106507  1      0     managed collection     210650701 (unrated)
 //	2106027  O     2106507  2      32    managed collection     210650702 (Blocked level)
+//	2106028  O     2106502  5      1     needsReview csam       210650205
+//	2106029  O     2106502  6      1     needsReview poi        210650206
+//	2106030  X     2106504  2      1     needsReview poi        210650402
+//	2106031  X     2106504  3      1     needsReview csam       210650403
 //
 // Every image is Scanned unless the row says otherwise; no image is in ImageResourceNew but 2106014.
 func integSeedPrioritized(t *testing.T, pool *pgxpool.Pool) {
@@ -84,7 +88,11 @@ func integSeedPrioritized(t *testing.T, pool *pgxpool.Pool) {
 		  (2106024, 'p-u24', 2106901, 2106502, 4, 1, 'Scanned', NULL, true),
 		  (2106025, 'p-u25', 2106902, 2106504, 1, 1, 'Scanned', NULL, true),
 		  (2106026, 'p-u26', 2106901, 2106507, 1, 0, 'Scanned', NULL, false),
-		  (2106027, 'p-u27', 2106901, 2106507, 2, 32, 'Scanned', NULL, false);
+		  (2106027, 'p-u27', 2106901, 2106507, 2, 32, 'Scanned', NULL, false),
+		  (2106028, 'p-u28', 2106901, 2106502, 5, 1, 'Scanned', 'csam', false),
+		  (2106029, 'p-u29', 2106901, 2106502, 6, 1, 'Scanned', 'poi', false),
+		  (2106030, 'p-u30', 2106902, 2106504, 2, 1, 'Scanned', 'poi', false),
+		  (2106031, 'p-u31', 2106902, 2106504, 3, 1, 'Scanned', 'csam', false);
 		INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId") VALUES (2106014, 2106601);
 		INSERT INTO "CollectionContributor" ("userId", "collectionId", permissions) VALUES
 		  (2106903, 2106701, ARRAY['MANAGE']::"CollectionContributorPermission"[]),
@@ -121,16 +129,26 @@ func TestIntegrationPrioritizedPage(t *testing.T) {
 		{"pending, signed out", func(q *ImagesQuery) { q.Pending = true },
 			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106016, 2106017}},
 		// Pending, the owner: their unrated (2106019, and 2106026 though in a collection post),
-		// needsReview and acceptableMinor (2106024) images too; never the Blocked level (2106027).
+		// acceptableMinor (2106024) and needsReview 'poi' (2106029) images too; never their 'minor'
+		// (2106021) or 'csam' (2106028) one, nor the Blocked level (2106027).
 		{"pending, the owner", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = owner },
-			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106022, 2106016, 2106017, 2106026}},
+			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106024, 2106029, 2106022, 2106016, 2106017, 2106026}},
 		// The owner beside another creator: the owner's acceptableMinor image (2106024) shows, the other
-		// creator's (2106025) does not; the other creator's ordinary image (2106015) does.
+		// creator's (2106025) does not, nor any needsReview image of theirs (2106030, 2106031); the other
+		// creator's ordinary image (2106015) does.
 		{"pending, the owner, two creators", func(q *ImagesQuery) {
 			q.Pending = true
 			q.ViewerID = owner
 			q.PrioritizedUserIDs = []int{owner, other}
-		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106022, 2106015, 2106016, 2106017, 2106026}},
+		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106024, 2106029, 2106022, 2106015, 2106016, 2106017, 2106026}},
+		// The other creator viewing both: their own acceptableMinor (2106025) and 'poi' (2106030) images,
+		// not their 'csam' one (2106031), and none of the owner's needsReview, acceptableMinor or
+		// unrated images.
+		{"pending, the other creator, two creators", func(q *ImagesQuery) {
+			q.Pending = true
+			q.ViewerID = other
+			q.PrioritizedUserIDs = []int{owner, other}
+		}, []int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106015, 2106025, 2106030, 2106016, 2106017}},
 		// Pending, a viewer who MANAGEs the collection: the rated image of its post above their level,
 		// never its unrated (2106026) or Blocked-level (2106027) one, nor another creator's
 		// acceptableMinor image (2106024).
@@ -141,7 +159,7 @@ func TestIntegrationPrioritizedPage(t *testing.T) {
 			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106022, 2106016, 2106017}},
 		// Pending, a moderator: unrated, needsReview and acceptableMinor images, nothing above the level.
 		{"pending, a moderator", func(q *ImagesQuery) { q.Pending = true; q.ViewerID = 2106999; q.IsModerator = true },
-			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106022, 2106016, 2106017, 2106026}},
+			[]int{2106013, 2106012, 2106011, 2106010, 2106023, 2106019, 2106021, 2106024, 2106028, 2106029, 2106022, 2106016, 2106017, 2106026}},
 	}
 	for _, c := range cases {
 		q := carousel()

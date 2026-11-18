@@ -233,6 +233,8 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
+  // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
+  MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -441,8 +443,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
-  // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
-  // in `block-media-serving.ts` for what happens when Flipt is unreachable.
+  // App Block host media serving, per viewer. See `decideBlockMediaServing` in
+  // `block-media-serving.ts`, including what happens with no flag answer.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
@@ -678,6 +680,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // read here for its main-app endpoints. Evaluate with the user's Flipt context, or a segmented
   // flag matches nobody.
   TRAINING_STUDIO = 'trainingStudio',
+  // The Training Studio's v2 dataset rating (apps/training-studio/src/lib/server/dataset-rating.ts), a
+  // variant flag: a mature-level variant (s1-s4) is on; off, no match or unknown is off.
+  TRAINING_STUDIO_DATASET_RATING_V2 = 'trainingStudioDatasetRatingV2',
   // Gates sending the reporter's page capture to HQ.
   FEEDBACK_HQ_SCREENSHOT = 'feedback-hq-screenshot',
   // Gates the `feedback-hq-sync` job: a feedback row's triage status follows its HQ task. Off (or
@@ -755,6 +760,9 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
   // The App Block media brake: a flip must reach the next media fetch.
   FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE,
+  // Evaluated once per user in a pass over every user, each entity once a week: cached entries
+  // would never be read again and would push out the ones that are.
+  FLIPT_FEATURE_FLAGS.MISSED_NOTIFICATION_DIGEST,
 ]);
 
 // 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.
@@ -769,9 +777,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
 //   1. Duplicated work per pod — two wasm engines and two 60s config polls.
 //   2. Any reader that closes over "the" client sees ONE of the two. That is
 //      exactly how `civitai_app_heavy_bulkhead_active`/`_rejects` emitted zero
-//      series for 74 days while looking registered, deployed and healthy (#4173),
-//      and it is why `src/server/utils/request-bulkhead.ts` is enrolled in
-//      scripts/server-graph-watchlist.mjs. `getFliptCacheStats` below is precisely
+//      series for 74 days while looking registered, deployed and healthy (#4173).
+//      `getFliptCacheStats` below is precisely
 //      such a reader, so an unpinned client would make the eval-cache metrics a
 //      confident half-measurement — worse than their absence, because the number
 //      they exist to arbitrate (TTL-bound vs capacity-bound) is biased by the
@@ -779,13 +786,7 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
 //      far less than one cache holding all of it, which reads as "TTL-bound" and
 //      sends you to the knob that changes nothing.
 //
-// Enrolled as SHARED_STATE on `__civitaiFliptClient` in server-graph-watchlist.mjs,
-// so a future refactor that drops this pin fails that gate. Vitest cannot see this
-// (it loads each module once).
-// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this EXACT shape
-// against comment-stripped source, so an aliased handle
-// (`const g = globalThis as …; g.__civitaiFliptClient ??= …`) does NOT satisfy it —
-// the gate must be able to recognise the pin inside a bundled chunk. `??=`
+// Vitest cannot see a dropped pin (it loads each module once). `??=`
 // specifically, not `=`: `=` makes the second copy REPLACE the first's client
 // instead of adopting it, which is the original bug in one character.
 declare global {

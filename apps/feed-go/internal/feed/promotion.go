@@ -296,7 +296,7 @@ func SponsoredGalleryPost(ctx context.Context, s PromotionStore, modelID, versio
 		return nil, nil
 	}
 	if len(live) > 1 {
-		return nil, fallback.Newf("sponsored-rotation", "%d live runs", len(live))
+		return nil, fallback.Safef("sponsored-rotation", "%d live runs", len(live))
 	}
 	m, err := s.PromotionModel(ctx, modelID)
 	if err != nil {

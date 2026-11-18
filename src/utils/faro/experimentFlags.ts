@@ -58,6 +58,9 @@ export const RUM_EXPERIMENT_ATTR_PREFIX = 'exp_';
 export const RUM_EXPERIMENT_FLAGS = [
   { flag: 'genTabDeferView', attr: 'exp_gen_tab_defer_view' },
   { flag: 'modelPageDeferBelowFold', attr: 'exp_model_page_defer_below_fold' },
+  // Go feed transport cohorts, for `feed_transport` (~/utils/faro/feedTransport).
+  { flag: 'feedGoTransport', attr: 'exp_feed_go_transport' },
+  { flag: 'feedGoTransportModelGetAll', attr: 'exp_feed_go_transport_model_get_all' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
 /**

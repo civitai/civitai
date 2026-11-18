@@ -3,6 +3,12 @@ import type * as ManifestSubmitValidation from '~/server/services/blocks/manifes
 // Submit-time deep manifest validation is pinned in publish-request.submitValidation.test.ts;
 // this file's fixtures are not full manifests, so that seam is a no-op here (approve's own
 // validator is untouched).
+const { mockRevokeOrchestratorTokens } = vi.hoisted(() => ({
+  mockRevokeOrchestratorTokens: vi.fn(async (_a: { userId: number }) => undefined),
+}));
+vi.mock('~/server/services/orchestrator/civitai', () => ({
+  revokeCivitaiUserTokens: mockRevokeOrchestratorTokens,
+}));
 vi.mock('~/server/services/blocks/manifest-submit-validation', async (importOriginal) => ({
   ...(await importOriginal<typeof ManifestSubmitValidation>()),
   assertManifestValidAtSubmit: vi.fn(async () => undefined),
@@ -2179,7 +2185,11 @@ describe('approveRequest', () => {
     finalise.mockClear();
     notify.mockClear();
     mockTriggerBuild.mockClear();
-    finalise.mockImplementationOnce(async () => ({ lateHoldIds: [7] }));
+    finalise.mockImplementationOnce(async () => ({
+      lateHoldIds: [7],
+      revokedTokens: { clientId: 'appblk-hello', userIds: [5] },
+    }));
+    mockRevokeOrchestratorTokens.mockClear();
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);
     mockBundleBuffer.current = await makeValidBundle();
@@ -2194,6 +2204,8 @@ describe('approveRequest', () => {
     expect(takeDown).toHaveBeenCalledWith('hello');
     // The put-back listing is not served from a stale catalog cache.
     expect(bust).toHaveBeenCalled();
+    // The tokens the late hold revoked are dropped from the orchestrator's auth cache too.
+    expect(mockRevokeOrchestratorTokens).toHaveBeenCalledWith({ userId: 5 });
   });
 
   it('first-version happy path wires the 4 external systems in order', async () => {

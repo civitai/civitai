@@ -9,12 +9,16 @@ import {
   recordUploadKeyOwner,
   withholdUnrecordedUploadKey,
 } from '~/server/services/image-url-ownership';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export default async function imageUpload(req: NextApiRequest, res: NextApiResponse) {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: { scope: TokenScope.MediaWrite }, insufficient: 'refuse' }
+  );
   if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {

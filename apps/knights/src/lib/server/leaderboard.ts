@@ -40,11 +40,14 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
     .select([
       'p.userId',
       sql<string>`coalesce(u."username", 'Knight')`.as('username'),
-      // Players rate every level in the game, so any rated picture shows, PG through XXX (1–16). Unrated (0) and
-      // Blocked (32) fall back to the legacy `User.image`.
+      // Players rate every level in the game, so any rated picture shows, PG through XXX (1–16). Unrated (0),
+      // Blocked (32) and one under the main app's owner-hidden review holds fall back to the legacy `User.image`,
+      // which follows the same holds when it names the picture.
       sql<
         string | null
-      >`coalesce(case when pic."nsfwLevel" between 1 and 16 then pic.url end, u.image)`.as('image'),
+      >`coalesce(case when pic."nsfwLevel" between 1 and 16 and (pic."needsReview" is null or pic."needsReview" not in ('csam', 'minor')) then pic.url end, case when pic."needsReview" in ('csam', 'minor') and strpos(replace(lower(u.image), '%2d', '-'), lower(pic.url)) > 0 then null else u.image end)`.as(
+        'image'
+      ),
       'p.rankType',
       'p.exp',
       sql<string>`count(*)`.as('graded'),
@@ -63,6 +66,7 @@ export async function queryBoard(db: Kysely<DB>, now: Date): Promise<Board> {
       'u.image',
       'pic.url',
       'pic.nsfwLevel',
+      'pic.needsReview',
       'p.rankType',
       'p.exp',
     ])

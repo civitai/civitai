@@ -973,6 +973,24 @@ jobs:
           # A re-run of a failed shard uploads again under the same name.
           overwrite: true
 
+      # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
+      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
+      # own `test-times-` name so no download in this workflow can match it — `unit-verify`
+      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
+      # missing report is already failed, by name, by this suite's own ledger step.
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        # Telemetry only: a failed upload must never turn a green suite red.
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-unit-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: unit-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
+
       # The registry adapter's bundle, and its check that every external it loads loads under
       # this Node (`scripts/build-registry-adapter.mjs`), which no other job builds. It takes
       # seconds, so one shard pays it.
@@ -1127,6 +1145,21 @@ jobs:
       - name: Assert every package suite actually ran
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
+
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-packages-a${{ github.run_attempt }}
+          path: packages-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
 
   component:
     name: Component + geometry tests (${{ matrix.shard }}/3)
@@ -1328,6 +1361,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
+      - name: Upload test timings
+        if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-component-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/component-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
+
       # ── GEOMETRY: REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ──────────────────
       #
       # The browser-mode `geometry` project — real Chromium, the real app cascade, an explicit
@@ -1463,6 +1511,21 @@ jobs:
             process.exit(1);
           }
           JS
+
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
+      - name: Upload test timings
+        if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
+        # Telemetry: never turns a PR red. On a push to main a failed upload fails the job,
+        # so a broken uploader shows rather than reading green (main-branch-ci-coverage.test.ts).
+        continue-on-error: ${{ github.event_name != 'push' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-times-geometry-a${{ github.run_attempt }}
+          path: geometry-report.json
+          if-no-files-found: ignore
+          retention-days: 8
+          # One artifact per attempt (`-a<run_attempt>`, never overwritten): a failed attempt
+          # and its passing re-run on the same commit is exactly the flake the reader counts.
 
       # The only place a report-only red stays visible on a PR: see the geometry paragraph above.
       # Reads each report-only step's `outcome` (what it did) rather than its `conclusion` (what

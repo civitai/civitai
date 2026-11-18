@@ -20,12 +20,6 @@ const getAllHiddenForUser = vi.fn(async () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: (...a: unknown[]) => getAllHiddenForUser(...(a as [])),
 }));
-// The service imports the provenance-marker const from block-image-upload.service;
-// stub it so the test doesn't pull that module's env/s3 graph.
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-}));
-
 import {
   getBlockGatedImagesByIds,
   resolveViewerBrowsingLevel,
@@ -59,6 +53,8 @@ const clean = (id: number, over: Partial<Record<string, unknown>> = {}) => ({
   tosViolation: false,
   acceptableMinor: false,
   blockedFor: null,
+  // The row carries THIS app's published key (the SQL's `viaPublished`).
+  viaPublished: true,
   ...over,
 });
 

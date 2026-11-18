@@ -125,6 +125,7 @@ export async function createImageIngestionRequest({
   wait,
   priority = 'normal',
   type = 'image',
+  forceImageScanning = false,
 }: {
   imageId: number;
   url: string;
@@ -132,6 +133,8 @@ export async function createImageIngestionRequest({
   wait?: number;
   priority?: Priority;
   type?: MediaType;
+  /** Only the imageScanning lane reports face detections, which a search upload's gate needs. */
+  forceImageScanning?: boolean;
 }) {
   // 🔴 This is the funnel for the image-scan INGESTION path. `getEdgeUrl` forwards
   // absolute http(s)/blob: URLs through unmodified, so without this guard every path that
@@ -156,10 +159,9 @@ export async function createImageIngestionRequest({
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
   const externalId = randomUUID();
-  const useImageScanning = await isFlipt(
-    FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING,
-    String(imageId)
-  );
+  const useImageScanning =
+    forceImageScanning ||
+    (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING, String(imageId)));
   const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
 
   const steps =

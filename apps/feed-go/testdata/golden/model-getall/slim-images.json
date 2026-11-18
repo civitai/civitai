@@ -324,7 +324,7 @@
       },
       "packed": "3gADp21vZGVsSWTNE5GmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,
@@ -750,6 +750,7 @@
         },
         "v": 1
       }
-    }
+    },
+    "writes": {}
   }
 }
