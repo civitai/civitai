@@ -447,8 +447,8 @@ export async function blockImage({
   if (!updated) {
     // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
     // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
-    // Only the CSAM entry: a TOS entry is best-effort and has no retry to honour.
-    if (state?.held && state.removedForCsam)
+    // A TOS entry is best-effort, with no retry to honour.
+    if (state?.removedForCsam)
       await writeBlockBlocklistEntry(img, { imageId, actorUserId: userId, csam: true }).catch(
         (e: unknown) => {
           if (e instanceof CsamBlocklistWriteError) e.skipped = true;
