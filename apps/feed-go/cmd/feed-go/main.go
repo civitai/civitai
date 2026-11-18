@@ -224,7 +224,7 @@ func run(log *slog.Logger) error {
 		Verifier:            verifier,
 		Revocation:          &auth.Revocation{Redis: sys, Timeout: cfg.SysReadTimeout, Markers: markers, OnDegraded: degraded.Report},
 		Sessions:            packed,
-		CookieNames:         cfg.CookieNames(),
+		CookieNames:         cfg.CookieNames,
 		ModerationAccountID: cfg.ModerationAccountID,
 	}
 	deps := &feed.Deps{

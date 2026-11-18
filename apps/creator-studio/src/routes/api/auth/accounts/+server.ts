@@ -8,6 +8,6 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ request, locals }) => {
   if (!locals.user) return json({ accounts: [] });
   const cookie = request.headers.get('cookie') ?? '';
-  const accounts = await createDeviceAccountClient().list(cookie);
+  const accounts = await createDeviceAccountClient().list(cookie, null);
   return json({ accounts });
 };

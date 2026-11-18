@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,16 +27,17 @@ type Config struct {
 	// DATAPACKET_DATABASE_RO_URL, else DATABASE_REPLICA_URL.
 	DatabaseURL string
 
-	RedisURL         string // cache cluster (REDIS_URL)
-	RedisSysURL      string // system redis (REDIS_SYS_URL): revocation registry, browsing addons
-	RedisCluster     bool   // REDIS_URL is a cluster
-	CacheKeyPrefix   string // CACHE_KEY_NAMESPACE + ":" outside production
-	ImageQueryCache  bool   // IMAGE_QUERY_CACHING
-	AuthIssuer       string // AUTH_JWT_ISSUER
-	AuthJWKSURI      string // AUTH_JWKS_URI
-	AuthRequireIat0  bool   // AUTH_REQUIRE_IAT0
-	AuthCookieMode   string // AUTH_SESSION_COOKIE_MODE: host | shared (default)
-	AuthLegacyRead   bool   // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	RedisURL         string            // cache cluster (REDIS_URL)
+	RedisSysURL      string            // system redis (REDIS_SYS_URL): revocation registry, browsing addons
+	RedisCluster     bool              // REDIS_URL is a cluster
+	CacheKeyPrefix   string            // CACHE_KEY_NAMESPACE + ":" outside production
+	ImageQueryCache  bool              // IMAGE_QUERY_CACHING
+	AuthIssuer       string            // AUTH_JWT_ISSUER
+	AuthJWKSURI      string            // AUTH_JWKS_URI
+	AuthRequireIat0  bool              // AUTH_REQUIRE_IAT0
+	AuthCookieMode   string            // AUTH_SESSION_COOKIE_MODE: host | shared (default)
+	AuthLegacyRead   bool              // AUTH_LEGACY_READ (default true): read the shared-slot cookie
+	AuthSiteModes    map[string]string // AUTH_SESSION_COOKIE_MODE_BY_SITE: registrable domain -> host | shared
 	SysReadTimeout   time.Duration
 	FallbackURL      string // FEED_GO_FALLBACK_URL: the Node app, for everything not served here
 	Hosts            browsing.HostColors
@@ -164,6 +166,7 @@ func Load() (*Config, error) {
 		AuthRequireIat0:  boolEnv("AUTH_REQUIRE_IAT0", false),
 		AuthCookieMode:   env("AUTH_SESSION_COOKIE_MODE", "shared"),
 		AuthLegacyRead:   boolEnv("AUTH_LEGACY_READ", true),
+		AuthSiteModes:    SiteModes(os.Getenv("AUTH_SESSION_COOKIE_MODE_BY_SITE")),
 		FallbackURL:      os.Getenv("FEED_GO_FALLBACK_URL"),
 		CreatorPromotion: os.Getenv("FEED_GO_CREATOR_PROMOTIONS"),
 		LazyPostImages:   boolEnv("FEED_GO_LAZY_POST_IMAGES", true),
@@ -251,25 +254,75 @@ func Load() (*Config, error) {
 	return c, nil
 }
 
-// CookieNames returns the session cookie names to read, in the order getHubSession reads them.
-func (c *Config) CookieNames() []string {
+// CookieNames returns the session cookie names to read for a request to reqHost, in the order getHubSession
+// reads them.
+func (c *Config) CookieNames(reqHost string) []string {
 	secure := strings.HasPrefix(c.AuthIssuer, "https://")
 	if !secure {
 		return []string{"civ-token"}
 	}
+	mode, legacyRead := c.ModeFor(reqHost)
 	shared, host := "__Secure-civ-token", "__Host-civ-token"
 	var names []string
-	if c.AuthCookieMode == "host" {
+	if mode == "host" {
 		names = append(names, host)
-		if c.AuthLegacyRead {
+		if legacyRead {
 			names = append(names, shared)
 		}
 		return names
 	}
-	if c.AuthLegacyRead {
+	if legacyRead {
 		names = append(names, shared)
 	}
 	return append(names, host)
+}
+
+// SiteModes parses AUTH_SESSION_COOKIE_MODE_BY_SITE as siteCookieMode (packages/civitai-auth) does: comma-separated
+// `<registrable domain>:<host|shared>` entries; an entry with any other mode is ignored.
+func SiteModes(v string) map[string]string {
+	out := map[string]string{}
+	if v == "" {
+		return out
+	}
+	for _, entry := range strings.Split(v, ",") {
+		parts := strings.Split(entry, ":")
+		if len(parts) < 2 {
+			continue
+		}
+		site, mode := strings.ToLower(strings.TrimSpace(parts[0])), strings.TrimSpace(parts[1])
+		if site != "" && (mode == "host" || mode == "shared") {
+			out[site] = mode
+		}
+	}
+	return out
+}
+
+var ipv4 = regexp.MustCompile(`^\d+\.\d+\.\d+\.\d+$`)
+
+// registrableDomain is registrableDomain (packages/civitai-auth) of a Host header: its last two labels, port
+// ignored; "" for localhost and IPs.
+func registrableDomain(host string) string {
+	h := strings.ToLower(strings.Split(host, ":")[0])
+	if h == "" || h == "localhost" || ipv4.MatchString(h) {
+		return ""
+	}
+	parts := strings.Split(h, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+// ModeFor is sessionCookieMode(host) and legacyCookieReadEnabled(host): a site listed in
+// AUTH_SESSION_COOKIE_MODE_BY_SITE takes its own mode (a `host` site never reads the shared slot), any other
+// AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ.
+func (c *Config) ModeFor(host string) (mode string, legacyRead bool) {
+	if site := registrableDomain(host); site != "" {
+		if m, ok := c.AuthSiteModes[site]; ok {
+			return m, m == "shared"
+		}
+	}
+	return c.AuthCookieMode, c.AuthLegacyRead
 }
 
 // AllowedOriginHosts builds the origin allow-list the app's isAcceptableOrigin checks: the server

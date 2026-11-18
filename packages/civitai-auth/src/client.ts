@@ -5,7 +5,16 @@
 export { hubLoginUrl, hubLogoutUrl, type HubLoginUrlOptions } from './providers';
 export * from './constants';
 export { safeReturnPath } from './return-path';
-export { allCookieNames, readSessionToken, sessionCookieMode } from './cookies';
+export {
+  allCookieNames,
+  hostOnlySite,
+  isSecureCookie,
+  otherSlotExpiries,
+  readSessionToken,
+  registrableDomain,
+  sessionCookieMode,
+  sessionCookieNameForSlot,
+} from './cookies';
 
 /** A linked account on the browser's device set — display only (mirrors the hub's `/api/auth/accounts` row). */
 export interface DeviceAccountSummary {

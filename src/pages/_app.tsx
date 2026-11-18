@@ -66,6 +66,7 @@ import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsen
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
 import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
+import { appendSetCookie } from '~/server/utils/set-cookie';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -829,21 +830,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { checkPreviewAccess } = await import('~/server/auth/preview-access');
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
+  let guardCookies: string[] = [];
   if (!guardTo && typeof window === 'undefined') {
     const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
-    guardTo =
-      sharedSlotNavigationSyncUrl({
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        cookies,
-      }) ?? undefined;
+    const sync = sharedSlotNavigationSyncUrl({
+      method: request.method,
+      url: request.url,
+      headers: request.headers,
+      cookies,
+    });
+    if (sync) [guardTo, guardCookies] = [sync.location, sync.setCookies];
   }
   // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
   // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
   // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
   // Pinned by `app-guard-redirect-once.test.ts`.
   if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
+    for (const cookie of guardCookies) appendSetCookie(appContext.ctx.res, cookie);
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
   }

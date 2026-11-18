@@ -22,7 +22,7 @@ export default AuthedEndpoint(
     const cookie = req.headers.cookie ?? '';
 
     if (req.method === 'DELETE') {
-      const result = await impersonation.exit(cookie);
+      const result = await impersonation.exit(cookie, req.headers.host);
       // Forward the hub's REAL status + reason (e.g. 400 "not an impersonation session", 404, 500) instead of
       // masking every failure as a generic message. status 0 = hub unreachable → 502.
       if (!result.ok) {
@@ -39,7 +39,7 @@ export default AuthedEndpoint(
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
-    const minted = await impersonation.impersonate(cookie, parsed.data.userId);
+    const minted = await impersonation.impersonate(cookie, parsed.data.userId, req.headers.host);
     if (!minted.ok) {
       return res
         .status(minted.status || 502)

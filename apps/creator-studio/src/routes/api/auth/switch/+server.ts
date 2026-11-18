@@ -22,16 +22,16 @@ export const POST: RequestHandler = async ({ request, url, locals }) => {
   if (!Number.isInteger(userId) || userId <= 0) throw error(400, 'Invalid account.');
 
   const cookie = request.headers.get('cookie') ?? '';
-  const result = await deviceAccounts.switch(cookie, userId);
+  const result = await deviceAccounts.switch(cookie, userId, null);
   // The hub declined: the target isn't linked to this device, has aged out, or the hub is unreachable.
   if (!result) throw error(403, 'Could not switch to that account.');
 
   const jar = parseCookieHeader(cookie);
   const headers = new Headers({ 'content-type': 'application/json' });
   for (const c of spokeSessionCookies(result.token, {
-    slot: sessionCookieMode(),
+    slot: sessionCookieMode(null),
     hostname: url.hostname,
-    deviceId: readDeviceId(jar)?.value,
+    deviceId: readDeviceId(jar, { host: null })?.value,
     requestCookies: jar,
   })) {
     headers.append('set-cookie', c);

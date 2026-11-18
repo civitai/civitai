@@ -172,8 +172,7 @@ func (fx *Fixture) Engine() *beacon.Engine {
 		TrackerEnabled: fx.TrackerEnabled,
 		HubOrigin:      "https://auth.example.test",
 		UpdateAgeMs:    86_400_000,
-		CookieMode:     "shared",
-		LegacyRead:     true,
+		ModeFor:        func(string) (string, bool) { return "shared", true },
 		Now:            func() time.Time { return GoldenNow },
 	}
 }
