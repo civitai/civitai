@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 
 /**
@@ -77,17 +76,24 @@ describe('🔴 the per-viewer gate tells xxx from x', () => {
     expect(matureRatingAllowed('xxx', allowed)).toBe(false);
   });
 
-  it('the store’s SQL filter hides exactly the ratings the viewer may not see', async () => {
-    const { subListingMatureFilter } = await import('~/server/services/blocks/app-listing.service');
-    const hidden = (allowed: { r: boolean; x: boolean; xxx: boolean }) => {
-      const sql = subListingMatureFilter(allowed);
-      return sql.sql.includes('NOT IN') ? [...sql.values] : sql.sql;
-    };
-    expect(hidden({ r: true, x: true, xxx: false })).toEqual(['xxx']);
-    expect(hidden({ r: true, x: false, xxx: true })).toEqual(['x']);
-    expect(hidden({ r: false, x: false, xxx: false })).toEqual(['r', 'x', 'xxx']);
-    expect(hidden({ r: true, x: true, xxx: true })).toBe('TRUE');
-    expect(subListingMatureFilter({ r: false, x: true, xxx: true })).toBeInstanceOf(Prisma.Sql);
+  it('the store’s item-card filter hides xxx unless the viewer’s level includes XXX', async () => {
+    const { subListingMatureFilter, listingMatureFilter } = await import(
+      '~/server/services/blocks/app-listing.service'
+    );
+    const text = (allowed: { r: boolean; x: boolean; xxx: boolean }) =>
+      subListingMatureFilter(allowed).sql.replace(/\s+/g, ' ');
+    expect(text({ r: true, x: true, xxx: false })).toBe(
+      "(TRUE) AND COALESCE(LOWER(s.content_rating), '') <> 'xxx'"
+    );
+    expect(text({ r: true, x: true, xxx: true })).toBe('TRUE');
+    expect(text({ r: false, x: false, xxx: false })).toBe(
+      "(COALESCE(LOWER(s.content_rating), '') NOT IN ('r', 'x')) AND COALESCE(LOWER(s.content_rating), '') <> 'xxx'"
+    );
+    expect(text({ r: true, x: false, xxx: true })).toBe(
+      "COALESCE(LOWER(s.content_rating), '') <> 'x'"
+    );
+    // An app (listing) is never rated xxx: its filter is unchanged.
+    expect(listingMatureFilter({ r: true, x: true, xxx: false }).sql).toBe('TRUE');
   });
 
   it('a registry audience never admits xxx: it cannot say whether its user does', async () => {

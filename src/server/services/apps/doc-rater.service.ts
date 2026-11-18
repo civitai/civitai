@@ -185,6 +185,7 @@ type ScanRow = {
 /** The live and shadow verdict rows of these rating ids, by `<row entity type>:<id>`. */
 async function scanRows(ids: number[]): Promise<Map<string, ScanRow>> {
   if (!ids.length) return new Map();
+  // primary: a scan submitted moments ago must read as owned, or a lagging replica would make the pass resubmit it
   const rows = await dbWrite.entityModeration.findMany({
     where: {
       entityType: {
