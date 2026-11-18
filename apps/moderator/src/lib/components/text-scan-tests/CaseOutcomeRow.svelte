@@ -10,7 +10,8 @@
     describeVerdict,
     type VerdictSource,
   } from '$lib/text-scan-lab/labels';
-  import { LAB_LABELS, type LabLabel } from '$lib/text-scan-lab/types';
+  import type { LabLabel } from '$lib/text-scan-lab/types';
+  import { caseLabels } from '$lib/text-scan-tests/intent-set';
   import { scoredLabels, type Expected, type FlagLabel } from '$lib/text-scan-tests/expected';
   import type { Flip } from '$lib/text-scan-tests/score';
   import ExpectedEditor from './ExpectedEditor.svelte';
@@ -147,7 +148,7 @@
       <input type="hidden" name="caseId" value={row.caseId} />
       <input type="hidden" name="note" value={row.note ?? ''} />
       <ExpectedEditor
-        labels={LAB_LABELS[row.entityType]}
+        labels={caseLabels(setId, row.entityType)}
         bind:expected
         idPrefix="case-{row.caseId}"
       />

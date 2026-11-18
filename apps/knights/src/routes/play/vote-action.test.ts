@@ -129,6 +129,14 @@ describe('vote action', () => {
     });
   });
 
+  it('names the refusal reason, so the page can tell an item that moved on from a mistake', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+    expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
+      status: 409,
+      data: { reason: 'not-open', message: expect.stringMatching(/settled/i) },
+    });
+  });
+
   it('tells a player whose vote would weigh nothing why it was not counted', async () => {
     castVote.mockResolvedValue({ status: 'rejected', reason: 'no-weight' });
     expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({

@@ -66,6 +66,9 @@ func (e *ServerError) Error() string {
 	return fmt.Sprintf("clickhouse: code %d (http %d): %s", e.Code, e.Status, e.Message)
 }
 
+// HTTPStatus is the response's HTTP status (fallback.Class reads it as http_4xx / http_5xx).
+func (e *ServerError) HTTPStatus() int { return e.Status }
+
 // IsServerTimeout is whether err is ClickHouse's TIMEOUT_EXCEEDED (code 159): the server stopped the
 // query at its max_execution_time.
 func IsServerTimeout(err error) bool {

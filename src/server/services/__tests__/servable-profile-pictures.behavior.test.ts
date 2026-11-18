@@ -70,7 +70,8 @@ beforeAll(async () => {
       (${FLAGGED}, 'flagged', ${FLAGGED_AUTHOR}, 'Scanned', 'csam'),
       (40, 'pending', 4, 'Pending', NULL),
       (50, 'other-review', 5, 'Scanned', 'other-review'),
-      (60, 'error', 6, 'Error', NULL);
+      (60, 'error', 6, 'Error', NULL),
+      (110, 'minor', 11, 'Scanned', 'minor');
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevelLocked") VALUES
       (70, 'pending-mod-rated', 7, 'Pending', true);
     INSERT INTO "Image" (id, url, "userId", ingestion, "nsfwLevel") VALUES
@@ -144,9 +145,10 @@ describe('servable profile pictures', () => {
       80,
       90,
       100,
+      110,
     ]);
 
-    // Unscanned (Pending, Error) and unrated pictures are left out; a moderator's rating stands in
+    // Unscanned (Pending, Error), unrated, csam- and minor-held pictures are left out; a moderator's rating stands in
     // for a scan.
     expect(pictureUrls(pictures)).toEqual([
       'clean',

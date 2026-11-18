@@ -82,6 +82,19 @@ export function labelOptions(card: ModelCard): LabelType[] {
   return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
 }
 
+/** The label mode to carry into the Data step. The flow's `labelMode` starts as 'tag', so a first pick of a
+ *  caption-default `bothLabels` card must not inherit it; but labels already typed in the current mode, or a
+ *  pick on the same model, are kept. */
+export function labelModeForCard(
+  previous: ModelCard | null,
+  card: ModelCard,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType {
+  if (!labelOptions(card).includes(current)) return card.label;
+  return previous?.type === card.type || datasetLabeled ? current : card.label;
+}
+
 // Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
 // prepended to a label that doesn't already contain it, and highlighted in place where it does. Matching
 // is case-insensitive.
@@ -434,6 +447,11 @@ export interface RunParams {
   noiseOffset: NumericInput;
   flipAugmentation: boolean;
 }
+
+/** Review-step params editable without the refund-forfeit acknowledgement: Checkpoints (a price knob) and
+ *  the negative prompt, which only shapes the preview samples. The seed also seeds training, so it stays locked. */
+const ACK_FREE_PARAMS: ReadonlySet<keyof RunParams> = new Set(['epochs', 'negativePrompt']);
+export const paramNeedsRefundAck = (field: keyof RunParams) => !ACK_FREE_PARAMS.has(field);
 
 /** What a `type="number"` input's binding hands back: the number, or '' when cleared. Stored as-is —
  *  round-tripping through `String()` makes Svelte rewrite the field on every keystroke, and a
@@ -821,10 +839,17 @@ export function submittedPrompts(texts: string[]): string[] {
  *  Select step won't mix them, since the two datasets don't share a shape. */
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
-/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
- *  its label format and on whether it is pairs. */
-export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
-  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+/** The label mode one dataset can use for every run in `cards`, or null when they can't share one. */
+export function sweepLabelMode(
+  cards: ModelCard[],
+  previous: ModelCard | null,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType | null {
+  const lead = cards[0];
+  if (!lead || cards.some((c) => !!c.pairs !== !!lead.pairs)) return null;
+  const mode = labelModeForCard(previous, lead, current, datasetLabeled);
+  return cards.every((c) => labelOptions(c).includes(mode)) ? mode : null;
 }
 
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
@@ -934,10 +959,29 @@ export function withFilterTags(filter: TagFilter, text: string, side: keyof TagF
   } as TagFilter;
 }
 
-/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present. */
+/** `tags` plus the tags typed or pasted in `text`, in order, skipping any already present in any casing. */
 export function withTags(tags: string[], text: string): string[] {
-  const additions = splitTags(text).filter((t) => !tags.includes(t));
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  const additions = splitTags(text).filter((t) => {
+    const key = t.toLowerCase();
+    if (have.has(key)) return false;
+    have.add(key);
+    return true;
+  });
   return additions.length ? [...tags, ...additions] : tags;
+}
+
+/** What a key does in the tag-entry box: Enter adds the typed tags, Shift+Enter keeps a newline (it splits
+ *  like a comma), and Backspace in an empty box removes the last tag. */
+export function tagEntryKey(
+  e: Pick<KeyboardEvent, 'key' | 'shiftKey' | 'isComposing' | 'keyCode'>,
+  draft: string,
+  tagCount: number
+): 'commit' | 'removeLast' | null {
+  // keyCode 229: Safari reports the Enter that confirms an IME conversion with isComposing false.
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) return 'commit';
+  if (e.key === 'Backspace' && draft === '' && tagCount > 0) return 'removeLast';
+  return null;
 }
 
 /** labelString's inverse — one definition so a mode round-trip can't corrupt labels. */

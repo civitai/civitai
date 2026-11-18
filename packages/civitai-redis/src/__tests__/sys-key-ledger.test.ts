@@ -216,6 +216,7 @@ const SYS_KEY_LEDGER = [
   'training:status',
   'training:studio-auto-label-daily',
   'training:studio-dataset-rating-daily',
+  'training:studio-dataset-rating-sent',
   'urllists',
   'webhooks:image-scan:job-reason',
   'webhooks:model-file-scan:processed',

@@ -135,7 +135,7 @@ func (s *Sources) officialFetch(ctx context.Context) ([]OfficialModel, error) {
 		if p == nil {
 			c.observe(MissOfficialModels, "error", 1)
 		}
-		return nil, fallback.Newf("official-models-miss-failed", "%v", err)
+		return nil, fallback.Wrap("official-models-miss-failed", err)
 	}
 	if p == nil {
 		c.observe(MissOfficialModels, "computed", 1)

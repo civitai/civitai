@@ -444,7 +444,7 @@ export async function bulkSetUsageControl(
   cookie: string,
   canSetGenerationOnly: boolean
 ): Promise<
-  | { ok: true; updated: number; migrated: number; migrationFailures: number }
+  | { ok: true; updated: number; skipped: number; migrated: number; migrationFailures: number }
   | { ok: false; status: number; error: string }
 > {
   if (versionIds.length === 0)
@@ -454,15 +454,16 @@ export async function bulkSetUsageControl(
     return { ok: false, status: 403, error: GENERATION_ONLY_HINT };
 
   const gates = await readGates(versionIds);
-  const migrations = planUsageControlMigrations(gates, usageControl);
 
   // Usage control first: the main-app endpoint validates a gate against the STORED usage control, so
   // writing the terms before it would have a generation-only save rejected for still carrying a download
   // tier. Ownership is in the WHERE — versions the caller doesn't own simply don't update.
-  const result = await dbWrite
+  const updatedRows = await dbWrite
     .updateTable('ModelVersion')
     .set({ usageControl })
     .where('id', 'in', versionIds)
+    // Internal/External generation is moderator-managed; those versions are left as they are.
+    .where('usageControl', 'in', ['Download', 'Generation'])
     .where('modelId', 'in', (eb) =>
       eb
         .selectFrom('Model')
@@ -470,7 +471,14 @@ export async function bulkSetUsageControl(
         .where('userId', '=', userId)
         .where('deletedAt', 'is', null)
     )
-    .executeTakeFirst();
+    .returning('id')
+    .execute();
+  const updatedIds = new Set(updatedRows.map((r) => r.id));
+  // Only versions this write matched get their price moved; moderator-managed ones keep their gate.
+  const migrations = planUsageControlMigrations(
+    gates.filter((g) => updatedIds.has(g.entityId)),
+    usageControl
+  );
 
   // Then move each gated version's price onto the surviving tier, one main-app write each (it owns the
   // gate's side effects). Ungated versions cost nothing here.
@@ -499,7 +507,8 @@ export async function bulkSetUsageControl(
 
   return {
     ok: true,
-    updated: Number(result.numUpdatedRows ?? 0),
+    updated: updatedIds.size,
+    skipped: versionIds.length - updatedIds.size,
     migrated,
     migrationFailures,
   };
@@ -529,6 +538,8 @@ export async function setUsageControl(
     .updateTable('ModelVersion')
     .set({ usageControl })
     .where('id', '=', versionId)
+    // Internal/External generation is moderator-managed; those versions are left as they are.
+    .where('usageControl', 'in', ['Download', 'Generation'])
     .where('modelId', 'in', (eb) =>
       eb
         .selectFrom('Model')

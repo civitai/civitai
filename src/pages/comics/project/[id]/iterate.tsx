@@ -11,6 +11,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
+  notifyIfReferenceImagesSkipped,
 } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
@@ -153,6 +154,7 @@ function ComicIteratePage() {
 
   // ── Mutations ──
   const iterateGenerateMutation = trpc.comics.iterateGenerate.useMutation({
+    onSuccess: notifyIfReferenceImagesSkipped,
     onError: (error) => showErrorNotification({ error, title: 'Failed to generate' }),
   });
 
@@ -161,6 +163,7 @@ function ComicIteratePage() {
   });
 
   const createPanelFromImageMutation = trpc.comics.enhancePanel.useMutation({
+    onSuccess: notifyIfReferenceImagesSkipped,
     onError: (error) => showErrorNotification({ error, title: 'Failed to create panel' }),
   });
 
