@@ -101,7 +101,7 @@ vi.mock('$lib/server/db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
   return { dbRead: capturingDb([], []), dbWrite: capturingDb([], []) };
 });
-vi.mock('$lib/server/redis', () => ({ getSysRedis: () => redis }));
+vi.mock('$lib/server/redis', () => ({ getRedis: () => redis, getSysRedis: () => redis }));
 vi.mock('$lib/server/auth', () => ({
   guard: { check: guardCheck },
   isRevoked,

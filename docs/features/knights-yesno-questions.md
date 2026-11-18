@@ -98,6 +98,7 @@ votes, never player rows.
   left, the slot is a rating; with no rating to show, a question is shown whenever there is one. A share of 0 switches questions
   off; any other value leaves the cadence as it is. The share comes from `yesNoShare` on `system:knights-v2-sources`, set on the
   moderator app's Knights of New Order Config page (read by Knights at most every 30 s), else from `KNIGHTS_YESNO_SHARE`.
+  The stretch and the max age below work the same way ([game settings](knights-sources.md#game-settings)).
 - A stretch is `KNIGHTS_YESNO_STRETCH` questions of one axis in a row (default 8); the next axis starts with a banner. The player's
   latest yes/no answers in the ledger say where they are in a stretch, so no state is kept. `GET /play/next` hands out up to 10 items at once, so each pick also counts the yes/no questions already handed out ahead of it and not yet on the ledger (`ahead` in `pickYesNo`): the stretch cap and the new-category banner hold across the buffer, and the banner is on the first question of a stretch only.
 - A question is offered only to a rank that may judge Knight items, on an image `servableImage` accepts, if it is `Open`, if the

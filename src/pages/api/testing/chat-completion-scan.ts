@@ -385,7 +385,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   const action = (req.body as { action?: unknown } | undefined)?.action;
   // Both return entity text and author ids: only the attributed, audited endpoint serves them.
-  if (action === 'composeEntities' || action === 'sampleShadow')
+  if (
+    action === 'composeEntities' ||
+    action === 'composeComFaceIntent' ||
+    action === 'sampleShadow'
+  )
     return res.status(403).json({
       error: `${action} is only served by /api/mod/text-scan, which records who read what.`,
     });

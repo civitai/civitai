@@ -54,6 +54,7 @@ export type NotifyResult = {
  * A type added later never counts against them. One grouped query over the (userId, type) index, for
  * the candidates only, rather than a subquery per player in every candidate query.
  */
+// Copy of `silencedUsersAmong` in src/server/notifications/silence-check-ages.ts; change both.
 async function silencedAmong(
   db: Kysely<DB>,
   ids: number[],

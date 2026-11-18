@@ -21,6 +21,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 /**
  * GET /api/v1/posts/[id] — public post with its images.
@@ -43,7 +44,9 @@ export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(214748364
 
 const servedAvailability = new Set<Availability>([Availability.Public, Availability.Unsearchable]);
 
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: { anyOf: [TokenScope.MediaRead] } });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -143,4 +146,4 @@ export default MixedAuthEndpoint(async function handler(
   } finally {
     releaseSlot?.();
   }
-});
+}

@@ -39,7 +39,7 @@ export type ApprenticeDeps = {
   /** Starts the career reset an answer's third smite makes due; without it the tick does. */
   resetPlayer?: ResetDeps['resetPlayer'];
   /** Without it, smites are on. */
-  settings?: () => ApprenticeSettings;
+  settings?: () => ApprenticeSettings | Promise<ApprenticeSettings>;
 };
 
 export type ItemKind = 'rating' | 'yesno';
@@ -392,7 +392,7 @@ export async function answerApprentice(
 ): Promise<AnswerResult> {
   const { userId, kind, referenceId, version, answer } = input;
   const now = deps.now();
-  const smites = deps.settings?.().smites ?? true;
+  const smites = (await deps.settings?.())?.smites ?? true;
 
   const result = await db.transaction().execute(async (trx): Promise<TxResult> => {
     // The player row lock serialises one player's answers, so the item check below and the insert cannot interleave.

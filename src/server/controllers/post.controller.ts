@@ -29,6 +29,7 @@ import { sendMessagesToCollaborators } from '~/server/services/entity-collaborat
 import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import {
   getRequestBrowsingLevel,
+  requestServableLevels,
   resolveRequestBrowsingLevels,
   viewerBrowsingLevel,
 } from '~/server/utils/browsing-level';
@@ -808,7 +809,11 @@ export const reorderPostImagesHandler = async ({
   // Text items move only with their flag; without it a reorder moves images alone.
   if (input.items && !ctx.features.storylineText) throw throwAuthorizationError();
   try {
-    return await reorderPostImages({ ...input });
+    return await reorderPostImages({
+      ...input,
+      user: ctx.user,
+      servableLevels: requestServableLevels(ctx),
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

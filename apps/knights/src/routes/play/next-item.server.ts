@@ -68,12 +68,14 @@ export async function pickItem(
   }
   if (!feed) return null;
 
+  const hiddenConfig = await hiddenSettings();
   const hidden = await pickHiddenCheck(db, {
     userId,
     rank,
     secret,
     questionKey: feed.question.key,
-    rate: hiddenSettings().rate,
+    rate: hiddenConfig.rate,
+    probationShare: hiddenConfig.probationShare,
     exclude: skipped?.hidden,
     slot,
   });

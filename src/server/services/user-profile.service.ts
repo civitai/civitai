@@ -194,7 +194,7 @@ export const getUserWithProfile = async ({
             user.profilePicture ??
               (viaKysely ? null : await getProfilePictureOfUser(dbWrite, user.id))
           )
-        : // csam is already dropped upstream for every viewer.
+        : // A held picture is already dropped upstream for every viewer.
           servableProfilePicture(
             user.profilePicture,
             null,

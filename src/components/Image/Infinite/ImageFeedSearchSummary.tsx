@@ -1,4 +1,5 @@
-import { Alert, Anchor, Button, Pill, Text, Title } from '@mantine/core';
+import { Alert, Anchor, Button, Chip, Pill, Text, Title } from '@mantine/core';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -24,6 +25,8 @@ type Props = {
   correctedQuery?: string;
   filters: Parameters<typeof ignoredWhileSearching>[0];
   failed: boolean;
+  /** "More like this" from an image it can't search: told plainly, not as an outage. */
+  unavailable?: boolean;
   onRetry: () => void;
 };
 
@@ -33,8 +36,10 @@ export function ImageFeedSearchSummary({
   correctedQuery,
   filters,
   failed,
+  unavailable,
   onRetry,
 }: Props) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   // The saved feed filters load in the browser, so the server can't render their chips.
   const isClient = useIsClient();
@@ -95,23 +100,54 @@ export function ImageFeedSearchSummary({
           Showing results for <strong>{shownQuery}</strong>
         </Text>
       )}
-      {failed && (
-        <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Text size="sm">
-              Search isn&rsquo;t answering right now, so this is the feed without your search.
-            </Text>
-            <Button size="compact-sm" variant="light" onClick={onRetry}>
-              Retry search
-            </Button>
-          </div>
+      {unavailable ? (
+        <Alert color="gray" p="xs">
+          <Text size="sm">
+            More like this isn&rsquo;t available for this image, so this is the feed without it.
+          </Text>
         </Alert>
+      ) : (
+        failed && (
+          <Alert color="yellow" icon={<IconCloudOff size={18} />} p="xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Text size="sm">
+                Search isn&rsquo;t answering right now, so this is the feed without your search.
+              </Text>
+              <Button size="compact-sm" variant="light" onClick={onRetry}>
+                Retry search
+              </Button>
+            </div>
+          </Alert>
+        )
       )}
       <div className="flex flex-wrap items-center gap-2">
         {similarTo ? (
-          <Pill withRemoveButton onRemove={() => update({ similarTo: undefined })}>
-            Similar to this image
-          </Pill>
+          <>
+            <Pill withRemoveButton onRemove={() => update({ similarTo: undefined })}>
+              Similar to this image
+            </Pill>
+            {currentUser && (
+              <Chip
+                size="xs"
+                checked={router.query.excludeOwn === 'true'}
+                onChange={(checked) =>
+                  void router.replace(
+                    {
+                      pathname: router.pathname,
+                      query: removeEmpty({
+                        ...router.query,
+                        excludeOwn: checked ? 'true' : undefined,
+                      }),
+                    },
+                    undefined,
+                    { shallow: true }
+                  )
+                }
+              >
+                Hide my images
+              </Chip>
+            )}
+          </>
         ) : (
           <Pill withRemoveButton onRemove={() => update({ query: undefined })}>
             &ldquo;{query}&rdquo;

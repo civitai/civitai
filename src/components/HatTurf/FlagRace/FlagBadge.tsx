@@ -25,6 +25,7 @@ import {
 import { useTeamColor } from '~/components/Events/events.utils';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { pluralize } from '~/shared/utils/pluralize';
+import { formatDate } from '~/utils/date-helpers';
 
 const RING_STROKE = 4;
 const DISC_RADIUS = 14;
@@ -172,11 +173,12 @@ function FlagDetails({ imageId }: { imageId: number }) {
   const teamColor = useTeamColor();
   const clock = useFlagClock(found?.summary);
   if (!found) return null;
-  const { summary, flag, rank } = found;
+  const { summary, flag, rank, pastDay } = found;
   const colorOf = (team: string) => teamColor(team) ?? FALLBACK_COLOR;
   const closed = summary.closed;
   const counting = flagCounting(summary);
-  const teams = Object.entries(flag.hatsByTeam)
+  // A past day kept no hat counts.
+  const teams = Object.entries(pastDay ? {} : flag.hatsByTeam)
     .filter(([, hats]) => hats > 0)
     .sort(([, a], [, b]) => b - a);
   const total = teams.reduce((sum, [, hats]) => sum + hats, 0);
@@ -189,6 +191,7 @@ function FlagDetails({ imageId }: { imageId: number }) {
           {closed ? <IconFlagCheck size={16} /> : <IconFlag size={16} />}
           <Text fw={700} size="sm">
             Flag #{rank}
+            {pastDay && ` · ${formatDate(pastDay, 'MMM D')}`}
           </Text>
         </Group>
         {closed ? (
@@ -300,10 +303,12 @@ function FlagDetails({ imageId }: { imageId: number }) {
       )}
 
       <Group gap={12} c="dimmed">
-        <Group gap={4} wrap="nowrap">
-          <IconUsers size={14} />
-          <Text size="xs">{pluralize(flag.players, 'player')}</Text>
-        </Group>
+        {!pastDay && (
+          <Group gap={4} wrap="nowrap">
+            <IconUsers size={14} />
+            <Text size="xs">{pluralize(flag.players, 'player')}</Text>
+          </Group>
+        )}
         {clock && clock.phase !== 'closed' && (
           <Group gap={4} wrap="nowrap">
             <IconClock size={14} />

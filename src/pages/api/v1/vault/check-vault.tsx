@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const schema = z.object({
   modelVersionIds: commaDelimitedNumberArray(),
@@ -43,5 +44,6 @@ export default AuthedEndpoint(
       return handleEndpointError(res, error);
     }
   },
-  ['GET']
+  ['GET'],
+  { scope: { scope: TokenScope.VaultRead } }
 );

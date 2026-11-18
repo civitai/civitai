@@ -129,6 +129,8 @@ vi.mock('~/components/Model/model.utils', () => ({
     isFetching: false,
   }),
   useSemanticModelFeed: () => ({ models: [], searchKey: undefined }),
+  // Read by the Hide Paid notice, which this feed never shows.
+  useModelQueryParams: () => ({ set: () => undefined }),
 }));
 // /search/models' getServerSideProps pulls server modules into the browser bundle under test.
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -172,7 +174,10 @@ vi.mock('~/components/Search/CustomSearchComponents', () => ({
 vi.mock('~/components/Search/SearchHeader', () => ({ SearchHeader: () => null }));
 vi.mock('~/components/Search/SearchLayout', () => ({ SearchLayout: () => null }));
 vi.mock('~/components/Search/TimeoutLoader', () => ({ TimeoutLoader: () => null }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({}),
+  useOptionalFeatureFlags: () => ({}),
+}));
 vi.mock('~/providers/BrowsingSettingsAddonsProvider', () => ({
   useBrowsingSettingsAddons: () => ({ settings: {} }),
 }));

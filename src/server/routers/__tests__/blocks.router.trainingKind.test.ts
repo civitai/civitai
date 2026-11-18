@@ -169,10 +169,15 @@ import {
 } from '~/server/services/blocks/block-training-quote.service';
 import { blockTrainingBodySchema } from '~/server/schema/blocks/workflow.schema';
 
-// ── An in-memory sysRedis: get/set (NX/XX/KEEPTTL/EX)/getDel/del/incrBy/decrBy. ──
+// ── An in-memory Redis: get/set (NX/XX/KEEPTTL/EX)/getDel/del/incrBy/decrBy. ──
+// One store behind both clients: the quote and the reservations are in system Redis, the run
+// generation (`system:blocks:training-runs:*`) on the cache cluster. The test that pins the
+// generation's TTL reads it from the cluster client.
 const store = new Map<string, string>();
 function installRedis() {
-  const r = redisMock.sysRedis;
+  for (const r of [redisMock.sysRedis, redisMock.redis]) installRedisOn(r);
+}
+function installRedisOn(r: typeof redisMock.sysRedis) {
   r.get.mockImplementation(async (k: string) => store.get(k) ?? null);
   r.set.mockImplementation(async (k: string, v: string, opts?: { NX?: boolean; XX?: boolean }) => {
     if (opts?.NX && store.has(k)) return null;
@@ -1285,8 +1290,9 @@ describe('training — the run generation is per BODY', () => {
 
   it('a lost generation bump never breaks a paid submit, and the bump carries a TTL', async () => {
     const q = await confirmed();
-    const realIncr = redisMock.sysRedis.incrBy.getMockImplementation()!;
-    redisMock.sysRedis.incrBy.mockImplementation(async (k: string, n: number) => {
+    // The run generation is on the cache cluster.
+    const realIncr = redisMock.redis.incrBy.getMockImplementation()!;
+    redisMock.redis.incrBy.mockImplementation(async (k: string, n: number) => {
       if (k.startsWith('system:blocks:training-runs:')) throw new Error('redis down');
       return realIncr(k, n);
     });
@@ -1294,13 +1300,19 @@ describe('training — the run generation is per BODY', () => {
     expect(out.snapshot.workflowId).toBe(workflowId);
     expect(h.persistSettle).toHaveBeenCalled();
 
-    redisMock.sysRedis.incrBy.mockImplementation(realIncr);
+    redisMock.redis.incrBy.mockImplementation(realIncr);
+    redisMock.redis.expire.mockClear();
     redisMock.sysRedis.expire.mockClear();
     const q2 = await confirmed(body({ triggerWord: 'x2' }));
     await submit(body({ quoteId: q2, triggerWord: 'x2' }));
-    const runsExpire = redisMock.sysRedis.expire.mock.calls.find((c) =>
+    const runsExpire = redisMock.redis.expire.mock.calls.find((c) =>
       String(c[0]).startsWith('system:blocks:training-runs:')
     );
+    expect(
+      redisMock.sysRedis.expire.mock.calls.filter((c) =>
+        String(c[0]).startsWith('system:blocks:training-runs:')
+      )
+    ).toEqual([]);
     expect(runsExpire?.[1]).toBe(TRAINING_RUN_GENERATION_TTL_SECONDS);
     expect(TRAINING_RUN_GENERATION_TTL_SECONDS).toBe(172_800);
   });

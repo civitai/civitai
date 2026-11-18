@@ -4661,7 +4661,9 @@ export function PageBlockHost({
   //     routes through civitai's SESSION-AUTHED path → REAL createImage +
   //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
   //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
-  //     and unflagged is returned. UNCHANGED behavior.
+  //     and unflagged is returned. PRIVATE by default: only `share: true` (exactly) shares
+  //     it with the app's other viewers, and only replies to a share request carry `shared`.
+  //     Read rules: BLOCK_SHARED_UPLOAD_APP_ID_META_KEY.
   //
   //   • 'generationSource' (PRIVATE generation input — an img2img source): the
   //     upload routes through the SAME lightweight consumer-blob util the generator
@@ -4674,7 +4676,8 @@ export function PageBlockHost({
   //     blockSourceImageSchema allowlist (workflow.schema) unchanged.
   //
   //   • `bytes` (an ArrayBuffer the block made — no picker, display only): see imageUploadBytes.ts.
-  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else.
+  //     The row is stamped `blockUploadedAppId`, which lets THIS app post it and nothing else: it
+  //     is never readable cross-user through the gated read. (`share` does not apply.)
   //     Always BLOCKING: `asyncScan` is ignored, so the app never holds the id or a CDN url of
   //     bytes the scan refused (the SDK already treats a blocking reply to an async request as
   //     an immediately-scanned image).
@@ -4826,6 +4829,24 @@ export function PageBlockHost({
         return;
       }
 
+      // Read off the RAW payload: a share needs the block token the server verifies, so a share
+      // request with none is refused rather than stored private.
+      const shareRequested = (raw as { share?: unknown } | undefined)?.share === true;
+      const echo = (shared: boolean) => (shareRequested ? { shared } : {});
+      if (shareRequested && !token) {
+        reportNoToken('OPEN_IMAGE_UPLOAD');
+        send('IMAGE_UPLOAD_RESULT', {
+          requestId,
+          error: UPLOAD_BYTES_NO_TOKEN_ERROR,
+          ...echo(false),
+        });
+        return;
+      }
+      const shareWith =
+        shareRequested && token
+          ? { blockToken: token, appName: sanitizeAppChromeName(appName) || 'this app' }
+          : undefined;
+
       // display + asyncScan: NON-BLOCKING moderated path. The host modal resolves
       // EARLY on persist (returning a PENDING handle — the author's own preview
       // URL) and CLOSES; a host-mounted BlockImageScanPoller (registered below,
@@ -4840,10 +4861,19 @@ export function PageBlockHost({
           id: `block-image-upload-${requestId}`,
           component: BlockImageUploadModal,
           props: {
+            share: shareWith,
             // BLOCKING-mode callback — unused in async mode (onAccepted drives the
             // early resolve); a no-op that satisfies the modal's required prop.
             onResolved: () => undefined,
-            onAccepted: ({ imageId, url }: { imageId: number; url: string }) => {
+            onAccepted: ({
+              imageId,
+              url,
+              shared,
+            }: {
+              imageId: number;
+              url: string;
+              shared?: boolean;
+            }) => {
               accepted = true;
               // Early-resolve: the upload is accepted (image persisted, scan still
               // in-flight). Hand the block the PENDING handle and register the
@@ -4851,6 +4881,7 @@ export function PageBlockHost({
               send('IMAGE_UPLOAD_RESULT', {
                 requestId,
                 selected: { status: 'pending', imageId, url },
+                ...echo(shared === true),
               });
               setImageScanPollers((prev) =>
                 prev.some((p) => p.requestId === requestId && !p.replyOnScan)
@@ -4864,23 +4895,27 @@ export function PageBlockHost({
               // Dismissed WITHOUT accepting → bare (cancelled) result, no poller.
               // On accept, onClose fires AFTER onAccepted set `accepted`, so the
               // early-resolve reply is not followed by a spurious cancel.
-              if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId });
+              if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId, ...echo(false) });
             },
           },
         });
         return;
       }
 
-      // display (default): moderated public-image path — UNCHANGED.
+      // display (default): moderated public-image path. Shared with the app's other
+      // viewers only when the app asked (`shareWith`, above).
       let resolved: BlockUploadedImageInfo | null = null;
+      let resolvedShared = false;
       dialogStore.trigger({
         // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
         // each other in the dialog store's exists-check.
         id: `block-image-upload-${requestId}`,
         component: BlockImageUploadModal,
         props: {
-          onResolved: (result: BlockUploadedImageInfo) => {
+          share: shareWith,
+          onResolved: (result: BlockUploadedImageInfo, meta?: { shared: boolean }) => {
             resolved = result;
+            resolvedShared = meta?.shared === true;
           },
         },
         options: {
@@ -4888,9 +4923,13 @@ export function PageBlockHost({
             // A successful upload set `resolved` before the modal closed itself;
             // otherwise the user cancelled → reply with a bare (cancelled) result.
             if (resolved) {
-              send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+              send('IMAGE_UPLOAD_RESULT', {
+                requestId,
+                selected: resolved,
+                ...echo(resolvedShared),
+              });
             } else {
-              send('IMAGE_UPLOAD_RESULT', { requestId });
+              send('IMAGE_UPLOAD_RESULT', { requestId, ...echo(false) });
             }
           },
         },
@@ -4898,7 +4937,16 @@ export function PageBlockHost({
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, send, readGateStatus, reviewMode, token, reportNoToken, scannedSourcePath]);
+  }, [
+    onMessage,
+    send,
+    readGateStatus,
+    reviewMode,
+    token,
+    reportNoToken,
+    scannedSourcePath,
+    appName,
+  ]);
 
   // OPEN_IMAGE_PICKER → IMAGE_PICKER_RESULT. Every request carrying a requestId is answered: a
   // silent return strands the block until its picker timeout.

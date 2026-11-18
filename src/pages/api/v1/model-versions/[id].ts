@@ -53,12 +53,15 @@ import {
   getUserMetricPrivacyDefaults,
   resolveVersionHiddenMetrics,
 } from '~/server/utils/model-metric-privacy';
+import { MODEL_VIEW_SCOPE } from '~/server/auth/route-scopes';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
 
 const schema = z.object({ id: z.preprocess((val) => Number(val), z.number()) });
-export default MixedAuthEndpoint(async function handler(
+export default MixedAuthEndpoint(handler, ['GET'], { scope: MODEL_VIEW_SCOPE });
+
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
   user: Session['user'] | undefined
@@ -190,7 +193,7 @@ export default MixedAuthEndpoint(async function handler(
 
     return res.status(500).json({ error: 'Failed to fetch model version details' });
   }
-});
+}
 
 /**
  * A version's showcase at `browsingLevel`, with the tags `getShowcaseImageFilter` reads. What is

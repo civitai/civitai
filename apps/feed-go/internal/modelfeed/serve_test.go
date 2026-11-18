@@ -80,6 +80,17 @@ type fakeSources struct {
 	versionRq [][]int
 	memberRq  [][]int
 	pageErr   error
+	// official is what OfficialModels answers (officialErr fails it); officialCalls counts the calls.
+	official      []hydrate.OfficialModel
+	officialErr   error
+	officialCalls int
+}
+
+func (f *fakeSources) OfficialModels(_ context.Context) ([]hydrate.OfficialModel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.officialCalls++
+	return f.official, f.officialErr
 }
 
 func (f *fakeSources) ModelPage(_ context.Context, _ hydrate.ModelPageRequest) (*hydrate.ModelPage, error) {
@@ -416,8 +427,6 @@ func TestServeLoopBoundAndTrivial(t *testing.T) {
 }
 
 func TestServeFallbacks(t *testing.T) {
-	hot := baseInput()
-	hot.Sort, hot.BaseModels = SortHot, []string{"Pony"}
 	noLevel := baseInput()
 	noLevel.BrowsingLevel = nil
 	named := baseInput()
@@ -429,7 +438,6 @@ func TestServeFallbacks(t *testing.T) {
 		cfg    func(*Config)
 		reason string
 	}{
-		{"Hot with base models (official pin)", hot, nil, nil, "model-official-pin"},
 		{"signed in with no level", noLevel, &Viewer{ID: 1}, nil, "model-level-absent"},
 		{"signed out uncapped with no level", noLevel, nil, nil, "model-level-absent"},
 		{"base-model-feed-metrics off", baseInput(), nil, func(c *Config) { c.BaseModelMetrics = false }, "flag-off-state"},

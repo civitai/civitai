@@ -49,7 +49,7 @@ const h = vi.hoisted(() => ({
   patchWorkflows: vi.fn(),
   /** What the whatIf prices an upscale at, apart from every other workflow. */
   upscalePrice: 12,
-  /** sysRedis, where the option prices are cached. */
+  /** The cache cluster, where the option prices are cached (named before they moved there). */
   sys: new Map<string, string>(),
 }));
 
@@ -451,8 +451,8 @@ beforeEach(() => {
   h.upscalePrice = 12;
   const { sys } = h;
   sys.clear();
-  redisMock.sysRedis.get.mockImplementation((async (key: string) => sys.get(key) ?? null) as never);
-  redisMock.sysRedis.set.mockImplementation((async (key: string, value: string) => {
+  redisMock.redis.get.mockImplementation((async (key: string) => sys.get(key) ?? null) as never);
+  redisMock.redis.set.mockImplementation((async (key: string, value: string) => {
     sys.set(key, value);
     return 'OK';
   }) as never);
@@ -1159,6 +1159,13 @@ describe('Pick of four', () => {
 
     expect(again).toHaveProperty('prices', { upscale: h.upscalePrice, keep: 0 });
     expect(whatIfs()).toHaveLength(priced);
+    // A cache: on the cache cluster, not in system Redis.
+    expect([...h.sys.keys()].some((key) => key.startsWith('remix-app:option-prices:'))).toBe(true);
+    expect(
+      redisMock.sysRedis.set.mock.calls.filter(([key]: unknown[]) =>
+        String(key).startsWith('remix-app:')
+      )
+    ).toEqual([]);
   });
 
   it('will not post a run still waiting on an answer, and prices nothing to find that out', async () => {

@@ -60,7 +60,7 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
-A card's `flagKey` (its per-model Flipt gate) and the Kohya gate — together `hostFlagKeys()` — are
+A card's `flagKey` (its per-model Flipt gate), the Kohya gate and the Manage tags find-replace gate — together `hostFlagKeys()` — are
 evaluated by the shell in `/new`'s load, but the main-app embed can't ask Flipt: every key must also be
 in `studioModelFlagFeatures`
 (`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by

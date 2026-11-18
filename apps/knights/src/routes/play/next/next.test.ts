@@ -127,12 +127,11 @@ describe('GET /play/next', () => {
   it('hands the cadence what was handed out and not yet voted (ahead, every kind), then each one it picks; never after', async () => {
     skipList.list.mockResolvedValue([{ kind: 'queue', id: 8 }]);
     // `after` also names settled votes and skips: none of those are the cadence's.
-    await ask(
-      [token('queue', 1), token('queue', 2), token('queue', 9), token('yesno', 3)],
-      {},
-      2,
-      [token('queue', 9), token('queue', 8), token('yesno', 3)]
-    );
+    await ask([token('queue', 1), token('queue', 2), token('queue', 9), token('yesno', 3)], {}, 2, [
+      token('queue', 9),
+      token('queue', 8),
+      token('yesno', 3),
+    ]);
     expect(servedHistory.mock.calls.map((call) => call[2])).toEqual([
       [
         { kind: 'queue', id: 9 },
@@ -237,10 +236,10 @@ describe('GET /play/next', () => {
       expect(ids((await ask([], {}, -2)).body)).toEqual([1]);
     });
 
-    it('serves up to 10 items in one request and no more', async () => {
+    it('serves up to a full buffer (3) in one request and no more', async () => {
       queueOfFive(30);
-      expect(ids((await ask([], {}, 10)).body)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(ids((await ask([], {}, 50)).body)).toHaveLength(10);
+      expect(ids((await ask([], {}, 3)).body)).toEqual([1, 2, 3]);
+      expect(ids((await ask([], {}, 50)).body)).toHaveLength(3);
     });
 
     it('reads as many named items as a full buffer, the item on screen and the votes in flight', async () => {

@@ -82,7 +82,8 @@ beforeAll(async () => {
      CREATE TABLE "Image" (
        id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false,
        type text NOT NULL DEFAULT 'image', "nsfwLevel" integer NOT NULL DEFAULT 1,
-       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer
+       ingestion text NOT NULL DEFAULT 'Scanned', "blockedFor" text, "postId" integer,
+       poi boolean NOT NULL DEFAULT false, minor boolean NOT NULL DEFAULT false
      );`
   );
   await pg.exec(migration('20261210120000_knights_v2_tables'));
@@ -153,6 +154,36 @@ describe('enqueueKnightsItems', () => {
       { imageId: 99, outcome: 'refused', reason: 'image-not-found' },
     ]);
     expect((await items()).map((i) => i.imageId)).toEqual([3]);
+  });
+
+  it('refuses an image with no post, or whose post is gone, when the caller requires a post, and queues drafts and scheduled posts', async () => {
+    await pg.exec(`
+      INSERT INTO "Post" (id, "publishedAt") VALUES (10, '2026-01-01'), (20, NULL), (30, '2027-01-01');
+      UPDATE "Image" SET "postId" = 20 WHERE id = 2;
+      UPDATE "Image" SET "postId" = 30 WHERE id = 3;
+      UPDATE "Image" SET "postId" = 10 WHERE id = 4;
+      INSERT INTO "Image" (id, "postId") VALUES (5, 999);
+    `);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'scan-sample',
+        questionKey: Q,
+        items: [1, 2, 3, 4, 5].map((imageId) => ({ imageId, priority: 1 as const })),
+      },
+      NOW,
+      { requirePost: true }
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'no-post' },
+      { imageId: 2, outcome: 'enqueued' },
+      { imageId: 3, outcome: 'enqueued' },
+      { imageId: 4, outcome: 'enqueued' },
+      { imageId: 5, outcome: 'refused', reason: 'no-post' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([2, 3, 4]);
   });
 
   it('still queues an unpublished image for a caller that does not ask (intake)', async () => {

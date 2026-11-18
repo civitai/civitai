@@ -100,16 +100,21 @@ func (s *Sources) lagKey(typ string, id int) string {
 	return s.Packed.Prefix + "lag-helper:" + typ + ":" + strconv.Itoa(id)
 }
 
-// versionImagesDB is the database the version-images lookup reads. Node's lookupFn reads
-// getDbWithoutLagBatch('modelVersion', ids) (src/server/db/db-lag-helpers.ts): the primary when any of
-// the versions carries the lag flag a recent write set (markFresh, a non-empty value for
+// versionImagesDB is the database the version-images lookup reads: Node's lookupFn reads
+// getDbWithoutLagBatch('modelVersion', ids) (lagAwareDB).
+func (s *Sources) versionImagesDB(ctx context.Context, ids []int) (Querier, error) {
+	return s.lagAwareDB(ctx, "modelVersion", ids)
+}
+
+// lagAwareDB is getDbWithoutLagBatch(typ, ids) (src/server/db/db-lag-helpers.ts): the primary when any
+// of the ids carries the lag flag a recent write set (markFresh, a non-empty value for
 // REPLICATION_LAG_DELAY seconds; a flag read that fails reads as unflagged, the guard failing open),
 // else the replica. With WriteBack on this service writes what it reads, so it decides the same way
 // over the same flags (with REPLICATION_LAG_DELAY 0 Node never writes a flag, so none is found
-// either). With it off nothing it reads is cached and it reads the replica, as entityDB does: a
-// version flagged moments ago then gets the replica's answer for this one request. A Go-first probe
+// either). With it off nothing it reads is cached and it reads the replica, as entityDB does: an id
+// flagged moments ago then gets the replica's answer for this one request. A Go-first probe
 // (WithPresence) reads the replica too: it writes nothing, and never reads the primary.
-func (s *Sources) versionImagesDB(ctx context.Context, ids []int) (Querier, error) {
+func (s *Sources) lagAwareDB(ctx context.Context, typ string, ids []int) (Querier, error) {
 	if !s.Compute.WriteBack || presenceOf(ctx) != nil {
 		return s.Replica, nil
 	}
@@ -122,7 +127,7 @@ func (s *Sources) versionImagesDB(ctx context.Context, ids []int) (Querier, erro
 	cmds := make([]*redis.StringCmd, len(ids))
 	_, _ = s.Packed.Redis.Pipelined(ctx, func(p redis.Pipeliner) error {
 		for i, id := range ids {
-			cmds[i] = p.Get(ctx, s.lagKey("modelVersion", id))
+			cmds[i] = p.Get(ctx, s.lagKey(typ, id))
 		}
 		return nil
 	})

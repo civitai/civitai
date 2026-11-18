@@ -1,5 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { childBrowsingTagIds } from '@civitai/shared';
+import {
+  MODELS_SEARCH_INDEX,
+  SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS,
+  searchIndexQueueFallbackKey,
+} from '@civitai/shared/search-index-queue';
 import { REDIS_KEYS } from '@civitai/redis';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,6 +41,7 @@ CREATE TABLE "ModelVersion" ("id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NUL
 CREATE TABLE "Post" ("id" INTEGER PRIMARY KEY, "modelVersionId" INTEGER);
 CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "postId" INTEGER, "minor" BOOLEAN NOT NULL DEFAULT false);
 CREATE TABLE "TagsOnImageNew" ("imageId" INTEGER NOT NULL, "tagId" INTEGER NOT NULL);
+CREATE TABLE "KeyValue" ("key" TEXT PRIMARY KEY, "value" JSONB NOT NULL);
 INSERT INTO "ModelVersion" VALUES (10, 100), (11, 100);
 INSERT INTO "Post" VALUES (20, 10), (21, 11);
 INSERT INTO "Image" VALUES (1, 20), (2, 21), (3, NULL);
@@ -201,5 +207,68 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
 
     expect(logAxiomError).toHaveBeenCalledTimes(1);
     expect(queuedModels()).toEqual([{ entityType: 'model', entityIds: [100], action: 'update' }]);
+  });
+
+  describe('when the main app cannot take the requeue', () => {
+    const MODELS_PARKED = searchIndexQueueFallbackKey(MODELS_SEARCH_INDEX, 'Update');
+    const parked = async () =>
+      (await db.query<{ key: string; value: number[] }>('SELECT "key", "value" FROM "KeyValue"'))
+        .rows;
+    const run = async () => {
+      vi.useFakeTimers();
+      try {
+        const done = queueModelsForImageChildTagChanges({
+          tagWrites: [{ imageId: 1, tagId: CHILD_TAG }],
+        });
+        await vi.runAllTimersAsync();
+        await done;
+      } finally {
+        vi.useRealTimers();
+      }
+    };
+
+    it("parks the models for the main app's replay when both attempts fail", async () => {
+      vi.mocked(syncSearchIndexBulk).mockRejectedValue(new Error('main app down'));
+
+      await run();
+
+      expect(await parked()).toEqual([{ key: MODELS_PARKED, value: [100] }]);
+    });
+
+    it('appends to models already parked', async () => {
+      await db.query(`INSERT INTO "KeyValue" VALUES ($1, '[5]'::jsonb)`, [MODELS_PARKED]);
+      vi.mocked(syncSearchIndexBulk).mockRejectedValue(new Error('main app down'));
+
+      await run();
+
+      expect(await parked()).toEqual([{ key: MODELS_PARKED, value: [5, 100] }]);
+    });
+
+    it('adds nothing to a row at the cap, and logs it', async () => {
+      await db.query(
+        `INSERT INTO "KeyValue" SELECT $1, jsonb_agg(g) FROM generate_series(1, $2::int) g`,
+        [MODELS_PARKED, SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS]
+      );
+      vi.mocked(syncSearchIndexBulk).mockRejectedValue(new Error('main app down'));
+
+      await run();
+
+      const [row] = await parked();
+      expect(row.value).toHaveLength(SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS);
+      expect(row.value.at(-1)).toBe(SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS);
+      expect(vi.mocked(logAxiomError).mock.calls.at(-1)?.[1]).toMatchObject({
+        name: 'search-index-park',
+        modelIds: [100],
+      });
+    });
+
+    it('parks nothing when the retry queues them', async () => {
+      vi.mocked(syncSearchIndexBulk).mockRejectedValueOnce(new Error('main app down'));
+
+      await run();
+
+      expect(syncSearchIndexBulk).toHaveBeenCalledTimes(2);
+      expect(await parked()).toEqual([]);
+    });
   });
 });

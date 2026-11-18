@@ -51,6 +51,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 
 import { getAllImages, getImagesForModelVersion, getImagesForPosts } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { restrictedMinorClause } from '~/__tests__/minor-clause';
 
 const OWNER = 3300;
 const STRANGER = 4400;
@@ -107,8 +108,7 @@ async function getAllImagesMinor(viewer: Viewer, profileUserId?: number) {
 
 // `minorMatureImageVisibleSql`; what it keeps and drops is run against rows in
 // minor-mature-image-visibility.behavior.test.ts.
-const RESTRICTED_MINOR =
-  /\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= \$\d+\)\)(?: OR i\."userId" = \$(\d+))?\)/;
+const RESTRICTED_MINOR = restrictedMinorClause();
 
 /** getAllImages with the viewer's minor setting OFF, as a viewer who never turned it on. */
 async function getAllImagesStatement(

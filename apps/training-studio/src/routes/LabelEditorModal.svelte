@@ -71,8 +71,10 @@
   const suggestions = $derived.by(() => {
     if (!editing) return [];
     const q = newTag.trim().toLowerCase();
-    const have = editing.tags;
-    return tagVocab.filter((t) => !have.includes(t) && (q === '' || t.toLowerCase().includes(q))).slice(0, 8);
+    const have = new Set(editing.tags.map((t) => t.toLowerCase()));
+    return tagVocab
+      .filter((t) => !have.has(t.toLowerCase()) && (q === '' || t.toLowerCase().includes(q)))
+      .slice(0, 8);
   });
 
   // Focus the primary field (tag input / caption textarea) on open — this is a correction surface, the

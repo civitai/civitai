@@ -1,3 +1,4 @@
+import type { NextApiRequest, NextApiResponse } from 'next';
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
@@ -5,6 +6,8 @@ import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type { SessionUser } from '~/types/session';
 
 const historyLimiter = createLimiter({
   counterKey: REDIS_SYS_KEYS.COUNTERS.HISTORY_DOWNLOADS,
@@ -13,7 +16,9 @@ const historyLimiter = createLimiter({
   refetchInterval: CacheTTL.day,
 });
 
-export default AuthedEndpoint(async function handler(req, res, user) {
+export default AuthedEndpoint(handler, ['GET'], { scope: { scope: TokenScope.AIServicesRead } });
+
+async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionUser) {
   const limitKey = user.id.toString();
   if (await historyLimiter.hasExceededLimit(limitKey)) {
     const limitHitTime = await historyLimiter.getLimitHitTime(limitKey);
@@ -42,4 +47,4 @@ export default AuthedEndpoint(async function handler(req, res, user) {
   const preSignedUrl = await response.json();
 
   res.redirect(preSignedUrl);
-});
+}

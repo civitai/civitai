@@ -50,9 +50,8 @@ export { FORGEJO_ORG, FORGEJO_REVIEW_ORG, FORGEJO_SOURCE_ORG };
 export type CollaboratorOrg = typeof FORGEJO_ORG | typeof FORGEJO_SOURCE_ORG;
 
 /**
- * The names are env-derived strings now, so the type above no longer restricts anything at compile
- * time; this does at run time. Never the review org: a developer with write there could rewrite
- * the snapshot a moderator reviews.
+ * Org names come from env, so the type cannot restrict them; this check does at run time. Never
+ * the review org: a developer with write there could rewrite the snapshot a moderator reviews.
  */
 function collaboratorOrg(org: string | undefined): string {
   const o = org ?? FORGEJO_ORG;
@@ -90,9 +89,8 @@ export function repoCommitUrl(slug: string, ref: string): string {
 }
 
 function getBaseUrl(): string {
-  // Every request URL is built here (fjFetch, getRawFile, mintForgejoUserToken), so a refused org
-  // config (forgejo-orgs.ts) stops every call before it reaches Forgejo: with it, a call could land
-  // in an org this environment was never meant to write.
+  // Every Forgejo request builds its URL here, so a refused org config stops the call before it
+  // reaches Forgejo.
   if (FORGEJO_ORGS.error) throw new Error(FORGEJO_ORGS.error);
   const u = env.FORGEJO_BASE_URL;
   if (!u) throw new Error('FORGEJO_BASE_URL not configured');
@@ -1196,7 +1194,6 @@ async function ensureOrg(org: { username: string; full_name: string; description
  * deep-link mods into Forgejo's diff view.
  */
 export async function ensureReviewRepo(slug: string): Promise<void> {
-  // (1) Make sure the org exists.
   await ensureOrg({
     username: FORGEJO_REVIEW_ORG,
     full_name: 'Civitai App Blocks — in-review',

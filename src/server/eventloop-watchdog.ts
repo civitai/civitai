@@ -377,8 +377,8 @@ async function captureWedge(wedgeStartMs) {
     // unrecoverable one. The harvester needs no new permission to do this.
     //
     // UNCOMPRESSED and named cpu-*: the harvester matches *.cpuprofile, gzips during
-    // transfer itself, and keys the object by image SHA so the profile can be paired
-    // with its source maps. A .gz here would simply never be collected.
+    // transfer itself, and keys the object by image SHA. A .gz here would simply never be
+    // collected.
     const name =
       'cpu-wedge-' + wedgeMs + 'ms-' + capCfg.pod + '-' +
       new Date().toISOString().replace(/[:.]/g, '-') + '.cpuprofile';

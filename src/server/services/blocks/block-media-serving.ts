@@ -1,5 +1,8 @@
 import { TRPCError } from '@trpc/server';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { sessionClient } from '~/server/auth/session-client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type { SessionUser } from '~/types/session';
@@ -8,7 +11,10 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { assertAppBlocksEnabledForTokenUser } from '~/server/services/blocks/block-token-access.service';
-import { recordBlockMediaVerdict } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordBlockMediaServingDegraded,
+  recordBlockMediaVerdict,
+} from '~/server/metrics/app-block-runtime.metrics';
 import {
   blockMediaUrl,
   openBlockMediaRef,
@@ -22,24 +28,62 @@ import {
 import { readBlobState } from '~/server/services/orchestrator/blobRatings';
 import { hasEmptyViewerLevel } from '~/server/services/blocks/block-viewer-ceiling';
 import { blockOutputCeilingFromClaims } from '~/server/services/blocks/block-output-restriction';
-import type { BlockOutputRules, BlockOutputView } from '~/server/services/blocks/block-output-mint';
+import {
+  isOwnerOnlyMediaType,
+  type BlockOutputRules,
+  type BlockOutputView,
+} from '~/server/services/blocks/block-output-mint';
 
 /**
- * Off or absent: every App Block media item is paused. Judged per viewer: Flipt segments
- * read either the entity id or the session context, so both are passed. A viewer that does
- * not resolve, or an evaluation that throws, reads off. Flipt unreachable pauses only a pod
- * whose client never started; a running pod keeps its last-known state.
+ * Whether host media serving is on for one viewer. Judged per viewer: Flipt segments read
+ * either the entity id or the session context, so both are passed. A signed-out viewer is
+ * `off` without asking Flipt. A viewer whose session does not resolve (the auth hub answers
+ * "no such user" and every failure alike) is judged by entity id alone and treated as
+ * anonymous downstream: the anonymous level, never the owner, nothing offered for pay. No
+ * evaluation (an error, or a client that never started) is `unknown`: never served, and an
+ * app-facing read restricts every media output rather than handing out raw urls. A running
+ * pod that loses Flipt keeps its last-known state.
  */
-export async function isBlockMediaServing(viewerId: number | null): Promise<boolean> {
+export type BlockMediaServing = 'on' | 'off' | 'unknown';
+export type BlockMediaServingDecision = { serving: BlockMediaServing; anonymous: boolean };
+
+export async function decideBlockMediaServing(
+  viewerId: number | null
+): Promise<BlockMediaServingDecision> {
+  if (viewerId === null) return { serving: 'off', anonymous: true };
   try {
     const flag = FLIPT_FEATURE_FLAGS.APP_BLOCKS_WORKFLOW_MEDIA_SERVE;
-    if (viewerId === null) return await isFlipt(flag);
     const user = (await sessionClient.getSessionUserById(viewerId)) as SessionUser | null;
-    if (!user) return false;
-    return await isFlipt(flag, String(viewerId), buildFliptContext(user));
+    // The sync read, not `isFlipt`: that answers false for an evaluation error or a client
+    // that never started, where this needs to tell them apart from off.
+    await ensureFliptInitialized();
+    const on = user
+      ? isFliptSync(flag, String(viewerId), buildFliptContext(user))
+      : isFliptSync(flag, String(viewerId));
+    if (on === null) throw new Error('no flag evaluation');
+    if (!user) logServingDecision('no-session');
+    return { serving: on ? 'on' : 'off', anonymous: !user };
   } catch {
-    return false;
+    logServingDecision('eval-failed');
+    return { serving: 'unknown', anonymous: false };
   }
+}
+
+export async function resolveBlockMediaServing(
+  viewerId: number | null
+): Promise<BlockMediaServing> {
+  return (await decideBlockMediaServing(viewerId)).serving;
+}
+
+/** Counted after launch: decisions made without a session, or not made at all. */
+function logServingDecision(reason: 'no-session' | 'eval-failed') {
+  logToAxiom({ type: 'warning', name: 'app-block-media-serving-degraded', reason });
+  recordBlockMediaServingDegraded(reason === 'eval-failed' ? 'eval_failed' : 'no_session');
+}
+
+/** The level a signed-out viewer browses at, within the token's own ceiling. */
+export function anonymousBrowsingLevel(ceiling: number): number {
+  return Flags.intersection(ceiling, publicBrowsingLevelsFlag);
 }
 
 export type BlockMediaFetch =
@@ -65,13 +109,19 @@ export async function resolveBlockMediaFetch(token: unknown): Promise<BlockMedia
 async function judgeTicket(token: unknown): Promise<BlockMediaFetch> {
   const ticket = openBlockMediaTicket(token);
   if (!ticket) return { state: 'hidden', reason: 'invalid' };
-  if (!(await isBlockMediaServing(ticket.viewerId))) return { state: 'hidden', reason: 'paused' };
+  // Re-decided at each fetch: a viewer whose session has stopped resolving since the mint is
+  // judged as signed out, never the owner.
+  const decision = await decideBlockMediaServing(ticket.viewerId);
+  if (decision.serving !== 'on') return { state: 'hidden', reason: 'paused' };
+  const signedOut = ticket.anonymous || decision.anonymous;
 
   const blob = await readBlobState(ticket.blobId);
   if (blob.verdict === 'pending') return { state: 'pending' };
   // 🔴 A blob HEAD's `NA` is not step-output `na`: it is also what a blob that
-  // was never scanned reports, and it never changes, so it hides for good.
-  if (!blob.blockedReason && blob.nsfwLevel === 'na') return { state: 'hidden', reason: 'unrated' };
+  // was never scanned reports, and it never changes, so it hides for good. Owner-only
+  // media is never scanned at all; the gate below shows it to its owner and no one else.
+  if (!blob.blockedReason && blob.nsfwLevel === 'na' && !isOwnerOnlyMediaType(ticket.mediaType))
+    return { state: 'hidden', reason: 'unrated' };
 
   const gate = deriveOutputGate(
     {
@@ -82,7 +132,9 @@ async function judgeTicket(token: unknown): Promise<BlockMediaFetch> {
       privateGen: ticket.privateGen,
       ownerId: ticket.ownerId,
     },
-    { userId: ticket.viewerId, browsingLevel: ticket.viewerBrowsingLevel }
+    signedOut
+      ? { userId: null, browsingLevel: anonymousBrowsingLevel(ticket.viewerBrowsingLevel) }
+      : { userId: ticket.viewerId, browsingLevel: ticket.viewerBrowsingLevel }
   );
   if (gate.state === 'hidden') return gate;
   if (gate.state === 'pending' || !blob.location) return { state: 'pending' };
@@ -106,9 +158,17 @@ export async function resolveWorkflowMediaRefs(args: {
   /** Users the viewer hid, blocked or is blocked by: their refs do not replay to this viewer. */
   hiddenOwnerIds: ReadonlySet<number>;
 }): Promise<WorkflowMediaItem[]> {
-  const serving = await isBlockMediaServing(args.viewerId);
+  const decision = await decideBlockMediaServing(args.viewerId);
+  // A viewer whose session did not resolve replays as signed out, at the anonymous level.
+  const viewer = decision.anonymous
+    ? {
+        ...args,
+        ownerView: false,
+        viewerBrowsingLevel: anonymousBrowsingLevel(args.viewerBrowsingLevel),
+      }
+    : { ...args, ownerView: true };
   return args.refs.map((token) => {
-    const item = judgeRef(token, args, serving);
+    const item = judgeRef(token, viewer, decision.serving === 'on');
     recordBlockMediaVerdict(
       'workflow_media',
       item.status === 'visible' ? 'served' : item.status,
@@ -129,6 +189,8 @@ function judgeRef(
     viewerId: number | null;
     viewerBrowsingLevel: number;
     hiddenOwnerIds: ReadonlySet<number>;
+    /** False for a viewer judged as signed out: never the owner of any ref. */
+    ownerView: boolean;
   },
   serving: boolean
 ): WorkflowMediaItem | { status: 'hidden'; reason: 'owner_hidden' } {
@@ -137,8 +199,8 @@ function judgeRef(
   const ref = openBlockMediaRef(token);
   // A ref is bound to the app that stored it: a fork reading the same cache is refused.
   if (!ref || ref.appBlockId !== viewer.appBlockId) return { status: 'hidden', reason: 'invalid' };
-  if (ref.privateGen && ref.ownerId !== viewer.viewerId)
-    return { status: 'hidden', reason: 'private' };
+  const isOwner = viewer.ownerView && ref.ownerId === viewer.viewerId;
+  if (ref.privateGen && !isOwner) return { status: 'hidden', reason: 'private' };
   if (ref.ownerId !== viewer.viewerId && viewer.hiddenOwnerIds.has(ref.ownerId))
     return { status: 'hidden', reason: 'owner_hidden' };
 
@@ -147,6 +209,7 @@ function judgeRef(
     ...claims,
     viewerId: viewer.viewerId,
     viewerBrowsingLevel: viewer.viewerBrowsingLevel,
+    ...(viewer.ownerView ? {} : { anonymous: true as const }),
   });
   if (!ticket) return { status: 'hidden', reason: 'invalid' };
   return { status: 'visible', url: blockMediaUrl(ticket) };
@@ -196,17 +259,27 @@ export async function resolveWorkflowMediaForBlockClaims(input: {
 
 /**
  * The output view for an app-facing workflow read: the token's output ceiling, whether
- * serving is on for this viewer, and a mint context only while it is. Off, a signed-out
- * subject, or a failed evaluation gives `serving: false, mint: null`, so the read is
- * exactly what it was before serving existed.
+ * serving is on for this viewer, and a mint context only while it is. Off or a signed-out
+ * subject gives `serving: false, mint: null`, the read as it was before serving existed. A
+ * failed decision adds `servingUnknown`, which restricts every media output.
  */
 export async function resolveBlockOutputView(
   claims: Pick<BlockTokenClaims, 'sub' | 'appBlockId' | 'maxBrowsingLevel' | 'viewerBrowsingLevel'>
 ): Promise<BlockOutputView> {
   const ceiling = blockOutputCeilingFromClaims(claims);
   const userId = parseSubjectUserId(claims.sub);
-  if (userId == null || !(await isBlockMediaServing(userId))) {
-    return { ...ceiling, serving: false, mint: null };
+  const { serving, anonymous } = await decideBlockMediaServing(userId ?? null);
+  if (serving === 'unknown')
+    return { ...ceiling, serving: false, servingUnknown: true, mint: null };
+  if (userId == null || serving === 'off') return { ...ceiling, serving: false, mint: null };
+  if (anonymous) {
+    // The token's own level is never used for a viewer whose session did not resolve.
+    return {
+      maxBrowsingLevel: anonymousBrowsingLevel(ceiling.maxBrowsingLevel),
+      serving: true,
+      anonymous: true,
+      mint: { userId, appBlockId: claims.appBlockId, anonymous: true },
+    };
   }
   return { ...ceiling, serving: true, mint: { userId, appBlockId: claims.appBlockId } };
 }

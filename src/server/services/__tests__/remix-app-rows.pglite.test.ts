@@ -167,7 +167,7 @@ describe('saveRemixApp against the prod CHECKs', () => {
           data.featuredOrder,
         ]
       )) as never);
-    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
+    redisMock.redis.set.mockResolvedValue('OK' as never);
 
     await saveRemixApp({ ...SEED_REMIX_APPS[0], slug });
     const [row] = (

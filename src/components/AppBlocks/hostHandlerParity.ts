@@ -602,8 +602,9 @@ export const INVENTORY = {
   OPEN_IMAGE_UPLOAD: {
     request: true,
     reply: 'IMAGE_UPLOAD_RESULT',
-    replyKeys: ['selected?'],
-    errorKeys: ['error'],
+    // `shared` is present only on replies to a `share: true` request (see PageBlockHost).
+    replyKeys: ['selected?', 'shared?'],
+    errorKeys: ['error', 'shared?'],
     IframeHost:
       'host-mediated image upload is a page-only affordance today; the model slot has no such surface',
     PageBlockHost: 'required',

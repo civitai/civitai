@@ -13,6 +13,7 @@ import {
   assertClientKeysIssuedToCaller,
   type DecodeBudget,
   imageUrlUnavailableError,
+  isUnfinishedUploadUrl,
   keyIssuers,
   keysIn,
   keysInTextWithin,
@@ -45,8 +46,12 @@ export const GENERATION_PAGE_LINK_MESSAGE =
 /** An upload key as minted: the whole value, nothing around it. */
 const BARE_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** Stored urls a generation reads (a reference panel's image): refused if any image on them is blocked. */
+/**
+ * Stored urls a generation reads (a reference panel's image): refused if any image on them is
+ * blocked, or if one names no stored object (a `blob:` or `data:` url holds no key to check).
+ */
 export async function assertStoredImageUrlsUnblocked(urls: string[]) {
+  if (urls.some(isUnfinishedUploadUrl)) throw generationImageUnavailableError();
   const keys = [...new Set(urls.flatMap(keysIn))];
   if (!keys.length) return;
   const blocked = await dbWrite.$queryRaw<unknown[]>`

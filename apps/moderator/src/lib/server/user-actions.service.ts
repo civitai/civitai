@@ -341,7 +341,8 @@ export type ModReadEndpoint =
   | 'user/membership-cancel-preview'
   | 'user/membership-extend-preview'
   | 'user/membership-resync-preview'
-  | 'user/reactions';
+  | 'user/reactions'
+  | 'whoami';
 
 /** `callModEndpoint`'s GET twin: `params` ride in the query string, undefined ones are dropped. */
 export const readModEndpoint = (

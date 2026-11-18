@@ -82,12 +82,28 @@ const articles = (over: ArticleOver = {}) => {
     },
     ...(id === ARTICLE ? rest : {}),
   });
-  // Answers whichever id the code asks for, so reading the wrong article shows up as its title.
+  // Answers whichever id the code asks for, so reading the wrong article shows up as its title. An
+  // image read without `minor` comes back without it, so a select that drops the flag fails here.
+  type ImageSelect = { select?: { minor?: boolean } } | undefined;
+  const asSelected = (image: unknown, select: ImageSelect) => {
+    if (!image || select?.select?.minor) return image;
+    const { minor: _minor, ...unflagged } = image as { minor?: boolean };
+    return unflagged;
+  };
   dbMock.dbWrite.article.findUnique.mockImplementation((async ({
     where,
+    select,
   }: {
     where: { id: number };
-  }) => base(where.id)) as never);
+    select?: { coverImage?: ImageSelect; bannerImage?: ImageSelect };
+  }) => {
+    const row = base(where.id) as Record<string, unknown>;
+    return {
+      ...row,
+      coverImage: asSelected(row.coverImage, select?.coverImage),
+      bannerImage: asSelected(row.bannerImage, select?.bannerImage),
+    };
+  }) as never);
 };
 
 const read = (viewerId?: number, articleId = ARTICLE) =>
@@ -429,18 +445,6 @@ describe('getArticleByShareToken: cover and viewer', () => {
       const shown = result.status === 'ok' ? result.article.coverImage : undefined;
       expect(shown?.id).toBe(5);
       expect(shown).not.toHaveProperty('minor');
-    });
-
-    it('reads the flag for the cover and the banner', async () => {
-      articles({ coverImage: cover({}) });
-      await read();
-      const select = vi.mocked(dbMock.dbWrite.article.findUnique).mock.calls.at(-1)?.[0]
-        ?.select as {
-        coverImage: { select: { minor?: boolean } };
-        bannerImage: { select: { minor?: boolean } };
-      };
-      expect(select.coverImage.select.minor).toBe(true);
-      expect(select.bannerImage.select.minor).toBe(true);
     });
   });
 

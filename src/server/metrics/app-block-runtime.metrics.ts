@@ -739,6 +739,8 @@ type Bundle = {
   confirmedStepSubmitTotal: Counter<string>;
   succeededWithoutMediaTotal: Counter<string>;
   mediaVerdictTotal: Counter<string>;
+  mediaServingDegradedTotal: Counter<string>;
+  mediaInputRefusedTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -1129,6 +1131,24 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_media_verdict_total',
     'App Block workflow media decisions, one per item judged for a viewer: at the media route (each fetch) and in GET_WORKFLOW_MEDIA (each ref). verdict = served | pending | hidden. reason = the hidden reason (blocked, above_level, unknown_rating, unrated, owner_only, private, paused, unrecognised_url, invalid), or none. Its own denominator: the share hidden is hidden / sum over verdicts.',
     ['surface', 'verdict', 'reason']
+  );
+
+  // Expected flat zero for eval_failed: a nonzero rate is a pod restricting every App Block media
+  // output because it has no flag answer (an evaluation error, or no Flipt client). Closed labels,
+  // published at 0 by seedAppBlockMediaMetrics.
+  const mediaServingDegradedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_serving_degraded_total',
+    'App Block host media serve decisions made without a full answer, one per decision. reason = eval_failed (no flag evaluation: an error, or a Flipt client that never started; every media output is restricted and unlocks are refused) | no_session (the viewer session did not resolve; judged as signed out). eval_failed is expected to be zero. Every reason is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['reason']
+  );
+
+  // The workflow-input guard's refusals (block-media-input-guard.ts), beside its log line.
+  const mediaInputRefusedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_media_input_refused_total',
+    'App Blocks workflow bodies refused because they carried a host media url or ref as an input, by phase (estimate | submit). One per refused body. Every phase is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['phase']
   );
 
   const outputTruncatedTotal = getOrCreateCounter(
@@ -1599,6 +1619,8 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     confirmedStepSubmitTotal,
     succeededWithoutMediaTotal,
     mediaVerdictTotal,
+    mediaServingDegradedTotal,
+    mediaInputRefusedTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -1896,6 +1918,47 @@ export function recordBlockMediaVerdict(
     ensureRegisterAppBlockRuntimeMetrics().mediaVerdictTotal.inc({ surface, verdict, reason });
   } catch {
     /* instrument-only */
+  }
+}
+
+export const BLOCK_MEDIA_SERVING_DEGRADED_REASONS = ['eval_failed', 'no_session'] as const;
+export const BLOCK_MEDIA_INPUT_REFUSED_PHASES = ['estimate', 'submit'] as const;
+
+/** Fail-soft emit of one degraded App Block serve decision (see the counter). */
+export function recordBlockMediaServingDegraded(
+  reason: (typeof BLOCK_MEDIA_SERVING_DEGRADED_REASONS)[number]
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaServingDegradedTotal.inc({ reason });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/** Fail-soft emit of one refused workflow body (see the counter). */
+export function recordBlockMediaInputRefused(
+  phase: (typeof BLOCK_MEDIA_INPUT_REFUSED_PHASES)[number]
+): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().mediaInputRefusedTotal.inc({ phase });
+  } catch {
+    /* instrument-only */
+  }
+}
+
+/**
+ * Publishes the host-media safety counters at 0 for every label, so a series that never fired is
+ * distinguishable from one that is not deployed. Idempotent; /api/metrics calls it on every scrape.
+ */
+export function seedAppBlockMediaMetrics(reg: Registry = client.register): void {
+  try {
+    const { mediaServingDegradedTotal, mediaInputRefusedTotal } =
+      ensureRegisterAppBlockRuntimeMetrics(reg);
+    for (const reason of BLOCK_MEDIA_SERVING_DEGRADED_REASONS)
+      mediaServingDegradedTotal.inc({ reason }, 0);
+    for (const phase of BLOCK_MEDIA_INPUT_REFUSED_PHASES) mediaInputRefusedTotal.inc({ phase }, 0);
+  } catch {
+    // Seeding is a readability nicety; losing it must not cost the scrape.
   }
 }
 

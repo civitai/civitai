@@ -6,12 +6,15 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS } from '$lib/format';
   import CsamReportForm from './CsamReportForm.svelte';
+  import type { TrainingGateState } from '$lib/server/training-moderation.service';
 
   let {
+    gate,
     modelHref,
     csamContents,
     canReportCsam,
   }: {
+    gate: Promise<TrainingGateState>;
     modelHref: string;
     csamContents: Record<string, string>;
     canReportCsam: boolean;
@@ -55,18 +58,40 @@
   });
 </script>
 
-<div class="mb-4 flex flex-wrap items-center gap-2">
+{#snippet rulings(closed: boolean)}
   <form method="POST" action="?/approve" use:enhance={form.enhance}>
-    <Button type="submit" size="sm" disabled={form.submitting}>Approve</Button>
+    <Button type="submit" size="sm" disabled={closed || form.submitting}>Approve</Button>
   </form>
   <form method="POST" action="?/deny" use:enhance={form.enhance}>
-    <Button type="submit" size="sm" variant="destructive" disabled={form.submitting}>Deny</Button>
+    <Button type="submit" size="sm" variant="destructive" disabled={closed || form.submitting}>
+      Deny
+    </Button>
   </form>
+{/snippet}
+
+<div class="mb-4 flex flex-wrap items-center gap-2">
+  {#await gate}
+    {@render rulings(true)}
+  {:then checked}
+    {@render rulings(checked.state === 'closed')}
+  {:catch}
+    {@render rulings(false)}
+  {/await}
   {#if canReportCsam}
     <Button size="sm" variant="outline" onclick={() => (reporting = !reporting)}>Report CSAM</Button>
   {/if}
   <a href={modelHref} target="_blank" rel="noreferrer" class={LINK_CLASS}>Open model ↗</a>
 </div>
+
+{#await gate}
+  <p class="mb-4 text-sm text-dark-2">Checking the gate…</p>
+{:then checked}
+  {#if checked.state !== 'open'}
+    <p class="mb-4 text-sm text-amber-200">{checked.reason}</p>
+  {/if}
+{:catch}
+  <p class="mb-4 text-sm text-amber-200">The gate could not be checked.</p>
+{/await}
 
 {#if form.error}
   <p class="mb-4 text-sm text-red-300">{form.error}</p>

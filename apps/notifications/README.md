@@ -27,6 +27,9 @@ One process owns the whole notification write side:
   It also hands the newly delivered recipients to the push dispatcher (`worker/push.ts`) and the
   email dispatcher (`worker/email.ts`, gated on `emailNotificationTypes`; see
   docs/features/notifications.md "Web push" and "Email").
+- **Unseen read** — `POST /notifications/unseen`, same auth. For up to 1000 users, each with their
+  own window start, the count and newest notifications they have not seen. The main app's weekly
+  missed-notification digest job is the caller.
 - **System notices** — `POST /notifications/notices` (+ `/notifications/notices/get`). Sends one
   `system-message`, `system-announcement` or `event-reminder` to up to 50,000 users per call, with `{placeholder}` text
   filled per recipient. Dry run by default; each recipient gets a given `sendId` at most once; every

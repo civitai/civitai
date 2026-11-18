@@ -116,7 +116,7 @@ export function ScoredEventSections({ event, data }: { event: string; data: Even
       </div>
     ),
     turf: <HatTurfEventSection event={event} team={team} teams={data.teams} />,
-    flagRace: <FlagRaceEventSection event={event} />,
+    flagRace: <FlagRaceEventSection event={event} myTeam={team} teamHats={standings?.teamHats} />,
     hats: joined && hats.length > 0 && (
       <div ref={hatsView.ref}>
         <MyHatsLivePoints

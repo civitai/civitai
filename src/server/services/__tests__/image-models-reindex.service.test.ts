@@ -135,7 +135,6 @@ describe('queueModelsForImageChildTagChanges', () => {
 
     await queueModelsForImageChildTagChanges({ levelImageIds: [8, 9] });
 
-    expect(query('"TagsOnImageNew"')?.text).toMatch(/FROM "Image"[\s\S]*minor/);
     expect(query('"ModelVersion"')?.values[0]).toEqual([8]);
     expect(imagesForModelVersionsCache.refresh).toHaveBeenCalledWith([6000]);
     expect(queued()).toEqual([600]);

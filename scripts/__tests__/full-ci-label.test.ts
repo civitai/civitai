@@ -142,6 +142,7 @@ describe('the full-ci label', () => {
     ['lint.yml', 'component'],
     ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
+    ['apps.yml', 'apps-typecheck'],
     ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
@@ -165,7 +166,7 @@ describe('the full-ci label', () => {
         'unit-verify',
       ],
     ],
-    ['apps.yml', ['apps']],
+    ['apps.yml', ['apps', 'apps-typecheck']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);
@@ -340,11 +341,18 @@ describe('the full-ci label', () => {
       expect(doc.jobs?.unit?.['continue-on-error']).toBeUndefined();
     });
 
-    it('relies on a fail-closed `unit`: continue-on-error only on the named cache-save step', () => {
+    // `Upload test timings` is telemetry for an external reader, and `Upload memory samples` a
+    // diagnostic artifact: their failure says nothing about the suite, and must not red a passing
+    // shard (unit-verify would post a false `failure`).
+    it('relies on a fail-closed `unit`: continue-on-error only on the named cache-save and telemetry steps', () => {
       const lenient = (doc.jobs?.unit?.steps ?? [])
         .filter((st) => st['continue-on-error'] !== undefined && st['continue-on-error'] !== false)
         .map((st) => st.name ?? st.uses ?? '(unnamed)');
-      expect(lenient).toEqual(['Save Vite pre-bundle cache']);
+      expect(lenient).toEqual([
+        'Upload memory samples',
+        'Upload test timings',
+        'Save Vite pre-bundle cache',
+      ]);
     });
 
     // Evaluate the matrix expression for every `only` a full run can have.

@@ -27,9 +27,6 @@ const getAllHiddenForUser = vi.fn(async () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: (...a: unknown[]) => getAllHiddenForUser(...(a as [])),
 }));
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-}));
 
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 import { splitPassThroughStepOutput } from '../steps';
@@ -640,6 +637,8 @@ describe('the gated read over an Image row a pass-through publish would produce'
       tosViolation: false,
       acceptableMinor: false,
       blockedFor: null,
+      // The row carries THIS app's published key (the SQL's `viaPublished`).
+      viaPublished: true,
       ...over,
     };
   };

@@ -192,7 +192,8 @@ const HIDDEN: Array<[string, Parameters<typeof seed>[0]]> = [
     'rated R on a restricted base model',
     { image: { '"nsfwLevel"': '4', '"modelRestricted"': 'true' } },
   ],
-  ['awaiting review', { image: { '"needsReview"': `'minor'` } }],
+  // Another review state, not one of the held ones below: the owner keeps it.
+  ['awaiting review', { image: { '"needsReview"': `'poi'` } }],
   ['in an unpublished post', { post: { '"publishedAt"': 'NULL' } }],
   ['in a Private post', { post: { availability: `'Private'` } }],
   ['with no post', { post: null }],
@@ -216,6 +217,15 @@ describe('image.getDetail visibility', () => {
     expect(await sees(SELF)).toBe(true);
     expect(await sees(MOD)).toBe(true);
   });
+
+  it.each(['csam', 'minor'])(
+    'an image held for %s review is refused to its owner; a moderator still gets it',
+    async (hold) => {
+      await seed({ image: { '"needsReview"': `'${hold}'` } });
+      expect(await sees(SELF)).toBe(false);
+      expect(await sees(MOD)).toBe(true);
+    }
+  );
 
   it('a stranger the owner blocked gets NOT_FOUND; a moderator is not block-checked', async () => {
     await seed();
@@ -279,6 +289,15 @@ describe('tag.getVotableTags on an image', () => {
     async (_, state) => {
       await seed(state);
       expect(await seesTags(SELF)).toBe(true);
+      expect(await seesTags(MOD)).toBe(true);
+    }
+  );
+
+  it.each(['csam', 'minor'])(
+    'an image held for %s review returns no tags to its owner; a moderator still gets them',
+    async (hold) => {
+      await seed({ image: { '"needsReview"': `'${hold}'` } });
+      expect(await seesTags(SELF)).toBe(false);
       expect(await seesTags(MOD)).toBe(true);
     }
   );

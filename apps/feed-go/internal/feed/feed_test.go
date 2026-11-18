@@ -2,6 +2,8 @@ package feed
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +49,110 @@ func TestParseFallsBackOnUnportedShapes(t *testing.T) {
 	// Falsy values of unsupported keys are the same as absent.
 	if _, err := Parse(map[string]any{"hidden": false, "tags": []any{}, "username": ""}); err != nil {
 		t.Fatalf("falsy keys must not fall back: %v", err)
+	}
+}
+
+// `tools` is z.number().array(): read on both image procedures, kept as sent (getAllImages binds the
+// list into its SQL as is; the feed query keeps the positive ids). Values the schema rejects are
+// Node's BAD_REQUEST (input-invalid); a number it accepts that is not an int4 falls back.
+func TestParseTools(t *testing.T) {
+	parsers := map[string]func(map[string]any) (*Input, error){
+		"Parse": Parse,
+		"ParseInfinite": func(m map[string]any) (*Input, error) {
+			in, err := ParseInfinite(m)
+			if err != nil {
+				return nil, err
+			}
+			return &in.Input, nil
+		},
+	}
+	for name, parse := range parsers {
+		for _, c := range []struct {
+			input string
+			want  []int
+		}{
+			{`{"limit":10}`, nil},
+			{`{"tools":null}`, nil},
+			{`{"tools":[]}`, []int{}},
+			{`{"tools":[42]}`, []int{42}},
+			// Order, repeats, zero and negative ids as sent.
+			{`{"tools":[7,3,7,0,-2]}`, []int{7, 3, 7, 0, -2}},
+			{`{"tools":[2147483647,-2147483648]}`, []int{2147483647, -2147483648}},
+		} {
+			in, err := parse(parseObj(t, c.input))
+			if err != nil {
+				t.Errorf("%s %s: reason %q (err %v), want it parsed", name, c.input, fallback.Reason(err), err)
+				continue
+			}
+			if !reflect.DeepEqual(in.Tools, c.want) {
+				t.Errorf("%s %s: Tools = %#v, want %#v", name, c.input, in.Tools, c.want)
+			}
+		}
+		for input, want := range map[string]string{
+			`{"tools":"42"}`:            "input-invalid",
+			`{"tools":42}`:              "input-invalid",
+			`{"tools":{"0":42}}`:        "input-invalid",
+			`{"tools":["42"]}`:          "input-invalid",
+			`{"tools":[42,null]}`:       "input-invalid",
+			`{"tools":[true]}`:          "input-invalid",
+			`{"tools":[1.5]}`:           "input-tools",
+			`{"tools":[42,2147483648]}`: "input-tools",
+			`{"tools":[-2147483649]}`:   "input-tools",
+		} {
+			if _, err := parse(parseObj(t, input)); fallback.Reason(err) != want {
+				t.Errorf("%s %s: reason %q (err %v), want %q", name, input, fallback.Reason(err), err, want)
+			}
+		}
+	}
+	// With another unported key, that key still names the fallback.
+	if _, err := Parse(parseObj(t, `{"tools":[42],"techniques":[3]}`)); fallback.Reason(err) != "input-techniques" {
+		t.Errorf("tools + techniques: reason %q (err %v), want input-techniques", fallback.Reason(err), err)
+	}
+}
+
+// The tools clause: getAllImagesUncaptured's EXISTS over the image's ImageTool rows, the list bound
+// once as sent, and the query's cache policy untouched (Node does not mark it personalized).
+func TestBuildToolsClause(t *testing.T) {
+	const clause = `EXISTS (
+      SELECT 1
+      FROM "ImageTool" it
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> $`
+	base := ImagesQuery{Limit: 10, Sort: SortNewest, BrowsingLevel: 1, ModelVersionID: 9}
+	if b := base.Build(); strings.Contains(b.SQL, `"ImageTool"`) {
+		t.Fatal("no tools: the query must not read ImageTool")
+	}
+	empty := base
+	empty.Tools = []int{}
+	if b := empty.Build(); strings.Contains(b.SQL, `"ImageTool"`) {
+		t.Fatal("an empty tools list filters nothing (`!!tools?.length`)")
+	}
+	q := base
+	q.Tools = []int{7, 3, 7, 0}
+	b := q.Build()
+	i := strings.Index(b.SQL, clause)
+	if i < 0 {
+		t.Fatalf("SQL lacks the tools clause:\n%s", b.SQL)
+	}
+	rest := b.SQL[i+len(clause):]
+	end := strings.Index(rest, "::integer[]\n    )")
+	if end < 0 {
+		t.Fatalf("tools clause not closed as `$n::integer[] )`:\n%s", b.SQL)
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil || n < 1 || n > len(b.Args) {
+		t.Fatalf("tools clause binds %q, not one of the %d args", rest[:end], len(b.Args))
+	}
+	if got, ok := b.Args[n-1].([]int); !ok || !reflect.DeepEqual(got, []int{7, 3, 7, 0}) {
+		t.Fatalf("tools clause binds %#v, want []int{7, 3, 7, 0} (as sent)", b.Args[n-1])
+	}
+	if strings.Count(b.SQL, `"ImageTool"`) != 1 {
+		t.Fatal("the tools clause must appear once")
+	}
+	// Same cache policy as without tools: a version gallery stays cached under its tag.
+	if b.CacheTTL != 10*time.Minute || !reflect.DeepEqual(b.CacheTags, []string{"images-modelVersion:9"}) {
+		t.Fatalf("cache policy with tools = %v %v, want 10m [images-modelVersion:9]", b.CacheTTL, b.CacheTags)
 	}
 }
 

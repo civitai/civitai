@@ -89,7 +89,7 @@ async function honouredSession(token: string): Promise<SessionClaims | null> {
 function carryDeviceId(cookies: Cookies): string {
   const host = cookies.get(deviceCookieNameForSlot('host'));
   const shared = cookies.get(deviceCookieNameForSlot('shared'));
-  const id = (sessionCookieMode() === 'host' ? host ?? shared : shared ?? host) ?? randomUUID();
+  const id = (sessionCookieMode(null) === 'host' ? host ?? shared : shared ?? host) ?? randomUUID();
   if (host !== id) setDeviceCookie(cookies, id, 'host');
   return id;
 }

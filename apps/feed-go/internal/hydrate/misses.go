@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/fallback"
@@ -28,13 +29,16 @@ const (
 	MissModelFrames      = "model-frames"      // cosmeticEntityCaches.Model (model.getAll)
 	MissModelDecorations = "model-decorations" // eventDecorationEntityCaches.Model (model.getAll)
 	MissVersionImages    = "version-images"    // imagesForModelVersionsCache (model.getAll)
+	MissModelData        = "model-data"        // dataForModelsCache (model.getAll)
+	MissModelTags        = "model-tags"        // modelTagCache (model.getAll)
+	MissOfficialModels   = "official-models"   // getOfficialModelIds' fetchThroughCache entry (model.getAll)
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissVersionImages, MissMetrics}
+	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -52,8 +56,9 @@ type MissCompute struct {
 	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
 	// The frame and event-decoration lookups (image and model) then read Primary, as Node's do
 	// (entityDB); the user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch
-	// does (dbRead); the version-images lookup reads Primary for a version a recent write flagged, as
-	// Node's lag-aware read does (versionImagesDB).
+	// does (dbRead); the version-images and model-data lookups read Primary for a version or model a
+	// recent write flagged, as Node's lag-aware reads do (lagAwareDB). The model-tags and
+	// official-models lookups read the replica, as Node's fetch does (dbRead).
 	WriteBack bool
 	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required with WriteBack: the
 	// frame and event-decoration lookups write what they read, so they must not read a lagging replica
@@ -78,6 +83,18 @@ type MissCompute struct {
 	// MetricsTimeout bounds one page's metrics lookup (FEED_GO_CLICKHOUSE_TIMEOUT_MS), held to at most
 	// metricsTimeoutMax (under Node's own budget); past it the page falls back (`metrics-miss-failed`).
 	MetricsTimeout time.Duration
+	// MetricsLockWait bounds the metrics lookup's wait on a populate lock another process holds
+	// (FEED_GO_METRICS_LOCK_WAIT_MS; not positive: defaultMetricsLockWait, 500 ms). Past it the page
+	// falls back (`metrics-miss-failed`). It bounds only that wait, never this lookup's own ClickHouse
+	// read (MetricsTimeout's); a MetricsTimeout that ends first still ends the wait.
+	MetricsLockWait time.Duration
+	// waitSleep, when set (tests), replaces the timer between lock-wait reads (sleepLockWait): called
+	// with the delay, it returns nil to read next or an error to end the wait.
+	waitSleep func(ctx context.Context, d time.Duration) error
+	// Tracer spans the waits on work this computation did not start (spans.go): a lookup that joins
+	// another caller's in-flight one, and the metrics lookup's wait on another process's populate
+	// lock. nil (tracing off) spans nothing; with it set, only under a recording span.
+	Tracer trace.Tracer
 
 	// flight coalesces concurrent lookups of one cache and id set; recent keeps answers for a few
 	// seconds with write-back off (lookupShared).
@@ -123,7 +140,8 @@ type recentEntry struct {
 // the same cold ids stop repeating the same queries:
 //
 //   - concurrent calls for the same cache and id set share one lookup (singleflight; the first
-//     caller's context runs it, so a joiner sees that caller's cancellation as its own error);
+//     caller's context runs it, so a joiner sees that caller's cancellation as its own error, and
+//     a traced joiner gets a `miss lookup join` span for its wait, joinSpan);
 //   - with write-back off, each answer (a record or "no row") is kept for recentTTL and answers the
 //     next miss of that id without a query. With write-back on nothing is kept: the written cache
 //     entry answers repeats, and a kept answer could outlive the bust that should replace it. The
@@ -147,10 +165,17 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 	for i, id := range sorted {
 		parts[i] = strconv.Itoa(id)
 	}
+	key := cache + ":" + strings.Join(parts, ",")
 	if c.beforeFlight != nil {
 		c.beforeFlight()
 	}
-	v, err, _ := c.flight.Do(cache+":"+strings.Join(parts, ","), func() (any, error) { return c.flightLookup(ctx, cache, todo, lookup) })
+	var v any
+	var err error
+	if c.traced(ctx) {
+		v, err = c.tracedFlight(ctx, key, cache, todo, lookup)
+	} else {
+		v, err, _ = c.flight.Do(key, func() (any, error) { return c.flightLookup(ctx, cache, todo, lookup) })
+	}
 	if c.afterFlight != nil {
 		c.afterFlight()
 	}
@@ -164,6 +189,24 @@ func (c *MissCompute) lookupShared(ctx context.Context, cache string, ids []int,
 		}
 	}
 	return out, nil
+}
+
+// tracedFlight is the flight of a traced caller (c.traced): the same Do, noting whether this caller
+// ran the flight. One that joined another caller's has spent the time waiting on a lookup spanned
+// on THAT caller's context, so it gets a `miss lookup join` span of its own (joinSpan), from before
+// it reached the flight. Kept apart from the untraced path so that path's closure is unchanged.
+func (c *MissCompute) tracedFlight(ctx context.Context, key, cache string, ids []int,
+	lookup func(context.Context, []int) (map[int]jspack.Obj, error)) (any, error) {
+	start := time.Now()
+	led := false
+	v, err, _ := c.flight.Do(key, func() (any, error) {
+		led = true
+		return c.flightLookup(ctx, cache, ids, lookup)
+	})
+	if !led {
+		c.joinSpan(ctx, cache, start, err)
+	}
+	return v, err
 }
 
 // flightLookup is the body of one flight: it runs inside singleflight, so a caller that arrives
@@ -346,7 +389,8 @@ var (
 
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
 // the fallbacks those misses raise without a computation (Sources.MissReason).
-var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec}
+var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec,
+	modelDataSpec, modelTagsSpec, officialModelsSpec}
 
 // specReason is the fallback reason of the named cache's lookup spec ("" for none).
 func specReason(cache string) string {
@@ -407,7 +451,7 @@ func (s *Sources) fill(ctx context.Context, spec lookupSpec, ids []int, got map[
 		if p == nil {
 			c.observe(spec.cache, "error", len(miss))
 		}
-		return fallback.Newf(spec.reason+"-failed", "%v", err)
+		return fallback.Wrap(spec.reason+"-failed", err)
 	}
 	now := c.now()
 	var writes []packedWrite

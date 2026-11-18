@@ -132,10 +132,9 @@ function outputAt(
   position: number,
   view: OutputUnlockView = NO_SERVING
 ): { snapshot: BlockWorkflowSnapshot; output: BlockWorkflowOutput | undefined } {
-  const decided = snapshotAt(workflow, { ...ceiling, serving: view.serving, mint: null });
-  const shown = view.mint
-    ? snapshotAt(workflow, { ...ceiling, serving: view.serving, mint: view.mint })
-    : decided;
+  const rules = { ...ceiling, serving: view.serving, servingUnknown: view.servingUnknown };
+  const decided = snapshotAt(workflow, { ...rules, mint: null });
+  const shown = view.mint ? snapshotAt(workflow, { ...rules, mint: view.mint }) : decided;
   return { snapshot: shown, output: decided.outputs?.[position] };
 }
 
@@ -146,7 +145,10 @@ function snapshotAt(workflow: Workflow, view: BlockOutputView): BlockWorkflowSna
 }
 
 /** `resolveBlockOutputView(claims)` without its ceiling: the serving rules and mint. */
-export type OutputUnlockView = Pick<BlockOutputView, 'serving' | 'mint'>;
+export type OutputUnlockView = Pick<
+  BlockOutputView,
+  'serving' | 'servingUnknown' | 'anonymous' | 'mint'
+>;
 const NO_SERVING: OutputUnlockView = { serving: false, mint: null };
 
 /** Shown, or unlockable by paying: either way the viewer could see it under that ceiling. */
@@ -190,6 +192,10 @@ export function planBlockOutputUnlock(
   );
   if (!output) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `output ${position} does not exist` });
+  }
+  // No serve decision, or a viewer judged as signed out: nothing is offered for pay.
+  if (view.servingUnknown || view.anonymous) {
+    return { kind: 'unavailable', position, message: OUTPUT_UNLOCK_CANNOT_SHOW_MESSAGE };
   }
   if (isUnrestrictedOutput(output)) return { kind: 'not-restricted', position, snapshot };
   if ('pending' in output) {
@@ -324,8 +330,8 @@ export type OutputUnlockResult = {
   /**
    * `unlocked`: the output now carries a url. `not-restricted`: it already did (a retry after a
    * success lands here), nothing was charged. `not-released`: the orchestrator accepted the
-   * unlock (its swap stands) but the output is still restricted at this token's ceiling;
-   * `message` says why. `refused`: the orchestrator refused the yellow charge (the viewer's
+   * unlock (its swap stands) but the output is still restricted at this token's ceiling, or
+   * reading it back after the charge failed; `message` says which. `refused`: the orchestrator refused the yellow charge (the viewer's
    * Yellow balance is short); `message` says so. `unavailable`: the write got no response, so it
    * may still land; the lock is kept until its TTL and `message` says to check back.
    */

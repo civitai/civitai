@@ -11,6 +11,8 @@
  *     it ({@link jsonBytes}), so a relay can pass it on byte for byte. `Entity.meta` and
  *     `Event.meta` are bytes too (a JSON object; empty is none): this source sets no `meta`, so it
  *     sends them empty, which is absent on the wire.
+ *   - `SubscribeRequest.meta` is read as the HTTP binding's `meta` parameter is
+ *     (`protocol.ts`), into the call's origin (`request-origin.ts`).
  *   - An error is its gRPC status (spec "Errors") with a `google.rpc.ErrorInfo` whose `reason` is
  *     the error's name, and no `domain` (the spec defines none), in `grpc-status-details-bin`.
  *   - An idle stream is kept open by HTTP/2 pings ({@link GRPC_KEEPALIVE_MS}).
@@ -47,13 +49,19 @@ import {
   wwwAuthenticate,
 } from '~/server/registry-adapter/auth';
 import type { SubscriptionLimiter, SubscriptionSlot } from '~/server/registry-adapter/limits';
-import type { Adapter, ErrorCode, StreamEvent } from '~/server/registry-adapter/protocol';
+import type {
+  Adapter,
+  ErrorCode,
+  RequestMeta,
+  StreamEvent,
+} from '~/server/registry-adapter/protocol';
 import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/protocol';
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
   peerAddress,
   regionRestricted,
+  subscriptionRegionLine,
 } from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
@@ -77,6 +85,7 @@ message SubscribeRequest {
   string cursor = 2;          // empty: from the beginning
   repeated string urns = 3;   // empty: every entity
   string filter = 4;          // a JSON Schema, as JSON; empty: no filter
+  bytes meta = 5;             // a JSON object, as UTF-8; empty: none
 }
 
 message Entity {
@@ -251,7 +260,13 @@ export function decodeEvent(buf: Uint8Array): StreamEvent | null {
   }
 }
 
-export type WireRequest = { schema: string; cursor: string; urns: string[]; filter: string };
+export type WireRequest = {
+  schema: string;
+  cursor: string;
+  urns: string[];
+  filter: string;
+  meta?: Uint8Array;
+};
 
 /** `registry.v1.Registry`, the spec's service. */
 export const REGISTRY_SERVICE: grpc.ServiceDefinition = {
@@ -390,15 +405,15 @@ function openCall(
 
 /**
  * A call's origin (`request-origin.ts`): its string metadata as headers (the last value of each,
- * as `authorizationOf` reads it) and its peer's address.
+ * as `authorizationOf` reads it), its request's `meta` and its peer's address.
  */
-function originOf(call: Call): RequestOrigin {
+function originOf(call: Call, meta: RequestMeta | undefined): RequestOrigin {
   const headers: Record<string, string> = {};
   for (const [name, values] of Object.entries(call.metadata.toJSON())) {
     const strings = values.filter((v): v is string => typeof v === 'string');
     if (strings.length > 0) headers[name] = strings[strings.length - 1];
   }
-  return { headers, remoteAddress: peerAddress(call.getPeer()) };
+  return { headers, meta, remoteAddress: peerAddress(call.getPeer()) };
 }
 
 /** The `authorization` metadata of a call: its last string value. */
@@ -422,6 +437,8 @@ export function createGrpcServer(
     limiter?: SubscriptionLimiter;
     /** As for HTTP: the site's region rule unless replaced. */
     regionRestricted?: (origin: RequestOrigin) => boolean;
+    /** As for HTTP: called with one line per subscription once its token is accepted. */
+    onRegion?: (line: string) => void;
   } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
@@ -443,8 +460,9 @@ export function createGrpcServer(
             cursor: r.cursor,
             urns: r.urns,
             filter: r.filter,
+            meta: r.meta,
           });
-          const origin = originOf(call);
+          const origin = originOf(call, request.meta);
           // The total and per-address caps before the token is verified; per token once it is.
           slot = opts.limiter?.acquire(clientAddress(origin));
           const restricted = opts.regionRestricted ?? regionRestricted;
@@ -452,6 +470,7 @@ export function createGrpcServer(
             regionRestricted: () => restricted(origin),
           });
           slot?.claim(principal.subject);
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted));
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),

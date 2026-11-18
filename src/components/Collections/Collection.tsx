@@ -258,7 +258,7 @@ const ImageCollection = ({
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
-  const flagRow = useFlagRow(useCollectionFlagRace(collection.id));
+  const flagRow = useFlagRow(useCollectionFlagRace(collection.id), { past: true });
 
   const [toolSearchOpened, setToolSearchOpened] = useState(false);
 

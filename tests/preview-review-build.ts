@@ -8,6 +8,9 @@
  * moves the request to `preview-deploying` only when the whole build succeeded, so
  * `preview-deploying` or `preview-live` proves the manifest check passed. `preview-failed` carries
  * the failed step in its error ("review build failed at manifest check (...)").
+ *
+ * In a build-only environment (PR previews) nothing is deployed: a passed build is recorded as
+ * `preview-failed` with `detail.buildOnly: true`, which also proves the manifest check passed.
  */
 
 import type { StoredReviewPreviewState } from '~/shared/constants/app-review-preview.constants';
@@ -15,7 +18,7 @@ import type { StoredReviewPreviewState } from '~/shared/constants/app-review-pre
 /** The fields of `blocks.getReviewStatus` this reads. */
 export type ReviewStatusLike = {
   state: string | null;
-  detail?: { error?: string } | null;
+  detail?: { error?: string; buildOnly?: boolean } | null;
 };
 
 /** `blocks.getMyAutoReviewBuildBudget`. */
@@ -61,6 +64,15 @@ export function reviewBuildVerdict(status: ReviewStatusLike): ReviewBuildVerdict
       done: true,
       pass: true,
       message: `review build passed (state ${state})`,
+    };
+  }
+  // A build-only environment (PR previews, APPS_REVIEW_BUILD_ONLY) records a PASSED build this way
+  // and serves no preview. Read from the flag, never from the error text.
+  if (state === 'preview-failed' && status.detail?.buildOnly === true) {
+    return {
+      done: true,
+      pass: true,
+      message: 'review build passed (build-only environment: recorded, not deployed)',
     };
   }
   if (state === 'preview-failed') {

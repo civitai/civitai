@@ -484,6 +484,19 @@ export const serverSchema = z
       .catch([])
       .transform((ids) => ids.filter((id) => id !== 0)),
     PERMISSIONS_CHECK_GATE: zc.booleanString.default(false),
+    // How API routes apply the token scope they declare (`getServerAuthSession`'s `scope`): `off`
+    // ignores it, `report` logs each request it would refuse, `enforce` applies it.
+    // Any other value reads as `off`, with a warning when the env is parsed; '' reads as unset.
+    REST_SCOPE_ENFORCE: z
+      .enum(['off', 'report', 'enforce'])
+      .default('off')
+      .catch(({ value }) => {
+        if (value !== '')
+          console.warn(
+            `REST_SCOPE_ENFORCE=${JSON.stringify(value)} is not off, report or enforce; using off.`
+          );
+        return 'off' as const;
+      }),
     // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
     MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     // Download links (`/api/v1/download-links`, `/api/download/l/<id>`). Only these credentials may
@@ -610,6 +623,8 @@ export const serverSchema = z
     // The search service in front of Qdrant, behind semantic image search. Unset = the search page errors.
     SEARCH_SERVICE_URL: z.url().optional(),
     SEARCH_SERVICE_TOKEN: z.string().optional(),
+    // Set privately; see search-upload-gate.ts.
+    SEARCH_UPLOAD_FACE_ANIME_MIN: z.string().optional(),
     // Entities whose search updates are forwarded to "Outbox" for the semantic search sync, e.g.
     // "Article,Comic". Unset = none. Comic needs its OutboxEntity value applied first.
     SEARCH_OUTBOX_FORWARD: commaDelimitedStringArray().default([]),
@@ -1282,6 +1297,12 @@ export const serverSchema = z
     // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+    // Build review previews, serve none (PR previews). A passed review build is recorded on the
+    // request (`preview-failed` with `buildOnly: true`) and nothing is deployed: no apply Job into
+    // APPS_KUBE_NAMESPACE and no shared-server publish. Every function that creates a Job in that
+    // namespace refuses (`assertAppsNamespaceWritable`), and review/agent teardowns do nothing.
+    // Unset (production) changes nothing.
+    APPS_REVIEW_BUILD_ONLY: zc.booleanString.optional().default(false),
     APPS_DOMAIN: z.string().default('civit.ai'),
     // App Assistant's hosted sandbox service, which the browser calls. Server-side so it is read per
     // request and set per environment; a NEXT_PUBLIC_ var would be frozen into the client at build.

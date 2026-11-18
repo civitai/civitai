@@ -46,7 +46,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: z.flattenError(parsed.error) });
 
-  const session = await getServerAuthSession({ req, res });
+  const session = await getServerAuthSession({ req, res, scope: 'defer' });
   return res
     .status(200)
     .json(await setCreatorShopFees(parsed.data, { actorId: session?.user?.id }));

@@ -53,37 +53,50 @@ describe('a scan result, which writes the minor flag', () => {
   type Outcome = Parameters<typeof applyIngestionSideEffects>[0]['outcome'];
   const audit = (minor: boolean) => ({ minor, poiTags: [], minorTags: [], reviewTags: [] });
 
-  it('queues the articles the image covers', async () => {
-    await applyIngestionSideEffects({
-      image,
-      outcome: { ingestion: ImageIngestionStatus.Scanned } as Outcome,
+  const scan = (minorBefore: boolean, audited?: boolean) =>
+    applyIngestionSideEffects({
+      image: { ...image, minor: minorBefore } as ScanImage,
+      outcome: {
+        ingestion: ImageIngestionStatus.Scanned,
+        ...(audited !== undefined && { audit: audit(audited) }),
+      } as unknown as Outcome,
     });
+
+  it('queues the articles the image covers', async () => {
+    await scan(false);
+    expect(queueArticlesAndComicsForImages).toHaveBeenCalledTimes(1);
     expect(queueArticlesAndComicsForImages).toHaveBeenCalledWith([IMAGE_ID]);
   });
 
-  it('queues the models of an image the scan flagged minor', async () => {
-    await applyIngestionSideEffects({
-      image,
-      outcome: {
-        ingestion: ImageIngestionStatus.Scanned,
-        audit: audit(true),
-      } as unknown as Outcome,
-    });
+  it('queues the models of an image the scan flagged minor, and its articles once', async () => {
+    await scan(false, true);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledTimes(1);
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
       levelImageIds: [IMAGE_ID],
       minorImageIds: [IMAGE_ID],
     });
+    // The minorImageIds requeue covers the articles and comics.
+    expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
   });
 
-  it('leaves an image the scan did not flag minor to the child-tag check (control)', async () => {
-    await applyIngestionSideEffects({
-      image,
-      outcome: {
-        ingestion: ImageIngestionStatus.Scanned,
-        audit: audit(false),
-      } as unknown as Outcome,
+  it('🔴 queues the models of an image the scan cleared of minor', async () => {
+    await scan(true, false);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledTimes(1);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({
+      levelImageIds: [IMAGE_ID],
+      minorImageIds: [IMAGE_ID],
     });
+    expect(queueArticlesAndComicsForImages).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['stays unflagged', false, false],
+    ['stays flagged', true, true],
+  ])('leaves an image whose flag %s to the child-tag check (control)', async (_, before, after) => {
+    await scan(before, after);
+    expect(queueModelsForImageChildTagChanges).toHaveBeenCalledTimes(1);
     expect(queueModelsForImageChildTagChanges).toHaveBeenCalledWith({ levelImageIds: [IMAGE_ID] });
+    expect(queueArticlesAndComicsForImages).toHaveBeenCalledTimes(1);
   });
 });
 

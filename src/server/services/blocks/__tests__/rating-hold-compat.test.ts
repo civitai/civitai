@@ -170,6 +170,14 @@ describe('a succeeded workflow with an output held for its rating', () => {
     expect(late.ratingPending).toBe(true);
   });
 
+  it('fails closed on a record with no parseable timestamp: the hold never runs out', () => {
+    const workflow = wf('succeeded', [held()], { completedAt: undefined, createdAt: 'garbage' });
+    const snap = snapshotFromWorkflow(workflow, SFW, { now: DONE + 365 * 24 * 3_600_000 });
+    expect(snap.status).toBe('processing');
+    expect(snap.outputs).toStrictEqual([{ pending: true }]);
+    expect(JSON.stringify(snap)).not.toContain(HELD_URL);
+  });
+
   it('leaves failed / canceled alone, and a still-running workflow is never cut short', () => {
     for (const status of ['failed', 'canceled'] as const) {
       const snap = snapshotFromWorkflow(wf(status, [held()], { completedAt: COMPLETED_AT }), SFW, {

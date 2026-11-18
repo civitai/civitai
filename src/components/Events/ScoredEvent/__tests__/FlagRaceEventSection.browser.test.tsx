@@ -26,6 +26,9 @@ vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
 vi.mock('~/components/HatTurf/FlagRace/FlagRacePanel', () => ({
   FlagRacePanel: () => <div data-testid="panel" />,
 }));
+vi.mock('~/components/HatTurf/FlagRace/FlagRaceTotals', () => ({
+  FlagRaceTotals: () => <div data-testid="totals" />,
+}));
 vi.mock('~/components/Cards/ImageCard', () => ({
   ImageCard: ({ data }: { data: { id: number } }) => <div data-testid="card">{data.id}</div>,
 }));

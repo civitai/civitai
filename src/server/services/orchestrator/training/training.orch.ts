@@ -1,3 +1,8 @@
+import {
+  parseAiToolkitOptions,
+  trainingIgnoredWarnings,
+  type AiToolkitOptions,
+} from '@civitai/shared/training-options';
 import type { YuE2SampleOverride, YuE2AiToolkitTrainingInput } from '@civitai/orchestration-client';
 import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 import { yue2SampleOverrideSchema } from '~/server/schema/model-version.schema';
@@ -238,6 +243,15 @@ export const buildAiToolkitTrainingStep = (
     lr: aiToolkitParams.lr,
     textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
     trainTextEncoder: aiToolkitParams.trainTextEncoder,
+    ...(parseAiToolkitOptions(
+      {
+        engine: 'ai-toolkit',
+        ecosystem: aiToolkitParams.ecosystem,
+        lrScheduler: aiToolkitParams.lrScheduler,
+        steps: aiToolkitParams.steps,
+      },
+      aiToolkitParams
+    ) satisfies Pick<AiToolkitTrainingInput, keyof AiToolkitOptions>),
     lrScheduler: aiToolkitParams.lrScheduler,
     optimizerType: aiToolkitParams.optimizerType,
     networkDim: aiToolkitParams.networkDim ?? undefined,
@@ -539,8 +553,17 @@ export const createTrainingWorkflow = async ({
     // continueFrom / sample params / saveEvery are AI Toolkit-only. The kohya-shaped params
     // schema tolerates them (it doubles as the UI run state), but they must never reach the
     // kohya/rapid/musubi dispatch, which spreads params straight into the payload.
-    const { continueFrom, sampleCfgScale, sampleStrength, saveEvery, ...engineParams } =
-      trainingParams;
+    const {
+      continueFrom,
+      sampleCfgScale,
+      sampleStrength,
+      saveEvery,
+      lrWarmupSteps,
+      captionDropoutRate,
+      rankDropout,
+      trainConv,
+      ...engineParams
+    } = trainingParams;
     params = engineParams;
   }
 
@@ -773,5 +796,11 @@ export const createTrainingWhatIfWorkflow = async ({
   const precedingJobs = _step?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
-  return { cost, licenseFee, precedingJobs, eta };
+  return {
+    cost,
+    licenseFee,
+    precedingJobs,
+    eta,
+    warnings: trainingIgnoredWarnings(workflow.steps),
+  };
 };

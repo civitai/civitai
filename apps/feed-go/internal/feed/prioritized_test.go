@@ -329,3 +329,30 @@ func TestBuildPrioritized(t *testing.T) {
 		t.Fatal("control: the publish clause is missing without pending")
 	}
 }
+
+// The owner's own image under an owner-hidden review hold (csam, minor) is withheld from their pending
+// view, as on the Node path (pendingOthersImageConditions); other review states stay the owner's.
+func TestServeInfinitePendingViewWithholdsOwnHeldImages(t *testing.T) {
+	f := newCarouselFixture(t)
+	f.rows = []RawImage{infRow(31, 700)}
+	if _, _, _, err := serveInf(t, f, carouselInput(), InfiniteRequest{Viewer: &Viewer{ID: 9}, ViewerUsername: "nine"}); err != nil {
+		t.Fatalf("signed in: %v", err)
+	}
+	mustContain(t, f.sql[0],
+		`(i."needsReview" IS NULL OR i."needsReview" NOT IN ($`,
+		// Control: the owner keeps their other review states.
+		`(i."needsReview" IS NULL OR i."userId" = $`,
+	)
+	bound := map[string]bool{}
+	for _, a := range f.sqlArgs[0] {
+		if s, ok := a.(string); ok {
+			bound[s] = true
+		}
+	}
+	if !bound["csam"] || !bound["minor"] {
+		t.Fatalf("the owner-hidden review holds are not bound: %v", f.sqlArgs[0])
+	}
+	if bound["poi"] {
+		t.Fatalf("poi is withheld from its owner: %v", f.sqlArgs[0])
+	}
+}

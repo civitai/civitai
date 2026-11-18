@@ -1,2 +1,13 @@
 /apps/auth/ @justmaier
 /packages/civitai-auth/ @justmaier
+
+# Dev tunnel / App Assistant preview path: changes here touch the shared dev-tunnel session
+# record (scopes, per-session Buzz cap, reaper) that both the CLI and the App Assistant use.
+*dev-tunnel* @ZacxDev @koenbeuk
+*devTunnel* @ZacxDev @koenbeuk
+*DevTunnel* @ZacxDev @koenbeuk
+/src/server/services/blocks/dev-scoped-mint* @ZacxDev @koenbeuk
+/src/pages/api/v1/blocks/dev-token.ts @ZacxDev @koenbeuk
+/apps/assistant-runner/src/app-assistant/preview.ts @ZacxDev @koenbeuk
+/apps/assistant-runner/src/app-assistant/preview-restart.ts @ZacxDev @koenbeuk
+/src/components/Apps/AppAssistant/previewTunnelStatus* @ZacxDev @koenbeuk

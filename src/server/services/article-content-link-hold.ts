@@ -3,9 +3,11 @@ import { dbWrite } from '~/server/db/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import {
   imageUrlUnavailableError,
+  isUnfinishedUploadUrl,
   keyIssuers,
   keysIn,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
+  urlScheme,
 } from '~/server/services/image-url-ownership';
 
 /**
@@ -93,6 +95,12 @@ export async function classifyUnlinkedContentUrls({
     const lookupFailed = issuers.requestLogReadFailed || issuers.recordReadFailed;
     const unrecorded = new Set(issuers.unrecorded);
     for (const url of chunk) {
+      // Neither gets a row. A `blob:` url shows only in its uploader's own tab, so it is just
+      // skipped; any other (a `data:` image) shows its bytes to every reader, unscanned.
+      if (isUnfinishedUploadUrl(url)) {
+        if (urlScheme(url) !== 'blob') refused.push(url);
+        continue;
+      }
       const keys = keysIn(url);
       const anyUnrecorded = keys.some((key) => unrecorded.has(key));
       if (keys.some((key) => others.has(key))) refused.push(url);

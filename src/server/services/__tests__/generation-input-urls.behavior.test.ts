@@ -744,6 +744,13 @@ describe('assertStoredImageUrlsUnblocked', () => {
     await givenImage({ url, blockedFor: 'moderated' });
     expect(await stored([url])).toBe('refused');
   });
+
+  it('refuses a url that names no stored object', async () => {
+    await givenImage({ userId: CALLER, postId: null });
+    expect(await stored([KEY])).toBe('accepted');
+    expect(await stored([KEY, `blob:https://civitai.com/${KEY}`])).toBe('refused');
+    expect(await stored(['data:image/png;base64,iVBORw0KGgo'])).toBe('refused');
+  });
 });
 
 describe('assertGenerationInputsUsable', () => {

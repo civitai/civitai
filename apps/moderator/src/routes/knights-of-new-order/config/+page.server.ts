@@ -7,8 +7,10 @@ import {
   getLastSourcesChange,
   getSourcesContext,
   getSourcesSettings,
+  saveGameSettings,
   saveSourcesConfig,
 } from '$lib/server/knights/sources-config.service';
+import { parseGameForm } from './game-form';
 import { percentToRate } from './rates';
 
 const percent = (label: string) =>
@@ -42,6 +44,19 @@ const sourcesForm = z.object({
   sfwPercent: percent('The SFW rate'),
   nsfwPercent: percent('The NSFW rate'),
   yesNoPercent: optionalPercent('The yes/no share'),
+  // A blank or absent box leaves the stored cap as it is; the service checks the range.
+  maxOpen: z
+    .string()
+    .optional()
+    .transform((text, ctx) => {
+      if (text === undefined || text.trim() === '') return undefined;
+      const trimmed = text.trim().replaceAll(',', '');
+      if (!/^\d+$/.test(trimmed)) {
+        ctx.addIssue({ code: 'custom', message: 'The open-item cap must be a whole number.' });
+        return z.NEVER;
+      }
+      return Number(trimmed);
+    }),
   // Ticked: clear the stored share, so Knights uses its environment default; it wins over the box.
   yesNoDefault: z.enum(['true']).optional(),
 });
@@ -67,6 +82,7 @@ export const actions: Actions = {
           enabled: input.enabled,
           sfwRate: input.sfwPercent,
           nsfwRate: input.nsfwPercent,
+          ...(input.maxOpen === undefined ? {} : { maxOpen: input.maxOpen }),
           ...(input.yesNoDefault
             ? { yesNoShare: null }
             : input.yesNoPercent === undefined
@@ -81,6 +97,24 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights sources: could not save the config', { error });
       return fail(500, { error: 'The config could not be saved. Nothing was changed; try again.' });
+    }
+  },
+  game: async ({ request, locals, url }) => {
+    requireAccess(locals.user, url.pathname);
+    const input = parseGameForm(await request.formData());
+    if (!input.ok) return fail(400, { error: input.error });
+    try {
+      const result = await saveGameSettings(input.changes, locals.user.id, {
+        killSwitchesConfirmed: input.confirmed,
+      });
+      return result.ok
+        ? { success: true, changed: result.changed }
+        : fail(400, { error: result.error });
+    } catch (error) {
+      console.error('knights game settings: could not save', { error });
+      return fail(500, {
+        error: 'The settings could not be saved. Nothing was changed; try again.',
+      });
     }
   },
 };

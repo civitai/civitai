@@ -290,12 +290,12 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-unavailable", "%v", err) // Node: a retryable 503
+		return nil, fallback.Wrap("feed-unavailable", err) // Node: a retryable 503
 	}
 	if ans.Status != 200 {
 		// A 5xx is a 503 on Node; a 4xx is an empty page there (a 400 with a feed cursor). A feed that
 		// refused this call but answered Node is not a page to compare, so every one falls back.
-		return nil, fallback.Newf("feed-status", "%d", ans.Status)
+		return nil, fallback.Safef("feed-status", "%d", ans.Status)
 	}
 	var next string
 	if ans.NextCursor != "" {
@@ -328,7 +328,7 @@ func v1Page(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, level in
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("feed-hydrate-error", "%v", err) // Node: hydrate:error, a 503
+		return nil, fallback.Wrap("feed-hydrate-error", err) // Node: hydrate:error, a 503
 	}
 	if len(rows) > hq.Limit {
 		rows = rows[:hq.Limit]
@@ -434,7 +434,7 @@ func v1LegacyPage(ctx context.Context, d *V1Deps, in *V1Input, viewer Viewer, vi
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, fallback.Newf("v1-legacy-error", "%v", err) // Node: a 500
+		return nil, fallback.Wrap("v1-legacy-error", err) // Node: a 500
 	}
 	res := &v1Result{hydrated: true} // the query ran, whatever it found
 	if len(rows) > q.Limit {

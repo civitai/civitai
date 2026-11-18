@@ -44,6 +44,18 @@ export default AuthedEndpoint(
     const banned = !!user.bannedAt || !!standing?.banned;
     const muted = !!user.muted || !!standing?.muted;
 
+    const status = banned ? 'banned' : muted ? 'muted' : 'active';
+    // A credential with no scope bits identifies its user and nothing more.
+    if (subject !== null && tokenScope === TokenScope.None)
+      return res.send({
+        id: user.id,
+        username: user.username,
+        image: user.image ?? null,
+        status,
+        tokenScope: Number(tokenScope),
+        subject,
+      });
+
     // Release email and moderator status for session auth (no token) or when the
     // token carries the UserRead scope — same gate the OIDC userinfo endpoint uses.
     const canReadProfile = subject === null || hasScope(tokenScope ?? 0n, TokenScope.UserRead);
@@ -52,7 +64,7 @@ export default AuthedEndpoint(
       id: user.id,
       username: user.username,
       tier: user.tier,
-      status: banned ? 'banned' : muted ? 'muted' : 'active',
+      status,
       isMember: user.tier ? user.tier !== 'free' : false,
       subscriptions: Object.keys(user.subscriptions ?? {}),
       // Never `false`: a non-moderator must look identical to a caller the gate withheld it from.
@@ -70,5 +82,5 @@ export default AuthedEndpoint(
     });
   },
   ['GET'],
-  { allowBanned: true }
+  { allowBanned: true, scope: 'anyScope' }
 );

@@ -74,8 +74,10 @@ async function postSync(body: unknown, logContext: unknown, strict = false): Pro
       if (strict) throw new Error(`search-index sync failed: ${res.status}`);
     }
   } catch (err) {
-    console.error('[search-index] sync error', err);
-    // A fresh error, not `err`: a URL parse error carries the request URL, token included.
-    if (strict) throw new Error(`search-index sync error: ${(err as Error)?.name ?? 'unknown'}`);
+    // Neither `err` nor its message, logged or rethrown: a URL parse error carries the request URL,
+    // token included.
+    const { name = 'unknown', cause } = (err ?? {}) as { name?: string; cause?: { code?: string } };
+    console.error('[search-index] sync error', name, cause?.code ?? '', logContext);
+    if (strict) throw new Error(`search-index sync error: ${name}`);
   }
 }

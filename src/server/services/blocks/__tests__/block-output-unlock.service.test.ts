@@ -17,6 +17,22 @@ import {
   type OutputUnlockDeps,
 } from '~/server/services/blocks/block-output-unlock.service';
 import { BLOCK_STEP_NAME, appBlockTag } from '~/server/services/blocks/workflow.service';
+import type * as WorkflowServiceModule from '~/server/services/blocks/workflow.service';
+
+/** Makes the level read behind the charged-not-released WARN throw; the snapshot path is untouched. */
+const projection = vi.hoisted(() => ({ throws: false }));
+vi.mock('~/server/services/blocks/workflow.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof WorkflowServiceModule>();
+  return {
+    ...actual,
+    projectAppWorkflowWithPositions: (
+      ...args: Parameters<typeof actual.projectAppWorkflowWithPositions>
+    ) => {
+      if (projection.throws) throw new Error('projection failed');
+      return actual.projectAppWorkflowWithPositions(...args);
+    },
+  };
+});
 import { ORCHESTRATOR_GET_TIMEOUT_MS } from '~/server/services/orchestrator/workflows';
 
 /**
@@ -691,5 +707,69 @@ describe('🔴 the plan/lift race: a rescan before the charge is never charged f
     const result = await unlock(f);
     expect(result.charged).toStrictEqual({ unlockBuzz: 0 });
     expect(f.warnChargedNotReleased).not.toHaveBeenCalled();
+  });
+});
+
+describe('🔴 no serve decision: nothing is offered or charged', () => {
+  const UNKNOWN = { serving: false, servingUnknown: true as const, mint: null };
+
+  it('a pool-locked output is not offered for pay', () => {
+    expect(planBlockOutputUnlock(LOCKED(), RED_MATURE, 1, UNKNOWN)).toMatchObject({
+      kind: 'unavailable',
+    });
+  });
+
+  it('CONTROL: the same output with serving off is offered for pay', () => {
+    expect(planBlockOutputUnlock(LOCKED(), RED_MATURE, 1, NO_VIEW)).toMatchObject({ kind: 'pay' });
+  });
+
+  it('the confirmed unlock is refused before the lift, nothing charged', async () => {
+    const f = fakes([LOCKED]);
+    await expect(
+      unlockBlockOutput({ ...request(), view: UNKNOWN, expectedTotal: TOTAL }, f)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
+    expect(f.release).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('🔴 a viewer judged as signed out: nothing is offered or charged', () => {
+  const SIGNED_OUT = { serving: true, anonymous: true as const, mint: null };
+
+  it('a pool-locked output is not offered for pay', () => {
+    expect(planBlockOutputUnlock(LOCKED(), RED_MATURE, 1, SIGNED_OUT)).toMatchObject({
+      kind: 'unavailable',
+    });
+  });
+
+  it('CONTROL: the same output for a signed-in viewer with serving on is offered for pay', () => {
+    expect(
+      planBlockOutputUnlock(LOCKED(), RED_MATURE, 1, { serving: true, mint: null })
+    ).toMatchObject({ kind: 'pay' });
+  });
+
+  it('the confirmed unlock is refused before the lift, nothing charged', async () => {
+    const f = fakes([LOCKED]);
+    await expect(
+      unlockBlockOutput({ ...request(), view: SIGNED_OUT, expectedTotal: TOTAL }, f)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(f.liftRestriction).not.toHaveBeenCalled();
+  });
+});
+
+describe('the WARN level read failing', () => {
+  afterEach(() => {
+    projection.throws = false;
+  });
+
+  it('a level read that throws still reports the charge, and the WARN carries no levels', async () => {
+    projection.throws = true;
+    const f = fakes([LOCKED, LOCKED, LOCKED]);
+    const result = await unlockBlockOutput({ ...request(), expectedTotal: TOTAL }, f);
+    expect(result.outcome).toBe('not-released');
+    expect(result.charged).toStrictEqual({ unlockBuzz: UNLOCK_PRICE });
+    expect(f.warnChargedNotReleased).toHaveBeenCalledWith(
+      expect.objectContaining({ plannedLevel: null, servedLevel: null, readBackFailed: false })
+    );
   });
 });

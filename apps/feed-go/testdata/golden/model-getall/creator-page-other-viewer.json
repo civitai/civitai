@@ -639,7 +639,7 @@
       },
       "packed": "3gADp21vZGVsSWTNE5CmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -1674,6 +1674,7 @@
         },
         "v": 1
       }
-    }
+    },
+    "writes": {}
   }
 }

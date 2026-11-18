@@ -9,7 +9,7 @@ import { dbMock, redisMock } from '~/__tests__/mocks';
  * REAL Redis. The unit suite beside this one mocks both clients, so it can prove the
  * control flow and prove nothing about the SQL: whether Prisma's tagged template binds
  * the `::jsonb` cast the way the statement expects, whether `jsonb_array_length` accepts
- * what we actually store, whether the length-guarded delete matches. Those only fail
+ * what we actually store, whether the value-guarded delete matches. Those only fail
  * against a database.
  *
  * Skipped unless both URLs are supplied, mirroring kysely-prisma-parity.test.ts — CI has
@@ -203,16 +203,16 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
     await addToQueue('images_v6:Delete', [10, 11]);
     backing = redis;
 
-    // The interleaving the length guard exists for: the drain has read [10,11] and is
+    // The interleaving the value guard exists for: the drain has read [10,11] and is
     // about to delete when another pod parks id 12. The delete must refuse the grown row.
     await prisma.$executeRawUnsafe(
       `UPDATE ${SCHEMA}."KeyValue" SET "value" = "value" || '[12]'::jsonb WHERE "key" = $1`,
       PARKED_KEY
     );
     await prisma.$executeRawUnsafe(
-      `DELETE FROM ${SCHEMA}."KeyValue" WHERE "key" = $1 AND jsonb_typeof("value") = 'array' AND jsonb_array_length("value") = $2`,
+      `DELETE FROM ${SCHEMA}."KeyValue" WHERE "key" = $1 AND "value" = $2::jsonb`,
       PARKED_KEY,
-      2
+      JSON.stringify([10, 11])
     );
 
     expect((await parked())[0].value).toEqual([10, 11, 12]);

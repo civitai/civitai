@@ -1,9 +1,9 @@
 <script lang="ts">
   import { IconX } from '@tabler/icons-svelte';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { autoLabelAvailable } from '$lib/host';
-  import { isTriggerTag, tagsHaveTrigger, withTags } from './trainingFlow';
+  import { isTriggerTag, tagEntryKey, tagsHaveTrigger, withTags } from './trainingFlow';
 
   // `draft` is bindable so the label editor can commit a half-typed tag when it steps to the next image.
   let {
@@ -27,6 +27,15 @@
   const triggerText = $derived(trigger.trim());
   const triggerMissing = $derived(!!triggerText && !tagsHaveTrigger(trigger, tags));
 
+  // Firefox has no field-sizing, so size the box to its text by hand there.
+  let input = $state<HTMLTextAreaElement | null>(null);
+  $effect(() => {
+    void draft;
+    if (!input || CSS.supports('field-sizing', 'content')) return;
+    input.style.height = 'auto';
+    input.style.height = `${input.scrollHeight}px`;
+  });
+
   function commit() {
     if (draft.trim()) onchange(withTags(tags, draft));
     draft = '';
@@ -35,17 +44,18 @@
     onchange(tags.filter((t) => t !== tag));
   }
   function keydown(e: KeyboardEvent) {
-    if (e.key === 'Backspace' && draft === '' && tags.length > 0) {
-      e.preventDefault();
-      onchange(tags.slice(0, -1));
-    }
+    const action = tagEntryKey(e, draft, tags.length);
+    if (!action) return;
+    e.preventDefault();
+    if (action === 'commit') commit();
+    else onchange(tags.slice(0, -1));
   }
 </script>
 
 {#if triggerMissing && !compact}
   <div class="mb-2 flex items-center gap-2 text-xs text-dark-2">
     <span class="rounded border border-buzz/30 bg-buzz/10 px-2 py-0.5 font-mono text-buzz">{triggerText}</span>
-    <span class="font-mono">auto-prepended to every tag</span>
+    <span class="font-mono">added to the start of every tag list</span>
   </div>
 {/if}
 
@@ -57,7 +67,7 @@
   {#if triggerMissing && compact && tags.length > 0}
     <span
       class="rounded border border-buzz/30 bg-buzz/10 px-1.5 py-0.5 font-mono text-xs text-buzz"
-      title="Auto-prepended to every tag"
+      title="Added to the start of every tag list"
     >
       {triggerText}
     </span>
@@ -101,13 +111,18 @@
     commit();
   }}
 >
-  <Input
+  <!-- Grows with what's typed (field-sizing) so a pasted tag list stays readable; Enter still commits. -->
+  <Textarea
+    bind:ref={input}
     bind:value={draft}
     onkeydown={keydown}
     onblur={compact ? commit : undefined}
+    rows={1}
     placeholder={compact ? 'Add tags…' : 'Add or paste tags…'}
     aria-label={`Add tags to ${name}`}
-    class="min-w-0 flex-1 font-mono {compact ? 'h-7 px-2 text-xs' : ''}"
+    class="max-h-32 min-w-0 flex-1 resize-none overflow-y-auto font-mono {compact
+      ? 'min-h-7 px-2 py-1 text-xs'
+      : 'min-h-9 py-1.5'}"
   />
   {#if !compact}
     <Button type="submit" variant="outline">Add</Button>

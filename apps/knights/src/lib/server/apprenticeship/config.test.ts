@@ -15,3 +15,18 @@ describe('apprenticeSettings', () => {
     }
   });
 });
+
+describe('apprenticeSettings with stored settings', () => {
+  it('lets the stored switch win over the environment either way', () => {
+    expect(
+      apprenticeSettings({ KNIGHTS_APPRENTICE_SMITES: 'off' }, { apprenticeSmites: true })
+    ).toEqual({
+      smites: true,
+    });
+    expect(apprenticeSettings({}, { apprenticeSmites: false })).toEqual({ smites: false });
+  });
+
+  it('keeps the environment when nothing is stored', () => {
+    expect(apprenticeSettings({ KNIGHTS_APPRENTICE_SMITES: 'off' }, {}).smites).toBe(false);
+  });
+});
