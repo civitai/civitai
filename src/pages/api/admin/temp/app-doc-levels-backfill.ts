@@ -51,7 +51,15 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     type: 'info',
     message: 'backfill pass',
     appBlockId,
-    ...result,
+    payload: {
+      ready: result.ready,
+      read: result.read,
+      submitted: result.submitted,
+      rated: result.rated,
+      waiting: result.waiting,
+      skipped: result.skipped,
+      failed: result.failed,
+    },
   });
   return res.status(200).json({ dryRun: false, appBlockId, ...result });
 });

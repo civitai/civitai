@@ -374,7 +374,7 @@ export async function rateUnratedDocs(
                 type: 'error',
                 message: 'rating a document threw',
                 appId,
-                error: (error as Error).message,
+                payload: { error: (error as Error).message },
               });
             }
             afterSeq = doc.seq;
@@ -394,7 +394,7 @@ export async function rateUnratedDocs(
         type: 'error',
         message: 'rating an app threw',
         appId,
-        error: (error as Error).message,
+        payload: { error: (error as Error).message },
       });
     }
   }
