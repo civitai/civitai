@@ -45,7 +45,7 @@ const (
 	goldenDir = "../../testdata/golden"
 	// The fixture counts gen.mjs writes: a glob that matches fewer fails, so a moved directory or a
 	// renamed extension cannot pass as zero fixtures.
-	goldenMinAsPosts  = 25
+	goldenMinAsPosts  = 26
 	goldenMinV1       = 36
 	goldenMinInfinite = 23
 	goldenMinModels   = 31

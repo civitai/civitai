@@ -330,6 +330,7 @@ const THUMBNAILS = {
 // Tag ids per image (tagIdsForImagesCache). None are tags the addons exclude.
 const tagIdsOf = (id) => [501 + (id % 3), 520 + (id % 7)];
 // ImageTool rows: imageId -> its tool ids (the `tools` filter). An image not listed has none.
+// 8201 (the sponsored post's approved image) has none, so a `tools` fetch of that post drops it.
 const IMAGE_TOOLS = {
   8001: [41, 42],
   8002: [42],
@@ -340,6 +341,9 @@ const IMAGE_TOOLS = {
   8102: [41],
   8103: [42, 43],
   8104: [41, 42],
+  8202: [42],
+  8203: [42],
+  8204: [42],
 };
 const toolIdsOf = (id) => IMAGE_TOOLS[id] ?? [];
 // Metric hashes (metrics:Image:<id>), as the watcher writes them.
@@ -481,6 +485,7 @@ class Trace {
     this.coldRead = new Set(); // the cold keys the mirror read (each must be)
     this.writes = new Map(); // key -> what Node writes on the miss ({value, ex})
     this.toolsRead = false; // a query filtered by `tools`: the tables then carry each image's tool rows
+    this.toolsCandidatePosts = new Set(); // posts of every row a tools query matches without its tools clause
   }
 }
 let T; // the fixture being traced
@@ -868,7 +873,7 @@ function imageSql(q) {
   let browsingLevel = onlySelectableLevels(q.browsingLevel ?? 0);
   if (!browsingLevel) browsingLevel = publicBrowsingLevelsFlag;
   const viaVersion = q.modelVersionId || q.modelId;
-  let rows = Object.values(IMAGES).filter((i) => {
+  const passes = (i, applyTools) => {
     const p = POSTS[i.postId];
     if (q.ids?.length && !q.ids.includes(i.id)) return false;
     if (q.types?.length && !q.types.includes(i.type)) return false;
@@ -889,11 +894,15 @@ function imageSql(q) {
     if (q.excludedUserIds?.length && q.excludedUserIds.includes(i.userId)) return false;
     // EXISTS (… FROM "ImageTool" … HAVING array_agg(it."toolId") @> ARRAY[tools]::integer[]): every
     // listed tool on the image; an image with no tool row has no group, so never matches.
-    if (q.tools?.length && !q.tools.every((t) => toolIdsOf(i.id).includes(t))) return false;
+    if (applyTools && q.tools?.length && !q.tools.every((t) => toolIdsOf(i.id).includes(t))) return false;
     if (i.needsReview !== null || i.acceptableMinor) return false;
     if ((i.nsfwLevel & browsingLevel) === 0 || i.nsfwLevel === 0) return false;
     return true;
-  });
+  };
+  let rows = Object.values(IMAGES).filter((i) => passes(i, true));
+  // Every row the same query would match WITHOUT the tools clause (before order, cursor and limit):
+  // the fixture's tables must hold them, or a feed-go that dropped the clause would answer the same.
+  if (q.tools?.length) for (const i of Object.values(IMAGES)) if (passes(i, false)) T.toolsCandidatePosts.add(i.postId);
   // A post's own media (`postId` without `modelId`): ORDER BY i."index", i."id", the cursor on the
   // index (getCursor('i."index"'), inclusive), and the index as the cursor column.
   const byIndex = !!q.postId && !q.modelId;
@@ -1854,6 +1863,19 @@ const AS_POSTS = [
     input: { modelId: 5001, modelVersionId: 6001, sort: 'Newest', browsingLevel: 31, limit: 3, tools: [41, 42] },
     replies: {},
   },
+  {
+    name: 'tools-sponsored-post-filtered-out',
+    description: 'A live sponsored post on page 1 under `tools: [42]`: the sponsored fetch (Postgres) applies tools too, so its only approved image (8201, no tool row) is dropped and no sponsored post is spliced in; its post then shows on the page like any other, completed through the feed with tools.',
+    viewer: null,
+    host: HOST.green,
+    nodeFlags: { creatorPromotions: true },
+    goConfig: { creatorPromotions: 'everyone' },
+    input: { modelId: 5005, modelVersionId: 6401, sort: 'Most Reactions', browsingLevel: 1, limit: 5, tools: [42] },
+    replies: {
+      'levels=1&excludedTags=9901&versionIds=6401&excludePoi=1&tools=42&sort=reactions&limit=10': { body: { items: [8202, 8203, 8204] } },
+      'levels=1&excludedTags=9901&versionIds=6401&excludePoi=1&tools=42&postIds=7201&sort=reactions&limit=2': { body: { items: [8202, 8201] } },
+    },
+  },
   // Fallbacks: shapes feed-go does not answer.
   {
     name: 'fallback-unparsed-cursor',
@@ -2347,9 +2369,12 @@ const INFINITE = [
 // ---------------------------------------------------------------------------------------------
 function dbTables({ tags = false, meta = false } = {}) {
   if (T.toolsRead) {
-    // A `tools` fixture holds every image the filter can decide on — each the feed named and each
-    // with a tool row — so a row only the tools clause drops is one feed-go must drop too.
+    // A `tools` fixture holds every image the tools clause decides on, so a row only that clause drops
+    // is one feed-go must drop too: each image the feed named (the hydrate), each row every tools
+    // query would match without the clause (the Postgres reads: page, completion, pinned, sponsored,
+    // hydrate), and each image with a tool row.
     for (const f of T.feed) for (const id of f.body?.items ?? []) if (IMAGES[id]) T.posts.add(IMAGES[id].postId);
+    for (const id of T.toolsCandidatePosts) T.posts.add(id);
     for (const id of Object.keys(IMAGE_TOOLS)) T.posts.add(IMAGES[id].postId);
   }
   const postIds = [...T.posts].sort((a, b) => a - b);
