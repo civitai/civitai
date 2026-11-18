@@ -1,7 +1,7 @@
 import { LAB_LABELS, type LabEntityType, type LabLabel } from '../text-scan-lab/types';
 
-/** The eval set for `label:model-com-face-intent`. 0, the placeholder until that set exists, matches no set. */
-export const INTENT_EVAL_SET_ID = 0;
+/** The eval set for `label:model-com-face-intent`. */
+export const INTENT_EVAL_SET_ID = 4;
 
 export const INTENT_LABEL = 'model-com-face-intent' satisfies LabLabel;
 export const INTENT_LABELS: readonly LabLabel[] = [INTENT_LABEL];

@@ -127,7 +127,6 @@ describe('a run on the pinned intent set', () => {
 
   it("sends the worker's scans the intent label; another set sends none", async () => {
     await importCase(pinned, 11, { 'model-com-face-intent': true });
-    // The worker skips a case whose source is gone from the main database.
     await sql`INSERT INTO "User" (id) VALUES (3)`.execute(main);
     await sql`INSERT INTO "Model" (id, "userId") VALUES (11, 3)`.execute(main);
     await seedCase(db, other, { entityType: 'Model', text: 'synthetic model' });
@@ -176,7 +175,6 @@ describe('cases in the pinned intent set', () => {
     await expect(importCase(pinned, 12, { nsfw: { min: 'r', max: 'r' } })).rejects.toMatchObject({
       status: 400,
     });
-    // Outside the pin a Model case still scores its profile's labels only.
     await expect(importCase(other, 11, { 'model-com-face-intent': true })).rejects.toMatchObject({
       status: 400,
     });
@@ -252,7 +250,6 @@ describe('importIntentCases', () => {
       [13, {}, 'import'],
     ]);
     for (const c of cases) expect(c.fields).toEqual(LISTING);
-    // A second import updates the same model's case.
     expect(
       await importIntentCases(
         { db, compose },
