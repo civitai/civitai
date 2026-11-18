@@ -36,7 +36,6 @@ export const GET: RequestHandler = async ({ locals, request, url }) => {
     return json(
       await continueTrainingWhatIf(
         token,
-        locals.user.id,
         opts,
         await datasetRatingFor(locals.user),
         await isKohyaAllowed(locals)
