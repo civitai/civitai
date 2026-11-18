@@ -130,14 +130,13 @@ async function writeRating(blobKey: string, rating: StoredRating): Promise<void>
 
 type RateResult =
   | { rating: StoredRating }
-  | { rating: null; retryAfterMs?: number; limited?: boolean };
+  /** `notSent`: nothing reached the rater, so the blob may be sent again. */
+  | { rating: null; retryAfterMs?: number; limited?: boolean; notSent?: true };
 
 /** Blob ids are base32 keys, optionally with a file extension; anything else is never sent. */
 const BLOB_ID = /^[A-Za-z0-9_-]+(\.[A-Za-z0-9]+)?$/;
 
-/** Whether a dataset blob goes to the rater: only an image extension the uploader accepts. The rater
- *  refuses audio and video without making a job. A key with no extension is skipped too, since nothing
- *  says what it holds; a skipped blob keeps its upload rating, like any unrated one. */
+/** Only an image extension the uploader accepts; a key with no extension says nothing about its media. */
 export const isRateableKey = (blobId: string): boolean => {
   const ext = extOfAir(blobId);
   return ext !== undefined && mediaOfExt(ext) === 'image';
@@ -157,14 +156,15 @@ export async function rateImage(
   blobId: string,
   signal: AbortSignal
 ): Promise<RateResult> {
-  if (!BLOB_ID.test(blobId)) return { rating: null };
+  if (!BLOB_ID.test(blobId)) return { rating: null, notSent: true };
   try {
     const { data } = await refreshBlob({ client: caller.client, path: { blobId }, signal });
-    if (!data?.url) return { rating: null };
+    if (!data?.url) return { rating: null, notSent: true };
     const answer = await mainAppRateImage(caller.cookie, blobId, data.url, signal);
     if (!answer) return { rating: null };
+    if ('refused' in answer) return { rating: null, notSent: true };
     if ('limited' in answer)
-      return { rating: null, limited: true, retryAfterMs: answer.retryAfterMs };
+      return { rating: null, limited: true, retryAfterMs: answer.retryAfterMs, notSent: true };
     const rating = parseRatingV2(answer.output);
     return rating ? { rating } : { rating: null };
   } catch {
@@ -172,14 +172,22 @@ export async function rateImage(
   }
 }
 
-/** Claim a blob's one send per SENT_TTL_SECONDS, whatever its outcome, so a call that failed or never
- *  answered is not sent again by every view, poll and pod. A Redis failure claims nothing. */
+/** Claim a blob's one send per SENT_TTL_SECONDS, so a call that failed after reaching the rater, or never
+ *  answered, is not sent again by every view, poll and pod. A Redis failure claims nothing. */
 async function claimSend(blobKey: string): Promise<boolean> {
   try {
     const set = await getSysRedis().set(sentKey(blobKey), '1', { NX: true, EX: SENT_TTL_SECONDS });
     return set !== null;
   } catch {
     return false;
+  }
+}
+
+async function releaseSend(blobKey: string): Promise<void> {
+  try {
+    await getSysRedis().del(sentKey(blobKey));
+  } catch {
+    // best-effort: the blob waits out the marker on its upload rating
   }
 }
 
@@ -229,6 +237,7 @@ export async function runRatingJob(
       }
       calls++;
       const result = await rate(caller, key, abort.signal);
+      if (!result.rating && result.notSent) await releaseSend(key);
       if (result.rating) {
         rated++;
         await writeRating(key, result.rating);

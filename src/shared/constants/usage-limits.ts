@@ -267,7 +267,6 @@ export const usageLimitDefs = [
     base: 120,
   },
   {
-    // A dataset is at most 2000 images; the Studio's own per-user allowance is the same 3000.
     id: 'dataset-rating.daily',
     area: 'training-studio',
     kind: 'abuse',

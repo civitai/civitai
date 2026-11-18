@@ -40,6 +40,7 @@ vi.mock('./redis', () => ({
       store.set(k, v);
       return 'OK';
     },
+    del: async (k: string) => Number(store.delete(k)),
   }),
 }));
 const flagVariant = vi.hoisted(() => vi.fn(async () => flag.variant));
@@ -173,7 +174,10 @@ describe('one rating call', () => {
 
   it("a blob the user's token can't refresh is never sent to the main app", async () => {
     refresh.mockResolvedValueOnce({ data: undefined, error: { status: 404 } });
-    expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toBeNull();
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -191,12 +195,40 @@ describe('one rating call', () => {
       rating: null,
       limited: true,
       retryAfterMs: 3000,
+      notSent: true,
     });
   });
 
-  it('a refusal is no rating', async () => {
+  it("the main app's 429 without Retry-After pauses past the job's deadline", async () => {
+    scan.mockResolvedValueOnce(refused(429));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toMatchObject({
+      limited: true,
+      retryAfterMs: 60_000,
+    });
+  });
+
+  it('an answer without the requested image is no rating, though it may have reached the rater', async () => {
+    scan.mockResolvedValueOnce(
+      Response.json({ results: [{ key: 'other.png', output: out('S0') }] })
+    );
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+    });
+  });
+
+  it("the main app's refusal is no rating, and nothing reached the rater", async () => {
     scan.mockResolvedValueOnce(refused(400));
-    expect((await rateImage(client, 'b.png', new AbortController().signal)).rating).toBeNull();
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+      notSent: true,
+    });
+  });
+
+  it('a 5xx may have reached the rater', async () => {
+    scan.mockResolvedValueOnce(refused(502));
+    expect(await rateImage(client, 'b.png', new AbortController().signal)).toEqual({
+      rating: null,
+    });
   });
 
   it('a thrown call is no rating', async () => {
@@ -239,6 +271,14 @@ describe('the rating job', () => {
     const again = await runRatingJob(client, ['a.png', 'b.png'], rate);
     expect(rate).toHaveBeenCalledTimes(2);
     expect(again).toMatchObject({ calls: 0, alreadySent: 2, rated: 0 });
+  });
+
+  it('a blob nothing reached the rater with may be sent again', async () => {
+    const rate = vi.fn(async () => ({ rating: null, notSent: true as const }));
+    await runRatingJob(client, ['a.png'], rate);
+    const again = await runRatingJob(client, ['a.png'], rate);
+    expect(rate).toHaveBeenCalledTimes(2);
+    expect(again).toMatchObject({ calls: 1, alreadySent: 0 });
   });
 
   it('stops at the deadline, leaving unreached images unrated', async () => {
@@ -288,14 +328,13 @@ describe('starting a job', () => {
     );
   });
 
-  it('a later view after a failed call sends nothing again', async () => {
+  it('a later view after a call that reached the rater and failed sends nothing again', async () => {
     scan.mockResolvedValue(refused(502));
     warmDatasetRating('t', 16, ['a.png'], 'c');
     await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
     expect(store.has('sent:radio-alpha:a.png')).toBe(true);
-    // Let the first job end, so the second view is free to start one.
-    await new Promise((r) => setTimeout(r, 20));
-    warmDatasetRating('t', 16, ['a.png'], 'c');
+    // Another user's view of the same blob, so this user's running job can't be what stops it.
+    warmDatasetRating('t', 19, ['a.png'], 'c');
     await new Promise((r) => setTimeout(r, 20));
     expect(scan).toHaveBeenCalledTimes(1);
   });

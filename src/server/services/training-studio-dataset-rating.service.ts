@@ -7,8 +7,7 @@ import { toOrchestratorError } from '~/server/services/training.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { usageLimits } from '~/shared/constants/usage-limits';
 
-/** The Training Studio's v2 dataset rating, on the system token: a scan submitted with the user's own
- *  token is charged to them. */
+// On the system token: a scan submitted with the user's own token is charged to them.
 
 export const STUDIO_DATASET_RATING_RATER = 'radio-alpha';
 /** Per-minute and per-day images, counted per request (one image each) in the `training:` bucket. */

@@ -95,7 +95,6 @@ export async function continueTrainingWhatIf(
   return core.continueTrainingWhatIf(orchestratorClient(token), opts, {
     status: await getTrainingServiceStatus(),
     kohyaAllowed,
-    // Read-only: opening a finished run's keep-training panel never starts a rating job.
     datasetRating,
     traceMode: TRACE_MODE,
   });

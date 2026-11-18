@@ -9,12 +9,8 @@ import { allowTrainingStudio } from '~/server/utils/training-studio-access';
 
 export const config = { api: { bodyParser: { sizeLimit: '16kb' } } };
 
-/**
- * The Training Studio's v2 dataset rating on the system-paid path. Both Studio surfaces reach it
- * through the Studio's server, so it is gated like check-text rather than as standalone-only.
- * POST { items: [{ mediaUrl, key }] } → { results: [{ key, output }] }, `output` being the
- * imageScanning step's, or null.
- */
+// Both Studio surfaces reach this through the Studio's server, so it is gated like check-text, not
+// as standalone-only.
 export default AuthedEndpoint(
   async (req, res, user) => {
     if (!(await allowTrainingStudio(req, res, user, { pageFlag: false }))) return;
