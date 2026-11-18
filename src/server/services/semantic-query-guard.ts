@@ -38,7 +38,12 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
-import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
+import {
+  includesInappropriate,
+  includesMinor,
+  includesNsfw,
+  includesPoi,
+} from '~/utils/metadata/audit';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 
 export type QueryTracker = Pick<Tracker, 'action'>;
@@ -123,7 +128,8 @@ export async function semanticQueryRefusal(
 ): Promise<QueryRefusal> {
   try {
     const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
-    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+    // The raw text decides whether the person and age checks run; the stripped text is what they read.
+    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag) || !!includesNsfw(query);
     const verdict = includesInappropriate({ prompt: audited }, nsfw);
     if (verdict === 'minor') return 'minor';
     // A 'poi' verdict is returned before the minor check runs, so it can hide one; still refused.

@@ -156,7 +156,7 @@ func Parse(m map[string]any) (*Input, error) {
 		keys = append(keys, k)
 	}
 	if k, ok := modelsSchema.Unknown(keys, trpcTransportKeys); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
+		return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(k), "%s", k)
 	}
 	// The limit is the handler's (`limit = 100`): the schema's is optional, with no default.
 	in := &Input{
@@ -166,7 +166,7 @@ func Parse(m map[string]any) (*Input, error) {
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {
 		if in.Limit, err = intIn(v, 0, 100); err != nil {
-			return nil, fallback.Newf("input-invalid", "limit: %v", err)
+			return nil, fallback.NewfSafe("input-invalid", "limit", "limit: %v", err)
 		}
 	}
 	if v, ok := m["cursor"]; ok && v != nil {
@@ -186,28 +186,28 @@ func Parse(m map[string]any) (*Input, error) {
 			return nil, fallback.New("model-sort-recently-added")
 		}
 		if !knownSorts[s] {
-			return nil, fallback.Newf("input-invalid", "sort %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "sort", "sort %v", v)
 		}
 		in.Sort = s
 	}
 	if v, ok := m["period"]; ok && v != nil {
 		s, _ := v.(string)
 		if !knownPeriods[s] {
-			return nil, fallback.Newf("input-invalid", "period %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "period", "period %v", v)
 		}
 		in.Period = s
 	}
 	if v, ok := m["periodMode"]; ok && v != nil {
 		s, _ := v.(string)
 		if s != "published" && s != "stats" {
-			return nil, fallback.Newf("input-invalid", "periodMode %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "periodMode", "periodMode %v", v)
 		}
 		in.PeriodMode = s
 	}
 	if v, ok := m["browsingLevel"]; ok && v != nil {
 		n, err := intIn(v, 0, math.MaxInt32)
 		if err != nil {
-			return nil, fallback.Newf("input-invalid", "browsingLevel: %v", err)
+			return nil, fallback.NewfSafe("input-invalid", "browsingLevel", "browsingLevel: %v", err)
 		}
 		in.BrowsingLevel = &n
 	}
@@ -242,7 +242,7 @@ func Parse(m map[string]any) (*Input, error) {
 	if v, ok := m["checkpointType"]; ok && v != nil {
 		s, _ := v.(string)
 		if !checkpointTypes[s] {
-			return nil, fallback.Newf("input-invalid", "checkpointType %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "checkpointType", "checkpointType %v", v)
 		}
 		in.CheckpointType = s
 	}
@@ -257,7 +257,7 @@ func Parse(m map[string]any) (*Input, error) {
 		if v, ok := m[key]; ok && v != nil {
 			b, isBool := v.(bool)
 			if !isBool {
-				return nil, fallback.Newf("input-invalid", "%s %v", key, v)
+				return nil, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s %v", key, v)
 			}
 			*dst = &b
 		}
@@ -267,7 +267,7 @@ func Parse(m map[string]any) (*Input, error) {
 		"onSale": &in.OnSale, "fromPlatform": &in.FromPlatform, "archived": &in.Archived,
 	} {
 		if *dst, err = booleanString(m[key]); err != nil {
-			return nil, fallback.Newf("input-invalid", "%s: %v", key, err)
+			return nil, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s: %v", key, err)
 		}
 	}
 	if v, ok := m["fileFormats"]; ok && v != nil {
@@ -278,7 +278,7 @@ func Parse(m map[string]any) (*Input, error) {
 		for _, e := range list {
 			s, _ := e.(string)
 			if !fileFormats[s] {
-				return nil, fallback.Newf("input-invalid", "fileFormats %v", e)
+				return nil, fallback.NewfSafe("input-invalid", "fileFormats", "fileFormats %v", e)
 			}
 			in.FileFormats = append(in.FileFormats, s)
 		}
@@ -287,7 +287,7 @@ func Parse(m map[string]any) (*Input, error) {
 		if v, ok := m[key]; ok && v != nil {
 			b, isBool := v.(bool)
 			if !isBool {
-				return nil, fallback.Newf("input-invalid", "%s %v", key, v)
+				return nil, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s %v", key, v)
 			}
 			*dst = b
 		}
@@ -317,7 +317,7 @@ func collectionKeys(m map[string]any) (collectionID, tagID int, err error) {
 		}
 		n, isNum := v.(json.Number)
 		if !isNum {
-			return "", false, fallback.Newf("input-invalid", "%s %v", key, v)
+			return "", false, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s %v", key, v)
 		}
 		return n, true, nil
 	}
@@ -333,11 +333,11 @@ func collectionKeys(m map[string]any) (collectionID, tagID int, err error) {
 		return 0, 0, nil
 	}
 	if collectionID, err = intIn(id, math.MinInt32, math.MaxInt32); err != nil {
-		return 0, 0, fallback.Newf("model-collection-id", "collectionId: %v", err)
+		return 0, 0, fallback.NewfSafe("model-collection-id", "collectionId", "collectionId: %v", err)
 	}
 	if hasTag && !isEmpty(tag) {
 		if tagID, err = intIn(tag, math.MinInt32, math.MaxInt32); err != nil {
-			return 0, 0, fallback.Newf("model-collection-id", "collectionTagId: %v", err)
+			return 0, 0, fallback.NewfSafe("model-collection-id", "collectionTagId", "collectionTagId: %v", err)
 		}
 	}
 	return collectionID, tagID, nil
@@ -371,7 +371,7 @@ func optString(m map[string]any, key string) (string, bool, error) {
 	}
 	s, isStr := v.(string)
 	if !isStr {
-		return "", false, fallback.Newf("input-invalid", "%s %v", key, v)
+		return "", false, fallback.NewfSafe("input-invalid", fallback.Token(key), "%s %v", key, v)
 	}
 	return s, true, nil
 }
@@ -401,7 +401,7 @@ func oneOrMany(v any, ok func(string) bool) ([]string, error) {
 		}
 		return out, nil
 	}
-	return nil, fallback.Newf("input-invalid", "%T", v)
+	return nil, fallback.Safef("input-invalid", "%T", v)
 }
 
 // booleanString is booleanString() (src/utils/zod-helpers.ts): a boolean, a z.stringbool() string,

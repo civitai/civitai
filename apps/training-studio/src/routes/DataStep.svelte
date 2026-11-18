@@ -112,6 +112,7 @@
     excludeSource = $bindable(true),
     filter = $bindable('all'),
     reuseItems = [],
+    findReplace = false,
     onContinue,
     onBack,
   }: {
@@ -132,6 +133,7 @@
     excludeSource: boolean;
     /** Owned by the flow so Review's "see which" can land on the Mature view. */
     filter: DatasetFilter;
+    findReplace?: boolean;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];
     onContinue: () => void;
@@ -1922,7 +1924,14 @@
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} onShowTag={showTag} />
+<ManageTagsModal
+  bind:open={manageOpen}
+  {tagFreq}
+  {images}
+  {media}
+  {findReplace}
+  onShowTag={showTag}
+/>
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

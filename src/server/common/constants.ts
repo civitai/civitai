@@ -1295,7 +1295,7 @@ export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
 
-export const MODELS_SEARCH_INDEX = 'models_v9';
+export { MODELS_SEARCH_INDEX } from '@civitai/shared/search-index-queue';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
