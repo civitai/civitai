@@ -1025,10 +1025,19 @@ describe('Krea 2 label modes', () => {
     const krea = cardByType('krea2')!;
     const anima = cardByType('anima')!;
     // the flow's initial mode is 'tag'; first selection of Krea 2 must not inherit it
-    expect(labelModeForCard(null, krea, 'tag')).toBe('caption');
+    expect(labelModeForCard(null, krea, 'tag', false)).toBe('caption');
     // Back/Continue on the same model keeps the user's choice
-    expect(labelModeForCard(krea, krea, 'tag')).toBe('tag');
-    // switching to another model takes that model's default
-    expect(labelModeForCard(krea, anima, 'caption')).toBe('tag');
+    expect(labelModeForCard(krea, krea, 'tag', false)).toBe('tag');
+    // switching to another model with no labels yet takes that model's default
+    expect(labelModeForCard(krea, anima, 'caption', false)).toBe('tag');
+  });
+
+  it('keeps the mode when a labeled dataset moves to another model that offers it', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    // captions typed on Krea 2 must not be orphaned by flipping Anima to its tag default
+    expect(labelModeForCard(krea, anima, 'caption', true)).toBe('caption');
+    // a mode the new model doesn't offer still snaps to its format
+    expect(labelModeForCard(anima, cardByType('sdxl')!, 'caption', true)).toBe('tag');
   });
 });

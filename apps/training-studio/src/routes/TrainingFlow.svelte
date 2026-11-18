@@ -14,6 +14,7 @@
     buildTrainingRuns,
     stampMature,
     defaultRunParams,
+    isLabeled,
     isTrainable,
     expandedCount,
     repeatsOf,
@@ -427,7 +428,12 @@
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
         selection = sel;
-        labelMode = labelModeForCard(previous, runCard(sel.runs[0]!), labelMode);
+        labelMode = labelModeForCard(
+          previous,
+          runCard(sel.runs[0]!),
+          labelMode,
+          images.some(isLabeled)
+        );
         step = 2;
       }}
     />
