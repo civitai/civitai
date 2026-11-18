@@ -45,6 +45,8 @@ import {
   matchesTagFilter,
   withFilterTags,
   withTags,
+  paramNeedsRefundAck,
+  tagEntryKey,
   withTrigger,
   versionOptions,
   CUSTOM_VERSION_KEY,
@@ -661,6 +663,42 @@ describe('withTags', () => {
   it('returns the same array when nothing new was typed, so an empty commit is not an edit', () => {
     const tags = ['smile'];
     expect(withTags(tags, ' , smile ')).toBe(tags);
+  });
+  it('skips a tag the image already has in another casing, so typing Dress does not add a second dress', () => {
+    expect(withTags(['dress', 'Smile'], 'Dress, smile, hat')).toEqual(['dress', 'Smile', 'hat']);
+    expect(withTags([], 'Dress, dress')).toEqual(['Dress']);
+  });
+});
+
+describe('tagEntryKey', () => {
+  const key = (k: string, shiftKey = false, isComposing = false, keyCode = 0) => ({
+    key: k,
+    shiftKey,
+    isComposing,
+    keyCode,
+  });
+  it('Enter adds the typed tags; Shift+Enter and IME composition leave the newline/text alone', () => {
+    expect(tagEntryKey(key('Enter'), '1girl, solo', 0)).toBe('commit');
+    expect(tagEntryKey(key('Enter', true), '1girl, solo', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, true), 'あ', 0)).toBeNull();
+    expect(tagEntryKey(key('Enter', false, false, 229), 'かみ', 0)).toBeNull();
+  });
+  it('Backspace removes the last tag only when the box is empty', () => {
+    expect(tagEntryKey(key('Backspace'), '', 2)).toBe('removeLast');
+    expect(tagEntryKey(key('Backspace'), 'so', 2)).toBeNull();
+    expect(tagEntryKey(key('Backspace'), '', 0)).toBeNull();
+  });
+});
+
+describe('paramNeedsRefundAck', () => {
+  it('leaves the sample negative prompt and Checkpoints editable without the refund acknowledgement', () => {
+    expect(paramNeedsRefundAck('negativePrompt')).toBe(false);
+    expect(paramNeedsRefundAck('epochs')).toBe(false);
+  });
+  // The seed is sent to the trainer, not only to the preview samples: editing it is an advanced edit.
+  it('keeps the seed and the training params behind the acknowledgement', () => {
+    expect(paramNeedsRefundAck('seed')).toBe(true);
+    expect(paramNeedsRefundAck('unetLr')).toBe(true);
   });
 });
 

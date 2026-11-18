@@ -35,7 +35,7 @@ func (g *GalleryStore) Settings(ctx context.Context, modelID int) (*GallerySetti
 		return nil, fallback.New("gallery-settings-miss")
 	}
 	if err != nil {
-		return nil, fallback.Newf("gallery-settings-read-failed", "%v", err)
+		return nil, fallback.Wrap("gallery-settings-read-failed", err)
 	}
 	return ParseGallerySettings(raw)
 }
@@ -60,7 +60,7 @@ func (g *GalleryStore) SettingsMany(ctx context.Context, modelIDs []int) (map[in
 			return nil, fallback.New("gallery-settings-miss")
 		}
 		if err != nil {
-			return nil, fallback.Newf("gallery-settings-read-failed", "%v", err)
+			return nil, fallback.Wrap("gallery-settings-read-failed", err)
 		}
 		s, err := ParseGallerySettings(raw)
 		if err != nil {
