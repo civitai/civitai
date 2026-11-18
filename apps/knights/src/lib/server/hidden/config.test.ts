@@ -36,3 +36,34 @@ describe('hiddenCheckSettings', () => {
     );
   });
 });
+
+describe('hiddenCheckSettings with stored settings', () => {
+  it('lets each stored value win over the environment, a rate of 0 included', () => {
+    expect(
+      hiddenCheckSettings(
+        { KNIGHTS_HIDDEN_CHECK_RATE: '0.2', KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE: '3' },
+        {
+          hiddenCheckRate: 0,
+          hiddenCheckFailureWindowHours: 6,
+          hiddenCheckSevereDistance: 1,
+          hiddenCheckSettleDelayMinutes: 0,
+          hiddenCheckRetireMinAnswers: 50,
+          hiddenCheckRetireFailureRate: 0.8,
+        }
+      )
+    ).toEqual({
+      rate: 0,
+      failureWindowHours: 6,
+      severeDistance: 1,
+      settleDelayMinutes: 0,
+      retireMinAnswers: 50,
+      retireFailureRate: 0.8,
+    });
+  });
+
+  it('keeps the environment, or the default, for every field nothing is stored for', () => {
+    expect(
+      hiddenCheckSettings({ KNIGHTS_HIDDEN_CHECK_RATE: '0.2' }, { hiddenCheckRetireMinAnswers: 50 })
+    ).toEqual({ ...DEFAULT_HIDDEN_CHECKS, rate: 0.2, retireMinAnswers: 50 });
+  });
+});

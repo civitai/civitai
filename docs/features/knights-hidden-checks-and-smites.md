@@ -30,7 +30,8 @@ ordinary vote in every way a player can see.
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
   its size, so a mostly-PG pool does not mean mostly-PG checks. Inside the bucket it takes the first eligible check from a
   per-player point in the pool's id range. Whether a slot holds a check at all is the same rate roll as before
-  (`KNIGHTS_HIDDEN_CHECK_RATE`). The bucket order, start point and roll all come from one per-player digest (no random
+  (a rate saved on the moderator Config page, else `KNIGHTS_HIDDEN_CHECK_RATE`; every `KNIGHTS_HIDDEN_CHECK_*` setting
+  works this way, see [game settings](knights-sources.md#game-settings)). The bucket order, start point and roll all come from one per-player digest (no random
   numbers), so the same player and slot always get the same offer.
 - Every feed item, check or queue item, is addressed by a sealed token (`feed-token.ts`, key `FEED_TOKEN_SECRET`). The vote action
   opens the token and routes to `castVote` or `answerHiddenCheck`.

@@ -7,8 +7,10 @@ import {
   getLastSourcesChange,
   getSourcesContext,
   getSourcesSettings,
+  saveGameSettings,
   saveSourcesConfig,
 } from '$lib/server/knights/sources-config.service';
+import { parseGameForm } from './game-form';
 import { percentToRate } from './rates';
 
 const percent = (label: string) =>
@@ -81,6 +83,24 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights sources: could not save the config', { error });
       return fail(500, { error: 'The config could not be saved. Nothing was changed; try again.' });
+    }
+  },
+  game: async ({ request, locals, url }) => {
+    requireAccess(locals.user, url.pathname);
+    const input = parseGameForm(await request.formData());
+    if (!input.ok) return fail(400, { error: input.error });
+    try {
+      const result = await saveGameSettings(input.changes, locals.user.id, {
+        killSwitchesConfirmed: input.confirmed,
+      });
+      return result.ok
+        ? { success: true, changed: result.changed }
+        : fail(400, { error: result.error });
+    } catch (error) {
+      console.error('knights game settings: could not save', { error });
+      return fail(500, {
+        error: 'The settings could not be saved. Nothing was changed; try again.',
+      });
     }
   },
 };
