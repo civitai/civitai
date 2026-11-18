@@ -1376,7 +1376,7 @@ jobs:
           echo "system-package cache: $(find "$HOME/playwright-apt-debs" -name '*.deb' 2>/dev/null | wc -l) .deb file(s) after install"
 
       - name: Save Playwright system packages
-        if: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || github.ref == 'refs/heads/ci/playwright-apt-deb-cache') && steps.apt-cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.apt-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v6
         with:
