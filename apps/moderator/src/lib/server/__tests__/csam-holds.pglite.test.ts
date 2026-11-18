@@ -1134,6 +1134,19 @@ describe('version text hits on Model holds', () => {
     });
   });
 
+  it('has nothing for a hold under another label, even with positions in its meta', async () => {
+    const hash = sha('  v one  ');
+    await holdWith(94, {
+      comVersionTextHits: [{ versionId: 700, field: 'name', hash }],
+      comVersionTextHoldHash: 'h-94',
+    });
+    await expect(getHoldVersionTexts(94)).resolves.toMatchObject({
+      hits: [{ state: 'unchanged' }],
+    });
+    await db.query(`UPDATE "TextScanHold" SET label = 'minor' WHERE id = 94`);
+    await expect(getHoldVersionTexts(94)).resolves.toBeNull();
+  });
+
   it('hides positions written for held text a later scan replaced', async () => {
     const meta = {
       comVersionTextHits: [{ versionId: 700, field: 'name', hash: sha('  v one  ') }],
