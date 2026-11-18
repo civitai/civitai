@@ -19,10 +19,19 @@ describe('the harvest job', () => {
     stored.current = {};
     delete process.env.KNIGHTS_HARVEST;
     delete process.env.KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE;
+    delete process.env.KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE;
   });
   afterEach(() => {
     delete process.env.KNIGHTS_HARVEST;
     delete process.env.KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE;
+    delete process.env.KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE;
+  });
+
+  it('passes the probation share to the job, 0 when unset', async () => {
+    await run();
+    process.env.KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE = '0.25';
+    await run();
+    expect(runHarvestJob.mock.calls.map((call) => call[1].probationShare)).toEqual([0, 0.25]);
   });
 
   it('runs on the environment when nothing is saved', async () => {
