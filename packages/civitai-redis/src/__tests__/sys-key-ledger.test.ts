@@ -15,6 +15,7 @@ const SYS_KEY_LEDGER = [
   'app:cases:send-running',
   'app:cases:sends-paused',
   'app:page-access',
+  'app:review-batch',
   'buzz-withdrawal-request:status',
   'clavata-policies',
   'client',
@@ -250,7 +251,7 @@ describe('REDIS_SYS_KEYS ledger', () => {
   });
 
   // The ledger's size, written out: a change to it is a change to this number too.
-  it('holds 194 keys', () => {
-    expect(SYS_KEY_LEDGER.length).toBe(194);
+  it('holds 195 keys', () => {
+    expect(SYS_KEY_LEDGER.length).toBe(195);
   });
 });

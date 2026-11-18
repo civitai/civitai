@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type { Prisma } from '@prisma/client';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
@@ -147,7 +147,7 @@ beforeEach(async () => {
     client.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
       keys.map(() => null)) as never);
   let ticket = 0;
-  redisMock.redis.hIncrBy.mockImplementation((async () => ++ticket) as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++ticket) as never);
   redisMock.redis.hGetAll.mockImplementation((async (key: string) => lua.hash(key) ?? {}) as never);
   pushTurfCounts.mockClear();
 });

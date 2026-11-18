@@ -4,7 +4,7 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
 import { turfKeys } from '~/server/events/turf/turf-map';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -171,8 +171,9 @@ describe('Hat Turf on contest entries', () => {
     expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.art).toEqual(art);
     const feed = await getTurfStickersForImages('e', [BOOKMARKED], 5);
     expect(feed[BOOKMARKED]?.[0]?.art).toEqual(art);
-    redisMock.redis.eval.mockImplementation(createLuaRedis(0).eval as never);
-    redisMock.redis.hIncrBy.mockResolvedValue(1 as never);
+    const lua = createLuaRedis(0);
+    redisMock.redis.eval.mockImplementation(lua.eval as never);
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => 1) as never);
     redisMock.redis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await syncTurfImages((await getTurfEvent('e'))!, [BOOKMARKED]);
@@ -213,8 +214,9 @@ describe('Hat Turf on contest entries', () => {
     ['a sync', async () => syncTurfImages((await getTurfEvent('e'))!, [CONTEST_ENTRY, BOOKMARKED])],
     ['a reconcile', async () => reconcileTurf((await getTurfEvent('e'))!)],
   ])('%s pushes nothing about a contest entry', async (_, run) => {
-    redisMock.redis.eval.mockImplementation(createLuaRedis(0).eval as never);
-    redisMock.redis.hIncrBy.mockResolvedValue(1 as never);
+    const lua = createLuaRedis(0);
+    redisMock.redis.eval.mockImplementation(lua.eval as never);
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => 1) as never);
     redisMock.redis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await run();
@@ -250,7 +252,7 @@ describe('Hat Turf on contest entries', () => {
       // Nothing earns on it either: a sync pushes it with no counts and leaves it off the turf map.
       const lua = createLuaRedis(0);
       redisMock.redis.eval.mockImplementation(lua.eval as never);
-      redisMock.redis.hIncrBy.mockResolvedValue(1 as never);
+      redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => 1) as never);
       pushTurfCounts.mockClear();
       await syncTurfImages((await getTurfEvent('e'))!, [flag, control]);
       // The turf map is what reactions pay from: the flag has no entry there, the control does.

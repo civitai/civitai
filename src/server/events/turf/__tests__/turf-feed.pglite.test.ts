@@ -3,7 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  createLuaRedis,
+  hashTicketFrom,
+  type LuaRedis,
+} from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { eventPointKeys, eventSeasonKeys } from '~/server/events/points/keys';
 import { turfConfigKey } from '~/server/events/turf/config';
@@ -132,7 +136,7 @@ beforeEach(async () => {
   redisMock.redis.zRange.mockImplementation((async (key: string) =>
     Object.keys(redis.zset(key) ?? {})) as never);
   redisMock.redis.eval.mockImplementation(redis.eval as never);
-  redisMock.redis.hIncrBy.mockImplementation((async () => (clock += 1)) as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(redis, () => (clock += 1)) as never);
   redisMock.redis.hGetAll.mockImplementation(
     (async (key: string) => redis.hash(key) ?? {}) as never
   );

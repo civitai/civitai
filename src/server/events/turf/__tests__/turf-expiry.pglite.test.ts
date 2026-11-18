@@ -5,7 +5,11 @@ import type * as PlacementModeration from '~/server/services/placement-moderatio
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  createLuaRedis,
+  hashTicketFrom,
+  type LuaRedis,
+} from '~/server/utils/__tests__/redis-lua-harness';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { eventSeasonKeys } from '~/server/events/points/keys';
 import { turfConfigKey } from '~/server/events/turf/config';
@@ -177,7 +181,7 @@ beforeEach(async () => {
         ? fields.map((field) => POINTS[field as keyof typeof POINTS] ?? null)
         : fields.map(() => null)) as never);
   redisMock.redis.eval.mockImplementation(redis.eval as never);
-  redisMock.redis.hIncrBy.mockImplementation((async () => (clock += 1)) as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(redis, () => (clock += 1)) as never);
   redisMock.redis.hGetAll.mockImplementation(
     (async (key: string) => redis.hash(key) ?? {}) as never
   );
@@ -306,10 +310,12 @@ describe('Hat Turf sticker lifetime', () => {
       fakeNow += 60_000;
       return redis.hash(key) ?? {};
     }) as never);
-    redisMock.redis.hIncrBy.mockImplementation((async () => {
-      fakeNow += 60_000;
-      return (clock += 1);
-    }) as never);
+    redisMock.redis.hIncrBy.mockImplementation(
+      hashTicketFrom(redis, () => {
+        fakeNow += 60_000;
+        return (clock += 1);
+      }) as never
+    );
     try {
       await reconcileTurf((await getTurfEvent('e', now))!, now);
     } finally {

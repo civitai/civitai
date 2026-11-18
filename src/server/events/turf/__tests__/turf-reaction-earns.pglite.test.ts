@@ -7,7 +7,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { createLuaRedis, type LuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import {
+  createLuaRedis,
+  hashTicketFrom,
+  type LuaRedis,
+} from '~/server/utils/__tests__/redis-lua-harness';
 import { eventPointKeys } from '~/server/events/points/keys';
 import { turfKeys } from '~/server/events/turf/turf-map';
 
@@ -152,7 +156,7 @@ beforeEach(() => {
   lua = createLuaRedis(0);
   let ticket = 0;
   redisMock.redis.eval.mockImplementation(lua.eval as never);
-  redisMock.redis.hIncrBy.mockImplementation((async () => ++ticket) as never);
+  redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++ticket) as never);
   redisMock.redis.hGetAll.mockResolvedValue({} as never);
   for (const client of [redisMock.redis, redisMock.sysRedis])
     client.hGet.mockImplementation((async (key: string, field: string) => {

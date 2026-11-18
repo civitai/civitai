@@ -5,7 +5,7 @@ import { keyHashSlots } from '@civitai/redis/key-slot';
 import { rejectCrossSlot } from '~/__tests__/cluster-slots';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as TurfWatch from '~/server/events/turf/turf-watch';
-import { createLuaRedis } from '~/server/utils/__tests__/redis-lua-harness';
+import { createLuaRedis, hashTicketFrom } from '~/server/utils/__tests__/redis-lua-harness';
 
 const START = new Date('2026-11-01T00:00:00Z');
 const EVENT = {
@@ -70,7 +70,7 @@ function realWrite(hashes: Record<string, Record<string, string>> = {}) {
     return lua.eval(script, options);
   }) as never);
   let ticket = 0;
-  redisMock.redis.hIncrBy.mockReset().mockImplementation(async () => ++ticket);
+  redisMock.redis.hIncrBy.mockReset().mockImplementation(hashTicketFrom(lua, () => ++ticket));
   redisMock.redis.hGetAll
     .mockReset()
     .mockImplementation((async (key: string) => lua.hash(key) ?? {}) as never);
@@ -128,6 +128,50 @@ describe('syncTurfImages', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([sticker(900, 5, 'Blue')]);
     await syncTurfImages(event, [900], NOW);
     expect(redisMock.redis.hIncrBy).toHaveBeenCalledWith(KEYS.stamp, '#ticket', 1);
+  });
+
+  // The cluster evicts the stamp hash (and the ticket counter in it) while a sync's read runs. The
+  // counter restarts at 1; the in-flight write still holds ticket 100.
+  it('🔴 refuses a write whose ticket predates an eviction of the stamp hash, and later writes still land', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    const lua = realWrite();
+    let next = 99;
+    lua.setHash(KEYS.stamp, { '#ticket': '99' });
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++next));
+    const oldRows = [sticker(900, 5, 'Blue')];
+    const newRows = [sticker(900, 5, 'Blue'), sticker(900, 6, 'Pink'), sticker(900, 7, 'Pink')];
+    const newest = [...newRows, sticker(900, 8, 'Pink')];
+    const slowRead = deferred<typeof oldRows>();
+    dbMock.dbWrite.$queryRaw
+      .mockImplementationOnce((() => slowRead.promise) as never)
+      .mockResolvedValueOnce(newRows)
+      .mockResolvedValueOnce(newest);
+
+    const older = syncTurfImages(event, [900], NOW); // ticket 100, its read held
+    await vi.waitFor(() => expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1));
+    lua.setHash(KEYS.stamp, {}); // evicted: the counter restarts
+    next = 0;
+    await syncTurfImages(event, [900], NOW); // ticket 1
+    slowRead.resolve(oldRows);
+    await older;
+    expect(lua.hash(KEYS.counts)?.['Image:900']).toBe(countsOf(newRows));
+
+    await syncTurfImages(event, [900], NOW); // ticket 2: not held below a stamp of 100
+    expect(lua.hash(KEYS.counts)?.['Image:900']).toBe(countsOf(newest));
+    expect(lua.hash(KEYS.stamp)?.['Image:900']).toBe('2');
+    expect(lua.errors).toEqual([]);
+  });
+
+  it('🔴 reads a stamp above the ticket counter as absent', async () => {
+    const event = (await getTurfEvent('e', NOW))!;
+    const lua = realWrite({ [KEYS.stamp]: { 'Image:900': '500', '#ticket': '3' } });
+    let next = 3;
+    redisMock.redis.hIncrBy.mockImplementation(hashTicketFrom(lua, () => ++next));
+    const rows = [sticker(900, 5, 'Blue')];
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce(rows);
+    await syncTurfImages(event, [900], NOW); // ticket 4
+    expect(lua.hash(KEYS.counts)?.['Image:900']).toBe(countsOf(rows));
+    expect(lua.hash(KEYS.stamp)?.['Image:900']).toBe('4');
   });
 
   // Two pods sync one image at once and the older read finishes last. Without the ticket check the

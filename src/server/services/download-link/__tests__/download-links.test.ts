@@ -1236,6 +1236,21 @@ describe('on the cache cluster', () => {
     expect(clusterMultiKeys.length).toBeGreaterThan(0);
   });
 
+  it('🔴 revokes a link by linkId after the cluster evicted its linkid key', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    expect(store.delete(`dl:linkid:${result.linkId}`)).toBe(true);
+    expect((await fetchLink(result.url)).status).toBe(302);
+    expect((await revoke(result.linkId)).status).toBe(204);
+    expect((await fetchLink(result.url)).status).toBe(404);
+  });
+
+  it('still refuses a revoke from another credential when the linkid key is gone', async () => {
+    const result = await mintOne(userItem(PUBLIC_VERSION));
+    store.delete(`dl:linkid:${result.linkId}`);
+    expect((await revoke(result.linkId, 'tok-apikey')).status).toBe(404);
+    expect((await fetchLink(result.url)).status).toBe(302);
+  });
+
   it('writes the link hash before any key that names it', async () => {
     const order: string[] = [];
     const multi = redisMock.redis.multi.getMockImplementation()!;
