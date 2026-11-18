@@ -370,6 +370,8 @@ beforeEach(() => {
   mockSysRedis.get.mockResolvedValue(null);
   mockSysRedis.expire.mockResolvedValue(true);
   mockSysRedis.ttl.mockResolvedValue(-1);
+  // The opt-in and refusal records are on the cache cluster.
+  redisMock.redis.get.mockResolvedValue(null);
 
   // DEFAULT: no grant row ⇒ no consent budget. This is the pre-change world, and it is
   // what every test that is not about the budget runs in.
@@ -845,9 +847,12 @@ function usageLimitsRow(limits: Record<string, unknown>) {
       : null) as never);
 }
 
-/** The viewer's opt-in record for today reads as set; every other key keeps reading null. */
+/**
+ * The viewer's opt-in record for today (on the cache cluster) reads as set; every other key keeps
+ * reading null.
+ */
 function viewerOptedIn() {
-  mockSysRedis.get.mockImplementation((async (key: string) =>
+  redisMock.redis.get.mockImplementation((async (key: string) =>
     key.startsWith('system:blocks:buzz-opt-in:42:') ? '1' : null) as never);
 }
 
@@ -1028,13 +1033,16 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
     beforeEach(() => {
       kv.clear();
       mockIsUpgradePromptEnabled.mockImplementation(async () => true);
-      mockSysRedis.set.mockImplementation((async (key: string, value: string) => {
-        kv.set(key, String(value));
-        return 'OK';
-      }) as never);
-      mockSysRedis.get.mockImplementation((async (key: string) => kv.get(key) ?? null) as never);
-      mockSysRedis.del.mockImplementation((async (key: string) =>
-        kv.delete(key) ? 1 : 0) as never);
+      // One kv behind both clients: the counter is in system Redis, the refusal and opt-in
+      // records on the cache cluster. Each test below names the keys it expects.
+      for (const client of [mockSysRedis, redisMock.redis]) {
+        client.set.mockImplementation((async (key: string, value: string) => {
+          kv.set(key, String(value));
+          return 'OK';
+        }) as never);
+        client.get.mockImplementation((async (key: string) => kv.get(key) ?? null) as never);
+        client.del.mockImplementation((async (key: string) => (kv.delete(key) ? 1 : 0)) as never);
+      }
     });
 
     it('one under the cap, a refused spend pauses; raising the limit unpauses', async () => {
@@ -1057,6 +1065,16 @@ describe('per-user daily cap by membership tier (resolveUserAppCaps)', () => {
       expect(
         [...kv.keys()].filter((k) => k.startsWith('system:blocks:buzz-refused:42:'))
       ).toHaveLength(1);
+      expect(
+        redisMock.redis.set.mock.calls.filter(([k]: unknown[]) =>
+          String(k).startsWith('system:blocks:buzz-refused:42:')
+        )
+      ).toHaveLength(1);
+      expect(
+        mockSysRedis.set.mock.calls.filter(([k]: unknown[]) =>
+          /^system:blocks:buzz-(refused|opt-in):/.test(String(k))
+        )
+      ).toEqual([]);
 
       await optInAppBuzzToday(viewer);
       expect(await getMyAppBuzzCap(viewer)).toMatchObject({

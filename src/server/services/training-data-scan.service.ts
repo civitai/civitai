@@ -6,10 +6,11 @@ import { env } from '~/env/server';
 import type { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { blobAir, uploadConsumerBlob } from '~/server/services/orchestrator/consumer-blob-scan';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { isDefiniteNotFound, resolveDownloadUrl } from '~/utils/delivery-worker';
 import { ModelModifier, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 
@@ -354,9 +355,9 @@ const HEAL_MAX_UNREADABLE = 24;
 const zipKey = <Prefix extends string>(prefix: Prefix, file: PendingZip) =>
   `${prefix}:${file.id}:${createHash('sha1').update(file.url).digest('hex').slice(0, 16)}` as const;
 const healAttemptsKey = (file: PendingZip) =>
-  zipKey(REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_ATTEMPTS, file);
+  zipKey(REDIS_KEYS.TRAINING_DATA_SCAN.HEAL_ATTEMPTS, file);
 const healUnreadableKey = (file: PendingZip) =>
-  zipKey(REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_UNREADABLE, file);
+  zipKey(REDIS_KEYS.TRAINING_DATA_SCAN.HEAL_UNREADABLE, file);
 
 export const HEAL_OP = 'self-heal';
 
@@ -375,15 +376,17 @@ export async function uncountUnconfirmedResubmit({
   workflowId: string;
 }) {
   const zip = { id: fileId, url, modelVersionId: 0 };
-  const once = `${REDIS_SYS_KEYS.TRAINING_DATA_SCAN.HEAL_TAKEN_BACK}:${workflowId}` as const;
+  const once = `${REDIS_KEYS.TRAINING_DATA_SCAN.HEAL_TAKEN_BACK}:${workflowId}` as const;
   try {
-    if ((await sysRedis.incrBy(once, 1)) !== 1) return;
-    await sysRedis.expire(once, HEAL_ATTEMPTS_TTL_SECONDS);
+    if ((await redis.incrBy(once, 1)) !== 1) return;
+    await redis.expire(once, HEAL_ATTEMPTS_TTL_SECONDS);
     const accepted = healAttemptsKey(zip);
-    if ((await sysRedis.decrBy(accepted, 1)) < 0) await sysRedis.incrBy(accepted, 1);
+    if ((await redis.decrBy(accepted, 1)) < 0) await redis.incrBy(accepted, 1);
+    // A DECRBY on a missing key creates it with no TTL, so the count would never expire.
+    await redis.expire(accepted, HEAL_ATTEMPTS_TTL_SECONDS);
     const unreadable = healUnreadableKey(zip);
-    await sysRedis.incrBy(unreadable, 1);
-    await sysRedis.expire(unreadable, HEAL_ATTEMPTS_TTL_SECONDS);
+    await redis.incrBy(unreadable, 1);
+    await redis.expire(unreadable, HEAL_ATTEMPTS_TTL_SECONDS);
   } catch {
     // An uncounted take-back only brings the give-up one resubmit nearer.
   }
@@ -417,8 +420,8 @@ export async function healStalledTrainingDataScans() {
       let accepted: number;
       let unreadable: number;
       try {
-        accepted = Number((await sysRedis.get(healAttemptsKey(file))) ?? 0);
-        unreadable = Number((await sysRedis.get(healUnreadableKey(file))) ?? 0);
+        accepted = Number((await redis.get(healAttemptsKey(file))) ?? 0);
+        unreadable = Number((await redis.get(healUnreadableKey(file))) ?? 0);
       } catch {
         // Without a count the cap can't be kept; it is tried again once its claim is an hour old.
         return false;
@@ -463,8 +466,7 @@ export async function healStalledTrainingDataScans() {
       if (!key) return;
       if (outcome === 'unreadable') unreadableRuns++;
       try {
-        await sysRedis.incrBy(key, 1);
-        await sysRedis.expire(key, HEAL_ATTEMPTS_TTL_SECONDS);
+        await takeClusterWindowCount('countHealResubmit', key, HEAL_ATTEMPTS_TTL_SECONDS);
       } catch {
         // An uncounted resubmit only allows one more.
       }

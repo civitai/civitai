@@ -12,7 +12,7 @@ import { archiveStoreConfig, createArchiveStore } from '~/utils/app-archive-s3';
 import type { SessionUser } from '~/types/session';
 
 /**
- * The production wiring of `HibernationDeps`: the raw-SQL repo, Redis for attempts,
+ * The production wiring of `HibernationDeps`: the raw-SQL repo, Redis for attempts and tickets,
  * the S3 archive store, the master key from env, the `app-hibernate` flag and the per-plan
  * limits. Everything heavy is imported lazily, per call.
  */
@@ -22,19 +22,24 @@ async function sysRedisClient() {
   return { sysRedis, keys: REDIS_SYS_KEYS.BLOCKS };
 }
 
+async function cacheRedisClient() {
+  const { redis, REDIS_KEYS } = await import('~/server/redis/client');
+  return { redis, keys: REDIS_KEYS.BLOCKS };
+}
+
 const redisAttempts: AttemptStore = {
   async claim(rec, ttlSeconds) {
-    const { sysRedis, keys } = await sysRedisClient();
+    const { redis, keys } = await cacheRedisClient();
     const key = `${keys.HIBERNATION_ATTEMPT}:${rec.attemptId}` as const;
-    const set = await sysRedis.set(key, JSON.stringify(rec), { NX: true, EX: ttlSeconds });
+    const set = await redis.set(key, JSON.stringify(rec), { NX: true, EX: ttlSeconds });
     if (set) return rec;
-    const raw = await sysRedis.get(key);
+    const raw = await redis.get(key);
     if (!raw) throw new Error('hibernation attempt vanished between SET NX and GET');
     return JSON.parse(raw) as AttemptRecord;
   },
   async get(attemptId) {
-    const { sysRedis, keys } = await sysRedisClient();
-    const raw = await sysRedis.get(`${keys.HIBERNATION_ATTEMPT}:${attemptId}` as const);
+    const { redis, keys } = await cacheRedisClient();
+    const raw = await redis.get(`${keys.HIBERNATION_ATTEMPT}:${attemptId}` as const);
     return raw ? (JSON.parse(raw) as AttemptRecord) : null;
   },
 };
