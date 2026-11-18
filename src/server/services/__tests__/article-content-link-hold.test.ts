@@ -554,12 +554,26 @@ describe('an image whose upload did not finish', () => {
     }
   });
 
+  // Deliberate: a blob: url renders only in its uploader's own tab, so it is skipped, not held.
   it('gets no image row when stored content is linked, and holds nothing', async () => {
     await recordUploadKeyOwner(KEY2, AUTHOR);
     await givenArticle({ content });
     await link({ content });
     expect(await rows()).toEqual([KEY2]);
     expect(await hold()).toBeNull();
+  });
+
+  // Deliberate, unlike blob: a data: image renders its bytes, unscanned, to every reader.
+  it('holds the article on a stored data: image, with no image row', async () => {
+    const DATA =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk';
+    const dataContent = `<p><edge-media url="${DATA}" type="image"></edge-media>${img(KEY2)}</p>`;
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    await givenArticle({ content: dataContent });
+    await link({ content: dataContent });
+    expect(await rows()).toEqual([KEY2]);
+    expect((await hold())?.refused).toEqual([DATA]);
+    expect(await ingestion()).toBe('Blocked');
   });
 });
 

@@ -39,10 +39,11 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *
  * 🔴 THE DECISIVE FACT IS THAT THE TWO CORPORA ARE DISJOINT — not that the two
  * routes DISCLOSE differently. `blocks/images` serves `runImageSearch`
- * (`src/pages/api/v1/blocks/images.ts:218`) over the Meilisearch images index,
- * whose source query hard-filters `i."postId" IS NOT NULL`. THIS route's corpus is exactly the complement —
+ * (`src/pages/api/v1/blocks/images.ts:256`), which answers an `ids` lookup from
+ * `getAllImages`, whose query inner-joins `"Post"` on `i."postId"`: only images with a
+ * post. THIS route's corpus is exactly the complement —
  * `AND i."postId" IS NULL` (`block-gated-images.service.ts:184`), further scoped
- * to `blockPublishedAppId = claims.appId`. Complementary predicates: an image
+ * to `blockPublishedAppId` or `blockSharedUploadAppId` = `claims.appId`. Complementary predicates: an image
  * cannot satisfy both. So `blocks/images?ids=` returns an EMPTY ARRAY for every
  * id in this route's corpus — at any ceiling, for any viewer, forever. "Use
  * `blocks/images` and accept losing the hidden tile" is therefore not a trade:
@@ -64,10 +65,13 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
  *     catalog without ever receiving a pixel. Collapsing "above your ceiling"
  *     into "not in your results" is what stops that, and nothing here changes it.
  *
- *   • THIS route reads only rows carrying `metadata.blockPublishedAppId =` THIS
- *     TOKEN'S OWN `appId`, with `postId IS NULL` — images the CALLING APP ITSELF
- *     published, through its own workflow, on behalf of its own users. The app
- *     already holds those ids; it is the party that stored them. "This id exists"
+ *   • THIS route reads only rows carrying `metadata.blockPublishedAppId` or
+ *     `metadata.blockSharedUploadAppId` = THIS TOKEN'S OWN `appId`, with
+ *     `postId IS NULL` — images the CALLING APP ITSELF published through its own
+ *     workflow, or viewer uploads it opted in to share (the viewer was told, and
+ *     only once scanned and SFW; see `block-gated-images.service.ts`), on behalf of
+ *     its own users. Never its bytes uploads (`blockUploadedAppId`).
+ *     The app already holds those ids; it is the party that stored them. "This id exists"
  *     is the caller's own record being read back, not a fact about the catalog,
  *     so there is no id space to enumerate and no oracle to build.
  *

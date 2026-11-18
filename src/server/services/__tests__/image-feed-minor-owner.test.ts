@@ -51,6 +51,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 
 import { getAllImages, getImagesForModelVersion, getImagesForPosts } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { restrictedMinorClause } from '~/__tests__/minor-clause';
 
 const OWNER = 3300;
 const STRANGER = 4400;
@@ -87,6 +88,9 @@ const POSTS_MINOR = /\(i\."minor" = false OR i\."minor" IS NULL(?: OR i\."userId
 
 async function getAllImagesMinor(viewer: Viewer, profileUserId?: number) {
   await getAllImages({
+    // The session views the feed grants a session or full-access key.
+    asModerator: true,
+    asOwner: true,
     limit: 20,
     period: 'AllTime',
     periodMode: 'published',
@@ -104,8 +108,7 @@ async function getAllImagesMinor(viewer: Viewer, profileUserId?: number) {
 
 // `minorMatureImageVisibleSql`; what it keeps and drops is run against rows in
 // minor-mature-image-visibility.behavior.test.ts.
-const RESTRICTED_MINOR =
-  /\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= \$\d+\)\)(?: OR i\."userId" = \$(\d+))?\)/;
+const RESTRICTED_MINOR = restrictedMinorClause();
 
 /** getAllImages with the viewer's minor setting OFF, as a viewer who never turned it on. */
 async function getAllImagesStatement(
@@ -121,6 +124,9 @@ async function getAllImagesStatement(
     include: [],
     disableMinor: false,
     user: viewer ? { isModerator: false, ...viewer } : undefined,
+    // A session's views (credentialViews); the feed reads neither without them.
+    asModerator: true,
+    asOwner: true,
     userId: profileUserId,
   } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
   expect(queryWithTimeoutMock, 'the build no longer reaches queryWithTimeout').toHaveBeenCalled();

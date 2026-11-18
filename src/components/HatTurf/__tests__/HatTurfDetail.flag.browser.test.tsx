@@ -87,7 +87,9 @@ const turf = (joined: boolean): TurfSummaries => ({
       hattedTeam: null,
     },
   },
-  open: { [FLAG]: true, [TURF]: true },
+  // As getTurfSummaries answers: today's flags are hidden from Hat Turf (contestEntry) and not open.
+  open: { [FLAG]: false, [TURF]: true },
+  hidden: { [FLAG]: true },
   stickers: {},
   joined,
   watch: () => () => undefined,

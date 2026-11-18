@@ -20,9 +20,9 @@ import {
  * It lives HERE, under the `no-*.test.ts` convention-guard name, rather than
  * beside the module it protects: this is a source-text structural guard over a
  * call-site population, which is exactly the class `src/server/services/__tests__/no-*.test.ts`
- * exists for. `no-lint-rules-script-drift` only scans THIS directory for THIS
- * name shape, so a guard of this class parked anywhere else is invisible to the
- * ratchet and is not run by the fast `pnpm run test:lint-rules` selector — it
+ * exists for. The convention-guard list covers only THIS directory and THIS
+ * name shape, so a guard of this class parked anywhere else is missing from it
+ * and is not run by the fast `pnpm run test:lint-rules` selector — it
  * would surface only in the full unit suite, minutes later, in a file nobody
  * was looking at.
  *

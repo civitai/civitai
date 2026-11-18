@@ -1,7 +1,7 @@
 <script lang="ts">
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { getInferredMediaType, type MediaType } from '$lib/media/edge-url';
-  import { retractedMediaUrl } from '$lib/held-media';
+  import { probeRetractedRefusal, RETRACTED_REFUSED, retractedMediaUrl } from '$lib/held-media';
 
   // The public CDN first. Media it will not serve (a blocked image or video) is tried once more from
   // storage through `/api/retracted-media`, which decides on the server whether this moderator may see
@@ -25,7 +25,7 @@
   // Per id, so an instance reused for another image starts on the CDN again.
   let fallback = $state<{ id: number; mode: 'retracted' | 'failed' } | null>(null);
   const mode = $derived(fallback?.id === item.id ? fallback.mode : 'cdn');
-  let reason = $state('Not viewable here');
+  let reason = $state(RETRACTED_REFUSED);
 
   const toStorage = (id: number) => {
     if (fallback?.id !== id) fallback = { id, mode: 'retracted' };
@@ -56,12 +56,10 @@
   const onRetractedError = () => {
     const id = item.id;
     fallback = { id, mode: 'failed' };
-    reason = 'Not viewable here';
-    fetch(`${retractedMediaUrl(id)}?probe=1`)
-      .then(async (res) => {
-        if (res.status !== 403 || fallback?.id !== id) return;
-        const body = (await res.json()) as { message?: unknown };
-        if (typeof body.message === 'string' && body.message) reason = body.message;
+    reason = RETRACTED_REFUSED;
+    probeRetractedRefusal(id)
+      .then((line) => {
+        if (fallback?.id === id) reason = line;
       })
       .catch(() => null);
   };

@@ -410,9 +410,7 @@ describe('/api/v1/blocks/me and blocks.getMyViewer return the SAME authorization
     // 🔴 STATUS, NOT TEXT, ON THIS ONE BRANCH — and the asymmetry is deliberate, not a
     // gap. `me.ts` renders both kill-switch refusals with its own generic literal rather
     // than echoing the gate's message: `rest-error-envelope-ledger.test.ts` blocks a REST
-    // route from serialising a caught error's `.message`, and the gate's other message is
-    // a compiled-branch watchlist anchor that must stay unique app-wide, so re-spelling it
-    // here to win text parity would break that guard. Every OTHER case in this file still
+    // route from serialising a caught error's `.message`. Every OTHER case in this file still
     // compares the whole verdict including the message.
     expect(rest.outcome).toBe('refuse');
     expect(trpc.outcome).toBe('refuse');

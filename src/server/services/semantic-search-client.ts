@@ -9,13 +9,16 @@ export const MAX_HITS_PER_USER = 3;
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
-// Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
-const MAX_HYDRATION_BATCH = 100;
+// The search service's page maximum (a larger `limit` is an error, not a short page), and so the
+// most candidates hydrated per round: each round is one id-list query on the page's fetch path.
+export const MAX_CANDIDATE_LIMIT = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
 // and payload indexes are on disk), then well under 1 s.
 const SEARCH_SERVICE_TIMEOUT_MS = 20_000;
+// Above the search service's own orchestrator wait, so a slow image embed is not paid twice.
+const SIMILAR_IMAGE_TIMEOUT_MS = 35_000;
 
 /**
  * The viewer's content gate, which every query carries. Challenges and crucibles rate the entity
@@ -49,7 +52,7 @@ const GATE_KIND = {
 
 export type SearchCollection = keyof typeof GATE_KIND;
 
-export type SearchQuery = { text: string } | { similarTo: number };
+export type SearchQuery = { text: string } | { similarTo: number } | { imageUrl: string };
 
 export type QdrantCondition = Record<string, unknown>;
 type PayloadValue = string | number | boolean;
@@ -200,13 +203,14 @@ async function searchServiceRequest<T>(
   path: string,
   body: unknown,
   notFound: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  timeoutMs = SEARCH_SERVICE_TIMEOUT_MS
 ): Promise<T> {
   const res = await fetch(searchServiceUrl(path), {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...searchServiceAuth(), ...headers },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(SEARCH_SERVICE_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch((err) => {
     throw new TRPCError({ code: 'BAD_GATEWAY', message: 'Search is unavailable', cause: err });
   });
@@ -226,7 +230,8 @@ function requestIdHeader(): Record<string, string> {
 /**
  * The cluster search service: text through `/v1/search` (embedding and spelling correction are
  * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
- * the index lags Postgres, so hydration decides what is shown.
+ * the index lags Postgres, so hydration decides what is shown. `limit` is at most
+ * MAX_CANDIDATE_LIMIT; the candidate cache in front of it pages larger ranges in blocks of that size.
  */
 export function searchServiceSource(
   collection: SearchCollection,
@@ -255,6 +260,24 @@ export function searchServiceSource(
         headers
       );
       return { ids: result.points.map((p) => Number(p.id)), guard: GUARD_NONE };
+    }
+    if ('imageUrl' in query) {
+      // The caller has scanned and rated the image (the search upload gate) before sending it.
+      const { hits } = await searchServiceRequest<{ hits: { id: number | string }[] }>(
+        '/v1/similar',
+        {
+          collection,
+          image_url: query.imageUrl,
+          filter: qdrantFilter,
+          offset,
+          limit,
+          ...(audit ? { browsing_levels: filter.gate.nsfwLevels } : {}),
+        },
+        notFoundMessage,
+        headers,
+        SIMILAR_IMAGE_TIMEOUT_MS
+      );
+      return { ids: hits.map((h) => Number(h.id)), guard: GUARD_NONE };
     }
 
     const { corrected, changes, hits, guard } = await searchServiceRequest<{
@@ -403,7 +426,7 @@ export async function collectPage<T extends { id: number }>({
   for (let round = 0; round < MAX_HYDRATION_ROUNDS && items.length < limit; round++) {
     const batchSize = Math.min(
       (limit - items.length) * CANDIDATE_MULTIPLIER,
-      MAX_HYDRATION_BATCH,
+      MAX_CANDIDATE_LIMIT,
       MAX_CANDIDATE_OFFSET - position
     );
     if (batchSize <= 0) {

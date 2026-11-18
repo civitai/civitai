@@ -1,4 +1,5 @@
 import { BlocklistType } from '~/server/common/enums';
+import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import type { Tracker } from '~/server/clickhouse/tracker';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { matchesQueryRule } from '~/server/services/search-query-rules';
@@ -32,9 +33,17 @@ import {
   type SearchViewer,
   type SearchCollection,
 } from '~/server/services/semantic-search-client';
+import { getBrowsingSettingAddons } from '~/server/services/system-cache';
+import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
+import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { Flags } from '~/shared/utils/flags';
 import type { SessionUser } from '~/types/session';
-import { includesInappropriate, includesMinor, includesPoi } from '~/utils/metadata/audit';
+import {
+  includesInappropriate,
+  includesMinor,
+  includesNsfw,
+  includesPoi,
+} from '~/utils/metadata/audit';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
 
 export type QueryTracker = Pick<Tracker, 'action'>;
@@ -49,7 +58,7 @@ export type QueryRefusal =
 
 /**
  * The viewer's own level; while `clamp` (the containment switch) is on, non-moderators get the safe
- * levels. Only an explicit `false` lifts it: pass `await isNonModClampOn()`.
+ * levels. Only an explicit `false` lifts it: pass `await isNonModClampOn(user)`.
  */
 export function resolveSemanticBrowsingLevel(
   requested: number | undefined,
@@ -64,9 +73,12 @@ export function resolveSemanticBrowsingLevel(
 /**
  * The containment switch, read fail-closed: only a successful evaluation that answers off lifts
  * the clamp. An unavailable client, an evaluation error (a missing key throws) or a malformed
- * answer all hold it. Read uncached so a flip takes effect at the next refresh.
+ * answer all hold it. Read uncached so a flip takes effect at the next refresh. Evaluated per
+ * viewer (`userId` in the context; signed out has none), so a segment can lift it for one account.
  */
-export async function isNonModClampOn(): Promise<boolean> {
+export async function isNonModClampOn(
+  viewer: Pick<SessionUser, 'id'> | undefined
+): Promise<boolean> {
   const flag = FLIPT_FEATURE_FLAGS.SEMANTIC_SEARCH_NONMOD_CLAMP;
   const override = getFliptLocalOverride(flag);
   if (override !== undefined) return override !== 'off';
@@ -75,7 +87,11 @@ export async function isNonModClampOn(): Promise<boolean> {
   if (!client) return true;
   try {
     return (
-      client.evaluateBoolean({ flagKey: flag, entityId: 'global', context: {} }).enabled !== false
+      client.evaluateBoolean({
+        flagKey: flag,
+        entityId: viewer ? String(viewer.id) : 'global',
+        context: viewer ? { userId: String(viewer.id) } : {},
+      }).enabled !== false
     );
   } catch (e) {
     const now = Date.now();
@@ -112,7 +128,8 @@ export async function semanticQueryRefusal(
 ): Promise<QueryRefusal> {
   try {
     const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
-    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
+    // The raw text decides whether the person and age checks run; the stripped text is what they read.
+    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag) || !!includesNsfw(query);
     const verdict = includesInappropriate({ prompt: audited }, nsfw);
     if (verdict === 'minor') return 'minor';
     // A 'poi' verdict is returned before the minor check runs, so it can hide one; still refused.
@@ -207,6 +224,63 @@ export function makeRefusalOf({
     audit?.verdict(refusal);
     return refusal;
   };
+}
+
+/**
+ * What a semantic search settles before it searches: the viewer's level (clamped, then capped by
+ * the site), their hidden users, and the query audit. Null when the query is refused. The returned
+ * `browsingLevel` is the level the feed filters on, and `refusalOf` audits at it, so a correction is
+ * judged at the level the query was narrowed to.
+ */
+export async function semanticSearchPrelude({
+  index,
+  query,
+  requestedLevel,
+  user,
+  isGreen,
+  browsingLevelCap,
+  track,
+}: {
+  index: string;
+  query: string;
+  requestedLevel: number | undefined;
+  user: SessionUser | undefined;
+  isGreen: boolean;
+  /** The site's cap (requestDomainBrowsingLevelCap); undefined on an uncapped site. */
+  browsingLevelCap: number | undefined;
+  track?: QueryTracker;
+}) {
+  let browsingLevel = resolveSemanticBrowsingLevel(
+    requestedLevel,
+    user,
+    await isNonModClampOn(user)
+  );
+  if (browsingLevelCap !== undefined)
+    browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
+  const [hidden, addonData] = await Promise.all([
+    getAllHiddenForUser({ userId: user?.id }),
+    getBrowsingSettingAddons(),
+  ]);
+  const { disablePoi } = resolveBrowsingSettingsAddons(addonData, browsingLevel, {
+    isModerator: user?.isModerator,
+  });
+  const refusalOf = makeRefusalOf({
+    index,
+    track,
+    context: () => ({ browsingLevel, disablePoi, isModerator: user?.isModerator }),
+  });
+  const verdictLevel = queryVerdictLevel(
+    await refusalOf(query, 'query'),
+    browsingLevel,
+    user?.isModerator
+  );
+  if (verdictLevel === 'refuse') return null;
+  browsingLevel = getEffectiveBrowsingLevel({
+    isGreen,
+    isLoggedIn: !!user,
+    requested: verdictLevel,
+  });
+  return { browsingLevel, hidden, refusalOf };
 }
 
 /** The candidates a refused text search would have served, for its audit row only. */

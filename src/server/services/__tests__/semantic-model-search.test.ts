@@ -69,6 +69,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
 }));
 vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -187,7 +188,7 @@ describe('name and keyword matches', () => {
       candidateSource: ranking([1, 2, 3, 9], undefined, [9]),
     });
     expect(result.items.map((m) => m.id)).toEqual([9, 1, 2, 3]);
-    expect(sent[0].allWords).toEqual({ key: 'search_text', text: 'civetai' });
+    expect(sent[0].allWords).toEqual({ key: 'name', text: 'civetai' });
   });
 });
 

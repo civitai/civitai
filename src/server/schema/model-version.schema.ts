@@ -1,3 +1,4 @@
+import { aiToolkitOptionSchema } from '@civitai/shared/training-options';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
@@ -159,6 +160,7 @@ export const baseModelToTraningDetailsBaseModelMap: Partial<
 
 // Kohya-style training parameters (used by frontend and as legacy format)
 export const trainingDetailsParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   unetLR: z.number(),
   textEncoderLR: z.number(),
   optimizerType: z.enum(optimizerTypes),
@@ -196,6 +198,7 @@ export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 
 // AI Toolkit training parameters (alternate format for database storage)
 export const aiToolkitTrainingDetailsParams = z.object({
+  ...aiToolkitOptionSchema.shape,
   engine: z.literal('ai-toolkit'),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),

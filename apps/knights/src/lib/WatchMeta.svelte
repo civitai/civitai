@@ -1,37 +1,42 @@
 <script lang="ts">
   import HeartsRow from './HeartsRow.svelte';
+  import { heartBackShort } from './chrome';
   import Icon from './Icon.svelte';
   import { untrack } from 'svelte';
   import { bump } from './motion';
   import { sound } from './sound';
+  import { watchBell } from './watch-bell';
 
   let {
     value,
     max,
+    watch,
     done,
     streak,
     hearts,
     maxHearts,
+    heartBack = null,
     onmore,
   }: {
     value: number;
     max: number;
+    /** Names the Watch (`DailyStatus.watch`): the bell rings once per Watch. */
+    watch: string;
     done: boolean;
     streak: number;
     hearts: number;
     maxHearts: number;
+    heartBack?: { done: number; needed: number } | null;
     /** Opens the rail's other panels; without it there is no More button. */
     onmore?: () => void;
   } = $props();
 
-  // Mounted at every width (hidden by CSS beside the rail), so it is the one place the bell rings: once, for a Watch
-  // completed while the page is open, never for the first read.
-  let seen = untrack(() => value);
+  // Mounted at every width (hidden by CSS beside the rail), so it is the one place the bell rings.
+  const bell = watchBell(untrack(() => ({ value, max, watch })));
   $effect(() => {
-    const now = value;
+    const now = { value, max, watch };
     untrack(() => {
-      if (max > 0 && now >= max && seen < max) sound.play('bell');
-      seen = now;
+      if (bell(now)) sound.play('bell');
     });
   });
 </script>
@@ -47,7 +52,7 @@
       {/if}
     </span>
     <span class="cell"><span class="streak"><Icon name="flame" size={14} /><b>{streak}</b> {streak === 1 ? 'day' : 'days'}</span></span>
-    <span class="cell"><HeartsRow {hearts} {maxHearts} /></span>
+    <span class="cell"><HeartsRow {hearts} {maxHearts} {heartBack} />{#if heartBack}<span class="back">{heartBackShort(heartBack)}</span>{/if}</span>
     {#if onmore}
       <button type="button" class="cell more" aria-label="More stats" aria-haspopup="dialog" onclick={onmore}>
         <Icon name="chevron-down" size={16} />
@@ -57,6 +62,12 @@
 </div>
 
 <style>
+  /* Touch has no tooltip, so the count toward the next heart sits beside the hearts. */
+  .back {
+    margin-left: 6px;
+    color: var(--io-parchment-muted);
+    font-size: 12px;
+  }
   .meta {
     flex: none;
     box-sizing: border-box;

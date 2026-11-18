@@ -1219,8 +1219,7 @@ export async function startPreviewScans({ limit = 5 } = {}) {
       }
       if (!imageId) {
         const original = await readObject(await getBucket(), preview.s3Key);
-        // A video is scanned already marked: the transcode is the only place a mark can be burned
-        // in, and the marked clip is exactly what the buyer would see.
+        // Scanned already marked: the transcode is the only place a video gets its mark, and publish reuses this clip.
         const copy = isVideoPreviewMime(preview.mimeType)
           ? {
               ...(await buildWatermarkedVideoPreview(original, preview.mimeType, preview.sellerId)),

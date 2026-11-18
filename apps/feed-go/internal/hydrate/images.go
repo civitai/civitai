@@ -15,7 +15,7 @@ import (
 // back; with Sources.Compute, fillFrames has computed every miss into got before this runs.
 func frameCosmeticIDs(imageIDs []int, got map[int]Entry) ([]int, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
-		return nil, fallback.Newf("image-frame-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("image-frame-miss", "%d ids", len(miss))
 	}
 	var cosmeticIDs []int
 	for _, e := range got {
@@ -102,7 +102,7 @@ func truthyJS(v any) bool {
 // answer falls back (with Sources.Compute, fillEvents has computed the misses into got first).
 func VisibleEventDecorations(imageIDs []int, got map[int]Entry, visibleEvents map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
-		return nil, fallback.Newf("event-decoration-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("event-decoration-miss", "%d ids", len(miss))
 	}
 	out := map[int]superjson.Object{}
 	for id, e := range got {
@@ -174,7 +174,7 @@ type Metrics map[string]int
 // metricHashKey is cacheKeys.metric (event-engine-common/utils/cache-keys.ts); never namespace-prefixed.
 func metricHashKey(id int) string { return "metrics:Image:" + strconv.Itoa(id) }
 
-func metricsReadFailed(err error) error { return fallback.Newf("metrics-read-failed", "%v", err) }
+func metricsReadFailed(err error) error { return fallback.Wrap("metrics-read-failed", err) }
 
 // MetricsFromHashes is the per-id half of ImageMetrics: hashes[i] is the `metrics:Image:<ids[i]>`
 // hash as HGETALL returned it. An empty hash (no key) falls back; any other hash is an entry, a
@@ -256,7 +256,7 @@ func Stats(m Metrics, ok bool) superjson.Object {
 // this runs (revalidateStaleTagIDs).
 func tagIDsFrom(imageIDs []int, got map[int]Entry) (map[int]any, error) {
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
-		return nil, fallback.Newf("tag-ids-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("tag-ids-miss", "%d ids", len(miss))
 	}
 	out := map[int]any{}
 	for id, e := range got {

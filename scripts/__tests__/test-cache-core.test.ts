@@ -300,7 +300,7 @@ describe('the salt and the workspace manifests', () => {
   });
 
   // The salt is version-blind; a test that reads a manifest itself must not be.
-  // no-lint-rules-script-drift reads the root `scripts` itself, so it must re-run when they change.
+  // A test that reads the root `scripts` itself must re-run when they change.
   it.each(['version', 'scripts'])(
     'still re-runs a test that read a manifest when only its %s changes',
     (field) => {

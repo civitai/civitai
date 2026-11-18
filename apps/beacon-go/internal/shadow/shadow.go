@@ -164,6 +164,10 @@ func (s *Sample) Request(ctx context.Context) (*beacon.Request, error) {
 	if err != nil {
 		return nil, ErrInvalidSample
 	}
+	// The session cookie names follow the site the browser addressed (AUTH_SESSION_COOKIE_MODE_BY_SITE).
+	if h, ok := s.Headers["host"]; ok {
+		hreq.Host = h
+	}
 	if c, ok := s.Headers["cookie"]; ok {
 		hreq.Header.Set("Cookie", c)
 	}

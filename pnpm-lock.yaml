@@ -372,9 +372,6 @@ importers:
       blurhash:
         specifier: ^2.0.4
         version: 2.0.5
-      chalk:
-        specifier: ^5.2.0
-        version: 5.5.0
       chart.js:
         specifier: ^4.4.0
         version: 4.5.0
@@ -639,15 +636,9 @@ importers:
       socket.io-client:
         specifier: ^4.5.4
         version: 4.8.1(bufferutil@4.0.9)(utf-8-validate@5.0.10)
-      source-map:
-        specifier: ^0.7.4
-        version: 0.7.6
       sqids:
         specifier: ^0.3.0
         version: 0.3.0
-      stacktrace-parser:
-        specifier: ^0.1.10
-        version: 0.1.11
       standardwebhooks:
         specifier: ^1.1.1
         version: 1.1.1
@@ -1652,6 +1643,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       '@sveltejs/adapter-node':
         specifier: ^5.3.2
@@ -1786,6 +1780,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../civitai-db-schema
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../civitai-shared
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
@@ -11391,10 +11388,6 @@ packages:
   stackback@0.0.2:
     resolution: {integrity: sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==}
 
-  stacktrace-parser@0.1.11:
-    resolution: {integrity: sha512-WjlahMgHmCJpqzU8bIBy4qtsZdU9lRlcZE3Lvyej6t4tuOuv1vk57OW3MBrj6hXBFx/nNoC9MPMTcr5YA7NQbg==}
-    engines: {node: '>=6'}
-
   standardwebhooks@1.1.1:
     resolution: {integrity: sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==}
 
@@ -11916,10 +11909,6 @@ packages:
   type-fest@0.20.2:
     resolution: {integrity: sha512-Ne+eE4r0/iWnpAxD852z3A+N0Bt5RN//NjJwRd2VFHEmrywxf5vsZlh4R6lixl6B+wz/8d+maTSAkN1FIkI3LQ==}
     engines: {node: '>=10'}
-
-  type-fest@0.7.1:
-    resolution: {integrity: sha512-Ne2YiiGN8bmrmJJEuTWTLJR32nh/JdL1+PSicowtNb0WFpn59GK8/lfD61bVtzguz7b3PBt74nxpv/Pw5po5Rg==}
-    engines: {node: '>=8'}
 
   type-fest@4.41.0:
     resolution: {integrity: sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==}
@@ -24100,10 +24089,6 @@ snapshots:
 
   stackback@0.0.2: {}
 
-  stacktrace-parser@0.1.11:
-    dependencies:
-      type-fest: 0.7.1
-
   standardwebhooks@1.1.1:
     dependencies:
       '@stablelib/base64': 1.0.1
@@ -24778,8 +24763,6 @@ snapshots:
       prelude-ls: 1.2.1
 
   type-fest@0.20.2: {}
-
-  type-fest@0.7.1: {}
 
   type-fest@4.41.0: {}
 

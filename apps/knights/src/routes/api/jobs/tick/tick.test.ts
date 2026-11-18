@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const escalateExpired = vi.hoisted(() => vi.fn());
 const applyPendingResolutions = vi.hoisted(() => vi.fn());
+const closeModeratorRuledItems = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
 const expireSmites = vi.hoisted(() => vi.fn());
 const settleHiddenChecks = vi.hoisted(() => vi.fn());
@@ -29,11 +30,16 @@ vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
-vi.mock('$lib/server/smites/runtime', () => ({ resetDeps: {} }));
+const resetDeps = vi.hoisted(() => ({} as { acolyteSmites?: () => boolean }));
+vi.mock('$lib/server/smites/runtime', () => ({ resetDeps }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({}) }));
 vi.mock('$lib/server/hidden/settle', () => ({ settleHiddenChecks }));
 vi.mock('$lib/server/smites/smites.service', () => ({ expireSmites, resetPendingPlayers }));
-vi.mock('$lib/server/queue/queue.service', () => ({ escalateExpired, applyPendingResolutions }));
+vi.mock('$lib/server/queue/queue.service', () => ({
+  escalateExpired,
+  applyPendingResolutions,
+  closeModeratorRuledItems,
+}));
 const tickItemFailures = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/metrics', () => ({ metrics: { tickItemFailures } }));
 
@@ -47,6 +53,8 @@ const run = () =>
 beforeEach(() => {
   escalateExpired.mockReset();
   applyPendingResolutions.mockReset();
+  closeModeratorRuledItems.mockReset();
+  closeModeratorRuledItems.mockResolvedValue({ closed: 0, failed: 0 });
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
   settleHiddenChecks.mockReset();
@@ -85,6 +93,7 @@ describe('POST /api/jobs/tick', () => {
       toInquisitor: 1,
       extended: 3,
       applied: 1,
+      moderatorRuled: 0,
       settledVotes: 0,
       hiddenChecksGraded: 0,
       yesNoClosed: 0,
@@ -94,6 +103,21 @@ describe('POST /api/jobs/tick', () => {
       purchasesRetried: 0,
       labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
+  });
+
+  it('closes items a moderator ruled before paying out, reports them, and counts one that failed', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    closeModeratorRuledItems.mockResolvedValue({ closed: 3, failed: 1 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ moderatorRuled: 3 });
+    expect(tickItemFailures).toHaveBeenCalledWith('moderator_ruled', 1);
+    expect(closeModeratorRuledItems.mock.invocationCallOrder[0]).toBeLessThan(
+      settleFinalItems.mock.invocationCallOrder[0]
+    );
   });
 
   it('reports how many unvoted items the escalation closed as expired', async () => {
@@ -229,6 +253,29 @@ describe('POST /api/jobs/tick', () => {
     expect(expireSmites).toHaveBeenCalled();
     expect(response.status).toBe(500);
   });
+
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    'with Acolyte smites %s, holds wrong-answer resets and their expiry: %s, reading the switch once for both',
+    async (on, held) => {
+      escalateExpired.mockResolvedValue({ escalated: 0 });
+      applyPendingResolutions.mockResolvedValue({ applied: 0 });
+      // A switch that flips between reads: both steps must still agree.
+      let reads = 0;
+      resetDeps.acolyteSmites = () => (reads++ === 0 ? on : !on);
+      try {
+        await run();
+      } finally {
+        delete resetDeps.acolyteSmites;
+      }
+      expect(resetPendingPlayers.mock.calls[0][1].acolyteSmites()).toBe(on);
+      expect(expireSmites).toHaveBeenCalledWith(expect.anything(), expect.any(Date), {
+        holdAcolyteWrongAnswer: held,
+      });
+    }
+  );
 
   it('retries resets before it expires smites', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
