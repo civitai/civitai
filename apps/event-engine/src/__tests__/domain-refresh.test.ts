@@ -57,6 +57,19 @@ describe('refresh walk timers', () => {
     }
   });
 
+  test('releases only the held orphans the primary-key lookup cannot find', async () => {
+    vi.useFakeTimers();
+    try {
+      const deleted = await droppingWalk(async (ids) => ({
+        rows: ids.filter((id) => id % 2 === 0).map((id) => ({ id })),
+      }));
+      expect(deleted.length).toBeGreaterThan(0);
+      expect(deleted.every((id) => id % 2 === 1)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('a failed primary-key lookup releases no held orphan', async () => {
     vi.useFakeTimers();
     try {
@@ -221,6 +234,28 @@ describe('refresh walk timers', () => {
       const points = Array.from({ length: 50 }, (_, i) => i + 1);
       const timers = startRefreshers(
         [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(added).toEqual([]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('an empty row read deletes nothing even when too few points to trip the brake', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = { query: bounded(async () => ({ rows: [] })) };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, [1, 2, 3])],
         queue as never,
         pg as never
       );

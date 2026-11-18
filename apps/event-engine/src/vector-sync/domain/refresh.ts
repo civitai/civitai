@@ -76,19 +76,28 @@ export function startRefreshers(
           : [];
         const rows = new Set(ids);
         let orphans = points.filter((id) => !rows.has(id));
-        // A table read that came back empty is a bad read, or a cleanup to run by hand: never trusted.
-        const emptyTable = cursor === 0 && ids.length === 0;
-        const fresh = emptyTable ? orphans : orphans.filter((id) => !heldLastPass.has(id));
+        // A table read that came back empty is a bad read, or a cleanup to run by hand: never trusted,
+        // however few points it would delete. Its orphans are not held either, since a hold would
+        // exempt them from the brake on the next pass.
+        if (cursor === 0 && ids.length === 0) {
+          if (orphans.length) {
+            logger.error(
+              { points: points.length, sample: orphans.slice(0, 10) },
+              `${domain.name}-sync: refresh read no rows but the collection has points; deleting none`
+            );
+            vectorSyncMetrics.orphanBrakes.inc({ domain: domain.name });
+          }
+          orphans = [];
+        }
+        const fresh = orphans.filter((id) => !heldLastPass.has(id));
         if (orphanBrake(fresh.length, points.length)) {
-          // An empty read's orphans are never let through, so remembering them would only exempt
-          // them from the brake on the next pass.
-          if (!emptyTable) for (const id of fresh) held.add(id);
+          for (const id of fresh) held.add(id);
           logger.error(
             { orphans: fresh.length, points: points.length, from, sample: fresh.slice(0, 10) },
             `${domain.name}-sync: refresh found too many points with no row in one batch; holding them a pass`
           );
           vectorSyncMetrics.orphanBrakes.inc({ domain: domain.name });
-          orphans = emptyTable ? [] : orphans.filter((id) => heldLastPass.has(id));
+          orphans = orphans.filter((id) => heldLastPass.has(id));
         }
         // A held orphan is released only once a primary-key lookup on the table confirms its row is
         // gone, so a walk read that keeps missing rows cannot delete them; a failed lookup releases none.
