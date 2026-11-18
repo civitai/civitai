@@ -74,5 +74,5 @@ export function recordRetractedView(moderatorId: number, imageId: number) {
 /** `/api/retracted-media` answers 404 unless this is exactly 'true'. */
 export const retractedMediaEnabled = () => env.RETRACTED_MEDIA_ENABLED === 'true';
 
-/** Whether a scanned image whose url the image CDN retracted is eligible too. Off unless exactly 'true'. */
+/** Whether a scanned image whose url the image CDN retracted is eligible too. */
 export const retractedMediaCdnLeg = () => env.RETRACTED_MEDIA_CDN_LEG === 'true';

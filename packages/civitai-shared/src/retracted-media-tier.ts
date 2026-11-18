@@ -10,7 +10,8 @@ import { blockedForSignal, type BlockedForPatterns } from './review-batch';
  *   report or held.
  * Held media (`heldImageSql`) and an image under an evidence hold are never served here; the
  * held-media route serves the first. With `cdnLeg`, a scanned image is also eligible while the image
- * CDN has retracted its url, unless the url is held (`heldUrlSql`) or another image row shares it.
+ * CDN has retracted its url, unless the url is held (`heldUrlSql`) or another image row, a moderator
+ * delete or a shop takedown shares it.
  */
 export type RetractedTier = 'plain' | 'suspect';
 

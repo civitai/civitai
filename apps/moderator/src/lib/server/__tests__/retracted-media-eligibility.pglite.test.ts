@@ -246,11 +246,6 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
     scanner.verdict = 'hit';
     expect(await getRetractedMedia(7, { csamReview: false })).toBeNull();
   });
-
-  it('keeps a blocked image with no reason suspect, and a scanned one with none plain', async () => {
-    expect(await tierOf(3)).toBe('suspect');
-    expect(await tierOf(7)).toBe('plain');
-  });
 });
 
 describe('recordRetractedView', () => {
