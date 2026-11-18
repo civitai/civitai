@@ -752,10 +752,9 @@ async function releaseAgentAutostartBudget(
   key: AgentAutostartReservedKey
 ): Promise<void> {
   try {
-    const { takeClusterWindowCount } = await clusterCounters();
-    await takeClusterWindowCount('releaseAgentAutostartBudget', key, AGENT_DAY_KEY_TTL_S, {
-      by: -cents,
-    });
+    const { redis } = await import('~/server/redis/client');
+    const { boundedClusterCall } = await clusterCounters();
+    await boundedClusterCall('releaseAgentAutostartBudget', () => redis.incrBy(key, -cents));
   } catch {
     // The key expires with the day; a lost release only makes later starts more conservative.
   }

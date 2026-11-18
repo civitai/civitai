@@ -122,11 +122,7 @@ export async function reserveMediaUploadBatchQuota(
   const release = async () => {
     for (const [key, amount] of charged) {
       try {
-        await redis
-          .multi()
-          .set(key, '0', { NX: true, EX: QUOTA_KEY_TTL_S })
-          .decrBy(key, amount)
-          .exec();
+        await redis.decrBy(key, amount);
       } catch {
         // Best-effort: a counter left high refuses early, never admits more.
       }
