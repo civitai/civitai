@@ -178,8 +178,8 @@ jobs:
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across
     # five apps then): the root config registered `packages/*/vitest.config.*` as projects and
     # nothing for `apps/*`. And the root `pnpm run typecheck` is bounded by the root tsconfig
-    # `include`, which has no `apps/*` entry, so the typecheck step below is the only one the
-    # apps get.
+    # `include`, which has no `apps/*` entry, so the `apps-typecheck` job above is the only
+    # typecheck the apps get.
     #
     # Not `continue-on-error`: no browser and no Next module graph. A red here does not block a
     # merge (`main` has no required_status_checks); it is a signal someone has to look at.

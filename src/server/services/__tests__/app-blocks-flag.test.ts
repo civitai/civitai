@@ -213,7 +213,7 @@ describe('isAppBlocksAuthorEnabled — author capability (developer soft-launch)
    *
    * `isAppBlocksAuthorEnabled`'s `user` parameter is now REQUIRED and non-nullable, so
    * the undefined case is a COMPILE error, not a runtime branch. The guard is
-   * `pnpm typecheck` (and CI's `tekton / typecheck` + `App unit tests + typecheck`).
+   * `pnpm typecheck` (and CI's `tekton / typecheck` + `App typecheck`).
    * Re-adding a runtime assertion here would need an `as never` cast to compile — i.e.
    * it could only test a path the type system already forbids, while reading as
    * coverage.
