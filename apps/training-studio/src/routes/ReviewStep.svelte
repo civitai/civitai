@@ -22,7 +22,10 @@
   import BlueFirstToggle from '$lib/components/BlueFirstToggle.svelte';
   import StickySummary from '$lib/components/StickySummary.svelte';
   import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
-  import { parseAiToolkitOptions } from '@civitai/shared/training-options';
+  import {
+    AI_TOOLKIT_OPTION_FIELDS,
+    parseAiToolkitOptions,
+  } from '@civitai/shared/training-options';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import { isAbort, uploadFile } from '$lib/upload';
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
@@ -385,10 +388,12 @@
   };
   const unsupportedExtras = (i: number): { reason: string; labels: string[] }[] => {
     const caps = capsAt(i);
+    const aiToolkit = runEngine(selection.runs[i]!) === 'ai-toolkit';
     const groups = new Map<string, string[]>();
     for (const f of EXTRA_FIELDS) {
       const cap = caps[f.field as ExtraParamField];
       if (cap.supported) continue;
+      if (!aiToolkit && (AI_TOOLKIT_OPTION_FIELDS as readonly string[]).includes(f.field)) continue;
       const reason = cap.reason ?? 'Not available for this model.';
       groups.set(reason, [...(groups.get(reason) ?? []), PARAM_LABELS[f.field]]);
     }

@@ -1030,6 +1030,35 @@ describe('Kohya engine selection and options', () => {
       keepTokens: 0,
     });
   });
+
+  it('offers and sends the AI Toolkit-only settings on AI Toolkit runs alone', () => {
+    const aiToolkit = run('sdxl');
+    const kohya = { ...aiToolkit, engine: 'kohya' };
+    const params = {
+      ...defaultRunParams(aiToolkit),
+      lrScheduler: 'constant',
+      lrWarmupSteps: '100',
+      captionDropoutRate: '0.1',
+      rankDropout: '0.2',
+      trainConv: true,
+    };
+    expect(runTrainingParams(aiToolkit, params, 'tag')).toMatchObject({
+      lrWarmupSteps: 100,
+      captionDropoutRate: 0.1,
+      rankDropout: 0.2,
+      trainConv: true,
+    });
+    const caps = runExtraCapabilities(kohya, 'tag', params);
+    for (const field of [
+      'lrWarmupSteps',
+      'captionDropoutRate',
+      'rankDropout',
+      'trainConv',
+    ] as const) {
+      expect(caps[field].supported).toBe(false);
+      expect(runTrainingParams(kohya, params, 'tag')).not.toHaveProperty(field);
+    }
+  });
 });
 
 describe('per-image repeats on the submit', () => {

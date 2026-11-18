@@ -721,13 +721,11 @@ export function runExtraCapabilities(
   labelMode: LabelType,
   params = defaultRunParams(run)
 ) {
-  const caps = extraParamCapabilities(
-    runCard(run),
-    runVersion(run),
-    labelMode,
-    params.lrScheduler,
-    params.steps
-  );
+  const caps = extraParamCapabilities(runCard(run), runVersion(run), labelMode, {
+    engine: runEngine(run),
+    lrScheduler: params.lrScheduler,
+    steps: params.steps,
+  });
   if (runEngine(run) === 'kohya' && isKohyaFlow(runVersion(run).ecosystem))
     caps.noiseOffset = { supported: false, reason: 'Flux and Chroma do not use noise offset.' };
   return caps;

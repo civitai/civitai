@@ -1816,11 +1816,14 @@ export function extraParamCapabilities(
   card: ModelCard,
   version: ModelVersionInfo,
   labelMode: LabelType,
-  lrScheduler = '',
-  steps = 0
+  {
+    engine = version.engine ?? 'ai-toolkit',
+    lrScheduler = '',
+    steps = 0,
+  }: { engine?: string; lrScheduler?: string; steps?: number } = {}
 ): Record<ExtraParamField, ExtraParamCapability> {
   const support = aiToolkitOptionSupport({
-    engine: version.engine ?? 'ai-toolkit',
+    engine,
     ecosystem: version.ecosystem,
     lrScheduler,
     steps,

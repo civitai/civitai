@@ -219,6 +219,13 @@ export const AdvancedSettings = ({
     features.trainingStepsPricing,
   ]);
 
+  useEffect(() => {
+    const { lrWarmupSteps, targetSteps } = selectedRun.params;
+    if (lrWarmupSteps !== undefined && lrWarmupSteps > targetSteps)
+      doUpdate({ params: { lrWarmupSteps: targetSteps } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.params.targetSteps]);
+
   // Adjust optimizer and related settings
   useEffect(() => {
     let newOptimizerArgs: string;
