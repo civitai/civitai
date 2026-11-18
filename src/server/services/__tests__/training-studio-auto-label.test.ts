@@ -358,6 +358,8 @@ describe('Training Studio auto-label', () => {
     });
 
     it('gives every key it writes an expiry, even when the give-back itself fails', async () => {
+      // The shared mock keeps call history across tests: count only this poll's expiries.
+      redisMock.redis.expire.mockClear();
       record('wf-q', { userId: 7, day: today(), count: 1 });
       redisMock.sysRedis.decrBy.mockRejectedValueOnce(new Error('sys down'));
       orch.getWorkflow.mockResolvedValue(failed(1));
