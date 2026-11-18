@@ -4,17 +4,28 @@ import { NsfwLevel } from '~/server/common/enums';
 import type { CandidateFilter, CandidateSource } from '~/server/services/semantic-search-client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { SessionUser } from '~/types/session';
+import { describeSemanticAuditContract } from './semantic-audit.harness';
 
 const h = vi.hoisted(() => ({
+  recordAudit: vi.fn(),
   fetched: [] as number[][],
   hiddenFor: [] as (number | undefined)[],
   rows: new Map<number, Record<string, unknown>>(),
   includesInappropriate:
     vi.fn<(input: { prompt?: string }, nsfw?: boolean) => 'minor' | 'poi' | false>(),
   evalBoolean: vi.fn<() => { enabled: unknown }>(),
-  fliptClient: null as null | { evaluateBoolean: () => { enabled: unknown } },
+  fliptClient: null as null | {
+    evaluateBoolean: (req: { entityId: string; context: Record<string, string> }) => {
+      enabled: unknown;
+    };
+  },
 }));
 
+vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  recordSemanticAudit: h.recordAudit,
+  recordRefusedSemanticAudit: h.recordAudit,
+}));
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   ensureFliptInitialized: async () => undefined,
@@ -24,7 +35,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: async (text: string) => text,
 }));
+vi.mock('~/server/services/search-query-rules', () => ({ matchesQueryRule: async () => false }));
 vi.mock('~/utils/metadata/audit', () => ({
+  includesNsfw: () => false,
   includesInappropriate: h.includesInappropriate,
   includesPoi: () => false,
   includesMinor: () => false,
@@ -208,6 +221,41 @@ describe('semantic comic search', () => {
     expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
   });
 
+  describe('a segment that lifts the switch for one account', () => {
+    const EXEMPT = { id: 500, isModerator: false } as SessionUser;
+    const OTHER = { id: 502, isModerator: false } as SessionUser;
+    const asked: { entityId: string; context: Record<string, string> }[] = [];
+    beforeEach(() => {
+      asked.length = 0;
+      // Flipt matches segments on the context, never the entity id.
+      h.fliptClient = {
+        evaluateBoolean: (req) => {
+          asked.push(req);
+          return { enabled: req.context.userId !== String(EXEMPT.id) };
+        },
+      };
+    });
+
+    it('keeps every other signed-in non-moderator clamped', async () => {
+      await search([], { browsingLevel: PG | R, user: OTHER });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+    });
+
+    it('searches the exempt account at its own level', async () => {
+      await search([], { browsingLevel: PG | R, user: EXEMPT });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG, R, PG | R] });
+      expect(asked).toEqual([
+        { flagKey: expect.any(String), entityId: '500', context: { userId: '500' } },
+      ]);
+    });
+
+    it('keeps a signed-out visitor clamped, asking with no user', async () => {
+      await search([], { browsingLevel: PG | R, user: undefined });
+      expect(sent[0].gate).toEqual({ kind: 'level', nsfwLevels: [PG] });
+      expect(asked).toEqual([{ flagKey: expect.any(String), entityId: 'global', context: {} }]);
+    });
+  });
+
   it('holds the clamp when the switch cannot be read', async () => {
     h.fliptClient = null;
     const viewer = { id: 500, isModerator: false } as SessionUser;
@@ -226,7 +274,11 @@ describe('semantic comic search', () => {
     h.rows.set(10, comic(10));
     await search([11, 10]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'semantic-comic-search', returned: 2, hydrated: 1 })
+      expect.objectContaining({
+        name: 'semantic-comic-search',
+        hydrated: 1,
+        payload: expect.objectContaining({ returned: 2 }),
+      })
     );
   });
 });
@@ -286,4 +338,21 @@ describe('semantic comic search: the query audit', () => {
     // The refused correction's candidates are never hydrated.
     expect(h.fetched).toEqual([]);
   });
+});
+
+describeSemanticAuditContract({
+  index: 'comics',
+  run: ({ source, user, cursor }) => {
+    for (const id of [10, 12]) h.rows.set(id, comic(id));
+    return searchSemanticComics({
+      input: { query: 'space pirates', browsingLevel: PG, limit: 10, cursor },
+      user,
+      browsingLevelCap: undefined,
+      candidateSource: source,
+    });
+  },
+  ids: [10, 12],
+  recorded: h.recordAudit,
+  narrowToMinor: () => h.includesInappropriate.mockReturnValue('minor'),
+  refuse: () => h.includesInappropriate.mockReturnValue('poi'),
 });

@@ -9,8 +9,9 @@ import {
   type PreviewErrorSource,
 } from '@civitai/app-assistant';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
-import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { getActiveDevTunnel } from '~/server/services/blocks/dev-tunnel.service';
+import { boundedClusterCall as bounded } from '~/server/utils/cluster-window-count';
 
 /**
  * The errors an app's own code reported in its LIVE DEV PREVIEW, kept for App Assistant's
@@ -98,7 +99,7 @@ export function sanitizePreviewError(report: PreviewErrorReport, now: number): E
 }
 
 export function previewErrorsKey(userId: number, blockId: string) {
-  return `${REDIS_SYS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
+  return `${REDIS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
 }
 
 /** Back-to-back repeats in `entries` (oldest first) folded into one entry each. */
@@ -140,12 +141,13 @@ export async function storePreviewErrors({
   const key = previewErrorsKey(userId, blockId);
 
   // The oldest of this batch repeats the newest kept entry: that entry is replaced by the fold.
-  const [headRaw] = (await withSysReadDeadline(sysRedis.lRange<string | Buffer>(key, 0, 0))) ?? [];
+  const [headRaw] =
+    (await bounded('storePreviewErrors', () => redis.lRange<string | Buffer>(key, 0, 0))) ?? [];
   const head = headRaw === undefined ? null : parseStored(headRaw);
   const replacesHead = !!head && sameError(head, entries[0]!);
   if (head && replacesHead) entries[0] = foldErrors(head, entries[0]!);
 
-  const pipeline = sysRedis.multi();
+  const pipeline = redis.multi();
   if (replacesHead) pipeline.lPopCount(key, 1);
   pipeline.lPush(
     key,
@@ -153,7 +155,7 @@ export async function storePreviewErrors({
   );
   pipeline.lTrim(key, 0, PREVIEW_ERRORS_MAX_ENTRIES - 1);
   pipeline.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-  const replies: unknown = await withSysReadDeadline(pipeline.exec());
+  const replies: unknown = await bounded('storePreviewErrors', () => pipeline.exec());
 
   // Another write pushed between the read and the replace, so the pop took ITS entry: it goes back
   // (readers order by time, so its place in the list does not matter). The entry this meant to
@@ -168,10 +170,10 @@ export async function storePreviewErrors({
       )
       .filter((raw): raw is string => typeof raw === 'string' && raw !== kept);
     if (others.length > 0) {
-      const putBack = sysRedis.multi();
+      const putBack = redis.multi();
       putBack.lPush(key, others);
       putBack.expire(key, PREVIEW_ERRORS_TTL_SECONDS);
-      await withSysReadDeadline(putBack.exec());
+      await bounded('storePreviewErrors', () => putBack.exec());
     }
   }
   return { status: 'stored', stored: entries.length };
@@ -214,8 +216,8 @@ export async function readPreviewErrors({
   userId: number;
   blockId: string;
 }): Promise<ErrorActivity[]> {
-  const raw = await withSysReadDeadline(
-    sysRedis.lRange<string | Buffer>(
+  const raw = await bounded('readPreviewErrors', () =>
+    redis.lRange<string | Buffer>(
       previewErrorsKey(userId, blockId),
       0,
       PREVIEW_ERRORS_MAX_ENTRIES - 1

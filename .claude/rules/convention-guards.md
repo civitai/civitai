@@ -14,6 +14,6 @@ Several repo conventions are enforced by tests in `src/server/services/__tests__
 - `no-io-in-transaction` — no awaited non-database I/O (HTTP, ingestion, queues) inside a `$transaction` callback.
 - `no-wholesale-module-mock` — the `importOriginal` rule in `.claude/rules/testing.md`.
 
-**Adding a guard:** in the same commit, add it to the `test:lint-rules` file list in `package.json` (a hand-maintained list, not a glob) and to the list and both counts in `docs/dev/convention-guards.md`. `no-lint-rules-script-drift` fails until all three agree. A green `test:lint-rules` doesn't mean every guard passed unless the script matches the directory.
+**Adding a guard:** in the same commit, add it to the list in `docs/dev/convention-guards.md`. `test:lint-rules` picks up any `src/server/services/__tests__/no-*` guard by path prefix; a guard that lives elsewhere must be added to the script in `package.json` by name.
 
-`test:lint-rules` is a convenience selector: the guards match the `unit` project's `include`, so `pnpm run test:unit:run` already runs them, and so does CI's `Unit tests` job on pushes to `main` (it does not run on pull requests).
+`test:lint-rules` is a convenience selector: the guards match the `unit` project's `include`, so `pnpm run test:unit:run` already runs them, and so does CI's `Unit tests` job, which verifies `main` in scheduled batches rather than per push (on a pull request only when it carries the `full-ci` label).

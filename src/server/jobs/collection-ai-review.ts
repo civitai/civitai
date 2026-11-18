@@ -32,6 +32,7 @@ import type { AiReviewDecision } from '~/server/services/ai/collection-review.se
 import { describeProviderError } from '~/server/services/ai/provider-error';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -193,7 +194,7 @@ async function classifyItem({
         name: 'collection-ai-review',
         collectionId,
         error: `Non-absolute image url (${imageUrl}); check NEXT_PUBLIC_IMAGE_LOCATION`,
-      }).catch(() => undefined);
+      });
       return undefined;
     }
 
@@ -219,7 +220,7 @@ async function classifyItem({
         imageId: item.imageId,
         attempts,
         error: describeProviderError(error, { sent: [item.prompt, config.prompt] }),
-      }).catch(() => undefined);
+      });
       // Most failures clear on a later run, so the item is left for the next one. Stamped once the
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
       // retried, and re-billed, on every run for the life of the collection.
@@ -326,7 +327,7 @@ function logFlagError(collectionId: number, error: string, imageIds?: number[]) 
     collectionId,
     imageIds,
     error,
-  }).catch(() => undefined);
+  });
 }
 
 // Only fills an empty slot. Even the queues minor review outranks are left alone: accepting in the
@@ -381,6 +382,8 @@ export async function flagForMinorReview({
     bustCachesForPosts(postIds).catch((error) =>
       logFlagError(collectionId, `Post cache bust failed: ${(error as Error).message}`)
     ),
+    // A held image that is someone's profile picture stops being served as one now, not at the TTL.
+    refreshProfilePicturesForImagesLazy([...flaggedIds]),
   ]);
   return true;
 }
@@ -524,7 +527,7 @@ async function applyOutcomes({
         error: `Failed to apply ${write.status} to ${write.ids.length} items: ${
           (error as Error).message
         }`,
-      }).catch(() => undefined);
+      });
     }
   }
 }

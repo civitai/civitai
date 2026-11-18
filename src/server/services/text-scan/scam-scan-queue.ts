@@ -27,7 +27,7 @@ export function createScamScanQueue({
         type: 'warning',
         message: 'scam scan queue full, dropped',
         ...args,
-      }).catch(() => undefined);
+      });
       return;
     }
     void limit(() => scan(args)).catch((error) =>
@@ -37,7 +37,7 @@ export function createScamScanQueue({
         message: 'background scan threw',
         ...args,
         error: (error as Error).message,
-      }).catch(() => undefined)
+      })
     );
   };
 }

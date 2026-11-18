@@ -42,7 +42,7 @@ import type { AppRole } from './app-capabilities.constants';
  * per-op server-side checks for apps:storage:*).
  */
 export const SKIP_OAUTH_CHECK = Symbol('SKIP_OAUTH_CHECK');
-export type ScopeBitmaskRequirement = number | typeof SKIP_OAUTH_CHECK;
+export type ScopeBitmaskRequirement = bigint | typeof SKIP_OAUTH_CHECK;
 
 export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> = {
   'models:read:self': TokenScope.ModelsRead,
@@ -560,8 +560,9 @@ export const CONFIRMED_STEP_DAILY_LIMIT_ERROR_CODE = 'daily-limit-exceeded' as c
 
 /**
  * A generation input names the viewer's own upload before its scan has finished. Retry once the
- * upload's scan completes. Returned by the estimate and the submit of `kind:'step'` and
- * `kind:'workflow'` bodies as a failed snapshot's `errorCode`.
+ * upload's scan completes. Returned by the estimate and the submit of `kind:'textToImage'`,
+ * `kind:'step'` and `kind:'workflow'` bodies and inline `customComfy` graphs as a failed
+ * snapshot's `errorCode`.
  */
 export const SOURCE_SCAN_PENDING_ERROR_CODE = 'source-scan-pending' as const;
 
@@ -796,7 +797,7 @@ export type { SensitiveScopeManifestInput } from '@civitai/shared/sensitive-bloc
  */
 export function validateBlockScopesAgainstOauthClient(
   blockScopes: string[],
-  oauthClientAllowedScopes: number
+  oauthClientAllowedScopes: bigint
 ): { valid: boolean; rejectedScopes: string[] } {
   const rejected: string[] = [];
   for (const scope of blockScopes) {
@@ -848,8 +849,8 @@ export function isAppBlockOauthClientId(clientId: string | null | undefined): bo
  * the OAuth-eligible scope set, exactly what the validator / token-mint path
  * expects as the per-client ceiling.
  */
-export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): number {
-  let bitmask = 0;
+export function deriveOauthBitmaskFromBlockScopes(blockScopes: string[]): bigint {
+  let bitmask = 0n;
   for (const scope of blockScopes) {
     if (!isKnownBlockScope(scope)) continue;
     const requirement = BLOCK_SCOPE_TO_OAUTH_BIT[scope];
@@ -996,3 +997,16 @@ export function isConsentExemptScope(scope: string): boolean {
 
 /** `blocks.revokeScopes` takes at most this many scopes per call; the router schema and the client share it. */
 export const REVOKE_SCOPES_MAX_PER_CALL = 32;
+
+/**
+ * The site's prompt check refused the prompt. A failed snapshot's `errorCode` on every App Block
+ * generation submit, with `error` the refusal reasons only. Nothing is charged; resubmitting the
+ * same prompt is refused again.
+ */
+export const PROMPT_POLICY_REFUSED_ERROR_CODE = 'prompt-policy-refused' as const;
+
+/**
+ * The prompt check could not run, so nothing was submitted or charged. Retry no sooner than
+ * 30 seconds later, at most 3 times.
+ */
+export const PROMPT_CHECK_UNAVAILABLE_ERROR_CODE = 'prompt-check-unavailable' as const;

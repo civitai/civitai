@@ -39,7 +39,7 @@ function logFallbacks(fallbacks: UsageLimitFallback[]) {
     type: 'warning',
     message: 'Usage limit overrides refused; serving their code defaults',
     fallbacks,
-  }).catch(() => null);
+  });
 }
 
 async function load(): Promise<UsageLimitConfig> {
@@ -56,7 +56,7 @@ async function load(): Promise<UsageLimitConfig> {
       message: 'Usage limit config read failed; keeping the last good config',
       error: (error as Error)?.message,
       haveLastGood: !!current,
-    }).catch(() => null);
+    });
     // Retry after a TTL, not on every request, while the store is down.
     current = { config: current?.config ?? defaultUsageLimitConfig, loadedAt: Date.now() };
     return current.config;

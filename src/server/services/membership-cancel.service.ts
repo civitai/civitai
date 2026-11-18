@@ -38,7 +38,7 @@ export const MEMBERSHIP_CANCEL_ACTIVITY = {
 const CHANGEABLE_STATUSES = ['active', 'trialing'];
 
 const log = (data: MixedObject) =>
-  logToAxiom({ name: 'mod-membership-cancel', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'mod-membership-cancel', ...data }, 'webhooks');
 
 export type CancelGuardInput = {
   userId: number;

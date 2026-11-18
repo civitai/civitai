@@ -22,7 +22,7 @@ import {
   trainingModelInfo,
 } from '~/utils/training';
 import {
-  catalogFlagKeys,
+  hostFlagKeys,
   MODEL_CARDS,
   PARAM_DEFAULTS,
 } from '../../../apps/training-studio/src/lib/data/trainingModels';
@@ -74,8 +74,8 @@ describe.each(models)('%s training identity', (key, id, media) => {
 });
 
 describe('Training Studio embed model gates', () => {
-  it('maps every gated Studio card to a feature flag the host can evaluate', () => {
-    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(catalogFlagKeys().sort());
+  it('maps every Studio gate to a feature flag the host can evaluate', () => {
+    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(hostFlagKeys().sort());
   });
 
   it('asks Flipt the same key the standalone Studio asks', () => {

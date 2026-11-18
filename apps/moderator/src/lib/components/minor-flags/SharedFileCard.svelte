@@ -2,6 +2,7 @@
   import { browser } from '$app/environment';
   import { IconFileCheck } from '@tabler/icons-svelte';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import MatureRestrictedBadge from '$lib/components/MatureRestrictedBadge.svelte';
   import MetaChip from '$lib/components/minor-flags/MetaChip.svelte';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { LINK_CLASS, bytes, dateTime } from '$lib/format';
@@ -55,10 +56,15 @@
   const request = $derived(browser ? fetchHashDetail(modelId, minorModelId, label) : null);
 </script>
 
-{#snippet cover(url: string | null | undefined, type: string | null | undefined)}
+{#snippet cover(
+  url: string | null | undefined,
+  type: string | null | undefined,
+  restricted: boolean | null | undefined
+)}
   <!-- Same box for both, filled per the design; cropped from the top, where a subject's face usually
        is. -->
-  <div class="aspect-[4/5] w-full overflow-hidden rounded-md border border-dark-4 bg-dark-6">
+  <div class="aspect-[4/5] w-full overflow-hidden rounded-md border border-dark-4 bg-dark-6 relative">
+    <MatureRestrictedBadge restricted={!!restricted} class="absolute left-2 top-2 z-10" />
     {#if url}
       <EdgeMedia
         src={url}
@@ -142,7 +148,7 @@
 
             <div class="grid grid-cols-2 gap-3">
               <div class="flex min-w-0 flex-col gap-1.5">
-                {@render cover(d.modelCoverUrl, d.modelCoverType)}
+                {@render cover(d.modelCoverUrl, d.modelCoverType, d.modelCoverRestricted)}
                 {@render heading(row.modelName, 'this model', modelUrl(civitaiUrl, modelId, ownVersion))}
                 <span class="text-[11px] text-dark-1">{row.username ?? `user #${row.userId}`}</span>
                 {#if d.modelCreatedAt}
@@ -154,7 +160,7 @@
               </div>
 
               <div class="flex min-w-0 flex-col gap-1.5">
-                {@render cover(d.minorModelCoverUrl, d.minorModelCoverType)}
+                {@render cover(d.minorModelCoverUrl, d.minorModelCoverType, d.minorModelCoverRestricted)}
                 {@render heading(
                   seedName ?? `#${seedId}`,
                   'earlier model',

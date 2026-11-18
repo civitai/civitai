@@ -9,16 +9,21 @@ import {
 
 const submitVote = vi.fn();
 const getJudgingPair = vi.fn();
+const dismissJudgingPair = vi.fn();
 
 vi.mock('~/server/services/crucible.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CrucibleService>()),
   submitVote,
   getJudgingPair,
+  dismissJudgingPair,
 }));
 
-const { getJudgeEligibilityHandler, getJudgingPairHandler, submitVoteHandler } = await import(
-  '~/server/controllers/crucible.controller'
-);
+const {
+  dismissJudgingPairHandler,
+  getJudgeEligibilityHandler,
+  getJudgingPairHandler,
+  submitVoteHandler,
+} = await import('~/server/controllers/crucible.controller');
 
 const ctxFor = (isModerator = false) =>
   ({ user: { id: 7, isModerator }, features: {} } as unknown as ProtectedContext);
@@ -72,6 +77,22 @@ describe('crucible judging requires a creator score', () => {
       message: CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE,
     });
     expect(getJudgingPair).not.toHaveBeenCalled();
+  });
+
+  it("refuses Don't show again below the threshold; at it the dismissal goes through", async () => {
+    const input = { crucibleId: 1, entryIds: [2, 3] } as Parameters<
+      typeof dismissJudgingPairHandler
+    >[0]['input'];
+    withScore(CRUCIBLE_JUDGE_MIN_CREATOR_SCORE - 1);
+    await expect(dismissJudgingPairHandler({ input, ctx: ctxFor() })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE,
+    });
+    expect(dismissJudgingPair).not.toHaveBeenCalled();
+
+    withScore(CRUCIBLE_JUDGE_MIN_CREATOR_SCORE);
+    await dismissJudgingPairHandler({ input, ctx: ctxFor() });
+    expect(dismissJudgingPair).toHaveBeenCalledWith({ ...input, userId: 7 });
   });
 
   it.each([

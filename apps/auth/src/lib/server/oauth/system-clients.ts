@@ -1,11 +1,17 @@
 import { randomUUID } from 'crypto';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
-import { NON_USER_SCOPES, TokenScope, tokenScopeLabels } from '@civitai/auth/token-scope';
+import {
+  NON_USER_SCOPES,
+  parseTokenScope,
+  TokenScope,
+  tokenScopeLabels,
+} from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { APP_BLOCK_OAUTH_CLIENT_ID_PREFIX } from '$lib/server/oauth/block-guard';
-import { SYSTEM_USER_ID } from '$lib/server/oauth/constants';
+import { SERVICE_GRANT, SYSTEM_USER_ID } from '$lib/server/oauth/constants';
 import { firstNonSkipConsentRedirectUri } from '$lib/server/oauth/redirect-uri';
+import { scopeToColumn } from '$lib/server/oauth/scope';
 
 // System OAuth apps: registered apps owned by the civitai system account (User id -1), the first-party
 // convention Civitai Link already uses. Staff manage them on /admin/access; only they may skip the
@@ -18,8 +24,8 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** Scopes a system app may be granted here: every user-grantable scope (UserRead is always included). */
 export const SYSTEM_APP_SCOPE_OPTIONS = Object.entries(tokenScopeLabels)
-  .map(([bit, label]) => ({ bit: Number(bit), label }))
-  .filter(({ bit }) => (bit & NON_USER_SCOPES) === 0);
+  .map(([bit, label]) => ({ bit: BigInt(bit), label }))
+  .filter(({ bit }) => (bit & NON_USER_SCOPES) === 0n);
 
 export type SystemClientDetails = {
   name: string;
@@ -29,7 +35,7 @@ export type SystemClientDetails = {
 
 export type SystemClientInput = SystemClientDetails & {
   isConfidential: boolean;
-  allowedScopes: number;
+  allowedScopes: bigint;
 };
 
 /**
@@ -71,8 +77,8 @@ export function parseSystemClientInput(data: FormData): SystemClientInput | { er
   const allowed = new Set(SYSTEM_APP_SCOPE_OPTIONS.map((o) => o.bit));
   let allowedScopes = TokenScope.UserRead;
   for (const raw of data.getAll('scope')) {
-    const bit = Number(raw);
-    if (!allowed.has(bit)) return { error: 'Unknown scope.' };
+    const bit = typeof raw === 'string' ? parseTokenScope(raw) : null;
+    if (bit === null || !allowed.has(bit)) return { error: 'Unknown scope.' };
     allowedScopes |= bit;
   }
 
@@ -113,7 +119,7 @@ export async function createSystemClient(
       redirectUris: input.redirectUris,
       allowedOrigins: originsOf(input.redirectUris),
       isConfidential: input.isConfidential,
-      allowedScopes: input.allowedScopes,
+      allowedScopes: scopeToColumn(input.allowedScopes),
       userId: SYSTEM_USER_ID,
       isVerified: true,
     })
@@ -125,6 +131,70 @@ export async function createSystemClient(
     metadata: { owner: 'system' },
   });
   return { clientId, clientSecret };
+}
+
+/**
+ * Register a service client: a system app that gets resource tokens as itself, and nothing else. It holds
+ * only the service grant, no redirect URIs or origins, and UserRead; what it receives at a resource is set
+ * by that resource's `services` entry in OAUTH_EXCHANGE_RESOURCES. The secret is returned once.
+ */
+export async function createServiceClient(
+  name: string,
+  actorUserId: number
+): Promise<{ clientId: string; clientSecret: string }> {
+  const clientId = randomUUID();
+  const clientSecret = generateKey(48);
+  await db
+    .insertInto('OauthClient')
+    .values({
+      id: clientId,
+      secret: generateSecretHash(clientSecret),
+      name,
+      description: '',
+      redirectUris: [],
+      allowedOrigins: [],
+      grants: [SERVICE_GRANT],
+      isConfidential: true,
+      allowedScopes: scopeToColumn(TokenScope.UserRead),
+      userId: SYSTEM_USER_ID,
+      isVerified: true,
+    })
+    .execute();
+  logOAuthEvent({
+    type: 'client.created',
+    userId: actorUserId,
+    clientId,
+    metadata: { owner: 'system', service: true },
+  });
+  return { clientId, clientSecret };
+}
+
+/**
+ * Give a service client a new secret, returned once; the old one stops working. Tokens already issued stay
+ * valid until they expire: disable the client first to end them. Returns null when the id is not a service
+ * client.
+ */
+export async function rotateServiceSecret(
+  clientId: string,
+  actorUserId: number
+): Promise<{ clientSecret: string } | null> {
+  const clientSecret = generateKey(48);
+  const rotated = await db
+    .updateTable('OauthClient')
+    .set({ secret: generateSecretHash(clientSecret) })
+    .where('id', '=', clientId)
+    .where('userId', '=', SYSTEM_USER_ID)
+    .where('grants', '=', [SERVICE_GRANT])
+    .returning('id')
+    .executeTakeFirst();
+  if (!rotated) return null;
+  logOAuthEvent({
+    type: 'client.secret_rotated',
+    userId: actorUserId,
+    clientId,
+    metadata: { owner: 'system', service: true },
+  });
+  return { clientSecret };
 }
 
 /**

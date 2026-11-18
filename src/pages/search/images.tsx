@@ -34,6 +34,9 @@ import { adjustImagesCardHeight } from '~/components/Image/Infinite/images-card-
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSimilarImage } from '~/components/Search/useSimilarImage';
+import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { SEARCH_FACET_LIMIT } from '~/shared/constants/search.constants';
@@ -94,6 +97,8 @@ function ImagesHitList() {
   const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Image' });
 
   const query = indexUiState.query?.trim();
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const similar = useSimilarImage();
   // A typed query replaces "more like this": drop it from the URL too, or clearing the query would
   // bring it back.
@@ -102,6 +107,14 @@ function ImagesHitList() {
   useEffect(() => {
     if (query && similar.imageId) clearSimilar(undefined);
   }, [query, similar.imageId, clearSimilar]);
+  useScrollToTopOnChange(
+    JSON.stringify({
+      query,
+      similarTo,
+      refinementList: indexUiState.refinementList,
+      range: indexUiState.range,
+    })
+  );
 
   // Image search ranks by meaning, so it needs words (or an image) to rank by; filters alone list
   // nothing.
@@ -123,6 +136,11 @@ function ImagesHitList() {
               ? 'Image search starts from what you describe. Filters like users, tags and base model narrow those results, but they can’t list images on their own.'
               : 'Describe what you want to see, like “a red fox in the snow”, then use the filters to narrow the results.'}
           </Text>
+          {features.imageSearchUpload && features.moreLikeThis && currentUser && (
+            <Button component={NextLink} href="/search/by-image" variant="light">
+              Search by image
+            </Button>
+          )}
         </Stack>
       </Center>
     );
@@ -277,7 +295,7 @@ ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, ctx }) => {
-    const destination = legacyImageSearchDestination(features ?? {}, ctx.query);
+    const destination = legacyImageSearchDestination(features ?? {});
     if (destination === 'images-feed')
       return {
         redirect: {

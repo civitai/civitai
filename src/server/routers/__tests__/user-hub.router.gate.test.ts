@@ -37,7 +37,14 @@ vi.mock('~/server/services/user-hub.service', () => ({
   unfollowUserHub: vi.fn().mockResolvedValue({ hubId: 1, followed: false }),
 }));
 
-import { getUserHubByKey } from '~/server/services/user-hub.service';
+import {
+  deleteUserHub,
+  getHubSourceCandidates,
+  getHubSourceScope,
+  getUserHubByKey,
+  resolveHubSourceFromUrl,
+  upsertUserHub,
+} from '~/server/services/user-hub.service';
 import { userHubRouter } from '~/server/routers/user-hub.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -92,7 +99,7 @@ describe('a signed-out visitor can open a hub and do nothing else', () => {
     expect(getUserHubByKey).toHaveBeenLastCalledWith({
       key: 'Xk3p9aBc',
       userId: undefined,
-      isModerator: undefined,
+      isModerator: false,
     });
 
     await caller().getById({ key: 'Xk3p9aBc' });
@@ -121,7 +128,7 @@ describe('a signed-out visitor can open a hub and do nothing else', () => {
   }
 });
 
-const caller = (tokenScope: number = TokenScope.Full, apiKeyId: number | null = null) =>
+const caller = (tokenScope: bigint = TokenScope.Full, apiKeyId: number | null = null) =>
   userHubRouter.createCaller({
     user: { id: 7, isModerator: false },
     ip: '1.2.3.4',
@@ -172,7 +179,7 @@ describe('every hub procedure is behind the userHubs flag', () => {
  * written out by hand rather than read off the router, because a map derived from
  * `.meta()` asserts the router against itself and passes whatever it says.
  */
-const requiredScopes: Record<string, number> = {
+const requiredScopes: Record<string, bigint> = {
   getAll: TokenScope.UserRead,
   getById: TokenScope.UserRead,
   resolveSource: TokenScope.UserRead,
@@ -191,7 +198,7 @@ const requiredScopes: Record<string, number> = {
 
 // `UserRead` and `UserWrite` are independent bits, so each is the other's negative
 // control: a read-scoped token must be refused every write procedure and vice versa.
-const otherScope = (scope: number) =>
+const otherScope = (scope: bigint) =>
   scope === TokenScope.UserRead ? TokenScope.UserWrite : TokenScope.UserRead;
 
 describe('every hub procedure declares the scope it needs', () => {
@@ -218,6 +225,57 @@ describe('every hub procedure declares the scope it needs', () => {
       await expect(caller(otherScope(scope), 999)[name](inputs[name])).rejects.toMatchObject({
         code: 'FORBIDDEN',
       });
+    });
+  }
+});
+
+// Moderator reach follows the credential: a session or full-access key keeps it, a scoped
+// API key or app token of the same moderator does not.
+describe('hub procedures take the moderator view from the credential', () => {
+  const moderatorCaller = (credential: object) =>
+    userHubRouter.createCaller({
+      user: { id: 7, isModerator: true },
+      ip: '1.2.3.4',
+      acceptableOrigin: true,
+      tokenScope: TokenScope.Full,
+      apiKeyId: null,
+      features: {},
+      ...credential,
+    } as never) as unknown as Record<string, (input?: unknown) => Promise<unknown>>;
+
+  const scopedKey = {
+    subject: { type: 'apiKey', id: 1 },
+    apiKeyId: 1,
+    apiKeyType: 'User',
+    tokenScope: TokenScope.UserRead | TokenScope.UserWrite,
+  };
+  const appToken = { subject: { type: 'oauth', id: 'app' }, tokenScope: TokenScope.Full };
+
+  const services: Record<string, unknown> = {
+    getById: getUserHubByKey,
+    upsert: upsertUserHub,
+    sourceScope: getHubSourceScope,
+    sourceCandidates: getHubSourceCandidates,
+    delete: deleteUserHub,
+    resolveSource: resolveHubSourceFromUrl,
+  };
+
+  beforeEach(() => {
+    getFeatureFlagsMock.mockReturnValue({ userHubs: true });
+  });
+
+  for (const [name, service] of Object.entries(services)) {
+    it(`${name}: a moderator's session reads as a moderator`, async () => {
+      await moderatorCaller({})[name](inputs[name]);
+      expect(service).toHaveBeenLastCalledWith(expect.objectContaining({ isModerator: true }));
+    });
+
+    it.each([
+      ['scoped API key', scopedKey],
+      ['app token', appToken],
+    ])(`${name}: a moderator's %s does not`, async (_, credential) => {
+      await moderatorCaller(credential)[name](inputs[name]);
+      expect(service).toHaveBeenLastCalledWith(expect.objectContaining({ isModerator: false }));
     });
   }
 });

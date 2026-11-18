@@ -18,6 +18,7 @@ import {
   enqueueImageIngestion,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
@@ -140,7 +141,15 @@ export const upsertBountyEntry = async ({
   images,
   description,
   userId,
-}: UpsertBountyEntryInput & { userId: number }) => {
+  shownImageIds,
+  replaceImages,
+}: UpsertBountyEntryInput & {
+  userId: number;
+  /** Replace every linked image, for a caller that never read the entry's images. */
+  replaceImages?: boolean;
+}) => {
+  if (!id && images?.length === 0)
+    throw throwBadRequestError('At least one example image must be uploaded');
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
@@ -173,6 +182,8 @@ export const upsertBountyEntry = async ({
           tx,
           userId,
           keysCheckedFor,
+          shownImageIds: replaceImages ? 'all' : shownImageIds,
+          maxLinked: constants.bounties.maxEntryImagesForEdit,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
@@ -240,7 +251,7 @@ export const upsertBountyEntry = async ({
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
   const logData = { entryId: id, userId, bountyId: 0 };
   const log = (type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) =>
-    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
+    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra });
 
   await log('info', 'Award bounty entry started');
   const fileCheckOn = await isBountyEntryFileCheckOn();

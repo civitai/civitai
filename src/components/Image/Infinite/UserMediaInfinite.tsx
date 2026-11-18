@@ -230,6 +230,8 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 showEmptyCta={isSameUser && !jumpToEmpty}
                 emptyMessage={jumpToEmpty}
                 hideCreator={!viewingReactions}
+                // Reactions span other creators, and the header bar never filters the videos tab.
+                searchable={!viewingReactions && !isVideo}
               />
             )}
           </Stack>

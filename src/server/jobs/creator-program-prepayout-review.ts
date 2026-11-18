@@ -53,9 +53,7 @@ export const creatorProgramPrepayoutReview = createJob(
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
       log: (name, data) =>
-        void logToAxiom({ type: name.endsWith('-failed') ? 'error' : 'info', name, ...data }).catch(
-          () => undefined
-        ),
+        void logToAxiom({ type: name.endsWith('-failed') ? 'error' : 'info', name, ...data }),
     }),
   { lockExpiration: 30 * 60 }
 );

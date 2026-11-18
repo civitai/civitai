@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"json\":{\"modelId\":5001,\"modelVersionId\":6001,\"sort\":\"Newest\",\"browsingLevel\":1,\"limit\":2}}")

@@ -6,14 +6,18 @@
 // 🔴 Never rename or drop a `value` that has been written: the column keeps old rows, and this list is
 // the only place their meaning is recorded. Retire one by moving it out of the offered list instead.
 
+import type { RequestableLock } from './lock-review';
+
 export type TextScanLabel = 'minor' | 'poi';
+/** What a reason can be scoped to: a text-scan flag, or a setting a lock review asked about. */
+export type ReasonScope = TextScanLabel | RequestableLock;
 
 export type ResolutionReason = {
   value: string;
   label: string;
   description: string;
-  /** The flags this reason can explain; absent means any. */
-  labels?: readonly TextScanLabel[];
+  /** The flags or settings this reason can explain; absent means any. */
+  labels?: readonly ReasonScope[];
 };
 
 const OTHER: ResolutionReason = {
@@ -178,6 +182,13 @@ export const RESOLUTION_REASONS = {
         label: 'Lock stands',
         description: 'The setting is right and stays locked.',
       },
+      {
+        value: 'sexual-purpose',
+        label: 'Main purpose is sexual',
+        description:
+          "Only when the model's sole intent is sexual. Not because of R+ showcase images.",
+        labels: ['nsfw'],
+      },
       OTHER,
     ],
   },
@@ -203,14 +214,14 @@ export const RESOLUTION_NOTE_MAX_LENGTH = 2000;
 const reasonsOf = (subject: ResolutionSubject, verdict: string): readonly ResolutionReason[] =>
   (RESOLUTION_REASONS[subject] as Record<string, readonly ResolutionReason[]>)[verdict] ?? [];
 
-const appliesTo = (reason: ResolutionReason, labels: readonly TextScanLabel[] | undefined) =>
+const appliesTo = (reason: ResolutionReason, labels: readonly ReasonScope[] | undefined) =>
   !labels || !reason.labels || reason.labels.some((label) => labels.includes(label));
 
-/** The reasons for this verdict; with `labels`, only those that can explain one of those flags. */
+/** The reasons for this verdict; with `labels`, only those that can explain one of those flags or settings. */
 export function resolutionReasonsFor<S extends ResolutionSubject>(
   subject: S,
   verdict: ResolutionVerdict<S>,
-  labels?: readonly TextScanLabel[]
+  labels?: readonly ReasonScope[]
 ): readonly ResolutionReason[] {
   return reasonsOf(subject, verdict).filter((r) => appliesTo(r, labels));
 }
@@ -230,15 +241,15 @@ export function reasonRequiresNote(reason: string | null | undefined): boolean {
 /**
  * Why a reason/note pair cannot be recorded for this verdict, or null when it can. A reason is
  * required, must belong to the verdict (an uphold reason on an overturn is a mislabel, not a
- * label) and, given `labels`, to one of the flags ruled on; `other` carries no meaning without its
- * note.
+ * label) and, given `labels`, to one of the flags or settings ruled on; `other` carries no
+ * meaning without its note.
  */
 export function resolutionReasonError<S extends ResolutionSubject>(
   subject: S,
   verdict: ResolutionVerdict<S>,
   reason: string | null | undefined,
   note: string | null | undefined,
-  labels?: readonly TextScanLabel[]
+  labels?: readonly ReasonScope[]
 ): string | null {
   if (!reason) return 'Pick a reason for this ruling.';
   const known = reasonsOf(subject, verdict).find((r) => r.value === reason);

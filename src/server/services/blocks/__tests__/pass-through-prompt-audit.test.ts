@@ -246,6 +246,13 @@ describe('collectPassThroughAuditText on a training step', () => {
     expect(got.negativePrompt).toBe('blurry');
   });
 
+  it('🔴 reads a key spelled with ſ the way the step-type checks fold it', () => {
+    const got = collectPassThroughAuditText([
+      { $type: 'training', input: { ſamplePrompts: ['a lake'] } },
+    ]);
+    expect(got.prompt).toBe('a lake');
+  });
+
   it('records a reference in the sample prompts as an unreadable prompt', () => {
     const got = collectPassThroughAuditText([
       { $type: 'training', input: { samples: { prompts: { $ref: '$arguments', path: 'p' } } } },

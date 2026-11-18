@@ -9,9 +9,8 @@ export const CHALLENGE_TOPICS = ['postgres.Challenge', 'postgres.ChallengeEvent'
  * What a CDC message touches: a challenge row names itself; an event row names every challenge
  * whose point carries its eventId, since the event title is in the document. A change to the
  * cover image alone (its scan, rating or flag) changes neither table, so the point keeps its old
- * eligibility and coverNsfwLevel until the challenge next changes or a backfill re-reads it,
- * which for a finished challenge may be never. The site must hydrate every hit through the
- * feed's own query and never trust the payload.
+ * eligibility and coverNsfwLevel until the challenge next changes or CHALLENGE_REFRESH re-reads
+ * it. The site must hydrate every hit through the feed's own query and never trust the payload.
  */
 export function challengeRefFromEvent(topic: string, value: unknown): DomainRef | null {
   const event = value as {
@@ -25,6 +24,13 @@ export function challengeRefFromEvent(topic: string, value: unknown): DomainRef 
   return topic === 'postgres.ChallengeEvent' ? { child: row.id } : { id: row.id };
 }
 
+/**
+ * An owner's ban or deletion, and a cover's later moderation (held, minor, blocked, ToS), change no
+ * Challenge row, so no event re-syncs the point. The walk re-reads every row, which
+ * deletes the points they made ineligible.
+ */
+export const CHALLENGE_REFRESH = { everyMs: 60 * 60_000, batch: 500, startupDelayMs: 5 * 60_000 };
+
 export const challengeDomain: Domain<ChallengePayload> = {
   name: 'challenge',
   table: 'Challenge',
@@ -33,6 +39,7 @@ export const challengeDomain: Domain<ChallengePayload> = {
   refFromEvent: challengeRefFromEvent,
   cdcTables: ['public.Challenge', 'public.ChallengeEvent'],
   childField: 'eventId',
+  refresh: CHALLENGE_REFRESH,
   store: challengeVectorStore,
   alias: () => config.vectorSync.challengeAlias,
 };

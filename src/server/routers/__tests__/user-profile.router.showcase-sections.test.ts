@@ -5,11 +5,15 @@ vi.hoisted(() => {
   process.env.SERVER_DOMAIN_GREEN = 'civitai.com';
 });
 
-const { handler } = vi.hoisted(() => ({ handler: vi.fn(async () => []) }));
+const { handler, addHandler } = vi.hoisted(() => ({
+  handler: vi.fn(async () => []),
+  addHandler: vi.fn(async () => ({ added: true, sections: [] })),
+}));
 
 vi.mock('~/server/controllers/user-profile.controller', async (importOriginal) => ({
   ...(await importOriginal<typeof UserProfileController>()),
   setShowcaseSectionsHandler: handler,
+  addToShowcaseSectionHandler: addHandler,
 }));
 
 import { OnboardingComplete } from '~/server/common/enums';
@@ -42,7 +46,10 @@ const section = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-beforeEach(() => handler.mockClear());
+beforeEach(() => {
+  handler.mockClear();
+  addHandler.mockClear();
+});
 
 describe('userProfile.setShowcaseSections', () => {
   it('is refused with the flag off', async () => {
@@ -81,5 +88,28 @@ describe('userProfile.setShowcaseSections', () => {
       code: 'BAD_REQUEST',
     });
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('userProfile.addToShowcaseSection', () => {
+  const input = { sectionId: 'abc123', entityType: 'Image' as const, entityId: 7 };
+
+  it('is refused with the flag off', async () => {
+    await expect(flagOff().addToShowcaseSection(input)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(addHandler).not.toHaveBeenCalled();
+  });
+
+  it('reaches the handler with the flag on', async () => {
+    await flagOn().addToShowcaseSection(input);
+    expect(addHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a type other than Image before the handler runs', async () => {
+    await expect(
+      flagOn().addToShowcaseSection({ ...input, entityType: 'Model' } as never)
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(addHandler).not.toHaveBeenCalled();
   });
 });

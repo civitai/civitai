@@ -48,7 +48,7 @@ type Route = (req: NextApiRequest, res: NextApiResponse) => Promise<void>;
 const routes: {
   name: string;
   method: string;
-  scope: number;
+  scope: bigint;
   load: () => Promise<{ default: unknown }>;
 }[] = [
   {
@@ -82,7 +82,7 @@ const USER = 4242;
 /** `tokenScope` set: a bearer key with that scope, recorded the way getServerAuthSession does. */
 async function call(
   route: (typeof routes)[number],
-  tokenScope?: number,
+  tokenScope?: bigint,
   subject: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string } = {
     type: 'apiKey',
     id: 7,
@@ -176,8 +176,9 @@ describe.each(routes)('/api/$name', (route) => {
       name: 'orchestrator-endpoint-scope-refused',
       type: 'info',
       route: `/api/${route.name}`,
-      requiredScope: route.scope,
-      tokenScope,
+      // JSON numbers in the log line.
+      requiredScope: Number(route.scope),
+      tokenScope: Number(tokenScope),
       apiKeyType: ApiKeyType.User,
       client: 'personal-key',
       clientIdHash: undefined,

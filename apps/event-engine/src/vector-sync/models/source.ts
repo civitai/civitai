@@ -5,12 +5,13 @@ import { modelDocument, nsfwLevels, normalizeTitle, type ModelSource } from './d
  * Which models get a vector: the demo's export rule (civitai/model-search-demo export.py), which
  * is the site's search-index rule (published, not Unsearchable) plus deleted, ToS and minor
  * exclusions. A model also needs a published, searchable version, checked in `getModelDocs`.
+ * Private is excluded at both levels so the payload never holds a private name or description.
  */
 export const MODEL_ELIGIBLE_SQL = `m.status = 'Published' AND m."deletedAt" IS NULL
-  AND NOT m."tosViolation" AND NOT m.minor AND m.availability != 'Unsearchable'
+  AND NOT m."tosViolation" AND NOT m.minor AND m.availability NOT IN ('Unsearchable', 'Private')
   AND m."publishedAt" IS NOT NULL`;
 
-const VERSION_ELIGIBLE_SQL = `mv.status = 'Published' AND mv.availability != 'Unsearchable'`;
+const VERSION_ELIGIBLE_SQL = `mv.status = 'Published' AND mv.availability NOT IN ('Unsearchable', 'Private')`;
 /** Versions read per model; the document folds in the first three descriptions. */
 const MAX_VERSIONS = 8;
 

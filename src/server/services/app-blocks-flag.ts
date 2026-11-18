@@ -1215,6 +1215,27 @@ export async function isAppBlocksAppReactionsEnabled(opts: {
 }
 
 /**
+ * Dedicated fail-closed flag for BATCH PRIVATE UPLOADS — `OPEN_MEDIA_UPLOAD_BATCH` and the three
+ * `blocks.*MediaUploadBatch*` procedures behind it (`media-upload-batch.service.ts`). A batch puts
+ * up to a day's quota of files into the viewer's account in one confirm, so it is armed on its own
+ * rather than by the runtime flag widening. The single-file `OPEN_MEDIA_UPLOAD` is not gated by it.
+ *
+ * NO moderator static floor: an ABSENT flag resolves `false` for everyone, mods included.
+ * Evaluated with the TOKEN SUBJECT'S hydrated `SessionUser`, already proven to be the session user.
+ *
+ * 🔴 SHIPS OFF. The flag is created separately in Flipt, base `enabled: false`; until it exists,
+ * `isFlipt` turns the failed evaluation into `false`, so batches stay off.
+ */
+export const APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG = 'app-blocks-batch-media-upload';
+
+export async function isAppBlocksBatchMediaUploadEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_BATCH_MEDIA_UPLOAD_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind — the
  * training estimate/submit arm of
  * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
@@ -1571,7 +1592,7 @@ function reportSilentStoreGate(user: SessionUser): void {
       message: 'store read scope resolved `none` for a logged-in viewer who holds a store flag',
       userId: user.id,
       heldFlags: [...held],
-    }).catch(() => null);
+    });
   } catch {
     /* never throw from telemetry — a detection net must not break the read path */
   }
@@ -1622,6 +1643,56 @@ export async function isAppHibernateEnabled(opts: { user?: SessionUser | null })
   if (!user) return false;
   try {
     return (await isFlipt(APP_HIBERNATE_FLAG, String(user.id), buildFliptContext(user))) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The in-app raise of a viewer's own per-app daily Buzz limit: the host's daily-limit dialog
+ * offers "Raise limit", and `blocks.getMyAppDailyLimit` / `blocks.raiseAppDailyLimit` answer.
+ * Checked on the server as well as the client so turning it off reaches tabs that loaded the
+ * client flags while it was on. No user, an absent flag or an unreachable Flipt: `false`.
+ * Mirrors `appDailyLimitRaise` in `feature-flags.service.ts`.
+ */
+export const APP_DAILY_LIMIT_RAISE_FLAG = 'app-daily-limit-raise';
+
+export async function isAppDailyLimitRaiseEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(APP_DAILY_LIMIT_RAISE_FLAG, String(user.id), buildFliptContext(user))) === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A viewer may opt in, per app, to running its above-budget confirmed-step jobs without a
+ * per-job confirm while each fits their daily limit for it. Server only: the step preview
+ * offers the opt-in and reports a standing consent, and the standing consent and the submit
+ * each check it again, so turning it off stops unprompted jobs within the flag cache. No
+ * user, an absent flag or an unreachable Flipt: `false`.
+ */
+export const APP_CONFIRMED_STEP_WITHIN_LIMIT_FLAG = 'app-confirmed-step-within-limit';
+
+export async function isAppConfirmedStepWithinLimitEnabled(opts: {
+  user?: SessionUser | null;
+}): Promise<boolean> {
+  const user = opts.user;
+  if (!user) return false;
+  try {
+    return (
+      (await isFlipt(
+        APP_CONFIRMED_STEP_WITHIN_LIMIT_FLAG,
+        String(user.id),
+        buildFliptContext(user)
+      )) === true
+    );
   } catch {
     return false;
   }

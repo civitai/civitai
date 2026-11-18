@@ -5,6 +5,13 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCollection } from '~/components/Collections/collection.utils';
+import type { DetailItem, DetailText } from '~/components/Image/Detail/detail-items';
+import {
+  anchorImageIndex,
+  mergeDetailItems,
+  TEXT_SLIDE_PARAM,
+} from '~/components/Image/Detail/detail-items';
+import { usePostDetailTexts } from '~/components/Image/Detail/usePostDetailTexts';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import {
   hasImageDetailQueryFilters,
@@ -14,6 +21,7 @@ import {
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { useMarkImageMilestonesReadOnView } from '~/components/Notifications/notifications.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { parseIdParam } from '~/components/Storyline/storyline-mode.utils';
 import { useCloseOnEscape } from '~/components/Image/Detail/useCloseOnEscape';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -26,16 +34,22 @@ import { trpc } from '~/utils/trpc';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
+  /** The carousel's slides: `images`, with any storyline text items placed among them. */
+  items: DetailItem<ImageGetInfinite[number]>[];
   isLoading: boolean;
   active: boolean;
   connect: ConnectProps;
   isMod?: boolean;
   isOwner?: boolean;
   shareUrl: string;
+  /** The URL's slide, in `items`. */
   index: number;
   toggleInfo: () => void;
   close: () => void;
-  navigate: (id: number) => void;
+  /** Point the URL at an image, or at a text slide anchored on `imageId`. */
+  navigate: (imageId: number, textId?: number) => void;
+  /** Point the URL at the slide at this index of `items`. */
+  navigateTo: (index: number) => void;
   loadMore: () => void;
   hasMore: boolean;
   updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
@@ -58,10 +72,16 @@ export function ImageDetailProvider({
   hideReactions,
   filters,
   collectionId,
+  texts: givenTexts,
+  postOrder,
 }: {
   children: React.ReactElement;
   imageId: number;
   images?: ImagesInfiniteModel[];
+  /** Text items to place among the images. Without it, a post-scoped viewer reads its post's own. */
+  texts?: DetailText[];
+  /** The order of the posts `texts` belong to, when the images span several (a storyline path). */
+  postOrder?: number[];
   hideReactionCount?: boolean;
   hideReactions?: boolean;
   filters: ImagesQueryParamSchema;
@@ -86,6 +106,7 @@ export function ImageDetailProvider({
   // way the filters are parsed; `active` is a genuine boolean read and stays a cast.
   const { postId: queryPostId } = parseImageQueryParams(browserRouter.query);
   const { active: queryActive = false } = browserRouter.query as { active?: boolean };
+  const textId = parseIdParam(browserRouter.query[TEXT_SLIDE_PARAM]);
   // A comment link (`?highlight=`) opens with the phone sheet up. Held here rather than pushed as
   // `active`, so closing it is one tap and leaves no history entry for Back to step through.
   // Without it the highlight scroll drags the collapsed sheet into view and the toggle reads closed.
@@ -143,12 +164,27 @@ export function ImageDetailProvider({
   const images =
     prefetchedImage && shouldFetchImage ? [prefetchedImage as any, ...baseImages] : baseImages;
 
-  function findCurrentImageIndex() {
-    const index = images.findIndex((x) => x.id === imageId);
+  const postTexts = usePostDetailTexts(postId, { enabled: !givenTexts });
+  const texts = givenTexts ?? postTexts;
+  const items = useMemo(
+    () => mergeDetailItems(images, texts, postOrder),
+    [images, texts, postOrder]
+  );
+
+  // A `?text=` id selects a text slide already among the items; an unknown one falls back to the image.
+  function findCurrentIndex() {
+    const textIndex = textId
+      ? items.findIndex((x) => x.type === 'text' && x.text.id === textId)
+      : -1;
+    if (textIndex > -1) return textIndex;
+    const index = items.findIndex((x) => x.type === 'image' && x.image.id === imageId);
     return index > -1 ? index : 0;
   }
 
-  const index = findCurrentImageIndex();
+  const index = findCurrentIndex();
+  const anchor = anchorImageIndex(items, index);
+  const image =
+    anchor > -1 ? (items[anchor] as { image: ImageGetInfinite[number] }).image : undefined;
 
   const updateImage = (id: number, data: Partial<ImagesInfiniteModel>) => {
     queryUtils.image.getInfinite.setInfiniteData(
@@ -221,17 +257,27 @@ export function ImageDetailProvider({
     lastNavigatedIdRef.current = imageId;
   }
 
-  const navigate = (id: number) => {
+  const navigate = (id: number, textId?: number) => {
     lastNavigatedIdRef.current = id;
-    const query = browserRouter.query;
+    const { [TEXT_SLIDE_PARAM]: _text, ...query } = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
+    const { [TEXT_SLIDE_PARAM]: _asText, ...asQuery } = QS.parse(queryString) as any;
     browserRouter.replace(
-      { query: { ...query, imageId: id } },
+      { query: { ...query, imageId: id, ...(textId ? { [TEXT_SLIDE_PARAM]: textId } : {}) } },
       {
         pathname: `/images/${id}`,
-        query: QS.parse(queryString) as any,
+        query: textId ? { ...asQuery, [TEXT_SLIDE_PARAM]: textId } : asQuery,
       }
     );
+  };
+
+  // A text slide has no page of its own: its URL is its anchor image's, with `?text=`.
+  const navigateTo = (i: number) => {
+    const item = items[i];
+    if (!item) return;
+    if (item.type === 'image') return navigate(item.image.id);
+    const anchorItem = items[anchorImageIndex(items, i)];
+    if (anchorItem?.type === 'image') navigate(anchorItem.image.id, item.text.id);
   };
 
   // #endregion
@@ -243,9 +289,9 @@ export function ImageDetailProvider({
   }, [browserRouter]);
 
   const isMod = currentUser?.isModerator ?? false;
-  const isOwner = currentUser?.id === images[index]?.user.id;
+  const isOwner = currentUser?.id === image?.user.id;
   // `index` falls back to 0 while the routed image loads; only mark the image actually shown.
-  useMarkImageMilestonesReadOnView(isOwner && images[index]?.id === imageId ? imageId : undefined);
+  useMarkImageMilestonesReadOnView(isOwner && image?.id === imageId ? imageId : undefined);
 
   const connect: ConnectProps = modelId
     ? { connectType: 'model', connectId: modelId }
@@ -255,7 +301,6 @@ export function ImageDetailProvider({
     ? { connectType: 'user', connectId: username }
     : {};
 
-  const image = images[index];
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
 
@@ -266,6 +311,7 @@ export function ImageDetailProvider({
     <ImageDetailContext.Provider
       value={{
         images,
+        items,
         isLoading: imagesLoading || imageLoading,
         active,
         connect,
@@ -275,6 +321,7 @@ export function ImageDetailProvider({
         isMod,
         shareUrl,
         navigate,
+        navigateTo,
         loadMore,
         hasMore,
         index,

@@ -1,3 +1,4 @@
+import { imageStatsToReactionMetrics } from '~/components/Reaction/image-reaction-metrics';
 import { Button, Loader, Text } from '@mantine/core';
 import { IconInfoCircle, IconLibraryPhoto, IconPhotoOff } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -22,11 +23,13 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import classes from './ResourceReviewCarousel.module.css';
+import {
+  DESKTOP_IMAGE_HEIGHT,
+  getReviewImageWidth,
+  getReviewSlideSize,
+} from './review-image-width';
 
 const MAX_IMAGES = 8;
-const MOBILE_MAX_IMAGE_HEIGHT = '60vh';
-// Desktop slides share one height and take their width from the image, so as many as fit show.
-const DESKTOP_IMAGE_HEIGHT = '55vh';
 const SIDE_SLIDE_WIDTH = 240;
 const SLIDE_CLASS =
   'flex max-w-full flex-[0_0_100%] items-center justify-center pl-2 md:flex-none md:justify-start';
@@ -178,6 +181,30 @@ function NoReviewImages() {
   );
 }
 
+export function ReviewImageMedia({
+  image,
+  hiDpi,
+  mobile,
+}: {
+  image: Pick<ImagesInfiniteModel, 'url' | 'name' | 'id' | 'type' | 'width' | 'height'>;
+  hiDpi?: boolean;
+  mobile?: boolean;
+}) {
+  return (
+    <EdgeMedia
+      src={image.url}
+      name={image.name ?? image.id.toString()}
+      alt={image.name ?? undefined}
+      type={image.type}
+      width={getReviewImageWidth(image, mobile)}
+      hiDpi={hiDpi}
+      sourceWidth={image.width}
+      placeholder="empty"
+      style={{ width: '100%', height: '100%', maxWidth: '100%' }}
+    />
+  );
+}
+
 function ReviewImage({
   image,
   images,
@@ -193,10 +220,7 @@ function ReviewImage({
 }) {
   const features = useFeatureFlags();
   // The wrapper takes the image's own shape so `MediaHash` (absolute, inset-0) has a size to fill.
-  const ratio = image.width && image.height ? image.width / image.height : 1;
-  const size = mobile
-    ? { aspectRatio: ratio, width: `min(100%, calc(${MOBILE_MAX_IMAGE_HEIGHT} * ${ratio}))` }
-    : { aspectRatio: ratio, height: DESKTOP_IMAGE_HEIGHT, maxWidth: '100%' };
+  const size = getReviewSlideSize(image, mobile);
 
   if (!inView)
     return (
@@ -229,17 +253,7 @@ function ReviewImage({
               {!safe ? (
                 <MediaHash {...image} />
               ) : (
-                <EdgeMedia
-                  src={image.url}
-                  name={image.name ?? image.id.toString()}
-                  alt={image.name ?? undefined}
-                  type={image.type}
-                  width={800}
-                  hiDpi={features.hiDpiPreviews}
-                  sourceWidth={image.width}
-                  placeholder="empty"
-                  className="size-full"
-                />
+                <ReviewImageMedia image={image} hiDpi={features.hiDpiPreviews} mobile={mobile} />
               )}
             </RoutedDialogLink>
             <Reactions
@@ -247,13 +261,7 @@ function ReviewImage({
               entityType="image"
               reactions={image.reactions}
               metricsUnknown={image.stats?.statsUnknown}
-              metrics={{
-                likeCount: image.stats?.likeCountAllTime,
-                dislikeCount: image.stats?.dislikeCountAllTime,
-                heartCount: image.stats?.heartCountAllTime,
-                laughCount: image.stats?.laughCountAllTime,
-                cryCount: image.stats?.cryCountAllTime,
-              }}
+              metrics={imageStatsToReactionMetrics(image.stats)}
               readonly={!safe}
               className={classes.reactions}
               targetUserId={image.user.id}

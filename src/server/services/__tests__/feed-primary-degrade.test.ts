@@ -1,3 +1,4 @@
+import promClient from 'prom-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEED_PRIMARY_TIMEOUT_MS, serveFromFeed } from '../feed-primary.service';
 import type { FeedPrimaryDeps } from '../feed-primary.service';
@@ -12,17 +13,22 @@ import type * as FliptClient from '~/server/flipt/client';
  * below are written out, not imported, so a changed bound has to change a test too.
  */
 
-const flag = vi.hoisted(() => ({ on: true, widen: null as boolean | null }));
+// The suite setup stubs ~/server/prom/client with metrics that record nothing; the real helpers
+// register on prom-client's default registry, so the caller-side histogram can be read back.
+vi.mock('~/server/prom/client', async () => await vi.importActual('@civitai/telemetry/client'));
+
+// `read` lists every flag key evaluated, so a test can show a key is never read at all.
+const flag = vi.hoisted(() => ({ on: true, read: [] as string[] }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return {
     ...actual,
-    isFliptSync: (key: string) =>
-      key === 'feed-service-degrade'
-        ? flag.on
-        : key === 'feed-service-timeout-widen'
-        ? flag.widen
-        : actual.isFliptSync(key as never),
+    isFliptSync: (key: string) => {
+      flag.read.push(key);
+      // The retired budget off-switch answers "on" here; the timeout test asserts it is never read.
+      if (key === 'feed-service-timeout-widen') return true;
+      return key === 'feed-service-degrade' ? flag.on : actual.isFliptSync(key as never);
+    },
   };
 });
 
@@ -44,7 +50,7 @@ const down = () => vi.fn(async (): Promise<FeedAnswer> => Promise.reject(new Err
 
 beforeEach(() => {
   flag.on = true;
-  flag.widen = null;
+  flag.read = [];
   // Fresh breaker, cache and flag gate per test.
   delete (globalThis as { __civitaiFeedDegradeState?: unknown }).__civitaiFeedDegradeState;
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -54,24 +60,54 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('feed-service request timeout', () => {
-  it('asks the feed with a 2.5s budget', async () => {
-    expect(FEED_PRIMARY_TIMEOUT_MS).toBe(2_500);
+  it('asks the feed with a 5s budget and reads no flag for it', async () => {
+    expect(FEED_PRIMARY_TIMEOUT_MS).toBe(5_000);
     const fetchFeed = vi.fn<FeedPrimaryDeps<{ id: number }>['fetchFeed']>(async () => answer([1]));
     await serveFromFeed(anon, { fetchFeed, hydrate });
-    expect(fetchFeed.mock.calls[0]?.[1]).toBe(2_500);
-  });
-
-  it('goes back to 5s when feed-service-timeout-widen is on, and stays 2.5s when it is off', async () => {
-    const fetchFeed = vi.fn<FeedPrimaryDeps<{ id: number }>['fetchFeed']>(async () => answer([1]));
-    flag.widen = true;
-    await serveFromFeed(anon, { fetchFeed, hydrate });
-    expect(fetchFeed.mock.calls[0]?.[1]).toBe(5_000);
-
-    flag.widen = false;
-    // The switch is re-read at most every 5s.
+    // A flag gate is re-read at most every 5s; a second call past that would see any change.
     vi.setSystemTime(Date.now() + 5_001);
     await serveFromFeed(anon, { fetchFeed, hydrate });
-    expect(fetchFeed.mock.calls[1]?.[1]).toBe(2_500);
+    expect(fetchFeed.mock.calls.map((c) => c[1])).toEqual([5_000, 5_000]);
+    expect(flag.read).toContain('feed-service-degrade');
+    expect(flag.read).not.toContain('feed-service-timeout-widen');
+  });
+});
+
+describe('caller-side feed time', () => {
+  const HIST = 'civitai_app_feed_primary_fetch_duration_seconds';
+  type Sample = { metricName?: string; labels: Record<string, string | number>; value: number };
+  const sample = async (suffix: 'sum' | 'count', labels: Record<string, string>) => {
+    const metric = promClient.register.getSingleMetric(HIST);
+    if (!metric) throw new Error(`metric ${HIST} is not registered`);
+    const values = (await metric.get()).values as Sample[];
+    return values.find(
+      (v) =>
+        v.metricName === `${HIST}_${suffix}` &&
+        Object.entries(labels).every(([k, want]) => v.labels[k] === want)
+    )?.value;
+  };
+  beforeEach(() => promClient.register.getSingleMetric(HIST)?.reset());
+
+  it("records the call's wall-clock time, not the ms the answer reports", async () => {
+    // The clock moves 1.234s during the call; the answer claims 321ms.
+    const fetchFeed = vi.fn(async () => {
+      vi.setSystemTime(Date.now() + 1_234);
+      return answer([1], { ms: 321 });
+    });
+    await serveFromFeed(anon, { fetchFeed, hydrate });
+    expect(await sample('count', { route: 'website', outcome: 'ok' })).toBe(1);
+    expect(await sample('sum', { route: 'website', outcome: 'ok' })).toBeCloseTo(1.234, 6);
+  });
+
+  it('records a timed-out call under its route and outcome', async () => {
+    const fetchFeed = vi.fn(async (): Promise<FeedAnswer> => {
+      vi.setSystemTime(Date.now() + 4_321);
+      throw Object.assign(new Error('t'), { name: 'TimeoutError' });
+    });
+    await serveFromFeed(anon, { fetchFeed, hydrate, route: 'rest' });
+    expect(await sample('count', { route: 'rest', outcome: 'timeout' })).toBe(1);
+    expect(await sample('sum', { route: 'rest', outcome: 'timeout' })).toBeCloseTo(4.321, 6);
+    expect(await sample('count', { route: 'website', outcome: 'ok' })).toBeUndefined();
   });
 });
 

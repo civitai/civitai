@@ -4,7 +4,7 @@ import type { DocumentContext } from 'next/document';
 import clsx from 'clsx';
 import { sampleImageRender } from '~/server/logging/image-render-sample';
 import { recordPageRender } from '~/server/prom/route-traffic.metrics';
-import { measureRenderCpu, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
+import { measureRenderCpu, ssrPrefetchCohort, ssrRequestKind } from '~/server/prom/ssr-cpu.metrics';
 import { shellPageDataPrefetchScript } from '~/components/Shell/shell-page-data';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { applyShellEdgeHeaders } from '~/server/shell/shell-response';
@@ -22,8 +22,11 @@ export default class _Document extends Document {
   // getServerSideProps page never do. A `/_next/data` request for any other page renders here.
   static async getInitialProps(ctx: DocumentContext) {
     if (!ctx.req) return Document.getInitialProps(ctx);
-    const initialProps = await measureRenderCpu(ctx.pathname, ssrRequestKind(ctx.req), () =>
-      Document.getInitialProps(ctx)
+    const initialProps = await measureRenderCpu(
+      ctx.pathname,
+      ssrRequestKind(ctx.req),
+      () => Document.getInitialProps(ctx),
+      ssrPrefetchCohort(ctx.req)
     );
     recordPageRender(ctx.pathname, ctx.req as never);
     // Reached only once the page rendered, so a shell render that throws never carries these; and

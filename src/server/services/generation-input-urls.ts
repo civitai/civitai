@@ -13,12 +13,14 @@ import {
   assertClientKeysIssuedToCaller,
   type DecodeBudget,
   imageUrlUnavailableError,
+  isUnfinishedUploadUrl,
   keyIssuers,
   keysIn,
   keysInTextWithin,
   keysInWithin,
   MAX_KEYS,
 } from '~/server/services/image-url-ownership';
+import { appUsesScannedSourceRows } from '~/server/services/blocks/source-scanned-rows';
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { ORCHESTRATOR_PROXY_HOST } from '~/server/orchestrator/region-proxy';
 import { INLINE_MEDIA_MAX_VISITS } from '~/server/schema/blocks/inline-media';
@@ -44,8 +46,12 @@ export const GENERATION_PAGE_LINK_MESSAGE =
 /** An upload key as minted: the whole value, nothing around it. */
 const BARE_KEY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** Stored urls a generation reads (a reference panel's image): refused if any image on them is blocked. */
+/**
+ * Stored urls a generation reads (a reference panel's image): refused if any image on them is
+ * blocked, or if one names no stored object (a `blob:` or `data:` url holds no key to check).
+ */
 export async function assertStoredImageUrlsUnblocked(urls: string[]) {
+  if (urls.some(isUnfinishedUploadUrl)) throw generationImageUnavailableError();
   const keys = [...new Set(urls.flatMap(keysIn))];
   if (!keys.length) return;
   const blocked = await dbWrite.$queryRaw<unknown[]>`
@@ -230,17 +236,30 @@ export type GenerationInputUrlClass =
   | 'external'
   | 'invalid';
 
-export type GenerationInputEntryPoint =
+/** App Blocks entries: their sources must be scanned, unflagged images stored on Civitai. */
+const APP_BLOCK_ENTRY_LIST = [
+  'appBlocks',
+  'appBlocksStep',
+  'appBlocksPassThrough',
+  'appBlocksWorkflow',
+  'appBlocksInlineComfy',
+  /**
+   * Not a generation: `blocks.persistGenerationSource` asking whether the private source it just
+   * wrote is usable yet, so its pending polls count apart from real refusals.
+   */
+  'appBlocksSourcePersist',
+] as const;
+
+/** An App Blocks entry: every call through one names its app (`AppBlockLog.appBlockId`). */
+export type AppBlockGenerationInputEntryPoint = (typeof APP_BLOCK_ENTRY_LIST)[number];
+
+/** An entry that is not an app's: no app id, so `app-block-source-scanned-rows` never applies. */
+export type SiteGenerationInputEntryPoint =
   | 'generateFromGraph'
   | 'whatIfFromGraph'
   | 'iterateGenerate'
   | 'getIterateCostEstimate'
   | 'imageUpload'
-  | 'appBlocks'
-  | 'appBlocksStep'
-  | 'appBlocksPassThrough'
-  | 'appBlocksWorkflow'
-  | 'appBlocksInlineComfy'
   | 'enhancePrompt'
   | 'comicsCostEstimate'
   | 'comicPanelJob'
@@ -248,14 +267,11 @@ export type GenerationInputEntryPoint =
   | 'remixAppQuote'
   | 'articleReframe';
 
-/** App Blocks entries: their sources must be scanned, unflagged images stored on Civitai. */
-const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>([
-  'appBlocks',
-  'appBlocksStep',
-  'appBlocksPassThrough',
-  'appBlocksWorkflow',
-  'appBlocksInlineComfy',
-]);
+export type GenerationInputEntryPoint =
+  | AppBlockGenerationInputEntryPoint
+  | SiteGenerationInputEntryPoint;
+
+const APP_BLOCK_ENTRIES = new Set<GenerationInputEntryPoint>(APP_BLOCK_ENTRY_LIST);
 
 /** Entry points where an external host is only counted while the external-host flag is off. */
 const EXTERNAL_COUNTED_ENTRIES = new Set<GenerationInputEntryPoint>([
@@ -370,7 +386,21 @@ function appBlockHostSourceReason(url: string): AppBlockHostSourceReason {
   }
 }
 
-type AppBlockLog = { appBlockId?: string; stepTypes?: string; phase?: GenerationInputPhase };
+/**
+ * Who and what an App Blocks entry's source log lines are about. Never a url or image id.
+ * `appBlockId` is the block token's `appBlockId` claim: it is also the entity
+ * `app-block-source-scanned-rows` is evaluated for (`appUsesScannedSourceRows`).
+ */
+export type AppBlockLog = { appBlockId: string; stepTypes?: string; phase?: GenerationInputPhase };
+
+/**
+ * Which caller a gate call comes through. An App Blocks entry MUST carry its app's
+ * `appBlockLog`, so the scanned-rows flag is read for that app. Any other entry never reads that
+ * flag, whatever it carries.
+ */
+export type GenerationInputCaller =
+  | { entry: AppBlockGenerationInputEntryPoint; appBlockLog: AppBlockLog }
+  | { entry: SiteGenerationInputEntryPoint; appBlockLog?: AppBlockLog };
 
 /** One Axiom row per reason with its count, so a many-image step is one row, not one per url. */
 function recordAppBlockHostSources(
@@ -412,7 +442,7 @@ export async function countAppBlockHostSources({
     .filter((url) => classifyGenerationInputUrl(url) === 'orchestrator')
     .map(appBlockHostSourceReason);
   if (!reasons.length) return;
-  if (await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS)) return;
+  if (await appUsesScannedSourceRows(appBlockLog.appBlockId)) return;
   recordAppBlockHostSources('appBlocks', reasons, appBlockLog);
 }
 
@@ -875,10 +905,9 @@ export async function assertGenerationInputsUsable({
   opaqueInput = false,
   appBlockLog,
   now,
-}: {
+}: GenerationInputCaller & {
   urls: (string | null | undefined)[];
   userId: number;
-  entry: GenerationInputEntryPoint;
   isApiCaller: boolean;
   /**
    * Urls from an orchestrator-native input (`opaqueInputUrlsIn`), where a uuid may be any id and
@@ -886,8 +915,6 @@ export async function assertGenerationInputsUsable({
    * that fails, and http to an external host counts as external.
    */
   opaqueInput?: boolean;
-  /** Who and what an App Blocks entry's source log lines are about. Never a url or image id. */
-  appBlockLog?: AppBlockLog;
   now?: Date;
 }) {
   const given = [...new Set(urls.filter((url): url is string => !!url))];
@@ -946,8 +973,9 @@ export async function assertGenerationInputsUsable({
     }
     if (cls === 'orchestrator') {
       if (appBlock) {
-        // Turns on with scanned source rows: until then an app's uploaded source is a blob.
-        refuseOrchestrator ??= await isFlipt(FLIPT_FEATURE_FLAGS.APP_BLOCK_SOURCE_SCANNED_ROWS);
+        // Refused only once the app is on scanned source rows (per-app flag): until then the
+        // sources it uploads are orchestrator blobs, and refusing them would refuse its own uploads.
+        refuseOrchestrator ??= await appUsesScannedSourceRows(appBlockLog?.appBlockId);
         if (refuseOrchestrator) {
           refusalCounter.inc({ entry, class: cls, caller, mode: 'refuse' });
           throw appSourceNotOnCivitaiError();

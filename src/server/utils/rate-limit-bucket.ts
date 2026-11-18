@@ -75,6 +75,8 @@ export const FAIL_CLOSED_RATE_LIMIT_SCOPES: readonly string[] = [
   'orchestrator',
   // run / start / advance / testStart quote and submit Buzz-paid orchestrator workflows.
   'remixApp',
+  // Each upload is a scan and an embed paid by the site; its global daily cap must not degrade open.
+  'imageSearchUpload',
   'training',
 ];
 
@@ -109,8 +111,16 @@ export const RATE_LIMIT_FALLBACK_SCOPES: readonly string[] = [
   'report',
   'resourceLoad',
   'semanticArticleSearch',
+  'semanticBountySearch',
+  'semanticChallengeSearch',
+  'semanticCollectionSearch',
+  'semanticCrucibleSearch',
   'semanticComicSearch',
   'semanticImageSearch',
+  'semanticModelSearch',
+  'semanticModel3DSearch',
+  'semanticStorylineSearch',
+  'storyline',
   'user',
 ];
 

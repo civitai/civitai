@@ -1,8 +1,10 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
-import { trainingWhatIf } from '$lib/server/orchestrator';
+import { trainingPreview } from '$lib/server/orchestrator';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
+import { KOHYA_UNAVAILABLE } from '$lib/train-core';
+import { isKohyaAllowed } from '$lib/server/flipt';
 
 const optionalString = (v: unknown) => v === undefined || typeof v === 'string';
 const optionalNumber = (v: unknown) =>
@@ -32,12 +34,14 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     error(400, 'Bad quote request.');
   }
 
+  if (body.engine === 'kohya' && !(await isKohyaAllowed(locals))) error(403, KOHYA_UNAVAILABLE);
+
   try {
-    return json({ cost: await trainingWhatIf(token, body as TrainingWhatIfInput) });
+    return json(await trainingPreview(token, body as TrainingWhatIfInput));
   } catch (err) {
     console.warn('[training-studio] quote whatif failed', err);
     // Null, not a 5xx: an unpriceable config renders as "—" and blocks Start the same way the
     // from-quote path does — the client treats transport errors and unpriced identically.
-    return json({ cost: null });
+    return json({ cost: null, warnings: [] });
   }
 };

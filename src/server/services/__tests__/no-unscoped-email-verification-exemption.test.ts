@@ -107,6 +107,11 @@ const DERIVED_BASES: Record<string, string> = {
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
   guardedPromotionProcedure: 'guardedProcedure',
+  // `image-search-upload.router.ts`: a private upload to search by, never shown or posted.
+  imageSearchUploadProcedure: 'protectedProcedure',
+  // `orchestrator.router.ts` `enhancePrompt`: `orchestratorGuardedProcedure` with the generation
+  // kill switch ahead of the token fetch; the same `guardedProcedure` base it had before.
+  orchestratorEnhanceProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorOwnWorkProcedure: 'protectedProcedure',
   orchestratorProcedure: 'protectedProcedure',
@@ -125,6 +130,7 @@ const DERIVED_BASES: Record<string, string> = {
   sleepingAppsProcedure: 'protectedProcedure',
   storylineMemberProcedure: 'protectedProcedure',
   storylineReadProcedure: 'publicProcedure',
+  storylineTextProcedure: 'guardedProcedure',
   storylineWriteProcedure: 'guardedProcedure',
 };
 

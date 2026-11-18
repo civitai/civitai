@@ -14,6 +14,7 @@ import {
 import {
   enforceBlockedBrowsingTags,
   enforceBlockedBrowsingTagsForModels,
+  getRequestImageFilter,
   getShowcaseImageFilter,
 } from '~/server/services/blocked-browsing-tags.service';
 
@@ -260,6 +261,47 @@ describe('enforceBlockedBrowsingTags', () => {
     expect(input.excludedTagIds).toContain(5188);
   });
 
+  describe('own scope reads the creator the feed filters by', () => {
+    type ScopedInput = {
+      userId?: number;
+      username?: string;
+      browsingLevel: number;
+      excludedTagIds?: number[];
+      disablePoi?: boolean;
+    };
+    const viewer = { id: 7, username: 'alice' };
+
+    it('applies the tag exclusions to another creator’s userId sent with the viewer’s username', async () => {
+      const input: ScopedInput = { userId: 9, username: 'alice', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toContain(5188);
+    });
+
+    it('keeps them off for the viewer’s own userId beside a username that does not match (a slugified one)', async () => {
+      const input: ScopedInput = {
+        userId: 7,
+        username: 'johndoe',
+        browsingLevel: NsfwLevel.PG,
+      };
+      await enforceBlockedBrowsingTags(input, { id: 7, username: 'john.doe' });
+      expect(input.excludedTagIds).toBeUndefined();
+      expect(input.disablePoi).toBe(true);
+    });
+
+    it('control: the viewer’s own userId and username (any case) keep them off', async () => {
+      const input: ScopedInput = { userId: 7, username: 'Alice', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toBeUndefined();
+      expect(input.disablePoi).toBe(true);
+    });
+
+    it('control: another creator’s userId and username apply them', async () => {
+      const input: ScopedInput = { userId: 9, username: 'bob', browsingLevel: NsfwLevel.PG };
+      await enforceBlockedBrowsingTags(input, viewer);
+      expect(input.excludedTagIds).toContain(5188);
+    });
+  });
+
   it('unions addon exclusions into a non-own feed and preserves client-sent ids', async () => {
     const input = { excludedTagIds: [42], browsingLevel: NsfwLevel.PG } as {
       excludedTagIds?: number[];
@@ -352,5 +394,25 @@ describe('getShowcaseImageFilter', () => {
     });
     expect(shows({ userId: 2, tags: undefined, minor: true })).toBe(true);
     expect(shows({ userId: 3, tags: [], minor: true })).toBe(false);
+  });
+});
+
+describe('getRequestImageFilter', () => {
+  const ctx = {
+    user: { id: 9, isModerator: false, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+    features: { canViewNsfw: true },
+    req: { headers: {} },
+  } as never;
+
+  it('hides an image whose tags were not read while a tag is excluded, and keeps an untagged one', async () => {
+    const showsImage = await getRequestImageFilter(ctx);
+    expect(showsImage({ userId: 5, tags: undefined })).toBe(false);
+    expect(showsImage({ userId: 5, tags: [] })).toBe(true);
+  });
+
+  it('reads tags given as { id } rows', async () => {
+    const showsImage = await getRequestImageFilter(ctx);
+    expect(showsImage({ userId: 5, tags: [{ id: 5351 }] })).toBe(false);
+    expect(showsImage({ userId: 5, tags: [{ id: 1 }] })).toBe(true);
   });
 });

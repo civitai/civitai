@@ -594,10 +594,12 @@ export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
+export const ORCHESTRATOR_HOSTNAME_PATTERN = 'orchestration[a-z0-9-]*\\.civitai\\.com';
+
 export function isOrchestratorUrl(url: string) {
   try {
     const { host } = new URL(url);
-    return /^orchestration[a-z0-9-]*\.civitai\.com$/i.test(host);
+    return new RegExp(`^${ORCHESTRATOR_HOSTNAME_PATTERN}$`, 'i').test(host);
   } catch {
     return false;
   }
@@ -1044,6 +1046,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.3 Klein-base': baseLicenses['flux kommunity'],
   'MOSS Image': baseLicenses['apache 2.0'],
   'Fibo 2.0': baseLicenses['bria fibo'],
+  'Fibo 2.0 Turbo': baseLicenses['bria fibo'],
   'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux2 dev nc'],
   'Flux.2 Klein 9B': baseLicenses['flux nc'],
@@ -1292,7 +1295,7 @@ export const maxUpscaleSize = 3840;
 export const minDownscaleSize = 320;
 export const minUploadSize = 300;
 
-export const MODELS_SEARCH_INDEX = 'models_v9';
+export { MODELS_SEARCH_INDEX } from '@civitai/shared/search-index-queue';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
 export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';

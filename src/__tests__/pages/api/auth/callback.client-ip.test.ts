@@ -48,6 +48,7 @@ vi.mock('~/server/auth/oauth-bridge', () => ({
   completeFirstPartyCallback: (opts: unknown) => bridgeSpy(opts),
 }));
 vi.mock('@civitai/auth', () => ({ sessionCookieName: () => 'civ-token' }));
+vi.mock('~/server/auth/session-client', () => ({ getHubSession: vi.fn(async () => null) }));
 vi.mock('~/server/auth/civ-cookie', () => ({
   setSessionCookie: vi.fn(),
   postLoginMarkerCookie: vi.fn(() => 'civ-post-login=1'),
@@ -94,7 +95,7 @@ async function forwardedIp(req: NextApiRequest): Promise<string | undefined> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  bridgeSpy.mockResolvedValue({ token: 't', deviceId: 'd', returnUrl: '/' });
+  bridgeSpy.mockResolvedValue({ token: 't', deviceId: 'd', returnUrl: '/', clearCookies: [] });
 });
 
 describe('auth callback: the address forwarded to the hub', () => {

@@ -379,7 +379,7 @@ async function quoteBlockAuthorFeeUncounted(
           error: error instanceof Error ? error.message : String(error),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
     }
     return { charge: false, reason: 'error' };
   }
@@ -604,7 +604,7 @@ async function chargeBlockAuthorFeeUncounted(
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { charged: false, reason: 'debit-failed' };
   }
 
@@ -626,7 +626,7 @@ async function chargeBlockAuthorFeeUncounted(
         feeBuzz,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { charged: false, reason: 'debit-failed' };
   }
 
@@ -663,7 +663,7 @@ async function chargeBlockAuthorFeeUncounted(
         chargedBuzz: feeBuzz,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
   }
 
   // 🔴 WRAPPED, AND THE DEBIT ABOVE IS WHY. `accrueBlockAuthorFee` re-resolves
@@ -712,7 +712,7 @@ async function chargeBlockAuthorFeeUncounted(
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     await refundBlockAuthorFee({ workflowId, viewerUserId, buzzType, feeBuzz });
     return { charged: false, reason: 'accrual-failed' };
   }
@@ -738,7 +738,7 @@ async function chargeBlockAuthorFeeUncounted(
       accrualReason: accrual.reason,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
   await refundBlockAuthorFee({ workflowId, viewerUserId, buzzType, feeBuzz });
   return { charged: false, reason: 'accrual-failed' };
 }
@@ -914,7 +914,7 @@ export async function reverseBlockAuthorFee(args: {
           accruedAt: row.accruedAt.toISOString(),
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       return { reversed: false, reason: 'settlement-eligible' };
     }
     if (row.status !== STATUS_ACCRUED) {
@@ -929,7 +929,7 @@ export async function reverseBlockAuthorFee(args: {
           viewerUserId: row.viewerUserId,
         },
         'civitai-prod'
-      ).catch(() => undefined);
+      );
       return { reversed: false, reason: 'already-settled' };
     }
 
@@ -988,7 +988,7 @@ export async function reverseBlockAuthorFee(args: {
         feeBuzz: row.feeBuzz,
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { reversed: true, feeBuzz: row.feeBuzz };
   } catch (error) {
     logToAxiom(
@@ -1001,7 +1001,7 @@ export async function reverseBlockAuthorFee(args: {
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return { reversed: false, reason: 'refund-failed' };
   }
 }
@@ -1061,7 +1061,7 @@ export async function refundBlockAuthorFee(args: {
         error: error instanceof Error ? error.message : String(error),
       },
       'civitai-prod'
-    ).catch(() => undefined);
+    );
     return false;
   }
 
@@ -1076,7 +1076,7 @@ export async function refundBlockAuthorFee(args: {
       feeBuzz,
     },
     'civitai-prod'
-  ).catch(() => undefined);
+  );
   return false;
 }
 

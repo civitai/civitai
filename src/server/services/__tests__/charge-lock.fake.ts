@@ -3,7 +3,8 @@
  * `withChargeKeyLock` concurrently. A transaction run through `transaction(run, tx)` gets `tx`
  * plus a `$executeRaw` that, for `pg_advisory_xact_lock(hashtextextended(<key>, 0))`, waits until
  * no other open transaction holds `<key>`; every lock a transaction took is released when `run`
- * settles, as Postgres releases them at commit or rollback. Other raw statements are no-ops.
+ * settles, as Postgres releases them at commit or rollback. Other raw statements go to `tx`'s own
+ * `$executeRaw` when it has one (a record that runs its own UPDATE), and are no-ops otherwise.
  *
  * What this cannot show is Postgres's own behaviour (the hash, `lock_timeout`): it tests that the
  * code takes the lock, on which key, and around which work.
@@ -38,8 +39,15 @@ export function createFakeAdvisoryLocks() {
             releaseAll();
           }, options.timeout)
         : undefined;
+    const own = tx.$executeRaw as
+      | ((strings: TemplateStringsArray, ...values: unknown[]) => Promise<number>)
+      | undefined;
     const $executeRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      if (!strings.join('').includes('pg_advisory_xact_lock')) return 0;
+      const sql = strings.join('');
+      if (!sql.includes('pg_advisory_xact_lock')) {
+        const setup = sql.includes('set_config') || sql.includes('SET LOCAL');
+        return own && !setup ? own(strings, ...values) : 0;
+      }
       const key = String(values[0]);
       while (holders.has(key)) await holders.get(key);
       let release!: () => void;
