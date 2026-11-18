@@ -1,6 +1,7 @@
 import { Button, Checkbox, Group, Radio, Stack, Textarea, Modal } from '@mantine/core';
 import React, { useState } from 'react';
 
+import { MINOR_UNPUBLISH_REASONS } from '@civitai/shared/held-url';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -24,7 +25,7 @@ const reasonOptions = Object.entries(unpublishReasons).map(([key, { optionLabel 
  * no mod endpoint. Adding a bare `poi: true` write here would invent a moderation flag's semantics in
  * a modal. See docs/moderator-app/post-migration-backlog.md.
  */
-const MINOR_REASONS = new Set<UnpublishReason>(['mature-underage', 'photo-real-underage']);
+const MINOR_REASONS = new Set<UnpublishReason>(MINOR_UNPUBLISH_REASONS);
 
 export default function UnpublishModal({
   modelId,

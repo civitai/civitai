@@ -37,17 +37,23 @@ export async function getRetractedMedia(
 ): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
   const row = await dbWrite
     .selectFrom('Image as i')
-    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])
+    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
     .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
     .where('i.id', '=', imageId)
-    .where(sql<boolean>`${sql.raw(retractedImageWhereSql('i'))}`)
+    .where(
+      sql<boolean>`${sql.raw(retractedImageWhereSql('i', { cdnLeg: retractedMediaCdnLeg() }))}`
+    )
     .executeTakeFirst();
   if (!row) return null;
   const tier = retractedTier(row, blockedForPatterns());
   if (!csamReview) {
     if (tier === 'suspect') return null;
     // Refused when the scanner marks it, has no verdict for it, or cannot be read.
-    const verdict = await scannerVerdicts.read(imageId);
+    // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+    const verdict =
+      row.ingestion === 'Scanned'
+        ? await readScannerVerdict(imageId)
+        : await scannerVerdicts.read(imageId);
     if (verdict === 'none') return NEEDS_CSAM_QUEUE;
     if (verdict !== 'clear') return null;
   }
@@ -67,3 +73,6 @@ export function recordRetractedView(moderatorId: number, imageId: number) {
 
 /** `/api/retracted-media` answers 404 unless this is exactly 'true'. */
 export const retractedMediaEnabled = () => env.RETRACTED_MEDIA_ENABLED === 'true';
+
+/** Whether a scanned image whose url the image CDN retracted is eligible too. */
+export const retractedMediaCdnLeg = () => env.RETRACTED_MEDIA_CDN_LEG === 'true';
