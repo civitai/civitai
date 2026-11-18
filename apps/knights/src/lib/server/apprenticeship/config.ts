@@ -1,3 +1,5 @@
+import type { StoredSettings } from '../settings/stored';
+
 /** The Acolyte apprenticeship: a continuous graded stream that pays XP and ends in knighthood. */
 export const APPRENTICE = {
   xpPerCorrect: 100,
@@ -24,7 +26,16 @@ export type ApprenticeSettings = {
   smites: boolean;
 };
 
-/** Operator switches from the environment (see `.env.example`). `KNIGHTS_APPRENTICE_SMITES=off` stops the wrong-answer smite. */
-export function apprenticeSettings(env: Record<string, string | undefined>): ApprenticeSettings {
-  return { smites: env.KNIGHTS_APPRENTICE_SMITES?.trim().toLowerCase() !== 'off' };
+/**
+ * The switch saved on the moderator Config page wins (`stored`); without one, the environment (see `.env.example`):
+ * `KNIGHTS_APPRENTICE_SMITES=off` stops the wrong-answer smite.
+ */
+export function apprenticeSettings(
+  env: Record<string, string | undefined>,
+  stored: StoredSettings = {}
+): ApprenticeSettings {
+  return {
+    smites:
+      stored.apprenticeSmites ?? env.KNIGHTS_APPRENTICE_SMITES?.trim().toLowerCase() !== 'off',
+  };
 }

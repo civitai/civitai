@@ -73,7 +73,7 @@ export async function searchSemanticModels3D({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),

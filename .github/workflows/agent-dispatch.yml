@@ -1,0 +1,49 @@
+# Synced from civitai-dev-stack/contributing by scripts/sync-contributing.sh; edit it there.
+name: agent-dispatch
+
+# Hands an issue or PR here to civitai-dev-agent, which runs in civitai-dev-stack and reports back here.
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  dispatch:
+    # In a private repo anyone with access can start it; in a public one only org members, or whoever may label. Bots
+    # never do, so the agent's own comments that mention it don't start runs.
+    if: >-
+      (github.event.repository.private || github.event_name == 'issues' ||
+        contains(fromJSON('["OWNER","MEMBER"]'), github.event.comment.author_association || github.event.review.author_association)) &&
+      !endsWith(github.actor, '[bot]') && (
+        (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent') ||
+        (contains(fromJSON('["issue_comment","pull_request_review_comment"]'), github.event_name) && (contains(github.event.comment.body, '@civitai-dev-agent') || contains(github.event.comment.body, '@civitai/dev-agent'))) ||
+        (github.event_name == 'pull_request_review' && (contains(github.event.review.body, '@civitai-dev-agent') || contains(github.event.review.body, '@civitai/dev-agent'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.AGENT_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          owner: civitai
+          repositories: civitai-dev-stack
+          permission-contents: write
+
+      - name: Hand the request to civitai-dev-agent
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          KIND: ${{ (github.event.pull_request || github.event.issue.pull_request) && 'pull request' || 'issue' }}
+          EVENT_URL: ${{ github.event.comment.html_url || github.event.review.html_url || github.event.issue.html_url }}
+        run: |
+          curl -sS --fail-with-body -o /dev/null -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/civitai/civitai-dev-stack/dispatches" \
+            -d "{\"event_type\":\"agent-request\",\"client_payload\":{\"repo\":\"$GITHUB_REPOSITORY\",\"number\":$NUMBER,\"kind\":\"$KIND\",\"actor\":\"$GITHUB_ACTOR\",\"event_url\":\"$EVENT_URL\"}}"
+          echo "Handed $KIND $GITHUB_REPOSITORY#$NUMBER to civitai-dev-agent."

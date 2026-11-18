@@ -14,8 +14,7 @@ import {
   resolveModelSearchIds,
   runModelSearch,
 } from '~/server/services/model-search.service';
-import { resolveCatalogViewerBrowsingLevel } from '~/server/utils/block-catalog-viewer-level';
-import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.constants';
+import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import {
@@ -248,10 +247,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // 🔴 AUTHORITATIVE CLAMP — see the header. Never the client's; the tool
   // argument schema does not even carry a maturity field to ignore.
   const regionRestricted = isRegionRestricted(getRegion(req));
-  // The VIEWER's level held to the domain cap (the main site's rule), never the domain
-  // alone: a viewer with mature content off on a mature domain is served SFW here too.
-  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, { regionRestricted });
-  const isSfwCeiling = allowMatureContentForCeiling(browsingLevel) === false;
+  const { browsingLevel, isSfwCeiling } = resolveCatalogViewerMaturity(claims, {
+    regionRestricted,
+  });
 
   try {
     if (tool.name === 'search_models') {

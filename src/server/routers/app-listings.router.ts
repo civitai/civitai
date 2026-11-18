@@ -938,6 +938,7 @@ export const appListingsRouter = router({
           listingId: input.listingId,
           userId: ctx.user.id,
           isModerator: actsAsModerator(ctx),
+          readOnly: input.readOnly,
         });
       } catch (err) {
         throw mapOffsiteError(err);

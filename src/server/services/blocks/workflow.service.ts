@@ -24,6 +24,7 @@ import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restri
 import type { BlockOutputWorkflowFacts } from './block-output-restriction';
 import {
   applyServingRules,
+  restrictWhileServingUnknown,
   isPrivateGenerationWorkflow,
   mintBlockOutput,
   type BlockOutputView,
@@ -339,6 +340,7 @@ function classifyOutputs(
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
     });
+    if (view.servingUnknown) return restrictWhileServingUnknown(output);
     if (view.mint && mintStep) {
       return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
     }
@@ -513,12 +515,9 @@ export function propagateMeshRating(
  * restricted `'unrated'` entry: that reason means "no rating will ever come" and is
  * terminal in the wire contract, and the unlock dialog answers it as such.
  *
- * WHY 5 MINUTES. The orchestrator's blob scan latency histogram
- * (`orchestration_blob_scan_latency_seconds`, the 7 days to 2026-11-17) puts the median
- * near 2.5s and p99 near 8s, with about 99.85% of scans done within 100s, 99.90% within
- * 250s and 99.92% within 500s. Past that the tail is long and flat, so a longer hold
- * buys little and only keeps the app waiting. `@civitai/blocks-react` `watch` gives up
- * after 10 minutes by default, so the hold stays well inside it.
+ * 5 minutes: well past the blob scan latency tail
+ * (`orchestration_blob_scan_latency_seconds`), and under `@civitai/blocks-react` `watch`'s
+ * default 10 minute timeout, which counts from the watch's start, not from completion.
  */
 export const RATING_HOLD_MAX_MS = 5 * 60_000;
 
@@ -580,15 +579,10 @@ export function orchestratorBlockStatus(
  * are passed through: no app keeps outputs on them as a success, and the cancel and
  * refund paths key on them.
  *
- * ⚠️ IT APPLIES TO EVERY APP, NEW SDKS INCLUDED — the host cannot tell which apps need
- * it. The only SDK signal is the `sdkVersion` a `@civitai/blocks-react` >= 0.72.3 block
- * reports in `BLOCK_READY`: informational by its own contract, absent from `@civitai/sdk`
- * (REST) callers, and not read by the host. And an SDK version is not app behaviour: an
- * app on a `ratingPending`-aware SDK that polls by hand and stops at `succeeded` loses
- * the image exactly like an old one. The cost to a `watch` caller: while masked it is
- * outside `watch`'s 2-minute rating window, so its own `timeoutMs` (blocks-react: 10
- * minutes from the watch's start) can end it on this `processing` snapshot, and a run
- * of transport failures rejects instead of resolving with the last snapshot.
+ * ⚠️ Applies to every app, new SDKs included: the host cannot tell which apps need it,
+ * and an app that polls by hand and stops at `succeeded` loses the image whatever its
+ * SDK version. Cost: a `watch` caller can hit its own timeout on this `processing`
+ * snapshot.
  */
 export function appWorkflowStatus(
   workflow: Workflow,
