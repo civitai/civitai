@@ -112,8 +112,7 @@ function eligibleReferences(
  * eligible reference is equally likely, whatever its size, and the cost is a short index walk per bucket tried, not a
  * count of every eligible row.
  *
- * A second digest (the same seed and `:probation`) rolls against `probationShare` to try the probation or the active
- * references first, taking the other when the first has none for the player. A share of 0 never serves probation.
+ * A share of 0 never serves probation, not even as a fallback.
  */
 export async function pickHiddenCheck(
   db: Executor,
@@ -136,7 +135,7 @@ export async function pickHiddenCheck(
     input.slot ?? (await slotOf(db, input.userId))
   }`;
   const digest = createHash('sha256').update(seed).digest();
-  // Every byte of `digest` is spoken for, so the pool roll has its own.
+  // Its own digest: the pool roll must not reuse bytes `digest` already spends.
   const poolRoll = unit(createHash('sha256').update(`${seed}:probation`).digest(), 0);
   const share = input.probationShare ?? 0;
   const pools: ServedStatus[] =
@@ -261,7 +260,7 @@ export async function answerHiddenCheck(
       .executeTakeFirst();
     if (!ref) return { status: 'rejected', reason: 'unavailable' };
     const probation = ref.status === REFERENCE_STATUS.probation;
-    // Unreachable while the query lists only these two; kept so widening that list cannot serve a check ungraded.
+    // Fail closed on any other status.
     if (!probation && ref.status !== REFERENCE_STATUS.active) {
       return { status: 'rejected', reason: 'unavailable' };
     }
