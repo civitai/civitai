@@ -41,7 +41,7 @@
     createVoteTracker,
     postVote,
     refillCount,
-    refusedNote,
+    refusalNote,
     skillCheckCue,
     type PickedItem,
   } from './optimistic';
@@ -473,7 +473,8 @@
       },
       onFailure: (outcome) => {
         uncount();
-        stick(refusedNote(outcome.message));
+        const message = refusalNote(outcome);
+        if (message) stick(message);
         dropBuffered(key);
         if (outcome.resync) {
           local = null;
