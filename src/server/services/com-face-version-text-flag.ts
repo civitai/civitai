@@ -15,7 +15,7 @@ export async function getComVersionTextHideMode(): Promise<ComVersionTextHideMod
       type: 'error',
       name: 'com-face-version-text',
       message: 'hide flag not evaluated; hiding',
-    }).catch(() => undefined);
+    });
     return 'on';
   }
   return enabled ? 'on' : 'off';

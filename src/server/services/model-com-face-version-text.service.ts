@@ -3,6 +3,12 @@ import { createHash } from 'node:crypto';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  COM_FACE_RECHECK_FIRST_DELAY_MS,
+  COM_FACE_RECHECK_MAX_DELAY_MS,
+  COM_FACE_RESTORE_QUIET_MS,
+  COM_FACE_RUN_BUDGET_MS,
+} from '~/server/services/model-com-face-recheck.service';
 import type { TextScanEachVerdict } from '~/server/services/text-scan/preview';
 import { previewTextScanEach } from '~/server/services/text-scan/preview';
 import { getActiveTextScanPrompts, getTextScanConfig } from '~/server/services/text-scan/prompt';
@@ -54,12 +60,14 @@ export const COM_VERSION_TEXT_STEPS_PER_WORKFLOW = 20;
 export const COM_VERSION_TEXT_WORKFLOWS_PER_RUN = 20;
 /** So one model with many strings cannot take a whole run from the others. */
 export const COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN = 5;
-/** One rating per burst of edits: a model is rated once its owner has stopped editing this long. */
-export const COM_VERSION_TEXT_QUIET_MS = 2 * 60_000;
-export const COM_VERSION_TEXT_RUN_BUDGET_MS = 4 * 60_000;
+/**
+ * One rating per burst of edits: a model is rated once its owner has stopped editing this long.
+ * Paced like the .com face restore check, which the same owner edits queue. Its own queue rows,
+ * because the restore queue holds only models whose face the re-check removed.
+ */
+export const COM_VERSION_TEXT_QUIET_MS = COM_FACE_RESTORE_QUIET_MS;
+export const COM_VERSION_TEXT_RUN_BUDGET_MS = COM_FACE_RUN_BUDGET_MS;
 export const COM_VERSION_TEXT_SWEEP_LIMIT = 500;
-const RETRY_FIRST_DELAY_MS = 60_000;
-const RETRY_MAX_DELAY_MS = 60 * 60_000;
 /** Past this a model leaves the queue; the hourly sweep queues it again behind owner edits. */
 export const COM_VERSION_TEXT_MAX_ATTEMPTS = 8;
 const WAIT_SECONDS = 10;
@@ -74,7 +82,7 @@ export async function getComVersionTextPolicy() {
 }
 
 function log(type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) {
-  logToAxiom({ type, name: 'com-face-version-text', message, ...extra }).catch(() => undefined);
+  logToAxiom({ type, name: 'com-face-version-text', message, payload: extra });
 }
 
 /**
@@ -337,7 +345,6 @@ export async function rateComFaceVersionText(
     await dbWrite.$executeRaw(comVersionTextVerdictSql(version.id, next));
   }
 
-  // A run that rated nothing backs off rather than coming straight back.
   if (pending.length && rated) return { status: 'partial', workflows, csamHits: csamHits.length };
   return { status: anyUnrated ? 'unrated' : 'complete', workflows, csamHits: csamHits.length };
 }
@@ -358,7 +365,10 @@ function sameVerdicts(a: ComVersionTextVerdicts | undefined, b: ComVersionTextVe
 }
 
 const retryDelay = (attempt: number) =>
-  backoffDelay(attempt - 1, { baseMs: RETRY_FIRST_DELAY_MS, maxMs: RETRY_MAX_DELAY_MS });
+  backoffDelay(attempt - 1, {
+    baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,
+    maxMs: COM_FACE_RECHECK_MAX_DELAY_MS,
+  });
 
 /**
  * Rates the queued models whose edits have gone quiet: owner edits first, then sweep rows, at most
@@ -372,6 +382,7 @@ export async function processComFaceVersionText(
 ) {
   const startedAt = Date.now();
   const counts = { complete: 0, partial: 0, unrated: 0, failed: 0, workflows: 0 };
+  // primary: owner edits write these rows moments before a run; the replica can lag them.
   const rows = await dbWrite.keyValue.findMany({ where: { key: { startsWith: QUEUE_PREFIX } } });
 
   const due = rows
