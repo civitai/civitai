@@ -2,6 +2,7 @@ import { type ActionFailure, fail } from '@sveltejs/kit';
 import { isBlockReason } from '$lib/block-reasons';
 import { db } from '$lib/server/db';
 import { getDailyStatus } from '$lib/server/daily/daily.service';
+import { utcDay } from '$lib/server/daily/days';
 import { openItem } from '$lib/server/feed-token';
 import { imageUrl, THUMBNAIL_WIDTH } from '$lib/server/image-url';
 import { metrics } from '$lib/server/metrics';
@@ -177,6 +178,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     category: picked?.category ?? null,
     ...common,
     daily,
+    watchDay: utcDay(now),
     rail,
     resetPending,
     apprenticeMeter,
