@@ -22,7 +22,9 @@ describe('trpc-server-parity token and secrets', () => {
   it('token permissions are exactly the minimal set', () => {
     expect(wf.permissions).toEqual({ contents: 'read', packages: 'read' });
     expect(
-      Object.fromEntries(Object.entries(wf.jobs).map(([name, job]) => [name, job.permissions ?? null]))
+      Object.fromEntries(
+        Object.entries(wf.jobs).map(([name, job]) => [name, job.permissions ?? null])
+      )
     ).toEqual({
       gate: null,
       parity: { contents: 'read', packages: 'read', statuses: 'write' },
