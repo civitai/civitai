@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { freshPglite } from '../../../test/pglite';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import type { LabDB } from '../xguard-lab';
-import { importNamedSamples } from '../xguard-named-samples';
+import {
+  buildNamedSampleQueries,
+  importNamedSamples,
+  NamedSampleInputError,
+  REFUSED_PROMPT_HASH_SQL,
+} from '../xguard-named-samples';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LAB_SCHEMA = readFileSync(join(HERE, '../../../../xguard-lab/schema.sql'), 'utf8');
@@ -55,7 +60,15 @@ const rows = () =>
     .selectFrom('sample')
     // Production's pg driver returns bigint as a string; pglite returns a number or a BigInt.
     .select(sql<string>`prompt_hash::text`.as('prompt_hash'))
-    .select(['source', 'batch', 'user_id', 'positive_prompt', 'negative_prompt', 'live_scores'])
+    .select([
+      'source',
+      'batch',
+      'user_id',
+      'positive_prompt',
+      'negative_prompt',
+      'live_scores',
+      'prompt_created_at',
+    ])
     .orderBy('source')
     .execute();
 
@@ -101,6 +114,7 @@ describe('importNamedSamples', () => {
         positive_prompt: 'refused positive',
         negative_prompt: 'refused negative',
         live_scores: null,
+        prompt_created_at: new Date('2026-11-15T08:00:00.000Z'),
       },
       {
         prompt_hash: GENERATED.promptHash,
@@ -110,6 +124,7 @@ describe('importNamedSamples', () => {
         positive_prompt: 'generated positive',
         negative_prompt: 'generated negative',
         live_scores: { CR: 0.1, Young: 0.9 },
+        prompt_created_at: new Date('2026-11-18T10:00:00.000Z'),
       },
     ]);
   });
@@ -206,5 +221,115 @@ describe('importNamedSamples', () => {
     expect(a).toEqual(await order('b'));
     expect([...a].sort()).toEqual(['1', '2', '3', '4', '5', '6']);
     expect(a).not.toEqual(['1', '2', '3', '4', '5', '6']);
+  });
+
+  it('blind: a different seed gives a different order', async () => {
+    const req = (batch: string, seed: number) => ({
+      batch,
+      generated: ['1', '2', '3', '4', '5', '6'],
+      blind: { seed },
+    });
+    await importNamedSamples(req('a', 1), { query: manyClickhouse(), db });
+    await importNamedSamples(req('b', 2), { query: manyClickhouse(), db });
+    const order = async (batch: string) =>
+      (
+        await db
+          .selectFrom('sample')
+          .select(sql<string>`prompt_hash::text`.as('h'))
+          .where('batch', '=', batch)
+          .orderBy('id')
+          .execute()
+      ).map((r) => r.h);
+    expect(await order('a')).not.toEqual(await order('b'));
+  });
+
+  it.each([
+    ['blind into a batch that already holds plain rows', false, true],
+    ['plain into a blind batch', true, false],
+  ])('refuses to load %s', async (_name, firstBlind, secondBlind) => {
+    const load = (hash: string, blind: boolean) =>
+      importNamedSamples(
+        { batch: 'review-1', generated: [hash], ...(blind ? { blind: { seed: 1 } } : {}) },
+        { query: manyClickhouse(), db }
+      );
+    await load('1', firstBlind);
+    await expect(load('2', secondBlind)).rejects.toBeInstanceOf(NamedSampleInputError);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('counts a partly new set as inserted plus duplicates, and a repeated hash once', async () => {
+    await importNamedSamples(
+      { batch: 'review-1', generated: ['1'] },
+      { query: manyClickhouse(), db }
+    );
+    const summary = await importNamedSamples(
+      { batch: 'review-1', generated: ['1', '2', '2'] },
+      { query: manyClickhouse(), db }
+    );
+    expect(summary).toMatchObject({ requested: 2, inserted: 1, duplicates: 1 });
+  });
+
+  it('accepts exactly the cap across both lists', async () => {
+    const summary = await importNamedSamples(
+      {
+        batch: 'review-1',
+        generated: Array.from({ length: 250 }, (_, i) => String(i + 1)),
+        refused: Array.from({ length: 250 }, (_, i) => ({
+          hash: String(i + 1001),
+          date: '2026-11-15',
+        })),
+      },
+      { query: manyClickhouse(), db }
+    );
+    expect(summary.inserted).toBe(500);
+  });
+
+  it.each([
+    [
+      'over the cap across both lists',
+      {
+        generated: Array.from({ length: 250 }, (_, i) => String(i + 1)),
+        refused: Array.from({ length: 251 }, (_, i) => ({
+          hash: String(i + 1001),
+          date: '2026-11-15',
+        })),
+      },
+    ],
+    ['a hash with a leading zero', { generated: ['0123'] }],
+    ['negative zero', { generated: ['-0'] }],
+    ['a hash wider than Int64', { generated: ['12345678901234567890'] }],
+    ['a fractional seed', { generated: ['1'], blind: { seed: 1.5 } }],
+    [
+      'more distinct days than the cap',
+      {
+        refused: Array.from({ length: 32 }, (_, i) => ({
+          hash: String(i + 1),
+          date: `2026-10-${String(i + 1).padStart(2, '0')}`,
+        })),
+      },
+    ],
+  ])('refuses %s as an input error, before querying anything', async (_name, part) => {
+    const query = fakeClickhouse();
+    await expect(
+      importNamedSamples({ batch: 'review-1', ...part }, { query, db })
+    ).rejects.toBeInstanceOf(NamedSampleInputError);
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildNamedSampleQueries', () => {
+  it('bounds the refused lookup by day and matches on the shared hash expression', () => {
+    const { refused } = buildNamedSampleQueries([], ['7', '-8'], ['2026-11-15', '2026-11-16']);
+    expect(refused).toContain("WHERE createdDate IN ('2026-11-15','2026-11-16')");
+    expect(refused).toContain(`AND ${REFUSED_PROMPT_HASH_SQL} IN (7,-8)`);
+    expect(refused).toContain(`SELECT ${REFUSED_PROMPT_HASH_SQL} AS h,`);
+  });
+
+  it('takes every generated column from the earliest row', () => {
+    const { generated } = buildNamedSampleQueries(['5'], [], []);
+    for (const col of ['userId', 'positivePrompt', 'negativePrompt', 'scores']) {
+      expect(generated).toContain(`argMin(${col}, createdAt) AS ${col}`);
+    }
+    expect(generated).toContain('WHERE promptHash IN (5)');
   });
 });
