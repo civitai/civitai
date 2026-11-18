@@ -47,7 +47,7 @@ Note from the type:
 If the type is missing in the installed version, check the latest (`npm view @civitai/orchestration-client
 version`) and bump to it in every `package.json` that lists the client
 (`git grep -l '"@civitai/orchestration-client"' -- '*package.json'`), then `pnpm install`;
-`src/__tests__/orchestration-client-single-version.test.ts` fails on a partial bump. If still absent, the
+a partial bump leaves two copies installed. If still absent, the
 orchestrator dispatch (`training.orch.ts`) already casts `ecosystem as any`, so it works — but
 prefer a typed SDK.
 

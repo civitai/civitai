@@ -218,7 +218,7 @@ against the guards it could trip.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
 fail only in a full-suite run. If the diff adds a guard, check it was wired into the script and into
-`docs/dev/convention-guards.md` (`no-lint-rules-script-drift` checks both), and don't treat a green
+`docs/dev/convention-guards.md`, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
 If a guard fails, the code gets fixed. An added exemption needs a stated reason in the diff.

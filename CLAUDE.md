@@ -9,8 +9,6 @@ where it loads on demand:
 - a personal preference (whether you use worktrees, review habits, voice) → your `CLAUDE.local.md` or
   `~/.claude/CLAUDE.md`, never a committed file
 
-`no-claude-md-bloat` caps this file at 150 lines; move content out rather than raising the cap.
-
 ## How to work with us
 - Plans are markdown documents in `docs/`. Our inline comments are marked `@dev:`; leave yours as `@ai:`.
   A plan or proposal without a current `**Status:**` line is historical; guides (`docs/dev/`, `docs/packages/`) are not plans.
