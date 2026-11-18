@@ -1,5 +1,6 @@
 import { timeSemanticSearch } from '~/server/metrics/semantic-search.metrics';
 import { countSearchUpload } from '~/server/metrics/semantic-search.metrics';
+import { TRPCError } from '@trpc/server';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   imageSearchUploadSearchSchema,
@@ -19,7 +20,12 @@ import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 const imageSearchUploadProcedure = protectedProcedure
   .meta({ blockApiKeys: true })
   .use(isFlagProtected('imageSearchUpload'))
-  .use(isFlagProtected('moreLikeThis'));
+  .use(isFlagProtected('moreLikeThis'))
+  // Moderator-only until further gates, whatever the flag says.
+  .use(({ ctx, next }) => {
+    if (!ctx.user.isModerator) throw new TRPCError({ code: 'FORBIDDEN' });
+    return next();
+  });
 
 export const imageSearchUploadRouter = router({
   prepare: imageSearchUploadProcedure
@@ -31,7 +37,12 @@ export const imageSearchUploadRouter = router({
     )
     .input(prepareImageSearchUploadSchema)
     .mutation(({ input, ctx }) =>
-      prepareSearchUpload({ userId: ctx.user.id, url: input.url, req: ctx.req })
+      prepareSearchUpload({
+        userId: ctx.user.id,
+        url: input.url,
+        source: input.source,
+        req: ctx.req,
+      })
     ),
 
   status: imageSearchUploadProcedure

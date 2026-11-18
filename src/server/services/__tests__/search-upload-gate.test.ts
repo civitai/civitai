@@ -100,6 +100,12 @@ describe('reading the scan workflow', () => {
     expect(readSearchUploadScan(succeeded(out))).toEqual({ state: 'failed' });
   });
 
+  it('reads an age classifier that did not run as not run', () => {
+    const age = { ...output().jointAgeClassification, ran: false };
+    const read = readSearchUploadScan(succeeded(output({ jointAgeClassification: age })));
+    expect(read).toMatchObject({ state: 'done', faceScan: { ran: false } });
+  });
+
   it('reads a block reason, a CSAM signal and the minor and child flags', () => {
     const read = (over: Record<string, unknown>) =>
       readSearchUploadScan(succeeded(output(over))) as Extract<SearchUploadScan, { state: 'done' }>;

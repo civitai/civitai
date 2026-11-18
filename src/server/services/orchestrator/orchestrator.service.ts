@@ -18,6 +18,7 @@ import type { SCAN_ONLY_RESCAN_OP } from '~/server/services/orchestrator/model-s
 import { isProd } from '~/env/other';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
 import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
@@ -123,6 +124,8 @@ function imageScanSteps({
  * caller reads the result with getWorkflow. Returns the workflow id, or undefined when the submit failed.
  */
 export async function submitSearchUploadScan({ blobUrl }: { blobUrl: string }) {
+  // Backstop: the caller has already checked it is an uploaded blob; nothing else is scanned here.
+  if (!isTrustedOrchestratorUrl(blobUrl)) throw new ImageIngestionUrlBlockedError(blobUrl);
   const body: WorkflowTemplate = {
     externalId: randomUUID(),
     metadata: { searchUpload: true },

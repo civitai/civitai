@@ -59,10 +59,19 @@ const search = (user: typeof USER, credential?: object) =>
   caller(user, credential).search({ uploadId: UPLOAD, url: BLOB, browsingLevel: 1 });
 
 describe('imageSearchUpload', () => {
-  it("passes the moderator view only for a moderator's session", async () => {
-    await status(USER);
+  it('refuses every procedure to a non-moderator, whatever the flags say', async () => {
+    await expect(status(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(search(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(
+      caller(USER).prepare({ url: BLOB, source: { kind: 'image', id: 9 } })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(h.status).not.toHaveBeenCalled();
+    expect(h.anchor).not.toHaveBeenCalled();
+    expect(h.prepare).not.toHaveBeenCalled();
+  });
+
+  it("passes the moderator's session and view", async () => {
     await status(MOD);
-    expect(h.status.mock.calls.map(([args]) => args.isModerator)).toEqual([false, true]);
     expect(h.status).toHaveBeenCalledWith({ userId: 8, uploadId: UPLOAD, isModerator: true });
   });
 
@@ -82,15 +91,13 @@ describe('imageSearchUpload', () => {
     ['"More like this"', { imageSearchUpload: true, moreLikeThis: false }],
   ])('refuses without %s', async (_name, flags) => {
     h.flags = flags;
-    await expect(status(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(status(MOD)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(h.status).not.toHaveBeenCalled();
   });
 
-  it("searches with the moderator view only for a moderator's session, as the session user", async () => {
-    await search(USER);
+  it('searches as the session user with the moderator view', async () => {
     await search(MOD);
     expect(h.anchor.mock.calls.map(([args]) => args)).toEqual([
-      { userId: 7, uploadId: UPLOAD, url: BLOB, isModerator: false },
       { userId: 8, uploadId: UPLOAD, url: BLOB, isModerator: true },
     ]);
     expect(h.search).toHaveBeenCalledWith(expect.objectContaining({ uploadAnchor: ANCHOR }));
@@ -104,18 +111,22 @@ describe('imageSearchUpload', () => {
   });
 
   it('prepares an upload for the session user', async () => {
-    await caller(USER).prepare({ url: 'https://orchestration.civitai.com/v2/consumer/blobs/b1' });
+    await caller(MOD).prepare({
+      url: 'https://orchestration.civitai.com/v2/consumer/blobs/b1',
+      source: { kind: 'image', id: 9 },
+    });
     expect(h.prepare).toHaveBeenCalledWith(
       expect.objectContaining({
-        userId: 7,
+        userId: 8,
         url: 'https://orchestration.civitai.com/v2/consumer/blobs/b1',
+        source: { kind: 'image', id: 9 },
       })
     );
   });
 
   it('stops before searching when the gate refuses the upload', async () => {
     h.anchor.mockRejectedValue(Object.assign(new Error('refused'), { code: 'FORBIDDEN' }));
-    await expect(search(USER)).rejects.toThrow();
+    await expect(search(MOD)).rejects.toThrow();
     expect(h.search).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
+import type { SearchUploadSource } from '~/server/schema/semantic-image-search.schema';
 import { trpc } from '~/utils/trpc';
 
 export const SEARCH_UPLOAD_FAILED_MESSAGE = "This image can't be used for search.";
@@ -29,12 +30,12 @@ export function useImageSearchUpload() {
   );
 
   const start = useCallback(
-    async (file: File) => {
+    async (file: File, source: SearchUploadSource) => {
       setState({ step: 'uploading' });
       try {
         const blob = await uploadConsumerBlob(file);
         if (!blob.url) throw new Error(SEARCH_UPLOAD_FAILED_MESSAGE);
-        const { uploadId } = await prepare.mutateAsync({ url: blob.url });
+        const { uploadId } = await prepare.mutateAsync({ url: blob.url, source });
         setState({ step: 'checking', uploadId, url: blob.url });
       } catch (error) {
         setState({

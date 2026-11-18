@@ -1,7 +1,9 @@
 import { TRPCError } from '@trpc/server';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import type { NextApiRequest } from 'next';
 import { env } from '~/env/server';
+import { dbRead } from '~/server/db/client';
+import type { SearchUploadSource } from '~/server/schema/semantic-image-search.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { countSearchUpload } from '~/server/metrics/semantic-search.metrics';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
@@ -13,6 +15,7 @@ import {
   readSearchUploadScan,
   searchUploadFaceAnimeMin,
   searchUploadVerdict,
+  type SearchUploadRefusal,
   type SearchUploadScan,
   type SearchUploadVerdict,
 } from '~/server/services/search-upload-gate';
@@ -39,9 +42,19 @@ export type SearchUploadRecord = {
   blobId: string;
   workflowId: string;
   createdAt: number;
+  /** The site item the moderator started from. */
+  source: SearchUploadSource;
+  /** A hash of the URL that was scanned: the search must embed that same URL. */
+  urlHash: string;
   /** The scan once it ended, so later pages do not read the workflow again. */
   scan?: Exclude<SearchUploadScan, { state: 'pending' }>;
+  /** The blob's verdict once rated, so a later page's failed read cannot undo a pass. */
+  blobBlockedReason?: string | null;
+  /** Set on the first refusal other than the face rule: a refused upload stays refused. */
+  refused?: SearchUploadRefusal;
 };
+
+const hashUrl = (url: string) => createHash('sha256').update(url).digest('hex');
 
 const recordKey = (uploadId: string) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD}:${uploadId}` as RedisKeyTemplateCache;
@@ -79,15 +92,36 @@ export async function claimSearchUploadSlot(req: NextApiRequest) {
  * the upload is a cache record for an hour, and the orchestrator expires the blob. Returns at once;
  * the client polls {@link getSearchUploadStatus}.
  */
+export const SEARCH_UPLOAD_SOURCE_MESSAGE = 'Search needs the site item you started from.';
+
+/** Whether the item exists: a case is checked by its reference's format, as it lives in another app. */
+async function sourceExists(source: SearchUploadSource) {
+  const select = { id: true } as const;
+  switch (source.kind) {
+    case 'image':
+      return !!(await dbRead.image.findUnique({ where: { id: source.id }, select }));
+    case 'post':
+      return !!(await dbRead.post.findUnique({ where: { id: source.id }, select }));
+    case 'modelVersion':
+      return !!(await dbRead.modelVersion.findUnique({ where: { id: source.id }, select }));
+    case 'case':
+      return true;
+  }
+}
+
 export async function prepareSearchUpload({
   userId,
   url,
+  source,
   req,
 }: {
   userId: number;
   url: string;
+  source: SearchUploadSource | undefined;
   req: NextApiRequest;
 }) {
+  if (!source || !(await sourceExists(source)))
+    throw new TRPCError({ code: 'BAD_REQUEST', message: SEARCH_UPLOAD_SOURCE_MESSAGE });
   const blobId = uploadedSourceBlobId(url);
   if (!blobId)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'That is not an uploaded image.' });
@@ -95,23 +129,37 @@ export async function prepareSearchUpload({
   const existing = await redis.packed.get<string>(refKey(userId, blobId));
   if (existing && (await redis.packed.get<SearchUploadRecord>(recordKey(existing))))
     return { uploadId: existing };
-  if (await redis.exists(pendingKey(userId)))
+  const uploadId = randomUUID();
+  // Taken atomically before the slot and the scan, so two uploads at once cannot both pass.
+  const busy = await redis.set(pendingKey(userId), uploadId, {
+    NX: true,
+    EX: Math.ceil(SEARCH_UPLOAD_SCAN_TIMEOUT_MS / 1000),
+  });
+  if (busy === null)
     throw new TRPCError({ code: 'TOO_MANY_REQUESTS', message: SEARCH_UPLOAD_BUSY_MESSAGE });
-  await claimSearchUploadSlot(req);
 
-  const workflowId = await submitSearchUploadScan({ blobUrl: url });
+  let workflowId: string | undefined;
+  try {
+    await claimSearchUploadSlot(req);
+    workflowId = await submitSearchUploadScan({ blobUrl: url });
+  } finally {
+    if (!workflowId) await redis.del(pendingKey(userId));
+  }
   if (!workflowId)
     throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: SEARCH_UPLOAD_CAPACITY_MESSAGE });
 
-  const uploadId = randomUUID();
-  const record: SearchUploadRecord = { userId, blobId, workflowId, createdAt: Date.now() };
+  const record: SearchUploadRecord = {
+    userId,
+    blobId,
+    workflowId,
+    createdAt: Date.now(),
+    source: { kind: source.kind, id: source.id } as SearchUploadSource,
+    urlHash: hashUrl(url),
+  };
   const ttl = secondsLeft(record.createdAt);
   await Promise.all([
     redis.packed.set(recordKey(uploadId), record, { EX: ttl }),
     redis.packed.set(refKey(userId, blobId), uploadId, { EX: ttl }),
-    redis.packed.set(pendingKey(userId), uploadId, {
-      EX: Math.ceil(SEARCH_UPLOAD_SCAN_TIMEOUT_MS / 1000),
-    }),
   ]);
   countSearchUpload('prepared');
   return { uploadId };
@@ -127,6 +175,14 @@ async function ownedUpload(userId: number, uploadId: string) {
   return record;
 }
 
+const saveRecord = (uploadId: string, record: SearchUploadRecord) =>
+  redis.packed.set(recordKey(uploadId), record, { EX: secondsLeft(record.createdAt) });
+
+/** Frees the viewer for a new upload, unless a newer upload already holds the key. */
+async function releaseBusy(uploadId: string, userId: number) {
+  if ((await redis.get(pendingKey(userId))) === uploadId) await redis.del(pendingKey(userId));
+}
+
 /** The scan's result, read from the workflow until it ends and then kept on the record. */
 async function scanFor(uploadId: string, record: SearchUploadRecord): Promise<SearchUploadScan> {
   if (record.scan) return record.scan;
@@ -136,34 +192,41 @@ async function scanFor(uploadId: string, record: SearchUploadRecord): Promise<Se
   });
   const scan = readSearchUploadScan(workflow);
   if (scan.state !== 'pending') {
-    await Promise.all([
-      redis.packed.set(
-        recordKey(uploadId),
-        { ...record, scan },
-        { EX: secondsLeft(record.createdAt) }
-      ),
-      redis.del(pendingKey(record.userId)),
-    ]);
+    record.scan = scan;
+    await Promise.all([saveRecord(uploadId, record), releaseBusy(uploadId, record.userId)]);
   }
   return scan;
 }
 
+/** The blob's verdict, read until it is rated and then kept on the record. */
+async function blobFor(uploadId: string, record: SearchUploadRecord) {
+  if (record.blobBlockedReason !== undefined)
+    return { verdict: 'rated' as const, blockedReason: record.blobBlockedReason };
+  const blob = await readBlobState(record.blobId);
+  if (blob.verdict !== 'rated') return { verdict: 'pending' as const };
+  record.blobBlockedReason = blob.blockedReason;
+  await saveRecord(uploadId, record);
+  return { verdict: 'rated' as const, blockedReason: blob.blockedReason };
+}
+
 async function decide(uploadId: string, record: SearchUploadRecord, isModerator: boolean) {
+  if (record.refused)
+    return { scan: record.scan, decision: { verdict: 'refused' as const, reason: record.refused } };
   const scan = await scanFor(uploadId, record);
   const blob =
-    scan.state === 'done' ? await readBlobState(record.blobId) : { verdict: 'pending' as const };
-  const decision = searchUploadVerdict(
-    scan,
-    blob.verdict === 'rated'
-      ? { verdict: 'rated', blockedReason: blob.blockedReason }
-      : { verdict: 'pending' },
-    {
-      isModerator,
-      faceAnimeMin: searchUploadFaceAnimeMin(),
-      timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
-    }
-  );
+    scan.state === 'done' ? await blobFor(uploadId, record) : { verdict: 'pending' as const };
+  const decision = searchUploadVerdict(scan, blob, {
+    isModerator,
+    faceAnimeMin: searchUploadFaceAnimeMin(),
+    timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
+  });
   if (decision.verdict === 'refused') {
+    // The face rule depends on the viewer's moderator view; every other refusal is the image's.
+    if (decision.reason !== 'faces') {
+      record.refused = decision.reason;
+      await saveRecord(uploadId, record);
+    }
+    await releaseBusy(uploadId, record.userId);
     countSearchUpload('refused');
     logToAxiom({
       type: 'info',
@@ -171,6 +234,7 @@ async function decide(uploadId: string, record: SearchUploadRecord, isModerator:
       userId: record.userId,
       workflowId: record.workflowId,
       reason: decision.reason,
+      payload: { sourceKind: record.source.kind, sourceId: String(record.source.id) },
     });
   }
   return { scan, decision };
@@ -206,10 +270,10 @@ export async function resolveSearchUploadAnchor({
   isModerator: boolean;
 }) {
   const record = await ownedUpload(userId, uploadId);
-  if (uploadedSourceBlobId(url) !== record.blobId)
+  if (uploadedSourceBlobId(url) !== record.blobId || hashUrl(url) !== record.urlHash)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'That is not the uploaded image.' });
   const { scan, decision } = await decide(uploadId, record, isModerator);
-  if (decision.verdict !== 'ready' || scan.state !== 'done')
+  if (decision.verdict !== 'ready' || scan?.state !== 'done')
     throw new TRPCError({
       code: decision.verdict === 'pending' ? 'PRECONDITION_FAILED' : 'FORBIDDEN',
       message:

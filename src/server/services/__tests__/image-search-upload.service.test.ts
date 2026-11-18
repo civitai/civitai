@@ -3,6 +3,7 @@ import type * as RateLimitBucket from '~/server/utils/rate-limit-bucket';
 import { isFailClosedRateLimitScope } from '~/server/utils/rate-limit-bucket';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlobRatings from '~/server/services/orchestrator/blobRatings';
 import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
@@ -36,6 +37,7 @@ import {
   SEARCH_UPLOAD_GLOBAL_DAILY_CAP,
   SEARCH_UPLOAD_REFUSED_MESSAGE,
   SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
+  SEARCH_UPLOAD_SOURCE_MESSAGE,
   SEARCH_UPLOAD_TTL_MS,
 } from '~/server/services/image-search-upload.service';
 
@@ -47,7 +49,16 @@ beforeEach(() => {
   redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
     store.set(key, value);
   });
+  dbMock.dbRead.image.findUnique.mockResolvedValue({ id: 9 } as never);
   redisMock.redis.exists.mockImplementation(async (key: string) => (store.has(key) ? 1 : 0));
+  redisMock.redis.get.mockImplementation(async (key: string) => store.get(key) ?? null);
+  redisMock.redis.set.mockImplementation(
+    async (key: string, value: unknown, opts?: { NX?: boolean }) => {
+      if (opts?.NX && store.has(key)) return null;
+      store.set(key, value);
+      return 'OK';
+    }
+  );
   redisMock.redis.del.mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0));
 });
 
@@ -87,6 +98,7 @@ describe('the global daily upload cap', () => {
 });
 
 const BLOB_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/blob-1';
+const SOURCE = { kind: 'image' as const, id: 9 };
 const scanned = (over: Record<string, unknown> = {}) => ({
   status: 'succeeded',
   steps: [
@@ -104,11 +116,35 @@ const scanned = (over: Record<string, unknown> = {}) => ({
 
 describe('preparing a search upload', () => {
   const prepare = (url = BLOB_URL, userId = 5) =>
-    prepareSearchUpload({ userId, url, req: {} as never });
+    prepareSearchUpload({ userId, url, source: SOURCE, req: {} as never });
 
   beforeEach(() => {
     h.claim.mockReset().mockResolvedValue(async () => undefined);
     orch.submitSearchUploadScan.mockReset().mockResolvedValue('wf-1');
+  });
+
+  it('refuses an upload with no source, or a source that does not exist, before anything else', async () => {
+    await expect(
+      prepareSearchUpload({ userId: 5, url: BLOB_URL, source: undefined, req: {} as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: SEARCH_UPLOAD_SOURCE_MESSAGE });
+    dbMock.dbRead.image.findUnique.mockResolvedValue(null);
+    await expect(prepare()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbRead.image.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 9 } })
+    );
+    expect(h.claim).not.toHaveBeenCalled();
+    expect(orch.submitSearchUploadScan).not.toHaveBeenCalled();
+  });
+
+  it('records the source on the upload; a case is taken by its reference', async () => {
+    const { uploadId } = await prepareSearchUpload({
+      userId: 5,
+      url: BLOB_URL,
+      source: { kind: 'case', id: 'TD-26-ABC123' },
+      req: {} as never,
+    });
+    const record = [...store.entries()].find(([key]) => key.endsWith(`:${uploadId}`))?.[1];
+    expect(record).toMatchObject({ source: { kind: 'case', id: 'TD-26-ABC123' } });
   });
 
   it('refuses a url that is not an uploaded blob before taking a slot', async () => {
@@ -124,6 +160,7 @@ describe('preparing a search upload', () => {
     expect(orch.submitSearchUploadScan).toHaveBeenCalledWith({ blobUrl: BLOB_URL });
     const record = [...store.entries()].find(([key]) => key.endsWith(`:${uploadId}`))?.[1];
     expect(record).toMatchObject({ userId: 5, blobId: 'blob-1', workflowId: 'wf-1' });
+    expect((record as { urlHash: string }).urlHash).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify([...store.values()])).not.toContain('https://');
     // Expiring with the upload.
     expect(redisMock.redis.packed.set).toHaveBeenCalledWith(
@@ -157,10 +194,25 @@ describe('preparing a search upload', () => {
     expect(orch.submitSearchUploadScan).not.toHaveBeenCalled();
   });
 
-  it('fails, keeping nothing, when the scan cannot be submitted', async () => {
+  it('fails, keeping nothing and leaving the viewer free, when the scan cannot be submitted', async () => {
     orch.submitSearchUploadScan.mockResolvedValue(undefined);
     await expect(prepare()).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
     expect(store.size).toBe(0);
+  });
+
+  it('leaves the viewer free when the cap refuses', async () => {
+    h.claim.mockRejectedValue(Object.assign(new Error('full'), { code: 'TOO_MANY_REQUESTS' }));
+    await expect(prepare()).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
+    expect(store.size).toBe(0);
+  });
+
+  it('lets only one of two uploads at once through', async () => {
+    const results = await Promise.allSettled([
+      prepare(),
+      prepare('https://orchestration.civitai.com/v2/consumer/blobs/blob-2'),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(orch.submitSearchUploadScan).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -184,7 +236,12 @@ describe('search upload status and search anchor', () => {
       blockedReason: null,
       location: null,
     });
-    ({ uploadId } = await prepareSearchUpload({ userId: 5, url: BLOB_URL, req: {} as never }));
+    ({ uploadId } = await prepareSearchUpload({
+      userId: 5,
+      url: BLOB_URL,
+      source: SOURCE,
+      req: {} as never,
+    }));
   });
 
   it("gives a passed upload's level and its own blob url, read from its workflow", async () => {
@@ -207,10 +264,33 @@ describe('search upload status and search anchor', () => {
     await expect(status()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
-  it('refuses an anchor whose url is not the uploaded blob', async () => {
+  it('refuses an anchor whose url is not the uploaded blob, or not the url that was scanned', async () => {
     await expect(
       anchor(false, 'https://orchestration.civitai.com/v2/consumer/blobs/blob-2')
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(anchor(false, `${BLOB_URL}?v=2`)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('keeps a timed-out refusal even when the scan later succeeds', async () => {
+    wf.getWorkflow.mockResolvedValue({ status: 'processing', steps: [] });
+    vi.useFakeTimers({ now: Date.now() + SEARCH_UPLOAD_SCAN_TIMEOUT_MS + 1000 });
+    await expect(status(true)).resolves.toMatchObject({ status: 'refused' });
+    wf.getWorkflow.mockResolvedValue(scanned());
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('keeps a passed blob verdict, so a later failed read does not stop the search', async () => {
+    await anchor();
+    blob.readBlobState.mockResolvedValue({ verdict: 'pending' });
+    await expect(anchor()).resolves.toMatchObject({ nsfwLevel: 1 });
+    expect(blob.readBlobState).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not free a newer upload's busy hold when an older scan ends", async () => {
+    const busyKey = [...store.keys()].find((k) => k.includes('search-upload-pending'))!;
+    store.set(busyKey, 'a-newer-upload');
+    await status();
+    expect(store.get(busyKey)).toBe('a-newer-upload');
   });
 
   it('waits while the scan is running', async () => {
@@ -238,6 +318,16 @@ describe('search upload status and search anchor', () => {
       });
     }
   );
+
+  it('refuses a blob the orchestrator refused, for a moderator too', async () => {
+    blob.readBlobState.mockResolvedValue({
+      verdict: 'rated',
+      nsfwLevel: 'pg',
+      blockedReason: 'refused',
+      location: null,
+    });
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
 
   it('refuses a moderator a minor flag, with only the generic message', async () => {
     wf.getWorkflow.mockResolvedValue(
@@ -269,6 +359,7 @@ describe('search upload status and search anchor', () => {
         userId: 5,
         workflowId: 'wf-1',
         reason: 'scan-failed',
+        payload: { sourceKind: 'image', sourceId: '9' },
       })
     );
     expect(JSON.stringify(vi.mocked(logToAxiom).mock.calls)).not.toContain('blobs/');
@@ -280,6 +371,7 @@ describe('search upload status and search anchor', () => {
       prepareSearchUpload({
         userId: 5,
         url: 'https://orchestration.civitai.com/v2/consumer/blobs/blob-2',
+        source: SOURCE,
         req: {} as never,
       })
     ).resolves.toMatchObject({ uploadId: expect.any(String) });

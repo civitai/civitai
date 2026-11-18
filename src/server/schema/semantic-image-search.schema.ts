@@ -37,7 +37,21 @@ export const semanticImageSearchSchema = baseQuerySchema
   })
   .refine((x) => !!x.query || !!x.imageId, { message: 'Enter a query' });
 
-export const prepareImageSearchUploadSchema = z.object({ url: z.string().max(2048) });
+/** A moderator case's public reference (apps/moderator `PUBLIC_REF_PATTERN`). */
+const CASE_REF_PATTERN = /^TD-\d{2}-[0-9A-HJKMNP-TV-Z]{6}$/;
+/** The site item a search upload starts from: required, and recorded with the upload. */
+export const searchUploadSourceSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.enum(['image', 'post', 'modelVersion']),
+    id: z.number().int().positive(),
+  }),
+  z.object({ kind: z.literal('case'), id: z.string().regex(CASE_REF_PATTERN) }),
+]);
+export type SearchUploadSource = z.infer<typeof searchUploadSourceSchema>;
+export const prepareImageSearchUploadSchema = z.object({
+  url: z.string().max(2048),
+  source: searchUploadSourceSchema,
+});
 export const imageSearchUploadStatusSchema = z.object({ uploadId: z.string().uuid() });
 export const imageSearchUploadSearchSchema = baseQuerySchema.extend({
   uploadId: z.string().uuid(),
