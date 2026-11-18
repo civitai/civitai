@@ -45,6 +45,7 @@ if (warning) log(warning);
 const nextEnv = { ...process.env };
 let feedGoProc = null;
 let feedGoTarget = null; // { host, port } while healthy
+let healthy = false;
 let proxy = null;
 let shuttingDown = false;
 
@@ -136,7 +137,6 @@ async function startFeedGo(port) {
   watchHealth(internalPort, { host: '127.0.0.1', port: addrPort }, label);
 }
 
-let healthy = false;
 function setHealthy(next, why, target, label) {
   if (next === healthy) return;
   healthy = next;
