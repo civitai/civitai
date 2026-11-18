@@ -66,7 +66,8 @@ three are answered — each one changes what you do:
      those).
    - **Absent** → check `npm view @civitai/orchestration-client version` and bump to it in every
      `package.json` that lists the client (`git grep -l '"@civitai/orchestration-client"' -- '*package.json'`),
-     then `pnpm install`; a partial bump leaves two copies installed. If the
+     then `pnpm install`; `src/__tests__/orchestration-client-single-version.test.ts` fails on a
+     partial bump. If the
      type is still absent after bumping, the AI-Toolkit dispatch casts `ecosystem as any` so it works
      untyped — but say so to the user and prefer a typed SDK. **The `@civitai/orchestration-client` bump, when needed,
      is the answer to the brief's "does the client need updating?" — surface it explicitly.**

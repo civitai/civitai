@@ -63,7 +63,8 @@ git grep -l '"@civitai/orchestration-client"' -- '*package.json'
 pnpm install
 ```
 
-A bump in the root alone leaves two copies installed; bump every `package.json` that lists it.
+A bump in the root alone leaves two copies installed, and
+`src/__tests__/orchestration-client-single-version.test.ts` fails.
 
 Import new types from `@civitai/orchestration-client` rather than hand-rolling them.
 
