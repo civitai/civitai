@@ -9,6 +9,8 @@ export type NamedSampleRequest = {
   generated?: string[];
   /** Refused prompts, keyed by `refusedPromptHash` and the day they were refused. */
   refused?: { hash: string; date: string }[];
+  /** Review without hints: no scores, owner, date or origin on the rows, in a seeded shuffled order. */
+  blind?: { seed: number };
 };
 
 export type NamedSampleSummary = {
@@ -46,6 +48,8 @@ type ChRow = {
 // Values reach ClickHouse inside the SQL text, so anything not shaped like a hash or a day is refused
 // rather than escaped.
 function validate(req: NamedSampleRequest) {
+  if (req.blind && !Number.isSafeInteger(req.blind.seed))
+    throw new Error('blind.seed must be an integer');
   const generated = req.generated ?? [];
   const refused = req.refused ?? [];
   if (generated.length + refused.length > MAX_NAMED_SAMPLES) {
@@ -57,6 +61,23 @@ function validate(req: NamedSampleRequest) {
     if (!DAY.test(date)) throw new Error(`invalid date "${date}"`);
   }
   return { generated, refused };
+}
+
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  let s = seed >>> 0;
+  const next = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
 }
 
 export async function importNamedSamples(
@@ -86,20 +107,23 @@ export async function importNamedSamples(
       : [],
   ]);
 
+  const blind = req.blind;
   const toRow = (r: ChRow, source: string) => ({
     prompt_hash: r.promptHash,
-    source,
+    source: blind ? 'named' : source,
     batch: req.batch,
-    user_id: r.userId ?? null,
+    user_id: blind ? null : r.userId ?? null,
     positive_prompt: r.positivePrompt,
     negative_prompt: r.negativePrompt || null,
-    live_scores: r.scores ?? null,
-    prompt_created_at: new Date(`${r.promptCreatedAt.replace(' ', 'T')}Z`),
+    live_scores: blind ? null : r.scores ?? null,
+    prompt_created_at: blind ? null : new Date(`${r.promptCreatedAt.replace(' ', 'T')}Z`),
   });
-  const values = [
+  const rows = [
     ...generatedRows.map((r) => toRow(r, 'xguardPromptResults')),
     ...refusedRows.map((r) => toRow(r, 'prohibitedRequests')),
   ];
+  // Review order follows insertion order (sample id), which would otherwise group rows by origin.
+  const values = blind ? seededShuffle(rows, blind.seed) : rows;
 
   let inserted = 0;
   if (values.length) {

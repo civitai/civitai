@@ -26,6 +26,12 @@ export const POST = defineWebhookEndpoint({
       .describe(
         `Refused prompts: ${REFUSED_PROMPT_HASH_SQL} over default.prohibitedRequests, and the createdDate.`
       ),
+    blind: z
+      .object({ seed: z.number().int() })
+      .optional()
+      .describe(
+        'Store no scores, owner, date or origin, in a seeded shuffled order, for a blind review.'
+      ),
   }),
   returns: 'Counts inserted and already present, and every hash that was not found.',
   notes: [

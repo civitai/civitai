@@ -59,6 +59,20 @@ const rows = () =>
     .orderBy('source')
     .execute();
 
+const manyClickhouse = () =>
+  vi.fn(async (sql: string): Promise<any[]> => {
+    const ids = [...sql.matchAll(/IN \(([^)]*)\)/g)].pop()?.[1].split(',') ?? [];
+    const generated = sql.includes('orchestration.xguardPromptResults');
+    return ids.map((id) => ({
+      promptHash: id,
+      promptCreatedAt: '2026-11-15 08:00:00',
+      userId: 5,
+      positivePrompt: `p${id}`,
+      negativePrompt: `n${id}`,
+      ...(generated ? { scores: { CR: 0.5 } } : {}),
+    }));
+  });
+
 describe('importNamedSamples', () => {
   it("loads a named set from both sources, keeping the negative prompt and each row's origin", async () => {
     const query = fakeClickhouse();
@@ -142,5 +156,55 @@ describe('importNamedSamples', () => {
       importNamedSamples({ batch: 'review-1', generated }, { query, db })
     ).rejects.toThrow();
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it('blind: strips every field that could reveal where a row came from', async () => {
+    await importNamedSamples(
+      {
+        batch: 'review-1',
+        generated: ['1', '2'],
+        refused: [{ hash: '3', date: '2026-11-15' }],
+        blind: { seed: 7 },
+      },
+      { query: manyClickhouse(), db }
+    );
+    const stored = await db
+      .selectFrom('sample')
+      .select(['source', 'user_id', 'live_scores', 'prompt_created_at'])
+      .execute();
+    expect(stored).toHaveLength(3);
+    for (const row of stored) {
+      expect(row).toEqual({
+        source: 'named',
+        user_id: null,
+        live_scores: null,
+        prompt_created_at: null,
+      });
+    }
+  });
+
+  it('blind: stores rows in a seeded shuffle, the same for the same seed', async () => {
+    const req = (batch: string) => ({
+      batch,
+      generated: ['1', '2', '3'],
+      refused: ['4', '5', '6'].map((hash) => ({ hash, date: '2026-11-15' })),
+      blind: { seed: 20261118 },
+    });
+    await importNamedSamples(req('a'), { query: manyClickhouse(), db });
+    await importNamedSamples(req('b'), { query: manyClickhouse(), db });
+    const order = async (batch: string) =>
+      (
+        await db
+          .selectFrom('sample')
+          .select(sql<string>`prompt_hash::text`.as('h'))
+          .where('batch', '=', batch)
+          .orderBy('id')
+          .execute()
+      ).map((r) => r.h);
+
+    const a = await order('a');
+    expect(a).toEqual(await order('b'));
+    expect([...a].sort()).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(a).not.toEqual(['1', '2', '3', '4', '5', '6']);
   });
 });
