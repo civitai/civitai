@@ -66,5 +66,8 @@ describe('the unlock charged-not-released counter', () => {
     recordBlockUnlockChargedNotReleased(true);
     expect(await read('failed')).toBe(failed + 1);
     expect(await read('ok')).toBe(ok);
+    recordBlockUnlockChargedNotReleased(false);
+    expect(await read('ok')).toBe(ok + 1);
+    expect(await read('failed')).toBe(failed + 1);
   });
 });

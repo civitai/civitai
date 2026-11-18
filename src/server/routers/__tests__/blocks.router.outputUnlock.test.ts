@@ -357,7 +357,7 @@ describe('blocks.unlockOutput — the seam', () => {
     expectNoAuthorFee();
   });
 
-  it('🔴 not-released: the swap stands, the viewer is told why, nothing is counted', async () => {
+  it('🔴 not-released: the swap stands, the viewer is told why, no cap or fee is counted', async () => {
     // The orchestrator accepts the unlock, but its read-back still withholds the output.
     h.lift.mockImplementation(async () => ({ outcome: 'lifted' }));
     const before = await chargedNotReleased('ok');
@@ -369,6 +369,19 @@ describe('blocks.unlockOutput — the seam', () => {
     expect(store.get(consentKey())).toBe('400');
     expect(store.get(appCapKey())).toBe('900');
     expectNoAuthorFee();
+  });
+
+  it('🔴 a read-back that fails after the lift counts as failed, not ok', async () => {
+    h.lift.mockImplementation(async () => ({ outcome: 'lifted' }));
+    h.getWorkflow
+      .mockImplementationOnce(async () => workflow())
+      .mockImplementationOnce(async () => workflow())
+      .mockRejectedValueOnce(new Error('read-back unavailable'));
+    const [ok, failed] = [await chargedNotReleased('ok'), await chargedNotReleased('failed')];
+    const result = await unlock();
+    expect(result.outcome).toBe('not-released');
+    expect(await chargedNotReleased('failed')).toBe(failed + 1);
+    expect(await chargedNotReleased('ok')).toBe(ok);
   });
 
   it('a retry after the unlock calls the orchestrator no more', async () => {

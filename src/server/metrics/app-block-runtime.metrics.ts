@@ -1157,7 +1157,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const unlockChargedNotReleasedTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_unlock_charged_not_released_total',
-    'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the output was read back still restricted | failed = the read-back after the lift failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the read-back after the lift succeeded and the output was not released | failed = the read-back itself failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
     ['read_back']
   );
 
