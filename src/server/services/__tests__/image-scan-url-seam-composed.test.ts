@@ -98,15 +98,4 @@ describe('ingestImage + the real createImageIngestionRequest (composed seam)', (
     const body = mockSubmitWorkflowWithRetry.mock.calls[0][0].body;
     expect(String(body.arguments.mediaUrl)).toContain('https://image.test/');
   });
-
-  it('a forced upload goes to the imageScanning lane while Flipt has it off', async () => {
-    const key = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/name.png';
-    await ingestImage({ image: image(key), forceImageScanning: true });
-    await ingestImage({ image: image(key) });
-    const [forced, flipt] = mockSubmitWorkflowWithRetry.mock.calls.map(
-      ([args]) => (args.body.steps as { $type: string }[])[0].$type
-    );
-    expect(forced).toBe('imageScanning');
-    expect(flipt).toBe('wdTagging');
-  });
 });

@@ -258,11 +258,6 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     spreads: [],
     serverColumns: [],
   },
-  'src/server/services/image-search-upload.service.ts#prepareSearchUpload': {
-    calls: 1,
-    spreads: ['staged.metadata'],
-    serverColumns: [],
-  },
   'src/server/services/blocks/listing-meta.service.ts#ingestListingAssetFromUrl': {
     calls: 1,
     spreads: [],

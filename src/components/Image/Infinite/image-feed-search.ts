@@ -138,6 +138,9 @@ export function searchPeriodChange({
     : { savedPeriod: undefined };
 }
 
+/** The `?excludeOwn=` toggle of a "more like this" search. */
+export const parseExcludeOwn = (value: unknown) => value === 'true';
+
 /** The `?similarTo=` image id, when it is one. */
 export function parseSimilarTo(value: unknown) {
   const id = Number(first(value as string | string[] | undefined));
@@ -154,10 +157,13 @@ export function toSemanticImageSearchInput({
   filters,
   browsingLevel,
   sort,
+  excludeOwn,
   now,
 }: {
   query?: string;
   imageId?: number;
+  /** "More like this" without the viewer's own images. */
+  excludeOwn?: boolean;
   filters: FeedFilters;
   browsingLevel: number;
   sort?: ImageFeedSearchSort;
@@ -166,6 +172,7 @@ export function toSemanticImageSearchInput({
   return {
     query: query || undefined,
     imageId: query ? undefined : imageId,
+    excludeOwn: !query && imageId && excludeOwn ? true : undefined,
     browsingLevel,
     tagIds: filters.tags?.length ? filters.tags : undefined,
     excludedTagIds: filters.excludedTagIds?.length ? filters.excludedTagIds : undefined,

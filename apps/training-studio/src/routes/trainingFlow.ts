@@ -258,6 +258,20 @@ export function recommendedCardFor(
   );
 }
 
+/** The card a Kohya run starts on for a LoRA type + media: the recommended card when Kohya trains it,
+ *  else the first available Kohya card. Undefined when no Kohya card for the media is available. */
+export function kohyaSeedCard(
+  loraTypeId: string,
+  media: Media,
+  enabledFlags: ReadonlySet<string>,
+  status?: TrainingServiceStatus | null
+): ModelCard | undefined {
+  return [
+    recommendedCardFor(loraTypeId, media, enabledFlags),
+    ...cardsForMedia(media, enabledFlags),
+  ].find((c) => cardSupportsKohya(c) && !cardUnavailability(c, enabledFlags, status));
+}
+
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
 export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature' | 'failed';
@@ -1032,17 +1046,9 @@ function num(value: NumericInput, fallback: NumericInput): number {
   return Number.isFinite(n) ? n : Number(fallback);
 }
 
-/** One confirm covers every run of a sweep: they train on the same dataset. */
-export function stampMature(
-  runs: TrainingRunPayload[],
-  matureAck: boolean,
-  matureCount: number
-): TrainingRunPayload[] {
-  return runs.map((run) => ({
-    ...run,
-    ...(matureAck ? { matureAck: true } : {}),
-    meta: { ...run.meta, matureCount },
-  }));
+/** Every run of a sweep trains on the same dataset, so each carries its mature count. */
+export function stampMature(runs: TrainingRunPayload[], matureCount: number): TrainingRunPayload[] {
+  return runs.map((run) => ({ ...run, meta: { ...run.meta, matureCount } }));
 }
 
 export function runTrainingParams(

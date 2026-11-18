@@ -35,6 +35,8 @@ import {
   paramHelpText,
   promptHasTrigger,
   recommendedCardFor,
+  kohyaSeedCard,
+  cardSupportsKohya,
   runExtraCapabilities,
   runEngine,
   runParamsKey,
@@ -639,18 +641,12 @@ describe('stampMature', () => {
     typeof stampMature
   >[0][number];
 
-  it('puts one confirm and the mature count on every run of a sweep', () => {
-    const out = stampMature([run, { ...run, meta: { name: 'b' } }], true, 3);
-    expect(out.map((r) => [r.matureAck, r.meta.matureCount, r.meta.name])).toEqual([
-      [true, 3, 'a'],
-      [true, 3, 'b'],
+  it('puts the mature count on every run of a sweep', () => {
+    const out = stampMature([run, { ...run, meta: { name: 'b' } }], 3);
+    expect(out.map((r) => [r.meta.matureCount, r.meta.name])).toEqual([
+      [3, 'a'],
+      [3, 'b'],
     ]);
-  });
-
-  it('sends no confirm when the user gave none, but still stamps the count', () => {
-    const [out] = stampMature([run], false, 2);
-    expect('matureAck' in out!).toBe(false);
-    expect(out!.meta.matureCount).toBe(2);
   });
 });
 
@@ -885,6 +881,20 @@ describe('a model that is down, in a shared ecosystem or a multi-version card', 
 });
 
 describe('Kohya engine selection and options', () => {
+  it('starts a Kohya run on the first available Kohya model, and none on media Kohya lacks', () => {
+    const none = new Set<string>();
+    const first = kohyaSeedCard('character', 'image', none)!;
+    expect(cardSupportsKohya(first)).toBe(true);
+    const blocked = parseServiceStatus({
+      blockedModels: first.versions.map((v) => v.key),
+      blockedModelReasons: {},
+    });
+    const next = kohyaSeedCard('character', 'image', none, blocked)!;
+    expect(next.type).not.toBe(first.type);
+    expect(cardSupportsKohya(next)).toBe(true);
+    expect(kohyaSeedCard('character', 'video', none)).toBeUndefined();
+  });
+
   it('keeps AI Toolkit as default and isolates parameter drafts by engine', () => {
     const original = run('sdxl');
     const kohya = { ...original, engine: 'kohya' };

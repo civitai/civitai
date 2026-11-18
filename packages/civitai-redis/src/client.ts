@@ -3236,6 +3236,18 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
   },
+  TRAINING: {
+    // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
+    // key :<workflowId>. Only a workflow with this record can give items back; lost, they stay counted.
+    STUDIO_AUTO_LABEL_SUBMITTED: 'training:studio-auto-label-submitted',
+    // Studio auto-label items given back to a user's daily quota, key :<userId>:<yyyy-mm-dd>; capped
+    // at the daily limit so failing items can't run unbounded.
+    STUDIO_AUTO_LABEL_RELEASED_DAILY: 'training:studio-auto-label-released-daily',
+    // Steps of a Studio auto-label workflow whose failure already gave its item back to the daily
+    // quota (set of step names), key :<workflowId>. Lost early, a later poll gives those items
+    // back again: at most one workflow's failed items, and only to today's quota.
+    STUDIO_AUTO_LABEL_RELEASED: 'training:studio-auto-label-released',
+  },
   OAUTH: {
     AUTHORIZATION_CODES: 'packed:oauth:authorization-codes',
     DEVICE_CODES: 'packed:oauth:device-codes',
@@ -3342,6 +3354,16 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCK_MEDIA_BLOB_STATE: 'packed:caches:block-media-blob-state',
     // `<prefix>:<blobId>` — set after a failed, timed-out or pending verdict read (see `BLOB_STATE_BACKOFF_SECONDS`).
     BLOCK_MEDIA_BLOB_STATE_BACKOFF: 'packed:caches:block-media-blob-state-backoff',
+    // `<prefix>:<uploadId>` — a search-by-image upload: owner, blob id and scan workflow id, for an
+    // hour. See image-search-upload.service.ts.
+    SEARCH_UPLOAD: 'packed:caches:search-upload',
+    // `<prefix>:<userId>:<blobId>` — the viewer's upload of that blob, so a repeat reuses its scan.
+    SEARCH_UPLOAD_REF: 'packed:caches:search-upload-ref',
+    // `<prefix>:<userId>` — set while the viewer's last upload is still being scanned.
+    SEARCH_UPLOAD_PENDING: 'packed:caches:search-upload-pending',
+    // `<prefix>:<userId>` — held while one of the viewer's upload searches runs, so the daily count is
+    // never read and written by two at once.
+    SEARCH_UPLOAD_SEARCHING: 'packed:caches:search-upload-searching',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
