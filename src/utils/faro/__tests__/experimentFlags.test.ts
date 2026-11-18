@@ -25,6 +25,23 @@ describe('buildRumExperimentAttributes', () => {
     expect(buildRumExperimentAttributes({}).exp_model_page_defer_below_fold).toBe('false');
   });
 
+  it('carries both feed-go transport cohorts under their exact Loki field names', () => {
+    // Wire strings: a Go-vs-Node RUM comparison splits on
+    // `session_attr_exp_feed_go_transport` / `session_attr_exp_feed_go_transport_model_get_all`.
+    const on = buildRumExperimentAttributes({
+      feedGoTransport: true,
+      feedGoTransportModelGetAll: false,
+    });
+    expect(on.exp_feed_go_transport).toBe('true');
+    expect(on.exp_feed_go_transport_model_get_all).toBe('false');
+    const other = buildRumExperimentAttributes({
+      feedGoTransport: false,
+      feedGoTransportModelGetAll: true,
+    });
+    expect(other.exp_feed_go_transport).toBe('false');
+    expect(other.exp_feed_go_transport_model_get_all).toBe('true');
+  });
+
   it('treats a missing flag as off ("false"), never undefined/absent', () => {
     const attrs = buildRumExperimentAttributes({});
     expect(attrs.exp_gen_tab_defer_view).toBe('false');
