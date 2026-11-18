@@ -267,7 +267,8 @@ export async function startAgentReview(
 
   // (e) Mint the per-review callback bearer bound to this publishRequestId. NOT
   // the fleet-wide BLOCK_BUILD_CALLBACK_SECRET — that must never reach the agent
-  // pod. Short-TTL + review-scoped: a leaked token can only touch THIS report.
+  // pod. Short-TTL + request-scoped: a leaked token can only write a still-`running`
+  // report of THIS publish request (the token binds the request, not one run's row).
   const { signAgentCallbackToken, deriveAgentHooksToken } = await import('./review-session');
   const callbackToken = signAgentCallbackToken({ publishRequestId });
   // Derive the per-review agent GATEWAY secret (no storage / no migration): the

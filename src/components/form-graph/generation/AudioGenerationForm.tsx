@@ -137,6 +137,18 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={audioHub}
+        name="instrumental"
+        render={({ value, meta, onChange }) => (
+          <Checkbox
+            label={meta?.label ?? 'Instrumental'}
+            description={meta?.description}
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
+      <Controller
+        graph={audioHub}
         name="soniloOperation"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">

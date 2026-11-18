@@ -61,6 +61,7 @@ import {
   clientAddress,
   peerAddress,
   regionRestricted,
+  subscriptionRegionLine,
 } from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
@@ -436,6 +437,8 @@ export function createGrpcServer(
     limiter?: SubscriptionLimiter;
     /** As for HTTP: the site's region rule unless replaced. */
     regionRestricted?: (origin: RequestOrigin) => boolean;
+    /** As for HTTP: called with one line per subscription once its token is accepted. */
+    onRegion?: (line: string) => void;
   } = {}
 ): grpc.Server {
   const subscribe = createSubscriber(adapter);
@@ -467,6 +470,7 @@ export function createGrpcServer(
             regionRestricted: () => restricted(origin),
           });
           slot?.claim(principal.subject);
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted));
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),

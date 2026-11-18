@@ -18,7 +18,6 @@
     previous,
     badge = null,
     message,
-    submitting,
     submit,
   }: {
     rank: string;
@@ -30,7 +29,6 @@
     /** The rank's badge image; without one the crest shows. */
     badge?: string | null;
     message: string | null;
-    submitting: boolean;
     submit: SubmitFunction;
   } = $props();
 
@@ -39,9 +37,8 @@
     goldMultiplier === undefined ? [] : rankUpChanges(previous, { goldMultiplier })
   );
   onMount(() => sound.play(rank === 'Knight' ? 'knighting-ring' : 'rankup'));
-  const close = () => {
-    if (!submitting) form?.requestSubmit();
-  };
+  // The dialog is gone as soon as its form is submitted, so a second close cannot post twice.
+  const close = () => form?.requestSubmit();
 </script>
 
 <div class="ov-backdrop">
@@ -79,7 +76,7 @@
         <p class="notice" role="alert">{message}</p>
       {/if}
       <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
-        <button type="submit" class="ov-primary" disabled={submitting} data-autofocus>Onward</button>
+        <button type="submit" class="ov-primary" data-autofocus>Onward</button>
       </form>
     </section>
   </div>

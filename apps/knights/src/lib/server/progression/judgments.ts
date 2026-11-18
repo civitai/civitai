@@ -25,6 +25,7 @@ export const JUDGMENT_FILTERS = [
   'pending',
   'inconclusive',
   'forfeited',
+  'smites',
 ] as const;
 export type JudgmentFilter = (typeof JUDGMENT_FILTERS)[number];
 
@@ -44,6 +45,8 @@ export type Judgment = {
   verdictLabel: string | null;
   /** A skill check answered one level off its known answer: inconclusive, no reward and no penalty. */
   close: boolean;
+  /** A failed skill check that cost the player a smite. */
+  smite: boolean;
   status: JudgmentStatus;
   xp: number;
   gold: number;
@@ -66,7 +69,7 @@ export const statusOf = (verdict: string): JudgmentStatus =>
 export const forfeitedByReset = (castAt: Date, startAt: Date | null, status: JudgmentStatus) =>
   startAt !== null && castAt < startAt && (status === 'pending' || status === 'correct');
 
-/** The status filter as SQL over the columns `statusOf` and `forfeitedByReset` read; keep the three in step. */
+/** The filter as SQL over the columns `statusOf`, `forfeitedByReset` and `smite` read; keep them in step. */
 function filterClause(filter: Exclude<JudgmentFilter, 'all'>) {
   const unsettled = sql<SqlBool>`(j."settledAt" IS NULL OR j."verdict" NOT IN ('correct', 'failed', 'inconclusive'))`;
   const isCorrect = sql<SqlBool>`(j."settledAt" IS NOT NULL AND j."verdict" = 'correct')`;
@@ -82,6 +85,8 @@ function filterClause(filter: Exclude<JudgmentFilter, 'all'>) {
       return sql<SqlBool>`(j."settledAt" IS NOT NULL AND j."verdict" = 'failed')`;
     case 'inconclusive':
       return sql<SqlBool>`(j."settledAt" IS NOT NULL AND j."verdict" = 'inconclusive')`;
+    case 'smites':
+      return sql<SqlBool>`j."smite"`;
   }
 }
 
@@ -116,6 +121,7 @@ export async function listJudgments(
       sql<number>`COALESCE(v.gold, 0)`.as('gold'),
       'v.createdAt',
       sql<boolean>`v."consequence" IS NOT DISTINCT FROM 'close'`.as('close'),
+      sql<boolean>`v."consequence" IS NOT DISTINCT FROM 'smite'`.as('smite'),
       'pl.startAt',
       'q.prompt',
       'it.prompt as itemPrompt',
@@ -152,6 +158,7 @@ export async function listJudgments(
       sql<number>`0`.as('gold'),
       'a.createdAt',
       sql<boolean>`false`.as('close'),
+      sql<boolean>`false`.as('smite'),
       sql<Date | null>`NULL`.as('startAt'),
       'q.prompt',
       ownPairPrompt.as('itemPrompt'),
@@ -194,6 +201,7 @@ export async function listJudgments(
         answerLabel: labelOf(r.answer),
         verdictLabel: (status === 'wrong' || r.close) && r.resolved ? labelOf(r.resolved) : null,
         close: r.close,
+        smite: r.smite,
         status: forfeited ? 'forfeited' : status,
         xp: r.xp,
         gold: forfeited ? 0 : r.gold,

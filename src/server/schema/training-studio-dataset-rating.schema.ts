@@ -20,4 +20,6 @@ export const studioDatasetRatingSchema = z.object({
     .refine((items) => new Set(items.map((i) => i.key)).size === items.length, {
       message: 'Duplicate key in batch',
     }),
+  /** The level the caller will cache the verdicts under. */
+  matureLevel: z.number().int().min(1).max(4),
 });

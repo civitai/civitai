@@ -2,12 +2,12 @@ import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { optionFallback, aspectRatioDef, img2imgImages, SEED } from '../defs';
-import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
+import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
  * MiniMax H3 Image on our own comfy workers. The engine takes width and height (multiples of
  * 32, 4 to 20 MP), so resolution and aspect ratio pick a size from the table below. No negative
- * prompt and no prompt expansion; LoRAs and checkpoint overrides are not offered yet.
+ * prompt and no prompt expansion.
  */
 
 export const minimaxH3ImageVersionId = 3463368;
@@ -51,10 +51,10 @@ export const minimaxH3Image = defineGraph<FamilyExt>({ scope: familyScope })
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
-      modelLocked: true,
       defaultModelId: minimaxH3ImageVersionId,
     })
   )
+  .field('resources', familyResources)
   .use(promptOnlyTextBlock)
   .field('resolution', {
     input: z.enum(minimaxH3ImageResolutionOptions).optional(),
