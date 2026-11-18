@@ -68,6 +68,11 @@ const BASELINE: Record<string, string[]> = {
   'apps/moderator/src/lib/server/__tests__/ticket-lora-runs.test.ts': ['99999'],
   'apps/moderator/src/lib/server/__tests__/user-workflows-by-id.test.ts': ['20260818'],
   'apps/moderator/src/lib/server/assistant/__tests__/tools.test.ts': ['1795314120'],
+  // maxOpen item caps (#9503), not ids.
+  'apps/moderator/src/lib/server/knights/__tests__/sources-config.pglite.test.ts': [
+    '18300',
+    '1000001',
+  ],
   'apps/moderator/src/lib/server/text-scan-lab/__tests__/try.test.ts': ['600001'],
   'apps/moderator/src/routes/admin/__tests__/csam-flag-release-actions.test.ts': ['1234567890'],
   'apps/moderator/src/routes/admin/unpublished-version-posts/__tests__/actions.test.ts': [
@@ -76,6 +81,7 @@ const BASELINE: Record<string, string[]> = {
   'apps/moderator/src/routes/api/user-prompt-scans/[userId]/__tests__/user-prompt-scans-endpoint.test.ts':
     ['36500'],
   'apps/moderator/src/routes/images/__tests__/scan-label-vote-action.test.ts': ['402026'],
+  'apps/moderator/src/routes/knights-of-new-order/config/__tests__/config-draft.test.ts': ['18300'],
   'apps/moderator/src/routes/users/scam-restrictions/__tests__/load.test.ts': ['12345'],
   'src/__tests__/pages/api/mod/held-media.test.ts': ['999999999'],
   'src/__tests__/pages/api/v1/model-versions/mini-moderation-block.test.ts': ['131072'],
