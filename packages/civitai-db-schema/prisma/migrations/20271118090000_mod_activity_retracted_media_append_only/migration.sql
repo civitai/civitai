@@ -1,8 +1,9 @@
 -- Adds the "retractedMedia:view" rows of ModActivity to the append-only rules that already cover the
 -- "reportMedia:*" rows: they cannot be updated or deleted, no other row can be updated into one, and
 -- they are stamped with the database's UTC time as they are inserted, whatever "createdAt" the
--- insert names. Replaces the two functions and the stamp trigger from
--- 20261209120000_mod_activity_report_media_append_only; the guard and truncate triggers are unchanged.
+-- insert names. Replaces mod_activity_guard_report_media() and the "ModActivity_stamp_db_time"
+-- trigger from 20261209120000_mod_activity_report_media_append_only; the stamp function and the
+-- guard and truncate triggers are unchanged.
 --
 -- HAND-APPLIED. Apply as the owner of "ModActivity". One transaction: CREATE OR REPLACE TRIGGER
 -- takes a SHARE ROW EXCLUSIVE lock, so a lock timeout rolls the whole file back and leaves the
