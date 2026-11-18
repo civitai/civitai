@@ -100,15 +100,9 @@ type Answer struct {
 	Trivial bool
 }
 
-// Serve is getModelsInfiniteHandler for the supported subset: the browsing level resolved, then
-// getModelsFeed: the official-checkpoint pin, and the loop of up to three
-// getModelsWithImagesAndModelVersions pages until `limit` items.
-//
-// The pin (Hot with a base-model filter; a text query falls back before this): getOfficialModelIds'
-// Checkpoint ids, in its order. With no cursor they are fetched first, as one page of the same query
-// restricted to them (`onlyModelIds`, take = their count, every other filter applied), and lead the
-// answer; every page of the loop drops them (`excludeModelIds`), so a cursor never re-emits them. The
-// pinned page's cursor is not read, and its items do not count towards `limit`.
+// Serve is getModelsInfiniteHandler for the supported subset, then getModelsFeed. The
+// official-checkpoint pin (Hot with a base-model filter) leads the first page only; pinned items do
+// not count towards `limit` and are excluded from every loop page, so a cursor never re-emits them.
 func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	in := req.Input
 	level, err := resolveLevel(in, req)

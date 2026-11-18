@@ -13,7 +13,7 @@ import { stripComments } from '../../../../../test/strip-comments';
  *
  * `server-schema.ts` names `civitai-apps` as the default of APPS_KUBE_NAMESPACE, which is a
  * Kubernetes namespace, not a Forgejo org. `appFeedbackInbox.ts` quotes two org names inside
- * user-facing help text (a `git fetch` instruction), which addresses nothing. Update this ledger in the same commit as any change to the set.
+ * user-facing help text (a `git fetch` instruction), which addresses nothing.
  */
 const LITERAL_LEDGER: Record<string, string[]> = {
   'src/server/services/blocks/forgejo-orgs.ts': [

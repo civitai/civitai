@@ -352,6 +352,7 @@ export async function loadImageForScan(imageId: number) {
       ingestion: true,
       blockedFor: true,
       needsReview: true,
+      minor: true,
     },
   });
 
@@ -1216,11 +1217,13 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
-    // The scan writes "minor", which no trigger watches.
-    await queueArticlesAndComicsForImages([image.id]);
+    // The scan writes "minor", which no trigger watches. A changed flag requeues the articles and
+    // comics through minorImageIds; otherwise they are queued here.
+    const minorChanged = !!outcome.audit && !!outcome.audit.minor !== !!image.minor;
+    if (!minorChanged) await queueArticlesAndComicsForImages([image.id]);
     await queueModelsForImageChildTagChanges({
       levelImageIds: [image.id],
-      ...(outcome.audit?.minor && { minorImageIds: [image.id] }),
+      ...(minorChanged && { minorImageIds: [image.id] }),
     });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.

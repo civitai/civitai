@@ -42,7 +42,10 @@ import {
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
   assertChatNameAllowed,
+  canSetOwnChatStatus,
   createMessage,
+  joinChatMember,
+  signalJoined,
   maxUsersPerChat,
   resolveChatRecipients,
   signalChatMembersUpdated,
@@ -63,6 +66,7 @@ import { withSignals } from '~/server/signals/wrapper';
 import {
   throwAuthorizationError,
   throwBadRequestError,
+  throwConflictError,
   throwDbError,
   throwInternalServerError,
   throwNotFoundError,
@@ -554,7 +558,7 @@ export const modifyUserHandler = async ({
     });
 
     if (!existing) {
-      throw throwBadRequestError(`Could not find chat member`);
+      throw throwNotFoundError(`Could not find chat member`);
     }
 
     const ownerMember = existing.chat.chatMembers.find((cm) => cm.isOwner);
@@ -574,6 +578,9 @@ export const modifyUserHandler = async ({
     } else {
       if (userId !== existing.userId) {
         throw throwBadRequestError(`Cannot modify chat status for another user`);
+      }
+      if (status && status !== existing.status && !canSetOwnChatStatus(existing.status, status)) {
+        throw throwBadRequestError(`Cannot change from ${existing.status} to ${status}`);
       }
     }
 
@@ -615,22 +622,60 @@ export const modifyUserHandler = async ({
 
     // TODO if a moderator rejoins, auto-rejoin other users
 
+    // Already there (a stale tab, a double click): nothing to write. Rewriting
+    // kickedAt or leftAt would also move the point a member's reads stop at.
+    if (status === existing.status) {
+      // primary: the row this request is about, read back as it stands
+      return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    }
+
+    if (status === ChatMemberStatus.Joined) {
+      const notice = await dbWrite.$transaction((tx) =>
+        joinChatMember(tx, {
+          chatId: existing.chat.id,
+          memberId: chatMemberId,
+          username: existing.user.username ?? `User ${existing.userId}`,
+          from: existing.status,
+        })
+      );
+      if (!notice) {
+        // primary: re-read after a lost compare-and-set
+        const now = await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+        // Joined by another tab or a send in between: what was asked for holds.
+        if (now.status === ChatMemberStatus.Joined) return now;
+        throw throwConflictError('This membership changed; reload and try again.');
+      }
+      await signalJoined({ chatId: existing.chat.id, userId: existing.userId, notice });
+      await signalChatMembersUpdated({ chatId: existing.chat.id, userIds: [existing.userId] });
+      // primary: returns the row this request just wrote
+      return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    }
+
     const extra = {
-      joinedAt: status === ChatMemberStatus.Joined ? new Date() : undefined,
       ignoredAt: status === ChatMemberStatus.Ignored ? new Date() : undefined,
       leftAt: status === ChatMemberStatus.Left ? new Date() : undefined,
       kickedAt: status === ChatMemberStatus.Kicked ? new Date() : undefined,
       pinnedAt: isPinned === undefined ? undefined : isPinned ? new Date() : null,
-      // Accepting is what ends a request; leaving the mark set would strand the
-      // conversation in Requests forever.
-      filteredAt: status === ChatMemberStatus.Joined ? null : undefined,
       ...deriveMuteColumns({ isMuted, notifyLevel }),
     };
 
-    const resp = await dbWrite.chatMember.update({
-      where: { id: chatMemberId },
-      data: { status, ...rest, ...extra },
-    });
+    // A status change applies only to the status it was decided against, so a
+    // concurrent change (a kick, a join) is never overwritten.
+    let resp;
+    if (status) {
+      const { count } = await dbWrite.chatMember.updateMany({
+        where: { id: chatMemberId, status: existing.status },
+        data: { status, ...extra },
+      });
+      if (count === 0) throw throwConflictError('This membership changed; reload and try again.');
+      // primary: returns the row this request just wrote
+      resp = await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    } else {
+      resp = await dbWrite.chatMember.update({
+        where: { id: chatMemberId },
+        data: { ...rest, ...extra },
+      });
+    }
 
     const statusChanged = !!status && status !== existing.status;
 
@@ -669,7 +714,7 @@ export const modifyUserHandler = async ({
       await withSignals(() =>
         outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
           timeoutMs: 10_000,
-          method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
+          method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
         })
@@ -680,11 +725,7 @@ export const modifyUserHandler = async ({
           chatId: existing.chat.id,
           contentType: ChatMessageType.Markdown,
           content: `${existing.user.username} ${
-            status === ChatMemberStatus.Joined
-              ? 'joined'
-              : status === ChatMemberStatus.Left
-              ? 'left'
-              : 'was kicked'
+            status === ChatMemberStatus.Left ? 'left' : 'was kicked'
           }`,
           userId: -1,
         });

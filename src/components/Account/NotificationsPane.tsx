@@ -23,6 +23,7 @@ import { NotificationTypeControl } from '~/components/Notifications/Notification
 import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
 import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
 import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { SystemEmailSettings } from '~/components/Notifications/SystemEmailSettings';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
@@ -196,6 +197,13 @@ export function NotificationsPane() {
           })}
         </div>
       )}
+
+      <SettingsSection
+        title="App review emails"
+        description="The on-site notice is always sent. These turn its email on or off."
+      >
+        <SystemEmailSettings />
+      </SettingsSection>
     </SettingsStack>
   );
 }
