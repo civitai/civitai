@@ -11,7 +11,6 @@ process.env.WEBHOOK_TOKEN = 'hook-token';
 process.env.CIVITAI_WEBHOOK_URL = 'https://civitai.example';
 
 const recordModActivity = vi.fn();
-const getWorkflow = vi.fn();
 const fileRows = vi.fn(async (): Promise<unknown[]> => []);
 
 const chain: object = new Proxy(
@@ -21,7 +20,10 @@ const chain: object = new Proxy(
   }
 );
 
-vi.mock('@civitai/orchestration-client', () => ({ getWorkflow, createCivitaiClient: vi.fn() }));
+vi.mock('@civitai/orchestration-client', () => ({
+  getWorkflow: vi.fn(),
+  createCivitaiClient: vi.fn(),
+}));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: chain }));
 vi.mock('$lib/server/clickhouse', () => ({ getClickhouse: () => ({ $query: vi.fn() }) }));
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
@@ -35,17 +37,32 @@ const { moderateTrainingData, getTrainingReviewQueue, invalidateTrainingReviewQu
 
 const VERSION = 42;
 const MODERATOR = 7;
+const WF = '9-20261005123456789-abcd';
 
 const fetchMock = vi.fn();
 const gateCalls = () =>
   fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/moderation-gate'));
+const webhookBodies = () =>
+  fetchMock.mock.calls
+    .filter(([u]) => String(u).startsWith('https://civitai.example'))
+    .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+
+/** The manager API's shape, PascalCase enums included. */
+const managerWorkflow = (moderationStatus: string, status = 'Processing') => ({
+  id: WF,
+  status,
+  tags: [`modelVersion:${VERSION}`],
+  steps: [{ $type: 'training', status, output: { moderationStatus } }],
+});
+let managerRead: () => Response;
 
 function serve(gateStatus: number) {
-  fetchMock.mockImplementation(async (input: string | URL) =>
-    String(input).endsWith('/moderation-gate')
-      ? new Response(null, { status: gateStatus })
-      : new Response(null, { status: 200 })
-  );
+  fetchMock.mockImplementation(async (input: string | URL) => {
+    const url = String(input);
+    if (url.endsWith('/moderation-gate')) return new Response(null, { status: gateStatus });
+    if (url.includes(`/v1/manager/workflows/${WF}`)) return managerRead();
+    return new Response(null, { status: 200 });
+  });
 }
 
 beforeEach(() => {
@@ -54,10 +71,8 @@ beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
   recordModActivity.mockReset();
-  fileRows.mockResolvedValue([{ id: 1, metadata: { trainingResults: { workflowId: 'wf-1' } } }]);
-  getWorkflow.mockResolvedValue({
-    data: { id: 'wf-1', status: 'processing', tags: [`modelVersion:${VERSION}`] },
-  });
+  fileRows.mockResolvedValue([{ id: 1, metadata: { trainingResults: { workflowId: WF } } }]);
+  managerRead = () => Response.json(managerWorkflow('UnderReview'));
 });
 
 describe('moderateTrainingData', () => {
@@ -83,6 +98,45 @@ describe('moderateTrainingData', () => {
     });
   });
 
+  it("posts the webhook the camelCase status it accepts, not the manager API's PascalCase", async () => {
+    serve(204);
+    await moderateTrainingData({ modelVersionId: VERSION, approve: true, moderatorId: MODERATOR });
+    expect(webhookBodies()).toEqual([{ workflowId: WF, status: 'processing' }]);
+  });
+
+  it('refuses a gate the orchestrator reports already ruled, releasing nothing', async () => {
+    serve(204);
+    managerRead = () => Response.json(managerWorkflow('Approved', 'Succeeded'));
+
+    const result = await moderateTrainingData({
+      modelVersionId: VERSION,
+      approve: true,
+      moderatorId: MODERATOR,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'The gate is not under review (run: succeeded, gate: approved). Nothing was changed.',
+    });
+    expect(gateCalls()).toHaveLength(0);
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  // Fail-open: only a reading that says closed refuses. The release refuses a closed gate itself.
+  it('releases the gate when the run answered in a shape it cannot read', async () => {
+    serve(204);
+    managerRead = () => Response.json({ ...managerWorkflow('UnderReview'), steps: [] });
+
+    const result = await moderateTrainingData({
+      modelVersionId: VERSION,
+      approve: true,
+      moderatorId: MODERATOR,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(gateCalls()).toHaveLength(1);
+  });
+
   it('records nothing when the orchestrator refuses the gate', async () => {
     serve(500);
 
@@ -106,6 +160,7 @@ describe('moderateTrainingData', () => {
     fetchMock.mockImplementation(async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith('/moderation-gate')) return new Response(null, { status: 204 });
+      if (url.includes('/v1/manager/workflows/')) return managerRead();
       // The webhook: the version is still Paused while it is in flight.
       if (url.startsWith('https://civitai.example')) midRuling ??= emptyBuild();
       return new Response(null, { status: 200 });
