@@ -5,7 +5,7 @@ import type { Stripe } from 'stripe';
 import { dbMock, loggingMock, redisMock, resetSharedMocks, setEnv } from '~/__tests__/mocks';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { MODERATION_CANCEL_MARK, toDateTime } from '~/server/services/stripe.service';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 
@@ -266,7 +266,7 @@ beforeEach(() => {
   grantRow.path = 'grant:user.membership.cancel';
   grantRow.roles = [GRANTED_ROLE];
   asModerator([GRANTED_ROLE]);
-  redisMock.sysRedis.set.mockResolvedValue('OK');
+  redisMock.redis.set.mockResolvedValue('OK');
   redisMock.sysRedis.multi.mockImplementation(() => ({
     set: vi.fn().mockReturnThis(),
     incr: vi.fn().mockReturnThis(),
@@ -467,14 +467,14 @@ describe('cancel-at-period-end: the rules', () => {
   it("takes extend's per-member lock with NX, and releases it with its owner token", async () => {
     fakeStripe();
     await setCancel(true);
-    const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
-    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+    const lockKey = `${REDIS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
+    expect(redisMock.redis.set).toHaveBeenCalledWith(
       lockKey,
       expect.any(String),
       expect.objectContaining({ NX: true })
     );
-    const owner = redisMock.sysRedis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
-    expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, lockKey, owner);
+    const owner = redisMock.redis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
+    expect(delIfValue).toHaveBeenCalledWith(redisMock.redis, lockKey, owner);
   });
 
   it('the lock is released after a refusal too', async () => {
@@ -486,7 +486,7 @@ describe('cancel-at-period-end: the rules', () => {
 
   it('another change holding the member lock is refused (409)', async () => {
     const { writes } = fakeStripe();
-    redisMock.sysRedis.set.mockResolvedValue(null as never);
+    redisMock.redis.set.mockResolvedValue(null as never);
     expect((await setCancel(true)).status).toBe(409);
     expect(writes).toEqual([]);
   });
@@ -880,7 +880,7 @@ describe('races the lanes found', () => {
   it('re-sync takes the member lock: another change in progress is refused (409)', async () => {
     grantRow.path = 'grant:user.membership.extend';
     fakeStripe();
-    redisMock.sysRedis.set.mockResolvedValue(null as never);
+    redisMock.redis.set.mockResolvedValue(null as never);
     expect((await resync()).status).toBe(409);
     expect(dbMock.dbWrite.customerSubscription.upsert).not.toHaveBeenCalled();
   });
@@ -960,13 +960,13 @@ describe('re-sync: final-head lanes', () => {
   it('takes the member lock with NX and an expiry, and releases it with its owner token', async () => {
     fakeStripe();
     await resync();
-    const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
-    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(lockKey, expect.any(String), {
+    const lockKey = `${REDIS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${MEMBER}`;
+    expect(redisMock.redis.set).toHaveBeenCalledWith(lockKey, expect.any(String), {
       NX: true,
       EX: expect.any(Number),
     });
-    const owner = redisMock.sysRedis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
-    expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, lockKey, owner);
+    const owner = redisMock.redis.set.mock.calls.find((c) => c[0] === lockKey)?.[1];
+    expect(delIfValue).toHaveBeenCalledWith(redisMock.redis, lockKey, owner);
   });
 
   it('a failed row re-read after a stored upsert still answers 200, after unknown, audited once', async () => {

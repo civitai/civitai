@@ -171,16 +171,17 @@ beforeEach(async () => {
   dbMock.dbRead.eventTurfStock.findUnique.mockResolvedValue(null as never);
   redisMock.sysRedis.get.mockImplementation((async (key: string) =>
     key === turfConfigKey('e') ? override : null) as never);
-  redisMock.sysRedis.hmGet.mockImplementation((async (key: string, fields: string[]) =>
-    key === teamBase
-      ? fields.map((field) => POINTS[field as keyof typeof POINTS] ?? null)
-      : fields.map(() => null)) as never);
-  redisMock.sysRedis.eval.mockImplementation(redis.eval as never);
-  redisMock.sysRedis.incr.mockImplementation((async () => (clock += 1)) as never);
-  redisMock.sysRedis.hGetAll.mockImplementation(
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (key: string, fields: string[]) =>
+      key === teamBase
+        ? fields.map((field) => POINTS[field as keyof typeof POINTS] ?? null)
+        : fields.map(() => null)) as never);
+  redisMock.redis.eval.mockImplementation(redis.eval as never);
+  redisMock.redis.hIncrBy.mockImplementation((async () => (clock += 1)) as never);
+  redisMock.redis.hGetAll.mockImplementation(
     (async (key: string) => redis.hash(key) ?? {}) as never
   );
-  redisMock.sysRedis.xAdd.mockResolvedValue('0-1' as never);
+  redisMock.redis.xAdd.mockResolvedValue('0-1' as never);
 });
 
 const newImage = async () => {
@@ -301,11 +302,11 @@ describe('Hat Turf sticker lifetime', () => {
     let fakeNow = Date.now();
     const spy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
     // A minute reading the counts snapshot before the first batch, a minute more to its ticket.
-    redisMock.sysRedis.hGetAll.mockImplementation((async (key: string) => {
+    redisMock.redis.hGetAll.mockImplementation((async (key: string) => {
       fakeNow += 60_000;
       return redis.hash(key) ?? {};
     }) as never);
-    redisMock.sysRedis.incr.mockImplementation((async () => {
+    redisMock.redis.hIncrBy.mockImplementation((async () => {
       fakeNow += 60_000;
       return (clock += 1);
     }) as never);

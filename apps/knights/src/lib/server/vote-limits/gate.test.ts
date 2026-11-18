@@ -1,3 +1,4 @@
+import { keyHashSlots } from '@civitai/redis';
 import { describe, expect, it, vi } from 'vitest';
 import { VOTE_LIMITS, type VoteLimit } from '../queue/vote-rate';
 import { fakeRedis } from './fake-redis';
@@ -59,6 +60,32 @@ describe('vote gate in-flight cap', () => {
     expect((await gate.enter(7, at())).status).toBe('limited');
     clock.now += 60_000;
     expect((await gate.enter(7, at())).status).toBe('open');
+  });
+});
+
+// Invariant guard, not a regression test: the keys were already tagged before the gate moved to
+// the cache cluster. It pins that both scripts stay in one slot there.
+describe('vote gate on the cache cluster', () => {
+  it("runs each script over one player's keys, all in one hash slot", async () => {
+    const { client, at } = setup();
+    const calls: string[][] = [];
+    const evalScript = client.eval.bind(client);
+    const spy: GateClient = {
+      ...client,
+      eval: (script, options) => {
+        calls.push(options.keys);
+        return evalScript(script, options);
+      },
+    };
+    const spied = createVoteGate({
+      client: () => spy,
+      limits: async () => limitsOf(3),
+      timeoutMs: 2000,
+    });
+    const entry = await spied.enter(7, at());
+    if (entry.status === 'open') await entry.release();
+    expect(calls).toHaveLength(2);
+    for (const keys of calls) expect(keyHashSlots(keys), keys.join(' ')).toHaveLength(1);
   });
 });
 

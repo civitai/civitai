@@ -16,6 +16,7 @@ const {
   mockRecordMint,
   mockRecordDnsGc,
   sysRedis,
+  clusterRedis,
   luaRef,
   mockEnv,
   mockNewId,
@@ -99,6 +100,37 @@ const {
       APPS_DEV_TUNNEL_CF_ZONE_ID: undefined as string | undefined,
     },
     mockNewId: vi.fn(() => 'bki_testsession'),
+    // The cache cluster, where the per-user keys are: the same string store and Lua harness, but its
+    // own mocks, and an EVAL that refuses keys spanning hash slots (CROSSSLOT), as the cluster does.
+    clusterRedis: {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      set: vi.fn(async (k: string, v: string) => {
+        store.set(k, v);
+        return 'OK';
+      }),
+      del: vi.fn(async (k: string) => {
+        store.delete(k);
+        return 1;
+      }),
+      sAdd: vi.fn(async (k: string, v: string) =>
+        luaRef.current!.eval("return redis.call('SADD', KEYS[1], ARGV[1])", {
+          keys: [k],
+          arguments: [v],
+        })
+      ),
+      sRem: vi.fn(async (k: string, v: string) =>
+        luaRef.current!.eval("return redis.call('SREM', KEYS[1], ARGV[1])", {
+          keys: [k],
+          arguments: [v],
+        })
+      ),
+      sMembers: vi.fn(async (k: string) => luaRef.current!.set(k) ?? []),
+      eval: vi.fn(async (script: string, opts: { keys: string[]; arguments: string[] }) => {
+        const { rejectCrossSlot } = await import('~/__tests__/cluster-slots');
+        rejectCrossSlot(opts.keys);
+        return luaRef.current!.eval(script, opts);
+      }),
+    },
   };
 });
 
@@ -111,8 +143,14 @@ vi.mock('~/server/services/blocks/apps-pipeline.service', () => ({
 }));
 vi.mock('~/server/redis/client', () => ({
   sysRedis,
+  redis: clusterRedis,
   withSysReadDeadline: <T>(p: Promise<T>) => p,
   REDIS_SYS_KEYS: { BLOCKS: { DEV_TUNNEL: 'system:blocks:dev-tunnel' } },
+  REDIS_KEYS: { BLOCKS: { DEV_TUNNEL_USER: 'system:blocks:dev-tunnel' } },
+}));
+// The cluster cache guard's deadline is covered by its own tests; here every call goes through.
+vi.mock('~/server/utils/cluster-window-count', () => ({
+  boundedClusterCall: (_fn: string, op: () => Promise<unknown>) => op(),
 }));
 vi.mock('~/server/utils/app-block-ids', () => ({ newBlockInstanceId: () => mockNewId() }));
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
@@ -300,12 +338,12 @@ describe('the dev-tunnel index a ban enumerates', () => {
     // drop the EXPIRE on a failover, leaving a TTL-less set that accumulates every
     // blockId the user ever tunnels — and every later ban would then emit a marker for
     // all of them.
-    expect(sysRedis.eval).toHaveBeenCalledTimes(1);
-    expect(sysRedis.sAdd, 'the non-atomic SADD is back').not.toHaveBeenCalled();
+    expect(clusterRedis.eval).toHaveBeenCalledTimes(1);
+    expect(clusterRedis.sAdd, 'the non-atomic SADD is back').not.toHaveBeenCalled();
 
     // 🔴 AND THE TTL IS ASSERTED, as the script left it: a TTL-less index is exactly the state
     // the atomic write exists to make unreachable.
-    const key = `system:blocks:dev-tunnel:user-index:${TEST_USER_ID}`;
+    const key = `system:blocks:dev-tunnel:user-index:{${TEST_USER_ID}}`;
     expect(luaRef.current!.set(key), 'the index write did not go through the EVAL path').toEqual([
       TEST_BLOCK_ID,
     ]);
@@ -327,7 +365,7 @@ describe('the dev-tunnel index a ban enumerates', () => {
 
   it('fails OPEN to an empty list when the index read throws', async () => {
     await startTunnel();
-    sysRedis.sMembers.mockRejectedValueOnce(new Error('redis is down'));
+    clusterRedis.sMembers.mockRejectedValueOnce(new Error('redis is down'));
 
     // A ban must never be failable by this read. The cost is a coverage gap, which is
     // the same direction every other leg of the ban fan-out degrades in.
@@ -373,7 +411,9 @@ describe('startDevTunnel', () => {
     // persisted the 3 record keys (cred/session/host) with SET; the user-block pointer is written
     // by the listing script, with the ban index, and names this session
     expect(sysRedis.set).toHaveBeenCalledTimes(3);
-    expect(sysRedis._store.get('system:blocks:dev-tunnel:user:555:my-app')).toBe('bki_testsession');
+    expect(sysRedis._store.get('system:blocks:dev-tunnel:user:{555}:my-app')).toBe(
+      'bki_testsession'
+    );
     // the credential is keyed by pubkey fingerprint (sish authz lookup index)
     const credKeys = [...sysRedis._store.keys()].filter((k) => k.includes(':cred:'));
     expect(credKeys.length).toBe(1);

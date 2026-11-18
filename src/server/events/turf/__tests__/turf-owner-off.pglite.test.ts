@@ -142,14 +142,13 @@ beforeEach(async () => {
   dbMock.dbWrite.$transaction.mockRejectedValue(new Error('passed the checks') as never);
   dbMock.dbRead.eventTurfStock.findUnique.mockResolvedValue(null as never);
   lua = createLuaRedis(0);
-  redisMock.sysRedis.eval.mockImplementation(lua.eval as never);
-  redisMock.sysRedis.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
-    keys.map(() => null)) as never);
+  redisMock.redis.eval.mockImplementation(lua.eval as never);
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (_k: string, keys: string[]) =>
+      keys.map(() => null)) as never);
   let ticket = 0;
-  redisMock.sysRedis.incr.mockImplementation((async () => ++ticket) as never);
-  redisMock.sysRedis.hGetAll.mockImplementation(
-    (async (key: string) => lua.hash(key) ?? {}) as never
-  );
+  redisMock.redis.hIncrBy.mockImplementation((async () => ++ticket) as never);
+  redisMock.redis.hGetAll.mockImplementation((async (key: string) => lua.hash(key) ?? {}) as never);
   pushTurfCounts.mockClear();
 });
 
@@ -360,7 +359,7 @@ describe('who may use the switch', () => {
   // By the time the sync runs the switch is saved: a failed sync must not report a failed save,
   // which would leave the client stale and a retry with nothing to change.
   it('a failed sync after the switch is saved still reports the change', async () => {
-    redisMock.sysRedis.eval.mockRejectedValue(new Error('redis down') as never);
+    redisMock.redis.eval.mockRejectedValue(new Error('redis down') as never);
     expect((await setTurfOwnerOff('e', OUTSIDER, true)).changed).toBe(true);
     expect((await getTurfStock('e', OUTSIDER)).ownerOff).toBe(true);
   });

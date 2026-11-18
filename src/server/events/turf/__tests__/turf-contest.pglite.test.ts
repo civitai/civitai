@@ -134,8 +134,9 @@ beforeEach(() => {
     client.$queryRaw.mockImplementation(raw.queryRaw as never);
     client.$executeRaw.mockImplementation(raw.executeRaw as never);
   }
-  redisMock.sysRedis.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
-    fields.map(() => counts)) as never);
+  for (const client of [redisMock.redis, redisMock.sysRedis])
+    client.hmGet.mockImplementation((async (_key: string, fields: string[]) =>
+      fields.map(() => counts)) as never);
 });
 
 describe('Hat Turf on contest entries', () => {
@@ -148,10 +149,11 @@ describe('Hat Turf on contest entries', () => {
 
   it('summaries: a hatted image names the team of the hat that protects it', async () => {
     const hat = JSON.stringify({ ownerId: 7, cosmeticId: 11, claimKey: 'k', team: 'Pink' });
-    redisMock.sysRedis.hmGet.mockImplementation((async (key: string, fields: string[]) =>
-      fields.map((field) =>
-        key.endsWith(':hats') ? (field === `Image:${BOOKMARKED}` ? hat : null) : counts
-      )) as never);
+    for (const client of [redisMock.redis, redisMock.sysRedis])
+      client.hmGet.mockImplementation((async (key: string, fields: string[]) =>
+        fields.map((field) =>
+          key.endsWith(':hats') ? (field === `Image:${BOOKMARKED}` ? hat : null) : counts
+        )) as never);
     const { images } = await getTurfSummaries('e', [BOOKMARKED, OTHER], PLACER);
     expect(images[BOOKMARKED]).toMatchObject({ hatted: true, hattedTeam: 'Pink' });
     expect(images[OTHER]).toMatchObject({ hatted: false, hattedTeam: null });
@@ -169,9 +171,9 @@ describe('Hat Turf on contest entries', () => {
     expect((await getTurfStickers('e', BOOKMARKED, PLACER)).stickers[0]?.art).toEqual(art);
     const feed = await getTurfStickersForImages('e', [BOOKMARKED], 5);
     expect(feed[BOOKMARKED]?.[0]?.art).toEqual(art);
-    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
-    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
-    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    redisMock.redis.eval.mockImplementation(createLuaRedis(0).eval as never);
+    redisMock.redis.hIncrBy.mockResolvedValue(1 as never);
+    redisMock.redis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await syncTurfImages((await getTurfEvent('e'))!, [BOOKMARKED]);
     const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
@@ -211,9 +213,9 @@ describe('Hat Turf on contest entries', () => {
     ['a sync', async () => syncTurfImages((await getTurfEvent('e'))!, [CONTEST_ENTRY, BOOKMARKED])],
     ['a reconcile', async () => reconcileTurf((await getTurfEvent('e'))!)],
   ])('%s pushes nothing about a contest entry', async (_, run) => {
-    redisMock.sysRedis.eval.mockImplementation(createLuaRedis(0).eval as never);
-    redisMock.sysRedis.incr.mockResolvedValue(1 as never);
-    redisMock.sysRedis.hGetAll.mockResolvedValue({} as never);
+    redisMock.redis.eval.mockImplementation(createLuaRedis(0).eval as never);
+    redisMock.redis.hIncrBy.mockResolvedValue(1 as never);
+    redisMock.redis.hGetAll.mockResolvedValue({} as never);
     pushTurfCounts.mockClear();
     await run();
     const pushed = pushTurfCounts.mock.calls.flatMap((call) => (call as unknown[])[1] as never[]);
@@ -247,8 +249,8 @@ describe('Hat Turf on contest entries', () => {
 
       // Nothing earns on it either: a sync pushes it with no counts and leaves it off the turf map.
       const lua = createLuaRedis(0);
-      redisMock.sysRedis.eval.mockImplementation(lua.eval as never);
-      redisMock.sysRedis.incr.mockResolvedValue(1 as never);
+      redisMock.redis.eval.mockImplementation(lua.eval as never);
+      redisMock.redis.hIncrBy.mockResolvedValue(1 as never);
       pushTurfCounts.mockClear();
       await syncTurfImages((await getTurfEvent('e'))!, [flag, control]);
       // The turf map is what reactions pay from: the flag has no entry there, the control does.

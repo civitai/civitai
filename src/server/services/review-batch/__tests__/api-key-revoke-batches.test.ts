@@ -28,9 +28,10 @@ const { deleteApiKeys, expireUserApiKeys } = await import('~/server/services/api
 
 let store = new Map<string, string | Set<string>>();
 
-function installFakeSysRedis() {
+/** The cache cluster, where the batches and each key's set are. */
+function installFakeClusterRedis() {
   store = new Map();
-  const r = redisMock.sysRedis;
+  const r = redisMock.redis;
   r.get.mockImplementation(async (key: string) => {
     const v = store.get(key);
     return typeof v === 'string' ? v : null;
@@ -56,7 +57,7 @@ function seedBatch(hash: string, keyId: number, tier: 'general' | 'held') {
 const live = () => [...store.keys()].filter((k) => /^app:review-batch:[^:]+$/.test(k)).sort();
 
 beforeEach(() => {
-  installFakeSysRedis();
+  installFakeClusterRedis();
   seedBatch('held-1', 99, 'held');
   seedBatch('general-1', 99, 'general');
   seedBatch('other-key', 100, 'held');

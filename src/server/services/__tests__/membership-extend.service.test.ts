@@ -334,9 +334,9 @@ function seedDb({ recent = 0, provider = 'Stripe' } = {}) {
 
 /** The lock released is exactly ours: the key set with NX, and the owner value that set wrote. */
 function expectOwnLockReleased() {
-  const [key, owner] = redisMock.sysRedis.set.mock.calls[0] as [string, string];
+  const [key, owner] = redisMock.redis.set.mock.calls[0] as [string, string];
   expect(key).toBe(`membership-extend:lock:${USER}`);
-  expect(delIfValue).toHaveBeenCalledWith(redisMock.sysRedis, key, owner);
+  expect(delIfValue).toHaveBeenCalledWith(redisMock.redis, key, owner);
 }
 
 const axiomRecords = () =>
@@ -362,7 +362,7 @@ describe('extendMembership: the flow', () => {
     invalidateSubscriptionCaches.mockClear();
     delIfValue.mockClear();
     setEnv({ STRIPE_SECRET_KEY: 'sk_live_00000000000000000000' });
-    redisMock.sysRedis.set.mockResolvedValue('OK');
+    redisMock.redis.set.mockResolvedValue('OK');
     seedDb();
   });
 
@@ -395,7 +395,7 @@ describe('extendMembership: the flow', () => {
     expect(refreshSession).toHaveBeenCalledWith(USER, { caller: 'subscription' });
     expect(delIfValue).toHaveBeenCalledTimes(1);
     expectOwnLockReleased();
-    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+    expect(redisMock.redis.set).toHaveBeenCalledWith(
       `membership-extend:lock:${USER}`,
       expect.any(String),
       { NX: true, EX: 600 }
@@ -627,7 +627,7 @@ describe('extendMembership: the flow', () => {
   });
 
   it('a held lock refuses (409) and writes nothing', async () => {
-    redisMock.sysRedis.set.mockResolvedValue(null);
+    redisMock.redis.set.mockResolvedValue(null);
     const f = fakeStripe(liveSub());
     stripeRef.current = f.stripe;
     await expect(extendMembership(input())).rejects.toMatchObject({ code: 'CONFLICT' });
