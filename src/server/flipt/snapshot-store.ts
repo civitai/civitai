@@ -4,7 +4,7 @@ import { setFliptSnapshotStore } from '~/server/flipt/client';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 
-// The deadline the system Redis read had (REDIS_SYS_READ_TIMEOUT_MS's default).
+// Bounds the read so a stalled socket cannot hold the Flipt client's fallback.
 const SNAPSHOT_READ_DEADLINE_MS = 1_000;
 
 type SnapshotKey = `${typeof REDIS_KEYS.FLIPT.SNAPSHOT}:${string}`;
@@ -23,7 +23,7 @@ type SnapshotKey = `${typeof REDIS_KEYS.FLIPT.SNAPSHOT}:${string}`;
  * the _app client graph and must not reach the Redis clients.
  *
  * A cache: it is rebuilt by any pod that has live state, so losing it costs nothing until Flipt is
- * also down. A read is bounded by the cluster cache guard (the deadline the system Redis read had);
+ * also down. A read is bounded by the cluster cache guard;
  * a write is in the background. Either throws on failure, which the Flipt client catches.
  */
 export function registerFliptSnapshotStore(): void {

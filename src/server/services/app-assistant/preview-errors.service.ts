@@ -103,7 +103,7 @@ export function previewErrorsKey(userId: number, blockId: string) {
 }
 
 // A 2h log on the cache cluster: every command touches the one list, so none spans slots. Each
-// call is bounded as the system Redis calls were (1s, that client's default read deadline).
+// call is bounded so a stalled socket cannot hold the request.
 const PREVIEW_ERRORS_DEADLINE_MS = 1_000;
 function bounded<T>(fn: string, op: () => Promise<T>): Promise<T> {
   return clusterCacheGuard.call(fn, op, { deadlineMs: PREVIEW_ERRORS_DEADLINE_MS });

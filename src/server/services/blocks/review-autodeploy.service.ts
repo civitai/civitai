@@ -426,8 +426,8 @@ export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
 
 /**
  * The submission-alert, listing-check-spend and agent-review reservation counters are TTL'd
- * per-hour or per-day windows on the cache cluster, one key per command. Each call is bounded as
- * the system Redis calls were (1s, that client's default read deadline) and throws on failure,
+ * per-hour or per-day windows on the cache cluster, one key per command. Each call is bounded so a
+ * stalled socket cannot hold the request, and throws on failure,
  * which every caller already turns into its fail-safe answer.
  */
 async function boundedCacheCall<T>(fn: string, op: () => Promise<T>): Promise<T> {

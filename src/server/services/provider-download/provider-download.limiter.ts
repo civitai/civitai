@@ -8,7 +8,7 @@ import {
 const HOUR_MS = 60 * 60 * 1000;
 /** Two hours, so a key outlives the hour it counts. */
 const KEY_TTL_S = 2 * 60 * 60;
-// The download waits on this; the deadline the system Redis call had.
+// The download waits on this, so a stalled socket must not hold it.
 const COUNTER_DEADLINE_MS = 1_000;
 
 /**

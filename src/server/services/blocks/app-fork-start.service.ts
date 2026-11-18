@@ -388,7 +388,7 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 // Rate limit
 // ---------------------------------------------------------------------------
 
-// The deadline the system Redis call had (1s, that client's default read deadline).
+// Bounds the call so a stalled socket cannot hold the request.
 const FORK_RATE_DEADLINE_MS = 1_000;
 
 /**

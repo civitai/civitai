@@ -27,14 +27,13 @@ const RATE_KEYS = {
   push: REDIS_KEYS.BLOCKS.PUSH_REVIEW_RATE_LIMIT,
 } as const;
 
-// The deadline the system Redis calls had (1s, that client's default read deadline).
+// Bounds the call so a stalled socket cannot hold the request.
 const PUSH_WINDOW_DEADLINE_MS = 1_000;
 
 /**
  * One window's count after this take, and its TTL on the 429 path, from the store the family
- * lives in. The push window moved to the cache cluster: it bounds build and alert churn and fails
- * open anyway, so starting empty costs at most one window of pushes. The submit window is still
- * in system Redis.
+ * lives in. The push window is on the cache cluster: it bounds build and alert churn and fails
+ * open anyway, so starting empty costs at most one window of pushes.
  */
 function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
   if (family === 'push') {

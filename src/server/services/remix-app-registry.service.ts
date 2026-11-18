@@ -141,7 +141,7 @@ const REGISTRY_TTL = CacheTTL.hour;
  * after it.
  */
 const GENERATION_TTL_SECONDS = 24 * 60 * 60;
-// The menu and the quote wait on this read; the deadline the system Redis read had.
+// The menu and the quote wait on this read, so a stalled socket must not hold them.
 const GENERATION_READ_DEADLINE_MS = 1_000;
 
 /**

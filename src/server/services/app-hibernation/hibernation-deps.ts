@@ -29,7 +29,7 @@ async function cacheRedisClient() {
 
 // Attempts live on the cache cluster: a lost one (a deploy that moved it, an eviction) answers its
 // commit `unknown-attempt`, so the sandbox service keeps the app and the upload is swept as an
-// orphan. The wake tickets below stay in system Redis.
+// orphan.
 const redisAttempts: AttemptStore = {
   async claim(rec, ttlSeconds) {
     const { redis, keys } = await cacheRedisClient();

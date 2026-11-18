@@ -4,7 +4,7 @@ import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 
 // Every call is raced against this deadline, writes included: the part route holds a buffering
 // slot across `recordRelaySessionPart`, and a write parked on a half-open socket would hold it for
-// the cluster client's much longer per-command deadline. The deadline the system Redis calls had.
+// the cluster client's much longer per-command deadline.
 const SESSION_DEADLINE_MS = 1_000;
 
 function bounded<T>(fn: string, op: () => Promise<T>): Promise<T> {
