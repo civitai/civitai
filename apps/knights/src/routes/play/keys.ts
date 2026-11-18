@@ -18,13 +18,17 @@ export function answerForKeyPress(options: Option[], key: string, yesNo: boolean
 type Screen = {
   question?: { options: Option[] } | null;
   apprentice?: { kind: string; options?: Option[] } | null;
+  /** A skill-check ruling is up; it floats over the answer row and must be dismissed before the next answer. */
+  rulingPending?: boolean;
 };
 
 /** The options the number keys answer: the queue question's, or the apprenticeship question's; none on a recap. */
-export function optionsOnScreen({ question, apprentice }: Screen): Option[] | null {
+export function optionsOnScreen({ question, apprentice, rulingPending }: Screen): Option[] | null {
+  if (rulingPending) return null;
   if (question) return question.options;
   return apprentice?.kind === 'question' ? apprentice.options ?? null : null;
 }
 
 /** Space skips a queue item; in the apprenticeship (no skip) it stays the browser's, pressing a focused button. */
-export const spaceSkips = ({ question }: Screen): boolean => !!question;
+export const spaceSkips = ({ question, rulingPending }: Screen): boolean =>
+  !!question && !rulingPending;

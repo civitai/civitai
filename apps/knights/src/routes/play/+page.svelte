@@ -82,6 +82,8 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
+  // The ruling toast floats over the answer row, so nothing answers or skips until Understood.
+  let rulingPending = $derived(data.notices.length > 0);
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
   // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
@@ -125,6 +127,7 @@
     const screen = {
       question: view?.question,
       apprentice: data.mode === 'apprentice' ? data.apprentice : null,
+      rulingPending,
     };
     const options = optionsOnScreen(screen);
     if (event.repeat || dialogOpen || !options || submitting) return;
@@ -143,6 +146,7 @@
   }
 
   function pickReason(reason: BlockReason) {
+    if (rulingPending) return;
     blockReason = reason;
     reasonItem = null;
     const blocked = answers?.querySelector<HTMLButtonElement>(`button[value="${BLOCKED_ANSWER}"]`);
@@ -634,9 +638,9 @@
   </div>
 {/snippet}
 
-{#snippet ruling()}
-  {#if data.notices.length > 0}
-    <RulingToast notices={data.notices} message={form?.noticeFailed ? form.message : null} {submitting} {submit} />
+{#snippet ruling(anchored: boolean)}
+  {#if rulingPending}
+    <RulingToast notices={data.notices} message={form?.noticeFailed ? form.message : null} {submitting} {submit} {anchored} />
   {/if}
 {/snippet}
 
@@ -699,9 +703,7 @@
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0 && !rulingInStage}
-    <div class="rulingwrap">{@render ruling()}</div>
-  {/if}
+  {#if !rulingInStage}{@render ruling(false)}{/if}
 
   {#if data.mode === 'queue' && data.resetPending}
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
@@ -717,7 +719,6 @@
         </p>
         {@render questionTools()}
       </div>
-      {@render ruling()}
       <div class="stagewrap">
         {#key `${apprentice.item.kind}:${apprentice.item.referenceId}`}
           <ImageStage
@@ -730,7 +731,7 @@
         {@render levelToast(true)}
       </div>
       <div class="controls" class:yesno={yesNo}>
-        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
+        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers} inert={rulingPending}>
           <input type="hidden" name="kind" value={apprentice.item.kind} />
           <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
           <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
@@ -743,6 +744,7 @@
           <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>
+        {@render ruling(true)}
       </div>
       {#if formMessage}
         <p class="notice flat" role="alert">{formMessage}</p>
@@ -806,7 +808,6 @@
       <span class="vh" role="status" aria-live="polite"
         >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
       >
-      {@render ruling()}
       <div class="stagewrap">
         {#key shown.item.key}
           {@const itemKey = shown.item.key}
@@ -832,13 +833,13 @@
         {/if}
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
-        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
+        <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers} inert={rulingPending}>
           <input type="hidden" name="item" value={shown.item.id} />
           {#each shown.question.options as option, index (option.value)}
             {@render pill(option, index, imageFailed, asksBlockReason(shown.question.key))}
           {/each}
         </form>
-        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
+        <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm} inert={rulingPending}>
           <input type="hidden" name="item" value={shown.item.id} />
           <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
@@ -848,6 +849,7 @@
           <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
         <span class="rowtool">{@render soundToggle()}</span>
+        {@render ruling(true)}
         {#if choosingReason}
           <BlockReasons onpick={pickReason} oncancel={() => (reasonItem = null)} />
         {/if}
@@ -923,13 +925,6 @@
     overflow-y: auto;
   }
 
-  .rulingwrap {
-    box-sizing: border-box;
-    width: 100%;
-    max-width: 1056px;
-    margin: 0 auto;
-    padding: 8px 28px 0;
-  }
   /* The stage and whatever floats over it (the level-up toast). */
   .stagewrap {
     position: relative;
@@ -1268,9 +1263,6 @@
       gap: 8px;
       min-height: 10rem;
       padding: 4px 16px max(8px, env(safe-area-inset-bottom));
-    }
-    .rulingwrap {
-      padding: 4px 16px 0;
     }
     .eyebrow {
       font-size: 12px;

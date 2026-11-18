@@ -107,3 +107,20 @@ describe('spaceSkips', () => {
     expect(spaceSkips({ question: { options } })).toBe(true);
   });
 });
+
+describe('a pending skill-check ruling', () => {
+  const queue = { question: { options } };
+  const apprentice = { apprentice: { kind: 'question', options } };
+
+  it('holds every answer key and Space until it is dismissed', () => {
+    expect(optionsOnScreen({ ...queue, rulingPending: true })).toBeNull();
+    expect(optionsOnScreen({ ...apprentice, rulingPending: true })).toBeNull();
+    expect(spaceSkips({ ...queue, rulingPending: true })).toBe(false);
+  });
+
+  it('leaves the keys working once there is none', () => {
+    expect(optionsOnScreen({ ...queue, rulingPending: false })).toBe(options);
+    expect(optionsOnScreen(apprentice)).toBe(options);
+    expect(spaceSkips({ ...queue, rulingPending: false })).toBe(true);
+  });
+});

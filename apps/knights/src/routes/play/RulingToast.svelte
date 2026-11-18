@@ -1,8 +1,8 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import Icon from '$lib/Icon.svelte';
   import { noticeTone } from '$lib/chrome';
+  import '$lib/overlay.css';
   import type { PageData } from './$types';
 
   let {
@@ -10,19 +10,24 @@
     message,
     submitting,
     submit,
+    anchored,
   }: {
     notices: PageData['notices'];
     /** Why the last dismissal failed, if it did. */
     message: string | null;
     submitting: boolean;
     submit: SubmitFunction;
+    /** Over the answer row (a bottom sheet on phones); otherwise in the page flow, where no answer row is drawn. */
+    anchored: boolean;
   } = $props();
 
   let tone = $derived(noticeTone(notices));
+
+  // Understood is the only way on, so Enter dismisses at once.
+  const focusOnMount = (node: HTMLButtonElement) => node.focus({ preventScroll: true });
 </script>
 
-<section class="toast" class:calm={tone === 'calm'} role="status" aria-label="The Order's ruling">
-  <Icon name={tone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
+<section class="toast" class:anchored class:calm={tone === 'calm'} role="status" aria-label="The Order's ruling">
   <div class="toast-body">
     {#each notices as notice (notice.key)}
       <div class="check-notice" class:close={notice.consequence === 'close'}>
@@ -45,24 +50,35 @@
     {/if}
   </div>
   <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-    <button type="submit" disabled={submitting}>Understood</button>
+    <button type="submit" disabled={submitting} use:focusOnMount>Understood</button>
   </form>
 </section>
 
 <style>
   .toast {
     display: flex;
-    flex: none;
     align-items: center;
     gap: 12px;
     box-sizing: border-box;
-    width: 100%;
-    padding: 12px 16px;
+    width: min(1000px, calc(100% - 32px));
+    margin: 8px auto 0;
+    padding: 8px 12px;
     border: 1px solid var(--io-crimson);
     border-radius: 12px;
-    background: #14110dee;
+    background: #14110d;
     color: var(--io-crimson-text);
     font: 400 13px/1.4 var(--io-font-ui);
+  }
+  /* Covers the answer row, the full column wide, and never rises over the image. */
+  .toast.anchored {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    z-index: 11;
+    width: auto;
+    margin: 0;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+    animation: ov-fade var(--motion-base) var(--ease-out-quart);
   }
   /* Close calls only: information, not an alarm. */
   .toast.calm {
@@ -77,7 +93,6 @@
     color: var(--io-parchment);
   }
   .toast-body strong {
-    display: block;
     color: var(--io-crimson-text);
   }
   .check-notice {
@@ -86,48 +101,44 @@
     gap: 10px;
   }
   .check-notice + .check-notice {
-    margin-top: 8px;
+    margin-top: 6px;
   }
   .check-notice.close strong {
     color: var(--io-gold);
   }
   .check-thumb {
     flex: none;
-    width: 48px;
-    height: 48px;
+    width: 36px;
+    height: 36px;
     border-radius: 6px;
     object-fit: cover;
   }
   .check-answers {
-    display: block;
     color: var(--io-parchment);
     opacity: 0.8;
   }
   .toast button {
-    min-height: 0;
-    padding: 6px 12px;
+    min-height: 36px;
+    padding: 8px 16px;
     border-color: var(--io-crimson);
-    font-size: 12px;
+    background: var(--io-crimson);
+    color: var(--io-parchment);
+    font-size: 13px;
   }
   @media (max-width: 40rem) {
-    /* Text takes the full width and Understood drops to its own line; the title's own glyph stands in for the icon. */
-    .toast {
-      flex-wrap: wrap;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 10px 12px;
-    }
-    .toast > :global(svg) {
-      display: none;
-    }
-    .toast form {
-      display: flex;
-      flex-basis: 100%;
-      justify-content: flex-end;
+    /* A bottom sheet over the phone nav (15), under the account-menu scrim (20). */
+    .toast.anchored {
+      position: fixed;
+      z-index: 19;
+      border-width: 1px 0 0;
+      border-radius: 12px 12px 0 0;
+      padding-bottom: max(10px, env(safe-area-inset-bottom));
     }
     .check-thumb {
-      width: 36px;
-      height: 36px;
+      display: none;
+    }
+    .toast button {
+      min-height: 44px;
     }
   }
 </style>
