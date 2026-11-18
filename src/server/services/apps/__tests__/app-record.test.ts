@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createClaimer, docRev, familyDigest } from '~/server/registry-adapter/doc-feed';
-import { OWNER_HANDLE_RE, parseOwnedDocumentUrn, registryUrn } from '~/server/registry-adapter/urn';
+import { createClaimer, familyDigest } from '~/server/registry-adapter/doc-feed';
 import type {
   AppRecordConfig,
   RecordOwnerPolicy,
@@ -10,39 +9,36 @@ import {
   APP_RECORD_BODY_MAX_BYTES,
   appRecordConfig,
   assertRecordBodySize,
-  ownerHandle,
   recordBodyBytes,
   recordOwner,
   toAppRecord,
 } from '~/server/services/apps/app-record';
 
 /**
- * The record core: the owner policy table cell by cell, the owner handle, the body bound and
- * the record built from a stored row. Every expectation is a literal. The handles and revs were
- * computed outside this code (openssl HMAC-SHA256, and a separate sorted-key JSON + SHA-256), so
- * none is read back from the implementation under test.
+ * The record core: the owner rule cell by cell, the URN of a shared and of a private record,
+ * the body bound and the switch. Every expectation is a literal. The rev was computed outside
+ * this code (a separate sorted-key JSON + SHA-256), so it is not read back from the
+ * implementation under test.
  */
 
-// 41 and 41 bytes, both over the 32-byte minimum, and different from each other.
-const KEY = 'fixture-owner-handle-key-7f3a9c2e5b81d064';
-const OTHER_KEY = 'fixture-other-handle-key-1d5e8b0c4a92f736';
-
-// Pairwise distinct: the scope, author and editor users, none a substring of another.
+// Pairwise distinct: the scope, author and editor users, the key and the record id.
 const SCOPE_UID = 48213;
 const AUTHOR_UID = 90577;
 // A third user who edited the document after its author created it.
 const EDITOR_UID = 61349;
-// HMAC-SHA256(KEY, 'app-record-owner-handle:v1:<uid>')[0..16] in unpadded base64url.
-const SCOPE_HANDLE = 'Zb-suruP-fFtbvjjunifdw';
-const AUTHOR_HANDLE = '3Uipx1H4DxzUWDg9kOP_pA';
-// The same for SCOPE_UID under OTHER_KEY.
-const SCOPE_HANDLE_OTHER_KEY = 'CaQvWlUuLtDM-C4WZ059fw';
+const KEY = 'pk-31';
+const RECORD_ID = '3f6c1a9e-7b2d-4e58-9a01-c4d2e8f7b630';
 
 const S1 = 'urn:schema:apps.civitai.com:pixel-garden/seed_packs@v1';
 const S2 = 'urn:schema:apps.civitai.com:pixel-garden/seed_packs@v2';
 
-function config(key = KEY): AppRecordConfig {
-  const c = appRecordConfig({ APP_RECORD_CORE_ENABLED: true, APP_RECORD_OWNER_HANDLE_KEY: key });
+// The URN the registry feed publishes for this shared document (`doc-feed.ts`).
+const FEED_URN = 'urn:apps.civitai.com:pixel-garden/seed_packs/pk-31';
+const PRIVATE_URN =
+  'urn:apps.civitai.com:pixel-garden/seed_packs/3f6c1a9e-7b2d-4e58-9a01-c4d2e8f7b630';
+
+function config(): AppRecordConfig {
+  const c = appRecordConfig({ APP_RECORD_CORE_ENABLED: true });
   if (!c) throw new Error('fixture: config is null');
   return c;
 }
@@ -51,58 +47,45 @@ const userAuthor = (uid: number) => ({ kind: 'user' as const, uid, isViewer: fal
 
 function row(over: Partial<RecordSourceRow> = {}): RecordSourceRow {
   return {
-    key: 'pk-31',
+    key: KEY,
     data: { title: 'Moss lantern', stars: 4 },
     version: 7,
     author: userAuthor(AUTHOR_UID),
     scopeUid: 0,
     lastWriterUid: AUTHOR_UID,
+    recordId: RECORD_ID,
     ...over,
   };
 }
 
 describe('appRecordConfig (the switch)', () => {
-  it('is off when nothing is set', () => {
+  it('is off when unset', () => {
     expect(appRecordConfig({})).toBeNull();
   });
 
-  it('is off while the switch is off, even with a key', () => {
-    expect(
-      appRecordConfig({ APP_RECORD_CORE_ENABLED: false, APP_RECORD_OWNER_HANDLE_KEY: KEY })
-    ).toBeNull();
-    expect(appRecordConfig({ APP_RECORD_OWNER_HANDLE_KEY: KEY })).toBeNull();
+  it('is off when switched off', () => {
+    expect(appRecordConfig({ APP_RECORD_CORE_ENABLED: false })).toBeNull();
   });
 
-  it('is off with the switch on and no key', () => {
-    expect(appRecordConfig({ APP_RECORD_CORE_ENABLED: true })).toBeNull();
-    expect(
-      appRecordConfig({ APP_RECORD_CORE_ENABLED: true, APP_RECORD_OWNER_HANDLE_KEY: '' })
-    ).toBeNull();
+  it('is on when switched on', () => {
+    expect(appRecordConfig({ APP_RECORD_CORE_ENABLED: true })).not.toBeNull();
   });
 
-  it('is on with the switch on and a key', () => {
-    expect(
-      appRecordConfig({ APP_RECORD_CORE_ENABLED: true, APP_RECORD_OWNER_HANDLE_KEY: KEY })
-    ).toEqual({ handleKey: KEY });
-  });
-
-  it('refuses a key under 32 bytes, and takes one of exactly 32', () => {
+  it('toAppRecord refuses a null config from an untyped caller', () => {
     expect(() =>
-      appRecordConfig({
-        APP_RECORD_CORE_ENABLED: true,
-        APP_RECORD_OWNER_HANDLE_KEY: 'k'.repeat(31),
+      toAppRecord(null as unknown as AppRecordConfig, {
+        slug: 'pixel-garden',
+        collection: 'seed_packs',
+        policy: { kind: 'docs', visibility: 'shared', write: 'own' },
+        row: row(),
+        writer: { app: 'moss-lab', version: '2.4.1' },
+        claim: () => [],
       })
-    ).toThrow('at least 32 bytes');
-    expect(
-      appRecordConfig({
-        APP_RECORD_CORE_ENABLED: true,
-        APP_RECORD_OWNER_HANDLE_KEY: 'k'.repeat(32),
-      })
-    ).toEqual({ handleKey: 'k'.repeat(32) });
+    ).toThrow('switched off');
   });
 });
 
-describe('recordOwner: the policy table, cell by cell', () => {
+describe('recordOwner: the owner rule, cell by cell', () => {
   type Cell = [
     name: string,
     policy: RecordOwnerPolicy,
@@ -123,54 +106,33 @@ describe('recordOwner: the policy table, cell by cell', () => {
       { scopeUid: SCOPE_UID },
       { kind: 'user', userId: SCOPE_UID },
     ],
-    // Shared, own: the author.
     [
-      'shared own → the author',
+      'private, last written by another user → still the scope user',
+      { kind: 'docs', visibility: 'private' },
+      { scopeUid: SCOPE_UID, lastWriterUid: EDITOR_UID },
+      { kind: 'user', userId: SCOPE_UID },
+    ],
+    // Shared, created by a user: that user, under every write policy.
+    [
+      'shared own, user-created → the creator',
       { kind: 'docs', visibility: 'shared', write: 'own' },
       {},
       { kind: 'user', userId: AUTHOR_UID },
     ],
     [
-      'shared log own → the author',
+      'shared log own, user-created → the creator',
       { kind: 'log', visibility: 'shared', write: 'own' },
       {},
       { kind: 'user', userId: AUTHOR_UID },
     ],
     [
-      'shared, write absent (read as own) → the author',
+      'shared, write absent, user-created → the creator',
       { kind: 'docs', visibility: 'shared' },
       {},
       { kind: 'user', userId: AUTHOR_UID },
     ],
     [
-      'shared own, authored by the app → the app',
-      { kind: 'docs', visibility: 'shared', write: 'own' },
-      { author: { kind: 'app' } },
-      { kind: 'app' },
-    ],
-    // Shared, owner: the app, whoever the author field names.
-    [
-      'shared owner → the app',
-      { kind: 'docs', visibility: 'shared', write: 'owner' },
-      { author: { kind: 'app' } },
-      { kind: 'app' },
-    ],
-    [
-      'shared owner, user author field → still the app',
-      { kind: 'docs', visibility: 'shared', write: 'owner' },
-      {},
-      { kind: 'app' },
-    ],
-    // Shared, none: an aggregate.
-    [
-      'shared none → nobody',
-      { kind: 'docs', visibility: 'shared', write: 'none' },
-      {},
-      { kind: 'nobody' },
-    ],
-    // Shared, anyone: the creator, fixed at creation; a later editor never takes it over.
-    [
-      'shared anyone → the creator',
+      'shared anyone, user-created → the creator',
       { kind: 'docs', visibility: 'shared', write: 'anyone' },
       {},
       { kind: 'user', userId: AUTHOR_UID },
@@ -182,38 +144,71 @@ describe('recordOwner: the policy table, cell by cell', () => {
       { kind: 'user', userId: AUTHOR_UID },
     ],
     [
-      'shared anyone, created by the app → the app',
+      'shared own, last written by another user → still the creator',
+      { kind: 'docs', visibility: 'shared', write: 'own' },
+      { lastWriterUid: EDITOR_UID },
+      { kind: 'user', userId: AUTHOR_UID },
+    ],
+    // Was "the app" before: a user-authored row under `owner` is its author's.
+    [
+      'shared owner, user-created → the creator',
+      { kind: 'docs', visibility: 'shared', write: 'owner' },
+      {},
+      { kind: 'user', userId: AUTHOR_UID },
+    ],
+    // A collection whose write moved from `own` to `none`: its user-authored rows stay theirs.
+    [
+      'shared none (was own), user-created → the creator',
+      { kind: 'docs', visibility: 'shared', write: 'none' },
+      {},
+      { kind: 'user', userId: AUTHOR_UID },
+    ],
+    // Created by the app: the app, under every write policy.
+    [
+      'shared own, app-created → the app',
+      { kind: 'docs', visibility: 'shared', write: 'own' },
+      { author: { kind: 'app' } },
+      { kind: 'app' },
+    ],
+    [
+      'shared anyone, app-created → the app',
       { kind: 'docs', visibility: 'shared', write: 'anyone' },
       { author: { kind: 'app' } },
       { kind: 'app' },
     ],
     [
-      'shared own, last written by another user → still the author',
-      { kind: 'docs', visibility: 'shared', write: 'own' },
-      { lastWriterUid: EDITOR_UID },
-      { kind: 'user', userId: AUTHOR_UID },
+      'shared owner, app-created → the app',
+      { kind: 'docs', visibility: 'shared', write: 'owner' },
+      { author: { kind: 'app' } },
+      { kind: 'app' },
     ],
     [
-      'private, last written by another user → still the scope user',
-      { kind: 'docs', visibility: 'private' },
-      { scopeUid: SCOPE_UID, lastWriterUid: EDITOR_UID },
-      { kind: 'user', userId: SCOPE_UID },
+      'shared none, app-created → the app',
+      { kind: 'docs', visibility: 'shared', write: 'none' },
+      { author: { kind: 'app' } },
+      { kind: 'app' },
     ],
-    // A counter document is nobody's under every shared policy.
+    // A counter document: nobody's, under every write policy.
     [
-      'counter document under own → nobody',
+      'shared none, counter document → nobody',
+      { kind: 'docs', visibility: 'shared', write: 'none' },
+      { author: { kind: 'counter' }, data: {} },
+      { kind: 'nobody' },
+    ],
+    [
+      'shared own, counter document → nobody',
       { kind: 'docs', visibility: 'shared', write: 'own' },
       { author: { kind: 'counter' }, data: {} },
       { kind: 'nobody' },
     ],
     [
-      'counter document under owner → nobody',
+      'shared owner, counter document → nobody',
       { kind: 'docs', visibility: 'shared', write: 'owner' },
       { author: { kind: 'counter' }, data: {} },
       { kind: 'nobody' },
     ],
     [
-      'counter document under anyone → nobody',
+      'shared anyone, counter document → nobody',
       { kind: 'docs', visibility: 'shared', write: 'anyone' },
       { author: { kind: 'counter' }, data: {} },
       { kind: 'nobody' },
@@ -237,43 +232,6 @@ describe('recordOwner: the policy table, cell by cell', () => {
         row({ scopeUid: SCOPE_UID })
       )
     ).toThrow('has a user scope');
-  });
-});
-
-describe('ownerHandle', () => {
-  it('is the keyed digest, pinned', () => {
-    expect(ownerHandle(config(), SCOPE_UID)).toBe(SCOPE_HANDLE);
-    expect(ownerHandle(config(), AUTHOR_UID)).toBe(AUTHOR_HANDLE);
-  });
-
-  it('is deterministic', () => {
-    expect(ownerHandle(config(), SCOPE_UID)).toBe(ownerHandle(config(), SCOPE_UID));
-  });
-
-  it('differs between two users', () => {
-    expect(ownerHandle(config(), SCOPE_UID)).not.toBe(ownerHandle(config(), AUTHOR_UID));
-  });
-
-  it('depends on the key', () => {
-    expect(ownerHandle(config(OTHER_KEY), SCOPE_UID)).toBe(SCOPE_HANDLE_OTHER_KEY);
-  });
-
-  it('never contains the user id', () => {
-    for (const uid of [SCOPE_UID, AUTHOR_UID]) {
-      expect(ownerHandle(config(), uid)).not.toContain(String(uid));
-    }
-  });
-
-  it('is 22 URL-safe characters a URN accepts', () => {
-    for (const uid of [SCOPE_UID, AUTHOR_UID]) {
-      const h = ownerHandle(config(), uid);
-      expect(h).toHaveLength(22);
-      expect(OWNER_HANDLE_RE.test(h)).toBe(true);
-    }
-  });
-
-  it.each([0, -3, 1.5, Number.NaN])('refuses user id %s', (uid) => {
-    expect(() => ownerHandle(config(), uid)).toThrow('invalid user id');
   });
 });
 
@@ -306,18 +264,19 @@ describe('the body bound', () => {
 describe('toAppRecord', () => {
   const claimBoth = () => [S1, S2];
   const writer = { app: 'moss-lab', version: '2.4.1' };
-
-  it('builds a private record under the scope user’s handle', () => {
-    const rec = toAppRecord(config(), {
+  const build = (policy: RecordOwnerPolicy, over: Partial<RecordSourceRow> = {}) =>
+    toAppRecord(config(), {
       slug: 'pixel-garden',
       collection: 'seed_packs',
-      policy: { kind: 'docs', visibility: 'private' },
-      row: row({ scopeUid: SCOPE_UID }),
+      policy,
+      row: row(over),
       writer,
       claim: claimBoth,
     });
-    expect(rec).toEqual({
-      urn: `urn:apps.civitai.com:pixel-garden/seed_packs/${SCOPE_HANDLE}/pk-31`,
+
+  it('builds a private record whose URN id is its record_id, owned by the scope user', () => {
+    expect(build({ kind: 'docs', visibility: 'private' }, { scopeUid: SCOPE_UID })).toEqual({
+      urn: PRIVATE_URN,
       owner: { kind: 'user', userId: SCOPE_UID },
       writer: { app: 'moss-lab', version: '2.4.1' },
       collection: 'seed_packs',
@@ -325,101 +284,67 @@ describe('toAppRecord', () => {
       rev: '4d289dafd3d7f8f0',
       body: { title: 'Moss lantern', stars: 4 },
     });
-    expect(parseOwnedDocumentUrn(rec.urn)).toEqual({
-      slug: 'pixel-garden',
-      collection: 'seed_packs',
-      handle: SCOPE_HANDLE,
-      key: 'pk-31',
-    });
   });
 
-  it('carries the same rev as the registry feed for the same document', () => {
-    const r = row({ scopeUid: SCOPE_UID });
-    const rec = toAppRecord(config(), {
-      slug: 'pixel-garden',
-      collection: 'seed_packs',
-      policy: { kind: 'docs', visibility: 'private' },
-      row: r,
-      writer,
-      claim: claimBoth,
-    });
-    expect(rec.rev).toBe(docRev(r, [S1, S2]));
+  it('builds a private log record the same way', () => {
+    expect(build({ kind: 'log', visibility: 'private' }, { scopeUid: SCOPE_UID }).urn).toBe(
+      PRIVATE_URN
+    );
   });
 
-  // A shared collection is one key space per app, and the registry feed already publishes its
-  // documents as `<slug>/<coll>/<key>` (doc-feed.ts builds it with `registryUrn` kind
-  // `document`). A record of the same document must carry that same URN, whoever owns it.
-  const FEED_URN = 'urn:apps.civitai.com:pixel-garden/seed_packs/pk-31';
-
-  it.each([
-    ['own', {}],
-    ['anyone', { lastWriterUid: EDITOR_UID }],
-  ] as const)(
-    'a shared %s record, owned by its creator, keeps the URN the feed publishes',
-    (write, over) => {
-      const rec = toAppRecord(config(), {
-        slug: 'pixel-garden',
-        collection: 'seed_packs',
-        policy: { kind: 'docs', visibility: 'shared', write },
-        row: row(over),
-        writer,
-        claim: claimBoth,
-      });
-      expect(rec.urn).toBe(FEED_URN);
-      expect(rec.urn).toBe(
-        registryUrn({
-          kind: 'document',
-          slug: 'pixel-garden',
-          collection: 'seed_packs',
-          key: 'pk-31',
-        })
-      );
-      expect(parseOwnedDocumentUrn(rec.urn)).toBeNull();
-      expect(rec.urn).not.toContain(AUTHOR_HANDLE);
-      expect(rec.owner).toEqual({ kind: 'user', userId: AUTHOR_UID });
+  // No URN names its owner: two users' private records with the same key differ by record_id.
+  it('gives two users’ private records with one key different URNs, neither naming its owner', () => {
+    const other = '9d0e4b27-5c3a-4f16-b8e2-71a5c6d3f904';
+    const a = build({ kind: 'docs', visibility: 'private' }, { scopeUid: SCOPE_UID });
+    const b = build(
+      { kind: 'docs', visibility: 'private' },
+      { scopeUid: AUTHOR_UID, recordId: other }
+    );
+    expect(a.urn).toBe(PRIVATE_URN);
+    expect(b.urn).toBe(
+      'urn:apps.civitai.com:pixel-garden/seed_packs/9d0e4b27-5c3a-4f16-b8e2-71a5c6d3f904'
+    );
+    for (const r of [a, b]) {
+      expect(r.urn).not.toContain(String(SCOPE_UID));
+      expect(r.urn).not.toContain(String(AUTHOR_UID));
+      expect(r.urn).not.toContain(KEY);
     }
-  );
-
-  it('builds a private log record under the scope user’s handle too', () => {
-    const rec = toAppRecord(config(), {
-      slug: 'pixel-garden',
-      collection: 'seed_packs',
-      policy: { kind: 'log', visibility: 'private' },
-      row: row({ scopeUid: SCOPE_UID }),
-      writer,
-      claim: claimBoth,
-    });
-    expect(rec.urn).toBe(`urn:apps.civitai.com:pixel-garden/seed_packs/${SCOPE_HANDLE}/pk-31`);
   });
 
-  it('gives one user the same handle in two apps, so their records join', () => {
-    const urnIn = (slug: string) =>
-      toAppRecord(config(), {
-        slug,
-        collection: 'seed_packs',
-        policy: { kind: 'docs', visibility: 'private' },
-        row: row({ scopeUid: SCOPE_UID }),
-        writer,
-        claim: claimBoth,
-      }).urn;
-    expect(parseOwnedDocumentUrn(urnIn('pixel-garden'))?.handle).toBe(SCOPE_HANDLE);
-    expect(parseOwnedDocumentUrn(urnIn('moss-lab'))?.handle).toBe(SCOPE_HANDLE);
+  it('refuses a private row with no record_id rather than inventing one', () => {
+    expect(() =>
+      build({ kind: 'docs', visibility: 'private' }, { scopeUid: SCOPE_UID, recordId: null })
+    ).toThrow('private row pk-31 has no record_id');
   });
 
   it.each([
-    ['owner', { kind: 'app' }],
-    ['none', { kind: 'nobody' }],
-  ] as const)('a shared %s record keeps the URN the feed publishes', (write, owner) => {
-    const rec = toAppRecord(config(), {
-      slug: 'pixel-garden',
-      collection: 'seed_packs',
-      policy: { kind: 'docs', visibility: 'shared', write },
-      row: row(),
-      writer,
-      claim: claimBoth,
-    });
+    '3F6C1A9E-7B2D-4E58-9A01-C4D2E8F7B630',
+    '3f6c1a9e7b2d4e589a01c4d2e8f7b630',
+    'pk-31',
+    '',
+  ])('refuses a private row whose record_id is %j', (recordId) => {
+    expect(() =>
+      build({ kind: 'docs', visibility: 'private' }, { scopeUid: SCOPE_UID, recordId })
+    ).toThrow('malformed record_id');
+  });
+
+  // A shared collection is one key space per app: the record keeps the URN the registry feed
+  // already publishes for the document, whoever owns it, and never reads record_id.
+  it.each([
+    ['own', {}, { kind: 'user', userId: AUTHOR_UID }],
+    ['anyone', { lastWriterUid: EDITOR_UID }, { kind: 'user', userId: AUTHOR_UID }],
+    ['owner', { author: { kind: 'app' } }, { kind: 'app' }],
+    ['none', { author: { kind: 'counter' }, data: {} }, { kind: 'nobody' }],
+  ] as const)('a shared %s record keeps the URN the feed publishes', (write, over, owner) => {
+    const rec = build({ kind: 'docs', visibility: 'shared', write }, over);
     expect(rec.urn).toBe(FEED_URN);
     expect(rec.owner).toEqual(owner);
+  });
+
+  it('a shared record does not need a record_id', () => {
+    expect(
+      build({ kind: 'docs', visibility: 'shared', write: 'own' }, { recordId: null }).urn
+    ).toBe(FEED_URN);
   });
 
   it('claims the majors with the registry feed’s claimer', () => {
@@ -428,7 +353,7 @@ describe('toAppRecord', () => {
       { urn: S2, body: { type: 'object', required: ['title'] } },
     ];
     const claim = createClaimer()(family, familyDigest(family));
-    const build = (data: Record<string, unknown>) =>
+    const withClaim = (data: Record<string, unknown>) =>
       toAppRecord(config(), {
         slug: 'pixel-garden',
         collection: 'seed_packs',
@@ -437,23 +362,18 @@ describe('toAppRecord', () => {
         writer,
         claim,
       });
-    const both = build({ title: 'Moss lantern', stars: 4 });
+    const both = withClaim({ title: 'Moss lantern', stars: 4 });
     expect(both.schemas).toEqual([S1, S2]);
     expect(both.rev).toBe('4d289dafd3d7f8f0');
-    const first = build({ stars: 4 });
-    expect(first.schemas).toEqual([S1]);
+    expect(withClaim({ stars: 4 }).schemas).toEqual([S1]);
   });
 
   it('refuses a body over the limit', () => {
     expect(() =>
-      toAppRecord(config(), {
-        slug: 'pixel-garden',
-        collection: 'seed_packs',
-        policy: { kind: 'docs', visibility: 'private' },
-        row: row({ scopeUid: SCOPE_UID, data: { s: 'x'.repeat(65529) } }),
-        writer,
-        claim: claimBoth,
-      })
+      build(
+        { kind: 'docs', visibility: 'private' },
+        { scopeUid: SCOPE_UID, data: { s: 'x'.repeat(65529) } }
+      )
     ).toThrow('over the 65536-byte limit');
   });
 });
