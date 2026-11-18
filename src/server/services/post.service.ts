@@ -1681,6 +1681,27 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
 
+/** Whether an upload may stay at the index its client sent (`addPostImage`). */
+async function keepSentIndex(postId: number, index: number) {
+  if (!Number.isInteger(index) || index < 0) return false;
+  const [holder, hiddenEnd] = await Promise.all([
+    // primary: decides the index this upload is written at
+    dbWrite.image.findFirst({ where: { postId, index }, select: { id: true } }),
+    // primary: decides the index this upload is written at
+    dbWrite.image.aggregate({
+      where: {
+        postId,
+        OR: [
+          { NOT: notHeldForReviewWhere() },
+          { nsfwLevel: { notIn: [0, NsfwLevel.PG, NsfwLevel.PG13] } },
+        ],
+      },
+      _max: { index: true },
+    }),
+  ]);
+  return !holder && index > (hiddenEnd?._max.index ?? -1);
+}
+
 export const addPostImage = async ({
   modelVersionId,
   meta,
@@ -1785,26 +1806,7 @@ export const addPostImage = async ({
     select: { index: true },
   });
   const sentIndex = imageProps.index;
-  const keepSent = async (index: number) => {
-    if (!Number.isInteger(index) || index < 0) return false;
-    const [holder, hiddenEnd] = await Promise.all([
-      // primary: decides the index this upload is written at
-      dbWrite.image.findFirst({ where: { postId: props.postId, index }, select: { id: true } }),
-      // primary: decides the index this upload is written at
-      dbWrite.image.aggregate({
-        where: {
-          postId: props.postId,
-          OR: [
-            { NOT: notHeldForReviewWhere() },
-            { nsfwLevel: { notIn: [0, NsfwLevel.PG, NsfwLevel.PG13] } },
-          ],
-        },
-        _max: { index: true },
-      }),
-    ]);
-    return !holder && index > (hiddenEnd?._max.index ?? -1);
-  };
-  if (lastText || sentIndex == null || !(await keepSent(sentIndex))) {
+  if (lastText || sentIndex == null || !(await keepSentIndex(props.postId, sentIndex))) {
     const imageEnd = await dbWrite.image.aggregate({
       where: { postId: props.postId },
       _max: { index: true },
