@@ -199,7 +199,7 @@ describe('applyRating', () => {
       true,
       77
     );
-    const hiddenSeq = (await stored(app, 'h1')).seq;
+    const hiddenSeq = Number((await stored(app, 'h1')).seq);
     expect(
       await rater.applyRating(app, NS_PROD, BOARD.name, 'h1', { seq: hiddenSeq, level: 2 })
     ).toEqual({
