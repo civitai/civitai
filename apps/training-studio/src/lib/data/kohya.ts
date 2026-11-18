@@ -40,7 +40,9 @@ export const KOHYA_SCHEDULERS = [
   'polynomial',
 ] satisfies KohyaInput['lrScheduler'][];
 
-export function kohyaFamily(ecosystem: string): 'sd1' | 'sdxl' | 'flux1' | 'chroma' | undefined {
+export function kohyaFamily(
+  ecosystem: string
+): 'sd1' | 'sdxl' | 'flux1' | 'chroma' | 'anima' | undefined {
   switch (ecosystem) {
     case 'sd1':
       return 'sd1';
@@ -53,12 +55,18 @@ export function kohyaFamily(ecosystem: string): 'sd1' | 'sdxl' | 'flux1' | 'chro
       return 'flux1';
     case 'chroma':
       return 'chroma';
+    case 'anima':
+      return 'anima';
     default:
       return undefined;
   }
 }
 
 export const isKohyaFlow = (ecosystem: string): boolean =>
+  ecosystem === 'flux1' || ecosystem === 'chroma' || ecosystem === 'anima';
+
+/** The flow models large enough to need FP8 weights and block swapping. */
+export const isKohyaFlux = (ecosystem: string): boolean =>
   ecosystem === 'flux1' || ecosystem === 'chroma';
 
 export function kohyaDefaults(version: ModelVersionInfo): RunParamDefaults {
@@ -66,16 +74,17 @@ export function kohyaDefaults(version: ModelVersionInfo): RunParamDefaults {
   const flow = isKohyaFlow(version.ecosystem);
   const pony = version.key === 'pony';
   const anime = version.key === 'anime';
+  const anima = version.ecosystem === 'anima';
   return {
     epochs: flow ? 5 : 10,
-    unetLr: pony ? 1 : 5e-4,
+    unetLr: pony ? 1 : anima ? 1e-4 : 5e-4,
     textEncoderLr: flow ? 0 : pony ? 1 : anime ? 1e-4 : 5e-5,
-    networkDim: anime ? 16 : 32,
+    networkDim: anime || anima ? 16 : 32,
     networkAlpha: anime ? 8 : version.key === 'flux_dev' ? 2 : 16,
     resolution: sd1 ? 512 : 1024,
     batchSize: flow ? 1 : version.key === 'realistic' ? 2 : sd1 ? 6 : pony ? 5 : 4,
     noiseOffset: flow ? 0 : pony ? 0.03 : 0.1,
-    lrScheduler: pony ? 'cosine' : 'cosine_with_restarts',
+    lrScheduler: pony ? 'cosine' : anima ? 'constant' : 'cosine_with_restarts',
     optimizer: pony ? 'Prodigy' : !sd1 && !flow ? 'Adafactor' : 'AdamW8bit',
   };
 }
@@ -115,7 +124,7 @@ export const KOHYA_PARAM_FIELDS = [
 export function kohyaFieldSupported(field: string, ecosystem: string): boolean {
   if (field === 'negativePrompt') return ecosystem !== 'flux1';
   if (field === 'clipSkip') return ecosystem === 'sd1';
-  if (field === 'fp8Base' || field === 'blocksToSwap') return isKohyaFlow(ecosystem);
+  if (field === 'fp8Base' || field === 'blocksToSwap') return isKohyaFlux(ecosystem);
   if (field === 'vParameterization' || field === 'zeroTerminalSnr') return !isKohyaFlow(ecosystem);
   return true;
 }
