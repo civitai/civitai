@@ -18,8 +18,37 @@ export const KEEP_MIN_PLAYERS = 5;
 type Executor = Kysely<DB>;
 const LIVE = [REFERENCE_STATUS.active, REFERENCE_STATUS.pending];
 
+/** The pool a run cleans: hidden checks are answered by Knights (KnightsVote), trials by Acolytes (KnightsApprenticeAnswer). */
+export type RebuildPool = typeof REFERENCE_POOL.hiddenCheck | typeof REFERENCE_POOL.trials;
+
+function agreed(db: Executor, excludeImageIds: number[], pool: RebuildPool) {
+  return pool === REFERENCE_POOL.trials
+    ? agreedTrials(db, excludeImageIds)
+    : agreedHiddenChecks(db, excludeImageIds);
+}
+
+/** Harvested trials references whose Acolytes' answers agree with the ruling, by the same rule as hidden checks. */
+function agreedTrials(db: Executor, excludeImageIds: number[]) {
+  return db
+    .selectFrom('KnightsReferenceImage as k')
+    .innerJoin('KnightsApprenticeAnswer as a', 'a.referenceId', 'k.id')
+    .innerJoin('Image as img', 'img.id', 'k.imageId')
+    .select('k.id')
+    .where('k.pool', '=', REFERENCE_POOL.trials)
+    .where('k.source', '=', REFERENCE_SOURCE.harvested)
+    .where(
+      sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${MODERATOR_QUEUE_RATING_REASON}`
+    )
+    .$if(excludeImageIds.length > 0, (qb) => qb.where('k.imageId', 'not in', excludeImageIds))
+    .groupBy(['k.id', 'k.answer'])
+    .having(sql<boolean>`count(DISTINCT "a"."playerId") >= ${KEEP_MIN_PLAYERS}`)
+    .having(
+      sql<boolean>`2 * count(DISTINCT "a"."playerId") FILTER (WHERE "a"."answer" = "k"."answer") > count(DISTINCT "a"."playerId")`
+    );
+}
+
 /** Harvested hidden checks whose players' answers agree with the ruling; a hidden check votes under -referenceId. */
-function agreed(db: Executor, excludeImageIds: number[]) {
+function agreedHiddenChecks(db: Executor, excludeImageIds: number[]) {
   return db
     .selectFrom('KnightsReferenceImage as k')
     .innerJoin('KnightsVote as v', (join) => join.on(sql<boolean>`"v"."itemId" = -"k"."id"`))
@@ -38,20 +67,23 @@ function agreed(db: Executor, excludeImageIds: number[]) {
     );
 }
 
-export type RebuildInput = { now: Date; excludeImageIds: number[] };
+export type RebuildInput = { now: Date; excludeImageIds: number[]; pool?: RebuildPool };
 
 /** The ids a run would retire: every live harvested hidden check outside the agreed set. Reads only. */
 export function retirableIdsQuery(
   db: Executor,
-  { excludeImageIds }: Pick<RebuildInput, 'excludeImageIds'>
+  {
+    excludeImageIds,
+    pool = REFERENCE_POOL.hiddenCheck,
+  }: Pick<RebuildInput, 'excludeImageIds' | 'pool'>
 ) {
   return db
     .selectFrom('KnightsReferenceImage')
     .select('id')
-    .where('pool', '=', REFERENCE_POOL.hiddenCheck)
+    .where('pool', '=', pool)
     .where('source', '=', REFERENCE_SOURCE.harvested)
     .where('status', 'in', LIVE)
-    .where('id', 'not in', agreed(db, excludeImageIds))
+    .where('id', 'not in', agreed(db, excludeImageIds, pool))
     .orderBy('id');
 }
 
@@ -61,16 +93,16 @@ export function retirableIdsQuery(
  */
 export function retireIdsQuery(
   db: Executor,
-  { now, excludeImageIds, ids }: RebuildInput & { ids: number[] }
+  { now, excludeImageIds, ids, pool = REFERENCE_POOL.hiddenCheck }: RebuildInput & { ids: number[] }
 ) {
   return db
     .updateTable('KnightsReferenceImage')
     .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
     .where('id', 'in', ids)
-    .where('pool', '=', REFERENCE_POOL.hiddenCheck)
+    .where('pool', '=', pool)
     .where('source', '=', REFERENCE_SOURCE.harvested)
     .where('status', 'in', LIVE)
-    .where('id', 'not in', agreed(db, excludeImageIds));
+    .where('id', 'not in', agreed(db, excludeImageIds, pool));
 }
 
 /**
@@ -98,12 +130,13 @@ export function checkedRetireSql(db: Executor, input: RebuildInput & { ids: numb
 /** Live harvested hidden checks, and how many a run would keep and retire. Reads only. */
 export async function planHiddenRebuild(
   db: Executor,
-  input: Pick<RebuildInput, 'excludeImageIds'>
+  input: Pick<RebuildInput, 'excludeImageIds' | 'pool'>
 ) {
+  const pool = input.pool ?? REFERENCE_POOL.hiddenCheck;
   const live = await db
     .selectFrom('KnightsReferenceImage')
     .select((eb) => eb.fn.countAll<string>().as('n'))
-    .where('pool', '=', REFERENCE_POOL.hiddenCheck)
+    .where('pool', '=', pool)
     .where('source', '=', REFERENCE_SOURCE.harvested)
     .where('status', 'in', LIVE)
     .executeTakeFirstOrThrow();
@@ -160,6 +193,7 @@ export type RebuildArgs = {
   printSql: boolean;
   excludeImageIds: number[];
   ids: number[] | null;
+  pool: RebuildPool;
 };
 
 const idList = (flag: string, value: string | undefined) => {
@@ -171,14 +205,26 @@ const idList = (flag: string, value: string | undefined) => {
 
 /** Strict: an unknown or malformed argument is an error, so an id can never be dropped silently. */
 export function parseRebuildArgs(argv: string[]): RebuildArgs {
-  const args: RebuildArgs = { apply: false, printSql: false, excludeImageIds: [], ids: null };
+  const args: RebuildArgs = {
+    apply: false,
+    printSql: false,
+    excludeImageIds: [],
+    ids: null,
+    pool: REFERENCE_POOL.hiddenCheck,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--apply') args.apply = true;
     else if (arg === '--print-sql') args.printSql = true;
     else if (arg === '--exclude') args.excludeImageIds = idList(arg, argv[++i]);
     else if (arg === '--ids') args.ids = idList(arg, argv[++i]);
-    else throw new Error(`Unknown argument: ${arg}`);
+    else if (arg === '--pool') {
+      const pool = argv[++i];
+      if (pool !== REFERENCE_POOL.hiddenCheck && pool !== REFERENCE_POOL.trials) {
+        throw new Error('--pool takes hiddenCheck or trials.');
+      }
+      args.pool = pool;
+    } else throw new Error(`Unknown argument: ${arg}`);
   }
   if (args.apply && args.printSql) throw new Error('Pass --apply or --print-sql, not both.');
   if (args.ids && !args.printSql) throw new Error('--ids only goes with --print-sql.');

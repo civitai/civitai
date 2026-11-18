@@ -12,7 +12,8 @@ import {
 } from '../src/lib/server/trials/hidden-rebuild.service';
 
 /**
- * Retires harvested hidden checks that players do not agree with. Counts only, never deletes.
+ * Retires harvested hidden checks (or, with `--pool trials`, harvested trials references) that players do not agree
+ * with. Changes status only, never deletes.
  * - `pnpm run rebuild:hidden-checks [--exclude <imageId,...>]`: dry run against the local database.
  * - `... --apply`: retire in one transaction, local database only.
  * - `... --print-sql [--exclude ...]`: print the SELECT of the ids to retire; with `--ids <id,...>` (that SELECT's
@@ -21,7 +22,7 @@ import {
  */
 async function main() {
   const args = parseRebuildArgs(process.argv.slice(2));
-  const input = { now: new Date(), excludeImageIds: args.excludeImageIds };
+  const input = { now: new Date(), excludeImageIds: args.excludeImageIds, pool: args.pool };
 
   if (args.printSql) {
     const db = offlineDb();
@@ -30,6 +31,7 @@ async function main() {
         ? checkedRetireSql(db, { ...input, ids: args.ids })
         : `${inlineSql(retirableIdsQuery(db, input).compile())};`
     );
+    console.log(`-- pool: ${args.pool}`);
     console.log(`-- excluded image ids: ${args.excludeImageIds.join(',') || 'none'}`);
     if (args.ids) console.log(`-- expect exactly ${args.ids.length} rows updated`);
     return;

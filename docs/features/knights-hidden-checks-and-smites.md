@@ -26,7 +26,7 @@ ordinary vote in every way a player can see.
   `KEEP_MIN_PLAYERS` players answered or that most of its players answered differently, plus any `--exclude` image ids.
   It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run
   elsewhere, `--print-sql` prints the SELECT of the ids to retire, and `--print-sql --ids <ids>` a transaction that retires exactly
-  those ids and commits only if it retired all of them, both with their values written in.
+  those ids and commits only if it retired all of them, both with their values written in. `--pool trials` runs the same retire over harvested `trials` references, counting the Acolytes' apprenticeship answers instead of Knight votes.
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
