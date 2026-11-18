@@ -978,8 +978,8 @@ jobs:
           # A re-run of a failed shard uploads again under the same name.
           overwrite: true
 
-      # PER-TEST TIMINGS, read weekly by an external ci-speed job that ranks slow and flaky
-      # tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
+      # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
+      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
       # own `test-times-` name so no download in this workflow can match it — `unit-verify`
       # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
       # missing report is already failed, by name, by this suite's own ledger step.
@@ -1149,11 +1149,7 @@ jobs:
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
-      # PER-TEST TIMINGS, read weekly by an external ci-speed job that ranks slow and flaky
-      # tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
-      # own `test-times-` name so no download in this workflow can match it — `unit-verify`
-      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
-      # missing report is already failed, by name, by this suite's own ledger step.
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -1365,11 +1361,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-      # PER-TEST TIMINGS, read weekly by an external ci-speed job that ranks slow and flaky
-      # tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
-      # own `test-times-` name so no download in this workflow can match it — `unit-verify`
-      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
-      # missing report is already failed, by name, by this suite's own ledger step.
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && env.SUITE_COMPONENT == 'true' }}
         uses: actions/upload-artifact@v7
@@ -1517,11 +1509,7 @@ jobs:
           }
           JS
 
-      # PER-TEST TIMINGS, read weekly by an external ci-speed job that ranks slow and flaky
-      # tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
-      # own `test-times-` name so no download in this workflow can match it — `unit-verify`
-      # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
-      # missing report is already failed, by name, by this suite's own ledger step.
+      # PER-TEST TIMINGS: see the `unit` job's `Upload test timings` step.
       - name: Upload test timings
         if: ${{ !cancelled() && steps.geometry.outcome != 'skipped' }}
         uses: actions/upload-artifact@v7

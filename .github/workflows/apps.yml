@@ -234,8 +234,8 @@ jobs:
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps --scope app-suite-scope.json
 
-      # PER-TEST TIMINGS, read weekly by an external ci-speed job that ranks slow and flaky
-      # tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
+      # PER-TEST TIMINGS, read a few times a day by an external ci-speed job that ranks slow
+      # and flaky tests across runs. The SAME report this job's suite step wrote (no extra test run), under its
       # own `test-times-` name so no download in this workflow can match it — `unit-verify`
       # globs `unit-report-*` and once counted every .json it found. `ignore` when absent: a
       # missing report is already failed, by name, by this suite's own ledger step.
