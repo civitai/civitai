@@ -349,9 +349,39 @@ describe('Training Studio auto-label', () => {
       record('wf-q', { userId: 7, day: today(), count: 1 });
       redisMock.redis.sAdd.mockRejectedValue(new Error('redis down'));
       orch.getWorkflow.mockResolvedValue(failed(1));
+      counters.set(quotaKey(), 1);
       await expect(pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' })).resolves.toMatchObject({
         results: [{ key: 'k0', status: 'failed' }],
       });
+      // Nothing is given back unless the step was marked first, so a retry can't give it twice.
+      expect(counters.get(quotaKey())).toBe(1);
+    });
+
+    it('gives every key it writes an expiry, even when the give-back itself fails', async () => {
+      record('wf-q', { userId: 7, day: today(), count: 1 });
+      redisMock.sysRedis.decrBy.mockRejectedValueOnce(new Error('sys down'));
+      orch.getWorkflow.mockResolvedValue(failed(1));
+      await pollStudioAutoLabel({ userId: 7, workflowId: 'wf-q' });
+      const expired = redisMock.redis.expire.mock.calls.map((c) => c[0]);
+      expect(expired).toContain(`${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED}:wf-q`);
+      expect(expired).toContain(
+        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_RELEASED_DAILY}:7:${today()}`
+      );
+
+      orch.submitWorkflow.mockResolvedValue({ data: { id: 'wf-r' } });
+      await submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items });
+      expect(redisMock.redis.set).toHaveBeenLastCalledWith(
+        `${REDIS_KEYS.TRAINING.STUDIO_AUTO_LABEL_SUBMITTED}:wf-r`,
+        expect.any(String),
+        { EX: expect.any(Number) }
+      );
+    });
+
+    it('still returns the workflow when the submit record cannot be written', async () => {
+      redisMock.redis.set.mockRejectedValue(new Error('redis down'));
+      await expect(
+        submitStudioAutoLabel({ userId: 7, mode: 'tag', media: 'image', items })
+      ).resolves.toEqual({ workflowId: 'wf-1' });
     });
   });
 
