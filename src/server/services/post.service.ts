@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import {
   isHeldForReview,
-  isServableLevel,
+  isServableLevelOrOwnUnrated,
   notHeldForReviewWhere,
   servableLevelOrOwnUnratedWhere,
 } from '~/server/common/image-visibility';
@@ -2248,10 +2248,10 @@ const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.
 
 /**
  * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
- * `getPostEditImages` does not serve it (held for review unless a moderator, or rated outside the
- * request's levels) even if it lists them. They keep their index. A listed unrated image moves
- * even on a capped request: it is an upload the editor shows while its scan runs. `movable` holds the others the
- * editor listed, with their current index and whether the version level counts them.
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
+ * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * index. `movable` holds the others the editor listed, with their current index and whether the
+ * version level counts them.
  */
 async function editorHiddenImages(
   postId: number,
@@ -2261,13 +2261,13 @@ async function editorHiddenImages(
   // primary: decides which indexes the reorder write that follows may take
   const images = await dbWrite.image.findMany({
     where: { postId },
-    select: { id: true, index: true, needsReview: true, nsfwLevel: true },
+    select: { id: true, index: true, needsReview: true, nsfwLevel: true, userId: true },
   });
   const listed = new Set(listedIds);
   const isHidden = (image: (typeof images)[number]) =>
     !listed.has(image.id) ||
     (!user.isModerator && isHeldForReview(image.needsReview)) ||
-    (image.nsfwLevel !== 0 && !isServableLevel(image.nsfwLevel, servableLevels));
+    !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
   const hidden = images.filter(isHidden);
   const movable = new Map(
     images

@@ -147,6 +147,14 @@ export const servableLevelSql = (levels: number) =>
 export const isServableLevel = (nsfwLevel: number, levels: number) =>
   levels === allBrowsingLevelsFlag || Flags.instanceToArray(levels).includes(nsfwLevel);
 
+/** TS twin of `servableLevelOrOwnUnratedWhere`, for one image. */
+export const isServableLevelOrOwnUnrated = (
+  image: { nsfwLevel: number; userId: number },
+  levels: number,
+  viewerId: number
+) =>
+  isServableLevel(image.nsfwLevel, levels) || (image.nsfwLevel === 0 && image.userId === viewerId);
+
 /** Held to the request's servable levels: a capped request gets no unrated upload either. */
 export const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
   levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };

@@ -36,7 +36,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, index int, "needsReview" text,
-      "updatedAt" timestamp(3)
+      "userId" int NOT NULL DEFAULT ${OWNER}, "updatedAt" timestamp(3)
     );
     CREATE TABLE "PostText" (
       id int PRIMARY KEY, "postId" int NOT NULL, index int NOT NULL, "updatedAt" timestamp(3)
@@ -249,6 +249,23 @@ describe('reorderPostImages around images the editor does not list', () => {
     });
     expect((await indexes())[40]).toBe(0);
     expect(positions).toContainEqual({ type: 'image', id: 40, index: 0 });
+  });
+
+  it.each([
+    ['a moderator who is not the owner leaves it at its index', { id: 99, isModerator: true }, 3],
+    ['the owner moves it', { id: OWNER }, 0],
+  ])("on a capped request, the owner's listed unrated upload: %s", async (_l, user, expected) => {
+    await harness.pg.exec(`
+        INSERT INTO "Image" (id, "postId", "nsfwLevel", index) VALUES
+          (10, ${POST}, ${PG}, 0), (11, ${POST}, ${PG}, 1), (12, ${POST}, ${PG}, 2), (40, ${POST}, 0, 3);
+      `);
+    await reorderPostImages({
+      user: user as SessionUser,
+      servableLevels: sfwBrowsingLevelsFlag,
+      id: POST,
+      imageIds: [40, 10, 11, 12],
+    });
+    expect((await indexes())[40]).toBe(expected);
   });
 
   it('with a pinned image, an unrated upload moves within its stretch', async () => {
