@@ -4,7 +4,9 @@ import {
   KNIGHTS_SOURCES_DEFAULT_MAX_OPEN,
   knightsSourcesMaxOpen,
   parseKnightsSourcesConfig,
+  KNIGHTS_RULE_GUIDE_LIMITS,
   readKnightsSourcesConfig,
+  readRuleGuide,
 } from '../new-order';
 
 describe('readKnightsSourcesConfig', () => {
@@ -150,5 +152,84 @@ describe('isValidKnightsGameSetting', () => {
     expect(isValidKnightsGameSetting('yesNoMaxAgeDays', Number.POSITIVE_INFINITY)).toBe(false);
     expect(isValidKnightsGameSetting('shopDisabled', true)).toBe(true);
     expect(isValidKnightsGameSetting('shopDisabled', 'true')).toBe(false);
+  });
+});
+
+describe('readKnightsSourcesConfig ruleGuide', () => {
+  const level = (code: string) => ({ code, description: `Description of ${code}` });
+  const set = (title: string, codes: string[], notes?: string) => ({
+    title,
+    ...(notes ? { notes } : {}),
+    levels: codes.map(level),
+  });
+  const read = (ruleGuide: unknown) =>
+    readKnightsSourcesConfig(JSON.stringify({ enabled: true, ruleGuide })).config;
+
+  it('leaves ruleGuide out when nothing is stored, keeping the other fields', () => {
+    expect(
+      readKnightsSourcesConfig('{"enabled":true,"game":{"shopDisabled":true}}').config
+    ).toEqual({
+      enabled: true,
+      sfwRate: 1,
+      nsfwRate: 0.3,
+      game: { shopDisabled: true },
+    });
+  });
+
+  it('reads a stored guide back, trimmed', () => {
+    expect(
+      read({ intro: '  Why we ask  ', sets: [set(' First set ', ['A0', 'A1'], 'A note')] })
+        .ruleGuide
+    ).toEqual({ intro: 'Why we ask', sets: [set('First set', ['A0', 'A1'], 'A note')] });
+  });
+
+  it('drops a level missing its code or description, and a set left with no levels', () => {
+    const guide = read({
+      sets: [
+        {
+          title: 'Kept',
+          levels: [level('A0'), { code: 'A1', description: '  ' }, { description: 'x' }],
+        },
+        { title: 'Empty', levels: [{ code: '', description: '' }] },
+      ],
+    }).ruleGuide;
+    expect(guide).toEqual({ sets: [set('Kept', ['A0'])] });
+  });
+
+  it('drops what is over the limits instead of truncating it', () => {
+    const tooMany = Array.from({ length: KNIGHTS_RULE_GUIDE_LIMITS.sets + 2 }, (_, i) =>
+      set(`Set ${i}`, ['A0'])
+    );
+    expect(read({ sets: tooMany }).ruleGuide?.sets).toHaveLength(KNIGHTS_RULE_GUIDE_LIMITS.sets);
+    const longDescription = {
+      code: 'A0',
+      description: 'x'.repeat(KNIGHTS_RULE_GUIDE_LIMITS.description + 1),
+    };
+    expect(
+      read({ sets: [{ title: 'T', levels: [longDescription, level('A1')] }] }).ruleGuide
+    ).toEqual({
+      sets: [set('T', ['A1'])],
+    });
+    expect(
+      read({ intro: 'x'.repeat(KNIGHTS_RULE_GUIDE_LIMITS.intro + 1), sets: [set('T', ['A0'])] })
+        .ruleGuide
+    ).toEqual({
+      sets: [set('T', ['A0'])],
+    });
+  });
+
+  it('ignores an unusable guide without losing the rest of the config', () => {
+    for (const ruleGuide of ['text', 3, [], { sets: 'x' }, { sets: [] }, null]) {
+      const config = readKnightsSourcesConfig(
+        JSON.stringify({ enabled: true, yesNoShare: 0.2, ruleGuide })
+      ).config;
+      expect(config).not.toHaveProperty('ruleGuide');
+      expect(config.yesNoShare).toBe(0.2);
+    }
+  });
+
+  it('agrees with readRuleGuide', () => {
+    const value = { sets: [set('T', ['A0'])] };
+    expect(read(value).ruleGuide).toEqual(readRuleGuide(value));
   });
 });
