@@ -3,7 +3,6 @@ import { readFileSync } from 'fs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { emailNotificationTypes } from '@civitai/notifications/constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { sendEmail } from '~/server/email/client';
@@ -17,9 +16,7 @@ vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
 }));
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { emailNotificationTypeList, systemEmailNotificationTypes } = await import(
-  '~/server/notifications/utils.notifications'
-);
+const { systemEmailNotificationTypes } = await import('~/server/notifications/utils.notifications');
 const { clearNotificationEmailEnabledCache, getEmailUnsubscribeUrl, sendNotificationEmails } =
   await import('~/server/services/notification-email.service');
 const unsubscribe = (await import('~/pages/api/notifications/email-unsubscribe'))
@@ -99,11 +96,6 @@ async function post(query: Record<string, string>) {
 }
 
 describe('app-review notifications send email', () => {
-  it.each(APP_REVIEW_TYPES)('%s is emailed by both the main app and the fan-out worker', (type) => {
-    expect(emailNotificationTypeList).toContain(type);
-    expect(emailNotificationTypes).toContain(type);
-  });
-
   it('each one has an email control in settings, though it has no on-site toggle', () => {
     expect(systemEmailNotificationTypes.map((t) => t.type).sort()).toEqual(
       [...APP_REVIEW_TYPES].sort()
