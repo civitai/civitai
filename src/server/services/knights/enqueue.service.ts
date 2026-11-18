@@ -33,8 +33,9 @@ export type EnqueueRefusal =
 
 export type EnqueueOptions = {
   /**
-   * Refuse images the public feeds would not show. Intake leaves it off: scan results often
-   * arrive before the post is published.
+   * Refuse images the public feeds would not show, such as one whose post is unpublished or
+   * missing. Scan samples and owner ratings pass it, giving up the few images whose post
+   * publishes after the scan.
    */
   servableOnly?: boolean;
 };

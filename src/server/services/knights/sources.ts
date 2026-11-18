@@ -149,11 +149,16 @@ async function enqueueFromSource(
   try {
     const config = await getKnightsSourcesConfig();
     if (!config.enabled || !(await shouldEnqueue(config))) return;
-    await enqueueKnightsItems(kyselyWrite, {
-      source,
-      questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-      items: [item],
-    });
+    await enqueueKnightsItems(
+      kyselyWrite,
+      {
+        source,
+        questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+        items: [item],
+      },
+      undefined,
+      { servableOnly: true }
+    );
   } catch (error) {
     logToAxiom(
       { type, imageId: item.imageId, error: (error as Error).message },
