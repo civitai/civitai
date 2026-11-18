@@ -2,6 +2,7 @@ import {
   isValidKnightsGameSetting,
   KNIGHTS_GAME_SETTING_KEYS,
   KNIGHTS_GAME_SETTINGS,
+  KNIGHTS_SOURCES_MAX_OPEN_LIMIT,
   type KnightsGameSettingKey,
   type KnightsGameSettings,
   type KnightsSourcesConfig,
@@ -111,7 +112,15 @@ export const toggleLabel = (key: ToggleKey, stored: boolean | undefined) =>
   TOGGLE_ROWS[key].options.find((option) => option.value === toggleChoice(stored))?.label ?? '';
 
 export type Draft = {
-  sources: { enabled: boolean; sfw: string; nsfw: string; yesNo: string; yesNoReset: boolean };
+  sources: {
+    enabled: boolean;
+    sfw: string;
+    nsfw: string;
+    yesNo: string;
+    yesNoReset: boolean;
+    /** The open-item cap; blank keeps what is stored. */
+    maxOpen: string;
+  };
   numbers: Record<NumberKey, { text: string; reset: boolean }>;
   toggles: Record<ToggleKey, ToggleChoice>;
 };
@@ -137,6 +146,7 @@ export function seedDraft(settings: SourcesSettings): Draft {
       nsfw: stored ? rateToPercent(config.nsfwRate) : '',
       yesNo: config.yesNoShare === undefined ? '' : rateToPercent(config.yesNoShare),
       yesNoReset: false,
+      maxOpen: config.maxOpen === undefined ? '' : String(config.maxOpen),
     },
     numbers: Object.fromEntries(
       NUMBER_KEYS.map((key) => [key, { text: numberText(key, game[key]), reset: false }])
@@ -172,6 +182,13 @@ const yesNoChange = (settings: SourcesSettings, draft: Draft): string | 'clear' 
     : trimmed;
 };
 
+/** What the cap box would post: the typed text, or null when blank or unchanged (a blank box keeps the stored cap). */
+const maxOpenChange = (settings: SourcesSettings, draft: Draft): string | null => {
+  const trimmed = draft.sources.maxOpen.trim().replaceAll(',', '');
+  const saved = settings.config.maxOpen;
+  return trimmed === '' || trimmed === (saved === undefined ? '' : String(saved)) ? null : trimmed;
+};
+
 function sourceChanges(settings: SourcesSettings, draft: Draft) {
   const seed = seedDraft(settings).sources;
   const { sources } = draft;
@@ -180,6 +197,7 @@ function sourceChanges(settings: SourcesSettings, draft: Draft) {
     sources.sfw.trim() !== seed.sfw,
     sources.nsfw.trim() !== seed.nsfw,
     yesNoChange(settings, draft) !== null,
+    maxOpenChange(settings, draft) !== null,
   ];
 }
 
@@ -203,6 +221,8 @@ export function sourcesFormData(settings: SourcesSettings, draft: Draft): FormDa
   const yesNo = yesNoChange(settings, draft);
   if (yesNo === 'clear') form.set('yesNoDefault', 'true');
   else if (yesNo !== null) form.set('yesNoPercent', yesNo);
+  const maxOpen = maxOpenChange(settings, draft);
+  if (maxOpen !== null) form.set('maxOpen', maxOpen);
   return form;
 }
 
@@ -239,6 +259,15 @@ export function fieldError(key: NumberKey, text: string): string | null {
   const spec = KNIGHTS_GAME_SETTINGS[key];
   return isValidKnightsGameSetting(key, Number(trimmed)) ? null : `Enter ${spec.range}.`;
 }
+
+/** Blank keeps the stored cap; anything else must be a whole number (commas allowed). */
+export const maxOpenError = (text: string): string | null => {
+  const trimmed = text.trim().replaceAll(',', '');
+  if (trimmed === '') return null;
+  return /^\d+$/.test(trimmed) && Number(trimmed) <= KNIGHTS_SOURCES_MAX_OPEN_LIMIT
+    ? null
+    : `Enter a whole number up to ${KNIGHTS_SOURCES_MAX_OPEN_LIMIT.toLocaleString('en-US')}.`;
+};
 
 export const percentError = (text: string, required: boolean): string | null => {
   const trimmed = text.trim();
@@ -283,6 +312,15 @@ export function changeSummary(
       before
         ? `Yes/no share: ${show(before.yesNoShare)} to ${show(after.yesNoShare)}`
         : `Yes/no share: ${show(after.yesNoShare)}`
+    );
+  }
+  if (before?.maxOpen !== after.maxOpen && (before || after.maxOpen !== undefined)) {
+    const show = (v: number | undefined) =>
+      v === undefined ? 'Default' : v.toLocaleString('en-US');
+    parts.push(
+      before
+        ? `Open-item cap: ${show(before.maxOpen)} to ${show(after.maxOpen)}`
+        : `Open-item cap: ${show(after.maxOpen)}`
     );
   }
   const beforeGame: KnightsGameSettings = before?.game ?? {};

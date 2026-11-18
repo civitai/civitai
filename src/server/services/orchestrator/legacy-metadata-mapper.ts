@@ -657,6 +657,9 @@ export function mapDataToGraphInput(
     images,
     transformations: mappedTransformations,
     ...(videoDraft != null && { draft: !!videoDraft }),
+    // Upscales stored before the model selector ran FlashVSR; their x3 is invalid for RelayVSR.
+    ...(workflow === 'vid2vid:upscale' &&
+      rest.videoUpscaler == null && { videoUpscaler: 'flashvsr' }),
     // Map legacy field names to graph node keys
     ...(openAITransparentBackground != null && { transparent: openAITransparentBackground }),
     ...(openAIQuality != null && { quality: openAIQuality }),

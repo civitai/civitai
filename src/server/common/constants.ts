@@ -1204,6 +1204,7 @@ export function stopsCreatorEarnings(baseModel?: string | null): boolean {
 }
 
 export const NOT_COMMERCIALLY_AVAILABLE_LABEL = 'Not commercially available at the moment';
+export const NOT_AVAILABLE_FOR_DOWNLOAD = 'Not available for download';
 
 export function notCommerciallyAvailableMessage(baseModel: string) {
   return `This model isn't commercially available at the moment. Its base model, ${baseModel}, is licensed for non-commercial use only.`;

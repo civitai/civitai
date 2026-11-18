@@ -379,6 +379,43 @@ func TestLoadClickHouse(t *testing.T) {
 	}
 }
 
+// FEED_GO_METRICS_LOCK_WAIT_MS bounds the wait on another process's populate lock: 500 ms by default;
+// a positive integer is that many ms; zero, negative or junk is the default (as every FEED_GO_*_MS),
+// never a zero bound that would fall back on every held lock without a read. It is independent of
+// FEED_GO_CLICKHOUSE_TIMEOUT_MS.
+//
+// Fails on: the default changed (500); the variable not read (250, 3000); a non-positive or junk value
+// taken as is (0 / -5) or failing startup; the value read in seconds or derived from the ClickHouse
+// timeout.
+func TestLoadMetricsLockWait(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("FEED_GO_REQUEST_BUDGET_MS", "")
+	t.Setenv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", "1700")
+	for v, want := range map[string]time.Duration{
+		"":     500 * time.Millisecond,
+		"250":  250 * time.Millisecond,
+		"3000": 3000 * time.Millisecond,
+		"0":    500 * time.Millisecond,
+		"-5":   500 * time.Millisecond,
+		"abc":  500 * time.Millisecond,
+		"1.5":  500 * time.Millisecond,
+	} {
+		t.Setenv("FEED_GO_METRICS_LOCK_WAIT_MS", v)
+		c, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+		if c.MetricsLockWait != want {
+			t.Errorf("FEED_GO_METRICS_LOCK_WAIT_MS=%q: %v, want %v", v, c.MetricsLockWait, want)
+		}
+		if c.ClickHouseTimeout != 1700*time.Millisecond {
+			t.Errorf("FEED_GO_METRICS_LOCK_WAIT_MS=%q moved the ClickHouse timeout to %v", v, c.ClickHouseTimeout)
+		}
+	}
+}
+
 // FEED_GO_MAX_IN_FLIGHT: a positive integer is an explicit cap; anything else (unset, zero, negative,
 // junk) is 0, "not set", which the server resolves to the pool's ceiling — never an unlimited pod.
 func TestLoadMaxInFlight(t *testing.T) {

@@ -19,9 +19,9 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261210120000_knig
   than that many rating items are open at the Knight stage (yes/no questions share the queue table but are not counted). Owner ratings always enqueue. The main app counts open Knight-stage rating items up to
   `maxOpen + 1` on the `(status, minRank, ...)` index and caches the count in process for 60 s. One count runs at a time; a scan waits at
   most 500 ms for it and is not throttled when it is slower, and the count still fills the cache when it lands. A failed count does not
-  throttle, is not cached, and pauses counting for 10 s. The moderator Config page edits the three fields above and the optional
-  `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps a stored
-  `maxOpen` and the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "Reset" button
+  throttle, is not cached, and pauses counting for 10 s. The moderator Config page edits the three fields above, the open-item cap `maxOpen` (a blank box keeps the stored cap; whole
+  numbers up to `KNIGHTS_SOURCES_MAX_OPEN_LIMIT`), and the optional
+  `yesNoShare` (0-1, Knights' yes/no question share, see [yes/no questions](knights-yesno-questions.md)); a save there keeps the stored game settings, and keeps a stored `yesNoShare` when its box is left blank. Its "Reset" button
   removes a stored `yesNoShare` (audited like any save), so Knights falls back to `KNIGHTS_YESNO_SHARE`. The same page edits
   the [game settings](#game-settings).
 - Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's

@@ -32,10 +32,11 @@ describe('rewardDeltas', () => {
     ).toMatchObject({ xp: 12 });
   });
 
-  it('reports gold that settles into earned', () => {
+  it('does not float gold again when pending gold settles into earned, but still reports it earned', () => {
+    // The vote already floated this gold when it went pending; settling moves it, it does not add any.
     expect(rewardDeltas(standing(), standing({ goldEarned: 43, goldPending: 2 }))).toEqual({
       xp: 0,
-      gold: 3,
+      gold: 0,
       goldEarned: 3,
     });
   });

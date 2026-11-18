@@ -6,10 +6,54 @@ import { loadDbEnv, type DbConfig } from './env';
 
 export type PrismaClients = { dbRead: PrismaClient; dbWrite: PrismaClient };
 
+/** A statement carrying this comment is logged without its values. */
+export const REDACT_LOG_MARKER = '/* log:redact */';
+
+/**
+ * A query event as it may be logged: its params filled in, so it can be copied and run. A statement
+ * carrying REDACT_LOG_MARKER keeps only its text before VALUES, since it holds values inline.
+ */
+export function loggableQuery(e: { query: string; params: string }): string {
+  if (e.query.includes(REDACT_LOG_MARKER)) {
+    const at = e.query.search(/\bVALUES\b/i);
+    return at < 0 ? `${REDACT_LOG_MARKER} <redacted>` : `${e.query.slice(0, at)}VALUES <redacted>`;
+  }
+  let query = e.query;
+  const params = JSON.parse(e.params);
+  // Replace $X variables with params in query so it's possible to copy/paste and optimize
+  for (let i = 0; i < params.length; i++) {
+    // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
+    const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
+    // If string, will quote - if bool or numeric, will not - does the job here
+    if (typeof params[i] === 'string') params[i] = "'" + params[i].replace(/'/g, "\\'") + "'";
+    query = query.replace(re, params[i]);
+  }
+  return query;
+}
+
 export type CreatePrismaClientsOptions = Partial<DbConfig> & {
   /** Structured slow-query telemetry (the old logToAxiom call). Injected by the app. */
   onSlowQuery?: (e: { query: string; duration: number; target: 'read' | 'write' }) => void;
 };
+
+/** The handler for a client's query events: logs a statement slower than 2 s, as `loggableQuery`. */
+export function slowQueryLogger({
+  target,
+  isProd,
+  onSlowQuery,
+}: {
+  target: 'write' | 'read';
+  isProd: boolean;
+  onSlowQuery: CreatePrismaClientsOptions['onSlowQuery'];
+}) {
+  return async function logQuery(e: { query: string; params: string; duration: number }) {
+    if (e.duration < 2000) return;
+    const query = loggableQuery(e);
+
+    if (!isProd) console.log(query);
+    else onSlowQuery?.({ query, duration: e.duration, target });
+  };
+}
 
 /**
  * Build the Prisma read/write clients. Connection config defaults come from the
@@ -24,22 +68,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
   const singleClient = config.replicaUrl === config.databaseUrl;
 
   const logFor = (target: 'write' | 'read') =>
-    async function logQuery(e: { query: string; params: string; duration: number }) {
-      if (e.duration < 2000) return;
-      let query = e.query;
-      const params = JSON.parse(e.params);
-      // Replace $X variables with params in query so it's possible to copy/paste and optimize
-      for (let i = 0; i < params.length; i++) {
-        // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
-        const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
-        // If string, will quote - if bool or numeric, will not - does the job here
-        if (typeof params[i] === 'string') params[i] = "'" + params[i].replace(/'/g, "\\'") + "'";
-        query = query.replace(re, params[i]);
-      }
-
-      if (!config.isProd) console.log(query);
-      else onSlowQuery?.({ query, duration: e.duration, target });
-    };
+    slowQueryLogger({ target, isProd: config.isProd, onSlowQuery });
 
   const createPrismaClient = ({ readonly }: { readonly: boolean }): PrismaClient => {
     const logDef: Prisma.LogDefinition[] = config.logging
@@ -65,14 +94,7 @@ export function createPrismaClients(options: CreatePrismaClientsOptions = {}): P
     if (config.logging.some((x) => x === 'prisma-showparams')) {
       // @ts-ignore
       prisma.$on('query', async (e: { query: string; params: string; duration: number }) => {
-        let query = e.query;
-        const params = JSON.parse(e.params);
-        for (let i = 0; i < params.length; i++) {
-          const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
-          if (typeof params[i] === 'string') params[i] = "'" + params[i].replace(/'/g, "\\'") + "'";
-          query = query.replace(re, params[i]);
-        }
-        console.log(query);
+        console.log(loggableQuery(e));
       });
     }
     return prisma;
