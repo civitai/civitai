@@ -52,6 +52,19 @@ export const REFEREE_CLICKHOUSE_BUDGET_S = 35 * 60;
 // The settle job's lock, shared with the self-heal so the two never settle at once. Keep it under the
 // hourly cron, or a run is skipped while the last still holds it.
 export const SETTLE_LOCK_S = 45 * 60;
+// Both referee queries scan the whole season at the top of every hour. Left at the server's default
+// thread count they take every core for their scan and aggregation bursts, and interactive reads
+// queue behind them.
+// - max_threads bounds the burst. It lengthens a run by at most its CPU time divided by the cap, which
+//   is small next to REFEREE_CLICKHOUSE_BUDGET_S at 8: the referee spends most of its wall time in
+//   phases that do not use many threads anyway. Lower it and that bound grows in proportion.
+// - priority marks it as background work (1 is the highest, higher numbers are lower, 0 means none).
+//   ClickHouse only pauses it for a running query that has a NONZERO, smaller priority; a query at
+//   the default 0 never preempts it. So it does nothing until interactive reads set one.
+export const REFEREE_CLICKHOUSE_SCHEDULING = {
+  max_threads: 8,
+  priority: '10',
+} as const;
 // One missed hourly settle is normal lag; two means settles are failing.
 export const STALE_CUT_ALERT_MS = 2 * 60 * 60 * 1000;
 
@@ -241,6 +254,7 @@ async function restrictedUsers(event: RefereeEvent, window: Window, deadline: nu
       clickhouse_settings: {
         max_execution_time: limit.seconds,
         ...LONG_QUERY_PROGRESS_SETTINGS,
+        ...REFEREE_CLICKHOUSE_SCHEDULING,
       },
       query_params: params,
     })
@@ -297,6 +311,7 @@ export async function queryReferee(
       clickhouse_settings: {
         max_execution_time: limit.seconds,
         ...LONG_QUERY_PROGRESS_SETTINGS,
+        ...REFEREE_CLICKHOUSE_SCHEDULING,
         max_bytes_before_external_group_by: '8000000000',
         max_bytes_before_external_sort: '8000000000',
       },
