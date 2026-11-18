@@ -13,8 +13,17 @@ describe('hiddenCheckSettings', () => {
         KNIGHTS_HIDDEN_CHECK_FAILURE_WINDOW_HOURS: '12',
         KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE: '3',
         KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES: '5',
+        KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS: '40',
+        KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE: '0.6',
       })
-    ).toEqual({ rate: 0.2, failureWindowHours: 12, severeDistance: 3, settleDelayMinutes: 5 });
+    ).toEqual({
+      rate: 0.2,
+      failureWindowHours: 12,
+      severeDistance: 3,
+      settleDelayMinutes: 5,
+      retireMinAnswers: 40,
+      retireFailureRate: 0.6,
+    });
   });
 
   it.each([

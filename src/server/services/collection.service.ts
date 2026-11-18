@@ -2102,7 +2102,7 @@ export const getCollectionItemsByCollectionId = async ({
   coverage,
   requireRead = false,
   asModerator,
-  asOwner = true,
+  asOwner = false,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
@@ -2120,9 +2120,9 @@ export const getCollectionItemsByCollectionId = async ({
    * leave it off must check read themselves.
    */
   requireRead?: boolean;
-  /** Whether the request may act as a moderator (a session or full-scope key); defaults to the user's. */
+  /** Whether the request reads with a moderator's view; default false (`credentialViews`). */
   asModerator?: boolean;
-  /** Whether the request may see the user's own unpublished and private items; default true. */
+  /** Whether the request may see the user's own unpublished and private items; default false. */
   asOwner?: boolean;
 }): Promise<CollectionItemsResult> => {
   const {
@@ -2138,7 +2138,7 @@ export const getCollectionItemsByCollectionId = async ({
 
   const userPreferencesInput = userPreferencesSchema.parse(input);
 
-  const isModerator = asModerator ?? user?.isModerator ?? false;
+  const isModerator = asModerator === true && !!user?.isModerator;
   // Ownership and contributor rights follow the user even on a scoped key: it is their own
   // collection. The item reads inside still get no owner or moderator view.
   const itemsViewer = !asOwner

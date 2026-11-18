@@ -320,7 +320,7 @@ function toSharedArticle(
   contentImages: (Prisma.ImageGetPayload<{ select: typeof articleContentImageSelect }> & {
     minor: boolean | null;
   })[],
-  /** Cover or banner images their model withholds: no cover, and no banner in its place. */
+  /** Cover or banner images their model withholds. */
   withheldByModel: Set<number>
 ) {
   const { id, title, nsfwLevel, updatedAt } = article;
@@ -335,15 +335,25 @@ function toSharedArticle(
       withheld,
       keepEdgeMedia: new Set(servable.map((image) => image.url)),
     });
-  // The banner stands in for a missing cover.
-  const coverImage = article.coverImage ?? article.bannerImage;
   const { bannedAt: _bannedAt, muted: _muted, ...user } = article.user;
-  const showCover =
-    !!coverImage &&
-    !withheldByModel.has(coverImage.id) &&
-    servableArticleImage(coverImage) !== null &&
-    // A link holder is never exempt: no cover, and not the banner in its place.
-    !isMinorMatureImage(coverImage);
+  // A link holder is never exempt from the minor rule.
+  type Row = NonNullable<typeof article.coverImage>;
+  const shown = (image: Row | null) =>
+    image &&
+    !withheldByModel.has(image.id) &&
+    servableArticleImage(image) !== null &&
+    !isMinorMatureImage(image)
+      ? image
+      : undefined;
+  const toShared = (image: Row) => ({
+    ...withoutMinorFlag(image),
+    nsfwLevel: image.nsfwLevel as NsfwLevel,
+    meta: image.meta as ImageMetaProps,
+    metadata: image.metadata as ImageMetadata,
+    tags: image.tags.flatMap((x) => x.tag.id),
+  });
+  const coverImage = shown(article.coverImage);
+  const bannerImage = shown(article.bannerImage);
   return {
     id,
     title,
@@ -362,15 +372,7 @@ function toSharedArticle(
         ...image
       }) => image
     ),
-    coverImage:
-      showCover && coverImage
-        ? {
-            ...withoutMinorFlag(coverImage),
-            nsfwLevel: coverImage.nsfwLevel as NsfwLevel,
-            meta: coverImage.meta as ImageMetaProps,
-            metadata: coverImage.metadata as ImageMetadata,
-            tags: coverImage.tags.flatMap((x) => x.tag.id),
-          }
-        : undefined,
+    coverImage: coverImage ? toShared(coverImage) : undefined,
+    bannerImage: bannerImage ? toShared(bannerImage) : undefined,
   };
 }

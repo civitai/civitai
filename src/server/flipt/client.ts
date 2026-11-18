@@ -30,6 +30,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // Enabled: every non-moderator semantic search is held at the safe levels (the containment
   // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
   // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
+  // Evaluated per viewer (user id): segment rollouts only, never a percentage (threshold) rollout.
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
   // On: semantic searches send the search service the request id and the viewer's levels and
   // moderator status, and key the candidate cache on the guard's mode and version. Create the key

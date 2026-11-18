@@ -49,10 +49,10 @@ export const POST: RequestHandler = async ({ request }) => {
       ...resetDeps,
     })
   );
-  const yesNo = await settle('yes/no sweep', () =>
+  const yesNo = await settle('yes/no sweep', async () =>
     closeStrandedYesNo(db, {
       now: new Date(),
-      maxAgeDays: yesNoConfig().maxAgeDays,
+      maxAgeDays: (await yesNoConfig()).maxAgeDays,
       mirror: queueDeps.mirrorXp,
     })
   );

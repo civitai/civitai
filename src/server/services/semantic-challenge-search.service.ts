@@ -103,7 +103,7 @@ export async function searchSemanticChallenges({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   if (browsingLevelCap !== undefined)
     browsingLevel = Flags.intersection(browsingLevel, browsingLevelCap) || browsingLevelCap;
