@@ -26,6 +26,8 @@ const { syncSearchIndexBulk } = await import('../search-index');
 const SCHEMA = `
 CREATE TABLE "Article" ("id" INTEGER PRIMARY KEY, "coverId" INTEGER UNIQUE, "bannerId" INTEGER UNIQUE);
 INSERT INTO "Article" VALUES (1, 100, 101), (2, NULL, 200), (3, 500, NULL);
+CREATE TABLE "ComicProject" ("id" INTEGER PRIMARY KEY, "coverImageId" INTEGER);
+INSERT INTO "ComicProject" VALUES (7, 200), (8, 600);
 `;
 
 let db: PGlite;
@@ -55,7 +57,13 @@ describe('spoke queueArticlesForCoverImages', () => {
     expect(queued().sort()).toEqual([
       ['article', 1, 'update'],
       ['article', 2, 'update'],
+      ['comic', 7, 'update'],
     ]);
+  });
+
+  it('queues a comic Update for a comic whose cover is one of the images', async () => {
+    await queueArticlesForCoverImages([600]);
+    expect(queued()).toEqual([['comic', 8, 'update']]);
   });
 
   it('queues nothing for an image that is no cover or banner (control)', async () => {

@@ -2637,7 +2637,7 @@ const getAllImagesUncaptured = async (
         : Prisma.sql`(i."minor" != TRUE)`
     );
   }
-  // Whatever the viewer's settings; also the feed service's hydrate, which reads through here.
+  // Whatever the viewer's settings.
   AND.push(minorMatureImageVisibleSql({ userId: ownerId, isModerator }));
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
