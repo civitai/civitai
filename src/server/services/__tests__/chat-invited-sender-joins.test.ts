@@ -70,7 +70,8 @@ beforeEach(() => {
       ...m,
       isOwner: m.userId === OWNER,
       clearedAt: null,
-      filteredAt: null,
+      // The agent's chat sits in their Requests tab; their reply accepts it.
+      filteredAt: m.userId === AGENT ? new Date(0) : null,
       user: { isModerator: false, username: m.userId === AGENT ? 'agent-bot' : 'owner' },
     })),
   })) as never);
@@ -120,6 +121,25 @@ describe('createMessage from an Invited member', () => {
     expect(agent().joinedAt!.getTime()).toBeLessThanOrEqual(messages[1].createdAt.getTime());
   });
 
+  it('does not send the message signal until the notice signal has landed', async () => {
+    // Clients append in arrival order, so firing both at once can show the message first.
+    let land!: () => void;
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementationOnce((async (url: string, init: { body: string }) => {
+      h.signals.push({ url, body: init.body });
+      await new Promise<void>((r) => (land = r));
+    }) as never);
+
+    const sending = send(AGENT, 'first');
+    await vi.waitFor(() => expect(land).toBeTypeOf('function'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.signals.map((s) => JSON.parse(s.body).content)).not.toContain('first');
+
+    land();
+    await sending;
+    expect(h.signals.map((s) => JSON.parse(s.body).content)).toContain('first');
+  });
+
   it('adds them to the realtime group and signals the notice before the message', async () => {
     await send(AGENT, 'first');
 
@@ -154,6 +174,8 @@ describe('createMessage from an Invited member', () => {
     await expect(send(AGENT)).rejects.toThrow('Unable to post in this chat');
     expect(agent().status).toBe(ChatMemberStatus.Kicked);
     expect(messages).toEqual([]);
+    // Nor the Requests bookkeeping that runs with the send.
+    expect(dbMock.dbWrite.chatMember.update).not.toHaveBeenCalled();
   });
 });
 

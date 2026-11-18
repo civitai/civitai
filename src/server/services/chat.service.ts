@@ -494,7 +494,7 @@ const signalNewMessage = (chatId: number, message: ChatAllMessages[number]) =>
  */
 async function joinInvitedSender(
   tx: Prisma.TransactionClient,
-  { chatId, memberId, username }: { chatId: number; memberId: number; username: string | null }
+  { chatId, memberId, username }: { chatId: number; memberId: number; username: string }
 ) {
   const joinedAt = new Date();
   const { count } = await tx.chatMember.updateMany({
@@ -647,57 +647,6 @@ export const createMessage = async ({
     }
   }
 
-  // Answering a request accepts it. Without this the sender's reply left their
-  // own membership marked, so the conversation stayed in their Requests tab with
-  // no way out but the Accept button they had already implicitly used.
-  if (userId !== -1) {
-    const me = chat.chatMembers.find((cm) => cm.userId === userId);
-    if (me?.filteredAt) {
-      await dbWrite.chatMember.update({ where: { id: me.id }, data: { filteredAt: null } });
-    }
-  }
-
-  // Someone who deleted this conversation asked not to have it. The first
-  // message that reaches them afterwards is a new approach, not a continuation,
-  // so it re-enters the request flow regardless of their policy — the delete is
-  // the stronger signal. Only the first: once they accept, later messages land
-  // normally.
-  if (userId !== -1 && !isModerator) {
-    const clearedMembers = chat.chatMembers.filter(
-      (cm) =>
-        cm.userId !== userId &&
-        !!cm.clearedAt &&
-        !cm.filteredAt &&
-        // Never reopen a membership the user closed: re-arming a Left, Kicked or
-        // Ignored member would undo their own decision — or an owner's kick.
-        (cm.status === ChatMemberStatus.Joined || cm.status === ChatMemberStatus.Invited)
-    );
-    for (const member of clearedMembers) {
-      // findFirst, not count: this asks whether anything exists, and the answer
-      // is permanently "yes" once they accept — `clearedAt` is never unset, so a
-      // count would re-scan the whole conversation on every send forever.
-      // Scoped to real messages: an embed or a "X left" system row landing after
-      // the clear would otherwise consume the first-message slot and let the next
-      // real approach skip Requests entirely.
-      const since = await dbWrite.chatMessage.findFirst({
-        where: {
-          chatId,
-          createdAt: { gt: member.clearedAt as Date },
-          deletedAt: null,
-          userId: { not: -1 },
-          contentType: { not: ChatMessageType.Embed },
-        },
-        select: { id: true },
-      });
-      if (since) continue;
-
-      await dbWrite.chatMember.update({
-        where: { id: member.id },
-        data: { filteredAt: new Date() },
-      });
-    }
-  }
-
   // An Invited member who sends without pressing Join (an API client never sees
   // the button) is joined by the send, so the history reads "X joined" before
   // their first message instead of after it.
@@ -708,9 +657,59 @@ export const createMessage = async ({
         ? await joinInvitedSender(tx, {
             chatId,
             memberId: sender.id,
-            username: sender.user.username,
+            username: sender.user.username ?? `User ${userId}`,
           })
         : null;
+    // The join runs first, so a refused join leaves none of the writes below.
+
+    // Answering a request accepts it. Without this the sender's reply left their
+    // own membership marked, so the conversation stayed in their Requests tab with
+    // no way out but the Accept button they had already implicitly used.
+    if (sender?.filteredAt) {
+      await tx.chatMember.update({ where: { id: sender.id }, data: { filteredAt: null } });
+    }
+
+    // Someone who deleted this conversation asked not to have it. The first
+    // message that reaches them afterwards is a new approach, not a continuation,
+    // so it re-enters the request flow regardless of their policy — the delete is
+    // the stronger signal. Only the first: once they accept, later messages land
+    // normally.
+    if (userId !== -1 && !isModerator) {
+      const clearedMembers = chat.chatMembers.filter(
+        (cm) =>
+          cm.userId !== userId &&
+          !!cm.clearedAt &&
+          !cm.filteredAt &&
+          // Never reopen a membership the user closed: re-arming a Left, Kicked or
+          // Ignored member would undo their own decision — or an owner's kick.
+          (cm.status === ChatMemberStatus.Joined || cm.status === ChatMemberStatus.Invited)
+      );
+      for (const member of clearedMembers) {
+        // findFirst, not count: this asks whether anything exists, and the answer
+        // is permanently "yes" once they accept — `clearedAt` is never unset, so a
+        // count would re-scan the whole conversation on every send forever.
+        // Scoped to real messages: an embed or a "X left" system row landing after
+        // the clear would otherwise consume the first-message slot and let the next
+        // real approach skip Requests entirely.
+        const since = await tx.chatMessage.findFirst({
+          where: {
+            chatId,
+            createdAt: { gt: member.clearedAt as Date },
+            deletedAt: null,
+            userId: { not: -1 },
+            contentType: { not: ChatMessageType.Embed },
+          },
+          select: { id: true },
+        });
+        if (since) continue;
+
+        await tx.chatMember.update({
+          where: { id: member.id },
+          data: { filteredAt: new Date() },
+        });
+      }
+    }
+
     const resp = await tx.chatMessage.create({
       data: { chatId, contentType, content, referenceMessageId, userId },
       // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
@@ -731,7 +730,8 @@ export const createMessage = async ({
         body: JSON.stringify(`chat:${chatId}`),
       })
     ).catch(() => undefined);
-    signalNewMessage(chatId, joinNotice);
+    // Awaited: clients append in arrival order, so the notice must land first.
+    await signalNewMessage(chatId, joinNotice);
   }
   signalNewMessage(chatId, resp);
   if (joinNotice) await signalChatMembersUpdated({ chatId, userIds: [userId] });
