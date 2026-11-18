@@ -24,7 +24,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return json({ enabled: false } satisfies DatasetRatingCount);
   const token = await requireToken(locals, 'Rating is unavailable right now.');
   const count = await countDatasetMature(orchestratorClient(token), blobIds, rating);
-  warmDatasetRating(token, locals.user.id, count.unratedKeys, textCheckCookie(locals, request));
+  warmDatasetRating(
+    token,
+    locals.user.id,
+    rating.matureLevel,
+    count.unratedKeys,
+    textCheckCookie(locals, request)
+  );
   // A blob this request could not read would count as not mature here, though Review's own upload count
   // knows its rating, so Review keeps that count.
   if (count.failed > 0) return json({ enabled: false } satisfies DatasetRatingCount);

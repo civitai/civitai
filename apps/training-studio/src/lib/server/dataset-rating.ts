@@ -10,7 +10,6 @@ import { getSysRedis } from './redis';
 import {
   isStoredRating,
   parseMatureLevel,
-  parseRatingV2,
   RATER_MODEL,
   type DatasetRating,
   type StoredRating,
@@ -26,7 +25,7 @@ export const DATASET_RATING_DEADLINE_MS = 30_000;
 /** Rating calls in flight per job. */
 export const DATASET_RATING_CONCURRENCY = 2;
 /** Per user per UTC day, across pods: images sent to the rater, and Review's count requests. */
-export const DATASET_RATING_DAILY_CALLS = 3000;
+export const DATASET_RATING_DAILY_CALLS = 1000;
 export const DATASET_RATING_DAILY_LOOKUPS = 300;
 /** Per user per UTC day: dataset files Review reads to see whether they're ready to train. */
 export const UPLOAD_READINESS_DAILY_PROBES = 20_000;
@@ -43,12 +42,13 @@ const DAILY_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_DAILY;
 const SENT_KEY = REDIS_SYS_KEYS.TRAINING.STUDIO_DATASET_RATING_SENT;
 /** How long a blob sent to the rater is not sent again, whatever came back. */
 const SENT_TTL_SECONDS = 7 * 24 * 60 * 60;
-// By rater, so a different rater's results are never read as this one's. Blob ids are case-insensitive.
-const cacheKey = (blobId: string) =>
-  `${KEY}:${RATER_MODEL}:${blobId.trim().toLowerCase()}` as const;
+// By rater and mature level: a verdict at one level is not a verdict at another. Blob ids are
+// case-insensitive.
+const cacheKey = (level: number, blobId: string) =>
+  `${KEY}:${RATER_MODEL}:m${level}:${blobId.trim().toLowerCase()}` as const;
 
-const sentKey = (blobId: string) =>
-  `${SENT_KEY}:${RATER_MODEL}:${blobId.trim().toLowerCase()}` as const;
+const sentKey = (level: number, blobId: string) =>
+  `${SENT_KEY}:${RATER_MODEL}:m${level}:${blobId.trim().toLowerCase()}` as const;
 
 const dailyKey = (kind: DailyKind, userId: number) =>
   `${DAILY_KEY}:${kind}:${userId}:${new Date().toISOString().slice(0, 10)}` as const;
@@ -103,14 +103,16 @@ async function returnDaily(key: ReturnType<typeof dailyKey>, n: number): Promise
 export async function datasetRatingFor(user: SessionUser): Promise<DatasetRating | undefined> {
   const matureLevel = parseMatureLevel(await flagVariant(DATASET_RATING_FLAG, user));
   if (matureLevel === null) return undefined;
-  return { matureLevel, read: readRatings };
+  return { matureLevel, read: (blobKeys) => readRatings(matureLevel, blobKeys) };
 }
 
-async function readRatings(blobKeys: string[]): Promise<Map<string, StoredRating>> {
+async function readRatings(level: number, blobKeys: string[]): Promise<Map<string, StoredRating>> {
   const ratings = new Map<string, StoredRating>();
   if (blobKeys.length === 0) return ratings;
   try {
-    const values = await getSysRedis().packed.mGet<unknown>(blobKeys.map((k) => cacheKey(k)));
+    const values = await getSysRedis().packed.mGet<unknown>(
+      blobKeys.map((k) => cacheKey(level, k))
+    );
     values.forEach((value, i) => {
       if (isStoredRating(value)) ratings.set(blobKeys[i]!, value);
     });
@@ -120,9 +122,9 @@ async function readRatings(blobKeys: string[]): Promise<Map<string, StoredRating
   return ratings;
 }
 
-async function writeRating(blobKey: string, rating: StoredRating): Promise<void> {
+async function writeRating(level: number, blobKey: string, rating: StoredRating): Promise<void> {
   try {
-    await getSysRedis().packed.set(cacheKey(blobKey), rating, { EX: CACHE_TTL_SECONDS });
+    await getSysRedis().packed.set(cacheKey(level, blobKey), rating, { EX: CACHE_TTL_SECONDS });
   } catch {
     // best-effort: the image stays unrated and the next job rates it again
   }
@@ -142,15 +144,17 @@ export const isRateableKey = (blobId: string): boolean => {
   return ext !== undefined && mediaOfExt(ext) === 'image';
 };
 
-/** Who a rating is for: the user's orchestrator client, and their session cookie for the main app. */
+/** Who a rating is for: the user's orchestrator client, their session cookie for the main app, and
+ *  their mature level, which keys the cache (the main app reads the same flag for its verdict). */
 export interface RatingCaller {
   client: OrchestratorClient;
   cookie: string;
+  matureLevel: number;
 }
 
-/** One image through the v2 rater, free to the user: the user's token mints the blob's presigned URL
- *  (so only a blob they can read is rated), and the main app scans that URL on the system token.
- *  Anything but a parsed OK rating is null. */
+/** One image through the v2 rater, free to the user; the main app scans on the system token. The blob
+ *  id is the only gate: any token can refresh any blob, so this proves nothing about ownership, and the
+ *  per-user and global caps are what bound the cost. Anything but a verdict is null. */
 export async function rateImage(
   caller: RatingCaller,
   blobId: string,
@@ -165,13 +169,12 @@ export async function rateImage(
   }
   if (!url) return { rating: null, notSent: true };
   try {
-    const answer = await mainAppRateImage(caller.cookie, blobId, url, signal);
+    const answer = await mainAppRateImage(caller.cookie, blobId, url, caller.matureLevel, signal);
     if (!answer) return { rating: null };
     if ('refused' in answer) return { rating: null, notSent: true };
     if ('limited' in answer)
       return { rating: null, limited: true, retryAfterMs: answer.retryAfterMs, notSent: true };
-    const rating = parseRatingV2(answer.output);
-    return rating ? { rating } : { rating: null };
+    return answer.mature === null ? { rating: null } : { rating: { mature: answer.mature } };
   } catch {
     return { rating: null };
   }
@@ -179,9 +182,12 @@ export async function rateImage(
 
 /** Claim a blob's one send per SENT_TTL_SECONDS, so a call that failed after reaching the rater, or never
  *  answered, is not sent again by every view, poll and pod. A Redis failure claims nothing. */
-async function claimSend(blobKey: string): Promise<boolean> {
+async function claimSend(level: number, blobKey: string): Promise<boolean> {
   try {
-    const set = await getSysRedis().set(sentKey(blobKey), '1', { NX: true, EX: SENT_TTL_SECONDS });
+    const set = await getSysRedis().set(sentKey(level, blobKey), '1', {
+      NX: true,
+      EX: SENT_TTL_SECONDS,
+    });
     return set !== null;
   } catch {
     return false;
@@ -189,19 +195,19 @@ async function claimSend(blobKey: string): Promise<boolean> {
 }
 
 /** The keys with no sent marker. A Redis failure answers none, like claimSend. */
-async function unsentKeys(blobKeys: string[]): Promise<string[]> {
+async function unsentKeys(level: number, blobKeys: string[]): Promise<string[]> {
   if (blobKeys.length === 0) return [];
   try {
-    const sent = await getSysRedis().mGet(blobKeys.map((k) => sentKey(k)));
+    const sent = await getSysRedis().mGet(blobKeys.map((k) => sentKey(level, k)));
     return blobKeys.filter((_, i) => sent[i] == null);
   } catch {
     return [];
   }
 }
 
-async function releaseSend(blobKey: string): Promise<void> {
+async function releaseSend(level: number, blobKey: string): Promise<void> {
   try {
-    await getSysRedis().del(sentKey(blobKey));
+    await getSysRedis().del(sentKey(level, blobKey));
   } catch {
     // best-effort: the blob waits out the marker on its upload rating
   }
@@ -247,16 +253,16 @@ export async function runRatingJob(
         continue;
       }
       const key = images[next++]!;
-      if (!(await claimSend(key))) {
+      if (!(await claimSend(caller.matureLevel, key))) {
         alreadySent++;
         continue;
       }
       calls++;
       const result = await rate(caller, key, abort.signal);
-      if (!result.rating && result.notSent) await releaseSend(key);
+      if (!result.rating && result.notSent) await releaseSend(caller.matureLevel, key);
       if (result.rating) {
         rated++;
-        await writeRating(key, result.rating);
+        await writeRating(caller.matureLevel, key, result.rating);
       } else if (result.limited) {
         rateLimited++;
         pausedUntil = Math.max(pausedUntil, Date.now() + (result.retryAfterMs ?? 1000));
@@ -290,6 +296,7 @@ const activeJobs = new Map<number, Promise<void>>();
 export function warmDatasetRating(
   token: string,
   userId: number,
+  matureLevel: number,
   blobKeys: string[],
   cookie: string | null,
   deadlineMs: number = DATASET_RATING_DEADLINE_MS
@@ -297,12 +304,12 @@ export function warmDatasetRating(
   const images = blobKeys.filter(isRateableKey);
   // No session to call the main app with (the dev-login preview): nothing is rated.
   if (cookie === null || images.length === 0 || activeJobs.has(userId)) return;
-  const job = unsentKeys(images)
+  const job = unsentKeys(matureLevel, images)
     .then(async (unsent) => {
       // Allowance only for images that will be sent: one already sent never takes a slot.
       const { granted, key } = await claimAllowance('calls', userId, unsent.length);
       const summary = await runRatingJob(
-        { client: orchestratorClient(token), cookie },
+        { client: orchestratorClient(token), cookie, matureLevel },
         unsent.slice(0, granted),
         rateImage,
         deadlineMs
