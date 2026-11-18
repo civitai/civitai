@@ -7,6 +7,7 @@ import {
   dealStatusBadge,
   dealQueryError,
   escrowCopy,
+  sellerHeldLine,
   disputeNotice,
   groupEventsByRound,
   isModeratorHold,
@@ -185,6 +186,21 @@ describe('deal page access', () => {
       expect(dealPageState({ isLoading: false, hasDeal: false, error })).toEqual({
         kind: 'error',
       });
+  });
+});
+
+describe('seller held line', () => {
+  it('tells the seller the held amount and the payout timings while the deal is open', () => {
+    for (const status of ['Requested', 'Accepted', 'InRevision', 'Delivered'] as const)
+      expect(sellerHeldLine({ status, held: true, price: 5000 })).toBe(
+        "5,000 Buzz from the buyer is already held for you. After you deliver, it's paid to you 48 hours after the buyer accepts, or 120 hours after delivery if they don't respond."
+      );
+  });
+
+  it('says nothing before the hold is confirmed, or once the deal is closed or contested', () => {
+    expect(sellerHeldLine({ status: 'Requested', held: false, price: 5000 })).toBeNull();
+    for (const status of ['Completed', 'Cancelled', 'Disputed', 'CancellationRequested'] as const)
+      expect(sellerHeldLine({ status, held: true, price: 5000 })).toBeNull();
   });
 });
 

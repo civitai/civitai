@@ -1,7 +1,9 @@
 import {
+  SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_CANCELLATION_REASON_CODES,
   SERVICE_DEAL_DECLINE_REASON_CODES,
   SERVICE_DEAL_DISPUTE_REASON_CODES,
+  SERVICE_DEAL_DISPUTE_WINDOW_MS,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealCancellationReasonCode,
@@ -106,6 +108,22 @@ export type EscrowState =
   | 'released';
 
 const REFUND_STATUSES: ServiceDealStatus[] = ['Declined', 'Expired', 'Cancelled'];
+
+const SELLER_HELD_STATUSES: ServiceDealStatus[] = [
+  'Requested',
+  'Accepted',
+  'InRevision',
+  'Delivered',
+];
+
+/** For the seller: the buyer's Buzz is already held, and when it is paid out. */
+export function sellerHeldLine(deal: { status: ServiceDealStatus; held: boolean; price: number }) {
+  if (!deal.held || !SELLER_HELD_STATUSES.includes(deal.status)) return null;
+  const hours = (ms: number) => ms / 3_600_000;
+  const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
+  const unanswered = hours(SERVICE_DEAL_AUTO_COMPLETE_MS) + dispute;
+  return `${deal.price.toLocaleString()} Buzz from the buyer is already held for you. After you deliver, it's paid to you ${dispute} hours after the buyer accepts, or ${unanswered} hours after delivery if they don't respond.`;
+}
 
 /**
  * Never says "held" until the hold is confirmed. A closed deal whose hold never confirmed took no
