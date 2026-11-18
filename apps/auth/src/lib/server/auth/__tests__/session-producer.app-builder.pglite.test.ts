@@ -51,7 +51,7 @@ const PRELUDE = `
     "settings" JSONB NOT NULL DEFAULT '{}', "meta" JSONB NOT NULL DEFAULT '{}',
     "profilePictureId" INTEGER
   );
-  CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT);
+  CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "url" TEXT, "needsReview" TEXT);
   CREATE TABLE "UserReferral" ("id" INTEGER PRIMARY KEY, "userId" INTEGER);
   CREATE TABLE "Product" ("id" TEXT PRIMARY KEY, "metadata" JSONB);
   CREATE TABLE "CustomerSubscription" (
@@ -163,5 +163,23 @@ describe('produceSessionUser — appBuilderApproved comes from AppAccessRequest'
     // read ran and the absence below is not an unread blob.
     expect(user?.isEarlyAdopter).toBe(true);
     expect(user?.appBuilderApproved).toBeUndefined();
+  });
+});
+
+describe('produceSessionUser — the profile picture', () => {
+  it.each([
+    [null, 'pic.jpg'],
+    ['poi', 'pic.jpg'],
+    ['csam', 'legacy.jpg'],
+    ['minor', 'legacy.jpg'],
+  ])('a picture held %s gives the session image %s', async (hold, image) => {
+    await pg.query(`INSERT INTO "Image" ("id", "url", "needsReview") VALUES (1, 'pic.jpg', $1)`, [
+      hold,
+    ]);
+    await pg.query(
+      `UPDATE "User" SET "profilePictureId" = 1, "image" = 'legacy.jpg' WHERE "id" = $1`,
+      [BUILDER]
+    );
+    expect((await produceSessionUser(BUILDER))?.image).toBe(image);
   });
 });

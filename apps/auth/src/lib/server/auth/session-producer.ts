@@ -52,6 +52,13 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
           .selectFrom('Image')
           .select(['Image.url'])
           .whereRef('Image.id', '=', 'User.profilePictureId')
+          // The main app's owner-hidden review holds: not shown even to the picture's owner.
+          .where((w) =>
+            w.or([
+              w('Image.needsReview', 'is', null),
+              w('Image.needsReview', 'not in', ['csam', 'minor']),
+            ])
+          )
       ).as('profilePicture'),
       jsonObjectFrom(
         eb
