@@ -5,7 +5,7 @@ import {
   nsfwWordsSoft,
   youngWords,
 } from '@civitai/mod-utils/prompt-audit/lists';
-import { includesInappropriate, includesNsfw } from '~/utils/metadata/audit';
+import { auditPromptEnriched, includesInappropriate, includesNsfw } from '~/utils/metadata/audit';
 
 const strip = vi.hoisted(() => ({ phrase: '' }));
 vi.mock('~/server/services/blocklist.service', () => ({
@@ -48,5 +48,24 @@ describe('the shared-data audit with benign phrases', () => {
   it('does not flag the second word alone as the pair', async () => {
     strip.phrase = '';
     expect(await auditLabels(y)).not.toContain('inappropriate_minor');
+  });
+});
+
+describe('auditPromptEnriched without the nsfw option', () => {
+  const { n, y } = pickPair();
+  const category = (text: string, nsfw?: boolean) =>
+    auditPromptEnriched(text, undefined, false, nsfw === undefined ? undefined : { nsfw })
+      .triggers[0]?.category;
+
+  it('flags the pair', () => {
+    expect(category(`${n} ${y}`)).toBe('inappropriate_minor');
+  });
+
+  it('leaves the second word alone unflagged, as before the option existed', () => {
+    expect(category(y)).not.toBe('inappropriate_minor');
+  });
+
+  it('flags the second word alone when the caller passes it', () => {
+    expect(category(y, true)).toBe('inappropriate_minor');
   });
 });
