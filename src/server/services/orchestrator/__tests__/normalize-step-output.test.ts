@@ -69,6 +69,19 @@ describe('normalizeStepOutput — preprocessVideo', () => {
   });
 });
 
+describe('normalizeStepOutput — imageBackgroundRemoval', () => {
+  it('surfaces the cutout as an image', async () => {
+    const IMAGE_BLOB = { id: 'cutout', url: 'https://x/cutout.png', available: true };
+    const result = await normalize({
+      $type: 'imageBackgroundRemoval',
+      output: { image: IMAGE_BLOB },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ ...IMAGE_BLOB, type: 'image' });
+  });
+});
+
 describe('normalizeStepOutput — soniloAudioGen', () => {
   const AUDIO_BLOB = { id: 'blob-2', url: 'https://x/track.m4a', available: true };
 

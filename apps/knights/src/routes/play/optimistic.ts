@@ -59,7 +59,12 @@ export function skillCheckCue(
  * Refusals that mean the item moved on while it waited to be judged (settled, escalated past the player's rank, or
  * withdrawn), not that the player did anything wrong.
  */
-const STALE_REASONS = new Set(['not-open', 'not-eligible', 'unavailable']);
+/** Refusals for an item that moved on (settled, escalated, withdrawn) while it waited in the buffer. */
+export const STALE_REASONS: ReadonlySet<string> = new Set([
+  'not-open',
+  'not-eligible',
+  'unavailable',
+]);
 
 /** A background vote the server refused: by then the player has moved on, so the note says the press did not count. */
 export const refusedNote = (message: string) =>
@@ -194,7 +199,14 @@ export const refillCount = (size: number): number =>
 type Outcome = { type: string; status?: number; data?: Record<string, unknown> };
 export type VoteOutcome =
   | { ok: true }
-  | { ok: false; message: string; resync: boolean; stale: boolean };
+  | {
+      ok: false;
+      message: string;
+      resync: boolean;
+      stale: boolean;
+      /** A stale judgment the server still counted toward the Daily Watch (no gold). */
+      watchCounted?: boolean;
+    };
 
 /** The note a refused background vote leaves, or none for a stale item: the player is already on the next one. */
 export const refusalNote = (outcome: Extract<VoteOutcome, { ok: false }>): string | null =>
@@ -298,6 +310,7 @@ export function describeOutcome(result: Outcome | null): VoteOutcome {
       message: typeof message === 'string' && message ? message : FAILED_NOTICE,
       resync: typeof result.data?.lockoutSeconds === 'number',
       stale: typeof result.data?.reason === 'string' && STALE_REASONS.has(result.data.reason),
+      ...(result.data?.watchCounted === true ? { watchCounted: true } : {}),
     };
   }
   return { ok: false, message: FAILED_NOTICE, resync: true, stale: false };

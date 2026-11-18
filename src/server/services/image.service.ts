@@ -14,6 +14,7 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
+import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
 import { randomUUID } from 'crypto';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
@@ -7167,6 +7168,16 @@ function logBlocklistCheckFailed(
   });
 }
 
+/**
+ * The Postgres copy of the CSAM entries, which review routing reads. Throws like the ClickHouse write,
+ * so a block whose copy failed reports failure and is retried. Twin: apps/moderator
+ * image-moderation-effects.ts addImagesToBlocklist.
+ */
+async function mirrorCsamEntries(hashes: bigint[]) {
+  const sql = mirrorBlockedHashesSql(hashes);
+  if (sql) await dbWrite.$executeRawUnsafe(sql);
+}
+
 export function addBlockedImage({
   hash,
   reason,
@@ -7206,19 +7217,24 @@ export async function bulkAddBlockedImages({
 
   const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
   await write(csamRows);
-  const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
-  const others = data.filter(
-    ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
-  );
-  if (!others.length) return;
-  let csam: Set<string>;
   try {
-    csam = await csamBlockedHashes(others.map(({ hash }) => hash));
-  } catch (error) {
-    logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
-    return;
+    const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
+    const others = data.filter(
+      ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
+    );
+    if (!others.length) return;
+    let csam: Set<string>;
+    try {
+      csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+    } catch (error) {
+      logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
+      return;
+    }
+    await write(others.filter(({ hash }) => !csam.has(hash.toString())));
+  } finally {
+    // Last, so a failed copy still leaves the other rows written; it fails the call either way.
+    await mirrorCsamEntries(csamRows.map(({ hash }) => hash));
   }
-  await write(others.filter(({ hash }) => !csam.has(hash.toString())));
 }
 
 /**

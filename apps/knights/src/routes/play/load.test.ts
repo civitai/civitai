@@ -82,10 +82,18 @@ vi.mock('$lib/server/standing', async (original) => ({
 
 const { load, actions } = await import('./+page.server');
 
-const run = (user: Record<string, unknown> = {}) =>
-  load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
+const run = (user: Record<string, unknown> = {}) => {
+  // The load reads the player's rating for the gold a vote records; each test gives only the status fields it checks.
+  const given = getPlayerStatus.getMockImplementation();
+  if (given)
+    getPlayerStatus.mockImplementation(async (...args: unknown[]) => {
+      const status = await given(...args);
+      return status && { rating: { belowBar: false }, ...status };
+    });
+  return load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
     Record<string, any>
   >;
+};
 
 beforeEach(() => {
   acolyteLevelGoldSince.mockReset();
@@ -301,7 +309,7 @@ describe('play load', () => {
 
     const page = await run();
 
-    expect(page.daily).toEqual({ votes: 3 });
+    expect(page.daily).toEqual({ votes: 3, goldPerVote: 100 });
     expect(page).not.toHaveProperty('recap');
     expect(getDailyStatus).toHaveBeenCalledWith(expect.anything(), {
       playerId: 7,

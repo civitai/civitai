@@ -59,10 +59,10 @@ type Engine struct {
 	HubOrigin string
 	// UpdateAgeMs is UPDATE_AGE_MS: (Number(AUTH_SESSION_UPDATE_AGE) || 86400) * 1000.
 	UpdateAgeMs float64
-	// CookieMode is AUTH_SESSION_COOKIE_MODE (host | shared); LegacyRead is AUTH_LEGACY_READ.
-	CookieMode string
-	LegacyRead bool
-	Now        func() time.Time
+	// ModeFor gives the cookie mode (host | shared) and whether the shared slot is read, for a request host:
+	// AUTH_SESSION_COOKIE_MODE_BY_SITE, else AUTH_SESSION_COOKIE_MODE and AUTH_LEGACY_READ.
+	ModeFor func(host string) (mode string, legacyRead bool)
+	Now     func() time.Time
 }
 
 func (e *Engine) now() time.Time {
@@ -187,7 +187,7 @@ func (e *Engine) Ping(ctx context.Context, r *Request) (Outcome, error) {
 	}
 	// The session is resolved (awaited) before the response here, so a rolling refresh would add a
 	// Set-Cookie to this response: left to the Node app, which can mint it.
-	if user != nil && e.rollDue(user) {
+	if user != nil && e.rollDue(user, r.HTTP.Host) {
 		return Outcome{}, fallback.New("session-roll-due")
 	}
 	row := jsvalue.NewObject()
@@ -331,11 +331,11 @@ func clampToColumn(v, limit float64) float64 {
 // rollDue is whether getServerAuthSession would call maybeRollHubCookie and it would ask the hub for
 // a fresh token: the read slot rolls (rollSlot), the hub origin is set, and the token's numeric,
 // non-zero `iat` is at least UPDATE_AGE_MS old.
-func (e *Engine) rollDue(u *auth.SessionUser) bool {
+func (e *Engine) rollDue(u *auth.SessionUser, host string) bool {
 	if e.HubOrigin == "" || u.Claims == nil {
 		return false
 	}
-	if !e.rollSlot(u.CookieName) {
+	if !e.rollSlot(u.CookieName, host) {
 		return false
 	}
 	iat, ok := u.Claims.IssuedAt()
@@ -346,18 +346,23 @@ func (e *Engine) rollDue(u *auth.SessionUser) bool {
 	return age >= e.UpdateAgeMs
 }
 
-// rollSlot is rollSlot(readSessionToken(...)) !== null for the cookie the session was read from: a
+// rollSlot is whether the cookie the session was read from rolls, in the request host's mode: a
 // host-slot read rolls in either mode, a shared-slot read only in shared mode. Without the secure
-// prefixes both slots are named `civ-token`, and the slot is the one readSlot tried first.
-func (e *Engine) rollSlot(cookie string) bool {
-	hostMode := e.CookieMode == "host"
+// prefixes both slots are named `civ-token`, and the slot is the one CookieNames lists first.
+func (e *Engine) rollSlot(cookie, host string) bool {
+	var mode string
+	var legacyRead bool
+	if e.ModeFor != nil {
+		mode, legacyRead = e.ModeFor(host)
+	}
+	hostMode := mode == "host"
 	var slot string
 	switch {
 	case strings.HasPrefix(cookie, "__Host-"):
 		slot = "host"
 	case strings.HasPrefix(cookie, "__Secure-"):
 		slot = "shared"
-	case hostMode || !e.LegacyRead:
+	case hostMode || !legacyRead:
 		slot = "host"
 	default:
 		slot = "shared"

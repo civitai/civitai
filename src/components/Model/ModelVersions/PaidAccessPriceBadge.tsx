@@ -45,17 +45,15 @@ export function PaidAccessPriceBadge({
   price,
   acceptsBlueBuzz,
   listedOnly,
-  decimals,
 }: {
   price: number;
   acceptsBlueBuzz?: boolean;
   /** The viewer already has access; the chip is informational (owner/mod seeing the buyer price). */
   listedOnly?: boolean;
-  decimals?: number;
 }) {
   const theme = useMantineTheme();
   const { isGreen } = useFeatureFlags();
-  const amount = abbreviateNumber(price, decimals != null ? { decimals } : undefined);
+  const amount = abbreviateNumber(price);
 
   const currencyLabel = paidAccessBuzzLabel({ isGreen, acceptsBlueBuzz });
   const tooltip = listedOnly

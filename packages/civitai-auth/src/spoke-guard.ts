@@ -112,7 +112,7 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
     navigation: boolean,
     reason: SpokeSignInReason
   ): SpokeGuardResult => {
-    if (sessionCookieMode() === 'shared')
+    if (sessionCookieMode(null) === 'shared')
       return { status: 'login', redirect: hubLogin(returnUrl), reason };
     const authorize = spokeAuthorizeUrl(returnUrl);
     return navigation
@@ -149,21 +149,23 @@ export function createSpokeGuard(config: SpokeGuardConfig): SpokeGuard {
   ): Promise<SpokeGuardResult> {
     const navigation = opts.navigation ?? true;
     const jar = parseCookieHeader(cookieHeader);
-    const read = readSessionToken(jar);
+    const read = readSessionToken(jar, { host: null });
     if (!read) return signIn(returnUrl, navigation, 'no-session');
     const resolved = await sessions.resolveSessionUser(read.value);
     if (!resolved.user) return signIn(returnUrl, navigation, resolved.reason);
     const { user } = resolved;
     if (config.require && !config.require(user)) return { status: 'forbidden', user };
 
-    const mode = sessionCookieMode();
+    const mode = sessionCookieMode(null);
     // A host-mode page load carrying only the shared cookie signs in on this host, so it gets its own cookie.
     if (mode === 'host' && read.slot === 'shared' && navigation) {
       return { status: 'login', redirect: spokeAuthorizeUrl(returnUrl), reason: 'host-cookie' };
     }
     // The spoke rolls only its own host-only cookie; the shared one is rolled by the hub and the main app.
     const setCookies =
-      rollSlot(read, mode) === 'host' ? await roll(read.value, jar, readDeviceId(jar)) : [];
+      rollSlot(read, mode) === 'host'
+        ? await roll(read.value, jar, readDeviceId(jar, { host: null }))
+        : [];
     return { status: 'ok', user, setCookies };
   }
 

@@ -1119,7 +1119,7 @@ func goldenSetupMode(t *testing.T, fx *goldenFixture, writeBack bool) *goldenEnv
 		Verifier:    &auth.Verifier{Issuer: goldenIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client(), Now: nowFn},
 		Revocation:  &auth.Revocation{Redis: sys},
 		Sessions:    packed,
-		CookieNames: []string{goldenCookieName},
+		CookieNames: auth.FixedCookieNames(goldenCookieName),
 	}
 	events := map[string]bool{}
 	for _, e := range fx.Config.DecorationEvents {
