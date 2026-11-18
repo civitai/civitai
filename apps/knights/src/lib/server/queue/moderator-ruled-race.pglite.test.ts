@@ -67,3 +67,38 @@ it('leaves an item another path moved off Open after the sweep read it', async (
   );
   expect(votes.rows).toEqual([{ verdict: 'pending', settledAt: null }]);
 });
+
+it('closes against the level the image has when the close runs, not when the sweep read it', async () => {
+  await seedPlayer(pg, 2, 'Knight');
+  await seedImage(pg, 20, { nsfwLevel: 2 });
+  const id = await enqueueItem(
+    db,
+    { questionKey: 'knights.image.nsfwLevel', imageId: 20, source: 'test', expiresAt: null },
+    NOW
+  );
+  const applyConsensus = vi.fn();
+  await castVote(db, { userId: 2, itemId: id, answer: '4' }, { applyConsensus, now: () => NOW });
+  await pg.query(
+    `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=4, metadata='{"nsfwLevelReason":"Moderator review"}' WHERE id=20`
+  );
+
+  // In call order: the sweep selects the item at level 4, the moderator re-rates the image to 8, then the sweep closes it.
+  const [swept] = await Promise.all([
+    closeModeratorRuledItems(db, { now: NOW }),
+    db.updateTable('Image').set({ nsfwLevel: 8 }).where('id', '=', 20).execute(),
+  ]);
+
+  expect(swept).toEqual({ closed: 1, failed: 0 });
+  const row = (
+    await pg.query<Record<string, unknown>>(
+      `SELECT status, reason, "resolvedValue" FROM "KnightsQueueItem" WHERE id=$1`,
+      [id]
+    )
+  ).rows[0];
+  expect(row).toEqual({ status: 'Closed', reason: 'moderator-ruled', resolvedValue: '8' });
+  const votes = await pg.query<{ verdict: string }>(
+    `SELECT verdict FROM "KnightsVote" WHERE "itemId"=$1`,
+    [id]
+  );
+  expect(votes.rows).toEqual([{ verdict: 'failed' }]);
+});

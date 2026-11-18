@@ -659,80 +659,73 @@ async function readImageState(db: Executor, imageId: number): Promise<ImageState
 
 type Reroute = Exclude<WritebackDecision, { kind: 'apply' }>;
 
-/**
- * Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling.
- * With `ifOpen`, it acts only on an item still Open under its row lock (the lock `castVote` takes), and returns whether it did.
- */
+/** Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling. */
 async function reroute(
   db: Kysely<DB>,
   itemId: number,
   route: Reroute,
   now: Date,
-  mirror?: XpMirror,
-  { ifOpen = false }: { ifOpen?: boolean } = {}
-): Promise<boolean> {
-  const xp = await db.transaction().execute(async (trx): Promise<XpDelta[] | null> => {
-    if (ifOpen) {
-      const item = await trx
-        .selectFrom('KnightsQueueItem')
-        .select('status')
-        .where('id', '=', itemId)
-        .forUpdate()
-        .executeTakeFirst();
-      if (item?.status !== 'Open') return null;
-    }
-    const left = {
-      appliedAt: null,
-      nextAttemptAt: null,
-      updatedAt: utc(now),
-    };
-    if (route.kind === 'inquisitor') {
-      await trx
-        .updateTable('KnightsQueueItem')
-        .set({
-          ...left,
-          status: 'Inquisitor',
-          minRank: 'Inquisitor',
-          expiresAt: null,
-          resolvedValue: null,
-          resolvedAt: null,
-          resolvedBy: null,
-          resolvedFromLevel: null,
-          reason: route.reason,
-        })
-        .where('id', '=', itemId)
-        .execute();
-      await regradeVotes(trx, itemId, 'pending');
-      metrics.escalation(route.reason);
-      return [];
-    }
+  mirror?: XpMirror
+) {
+  const xp = await db.transaction().execute((trx) => applyReroute(trx, itemId, route, now));
+  await mirrorXp(mirror, xp);
+}
 
+async function applyReroute(
+  trx: Transaction<DB>,
+  itemId: number,
+  route: Reroute,
+  now: Date
+): Promise<XpDelta[]> {
+  const left = {
+    appliedAt: null,
+    nextAttemptAt: null,
+    updatedAt: utc(now),
+  };
+  if (route.kind === 'inquisitor') {
     await trx
       .updateTable('KnightsQueueItem')
       .set({
         ...left,
-        status: 'Closed',
-        ...(route.kind === 'moderator'
-          ? { reason: 'moderator-ruled', resolvedValue: String(route.level) }
-          : { reason: 'missing' }),
+        status: 'Inquisitor',
+        minRank: 'Inquisitor',
+        expiresAt: null,
+        resolvedValue: null,
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedFromLevel: null,
+        reason: route.reason,
       })
       .where('id', '=', itemId)
       .execute();
-    await regradeVotes(
-      trx,
-      itemId,
-      route.kind === 'moderator' ? { correctAnswer: String(route.level) } : 'inconclusive'
-    );
-    return (await settleItemVotes(trx, itemId, now)).xp;
-  });
-  if (!xp) return false;
-  await mirrorXp(mirror, xp);
-  return true;
+    await regradeVotes(trx, itemId, 'pending');
+    metrics.escalation(route.reason);
+    return [];
+  }
+
+  await trx
+    .updateTable('KnightsQueueItem')
+    .set({
+      ...left,
+      status: 'Closed',
+      ...(route.kind === 'moderator'
+        ? { reason: 'moderator-ruled', resolvedValue: String(route.level) }
+        : { reason: 'missing' }),
+    })
+    .where('id', '=', itemId)
+    .execute();
+  await regradeVotes(
+    trx,
+    itemId,
+    route.kind === 'moderator' ? { correctAnswer: String(route.level) } : 'inconclusive'
+  );
+  return (await settleItemVotes(trx, itemId, now)).xp;
 }
 
 /**
  * Closes Open rating items whose image a moderator has since locked at a level, the way the write-back closes a settled one on
  * finding that lock (`moderatorRuling`). A blocked image, a lock without a level, and items no longer Open are left to their own paths.
+ * Status and image are read again under the item row lock (the lock `castVote` takes), so the close uses the level as it is then.
  */
 export async function closeModeratorRuledItems(
   db: Kysely<DB>,
@@ -742,14 +735,7 @@ export async function closeModeratorRuledItems(
   const candidates = await db
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .select([
-      'i.id',
-      'img.nsfwLevel',
-      'img.nsfwLevelLocked as locked',
-      'img.ingestion',
-      'img.blockedFor',
-      sql<string | null>`img."metadata"->>'nsfwLevelReason'`.as('lockReason'),
-    ])
+    .select(['i.id', 'i.imageId'])
     .where('i.status', '=', 'Open')
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('i.audience', 'is', null)
@@ -766,11 +752,24 @@ export async function closeModeratorRuledItems(
     .execute();
 
   const counts = { closed: 0, failed: 0 };
-  for (const { id, ...image } of candidates) {
-    const ruling = hasBlockMarker(image) ? null : moderatorRuling(image);
-    if (ruling?.kind !== 'moderator') continue;
+  for (const { id, imageId } of candidates) {
     try {
-      if (await reroute(db, id, ruling, now, mirror, { ifOpen: true })) counts.closed++;
+      const xp = await db.transaction().execute(async (trx) => {
+        const item = await trx
+          .selectFrom('KnightsQueueItem')
+          .select('status')
+          .where('id', '=', id)
+          .forUpdate()
+          .executeTakeFirst();
+        if (item?.status !== 'Open') return null;
+        const image = await readImageState(trx, imageId);
+        const ruling = image && !hasBlockMarker(image) ? moderatorRuling(image) : null;
+        if (ruling?.kind !== 'moderator') return null;
+        return applyReroute(trx, id, ruling, now);
+      });
+      if (!xp) continue;
+      counts.closed++;
+      await mirrorXp(mirror, xp);
     } catch (error) {
       counts.failed++;
       console.error('knights: could not close an item a moderator ruled, it will be retried', {
