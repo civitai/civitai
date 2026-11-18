@@ -1,11 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import { hasBlockMarkerSql } from '~/server/common/image-visibility';
+import { clearHeldUserImagesStatement } from '@civitai/db-queries/profile-picture-clear';
 import {
   servableProfilePictureSql,
-  userImageNamesHeldPicture,
   type RawQueryClient,
 } from '~/server/services/profile-picture.sql';
+
+type RawUnsafeQueryClient = {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
+};
 
 /**
  * Whether any image stored under one of `keys` (lowercased, as `keysIn` gives them) is under an
@@ -24,41 +28,15 @@ export async function anyImageHeldForReview(db: RawQueryClient, keys: string[]) 
   return rows.length > 0;
 }
 
-const heldImageMarker = Prisma.raw(
-  `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`
-);
-
 /**
- * Of `userIds`, those whose profile picture is under an owner-hidden hold; for each of them whose
- * `User.image` names that picture, clears `User.image` in the same statement and marks it with
- * `meta.heldImageCleared = { pictureId }` (no value: the value is the held key), which
- * `restoreClearedUserImages` reads once the hold lifts. Only an object `meta` takes the marker.
+ * `clearHeldUserImagesStatement` from `@civitai/db-queries/profile-picture-clear`, the statement the
+ * moderator app runs too: the users whose profile picture is held or blocked, with any `User.image`
+ * naming it cleared and marked for `restoreClearedUserImages`.
  */
-export async function clearHeldUserImages(db: RawQueryClient, userIds: number[]) {
+export async function clearHeldUserImages(db: RawUnsafeQueryClient, userIds: number[]) {
   if (!userIds.length) return [];
-  const rows = await db.$queryRaw<{ id: number }[]>`
-    WITH held AS (
-      SELECT u.id, (u.image IS NOT NULL AND ${Prisma.raw(
-        userImageNamesHeldPicture
-      )}) AS "namesPicture"
-      FROM "User" u
-      JOIN "Image" picture ON picture.id = u."profilePictureId"
-      WHERE u.id IN (${Prisma.join(userIds)})
-        AND picture."needsReview" IN (${Prisma.join(OWNER_HIDDEN_REVIEWS)})
-    ), cleared AS (
-      UPDATE "User" u
-      SET image = NULL,
-        meta = CASE
-          WHEN u.meta IS NULL OR jsonb_typeof(u.meta) = 'null' THEN ${heldImageMarker}
-          WHEN jsonb_typeof(u.meta) = 'object' THEN u.meta || ${heldImageMarker}
-          -- A JSON scalar (the system-account marker can be a string) keeps its value and takes no marker.
-          ELSE u.meta
-        END
-      FROM held WHERE u.id = held.id AND held."namesPicture"
-      RETURNING u.id
-    )
-    SELECT id FROM held
-  `;
+  const { sql, parameters } = clearHeldUserImagesStatement(userIds);
+  const rows = await db.$queryRawUnsafe<{ id: number }[]>(sql, ...parameters);
   return rows.map((row) => row.id);
 }
 
@@ -69,7 +47,7 @@ const MARKER_IS_CURRENT = Prisma.raw(
 );
 
 /**
- * For those of `userIds` whose `User.image` a hold cleared (`clearHeldUserImages`), puts it back from
+ * For those of `userIds` whose `User.image` a hold or block cleared (`clearHeldUserImages`), puts it back from
  * the profile picture's own url once the picture is servable again (`servableProfilePictureSql`, and no
  * block marker survives on it),
  * is still the user's and `User.image` is still empty. A marker that can no longer apply is dropped by

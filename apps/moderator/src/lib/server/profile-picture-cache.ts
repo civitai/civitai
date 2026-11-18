@@ -1,3 +1,4 @@
+import { clearHeldUserImages } from '@civitai/db-queries/profile-picture-clear';
 import { bustEventEngineProfilePictures, REDIS_KEYS } from '@civitai/redis';
 import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
@@ -21,14 +22,22 @@ export async function profilePictureUserIds(
 }
 
 // The main app and the event engine each cache a user's profile picture for a day, and avatars are
-// shown or hidden on its rating. Never throws: it follows a committed moderation write.
+// shown or hidden on its rating. A held or blocked picture also clears the legacy `User.image` naming
+// it (putting it back is the main app's job). Never throws: it follows a committed moderation write.
 export async function bustProfilePictures(
   target: { imageIds: number[] } | { userIds: number[] }
 ): Promise<void> {
   try {
     const userIds =
       'userIds' in target ? target.userIds : await profilePictureUserIds(target.imageIds);
+    const heldUserIds = await clearHeldUserImages(dbWrite, userIds).catch((error) => {
+      void logAxiomError(error, { event: 'profile-picture-clear', userIds: userIds.join(',') });
+      return [] as number[];
+    });
     await Promise.all([
+      bustCachedObject(REDIS_KEYS.CACHES.BASIC_USERS, heldUserIds).catch((error) =>
+        logAxiomError(error, { event: 'profile-picture-cache-bust', cache: 'basic-users' })
+      ),
       bustCachedObject(REDIS_KEYS.CACHES.PROFILE_PICTURES, userIds).catch((error) =>
         logAxiomError(error, { event: 'profile-picture-cache-bust' })
       ),

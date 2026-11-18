@@ -4,6 +4,7 @@ import {
   imageReviewedSql,
   notHeldForReviewSql,
 } from '~/server/common/image-visibility';
+import { userImageNamesPicture } from '@civitai/db-queries/profile-picture-clear';
 import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 
@@ -23,7 +24,7 @@ export const userImageNamesHeldPicture = `EXISTS (
     SELECT 1 FROM "Image" held
     WHERE held.id = u."profilePictureId"
       AND held."needsReview" IN (${heldReviewList})
-      AND strpos(replace(lower(u.image), '%2d', '-'), lower(held.url)) > 0
+      AND ${userImageNamesPicture('held')}
   )`;
 
 /**

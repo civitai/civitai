@@ -110,9 +110,13 @@ CREATE TABLE "Model3D" (
 CREATE TABLE "Model3DMetric" ("model3dId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY,
-  "profilePictureId" INTEGER REFERENCES "Image"(id) ON DELETE SET NULL
+  "profilePictureId" INTEGER REFERENCES "Image"(id) ON DELETE SET NULL,
+  "image" TEXT,
+  "meta" JSONB
 );
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+CREATE FUNCTION queue_cdn_access_sync(entity_id INTEGER, entity_type TEXT, payload JSONB)
+  RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
 const AVATAR_ID = 800;
@@ -123,6 +127,13 @@ const avatarKey = `${REDIS_KEYS.CACHES.PROFILE_PICTURES}:${AVATAR_OWNER}`;
 const bustedKeys = () => del.mock.calls.flatMap(([keys]) => keys);
 
 let db: PGlite;
+const ownerRow = async () =>
+  (
+    await db.query<{ image: string | null; meta: unknown }>(
+      `SELECT "image", "meta" FROM "User" WHERE "id" = $1`,
+      [AVATAR_OWNER]
+    )
+  ).rows[0];
 
 beforeEach(async () => {
   del.mockReset();
@@ -132,14 +143,14 @@ beforeEach(async () => {
   db = await freshPglite();
   await db.exec(SCHEMA);
   await db.query(
-    `INSERT INTO "Image" ("id", "type", "userId", "nsfwLevel") VALUES
-      ($1, 'image', $3, 1), ($2, 'image', $3, 1)`,
+    `INSERT INTO "Image" ("id", "url", "type", "userId", "nsfwLevel") VALUES
+      ($1, 'avatar-key', 'image', $3, 1), ($2, 'other-key', 'image', $3, 1)`,
     [AVATAR_ID, OTHER_IMAGE_ID, AVATAR_OWNER]
   );
-  await db.query(`INSERT INTO "User" ("id", "profilePictureId") VALUES ($1, $2)`, [
-    AVATAR_OWNER,
-    AVATAR_ID,
-  ]);
+  await db.query(
+    `INSERT INTO "User" ("id", "profilePictureId", "image", "meta") VALUES ($1, $2, $3, '{}')`,
+    [AVATAR_OWNER, AVATAR_ID, 'https://cdn.example/avatar-key/width=96']
+  );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
@@ -157,6 +168,25 @@ describe('moderator writes to an image that is a profile picture', () => {
     expect(hSet).toHaveBeenCalledWith(`user:profilePicture:v3:${AVATAR_OWNER}`, {
       debounce: '1',
       cachedAt: expect.any(String),
+    });
+  });
+
+  it('blockImage clears a User.image naming the blocked picture, marks it, and evicts the basic user', async () => {
+    await blockImage({ imageId: AVATAR_ID, userId: 1 });
+
+    expect(await ownerRow()).toEqual({
+      image: null,
+      meta: { heldImageCleared: { pictureId: AVATAR_ID } },
+    });
+    expect(bustedKeys()).toContain(`${REDIS_KEYS.CACHES.BASIC_USERS}:${AVATAR_OWNER}`);
+  });
+
+  it("blockImage on an image that is not the user's picture leaves User.image alone", async () => {
+    await blockImage({ imageId: OTHER_IMAGE_ID, userId: 1 });
+
+    expect(await ownerRow()).toEqual({
+      image: 'https://cdn.example/avatar-key/width=96',
+      meta: {},
     });
   });
 
