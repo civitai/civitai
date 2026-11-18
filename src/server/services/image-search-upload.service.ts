@@ -15,6 +15,7 @@ import {
   readSearchUploadScan,
   searchUploadFaceAnimeMin,
   searchUploadVerdict,
+  type SearchUploadDecision,
   type SearchUploadRefusal,
   type SearchUploadScan,
   type SearchUploadVerdict,
@@ -50,16 +51,17 @@ export type SearchUploadRecord = {
   scan?: Exclude<SearchUploadScan, { state: 'pending' }>;
   /** The blob's verdict once rated, so a later page's failed read cannot undo a pass. */
   blobBlockedReason?: string | null;
-  /** Set on the first refusal other than the face rule: a refused upload stays refused. */
-  refused?: SearchUploadRefusal;
 };
 
 const hashUrl = (url: string) => createHash('sha256').update(url).digest('hex');
 
 const recordKey = (uploadId: string) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD}:${uploadId}` as RedisKeyTemplateCache;
-const refKey = (userId: number, blobId: string) =>
-  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_REF}:${userId}:${blobId}` as RedisKeyTemplateCache;
+// Set apart from the record, and only once, so no save of an older copy of the record undoes it.
+const refusedKey = (uploadId: string) =>
+  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD}:${uploadId}:refused` as RedisKeyTemplateCache;
+const refKey = (userId: number, blobId: string, source: SearchUploadSource) =>
+  `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_REF}:${userId}:${blobId}:${source.kind}:${source.id}` as RedisKeyTemplateCache;
 const pendingKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_PENDING}:${userId}` as RedisKeyTemplateCache;
 
@@ -126,7 +128,7 @@ export async function prepareSearchUpload({
   if (!blobId)
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'That is not an uploaded image.' });
 
-  const existing = await redis.packed.get<string>(refKey(userId, blobId));
+  const existing = await redis.packed.get<string>(refKey(userId, blobId, source));
   if (existing && (await redis.packed.get<SearchUploadRecord>(recordKey(existing))))
     return { uploadId: existing };
   const uploadId = randomUUID();
@@ -159,7 +161,7 @@ export async function prepareSearchUpload({
   const ttl = secondsLeft(record.createdAt);
   await Promise.all([
     redis.packed.set(recordKey(uploadId), record, { EX: ttl }),
-    redis.packed.set(refKey(userId, blobId), uploadId, { EX: ttl }),
+    redis.packed.set(refKey(userId, blobId, source), uploadId, { EX: ttl }),
   ]);
   countSearchUpload('prepared');
   return { uploadId };
@@ -209,23 +211,31 @@ async function blobFor(uploadId: string, record: SearchUploadRecord) {
   return { verdict: 'rated' as const, blockedReason: blob.blockedReason };
 }
 
+/** A scan that finished past the timeout is refused like one that never answered. */
+const finishedLate = (scan: SearchUploadScan, createdAt: number) =>
+  scan.state === 'done' &&
+  !(scan.completedAt && Date.parse(scan.completedAt) - createdAt <= SEARCH_UPLOAD_SCAN_TIMEOUT_MS);
+
 async function decide(uploadId: string, record: SearchUploadRecord, isModerator: boolean) {
-  if (record.refused)
-    return { scan: record.scan, decision: { verdict: 'refused' as const, reason: record.refused } };
+  const kept = await redis.packed.get<SearchUploadRefusal>(refusedKey(uploadId));
+  if (kept) return { scan: record.scan, decision: { verdict: 'refused' as const, reason: kept } };
   const scan = await scanFor(uploadId, record);
   const blob =
     scan.state === 'done' ? await blobFor(uploadId, record) : { verdict: 'pending' as const };
-  const decision = searchUploadVerdict(scan, blob, {
-    isModerator,
-    faceAnimeMin: searchUploadFaceAnimeMin(),
-    timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
-  });
+  const decision: SearchUploadDecision = finishedLate(scan, record.createdAt)
+    ? { verdict: 'refused', reason: 'timed-out' }
+    : searchUploadVerdict(scan, blob, {
+        isModerator,
+        faceAnimeMin: searchUploadFaceAnimeMin(),
+        timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
+      });
   if (decision.verdict === 'refused') {
     // The face rule depends on the viewer's moderator view; every other refusal is the image's.
-    if (decision.reason !== 'faces') {
-      record.refused = decision.reason;
-      await saveRecord(uploadId, record);
-    }
+    if (decision.reason !== 'faces')
+      await redis.packed.set(refusedKey(uploadId), decision.reason, {
+        EX: secondsLeft(record.createdAt),
+        NX: true,
+      });
     await releaseBusy(uploadId, record.userId);
     countSearchUpload('refused');
     logToAxiom({

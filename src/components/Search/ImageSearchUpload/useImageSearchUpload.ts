@@ -35,7 +35,7 @@ export function useImageSearchUpload() {
       try {
         const blob = await uploadConsumerBlob(file);
         if (!blob.url) throw new Error(SEARCH_UPLOAD_FAILED_MESSAGE);
-        const { uploadId } = await prepare.mutateAsync({ url: blob.url, source });
+        const { uploadId } = await prepare.mutateAsync({ uploadUrl: blob.url, source });
         setState({ step: 'checking', uploadId, url: blob.url });
       } catch (error) {
         setState({

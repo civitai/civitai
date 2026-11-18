@@ -13,6 +13,8 @@ export type SearchUploadScan =
   | { state: 'failed' }
   | {
       state: 'done';
+      /** When the scan step finished, as the orchestrator reports it. */
+      completedAt?: string | null;
       nsfwLevel: number;
       blocked: boolean;
       minorDetected: boolean;
@@ -39,7 +41,7 @@ export function readSearchUploadScan(workflow: {
 
   const step = (workflow.steps ?? []).find(
     (s) => (s as { $type?: string } | null)?.$type === 'imageScanning'
-  ) as { output?: ScanOutput } | undefined;
+  ) as { output?: ScanOutput; completedAt?: string | null } | undefined;
   const output = step?.output;
   const nsfwLevel = output?.nsfwLevel ? orchestratorNsfwLevelMap[output.nsfwLevel] : undefined;
   const age = output?.jointAgeClassification;
@@ -47,6 +49,7 @@ export function readSearchUploadScan(workflow: {
 
   return {
     state: 'done',
+    completedAt: step?.completedAt ?? null,
     nsfwLevel,
     blocked: !!output.blockedReason || output.csam === true,
     minorDetected: !!age.minorDetected,

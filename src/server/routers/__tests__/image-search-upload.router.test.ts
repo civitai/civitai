@@ -56,14 +56,14 @@ beforeEach(() => {
 
 const ANCHOR = { nsfwLevel: 1, imageUrl: 'https://image.test/u.jpeg' };
 const search = (user: typeof USER, credential?: object) =>
-  caller(user, credential).search({ uploadId: UPLOAD, url: BLOB, browsingLevel: 1 });
+  caller(user, credential).search({ uploadId: UPLOAD, uploadUrl: BLOB, browsingLevel: 1 });
 
 describe('imageSearchUpload', () => {
   it('refuses every procedure to a non-moderator, whatever the flags say', async () => {
     await expect(status(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(search(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(
-      caller(USER).prepare({ url: BLOB, source: { kind: 'image', id: 9 } })
+      caller(USER).prepare({ uploadUrl: BLOB, source: { kind: 'image', id: 9 } })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(h.status).not.toHaveBeenCalled();
     expect(h.anchor).not.toHaveBeenCalled();
@@ -112,7 +112,7 @@ describe('imageSearchUpload', () => {
 
   it('prepares an upload for the session user', async () => {
     await caller(MOD).prepare({
-      url: 'https://orchestration.civitai.com/v2/consumer/blobs/b1',
+      uploadUrl: 'https://orchestration.civitai.com/v2/consumer/blobs/b1',
       source: { kind: 'image', id: 9 },
     });
     expect(h.prepare).toHaveBeenCalledWith(

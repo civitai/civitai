@@ -130,6 +130,11 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
   }
 }
 
+/** Queries whose input carries a private upload's blob URL (`uploadUrl`), kept out of request URLs. */
+export const PRIVATE_URL_QUERY_PROCEDURES: ReadonlySet<string> = new Set([
+  'imageSearchUpload.search',
+]);
+
 /**
  * Whether a query must leave the browser as POST: either its input is too large for a GET URL
  * (`isLargeQuery`), or its procedure is in `BLOCK_TOKEN_QUERY_PROCEDURES` — its input carries a
@@ -138,7 +143,11 @@ export function isLargeQuery(op: { type: string; input: unknown }) {
  */
 export function shouldSendQueryAsPost(op: { type: string; path: string; input: unknown }) {
   if (op.type !== 'query') return false;
-  return BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) || isLargeQuery(op);
+  return (
+    BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) ||
+    PRIVATE_URL_QUERY_PROCEDURES.has(op.path) ||
+    isLargeQuery(op)
+  );
 }
 
 /**

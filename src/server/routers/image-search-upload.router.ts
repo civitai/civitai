@@ -39,7 +39,7 @@ export const imageSearchUploadRouter = router({
     .mutation(({ input, ctx }) =>
       prepareSearchUpload({
         userId: ctx.user.id,
-        url: input.url,
+        url: input.uploadUrl,
         source: input.source,
         req: ctx.req,
       })
@@ -65,7 +65,7 @@ export const imageSearchUploadRouter = router({
       const uploadAnchor = await resolveSearchUploadAnchor({
         userId: ctx.user.id,
         uploadId: input.uploadId,
-        url: input.url,
+        url: input.uploadUrl,
         isModerator: views.asModerator && !!ctx.user.isModerator,
       });
       const started = Date.now();

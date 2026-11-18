@@ -84,6 +84,7 @@ describe('reading the scan workflow', () => {
   it('reads the level, the flags and each face, a missing score as null', () => {
     expect(readSearchUploadScan(succeeded(output()))).toEqual({
       state: 'done',
+      completedAt: null,
       nsfwLevel: 1,
       blocked: false,
       minorDetected: false,

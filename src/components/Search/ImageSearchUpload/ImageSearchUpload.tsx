@@ -62,11 +62,6 @@ export function ImageSearchUpload() {
     took.current = true;
     setPendingFile(takePendingSearchUpload());
   }, []);
-  useEffect(() => {
-    if (!pendingFile || !source) return;
-    setPendingFile(null);
-    void start(pendingFile, source);
-  }, [pendingFile, source, start]);
 
   const busy = upload.uploading || upload.checking;
   return (
@@ -88,8 +83,21 @@ export function ImageSearchUpload() {
           w={220}
         />
       </Group>
-      {pendingFile && !source && (
-        <Text size="sm">Enter the item you started from to search with your image.</Text>
+      {pendingFile && (
+        <Group gap="sm">
+          <Text size="sm">Enter the item you started from, then search with your image.</Text>
+          <Button
+            size="compact-sm"
+            disabled={!source || busy}
+            onClick={() => {
+              if (!source) return;
+              setPendingFile(null);
+              void start(pendingFile, source);
+            }}
+          >
+            Search
+          </Button>
+        </Group>
       )}
       <Dropzone
         onDrop={([file]) => file && source && void start(file, source)}
@@ -156,7 +164,7 @@ function UploadResults({ uploadId, url }: { uploadId: string; url: string }) {
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, isFetching, hasNextPage, fetchNextPage, error } =
     trpc.imageSearchUpload.search.useInfiniteQuery(
-      { uploadId, url, browsingLevel },
+      { uploadId, uploadUrl: url, browsingLevel },
       { getNextPageParam: (page) => page.nextCursor, gcTime: 0, staleTime: 0 }
     );
   const items = (data?.pages ?? []).flatMap((page) => page.items);

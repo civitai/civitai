@@ -104,6 +104,7 @@ const scanned = (over: Record<string, unknown> = {}) => ({
   steps: [
     {
       $type: 'imageScanning',
+      completedAt: new Date().toISOString(),
       output: {
         nsfwLevel: 'pg',
         blockedReason: null,
@@ -177,6 +178,19 @@ describe('preparing a search upload', () => {
     await expect(prepare()).resolves.toEqual(first);
     expect(h.claim).not.toHaveBeenCalled();
     expect(orch.submitSearchUploadScan).not.toHaveBeenCalled();
+  });
+
+  it('reuses an upload only for the same source', async () => {
+    const first = await prepare();
+    store.forEach((_v, k) => k.includes('search-upload-pending') && store.delete(k));
+    dbMock.dbRead.post.findUnique.mockResolvedValue({ id: 3 } as never);
+    const other = await prepareSearchUpload({
+      userId: 5,
+      url: BLOB_URL,
+      source: { kind: 'post', id: 3 },
+      req: {} as never,
+    });
+    expect(other.uploadId).not.toBe(first.uploadId);
   });
 
   it('refuses while the viewer has an upload still being scanned, without taking a slot', async () => {
@@ -269,6 +283,36 @@ describe('search upload status and search anchor', () => {
       anchor(false, 'https://orchestration.civitai.com/v2/consumer/blobs/blob-2')
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     await expect(anchor(false, `${BLOB_URL}?v=2`)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('refuses a scan that finished after the timeout, read for the first time later', async () => {
+    const late = scanned();
+    (late.steps[0] as { completedAt: string }).completedAt = new Date(
+      Date.now() + SEARCH_UPLOAD_SCAN_TIMEOUT_MS + 60_000
+    ).toISOString();
+    wf.getWorkflow.mockResolvedValue(late);
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('refuses a scan with no completion time', async () => {
+    const unknown = scanned();
+    delete (unknown.steps[0] as { completedAt?: string }).completedAt;
+    wf.getWorkflow.mockResolvedValue(unknown);
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('keeps a refusal for a blob verdict that never came, even once it does', async () => {
+    blob.readBlobState.mockResolvedValue({ verdict: 'pending' });
+    await expect(status(true)).resolves.toEqual({ status: 'pending' });
+    vi.useFakeTimers({ now: Date.now() + SEARCH_UPLOAD_SCAN_TIMEOUT_MS + 1000 });
+    await expect(status(true)).resolves.toMatchObject({ status: 'refused' });
+    blob.readBlobState.mockResolvedValue({
+      verdict: 'rated',
+      nsfwLevel: 'pg',
+      blockedReason: null,
+      location: null,
+    });
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('keeps a timed-out refusal even when the scan later succeeds', async () => {

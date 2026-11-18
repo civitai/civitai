@@ -49,13 +49,13 @@ export const searchUploadSourceSchema = z.discriminatedUnion('kind', [
 ]);
 export type SearchUploadSource = z.infer<typeof searchUploadSourceSchema>;
 export const prepareImageSearchUploadSchema = z.object({
-  url: z.string().max(2048),
+  uploadUrl: z.string().max(2048),
   source: searchUploadSourceSchema,
 });
 export const imageSearchUploadStatusSchema = z.object({ uploadId: z.string().uuid() });
 export const imageSearchUploadSearchSchema = baseQuerySchema.extend({
   uploadId: z.string().uuid(),
-  url: z.string().max(2048),
+  uploadUrl: z.string().max(2048),
   limit: z.number().int().min(1).max(100).default(SEMANTIC_SEARCH_PAGE_SIZE),
   cursor: z.number().int().min(0).optional(),
 });
