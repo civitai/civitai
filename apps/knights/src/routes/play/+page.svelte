@@ -10,6 +10,7 @@
   import GuideDialog from './GuideDialog.svelte';
   import ImageStage from './ImageStage.svelte';
   import LevelToast from './LevelToast.svelte';
+  import RulingToast from './RulingToast.svelte';
   import QueueClear from './QueueClear.svelte';
   import RankUpDialog from './RankUpDialog.svelte';
   import ResetNotice from './ResetNotice.svelte';
@@ -17,7 +18,7 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, landVote, noticeTone, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
@@ -94,7 +95,6 @@
     inFlight.landedOn = null;
   });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
-  let toastTone = $derived(noticeTone(data.notices));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
   // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
   // given right after "Onward" still records the card it appeared with.
@@ -563,6 +563,7 @@
     if (view) return { kind: 'queue-stage' as const, view };
     return { kind: data.resetPending ? ('none' as const) : ('clear' as const), daily: data.daily };
   });
+  let rulingInStage = $derived(screen.kind === 'apprentice-question' || screen.kind === 'queue-stage');
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
@@ -635,33 +636,7 @@
 
 {#snippet ruling()}
   {#if data.notices.length > 0}
-    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
-      <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
-      <div class="toast-body">
-        {#each data.notices as notice (notice.key)}
-          <div class="check-notice" class:close={notice.consequence === 'close'}>
-            {#if notice.imageSrc}
-              <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
-            {/if}
-            <p>
-              <strong>{notice.title}</strong>
-              {notice.message}
-              {#if notice.consequence === 'smite'}
-                <span class="check-answers">
-                  You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
-                </span>
-              {/if}
-            </p>
-          </div>
-        {/each}
-        {#if form?.noticeFailed}
-          <p>{form.message}</p>
-        {/if}
-      </div>
-      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-        <button type="submit" disabled={submitting}>Understood</button>
-      </form>
-    </section>
+    <RulingToast notices={data.notices} message={form?.noticeFailed ? form.message : null} {submitting} {submit} />
   {/if}
 {/snippet}
 
@@ -724,7 +699,7 @@
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0 && screen.kind !== 'apprentice-question' && screen.kind !== 'queue-stage'}
+  {#if data.notices.length > 0 && !rulingInStage}
     <div class="rulingwrap">{@render ruling()}</div>
   {/if}
 
@@ -955,66 +930,6 @@
     margin: 0 auto;
     padding: 8px 28px 0;
   }
-  .toast {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 12px;
-    box-sizing: border-box;
-    width: 100%;
-    padding: 12px 16px;
-    border: 1px solid var(--io-crimson);
-    border-radius: 12px;
-    background: #14110dee;
-    color: var(--io-crimson-text);
-    font: 400 13px/1.4 var(--io-font-ui);
-  }
-  /* Close calls only: information, not an alarm. */
-  .toast.calm {
-    border-color: var(--io-gold);
-    color: var(--io-gold);
-  }
-  .toast-body {
-    flex: 1;
-  }
-  .toast-body p {
-    margin: 0;
-    color: var(--io-parchment);
-  }
-  .toast-body strong {
-    display: block;
-    color: var(--io-crimson-text);
-  }
-  .check-notice {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .check-notice + .check-notice {
-    margin-top: 8px;
-  }
-  .check-notice.close strong {
-    color: var(--io-gold);
-  }
-  .check-thumb {
-    flex: none;
-    width: 48px;
-    height: 48px;
-    border-radius: 6px;
-    object-fit: cover;
-  }
-  .check-answers {
-    display: block;
-    color: var(--io-parchment);
-    opacity: 0.8;
-  }
-  .toast button {
-    min-height: 0;
-    padding: 6px 12px;
-    border-color: var(--io-crimson);
-    font-size: 12px;
-  }
-
   /* The stage and whatever floats over it (the level-up toast). */
   .stagewrap {
     position: relative;
@@ -1356,25 +1271,6 @@
     }
     .rulingwrap {
       padding: 4px 16px 0;
-    }
-    /* Text takes the full width and Understood drops to its own line; the title's own glyph stands in for the icon. */
-    .toast {
-      flex-wrap: wrap;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 10px 12px;
-    }
-    .toast > :global(svg) {
-      display: none;
-    }
-    .toast form {
-      display: flex;
-      flex-basis: 100%;
-      justify-content: flex-end;
-    }
-    .check-thumb {
-      width: 36px;
-      height: 36px;
     }
     .eyebrow {
       font-size: 12px;
