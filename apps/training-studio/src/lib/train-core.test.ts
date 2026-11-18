@@ -914,6 +914,31 @@ describe('mature charge: Blue first, never Green', () => {
       { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
     ];
 
+    // Who actually pays a non-member's run: the orchestrator's rule for a submitted body
+    // (civitai-orchestration WorkflowGrain ChargeableCurrencies, BuzzClientAccount): with
+    // allowMatureContent true, only Yellow may pay; otherwise the body's currencies, in order.
+    const nonMemberPayers = (body: { allowMatureContent?: boolean; currencies?: string[] }) =>
+      body.allowMatureContent === true
+        ? (body.currencies ?? []).filter((c) => c === 'yellow')
+        : body.currencies ?? [];
+
+    it("a non-member's mature run is paid Blue first, not forced to Yellow, and never Green", async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow
+        .mockResolvedValueOnce({ data: { id: 'wf-pay-safe' } })
+        .mockResolvedValueOnce({ data: { id: 'wf-pay-mature' } });
+      const run = { ...baseRun(), currencies: ['blue', 'green'] };
+      await submitTrainingBatch(client, [run], { checkText });
+      const safe = nonMemberPayers(submitWorkflow.mock.calls.at(-1)![0].body);
+      await submitTrainingBatch(client, [{ ...run, items, meta: { name: 'm', matureCount: 1 } }], {
+        checkText,
+      });
+      const mature = nonMemberPayers(submitWorkflow.mock.calls.at(-1)![0].body);
+      expect(safe).toEqual(['blue', 'green']);
+      expect(mature).toEqual(['blue', 'yellow']);
+    });
+
     it('a fresh mature run needs no confirm and sends no unlock: Blue first, then Yellow', async () => {
       headBlob.mockReset();
       headBlob.mockImplementation(rateSpicy);
