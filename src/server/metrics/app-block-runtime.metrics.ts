@@ -741,6 +741,7 @@ type Bundle = {
   mediaVerdictTotal: Counter<string>;
   mediaServingDegradedTotal: Counter<string>;
   mediaInputRefusedTotal: Counter<string>;
+  unlockChargedNotReleasedTotal: Counter<string>;
   outputTruncatedTotal: Counter<string>;
   restApprovalVerdictsTotal: Counter<string>;
   revocationRefusalsTotal: Counter<string>;
@@ -1149,6 +1150,15 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     'civitai_app_block_media_input_refused_total',
     'App Blocks workflow bodies refused because they carried a host media url or ref as an input, by phase (estimate | submit). One per refused body. Every phase is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
     ['phase']
+  );
+
+  // Beside the `app-block-unlock-charged-not-released` WARN: an unlock that charged and did not
+  // release the output. Expected flat zero; published at 0 by seedAppBlockMediaMetrics.
+  const unlockChargedNotReleasedTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_unlock_charged_not_released_total',
+    'App Block output unlocks that charged and did not release the output, one per unlock, by read_back (ok = the output was read back still restricted | failed = the read-back after the lift failed, so release is unknown). Expected to be zero. Every label is published at 0 on each scrape, so a missing series means the code is not deployed. A count recorded before the first scrape of its pod is still born above 0, so read the birth-aware window clamp_min((m - m offset W) or m, 0), summed across pods',
+    ['read_back']
   );
 
   const outputTruncatedTotal = getOrCreateCounter(
@@ -1621,6 +1631,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     mediaVerdictTotal,
     mediaServingDegradedTotal,
     mediaInputRefusedTotal,
+    unlockChargedNotReleasedTotal,
     outputTruncatedTotal,
     restApprovalVerdictsTotal,
     revocationRefusalsTotal,
@@ -1923,6 +1934,7 @@ export function recordBlockMediaVerdict(
 
 export const BLOCK_MEDIA_SERVING_DEGRADED_REASONS = ['eval_failed', 'no_session'] as const;
 export const BLOCK_MEDIA_INPUT_REFUSED_PHASES = ['estimate', 'submit'] as const;
+export const BLOCK_UNLOCK_READ_BACK_OUTCOMES = ['ok', 'failed'] as const;
 
 /** Fail-soft emit of one degraded App Block serve decision (see the counter). */
 export function recordBlockMediaServingDegraded(
@@ -1946,17 +1958,30 @@ export function recordBlockMediaInputRefused(
   }
 }
 
+/** Fail-soft emit of one unlock that charged and did not release the output (see the counter). */
+export function recordBlockUnlockChargedNotReleased(readBackFailed: boolean): void {
+  try {
+    ensureRegisterAppBlockRuntimeMetrics().unlockChargedNotReleasedTotal.inc({
+      read_back: readBackFailed ? 'failed' : 'ok',
+    });
+  } catch {
+    /* instrument-only */
+  }
+}
+
 /**
  * Publishes the host-media safety counters at 0 for every label, so a series that never fired is
  * distinguishable from one that is not deployed. Idempotent; /api/metrics calls it on every scrape.
  */
 export function seedAppBlockMediaMetrics(reg: Registry = client.register): void {
   try {
-    const { mediaServingDegradedTotal, mediaInputRefusedTotal } =
+    const { mediaServingDegradedTotal, mediaInputRefusedTotal, unlockChargedNotReleasedTotal } =
       ensureRegisterAppBlockRuntimeMetrics(reg);
     for (const reason of BLOCK_MEDIA_SERVING_DEGRADED_REASONS)
       mediaServingDegradedTotal.inc({ reason }, 0);
     for (const phase of BLOCK_MEDIA_INPUT_REFUSED_PHASES) mediaInputRefusedTotal.inc({ phase }, 0);
+    for (const read_back of BLOCK_UNLOCK_READ_BACK_OUTCOMES)
+      unlockChargedNotReleasedTotal.inc({ read_back }, 0);
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
   }

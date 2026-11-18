@@ -1,3 +1,4 @@
+import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BridgeAuthModule from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccessModule from '~/server/services/blocks/block-token-access.service';
@@ -290,9 +291,21 @@ beforeEach(() => {
 
 const orchestratorWrites = () => h.lift.mock.calls.length + h.updateWorkflow.mock.calls.length;
 
+/** The unlock-charged-not-released counter for one read-back outcome, from the default registry. */
+async function chargedNotReleased(readBack: 'ok' | 'failed'): Promise<number> {
+  const metric = client.register.getSingleMetric(
+    'civitai_app_block_unlock_charged_not_released_total'
+  );
+  const values = metric ? (await metric.get()).values : [];
+  return values.find((v) => v.labels.read_back === readBack)?.value ?? 0;
+}
+
 describe('blocks.unlockOutput — the seam', () => {
   it('🔴 an unlock of a fee-accrued workflow charges no author fee and writes no accrual row', async () => {
+    const before = await chargedNotReleased('ok');
     const result = await unlock();
+    // CONTROL for the not-released counter: a released output counts nothing.
+    expect(await chargedNotReleased('ok')).toBe(before);
     expect(result.outcome).toBe('unlocked');
     expect(result.snapshot.outputs?.[1]).toEqual({ url: 'https://cdn/r1.png', nsfwLevel: 'r' });
     expect(result.charged).toEqual({ unlockBuzz: UNLOCK_PRICE });
@@ -347,7 +360,9 @@ describe('blocks.unlockOutput — the seam', () => {
   it('🔴 not-released: the swap stands, the viewer is told why, nothing is counted', async () => {
     // The orchestrator accepts the unlock, but its read-back still withholds the output.
     h.lift.mockImplementation(async () => ({ outcome: 'lifted' }));
+    const before = await chargedNotReleased('ok');
     const result = await unlock();
+    expect(await chargedNotReleased('ok')).toBe(before + 1);
     expect(result.outcome).toBe('not-released');
     expect(result.message).toBe(NOT_RELEASED_MESSAGE);
     expect(JSON.stringify(result)).not.toContain('r1.png');
