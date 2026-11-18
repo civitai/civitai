@@ -103,6 +103,7 @@ const ROLLOUT_FLAG_BY_MODEL: Record<string, string> = {
   ltx23: 'ltx23Training',
   ltx25: 'ltx25Training',
   minimaxh3: 'minimaxh3Training',
+  minimaxh3image: 'minimaxh3ImageTraining',
   ming: 'mingTraining',
   qwen21: 'qwen21Training',
   yue2: 'yue2Training',

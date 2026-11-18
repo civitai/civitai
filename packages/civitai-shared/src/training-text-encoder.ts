@@ -17,6 +17,7 @@ export const TEXT_ENCODER_LOCKED_BASES = [
   'ltx23',
   'ltx25',
   'minimaxh3',
+  'minimaxh3image',
   // 'sd3_medium',
   // 'sd3_large',
   'hy_720_fp8',

@@ -22,6 +22,7 @@ const ROLLOUT_FLAG_BY_MODEL: Record<string, string> = {
   flux2klein_9b: 'fluxTwoKleinTraining',
   ming: 'mingTraining',
   qwen21: 'qwen21Training',
+  minimaxh3image: 'minimaxh3ImageTraining',
 };
 const ALL_ON = Object.fromEntries(Object.values(ROLLOUT_FLAG_BY_MODEL).map((flag) => [flag, true]));
 

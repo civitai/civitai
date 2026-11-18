@@ -57,6 +57,7 @@ import {
   trainingDetailsBaseModelsLtx25,
   trainingDetailsBaseModelsMageFlow,
   trainingDetailsBaseModelsMiniMaxH3,
+  trainingDetailsBaseModelsMiniMaxH3Image,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -569,6 +570,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsMageFlow as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelMiniMaxH3Image =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMiniMaxH3Image as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelIdeogram4 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsIdeogram4 as ReadonlyArray<string>).includes(formBaseModel)
@@ -826,6 +832,18 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-09-19')}
                     />
                   )}
+                  {features.minimaxh3ImageTraining && (
+                    <ModelSelector
+                      status={status}
+                      selectedRun={selectedRun}
+                      color="violet"
+                      name="MiniMax H3 Image"
+                      value={baseModelMiniMaxH3Image}
+                      baseType="minimaxh3image"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-12-18')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
@@ -998,6 +1016,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx23' ||
                   selectedRun.baseType === 'ltx25' ||
                   selectedRun.baseType === 'minimaxh3' ||
+                  selectedRun.baseType === 'minimaxh3image' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'ming' ||
                   selectedRun.baseType === 'qwen21' ||

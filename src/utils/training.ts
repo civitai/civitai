@@ -1,6 +1,7 @@
 import type {
   AiToolkitTrainingInput,
   MingAiToolkitTrainingInput,
+  MiniMaxH3ImageAiToolkitTrainingInput,
   Qwen21AiToolkitTrainingInput,
   YuE2AiToolkitTrainingInput,
 } from '@civitai/orchestration-client';
@@ -38,6 +39,7 @@ export const studioModelFlagFeatures = {
   'hidream-o1-training': 'hidreamO1Training',
   'anima-training': 'animaTraining',
   'minimaxh3-training': 'minimaxh3Training',
+  'minimaxh3-image-training': 'minimaxh3ImageTraining',
   'zimage-turbo-training': 'zimageturboTraining',
   'ltx25-training': 'ltx25Training',
   'ltx23-training': 'ltx23Training',
@@ -89,6 +91,7 @@ export const trainingBaseModelTypesImage = [
   'qwen21',
   'mossimage',
   'flux3klein',
+  'minimaxh3image',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -129,7 +132,8 @@ export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ming' ||
   baseType === 'qwen21' ||
   baseType === 'yue2' ||
-  baseType === 'minimaxh3'
+  baseType === 'minimaxh3' ||
+  baseType === 'minimaxh3image'
     ? 3000
     : baseType === 'anima'
     ? 1500
@@ -503,6 +507,19 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
+  minimaxh3image: {
+    label: 'Base',
+    pretty: 'MiniMax H3 Image',
+    type: 'minimaxh3image',
+    description: "MiniMax's open-weights H3 image generation and editing model.",
+    air: 'urn:air:minimaxh3image:repository:huggingface:Comfy-Org/MiniMax-H3-Image@892de7cb61df49753bf15145a711154803a355cb.tar',
+    baseModel: 'MiniMax H3 Image',
+    isNew: true,
+    aiToolkit: {
+      ecosystem: 'minimaxh3image' satisfies MiniMaxH3ImageAiToolkitTrainingInput['ecosystem'],
+    },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -781,6 +798,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ltx23: 'ltx23',
   ltx25: 'ltx25',
   minimaxh3: 'minimaxh3',
+  minimaxh3image: 'minimaxh3image',
   'hidream-o1': 'hidream-o1',
   anima: 'anima',
   boogu: 'boogu',
@@ -906,6 +924,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'ltx25',
     'minimaxh3',
+    'minimaxh3image',
     'hidream-o1',
     'anima',
     'boogu',
@@ -932,6 +951,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ltx23',
     'ltx25',
     'minimaxh3',
+    'minimaxh3image',
     'hidream-o1',
     'anima',
     'boogu',
@@ -985,6 +1005,7 @@ export const trainingRolloutFlagByType = {
   ltx23: 'ltx23Training',
   ltx25: 'ltx25Training',
   minimaxh3: 'minimaxh3Training',
+  minimaxh3image: 'minimaxh3ImageTraining',
   'hidream-o1': 'hidreamO1Training',
   anima: 'animaTraining',
   boogu: 'booguTraining',
@@ -1042,7 +1063,13 @@ export const getDefaultEngine = (
   features?: Record<string, boolean>,
   opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
-  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'yue2') return 'ai-toolkit';
+  if (
+    baseType === 'ming' ||
+    baseType === 'qwen21' ||
+    baseType === 'yue2' ||
+    baseType === 'minimaxh3image'
+  )
+    return 'ai-toolkit';
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit
