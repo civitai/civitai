@@ -242,7 +242,7 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
     quoteRun: (input) =>
       input.engine === 'kohya' && !kohyaAllowed()
         ? Promise.reject(new Error(train.KOHYA_UNAVAILABLE))
-        : call((client) => orch.trainingWhatIf(client, input)),
+        : call((client) => orch.trainingPreview(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
 

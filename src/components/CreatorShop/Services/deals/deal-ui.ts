@@ -1,7 +1,9 @@
 import {
+  SERVICE_DEAL_AUTO_COMPLETE_MS,
   SERVICE_DEAL_CANCELLATION_REASON_CODES,
   SERVICE_DEAL_DECLINE_REASON_CODES,
   SERVICE_DEAL_DISPUTE_REASON_CODES,
+  SERVICE_DEAL_DISPUTE_WINDOW_MS,
 } from '~/shared/constants/creator-services.constants';
 import type {
   ServiceDealCancellationReasonCode,
@@ -107,6 +109,21 @@ export type EscrowState =
 
 const REFUND_STATUSES: ServiceDealStatus[] = ['Declined', 'Expired', 'Cancelled'];
 
+const SELLER_HELD_STATUSES: ServiceDealStatus[] = [
+  'Requested',
+  'Accepted',
+  'InRevision',
+  'Delivered',
+];
+
+export function sellerHeldLine(deal: { status: ServiceDealStatus; held: boolean; price: number }) {
+  if (!deal.held || !SELLER_HELD_STATUSES.includes(deal.status)) return null;
+  const hours = (ms: number) => ms / 3_600_000;
+  const dispute = hours(SERVICE_DEAL_DISPUTE_WINDOW_MS);
+  const unanswered = hours(SERVICE_DEAL_AUTO_COMPLETE_MS) + dispute;
+  return `${deal.price.toLocaleString()} Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you ${dispute} hours after the buyer accepts, or ${unanswered} hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled.`;
+}
+
 /**
  * Never says "held" until the hold is confirmed. A closed deal whose hold never confirmed took no
  * Buzz; the server still looks for a charge that lands late and returns it.
@@ -135,7 +152,7 @@ export const escrowCopy: Record<EscrowState, { title: string; body: string; colo
   },
   held: {
     title: 'Held in escrow',
-    body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is cancelled.',
+    body: 'The Buzz is held, not paid. Nothing moves until the deal completes or is canceled.',
     color: 'yellow',
   },
   awaitingRelease: {
@@ -184,7 +201,7 @@ export const dealStatusLabel: Record<ServiceDealStatus, string> = {
   Declined: 'Declined',
   Expired: 'Expired',
   CancellationRequested: 'Cancellation requested',
-  Cancelled: 'Cancelled',
+  Cancelled: 'Canceled',
   Disputed: 'In dispute',
 };
 
@@ -251,11 +268,11 @@ export const isModeratorHold = (events: { type: string; actorRole: string }[]) =
 /** The codes the server writes as the comment of a Cancelled or Completed event it closed itself. */
 export const closeCommentLabel: Record<string, string> = {
   withdrawn: 'Request withdrawn by the buyer',
-  late: 'Cancelled by the buyer after the due date',
-  buyer_refund: 'Cancelled by the buyer with a full refund',
-  overdue: 'Cancelled automatically: nothing delivered in time',
-  cancellation_unanswered: 'Cancelled automatically: the cancellation request was not answered',
-  payment_refused: 'Cancelled: the payment was refused',
+  late: 'Canceled by the buyer after the due date',
+  buyer_refund: 'Canceled by the buyer with a full refund',
+  overdue: 'Canceled automatically: nothing delivered in time',
+  cancellation_unanswered: 'Canceled automatically: the cancellation request was not answered',
+  payment_refused: 'Canceled: the payment was refused',
   auto: 'Completed automatically: the buyer did not respond in time',
 };
 

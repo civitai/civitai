@@ -2447,8 +2447,9 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
 /**
  * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
  * their sessions, whose shape carries the picture's url. For a user whose picture is under an
- * owner-hidden hold, a `User.image` naming it is cleared first (`clearHeldUserImages`); once the hold
- * lifts it is put back (`restoreClearedUserImages`). Either way their basic-user cache entry and
+ * owner-hidden hold or carries a block marker, a `User.image` naming it is cleared first
+ * (`clearHeldUserImages`); once the picture is servable again it is put back
+ * (`restoreClearedUserImages`). Either way their basic-user cache entry and
  * search document are refreshed too. The event engine's copy of the
  * picture is busted as well. Never throws: the write it follows has committed, and a moderation
  * action must not fail on a cache refill.

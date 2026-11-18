@@ -1462,7 +1462,12 @@ describe('🔴 the production region rule reads the request’s meta', () => {
 
   it.each([
     ['meta GB, no header: held by the UK block', meta('{"country":"GB"}'), NO_REGION, ['live']],
-    ['meta isuk, header DE: held by the UK block', meta('{"isuk":"true"}'), {}, ['live']],
+    [
+      'meta isuk is not read: meta DE with isuk is sent the x app',
+      meta('{"country":"DE","isuk":"true"}'),
+      NO_REGION,
+      ['upsert', 'live'],
+    ],
     ['meta ZY, no header: held by the restriction', meta('{"country":"ZY"}'), NO_REGION, ['live']],
     [
       'positive control: meta DE, no header, is sent the x app',
@@ -1501,9 +1506,7 @@ describe('🔴 the production region rule reads the request’s meta', () => {
     ['null', 'null'],
     ['a country that is not a string', '{"country":["DE"]}'],
   ])('HTTP: malformed meta (%s) is none', async (_n, json) => {
-    // With no header it is held, as a request with no region is ...
     expect(await sent(meta(json), NO_REGION)).toEqual(['live']);
-    // ... and with one, the header decides.
     expect(await sent(meta(json), { 'cf-ipcountry': 'DE' })).toEqual(['upsert', 'live']);
   });
 

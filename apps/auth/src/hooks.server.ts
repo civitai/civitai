@@ -120,13 +120,13 @@ export const handle: Handle = async ({ event, resolve }) => {
     : null;
   let token = internal ? internal.token : cookieToken;
   let slot = cookieRead?.slot;
-  const sharedToken = legacyCookieReadEnabled()
+  const sharedToken = legacyCookieReadEnabled(null)
     ? event.cookies.get(sessionCookieNameForSlot('shared'))
     : undefined;
   // Only a browser keeps the host-only cookie it is given; any other caller would be moved again on every request.
   if (
     !internal &&
-    sessionCookieMode() === 'host' &&
+    sessionCookieMode(null) === 'host' &&
     sharedToken &&
     callerShape(event.request, true) === 'browser'
   ) {
@@ -145,10 +145,10 @@ export const handle: Handle = async ({ event, resolve }) => {
       event.locals.impersonatedBy = claims.impersonatedBy;
       if (!internal) event.locals.sessionSlot = slot;
       // The main app writes the shared slot through its own proxy (an account switch), unseen by the hub.
-      if (!internal && slot === 'shared' && sessionCookieMode() === 'shared') {
+      if (!internal && slot === 'shared' && sessionCookieMode(null) === 'shared') {
         dropStaleHostCopy(event.cookies, token);
       }
-      const writeSlot = slot && rollSlot({ slot });
+      const writeSlot = slot && rollSlot({ slot }, sessionCookieMode(null));
       if (!internal && writeSlot && shouldRoll(event.request, claims, event.locals.user)) {
         const fresh = await reissueSession(claims, userId, claims.jti!).catch(() => null);
         if (fresh) setSessionCookie(event.cookies, fresh, writeSlot, { roll: true });

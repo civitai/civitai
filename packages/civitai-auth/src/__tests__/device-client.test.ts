@@ -7,7 +7,12 @@ vi.mock('../env', () => ({ loadAuthEnv: h.loadAuthEnv }));
 import { createDeviceAccountClient } from '../device-client';
 
 type Res = { ok: boolean; status: number; json: () => Promise<unknown> };
-function stubFetch(impl: (url: string, init: { method?: string; headers: Record<string, string>; body?: string }) => Promise<Res>) {
+function stubFetch(
+  impl: (
+    url: string,
+    init: { method?: string; headers: Record<string, string>; body?: string }
+  ) => Promise<Res>
+) {
   const fn = vi.fn(impl);
   vi.stubGlobal('fetch', fn);
   return fn;
@@ -25,7 +30,7 @@ describe('createDeviceAccountClient', () => {
       status: 200,
       json: async () => ({ accounts: [{ userId: 7, active: true, lastSwitchedAt: 1 }] }),
     }));
-    const accounts = await createDeviceAccountClient().list('civ-token=abc');
+    const accounts = await createDeviceAccountClient().list('civ-token=abc', null);
     expect(accounts).toEqual([{ userId: 7, active: true, lastSwitchedAt: 1 }]);
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://auth.test/api/auth/accounts');
@@ -34,12 +39,16 @@ describe('createDeviceAccountClient', () => {
 
   it('list returns [] on a non-ok response (unauthorized)', async () => {
     stubFetch(async () => ({ ok: false, status: 401, json: async () => ({}) }));
-    expect(await createDeviceAccountClient().list('x')).toEqual([]);
+    expect(await createDeviceAccountClient().list('x', null)).toEqual([]);
   });
 
   it('switch posts the userId and returns the minted token', async () => {
-    const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({ token: 'jwt.x.y' }) }));
-    expect(await createDeviceAccountClient().switch('c=1', 9)).toEqual({ token: 'jwt.x.y' });
+    const fetch = stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ token: 'jwt.x.y' }),
+    }));
+    expect(await createDeviceAccountClient().switch('c=1', 9, null)).toEqual({ token: 'jwt.x.y' });
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://auth.test/api/auth/switch');
     expect(init.method).toBe('POST');
@@ -48,12 +57,12 @@ describe('createDeviceAccountClient', () => {
 
   it('switch returns null when the hub declines', async () => {
     stubFetch(async () => ({ ok: false, status: 403, json: async () => ({}) }));
-    expect(await createDeviceAccountClient().switch('c', 9)).toBeNull();
+    expect(await createDeviceAccountClient().switch('c', 9, null)).toBeNull();
   });
 
   it('remove issues a DELETE with the userId and reports ok', async () => {
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
-    expect(await createDeviceAccountClient().remove('c', 5)).toBe(true);
+    expect(await createDeviceAccountClient().remove('c', 5, null)).toBe(true);
     const [url, init] = fetch.mock.calls[0];
     expect(url).toBe('https://auth.test/api/auth/accounts?userId=5');
     expect(init.method).toBe('DELETE');
@@ -62,9 +71,9 @@ describe('createDeviceAccountClient', () => {
   it('degrades to empty when AUTH_JWT_ISSUER is unset (no fetch)', async () => {
     h.loadAuthEnv.mockReturnValue({});
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
-    expect(await createDeviceAccountClient().list('c')).toEqual([]);
-    expect(await createDeviceAccountClient().switch('c', 1)).toBeNull();
-    expect(await createDeviceAccountClient().remove('c', 1)).toBe(false);
+    expect(await createDeviceAccountClient().list('c', null)).toEqual([]);
+    expect(await createDeviceAccountClient().switch('c', 1, null)).toBeNull();
+    expect(await createDeviceAccountClient().remove('c', 1, null)).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -128,10 +128,6 @@ Tables `KnightsReferenceImage`, `KnightsHarvestCursor` (migration `2026121012000
 
 Queue producers (moderator enqueue endpoint, scan sampling, owner ratings, the `system:knights-v2-sources` switch, the Inquisitor queue, the dev queue): [`docs/features/knights-sources.md`](../../docs/features/knights-sources.md). The enqueue contract is implemented once, in the main app (`src/server/services/knights/enqueue.service.ts`).
 
-## Motion and sound (`src/global.css`, `src/motion.css`)
-
-Tokens and easings are in `src/global.css`, keyframes in `src/motion.css`. Keep play-loop motion to 200ms or less and never gate a submit on it; every keyframe needs a reduced-motion counterpart; a new sound needs both files, `SOUND_NAMES` and `SOUND_LEVELS` entries and a `CREDITS.md` line. Detail: [`docs/features/knights-motion-and-sound.md`](../../docs/features/knights-motion-and-sound.md).
-
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion, Buzz packs), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),

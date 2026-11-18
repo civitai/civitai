@@ -104,14 +104,14 @@ export function DealActionsPanel({ deal }: { deal: ServiceDealView }) {
     withdraw: () =>
       confirm(
         'Withdraw request',
-        'The request is cancelled and the Buzz held for it goes back to you.',
+        'The request is canceled and the Buzz held for it goes back to you.',
         () => mutations.withdraw.mutate({ id }),
         true
       ),
     cancelLate: () =>
       confirm(
         'Cancel (overdue)',
-        'The seller is past the due date. Cancelling closes the deal and returns your Buzz.',
+        'The seller is past the due date. Canceling closes the deal and returns your Buzz.',
         () => mutations.cancelLate.mutate({ id }),
         true
       ),
