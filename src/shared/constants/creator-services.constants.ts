@@ -23,6 +23,9 @@ export const SERVICE_DEAL_FILE_RETENTION_CLOSED_MS = 30 * 24 * HOUR;
 /** A completed deal's files are deleted this long after its dispute window ended. */
 export const SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS = 90 * 24 * HOUR;
 
+/** No deal file's retention clock starts before this, so files on deals that closed before the notice shipped get their full window from then. */
+export const SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT = new Date('2026-11-25T00:00:00Z');
+
 const days = (ms: number) => ms / (24 * HOUR);
 export const SERVICE_DEAL_FILE_RETENTION_NOTICE = `Deal files are deleted ${days(
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS

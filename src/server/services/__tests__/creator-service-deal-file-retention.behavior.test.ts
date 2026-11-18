@@ -150,6 +150,9 @@ async function closedDeal(
   return { dealId: deal.id, finalId: final.id, attachmentId: attachment.id };
 }
 
+/** The sweep with its launch floor long past, so each test sets its own clock. */
+const sweep = () => retention.markExpiredDealFiles({ effectiveAt: new Date(0) });
+
 const removed = async (fileId: number) =>
   (
     await q<{ removedAt: Date | null }>(`SELECT "removedAt" FROM "ServiceDealFile" WHERE id = $1`, [
@@ -163,7 +166,7 @@ describe('the retention windows', () => {
     async (status) => {
       const early = await closedDeal(status, 29);
       const due = await closedDeal(status, 31);
-      expect(await retention.markExpiredDealFiles()).toBe(2);
+      expect(await sweep()).toBe(2);
       expect(await removed(early.finalId)).toBe(false);
       expect(await removed(due.finalId)).toBe(true);
       expect(await removed(due.attachmentId)).toBe(true);
@@ -173,7 +176,7 @@ describe('the retention windows', () => {
   it("removes a completed deal's files 90 days after its dispute window ended, and not a day before", async () => {
     const early = await closedDeal('Completed', 89);
     const due = await closedDeal('Completed', 91);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(early.finalId)).toBe(false);
     expect(await removed(due.finalId)).toBe(true);
   });
@@ -183,7 +186,29 @@ describe('the retention windows', () => {
     expect(unsettled.dealId).toBeGreaterThan(0);
     const open = await closedDeal('Cancelled', 60);
     await q(`UPDATE "ServiceDeal" SET status = 'Accepted' WHERE id = $1`, [open.dealId]);
-    expect(await retention.markExpiredDealFiles()).toBe(0);
+    expect(await sweep()).toBe(0);
+  });
+});
+
+describe('the launch floor', () => {
+  it('gives a deal that closed before launch its full window from launch, and not a day less', async () => {
+    const { finalId } = await closedDeal('Cancelled', 60);
+    const launch = (days: number) => new Date(Date.now() - days * 86_400_000);
+    await retention.markExpiredDealFiles({ effectiveAt: launch(29) });
+    expect(await removed(finalId)).toBe(false);
+    await retention.markExpiredDealFiles({ effectiveAt: launch(31) });
+    expect(await removed(finalId)).toBe(true);
+  });
+
+  it('defaults to the date the notice ships', async () => {
+    const { SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT } = await import(
+      '~/shared/constants/creator-services.constants'
+    );
+    const { finalId } = await closedDeal('Cancelled', 400);
+    await retention.markExpiredDealFiles();
+    expect(await removed(finalId)).toBe(
+      SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT.getTime() + 30 * 86_400_000 <= Date.now()
+    );
   });
 });
 
@@ -211,7 +236,7 @@ describe('a later moderation action restarts the clock', () => {
   ])('%s', async (_name, sql) => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(finalId)).toBe(false);
   });
 });
@@ -250,14 +275,14 @@ describe('holds', () => {
   it.each(holds)('%s on someone outside the deal keeps nothing', async (_name, sql) => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql(OTHER));
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(finalId)).toBe(true);
   });
 
   it.each(cases)('%s keeps the deal files', async (_name, sql) => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql);
-    expect(await retention.markExpiredDealFiles()).toBe(0);
+    expect(await sweep()).toBe(0);
     expect(await removed(finalId)).toBe(false);
     expect(await removed(attachmentId)).toBe(false);
   });
@@ -269,14 +294,14 @@ describe('holds', () => {
         VALUES (${OTHER}, 'Other', 'desc', 500, 3, 1, 'Image', 'Active', 'Scanned', now());
       INSERT INTO "Report" (status, "createdAt") VALUES ('Pending', ${daysAgo(1)});
       INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (2, 1);`);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(finalId)).toBe(true);
 
     const other = await closedDeal('Cancelled', 40);
     await holder.db.exec(`
       INSERT INTO "Report" (status, "createdAt") VALUES ('Processing', ${daysAgo(45)});
       INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 2);`);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(other.finalId)).toBe(false);
   });
 
@@ -285,10 +310,10 @@ describe('holds', () => {
     await holder.db.exec(`
       INSERT INTO "Report" (status, "createdAt") VALUES ('Pending', ${daysAgo(45)});
       INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1);`);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(finalId)).toBe(false);
     await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = ${daysAgo(35)}`);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(finalId)).toBe(true);
   });
 
@@ -297,7 +322,7 @@ describe('holds', () => {
     await holder.db.exec(`
       INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${BUYER}, now());
       INSERT INTO "Appeal" ("userId", status) VALUES (${SELLER}, 'Rejected');`);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await removed(finalId)).toBe(true);
   });
 });
@@ -305,7 +330,7 @@ describe('holds', () => {
 describe('the purge after the sweep', () => {
   it('checks the holds again: one placed after marking stops the delete', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
-    await retention.markExpiredDealFiles();
+    await sweep();
     await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
     expect(await files.purgeRemovedFiles()).toBe(0);
     expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
@@ -318,7 +343,7 @@ describe('the purge after the sweep', () => {
       `UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/archive', "watermarkedKey" = 'wm-1' WHERE id = $1`,
       [finalId]
     );
-    await retention.markExpiredDealFiles();
+    await sweep();
     await files.purgeRemovedFiles();
     const keys = s3.purgeObjectVersions.mock.calls.map(([arg]) => [arg.bucket, arg.key]);
     expect(keys).toEqual(
@@ -332,7 +357,7 @@ describe('the purge after the sweep', () => {
 
   it('deletes every version of the objects and keeps a record with no name', async () => {
     const { dealId, finalId } = await closedDeal('Cancelled', 40);
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await files.purgeRemovedFiles()).toBe(2);
     expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
     expect(s3.purgeObjectVersions).toHaveBeenCalledWith(
@@ -346,7 +371,7 @@ describe('the purge after the sweep', () => {
   it('falls back to a plain delete where versions cannot be listed, and still purges', async () => {
     const { dealId } = await closedDeal('Cancelled', 40);
     s3.purgeObjectVersions.mockRejectedValue(new Error('AccessDenied'));
-    await retention.markExpiredDealFiles();
+    await sweep();
     expect(await files.purgeRemovedFiles()).toBe(2);
     expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
     expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);

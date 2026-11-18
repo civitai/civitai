@@ -4,6 +4,7 @@ import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import {
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS,
   SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS,
+  SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT,
 } from '~/shared/constants/creator-services.constants';
 
 // `d` names the deal row and `o` its offering in every fragment below. This only marks files
@@ -21,10 +22,12 @@ const dealClosedAndSettled = Prisma.sql`(
 )`;
 
 /**
- * When the retention clock starts, restarted by later moderation of the deal or its offering.
- * GREATEST skips nulls and is null only if all are, so a deal with no close time never expires.
+ * When the retention clock starts, restarted by later moderation of the deal or its offering, and never before `effectiveAt`.
+ * The close term is required separately: GREATEST skips nulls, and the floor alone must not expire
+ * a deal with no close time.
  */
-const clockStart = Prisma.sql`GREATEST(
+const clockStart = (effectiveAt: Date) => Prisma.sql`GREATEST(
+  ${effectiveAt}::timestamp,
   CASE WHEN d."status" = 'Completed' THEN d."releaseAt" ELSE d."closedAt" END,
   d."disputeResolvedAt",
   CASE WHEN o."removedReason" IS NOT NULL THEN o."removedAt" END,
@@ -33,8 +36,9 @@ const clockStart = Prisma.sql`GREATEST(
    WHERE sr."serviceOfferingId" = o."id")
 )`;
 
-const retentionExpired = Prisma.sql`(
-  ${clockStart} + CASE WHEN d."status" = 'Completed'
+const retentionExpired = (effectiveAt: Date) => Prisma.sql`(
+  CASE WHEN d."status" = 'Completed' THEN d."releaseAt" ELSE d."closedAt" END IS NOT NULL
+  AND ${clockStart(effectiveAt)} + CASE WHEN d."status" = 'Completed'
     THEN ${ms(SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS)}
     ELSE ${ms(SERVICE_DEAL_FILE_RETENTION_CLOSED_MS)} END <= now()
 )`;
@@ -58,7 +62,10 @@ export const dealFilesHeld = Prisma.sql`(
 )`;
 
 /** Marks the files of deals past their retention, and not held, as removed. Returns how many. */
-export async function markExpiredDealFiles({ limit = 200 } = {}) {
+export async function markExpiredDealFiles({
+  limit = 200,
+  effectiveAt = SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT,
+}: { limit?: number; effectiveAt?: Date } = {}) {
   const marked = await dbWrite.$executeRaw`
     UPDATE "ServiceDealFile" SET "removedAt" = now()
     WHERE "id" IN (
@@ -66,7 +73,7 @@ export async function markExpiredDealFiles({ limit = 200 } = {}) {
       JOIN "ServiceDeal" d ON d."id" = f."dealId"
       JOIN "ServiceOffering" o ON o."id" = d."offeringId"
       WHERE f."removedAt" IS NULL
-        AND ${dealClosedAndSettled} AND ${retentionExpired} AND NOT ${dealFilesHeld}
+        AND ${dealClosedAndSettled} AND ${retentionExpired(effectiveAt)} AND NOT ${dealFilesHeld}
       ORDER BY f."id" LIMIT ${limit}::int
       FOR UPDATE OF f SKIP LOCKED
     )`;

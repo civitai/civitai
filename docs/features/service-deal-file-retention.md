@@ -4,7 +4,7 @@
 
 That line is shown beside the files on a completed deal (`SERVICE_DEAL_FILE_RETENTION_NOTICE`).
 
-- **Windows:** `SERVICE_DEAL_FILE_RETENTION_CLOSED_MS` and `SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS`.
+- **Windows:** `SERVICE_DEAL_FILE_RETENTION_CLOSED_MS` and `SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS`, never counted from before `SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT` (2026-11-25), so files on deals that closed before the notice shipped get their full window from then.
 - **Which files:** all of a deal's files, meaning the seller's previews and finals and the buyer's attachments.
 - **The clock:** it starts at the close (for a completed deal, at the end of its dispute window), once the deal's Buzz has settled. Any later moderation of the deal or its offering restarts it: a dispute ruling, a takedown, or a report and its handling.
 - **Holds:** a deal whose parties or offering are under a legal or moderation hold keeps its files until the hold clears. The rules are `dealFilesHeld` in `src/server/services/creator-service-deal-file-retention.ts`. The purge checks them again before it deletes.
