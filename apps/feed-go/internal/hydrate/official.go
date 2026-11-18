@@ -16,12 +16,10 @@ import (
 // entry, `{data: [{id, type}], cachedAt: <epoch ms>}` (no per-id suffix).
 const KeyOfficialModels = "packed:caches:official-models"
 
+// Mirror getOfficialModelIds' fetchThroughCache: ttl 5m, EX twice the ttl, default 10 s lock.
 const (
-	// officialModelsTTL is getOfficialModelIds' `ttl: 60 * 5`: an entry older is expired.
-	officialModelsTTL = 5 * time.Minute
-	// officialModelsEX is writeFetchThroughEntry's EX, the ttl twice.
-	officialModelsEX = 2 * officialModelsTTL
-	// officialModelsLockTTL is fetchThroughCache's default lockTTL (10 s).
+	officialModelsTTL     = 5 * time.Minute
+	officialModelsEX      = 2 * officialModelsTTL
 	officialModelsLockTTL = 10 * time.Second
 )
 
@@ -137,7 +135,7 @@ func (s *Sources) officialFetch(ctx context.Context) ([]OfficialModel, error) {
 		if p == nil {
 			c.observe(MissOfficialModels, "error", 1)
 		}
-		return nil, fallback.Newf("official-models-miss-failed", "%v", err)
+		return nil, fallback.Wrap("official-models-miss-failed", err)
 	}
 	if p == nil {
 		c.observe(MissOfficialModels, "computed", 1)

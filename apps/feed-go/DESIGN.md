@@ -1171,6 +1171,109 @@ The decision input is the ratio of the two CPU-per-call figures, on the same req
 For Go, read the compute-only figure (§10.1) as the serving estimate, with its coverage beside it,
 and the whole-process figure (above) as the upper bound that includes the shadow decode and compare.
 
+### 10.3 Traces, exemplars and fallback logs
+
+Tracing, exemplars and the fallback lines are off until the deployment sets the variables below.
+**What does change on merge** is the compute-error and proxy-error log lines (`feed compute failed;
+falling back`, `shadow compute failed`, `go-first probe failed`, `fallback proxy: the Node app did not
+answer`): they log the error's class and Go type instead of its text, at most
+`FEED_GO_ERROR_LOG_PER_MIN` (default 60) per key per minute, and a new counter,
+`feed_go_errors_total{feed_endpoint, mode, class}`, counts every one of them.
+
+**Tracing** (`internal/tracing`) mirrors the Node app's setup (`src/instrumentation.node.ts`), so one
+configuration drives both and a trace continues browser → feed-go → Node on the public routes:
+
+| Variable | Meaning |
+|---|---|
+| `FEED_GO_OTEL_ENABLED` | `true` turns tracing on (with an endpoint). feed-go's own switch, not the app's `OTEL_ENABLED`: feed-go's environment includes the shared app config, and a switch read from there would turn tracing on with no change to feed-go's deployment. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base URL, as Node's: spans go to `<it>/v1/traces`, OTLP over HTTP/protobuf (Node's `exporter-trace-otlp-proto`). The standard `OTEL_EXPORTER_OTLP_*` headers/timeout variables apply. |
+| `OTEL_SERVICE_NAME` | `service.name` (default `feed-go`). Set it EXPLICITLY on the feed-go deployment (`feed-go`) when turning tracing on: the shared app config in feed-go's environment could carry Node's, and would then label feed-go's spans as Node's. Node's `SERVICE_NAME` fallback is not read, for the same reason. |
+| `OTEL_TRACES_SAMPLE_RATIO` | Head-sampling ratio, Node's rule: a number in [0, 1], else 0.1. |
+
+- *Sampling* is Node's `buildHeadSampling`: ParentBased over a trace-id ratio, the ratio applied to
+  remote SAMPLED parents too (a `-01` traceparent alone does not force sampling), a remote unsampled
+  parent dropped, a local parent inherited. The ratio caps sampling for honest callers only: the
+  decision is a function of the trace id, so a caller who picks a trace id whose words XOR low is
+  sampled every time — the same as Node's `buildHeadSampling` (parity, not a defence). The ratio sampler is a port of the JS
+  `TraceIdRatioBasedSampler` (`tracing.NodeRatio`: the trace id's four 32-bit words XORed, kept below
+  `floor(ratio × 0xffffffff)`), NOT the Go SDK's `TraceIDRatioBased`, which reads the low 8 bytes and
+  so keeps a different subset for the same ratio: with it, a trace Node kept would continue in
+  feed-go only at random (its test pins decisions taken from the JS sampler itself).
+- *Spans.* One server span per request, named `<mode> <feed_endpoint>` (`serve as-posts`,
+  `shadow model-getall`, `probe infinite`), a child of the caller's `traceparent` when there is one
+  (W3C trace context + baggage, Node's default propagators). On the public `:8080` routes that is the
+  browser's (the Faro frontend sends it same-origin) or an edge's: the go-arm path, where feed-go
+  serves and the Node app sees only the fallbacks. Attributes: `feed_endpoint`, `feed_go.mode`,
+  `feed_go.outcome` (the `outcome` / shadow result labels), `feed_go.fallback.reason`,
+  `feed_go.shadow.result`; a fallback adds a `fallback` event (reason, safe detail), an error an
+  `error` event (class, type) and the error status. Children: one per pgx query (`pgx SELECT`:
+  operation and a hash of the SQL text, never a bind value or the text), one per Redis command or
+  pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), and
+  the fallback proxy hop (`fallback-proxy <endpoint>`), whose context the proxy injects as the
+  outbound `traceparent` so the Node request is its child. With tracing off the proxy passes the
+  inbound `traceparent` through unchanged, as before.
+- *The proxy hop carries feed-go's sampling decision to Node.* With tracing on, every proxied request
+  carries feed-go's `traceparent` (sampled flag included), and Node's ParentBased sampler follows a
+  remote parent: an unsampled one is dropped, a sampled one is re-checked against Node's own ratio.
+  Node's traces of proxied requests are therefore capped at min(feed-go ratio, Node ratio). Set
+  feed-go's `OTEL_TRACES_SAMPLE_RATIO` at or above Node's (normally equal; both default 0.1), or Node
+  loses traces of the requests feed-go hands back. Those requests now arrive WITH a `traceparent`, so
+  Node's root pre-sampling (`otel-root-presample`), which applies only to requests without one, does
+  not apply to them. No span per row or per hydrated entity; the
+  store spans start only under a recording (sampled) request span.
+- *Shadow and probe spans* are independent roots: the Node samplers do not send a `traceparent` on
+  their POSTs, so a sample is not linked to the Node request it describes (an inbound one would be
+  honoured, as on the public routes). They end when the comparison (probe) does, after the 202.
+
+**Exemplars.** `feed_go_request_duration_seconds` and `feed_go_shadow_phase_seconds` carry the trace
+id (`trace_id`) as an exemplar on observations made under a SAMPLED span only. With tracing on,
+`/metrics` answers a scrape that asks for OpenMetrics in that format (the only one with exemplars);
+Prometheus stores them with exemplar storage enabled. An exemplar's trace id can dangle: the head
+sampler keeps the trace, but the collector may still drop it before Tempo (tail sampling in Alloy),
+so a linked trace is found only once the collector retains feed-go's sampled traces (an infra
+follow-up, not in this PR).
+
+**Logs** (`server.EventLog`, the JSON slog handler on stdout). One line per fallback (`msg`
+`fallback`: `mode`, `endpoint`, `reason`, `detail` when safe, `trace_id`/`span_id` when the request has
+a span), per compute error (`feed compute failed; falling back`, `shadow compute failed`,
+`go-first probe failed`: `err_class`, `err_type`) and per fallback-proxy error (`fallback proxy: the
+Node app did not answer`, Warn for `upstream`, Debug for `canceled`). Each is rate-limited per (kind,
+mode, endpoint, reason) by a token bucket; a line carries `suppressed` (lines that key dropped since
+its last). No line is needed to see the rest: `feed_go_fallback_total` counts every fallback and
+`feed_go_errors_total{feed_endpoint, mode, class}` (mode `serve` | `shadow` | `probe` | `proxy`) every
+error, rate-limited or not.
+
+| Variable | Meaning |
+|---|---|
+| `FEED_GO_FALLBACK_LOG_PER_MIN` | Fallback lines per key per minute (default 0: none). |
+| `FEED_GO_ERROR_LOG_PER_MIN` | Error lines per key per minute (default 60). |
+
+*What is logged.* Never an error's text, the request input, a cookie, a token or an id. A fallback's
+`Detail` (its `Error()` text) is never logged; its loggable detail (`fallback.SafeDetail`) is opt-in
+at the call site: `fallback.Safef` (counts, status codes, the budget, a type name), `fallback.NewfSafe`
+(a fixed field name, or an input key name / enum value through `fallback.Token`, a charset and
+length filter — anything outside `[A-Za-z0-9_.-]` becomes `?`, cut to 64 bytes — that does NOT scrub
+free text: `a.b@x.com` logs as `a.b?x.com`, so it is used for key names and enum values only), and `fallback.Wrap` (the error's class). `fallback.Newf` details — cursors, ids, user
+values, sponsored data — log nothing but the reason.
+
+*Error class* (`fallback.Class`, closed set `fallback.ErrorClasses`, also the counter's `class`
+label): unwrapped to the most specific sentinel or kind, never text or values — `deadline`,
+`canceled`; `pg_no_rows`, `pg_connect`, `pg_<SQLSTATE class>` (the two-character class only, e.g.
+`pg_22` data exception, `pg_40` rollback, `pg_53` insufficient resources, `pg_57` operator
+intervention; one of Postgres' classes), `pg_other`; `redis_nil`, `redis_pool_timeout`,
+`redis_closed`, `redis_reply`; `timeout`, `conn_refused`, `conn_reset`, `dns`, `net_dial`, `net_read`,
+`net_write`, `net_other`; `clickhouse_busy`, `http_4xx`, `http_5xx`, `http_other` (an upstream status);
+`eof`, `json`, `other`. The `shadow diff` line is unchanged (paths
+only), plus the trace ids.
+
+*Overhead* (an estimate from what runs, not a measurement; the benchmarks do not cover the request
+path). Off: a nil check per request. On, unsampled (1 − ratio of requests): the traceparent parse, a
+non-recording span, one extra request copy (`WithContext`) and, on a fallback, the proxy hop's span —
+a handful of small allocations, single-digit µs; the store hooks then cost one context lookup per
+query or command. On, sampled: one recording span per request plus one per pgx query and per Redis
+command or pipeline (a pipeline is one span), each built in a few µs and exported in batches off the
+request path. Read the real figure from the phase CPU series (§10.1) before and after turning it on.
+
 ## 11. Deploy prerequisites (infrastructure repo, later)
 
 None of this is in this PR.

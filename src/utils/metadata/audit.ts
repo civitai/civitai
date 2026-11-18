@@ -978,10 +978,6 @@ export function includesInappropriate(
   const harmfulCombo = includesHarmfulCombinations(input.prompt);
   if (harmfulCombo) return harmfulCombo;
 
-  // 🔴 This makes the nsfw word list load-bearing for more than nsfw: the POI and minor checks
-  // below run only if it matches (callers that pass no `nsfw` argument — every search gate —
-  // depend entirely on it). So anything that can suppress a term on that list turns off two
-  // other checks for that input, not just its own.
   if (!nsfw && !includesNsfw(input.prompt)) return false;
 
   // Check for harmful combinations first

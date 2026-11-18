@@ -96,6 +96,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
 
 import { getAllImagesIndex } from '../image.service';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
+import { restrictedMinorClause } from '~/__tests__/minor-clause';
 
 const request = () =>
   ({
@@ -280,8 +281,7 @@ describe('getAllImagesIndex on the feed service', () => {
 
 // `minorMatureImageVisibleSql`; what it keeps and drops is run against rows in
 // minor-mature-image-visibility.behavior.test.ts.
-const RESTRICTED_MINOR =
-  /\(NOT \(\(COALESCE\(i\."minor", FALSE\)\) AND \(i\."nsfwLevel" IS NULL OR i\."nsfwLevel" = 0 OR i\."nsfwLevel" >= \$\d+\)\)(?: OR i\."userId" = \$(\d+))?\)/g;
+const RESTRICTED_MINOR = restrictedMinorClause('g');
 
 describe("the feed service's page hydrate, for restricted minor images", () => {
   beforeEach(() => {

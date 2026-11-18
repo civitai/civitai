@@ -33,7 +33,11 @@
     type SamplePrompt,
     type Selection,
   } from './trainingFlow';
-  import type { FromPrices, LabelType } from '$lib/data/trainingModels';
+  import {
+    TAG_FIND_REPLACE_FLAG_KEY,
+    type FromPrices,
+    type LabelType,
+  } from '$lib/data/trainingModels';
   import { isPairDataset, type ReuseItem } from '$lib/reuse';
   import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
   import { JUNK_TAGS } from '$lib/autolabel-exclude';
@@ -452,6 +456,7 @@
     <DataStep
       {selection}
       {prices}
+      findReplace={enabledModelFlags.includes(TAG_FIND_REPLACE_FLAG_KEY)}
       {reuseItems}
       bind:images
       bind:trigger

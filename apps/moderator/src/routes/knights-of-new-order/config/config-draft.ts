@@ -60,6 +60,11 @@ export const NUMBER_ROWS: Record<NumberKey, { unit: string; percent?: true; desc
       unit: 'days',
       description: 'A question nobody has answered for this long is closed.',
     },
+    harvestHiddenCheckShare: {
+      unit: '%',
+      percent: true,
+      description: 'Share of new moderator rulings used as skill checks instead of trials.',
+    },
   };
 
 type ToggleOption = { value: ToggleChoice; label: string };
@@ -72,6 +77,14 @@ export const TOGGLE_ROWS: Record<ToggleKey, { description: string; options: Togg
       { value: 'default', label: 'Default' },
       { value: 'on', label: 'On' },
       { value: 'off', label: 'Off' },
+    ],
+  },
+  harvest: {
+    description: 'Turns moderator rulings into trials and skill checks. Paused keeps its place.',
+    options: [
+      { value: 'default', label: 'Default' },
+      { value: 'on', label: 'Running' },
+      { value: 'off', label: 'Paused' },
     ],
   },
   shopDisabled: {

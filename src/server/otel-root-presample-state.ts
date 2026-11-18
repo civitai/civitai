@@ -5,8 +5,7 @@
 // On `globalThis`: the gate is installed from a dynamically imported module after the SDK starts,
 // while the hook and the id generator are built in src/instrumentation.node.ts. A module-scope copy
 // in a second emitted chunk would never see the gate (a dark, partial rollout with no error), and
-// an id stashed by one copy's hook would never reach the other copy's id generator. Enrolled as
-// SHARED_STATE in scripts/server-graph-watchlist.mjs.
+// an id stashed by one copy's hook would never reach the other copy's id generator.
 
 export type RootPresampleState = {
   gate: (() => boolean) | undefined;

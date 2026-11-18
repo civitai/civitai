@@ -14,6 +14,7 @@ import (
 
 	"github.com/civitai/civitai/apps/feed-go/internal/apipolicy"
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/tracing"
 )
 
 // Config is the parsed environment.
@@ -136,6 +137,16 @@ type Config struct {
 	// AllowedOriginHosts is the app's allowedOriginHosts (src/server/utils/origin-helpers.ts): every
 	// SERVER_DOMAIN_* host and alias, each TRPC_ORIGINS entry's host, and NEXTAUTH_URL's host.
 	AllowedOriginHosts map[string]bool
+
+	// Tracing is the OpenTelemetry tracing environment (tracing.FromEnv: FEED_GO_OTEL_ENABLED,
+	// OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, OTEL_TRACES_SAMPLE_RATIO). Off by default.
+	Tracing tracing.Config
+	// FallbackLogPerMinute is FEED_GO_FALLBACK_LOG_PER_MIN (default 0 = off): fallback log lines per
+	// (mode, endpoint, reason) per minute (server.EventLog; DESIGN.md §10.3).
+	FallbackLogPerMinute int
+	// ErrorLogPerMinute is FEED_GO_ERROR_LOG_PER_MIN (default 60): compute-error and proxy-error log
+	// lines per (mode, endpoint) per minute.
+	ErrorLogPerMinute int
 }
 
 // Load reads the environment.
@@ -214,6 +225,9 @@ func Load() (*Config, error) {
 	c.ClickHouseTimeout = min(time.Duration(positiveIntEnv("FEED_GO_CLICKHOUSE_TIMEOUT_MS", 2000))*time.Millisecond, c.RequestBudget/2)
 	c.ClickHouseMaxInFlight = positiveIntEnv("FEED_GO_CLICKHOUSE_MAX_IN_FLIGHT", 4)
 	c.AllowedOriginHosts = AllowedOriginHosts(c.Hosts, list(os.Getenv("TRPC_ORIGINS")), os.Getenv("NEXTAUTH_URL"))
+	c.Tracing = tracing.FromEnv(os.Getenv)
+	c.FallbackLogPerMinute = max(intEnv("FEED_GO_FALLBACK_LOG_PER_MIN", 0), 0)
+	c.ErrorLogPerMinute = positiveIntEnv("FEED_GO_ERROR_LOG_PER_MIN", 60)
 	rules, err := ParseRegionRules(os.Getenv("REGION_RESTRICTION_CONFIG"))
 	if err != nil {
 		return nil, err
