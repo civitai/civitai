@@ -43,7 +43,7 @@ export function resolveCatalogViewerBrowsingLevel(
 /**
  * `resolveCatalogViewerBrowsingLevel`, plus whether that level is a SFW ceiling:
  * no mature level in it (`allowMatureContentForCeiling` is `false`). An empty
- * level (0) counts as SFW. The one place a catalog route derives the flag.
+ * level (0) counts as SFW.
  */
 export function resolveCatalogViewerMaturity(
   claims: Pick<BlockTokenClaims, 'maxBrowsingLevel' | 'viewerBrowsingLevel'>,
