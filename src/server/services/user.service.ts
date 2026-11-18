@@ -11,8 +11,7 @@ import {
   fallbackUserImageColumn,
   servableProfilePictureSql,
 } from '~/server/services/profile-picture.sql';
-import { clearHeldUserImages } from '~/server/services/held-image-keys';
-import { restoreClearedUserImages } from '@civitai/db-queries/held-user-image';
+import { clearHeldUserImages, restoreClearedUserImages } from '~/server/services/held-image-keys';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -2466,10 +2465,7 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
   });
   let restoredIds: number[] = [];
   await step('restore-image', async () => {
-    restoredIds = await restoreClearedUserImages(
-      (text, values) => dbWrite.$queryRawUnsafe(text, ...values),
-      ids
-    );
+    restoredIds = await restoreClearedUserImages(dbWrite, ids);
   });
   const imageChangedIds = [...heldIds, ...restoredIds];
   await step('picture-cache', () => profilePictureCache.refresh(ids));

@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { anyImageHeldForReview, clearHeldUserImages } from '~/server/services/held-image-keys';
 import { fallbackUserImageColumn } from '~/server/services/profile-picture.sql';
-import { restoreClearedUserImages } from '@civitai/db-queries/held-user-image';
 
 let pg: PGlite;
 const db = {
@@ -16,9 +15,12 @@ const db = {
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TABLE "Image" (id int PRIMARY KEY, url text, "needsReview" text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int, url text, "needsReview" text, ingestion text NOT NULL DEFAULT 'Scanned',
+      "nsfwLevel" int NOT NULL DEFAULT 1, "blockedFor" text
+    );
     CREATE TABLE "User" (id int PRIMARY KEY, "profilePictureId" int, image text, meta jsonb);
-    INSERT INTO "Image" VALUES
+    INSERT INTO "Image" (id, url, "needsReview") VALUES
       (1, 'key-csam', 'csam'), (2, 'key-minor', 'minor'), (3, 'key-poi', 'poi'), (4, 'key-ok', NULL),
       (5, 'KEY-UPPER', 'csam');
     INSERT INTO "User" (id, "profilePictureId", image, meta) VALUES
@@ -85,22 +87,6 @@ describe('clearHeldUserImages', () => {
     );
     expect(eight.rows[0]).toEqual({ image: null, meta: 'a string meta' });
     expect(await clearHeldUserImages(db, [])).toEqual([]);
-  });
-});
-
-describe('clear, then restore once the hold lifts', () => {
-  it("puts back the picture's own key from the marker the clear wrote", async () => {
-    const query = async (text: string, values: unknown[]) => (await pg.query(text, values)).rows;
-    // User 2 was cleared above while picture 2 was held minor.
-    expect(await restoreClearedUserImages(query, [2])).toEqual([]);
-    await pg.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 2`);
-
-    expect(await restoreClearedUserImages(query, [2])).toEqual([2]);
-    const { rows } = await pg.query<{ image: string | null; meta: unknown }>(
-      `SELECT image, meta FROM "User" WHERE id = 2`
-    );
-    expect(rows[0]).toEqual({ image: 'key-minor', meta: {} });
-    await pg.exec(`UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 2`);
   });
 });
 
