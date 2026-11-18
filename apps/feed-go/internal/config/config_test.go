@@ -297,17 +297,17 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.ComputeMisses || c.CacheWriteBack.Any() || c.CacheWriteBackLegacy || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" ||
+	if !c.ComputeMisses || c.CacheWriteBack.Any() || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" ||
 		c.CacheWriteLogPerMinute != 0 {
-		t.Fatalf("defaults: compute %v, writeback %v (legacy %v), frame negative %v, primary %q, write log %d; want true, none, false, unset, 0",
-			c.ComputeMisses, c.CacheWriteBack, c.CacheWriteBackLegacy, c.FrameCacheNegative, c.PrimaryDatabaseURL, c.CacheWriteLogPerMinute)
+		t.Fatalf("defaults: compute %v, writeback %v, frame negative %v, primary %q, write log %d; want true, none, false, unset, 0",
+			c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL, c.CacheWriteLogPerMinute)
 	}
 	t.Setenv("DATABASE_URL", "x://primary")
 	if c, _ = Load(); c.PrimaryDatabaseURL != "" {
 		t.Fatalf("primary %q read with write-back off", c.PrimaryDatabaseURL)
 	}
 
-	t.Setenv("FEED_GO_CACHE_WRITEBACK", "true")
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", strings.Join(hydrate.WriteCaches, ","))
 	t.Setenv("DATABASE_URL", "")
 	if _, err := Load(); err == nil {
 		t.Fatal("write-back without DATABASE_URL loaded")
@@ -326,16 +326,16 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	}
 }
 
-// FEED_GO_CACHE_WRITEBACK's forms (hydrate.ParseWriteBack through Load): empty is none; the
-// deprecated bool form maps true/1/yes to every cache and false/0/no to none, flagged legacy (the
-// startup warning); a list writes exactly the caches it names, case and spacing ignored; a name that
-// is not a written cache (a typo, the never-written image meta, the old bool's `on`) fails Load. Only
-// a listed cache whose lookup reads the primary (the frame, event-decoration, version-images and
-// model-data lookups) reads DATABASE_URL, and only it fails without one.
+// FEED_GO_CACHE_WRITEBACK's forms (hydrate.ParseWriteBack through Load): empty is none; a list
+// writes exactly the caches it names, case and spacing ignored; a name that is not a written cache
+// fails Load — a typo, the never-written image meta, and every value of the old bool form (true,
+// false, 1, 0, yes, no, on, off), which is no longer accepted. Only a listed cache whose lookup reads
+// the primary (the frame, event-decoration, version-images and model-data lookups) reads
+// DATABASE_URL, and only it fails without one.
 //
-// Fails on: dropping the legacy mapping (true would be an unknown name), mapping true to none,
-// ignoring unknown names instead of failing, ignoring case/space, reading DATABASE_URL for every
-// list, or requiring it for a replica-only list.
+// Fails on: re-accepting the bool form (e.g. true as every cache or false as none), ignoring unknown
+// names instead of failing, ignoring case/space, reading DATABASE_URL for every list, or requiring it
+// for a replica-only list.
 func TestLoadCacheWriteBackForms(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
@@ -345,41 +345,35 @@ func TestLoadCacheWriteBackForms(t *testing.T) {
 	for _, c := range []struct {
 		raw     string
 		want    string // the sorted names, comma-joined
-		legacy  bool
 		primary bool
 	}{
-		{"", "", false, false},
-		{"false", "", true, false},
-		{"0", "", true, false},
-		{" NO ", "", true, false},
-		{"true", sortedJoin(hydrate.WriteCaches), true, true},
-		{"TRUE", sortedJoin(hydrate.WriteCaches), true, true},
-		{"1", sortedJoin(hydrate.WriteCaches), true, true},
-		{"yes", sortedJoin(hydrate.WriteCaches), true, true},
-		{"metrics", "metrics", false, false},
-		{" Tag-IDs , metrics,,", "metrics,tag-ids", false, false},
-		{"user-cosmetics,model-tags,official-models", "model-tags,official-models,user-cosmetics", false, false},
-		{"image-frames", "image-frames", false, true},
-		{"event-decorations", "event-decorations", false, true},
-		{"model-frames", "model-frames", false, true},
-		{"model-decorations", "model-decorations", false, true},
-		{"version-images", "version-images", false, true},
-		{"metrics,model-data", "metrics,model-data", false, true},
-		{all, sortedJoin(hydrate.WriteCaches), false, true},
+		{"", "", false},
+		{" , ", "", false},
+		{"metrics", "metrics", false},
+		{" Tag-IDs , metrics,,", "metrics,tag-ids", false},
+		{"user-cosmetics,model-tags,official-models", "model-tags,official-models,user-cosmetics", false},
+		{"image-frames", "image-frames", true},
+		{"event-decorations", "event-decorations", true},
+		{"model-frames", "model-frames", true},
+		{"model-decorations", "model-decorations", true},
+		{"version-images", "version-images", true},
+		{"metrics,model-data", "metrics,model-data", true},
+		{all, sortedJoin(hydrate.WriteCaches), true},
 	} {
 		t.Setenv("FEED_GO_CACHE_WRITEBACK", c.raw)
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("%q: %v", c.raw, err)
 		}
-		if got := strings.Join(cfg.CacheWriteBack.Names(), ","); got != c.want || cfg.CacheWriteBackLegacy != c.legacy {
-			t.Errorf("%q = %q (legacy %v), want %q (legacy %v)", c.raw, got, cfg.CacheWriteBackLegacy, c.want, c.legacy)
+		if got := strings.Join(cfg.CacheWriteBack.Names(), ","); got != c.want {
+			t.Errorf("%q = %q, want %q", c.raw, got, c.want)
 		}
 		if got := cfg.PrimaryDatabaseURL != ""; got != c.primary {
 			t.Errorf("%q: primary read %v, want %v", c.raw, got, c.primary)
 		}
 	}
-	for _, bad := range []string{"metric", "metrics,frames", "image-meta", "on", "all", "metrics;tag-ids"} {
+	for _, bad := range []string{"true", "TRUE", "false", "1", "0", "yes", " no ", "on", "off", "metric", "metrics,frames",
+		"metrics,true", "image-meta", "all", "metrics;tag-ids"} {
 		t.Setenv("FEED_GO_CACHE_WRITEBACK", bad)
 		if cfg, err := Load(); err == nil {
 			t.Errorf("%q loaded (%v), want an unknown-cache error", bad, cfg.CacheWriteBack)

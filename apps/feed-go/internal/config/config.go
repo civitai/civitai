@@ -112,12 +112,9 @@ type Config struct {
 	ComputeMisses bool
 	// CacheWriteBack is FEED_GO_CACHE_WRITEBACK (default none): the caches whose computed misses are
 	// written back to the cache cluster exactly as the Node lookup writes them, as a comma-separated
-	// list of hydrate.WriteCaches names (hydrate.ParseWriteBack; an unknown name fails Load). A cache
-	// not listed is never written by this service.
+	// list of hydrate.WriteCaches names (hydrate.ParseWriteBack; an unknown name, the old true/false
+	// included, fails Load). A cache not listed is never written by this service.
 	CacheWriteBack hydrate.WriteSet
-	// CacheWriteBackLegacy: FEED_GO_CACHE_WRITEBACK was the deprecated bool form (true = every cache,
-	// false = none), for the startup warning.
-	CacheWriteBackLegacy bool
 	// CacheWriteLogPerMinute is FEED_GO_CACHE_WRITE_LOG_PER_MIN (default 0 = off): `cache write` log
 	// lines per (cache, result) per minute (hydrate.WriteLog).
 	CacheWriteLogPerMinute int
@@ -225,11 +222,11 @@ func Load() (*Config, error) {
 		c.ModerationAccountID = n
 	}
 	c.ComputeMisses = boolEnv("FEED_GO_COMPUTE_MISSES", true)
-	writeBack, legacy, err := hydrate.ParseWriteBack(os.Getenv("FEED_GO_CACHE_WRITEBACK"))
+	writeBack, err := hydrate.ParseWriteBack(os.Getenv("FEED_GO_CACHE_WRITEBACK"))
 	if err != nil {
 		return nil, err
 	}
-	c.CacheWriteBack, c.CacheWriteBackLegacy = writeBack, legacy
+	c.CacheWriteBack = writeBack
 	c.CacheWriteLogPerMinute = max(intEnv("FEED_GO_CACHE_WRITE_LOG_PER_MIN", 0), 0)
 	c.FrameCacheNegative = boolEnv("FEED_GO_FRAME_CACHE_NEGATIVE", false)
 	if c.CacheWriteBack.NeedsPrimary() {

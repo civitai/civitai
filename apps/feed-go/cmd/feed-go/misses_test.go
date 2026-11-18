@@ -72,6 +72,31 @@ func TestMissCompute(t *testing.T) {
 	}
 }
 
+// run() opens the primary pool only with the miss computation on and a written-back cache whose
+// lookup reads the primary: a replica-only allowlist (metrics,tag-ids, or every replica reader) never
+// opens it; image-frames (or model-data) does; nothing listed, or the computation off, never.
+// Fails on: the condition reverting to "any cache listed" (metrics,tag-ids would open it), or
+// dropping the ComputeMisses term.
+func TestOpensPrimary(t *testing.T) {
+	for _, c := range []struct {
+		compute bool
+		set     hydrate.WriteSet
+		want    bool
+	}{
+		{true, nil, false},
+		{true, hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissTagIDs: true}, false},
+		{true, hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissTagIDs: true, hydrate.MissUserCosmetics: true,
+			hydrate.MissModelTags: true, hydrate.MissOfficialModels: true}, false},
+		{true, hydrate.WriteSet{hydrate.MissImageFrames: true}, true},
+		{true, hydrate.WriteSet{hydrate.MissMetrics: true, hydrate.MissModelData: true}, true},
+		{false, hydrate.WriteSet{hydrate.MissImageFrames: true}, false},
+	} {
+		if got := opensPrimary(&config.Config{ComputeMisses: c.compute, CacheWriteBack: c.set}); got != c.want {
+			t.Errorf("compute %v, %v: opens primary %v, want %v", c.compute, c.set.Names(), got, c.want)
+		}
+	}
+}
+
 // What run() wires for the cache writes: the counter (feed_go_cache_writes_total) and the write log
 // on the miss computation, and the counter seeded at 0 for each written-back cache and result, and
 // for no other cache. Fails if attachWriteObservers drops ObserveWrite or WriteLog, seeds every

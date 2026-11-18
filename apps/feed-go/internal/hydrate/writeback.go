@@ -26,7 +26,7 @@ var PrimaryCaches = []string{MissImageFrames, MissEventDecorations, MissModelFra
 // service writes no cache entry, lock or metric hash.
 type WriteSet map[string]bool
 
-// AllWrites is every cache in WriteCaches (the deprecated FEED_GO_CACHE_WRITEBACK=true).
+// AllWrites is every cache in WriteCaches.
 func AllWrites() WriteSet {
 	w := WriteSet{}
 	for _, c := range WriteCaches {
@@ -67,32 +67,23 @@ func (w WriteSet) Names() []string {
 	return out
 }
 
-// ParseWriteBack reads FEED_GO_CACHE_WRITEBACK: a comma-separated list of WriteCaches names (spaces
-// around a name and empty items ignored), or the deprecated bool form, which legacy reports: true, 1
-// or yes is every cache; false, 0 or no is none (any case). Empty is none. Any other name is an
-// error, so a typo never silently leaves a cache unwritten (or reads as the old bool's off).
-func ParseWriteBack(raw string) (set WriteSet, legacy bool, err error) {
-	v := strings.ToLower(strings.TrimSpace(raw))
-	switch v {
-	case "":
-		return WriteSet{}, false, nil
-	case "true", "1", "yes":
-		return AllWrites(), true, nil
-	case "false", "0", "no":
-		return WriteSet{}, true, nil
-	}
-	set = WriteSet{}
-	for _, name := range strings.Split(v, ",") {
+// ParseWriteBack reads FEED_GO_CACHE_WRITEBACK: a comma-separated list of WriteCaches names (any
+// case; spaces around a name and empty items ignored). Empty is none. Any other name is an error,
+// the old bool form (true, false, 1, 0, …) included, so a typo or a stale value never silently leaves
+// a cache unwritten or writes every cache.
+func ParseWriteBack(raw string) (WriteSet, error) {
+	set := WriteSet{}
+	for _, name := range strings.Split(strings.ToLower(raw), ",") {
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
 		if !slices.Contains(WriteCaches, name) {
-			return nil, false, fmt.Errorf("FEED_GO_CACHE_WRITEBACK: unknown cache %q (known: %s)", name, strings.Join(WriteCaches, ","))
+			return nil, fmt.Errorf("FEED_GO_CACHE_WRITEBACK: unknown cache %q (known: %s)", name, strings.Join(WriteCaches, ","))
 		}
 		set[name] = true
 	}
-	return set, false, nil
+	return set, nil
 }
 
 // The results of one cache write (feed_go_cache_writes_total's `result`): written (the key holds

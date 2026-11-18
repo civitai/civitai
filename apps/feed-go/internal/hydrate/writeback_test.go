@@ -371,3 +371,94 @@ func jsonNum(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+// Per cache, the stale tag-ids revalidation: with only metrics listed, a stale tag-ids entry whose
+// revalidation lock another process holds is still looked up (no lock is consulted or taken, as
+// with write-back off), nothing is written over it, and the holder's lock is left alone. Fails on
+// revalidateStale gating on "any cache listed": the held lock would then make it serve the stale
+// [77] with no lookup.
+func TestStaleTagIDsNotRevalidatedUnderLockWhenOtherCacheListed(t *testing.T) {
+	f, m := staleTagIDsFixture(t)
+	s, r := m.load(f, &MissCompute{WriteBack: WriteSet{MissMetrics: true}, FrameNegative: true, TagGate: (&tagGateSpy{}).fn})
+	r.SetString(tagLockKey(12), []byte("1"))
+	before, _ := r.String(pageNS + missKey(KeyTagIDs, 12))
+	got, err := s.TagIDs(context.Background(), []int{11, 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := pagePlain(t, got[12]); s != `[22]` {
+		t.Fatalf("stale 12 = %s, want [22] (looked up, no lock consulted)", s)
+	}
+	if q := m.queries("tagrows"); !reflect.DeepEqual(q, [][]int{{12}}) {
+		t.Fatalf("tag row queries %v, want only the stale 12", q)
+	}
+	if after, _ := r.String(pageNS + missKey(KeyTagIDs, 12)); string(after) != string(before) {
+		t.Fatal("the stale entry was overwritten with tag-ids not listed")
+	}
+	if b, _ := r.String(tagLockKey(12)); string(b) != "1" {
+		t.Fatal("the other holder's lock was touched")
+	}
+	if r.Has(tagLockKey(11)) {
+		t.Fatal("a lock was taken for the fresh 11")
+	}
+}
+
+// Per cache, the official models: with only metrics listed, an absent entry is fetched from the
+// replica with no lock taken and nothing written. Fails on OfficialModels gating on "any cache
+// listed": it would take the lock and write the entry.
+func TestOfficialModelsNotWrittenWhenOtherCacheListed(t *testing.T) {
+	obs := &observed{}
+	e := newOfficialEnv(&MissCompute{WriteBack: WriteSet{MissMetrics: true}, ObserveWrite: obs.observe})
+	got, err := e.run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, fromReplica) || e.queries != 1 {
+		t.Fatalf("got %v (%d queries), want the replica's rows", got, e.queries)
+	}
+	if e.r.Has(officialKey) || e.r.Has(officialLock) {
+		t.Fatalf("entry written %v, lock taken %v; want neither with official-models not listed", e.r.Has(officialKey), e.r.Has(officialLock))
+	}
+	if o := obs.get(); len(o) != 0 {
+		t.Fatalf("writes observed %v, want none", o)
+	}
+}
+
+// Per cache, the lag-aware reads: with only metrics listed (a primary configured), a version and a
+// model whose lag flags are set are still read from the replica, as with write-back off. Fails on
+// lagAwareDB gating on "any cache listed": both would read the primary.
+func TestLagAwareReadsReplicaWhenOtherCacheListed(t *testing.T) {
+	t.Run("version-images", func(t *testing.T) {
+		f := showcaseFixture(t)
+		s, r := computedModelSources(f, &MissCompute{WriteBack: WriteSet{MissMetrics: true}, FrameNegative: true})
+		s.Compute.Primary = &testkit.DB{Routes: []testkit.Route{f.showcaseRoute("primary")}}
+		r.SetString(pageNS+"lag-helper:modelVersion:6003", []byte("true"))
+		if _, err := s.VersionImages(context.Background(), []int{6001, 6003}); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(f.queries, []string{"showcases"}) {
+			t.Fatalf("queries %v, want [showcases] (the replica)", f.queries)
+		}
+	})
+	t.Run("model-data", func(t *testing.T) {
+		f := fullModelFixture(t)
+		f.del(KeyDataForModel, 5001)
+		s, r := modelDataSources(f, &MissCompute{WriteBack: WriteSet{MissMetrics: true}, FrameNegative: true})
+		if s.Compute.Primary == nil {
+			t.Fatal("no primary configured: the test would not tell the two apart")
+		}
+		r.SetString(pageNS+"lag-helper:model:5001", []byte("1"))
+		if _, err := s.ModelPage(context.Background(), modelPageRequest()); err != nil {
+			t.Fatal(err)
+		}
+		got := make([]string, 0, len(f.queries))
+		for _, q := range f.queries {
+			if q != "tags" {
+				got = append(got, q)
+			}
+		}
+		if !reflect.DeepEqual(got, []string{"replica-data", "replica-hashes"}) {
+			t.Fatalf("queries %v, want the replica's", got)
+		}
+	})
+}

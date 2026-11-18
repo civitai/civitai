@@ -53,8 +53,7 @@ are computed with the Node lookup's own query (`FEED_GO_COMPUTE_MISSES`, default
 caches `FEED_GO_CACHE_WRITEBACK` lists (default none), e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`; the names
 are the `cache` labels of `feed_go_cache_miss_total` (`user-cosmetics`, `image-frames`, `event-decorations`,
 `tag-ids`, `model-frames`, `model-decorations`, `version-images`, `model-data`, `model-tags`,
-`official-models`, `metrics`), an unknown name fails startup, and the old `true`/`false` still parses
-(every cache / none) with a deprecation warning. Listing a frame, decoration, `version-images` or
+`official-models`, `metrics`), and an unknown name, the old `true`/`false` included, fails startup. Listing a frame, decoration, `version-images` or
 `model-data` cache also needs `DATABASE_URL`, the primary. Each write is counted in
 `feed_go_cache_writes_total{cache,result}` (`written` | `nx_lost` | `error`; not per endpoint), and
 `FEED_GO_CACHE_WRITE_LOG_PER_MIN` (default 0) logs each written key, rate-limited, never its value

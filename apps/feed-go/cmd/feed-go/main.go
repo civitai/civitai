@@ -125,6 +125,13 @@ func attachMetricsReader(cfg *config.Config, c *hydrate.MissCompute, tp *tracing
 	return err
 }
 
+// opensPrimary is whether run() opens the primary pool (DATABASE_URL): only with the miss computation
+// on and a written-back cache whose lookup reads the primary (hydrate.PrimaryCaches). A replica-only
+// allowlist (e.g. metrics,tag-ids) never opens it.
+func opensPrimary(cfg *config.Config) bool {
+	return cfg.ComputeMisses && cfg.CacheWriteBack.NeedsPrimary()
+}
+
 // primaryMaxConns bounds the primary pool, used only by the written-back miss lookups that read it
 // (hydrate.PrimaryCaches; DESIGN.md §3.1).
 const primaryMaxConns = 4
@@ -190,7 +197,7 @@ func run(log *slog.Logger) error {
 	packed := &hydrate.PackedReader{Redis: cache, Prefix: cfg.CacheKeyPrefix}
 	sources := &hydrate.Sources{Packed: packed, Cache: cache, Replica: pool}
 	var primary hydrate.Querier
-	if cfg.ComputeMisses && cfg.CacheWriteBack.NeedsPrimary() {
+	if opensPrimary(cfg) {
 		primaryCfg, err := dbpool.Config(cfg.PrimaryDatabaseURL, dbpool.Settings{MaxConns: primaryMaxConns})
 		if err != nil {
 			return err
@@ -215,10 +222,6 @@ func run(log *slog.Logger) error {
 	}
 	// Under the env names, so a value that disagrees with the Node side's flag (frame-cache-negative)
 	// or with the rollout step (DESIGN.md §3.1) is visible in the startup log.
-	if cfg.CacheWriteBackLegacy {
-		log.Warn("FEED_GO_CACHE_WRITEBACK: the true/false form is deprecated; list the caches to write back instead (DESIGN.md §3.1)",
-			"caches", cfg.CacheWriteBack.Names())
-	}
 	log.Info("cache misses", "FEED_GO_COMPUTE_MISSES", cfg.ComputeMisses, "FEED_GO_CACHE_WRITEBACK", cfg.CacheWriteBack.Names(),
 		"primary_db", primary != nil, "FEED_GO_CACHE_WRITE_LOG_PER_MIN", cfg.CacheWriteLogPerMinute,
 		"FEED_GO_FRAME_CACHE_NEGATIVE", cfg.FrameCacheNegative, "clickhouse_metrics", sources.Compute != nil && sources.Compute.ClickHouse != nil,

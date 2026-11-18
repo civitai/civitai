@@ -325,8 +325,8 @@ list of the caches to write back, each named by its `cache` label of `feed_go_ca
 e.g. `FEED_GO_CACHE_WRITEBACK=metrics,tag-ids`. Empty (the default) writes nothing. Throughout this
 document "write-back on" (or "off") for a cache means that cache is (or is not) listed. A name not in
 the table fails startup (a typo never silently leaves a cache unwritten); `image-meta` is computed but
-never written, so it is not a name. The old bool form still parses, deprecated, with a startup
-warning: `true` (`1`, `yes`) is every cache, `false` (`0`, `no`) none. A cache not listed is never
+never written, so it is not a name. The old bool form (`true`, `false`, `1`, `0`, …) is not
+accepted: it fails startup like any unknown name. A cache not listed is never
 written (no entry, lock or hash; the tests assert the cache is untouched), and a lagging replica read
 affects only the one answer it feeds. For a listed cache, each computed entry is written where and as
 Node's fetch writes it: the same key
