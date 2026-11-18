@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { sessionClient } from '~/server/auth/session-client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
@@ -82,12 +83,7 @@ function logServingDecision(reason: 'no-session' | 'eval-failed') {
 
 /** The level a signed-out viewer browses at, within the token's own ceiling. */
 export function anonymousBrowsingLevel(ceiling: number): number {
-  return ceiling & publicBrowsingLevelsFlag;
-}
-
-/** Only `on` serves; `off` and `unknown` both pause the route and the ref replay. */
-export async function isBlockMediaServing(viewerId: number | null): Promise<boolean> {
-  return (await resolveBlockMediaServing(viewerId)) === 'on';
+  return Flags.intersection(ceiling, publicBrowsingLevelsFlag);
 }
 
 export type BlockMediaFetch =
@@ -113,7 +109,11 @@ export async function resolveBlockMediaFetch(token: unknown): Promise<BlockMedia
 async function judgeTicket(token: unknown): Promise<BlockMediaFetch> {
   const ticket = openBlockMediaTicket(token);
   if (!ticket) return { state: 'hidden', reason: 'invalid' };
-  if (!(await isBlockMediaServing(ticket.viewerId))) return { state: 'hidden', reason: 'paused' };
+  // Re-decided at each fetch: a viewer whose session has stopped resolving since the mint is
+  // judged as signed out, never the owner.
+  const decision = await decideBlockMediaServing(ticket.viewerId);
+  if (decision.serving !== 'on') return { state: 'hidden', reason: 'paused' };
+  const signedOut = ticket.anonymous || decision.anonymous;
 
   const blob = await readBlobState(ticket.blobId);
   if (blob.verdict === 'pending') return { state: 'pending' };
@@ -132,8 +132,9 @@ async function judgeTicket(token: unknown): Promise<BlockMediaFetch> {
       privateGen: ticket.privateGen,
       ownerId: ticket.ownerId,
     },
-    // An anonymous ticket is judged as signed out: never the owner.
-    { userId: ticket.anonymous ? null : ticket.viewerId, browsingLevel: ticket.viewerBrowsingLevel }
+    signedOut
+      ? { userId: null, browsingLevel: anonymousBrowsingLevel(ticket.viewerBrowsingLevel) }
+      : { userId: ticket.viewerId, browsingLevel: ticket.viewerBrowsingLevel }
   );
   if (gate.state === 'hidden') return gate;
   if (gate.state === 'pending' || !blob.location) return { state: 'pending' };
