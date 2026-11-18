@@ -10,6 +10,8 @@ const db = {
     const sql = Prisma.sql(strings, ...(values as never[]));
     return pg.query(sql.text, sql.values as unknown[]).then((r) => r.rows);
   },
+  $queryRawUnsafe: (text: string, ...values: unknown[]) =>
+    pg.query(text, values).then((r) => r.rows),
 } as never;
 
 beforeAll(async () => {
