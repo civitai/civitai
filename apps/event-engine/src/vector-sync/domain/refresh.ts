@@ -1,6 +1,15 @@
 import type { Pool } from 'pg';
 import { logger } from '@/utils/logger';
+import { vectorSyncMetrics } from '../metrics';
 import type { Domain, DomainRef } from './sync';
+
+/**
+ * More points with no row in one batch than this suggests a bad read (a lagging replica, an empty
+ * result) rather than deleted rows, so none of them are deleted: more than 10, and more than a tenth
+ * of the batch's points.
+ */
+export const orphanBrake = (orphans: number, points: number) =>
+  orphans > 10 && orphans > points / 10;
 
 /**
  * The next `batch` ids of the domain's table after `cursor`, by keyset, and the cursor for the
@@ -55,7 +64,22 @@ export function startRefreshers(
         const points = store
           ? await store.idsInRange(cursor + 1, next === 0 ? Number.MAX_SAFE_INTEGER : next + 1)
           : [];
-        for (const id of new Set([...ids, ...points])) lane.add({ id });
+        const rows = new Set(ids);
+        let orphans = points.filter((id) => !rows.has(id));
+        if (orphanBrake(orphans.length, points.length)) {
+          logger.error(
+            {
+              orphans: orphans.length,
+              points: points.length,
+              from: cursor + 1,
+              sample: orphans.slice(0, 10),
+            },
+            `${domain.name}-sync: refresh found too many points with no row in one batch; deleting none`
+          );
+          vectorSyncMetrics.orphanBrakes.inc({ domain: domain.name });
+          orphans = [];
+        }
+        for (const id of [...ids, ...orphans]) lane.add({ id });
         cursor = next;
       } while (cursor !== 0);
     };

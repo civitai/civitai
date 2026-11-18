@@ -23,6 +23,29 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  test('a row read that comes back empty over a populated range deletes nothing', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      const pg = { query: bounded(async () => ({ rows: [] })) };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const points = Array.from({ length: 50 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('also queues points whose row is gone, inside a batch and past the last row', async () => {
     vi.useFakeTimers();
     try {
