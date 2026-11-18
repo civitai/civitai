@@ -39,7 +39,7 @@ describe('mention card anchor inside a transformed scroll area', () => {
     const scroller = document.querySelector<HTMLElement>('[data-testid="scroller"]')!;
     const mention = document.querySelector<HTMLElement>('[data-type="mention"]')!;
     scroller.scrollTop = 550;
-    await new Promise((r) => setTimeout(r, 100));
+    await expect.poll(() => scroller.scrollTop).toBe(550);
 
     await userEvent.hover(mention);
     await expect
@@ -52,5 +52,7 @@ describe('mention card anchor inside a transformed scroll area', () => {
     const m = mention.getBoundingClientRect();
     expect(Math.abs(a.top - m.top)).toBeLessThan(2);
     expect(Math.abs(a.left - m.left)).toBeLessThan(2);
+    // Parked over the mention it would swallow the hover that keeps the card open.
+    expect(getComputedStyle(anchor).pointerEvents).toBe('none');
   });
 });
