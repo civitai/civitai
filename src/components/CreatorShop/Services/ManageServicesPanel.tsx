@@ -61,6 +61,9 @@ const reviewBadge: Record<
 const openForm = (offering?: ServiceOffering) =>
   dialogStore.trigger({ component: ServiceOfferingFormModal, props: { offering } });
 
+const openDuplicateForm = (copyOf: ServiceOffering) =>
+  dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
+
 export type ShopPublishState = { onPublish: () => void; publishing: boolean };
 
 /**
@@ -243,6 +246,9 @@ function OfferingRow({
             </Menu.Target>
             <Menu.Dropdown>
               {canSell && <Menu.Item onClick={() => openForm(offering)}>Edit</Menu.Item>}
+              {canSell && (
+                <Menu.Item onClick={() => openDuplicateForm(offering)}>Duplicate</Menu.Item>
+              )}
               {isActive ? (
                 <Menu.Item onClick={() => setStatus.mutate({ id: offering.id, status: 'Paused' })}>
                   Pause

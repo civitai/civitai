@@ -124,30 +124,10 @@ export default defineNextConfig(
     },
     reactStrictMode: true,
     typescript: { ignoreBuildErrors: skipBuildTypecheck },
-    // Source maps for prod CPU-profile de-minification.
-    //
-    // Under Turbopack (our prod bundler, Next 16), the ONLY source-map lever is the
-    // experimental `turbopackSourceMaps` flag, whose build-time default IS
-    // `productionBrowserSourceMaps`. So setting this `true` turns on map emission for
-    // BOTH client (`.next/static/**/*.js.map`) and server (`.next/server/**/*.js.map`)
-    // chunks. Turbopack ignores `experimental.serverSourceMaps` (webpack-only) — that
-    // flag below only matters for the `next build --webpack` fallback path.
-    //
-    // Maps are inert at runtime: the Node server never loads a `.js.map` unless an
-    // inspector / error-stack resolver reads it, so there is NO
-    //  request-path perf cost.
-    // They are NOT served to browsers for server chunks (those live in `.next/server`,
-    // which is not a static-served directory). Cost is build time + image size only.
-    //
-    // IMPORTANT: `output:'standalone'` traces required files via @vercel/nft, which
-    // follows `import`/`require`/`fs` — it does NOT trace sibling `.js.map` files, so
-    // the server maps are emitted to `.next/server` but DROPPED from `.next/standalone`.
-    // The runtime image does NOT ship these maps (the RUNNER stage copies only
-    // standalone + static). The build instead publishes them as a separate
-    // `civitai-web-maps:<tag>` artifact (Dockerfile `maps` target + the pipeline),
-    // fetched on demand by `scripts/resolve-cpuprofile.mjs --image <tag>` to
-    // de-minify a captured profile — keeping the runtime image lean.
-    productionBrowserSourceMaps: true,
+    // Off to cut release-build memory, together with `experimental.serverSourceMaps` below:
+    // which of the two Turbopack reads for server maps is decided in the native binary, so
+    // both are off.
+    productionBrowserSourceMaps: false,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
     i18n: {
       locales: ['en'],
@@ -273,7 +253,7 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       cpus: 8,
-      serverSourceMaps: true,
+      serverSourceMaps: false,
       // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
       // Nested async chunking for the SERVER build. Next's own defaults table
@@ -312,9 +292,6 @@ export default defineNextConfig(
       // smaller. Projected onto the worst observed production build that lands at
       // 37-39 GiB against the enforced 40 GiB limit, which is the exact band where the
       // release build OOMKilled three times when this flag was last on (#3807).
-      // Dropping source maps to pay for it is also closed: it works, but server `.js.map`
-      // has three consumers including the hard `scripts/assert-compiled-branches.mjs`
-      // gate, and `turbopackSourceMaps` cannot be split client/server.
       // Full evidence: claudedocs/turbopack-chunk-hash-collision-2026-08-18.md
       // (§Option 1 is closed). The live fix is upstream, not this flag.
       turbopackServerSideNestedAsyncChunking: false,
