@@ -48,14 +48,6 @@ describe('an item’s level → its card rating', () => {
     expect(isRatingAtLeastAsStrict('x', 'xxx')).toBe(false);
     expect(isRatingAtLeastAsStrict('xxx', 'x')).toBe(true);
   });
-
-  it('the label is XXX', async () => {
-    const { subListingContentRatingLabel } = await import(
-      '~/shared/constants/app-sub-listing.constants'
-    );
-    expect(subListingContentRatingLabel('xxx')).toBe('XXX');
-    expect(subListingContentRatingLabel('pg13')).toBe('PG-13');
-  });
 });
 
 describe('🔴 the per-viewer gate tells xxx from x', () => {

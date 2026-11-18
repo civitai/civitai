@@ -6,18 +6,18 @@ import type {
 import { NsfwLevel } from '~/server/common/enums';
 import {
   contentRatingFromNsfwLevel,
-  OFFSITE_CONTENT_RATING_LABELS,
   OFFSITE_CONTENT_RATING_LADDER,
   type OffsiteRatingValue,
 } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * App Store sub-listings: the vocabulary shared by the write service, the store read path,
- * the moderator tab and the card. Client-safe (no server imports).
+ * the moderator tab and the card. Client-safe: its one server-path import is the enums module
+ * (`~/server/common/enums`), which `browsingLevel.constants` already brings in.
  *
  * The status and rating sets mirror the CHECKs in
  * `packages/civitai-db-schema/prisma/migrations/20261010120000_app_sub_listings/migration.sql`, the
- * rating set as widened by `20261118130000_app_sub_listing_xxx_rating/migration.sql`;
+ * rating set as widened by `20271118200000_app_sub_listing_xxx_rating/migration.sql`;
  * `app-sub-listing.constants.test.ts` parses those files and fails on drift.
  */
 
@@ -46,12 +46,6 @@ export type AppSubListingContentRating = OffsiteRatingValue | 'xxx';
 export function subListingRatingFromNsfwLevel(level: number): AppSubListingContentRating {
   if (level & (NsfwLevel.XXX | NsfwLevel.Blocked)) return 'xxx';
   return contentRatingFromNsfwLevel(level);
-}
-
-/** A card rating's user-facing label: the listing labels, plus `XXX`. Raw for an unknown value. */
-export function subListingContentRatingLabel(rating: string): string {
-  if (rating === 'xxx') return 'XXX';
-  return (OFFSITE_CONTENT_RATING_LABELS as Record<string, string>)[rating] ?? rating;
 }
 
 export const APP_SUB_LISTING_TITLE_MAX = 80;
