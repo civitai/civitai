@@ -579,7 +579,7 @@ export const modifyUserHandler = async ({
       if (userId !== existing.userId) {
         throw throwBadRequestError(`Cannot modify chat status for another user`);
       }
-      if (status && !canSetOwnChatStatus(existing.status, status)) {
+      if (status && status !== existing.status && !canSetOwnChatStatus(existing.status, status)) {
         throw throwBadRequestError(`Cannot change from ${existing.status} to ${status}`);
       }
     }
@@ -622,6 +622,13 @@ export const modifyUserHandler = async ({
 
     // TODO if a moderator rejoins, auto-rejoin other users
 
+    // Already there (a stale tab, a double click): nothing to write. Rewriting
+    // kickedAt or leftAt would also move the point a member's reads stop at.
+    if (status === existing.status) {
+      // primary: the row this request is about, read back as it stands
+      return await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+    }
+
     if (status === ChatMemberStatus.Joined) {
       const notice = await dbWrite.$transaction((tx) =>
         joinChatMember(tx, {
@@ -631,7 +638,13 @@ export const modifyUserHandler = async ({
           from: existing.status,
         })
       );
-      if (!notice) throw throwConflictError('This membership changed; reload and try again.');
+      if (!notice) {
+        // primary: re-read after a lost compare-and-set
+        const now = await dbWrite.chatMember.findUniqueOrThrow({ where: { id: chatMemberId } });
+        // Joined by another tab or a send in between: what was asked for holds.
+        if (now.status === ChatMemberStatus.Joined) return now;
+        throw throwConflictError('This membership changed; reload and try again.');
+      }
       await signalJoined({ chatId: existing.chat.id, userId: existing.userId, notice });
       await signalChatMembersUpdated({ chatId: existing.chat.id, userIds: [existing.userId] });
       // primary: returns the row this request just wrote

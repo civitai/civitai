@@ -171,6 +171,41 @@ describe('modifyUser: a member changing their own status', () => {
   });
 });
 
+describe('modifyUser: asking for the status a member already has', () => {
+  it('is a no-op, not an error, so a stale tab or a double click is harmless', async () => {
+    await expect(setStatus(MEMBER, ChatMemberStatus.Joined)).resolves.toMatchObject({
+      status: ChatMemberStatus.Joined,
+    });
+    expect(dbMock.dbWrite.chatMember.updateMany).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
+  });
+
+  it('does not restamp kickedAt when an owner kicks an already-kicked member', async () => {
+    // kickedAt is where a kicked member's reads stop; moving it reopens what came after.
+    member().status = ChatMemberStatus.Kicked;
+
+    await setStatus(OWNER, ChatMemberStatus.Kicked);
+
+    expect(dbMock.dbWrite.chatMember.updateMany).not.toHaveBeenCalled();
+    expect(notices).toEqual([]);
+  });
+
+  it('succeeds when a concurrent request joined them after the read', async () => {
+    member().status = ChatMemberStatus.Left;
+    const read = dbMock.dbWrite.chatMember.findFirst.getMockImplementation()!;
+    dbMock.dbWrite.chatMember.findFirst.mockImplementationOnce((async (...args: never[]) => {
+      const snapshot = await read(...args);
+      member().status = ChatMemberStatus.Joined;
+      return snapshot;
+    }) as never);
+
+    await expect(setStatus(MEMBER, ChatMemberStatus.Joined)).resolves.toMatchObject({
+      status: ChatMemberStatus.Joined,
+    });
+    expect(notices).toEqual([]);
+  });
+});
+
 describe('modifyUser: the owner', () => {
   it('can still kick a member', async () => {
     await setStatus(OWNER, ChatMemberStatus.Kicked);
