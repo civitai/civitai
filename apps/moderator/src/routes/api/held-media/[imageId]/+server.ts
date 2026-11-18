@@ -15,7 +15,8 @@ import { SHEET_COOKIE, sheetCookie } from '$lib/server/held-sheet';
  * and only for an image `heldImageSql` holds, so this is no general way past the CDN.
  *
  * A moderator without the CSAM page's grant is served it on the covered view, from the web only,
- * unless it is reported; every response with bytes writes its view row.
+ * unless it is reported; every response with bytes writes its view row. Reported, unreadable and not
+ * held all answer the same 404, and HEAD answers nothing, so no answer tells them apart.
  */
 export const GET: RequestHandler = async ({ params, locals, request, cookies }) => {
   if (
@@ -25,19 +26,19 @@ export const GET: RequestHandler = async ({ params, locals, request, cookies }) 
     coveredViewEnabled()
   ) {
     const imageId = parseIdParam(params.imageId, 'image id');
+    if (request.method !== 'GET') error(404, 'Not available here.');
     const moderatorId = locals.user.id;
     const covered = await getCoveredHeldMedia(imageId, moderatorId);
-    if (covered === COVERED_REFUSED) error(404, 'Not available here.');
-    if (covered)
-      return streamStoredMedia({
-        media: covered,
-        imageId,
-        moderatorId,
-        sheet: false,
-        request,
-        audit: () => recordHeldView(moderatorId, imageId, 'web'),
-        auditEveryRange: true,
-      });
+    if (!covered || covered === COVERED_REFUSED) error(404, 'Not available here.');
+    return streamStoredMedia({
+      media: covered,
+      imageId,
+      moderatorId,
+      sheet: false,
+      request,
+      audit: () => recordHeldView(moderatorId, imageId, 'web'),
+      auditEveryRange: true,
+    });
   }
 
   const imageId = requireIdParam(locals, params.imageId, HELD_MEDIA_PAGE, 'image id');

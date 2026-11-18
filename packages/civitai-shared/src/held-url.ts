@@ -129,8 +129,9 @@ export function heldUrlSql(url: string): string {
 
 /** The ids `CSAM_REPORT_LISTED_IMAGE_IDS_SQL` lists, as bigints, so a join on "Image".id can use its
  *  primary key. An entry that is not a number lists nothing. */
-const LISTED_IMAGE_IDS_SQL = `SELECT (rl_ids.id)::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids
-  WHERE rl_ids.id ~ '^[0-9]{1,18}$'`;
+// The CASE, not a WHERE: Postgres may run the cast before a WHERE's pattern test.
+const LISTED_IMAGE_IDS_SQL = `SELECT CASE WHEN rl_ids.id ~ '^[0-9]{1,18}$' THEN (rl_ids.id)::bigint END
+  FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids`;
 
 /**
  * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete

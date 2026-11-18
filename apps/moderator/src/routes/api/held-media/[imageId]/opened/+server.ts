@@ -12,7 +12,11 @@ import { getHeldMedia, HELD_MEDIA_PAGE, type HeldMedia } from '$lib/server/held-
 // the database; the page names only the image.
 export const POST: RequestHandler = async ({ params, locals, request, url }) => {
   // The covered view's moderators too, for the images it would serve them.
-  const covered = !!locals.user && !canAccess(locals.user, HELD_MEDIA_PAGE) && coveredViewEnabled();
+  const covered =
+    !!locals.user &&
+    locals.heldCredential !== 'sheet' &&
+    !canAccess(locals.user, HELD_MEDIA_PAGE) &&
+    coveredViewEnabled();
   const imageId = covered
     ? parseIdParam(params.imageId, 'image id')
     : requireIdParam(locals, params.imageId, HELD_MEDIA_PAGE, 'image id');

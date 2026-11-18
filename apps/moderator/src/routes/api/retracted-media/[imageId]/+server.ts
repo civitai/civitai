@@ -45,9 +45,14 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const moderatorId = locals.user.id;
   const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  // Without the CSAM page's grant, the covered view first: anything blocked but reported bytes.
+  // Without the CSAM page's grant, the covered view first: anything blocked but reported bytes. Only
+  // for a GET of the bytes, which writes its row: a probe or HEAD gets the answer it gets without it,
+  // so neither tells a reported image from an unreported one unrecorded.
   const covered =
-    !csamReview && coveredViewEnabled()
+    !csamReview &&
+    coveredViewEnabled() &&
+    request.method === 'GET' &&
+    url.searchParams.get('probe') !== '1'
       ? await getCoveredRetractedMedia(imageId, moderatorId)
       : null;
   if (covered === COVERED_REFUSED) error(404, 'Not available here.');

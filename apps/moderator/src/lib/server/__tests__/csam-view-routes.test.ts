@@ -70,14 +70,14 @@ const fetchMock = vi.fn();
 async function call(
   route: (event: never) => unknown,
   path: string,
-  { headers = {} as Record<string, string>, sheet = false } = {}
+  { headers = {} as Record<string, string>, sheet = false, method = 'GET', query = '' } = {}
 ) {
-  const url = new URL(`http://mod.test${path}`);
+  const url = new URL(`http://mod.test${path}${query}`);
   try {
     const res = (await route({
       params: { imageId: '7' },
       url,
-      request: new Request(url, { headers }),
+      request: new Request(url, { headers, method }),
       cookies: { get: () => undefined },
       locals: {
         user: { id: 42, roles: ['moderator:staff'] },
@@ -151,7 +151,9 @@ describe('held media on the covered view', () => {
 
   it('sends no bytes when the row is not written', async () => {
     h.insertModActivity.mockRejectedValue(new Error('down'));
-    expect((await getHeld()).status).toBe(503);
+    const { status, res } = await getHeld();
+    expect(status).toBe(503);
+    expect(res).toBeUndefined();
   });
 
   it('answers reported bytes, or a failed read, as a missing image, touching no storage', async () => {
@@ -161,10 +163,15 @@ describe('held media on the covered view', () => {
     expect(h.insertModActivity).not.toHaveBeenCalled();
   });
 
-  it('answers an image it does not cover as before: no CSAM page, no access', async () => {
+  it('answers an image it does not cover with the same 404 as a reported one', async () => {
     h.getCoveredHeldMedia.mockResolvedValue(null);
-    expect((await getHeld()).status).toBe(403);
+    expect((await getHeld()).status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('answers HEAD without reading the image', async () => {
+    expect((await getHeld({ method: 'HEAD' })).status).toBe(404);
+    expect(h.getCoveredHeldMedia).not.toHaveBeenCalled();
   });
 
   it('is off unless switched on', async () => {
@@ -200,6 +207,23 @@ describe('blocked media on the covered view', () => {
     expect((await getRetracted()).status).toBe(404);
     expect(h.getRetractedMedia).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('sends no bytes when the row is not written', async () => {
+    h.recordRetractedView.mockRejectedValue(new Error('down'));
+    const { status, res } = await getRetracted();
+    expect(status).toBe(503);
+    // The route answers its refusals as JSON: the message, not the image.
+    expect(await res!.json()).toEqual({ message: 'Could not record this view.' });
+  });
+
+  it.each([
+    ['a probe', { query: '?probe=1' }],
+    ['HEAD', { method: 'HEAD' }],
+  ])('answers %s by the existing rules, without the covered read', async (_, opts) => {
+    await getRetracted(opts);
+    expect(h.getCoveredRetractedMedia).not.toHaveBeenCalled();
+    expect(h.getRetractedMedia).toHaveBeenCalledWith(7, { csamReview: false });
   });
 
   it('falls back to the existing rules for an image it does not cover', async () => {

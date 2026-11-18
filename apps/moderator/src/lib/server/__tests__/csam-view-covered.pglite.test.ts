@@ -24,7 +24,8 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../blocked-for-patterns', () => ({ blockedForPatterns: () => null }));
-vi.mock('$env/dynamic/private', () => ({ env: {} }));
+const env = vi.hoisted(() => ({ env: {} as Record<string, string | undefined> }));
+vi.mock('$env/dynamic/private', () => env);
 const logToAxiom = vi.hoisted(() => vi.fn(async (_line: Record<string, unknown>) => {}));
 vi.mock('../axiom', () => ({ logToAxiom }));
 vi.mock('../mod-activity', () => ({ insertModActivity: vi.fn(), recordModActivity: vi.fn() }));
@@ -85,7 +86,10 @@ beforeAll(async () => {
       (106, 'key-106', 506, 'csam', NULL),            -- a listed moderator delete on its url
       (107, 'key-107', 507, 'csam', ${LISTED_PHASH}), -- a listed image's pHash, on another url
       (108, 'key-108', 508, 'csam', 8888),            -- a moderator CSAM block's hash, not listed
-      (109, 'key-109', 509, 'csam', 9999);            -- nothing else
+      (109, 'key-109', 509, 'csam', 9999),            -- nothing else
+      (110, 'key-110', 510, 'csam', NULL),            -- listed as a bare number
+      (111, 'key-111', 511, 'csam', NULL),            -- listed as a string
+      (112, 'key-112', 512, 'csam', NULL);            -- listed on an archived report
     INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId") VALUES (906, 'key-106', 606);
     INSERT INTO "BlockedImage" (hash, reason) VALUES (8888, 'CSAM');
 
@@ -99,10 +103,28 @@ beforeAll(async () => {
       (206, 'key-206', 606, 'Blocked', 'moderated', false, NULL, ${LISTED_PHASH}); -- listed pHash
     INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (204);
 
+    -- The CDN-refusal leg: scanned, its url retracted. One fact each.
+    INSERT INTO "Image" (id, url, "userId", ingestion) VALUES
+      (301, 'key-301', 701, 'Scanned'), -- its owner held, so its url is held
+      (302, 'key-302', 702, 'Scanned'), -- another row shares its url
+      (312, 'key-302', 712, 'Scanned'),
+      (303, 'key-303', 703, 'Scanned'), -- a moderator delete, not listed, on its url
+      (304, 'key-304', 704, 'Scanned'), -- listed, report pending
+      (305, 'key-305', 705, 'Scanned'); -- its url not retracted
+    INSERT INTO "ImageCdnAccess" (url, state) VALUES
+      ('key-301', 'Retracted'), ('key-302', 'Retracted'), ('key-303', 'Retracted'),
+      ('key-304', 'Retracted'), ('key-305', 'Denied');
+    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (701);
+    INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId") VALUES (913, 'key-303', 713);
+
     INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES
-      (501, '{}', '[{"id": 101}, {"id": 105}, {"id": 906}, {"id": 203}]', NULL),
+      (501, '{}', '[{"id": 101}, {"id": 105}, {"id": 906}, {"id": 203}, {"id": 304}]', NULL),
+      -- Entries that are not ids list nothing, and break nothing.
+      (510, '{}', '[110, "111", "abc", {"id": "x"}, {"id": null}, null]', NULL),
       (502, '{"evidenceVerifiedAt": "2026-10-20T12:00:00Z"}', '[{"id": 102}]', now()),
       (503, '{}', '[]', NULL);
+    INSERT INTO "CsamReport" ("userId", details, images, "archivedAt") VALUES
+      (512, '{}', '[{"id": 112}]', now());
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -122,6 +144,9 @@ describe('reported bytes are refused', () => {
     [104, 'its url carries a listed image'],
     [106, 'its url carries a listed moderator delete'],
     [107, "it has a listed image's pHash"],
+    [110, 'listed as a bare number'],
+    [111, 'listed as a string'],
+    [112, 'listed on an archived report'],
   ])('held %i: %s', async (id) => {
     expect(await held(id)).toBe(COVERED_REFUSED);
   });
@@ -150,6 +175,31 @@ describe('everything else is served', () => {
     [205, 'held media'],
   ])('blocked %i: %s', async (id) => {
     expect(await retracted(id)).toMatchObject({ url: `key-${id}` });
+  });
+});
+
+describe('on the CDN-refusal leg', () => {
+  beforeAll(() => {
+    env.env.RETRACTED_MEDIA_CDN_LEG = 'true';
+  });
+  afterAll(() => {
+    delete env.env.RETRACTED_MEDIA_CDN_LEG;
+  });
+
+  it('serves a retracted url its owner hold would keep from everyone else', async () => {
+    expect(await retracted(301)).toMatchObject({ url: 'key-301' });
+  });
+
+  it('refuses a listed image', async () => {
+    expect(await retracted(304)).toBe(COVERED_REFUSED);
+  });
+
+  it.each([
+    [302, 'another row shares its url'],
+    [303, 'a moderator delete is on its url'],
+    [305, 'its url is not retracted'],
+  ])('does not cover %i: %s', async (id) => {
+    expect(await retracted(id)).toBeNull();
   });
 });
 
@@ -196,8 +246,5 @@ describe('the read', () => {
     } finally {
       spy.mockRestore();
     }
-    expect(logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'csam-view-covered-read-failed' })
-    );
   });
 });

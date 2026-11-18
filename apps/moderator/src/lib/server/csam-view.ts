@@ -35,6 +35,7 @@ type Trx = Parameters<Parameters<ReturnType<typeof dbWrite.transaction>['execute
  *  the timeout included, refuses. */
 async function coveredRead<T extends { listed: boolean }>(
   imageId: number,
+  moderatorId: number,
   read: (trx: Trx) => Promise<T | undefined>
 ): Promise<Covered<Omit<T, 'listed'>>> {
   try {
@@ -43,14 +44,21 @@ async function coveredRead<T extends { listed: boolean }>(
       return read(trx);
     });
     if (!row) return null;
-    if (row.listed) return COVERED_REFUSED;
+    if (row.listed) {
+      void logToAxiom({
+        name: 'csam-view-covered-refused',
+        type: 'info',
+        payload: { imageId, moderatorId },
+      });
+      return COVERED_REFUSED;
+    }
     const { listed: _, ...rest } = row;
     return rest;
   } catch (e) {
     void logToAxiom({
       name: 'csam-view-covered-read-failed',
       type: 'error',
-      payload: { imageId, message: e instanceof Error ? e.message : String(e) },
+      payload: { imageId, moderatorId, message: e instanceof Error ? e.message : String(e) },
     });
     return COVERED_REFUSED;
   }
@@ -58,7 +66,7 @@ async function coveredRead<T extends { listed: boolean }>(
 
 /** Held media for a moderator on the covered view. */
 export function getCoveredHeldMedia(imageId: number, moderatorId: number) {
-  return coveredRead<HeldMedia & { listed: boolean }>(imageId, (trx) =>
+  return coveredRead<HeldMedia & { listed: boolean }>(imageId, moderatorId, (trx) =>
     trx
       .selectFrom('Image as i')
       .select(['i.url', 'i.type', 'i.mimeType'])
@@ -75,7 +83,7 @@ export async function getCoveredRetractedMedia(
   imageId: number,
   moderatorId: number
 ): Promise<Covered<RetractedMedia>> {
-  const row = await coveredRead(imageId, (trx) =>
+  const row = await coveredRead(imageId, moderatorId, (trx) =>
     trx
       .selectFrom('Image as i')
       .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])

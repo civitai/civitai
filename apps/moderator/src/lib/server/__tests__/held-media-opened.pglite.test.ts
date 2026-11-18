@@ -153,6 +153,24 @@ describe('POST /api/held-media/[imageId]/opened', () => {
       expect(await rows()).toHaveLength(1);
     });
 
+    it('never covers the sheet credential', async () => {
+      await served(7);
+      const url = new URL('http://mod.test/api/held-media/7/opened');
+      const status = await Promise.resolve(
+        POST({
+          params: { imageId: '7' },
+          url,
+          request: new Request(url, { method: 'POST', headers: { origin: 'http://mod.test' } }),
+          locals: { user: { id: 42 }, grants: {}, heldCredential: 'sheet' },
+        } as never)
+      ).then(
+        (r: Response) => r.status,
+        (e: unknown) => (e as { status?: number }).status
+      );
+      expect(status).toBe(403);
+      expect(covered.read).not.toHaveBeenCalled();
+    });
+
     it.each([
       ['reported', 'covered-refused'],
       ['not covered', null],
