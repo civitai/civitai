@@ -28,6 +28,14 @@ vi.mock('@electric-sql/pglite', async (importOriginal) => {
       return db as never;
     }
 
+    // Idempotent, unlike the package's (which throws "PGlite is closed"): files that close the
+    // PREVIOUS test's instance in their next `beforeEach` (`await db?.close()`), or close in
+    // `afterAll`, find it already closed by the hook below.
+    override async close() {
+      if (this.closed) return;
+      await super.close();
+    }
+
     override async clone() {
       const copy = await super.clone();
       trackPglite(copy);

@@ -27,9 +27,12 @@ describe('pglite-close-on-finish', () => {
     expect(openTrackedPglites()).toBe(4);
   });
 
-  it('closes what that test opened once it has finished (positive control)', () => {
+  it('closes what that test opened once it has finished (positive control)', async () => {
     expect(fromTest.closed).toBe(true);
     expect(fromCreate.closed).toBe(true);
+    // A file that closes the previous test's instance itself (`await db?.close()` in its next
+    // beforeEach, or in afterAll) must not throw on one already closed here.
+    await expect(fromTest.close()).resolves.toBeUndefined();
   });
 
   it('keeps the file-scoped and kept instances open for later tests (negative control)', async () => {
