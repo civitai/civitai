@@ -35,6 +35,8 @@ describe('referee ClickHouse queries', () => {
     max_execution_time?: number;
     send_progress_in_http_headers?: number;
     http_headers_progress_interval_ms?: string;
+    max_threads?: number;
+    priority?: string;
   };
   const settingsFor = (sql: string) =>
     (
@@ -77,6 +79,20 @@ describe('referee ClickHouse queries', () => {
     // With the idle timer kept quiet, only this stops the client waiting on an overrunning query.
     for (const [arg] of query.mock.calls)
       expect((arg as { abort_signal?: unknown }).abort_signal).toBeInstanceOf(AbortSignal);
+  });
+
+  // Both queries scan the whole season every hour; at the server's default thread count they starve
+  // interactive reads. Literal values, so a change to the shared constant is a visible decision.
+  it.each([
+    ['an hourly run', '2026-11-05T12:07:00.000Z'],
+    ['the nightly whole-season run', '2026-11-05T03:07:00.000Z'],
+  ])('caps threads and runs at low priority on %s', async (_, at) => {
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    query.mockClear();
+    await queryReferee(EVENT, refereeWindow(EVENT, 'live', new Date(at)));
+    expect(query).toHaveBeenCalledTimes(2);
+    for (const sql of [eventPointsRefereeUsersSql, eventPointsRefereeSql])
+      expect(settingsFor(sql)).toMatchObject({ max_threads: 8, priority: '10' });
   });
 
   // floor() of a sub-second remainder is 0, which ClickHouse reads as no cap at all.
