@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RULING_AUTO_HIDE_MS, createAutoHide } from '$lib/auto-hide';
+import { closeDismiss, dismissShowing, type DismissState } from '$lib/optimistic-dismiss';
 import { answerForKey, answerForKeyPress, keyHints, optionsOnScreen, spaceSkips } from './keys';
 
 const options = [
@@ -122,5 +124,22 @@ describe('a pending skill-check ruling', () => {
     expect(optionsOnScreen({ ...queue, rulingPending: false })).toBe(options);
     expect(optionsOnScreen(apprentice)).toBe(options);
     expect(spaceSkips({ ...queue, rulingPending: false })).toBe(true);
+  });
+});
+
+describe('a ruling left alone', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('hides itself after 8 seconds, which frees the answer keys', () => {
+    vi.useFakeTimers();
+    const ruling: DismissState = { closed: null, failed: null };
+    createAutoHide(RULING_AUTO_HIDE_MS, () => closeDismiss(ruling, 'ruling'));
+    const keys = () =>
+      optionsOnScreen({ question: { options }, rulingPending: dismissShowing('ruling', ruling) });
+
+    vi.advanceTimersByTime(RULING_AUTO_HIDE_MS - 1);
+    expect(keys()).toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(keys()).toBe(options);
   });
 });

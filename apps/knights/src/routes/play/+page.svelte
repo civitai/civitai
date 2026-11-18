@@ -24,16 +24,8 @@
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
-  import {
-    DISMISS_FAILED,
-    closeNotice,
-    dismissFailedOn,
-    noticeKey,
-    noticeShowing,
-    settleNotice,
-    syncNotice,
-    type NoticeState,
-  } from './level-notice';
+  import { dismissible } from '$lib/optimistic-dismiss.svelte';
+  import { noticeKey } from './level-notice';
   import { closeGuide, guideShowing, openGuide, settleGuide, type GuideState } from './guide-dialog';
   import {
     MAX_EXCLUDED,
@@ -82,8 +74,13 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
-  // The ruling toast floats over the answer row, so nothing answers or skips until Understood.
-  let rulingPending = $derived(data.notices.length > 0);
+  // The ruling toast floats over the answer row, so nothing answers or skips until it is dismissed.
+  const rulingNotice = dismissible(
+    () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
+    { noticeFailed: true }
+  );
+  let rulingPending = $derived(rulingNotice.showing);
+  const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
   // Votes posted in the background that the page's data does not hold yet; the Watch and the header count them at once.
@@ -96,17 +93,11 @@
     inFlight.landed = 0;
     inFlight.landedOn = null;
   });
-  let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
+  // The level card and the rank-up dialog; `showing` decides whether one is drawn, while the `noticeShown` fields keep
+  // following `levelNotice`, the server's notice, so an answer given right after "Onward" still records the card it appeared with.
+  const progress = dismissible(() => (data.progress ? noticeKey(data.progress) : null), { progressFailed: true });
+  let dialogOpen = $derived(whatsNew.showing || guideOpen || (data.progress?.kind === 'rank' && progress.showing));
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
-  // Whether the card is drawn; the `noticeShown` fields keep following `levelNotice`, the server's notice, so an answer
-  // given right after "Onward" still records the card it appeared with.
-  const notice = $state<NoticeState>({ closed: null, failed: null });
-  let sentNotice = $derived(data.progress?.kind === 'level' ? noticeKey(data.progress) : null);
-  $effect(() => {
-    const key = sentNotice;
-    untrack(() => syncNotice(notice, key));
-  });
-  let levelToastShowing = $derived(noticeShowing(sentNotice, notice));
 
   // Header-menu dialogs (feedback, restart career) don't set `dialogOpen`; the reason picker is this page's own.
   const headerDialogOpen = () =>
@@ -226,22 +217,6 @@
       } finally {
         submitting = false;
         picked = null;
-      }
-    };
-  };
-
-  // Not through `submitting`: the answers stay live while the dismissal is in flight.
-  const submitDismissProgress: SubmitFunction = () => {
-    const key = sentNotice;
-    if (key) closeNotice(notice, key);
-    return async ({ result, update }) => {
-      const stored = result.type === 'success' || result.type === 'redirect';
-      if (key) settleNotice(notice, key, stored);
-      // An unanswered post would otherwise render the error page over the round.
-      if (result.type === 'error') {
-        await applyAction({ type: 'failure', status: 500, data: { message: DISMISS_FAILED, progressFailed: true } });
-      } else {
-        await update();
       }
     };
   };
@@ -640,17 +615,22 @@
 
 {#snippet ruling(anchored: boolean)}
   {#if rulingPending}
-    <RulingToast notices={data.notices} message={form?.noticeFailed ? form.message : null} {submitting} {submit} {anchored} />
+    <RulingToast
+      notices={data.notices}
+      message={form?.noticeFailed && rulingNotice.failed ? form.message : null}
+      submit={rulingNotice.submit}
+      {anchored}
+    />
   {/if}
 {/snippet}
 
 {#snippet levelToast(floating: boolean)}
-  {#if levelNotice && levelToastShowing}
+  {#if levelNotice && progress.showing}
     <LevelToast
       level={levelNotice.milestoneLevel ?? levelNotice.level}
       xpToNext={(levelNotice.milestoneLevel ?? levelNotice.level) === data.status.level ? data.status.xpForNextLevel - data.status.xpIntoLevel : null}
-      message={form?.progressFailed && dismissFailedOn(notice, sentNotice) ? form.message : null}
-      submit={submitDismissProgress}
+      message={form?.progressFailed && progress.failed ? form.message : null}
+      submit={progress.submit}
       {floating}
       milestone={levelNotice.milestone ?? null}
       gold={levelNotice.levelGold ?? 0}
@@ -659,12 +639,11 @@
 {/snippet}
 
 <div class="play">
-  {#if data.resetNotice}
+  {#if careerReset.showing}
     <ResetNotice
       smites={data.status.maxSmites}
-      message={form?.resetNoticeFailed ? form.message : null}
-      {submitting}
-      {submit}
+      message={form?.resetNoticeFailed && careerReset.failed ? form.message : null}
+      submit={careerReset.submit}
     />
   {:else}
   {#if data.mode === 'queue' && data.apprenticeMeter}
@@ -888,7 +867,7 @@
     {submitting}
     submit={submitGuide}
   />
-{:else if data.progress?.kind === 'rank'}
+{:else if data.progress?.kind === 'rank' && progress.showing}
   <RankUpDialog
     rank={data.progress.rank}
     level={data.progress.level}
@@ -896,9 +875,8 @@
     goldMultiplier={data.progress.goldMultiplier}
     previous={data.progress.previous}
     badge={data.badges.large[data.progress.rank]}
-    message={form?.progressFailed ? form.message : null}
-    {submitting}
-    {submit}
+    message={form?.progressFailed && progress.failed ? form.message : null}
+    submit={progress.submit}
   />
 {/if}
 

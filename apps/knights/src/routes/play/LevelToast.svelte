@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { LEVEL_AUTO_HIDE_MS, autoHide } from '$lib/auto-hide';
   import { count } from '$lib/format';
   import '$lib/overlay.css';
 
@@ -23,9 +24,17 @@
     milestone?: string | null;
     gold?: number;
   } = $props();
+
+  let form = $state<HTMLFormElement>();
 </script>
 
-<section class="toast" class:floating role="status" aria-label="Level up">
+<section
+  class="toast"
+  class:floating
+  role="status"
+  aria-label="Level up"
+  use:autoHide={{ ms: LEVEL_AUTO_HIDE_MS, onhide: () => form?.requestSubmit() }}
+>
   <span class="ov-crest crest">{level}</span>
   <div class="body">
     <p class="ov-eyebrow">{milestone ? 'Milestone' : 'Level up'}</p>
@@ -34,7 +43,7 @@
     {#if xpToNext !== null}<p class="sub">{count(xpToNext)} XP to level {level + 1}</p>{/if}
     {#if message}<p class="notice" role="alert">{message}</p>{/if}
   </div>
-  <form method="POST" action="?/dismissProgress" use:enhance={submit}>
+  <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
     <button type="submit" class="dismiss">Onward</button>
   </form>
 </section>

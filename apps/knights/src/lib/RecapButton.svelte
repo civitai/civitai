@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import type { SubmitFunction } from '@sveltejs/kit';
   import Icon from './Icon.svelte';
+  import { closeDismiss, dismissShowing, settleDismiss, syncDismiss, type DismissState } from './optimistic-dismiss';
   import RecapDialog from './RecapDialog.svelte';
   import type { Recap } from './server/daily/daily.service';
 
@@ -11,7 +12,8 @@
   type Loaded = { recap: Recap | null };
   let loaded = $state<Loaded | null>(null);
   let loading = $state(false);
-  let submitting = $state(false);
+  // Closed at once; `loaded` is kept until the day is recorded, so a refused post brings the same recap back.
+  const dismiss = $state<DismissState>({ closed: null, failed: null });
   let message = $state<string | null>(null);
   let failed = $state(false);
 
@@ -19,6 +21,7 @@
   async function show() {
     if (loading) return;
     loading = true;
+    syncDismiss(dismiss, null);
     message = null;
     failed = false;
     try {
@@ -44,16 +47,19 @@
       if (begin && page.url.pathname !== '/play') void goto('/play');
       return;
     }
-    submitting = true;
+    closeDismiss(dismiss, 'recap');
     fetch('/recap', { method: 'POST', body: formData })
       .then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
+        settleDismiss(dismiss, 'recap', true);
         loaded = null;
         await invalidate('app:recap');
         if (begin && page.url.pathname !== '/play') await goto('/play');
       })
-      .catch(() => (message = 'Could not save that. Try again.'))
-      .finally(() => (submitting = false));
+      .catch(() => {
+        settleDismiss(dismiss, 'recap', false);
+        message = 'Could not save that. Try again.';
+      });
   };
 </script>
 
@@ -69,14 +75,8 @@
   {#if unseen}<span class="dot" aria-hidden="true"></span>{/if}
 </button>
 
-{#if loaded}
-  <RecapDialog
-    recap={loaded.recap}
-    action="/recap"
-    {message}
-    {submitting}
-    {submit}
-  />
+{#if loaded && dismissShowing('recap', dismiss)}
+  <RecapDialog recap={loaded.recap} action="/recap" {message} {submit} />
 {/if}
 
 <style>

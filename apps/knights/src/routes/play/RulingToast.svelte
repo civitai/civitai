@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import { RULING_AUTO_HIDE_MS, autoHide } from '$lib/auto-hide';
   import { noticeTone } from '$lib/chrome';
   import '$lib/overlay.css';
   import type { PageData } from './$types';
@@ -8,26 +9,30 @@
   let {
     notices,
     message,
-    submitting,
     submit,
     anchored,
   }: {
     notices: PageData['notices'];
     /** Why the last dismissal failed, if it did. */
     message: string | null;
-    submitting: boolean;
     submit: SubmitFunction;
     /** Over the answer row (a bottom sheet on phones); otherwise in the page flow, where no answer row is drawn. */
     anchored: boolean;
   } = $props();
 
   let tone = $derived(noticeTone(notices));
-
-  // Understood is the only way on, so Enter dismisses at once.
-  const focusOnMount = (node: HTMLButtonElement) => node.focus({ preventScroll: true });
+  let form = $state<HTMLFormElement>();
 </script>
 
-<section class="toast" class:anchored class:calm={tone === 'calm'} role="status" aria-label="The Order's ruling">
+<!-- Understood is focused so Enter dismisses; left alone, it goes by the same form after RULING_AUTO_HIDE_MS. -->
+<section
+  class="toast"
+  class:anchored
+  class:calm={tone === 'calm'}
+  role="status"
+  aria-label="The Order's ruling"
+  use:autoHide={{ ms: RULING_AUTO_HIDE_MS, onhide: () => form?.requestSubmit(), focus: 'button[type="submit"]' }}
+>
   <div class="toast-body">
     {#each notices as notice (notice.key)}
       <div class="check-notice" class:close={notice.consequence === 'close'}>
@@ -49,8 +54,8 @@
       <p>{message}</p>
     {/if}
   </div>
-  <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-    <button type="submit" disabled={submitting} use:focusOnMount>Understood</button>
+  <form method="POST" action="?/dismissNotices" use:enhance={submit} bind:this={form}>
+    <button type="submit">Understood</button>
   </form>
 </section>
 
