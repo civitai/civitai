@@ -10,7 +10,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 // has a TTL; the every-5-minute reconcile (reconcileAllTurf) rebuilds them from Postgres.
 
 export function turfKeys(event: string) {
-  const root = `${REDIS_KEYS.EVENT.TURF}:{${event}}` as const;
+  const root = `${REDIS_KEYS.EVENT.TURF}:${event}` as const;
   return {
     // `Image:{id}` -> TurfEntry, only for images with a leader.
     map: `${root}:map` as const,

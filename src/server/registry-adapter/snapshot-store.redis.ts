@@ -48,6 +48,7 @@ export function createRedisSnapshotStore(
     const results = await call('retain.states', () =>
       client
         .multi()
+        .expire(snapshot, SNAPSHOT_RETENTION_SECONDS)
         .lRem(states, 0, digest)
         .lPush(states, digest)
         .lRange(states, keep, -1)

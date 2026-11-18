@@ -181,6 +181,7 @@ export async function mintReviewBatch(
         .multi()
         .sAdd(keySetKey(keyId), hash)
         .expire(keySetKey(keyId), REVIEW_BATCH_TTL_SECONDS)
+        .set(batchKey(hash), JSON.stringify(record), { EX: REVIEW_BATCH_TTL_SECONDS })
         .exec()
     );
     await reviewBatchCall('mint.batch', () =>
