@@ -24,6 +24,7 @@ import { classifyBlockOutput, isUnrestrictedOutput } from './block-output-restri
 import type { BlockOutputWorkflowFacts } from './block-output-restriction';
 import {
   applyServingRules,
+  restrictWhileServingUnknown,
   isPrivateGenerationWorkflow,
   mintBlockOutput,
   type BlockOutputView,
@@ -339,6 +340,7 @@ function classifyOutputs(
       // that does arrive still meets every ceiling check.
       unratedDelivered: neverRatedVideo && m.type === 'video',
     });
+    if (view.servingUnknown) return restrictWhileServingUnknown(output);
     if (view.mint && mintStep) {
       return mintBlockOutput(output, m, mintStep, { ...view, mint: view.mint });
     }

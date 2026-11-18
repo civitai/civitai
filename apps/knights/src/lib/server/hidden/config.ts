@@ -1,3 +1,5 @@
+import type { StoredSettings } from '../settings/stored';
+
 export type HiddenCheckSettings = {
   rate: number;
   failureWindowHours: number;
@@ -10,7 +12,7 @@ export type HiddenCheckSettings = {
   retireFailureRate: number;
 };
 
-/** Used when the environment does not set a value. */
+/** Used when neither the moderator Config page nor the environment sets a value. */
 export const DEFAULT_HIDDEN_CHECKS: HiddenCheckSettings = {
   rate: 0.05,
   failureWindowHours: 24,
@@ -25,34 +27,49 @@ const read = (raw: string | undefined, fallback: number, valid: (n: number) => b
   return Number.isFinite(value) && valid(value) ? value : fallback;
 };
 
-/** Operator-tuned values come from the environment (see `.env.example`), not from the source. */
-export function hiddenCheckSettings(env: Record<string, string | undefined>): HiddenCheckSettings {
+/** A value saved on the moderator Config page wins (`stored`); without one, the environment (see `.env.example`), then the default. */
+export function hiddenCheckSettings(
+  env: Record<string, string | undefined>,
+  stored: StoredSettings = {}
+): HiddenCheckSettings {
   return {
-    rate: read(env.KNIGHTS_HIDDEN_CHECK_RATE, DEFAULT_HIDDEN_CHECKS.rate, (n) => n >= 0 && n <= 1),
-    failureWindowHours: read(
-      env.KNIGHTS_HIDDEN_CHECK_FAILURE_WINDOW_HOURS,
-      DEFAULT_HIDDEN_CHECKS.failureWindowHours,
-      (n) => n > 0
-    ),
-    severeDistance: read(
-      env.KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE,
-      DEFAULT_HIDDEN_CHECKS.severeDistance,
-      (n) => Number.isInteger(n) && n > 0
-    ),
-    settleDelayMinutes: read(
-      env.KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES,
-      DEFAULT_HIDDEN_CHECKS.settleDelayMinutes,
-      (n) => n >= 0
-    ),
-    retireMinAnswers: read(
-      env.KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS,
-      DEFAULT_HIDDEN_CHECKS.retireMinAnswers,
-      (n) => Number.isInteger(n) && n > 0
-    ),
-    retireFailureRate: read(
-      env.KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE,
-      DEFAULT_HIDDEN_CHECKS.retireFailureRate,
-      (n) => n > 0 && n <= 1
-    ),
+    rate:
+      stored.hiddenCheckRate ??
+      read(env.KNIGHTS_HIDDEN_CHECK_RATE, DEFAULT_HIDDEN_CHECKS.rate, (n) => n >= 0 && n <= 1),
+    failureWindowHours:
+      stored.hiddenCheckFailureWindowHours ??
+      read(
+        env.KNIGHTS_HIDDEN_CHECK_FAILURE_WINDOW_HOURS,
+        DEFAULT_HIDDEN_CHECKS.failureWindowHours,
+        (n) => n > 0
+      ),
+    severeDistance:
+      stored.hiddenCheckSevereDistance ??
+      read(
+        env.KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE,
+        DEFAULT_HIDDEN_CHECKS.severeDistance,
+        (n) => Number.isInteger(n) && n > 0
+      ),
+    settleDelayMinutes:
+      stored.hiddenCheckSettleDelayMinutes ??
+      read(
+        env.KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES,
+        DEFAULT_HIDDEN_CHECKS.settleDelayMinutes,
+        (n) => n >= 0
+      ),
+    retireMinAnswers:
+      stored.hiddenCheckRetireMinAnswers ??
+      read(
+        env.KNIGHTS_HIDDEN_CHECK_RETIRE_MIN_ANSWERS,
+        DEFAULT_HIDDEN_CHECKS.retireMinAnswers,
+        (n) => Number.isInteger(n) && n > 0
+      ),
+    retireFailureRate:
+      stored.hiddenCheckRetireFailureRate ??
+      read(
+        env.KNIGHTS_HIDDEN_CHECK_RETIRE_FAILURE_RATE,
+        DEFAULT_HIDDEN_CHECKS.retireFailureRate,
+        (n) => n > 0 && n <= 1
+      ),
   };
 }

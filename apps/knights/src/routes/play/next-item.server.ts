@@ -73,7 +73,7 @@ export async function pickItem(
     rank,
     secret,
     questionKey: feed.question.key,
-    rate: hiddenSettings().rate,
+    rate: (await hiddenSettings()).rate,
     exclude: skipped?.hidden,
     slot,
   });
