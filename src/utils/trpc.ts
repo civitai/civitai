@@ -342,8 +342,9 @@ export const NEVER_BATCH_PROCEDURES: ReadonlySet<string> = new Set([
  *  - we're in an authenticated browser (see `isAuthedBrowser` — anon stays cacheable),
  *  - the procedure is NOT edge-cacheable for authed sessions (see `CACHEABLE_PROCEDURES`),
  *  - the procedure is NOT excluded for a non-caching reason (see `NEVER_BATCH_PROCEDURES`),
- *  - the procedure is NOT a block-token query (see `BLOCK_TOKEN_QUERY_PROCEDURES` — the batch link sends
- *    queries as GET, which would put a block token in the URL),
+ *  - the procedure is NOT a block-token or private-URL query (`BLOCK_TOKEN_QUERY_PROCEDURES`,
+ *    `PRIVATE_URL_QUERY_PROCEDURES` — the batch link sends queries as GET, which would put the
+ *    token or URL in the request URL),
  *  - the caller didn't opt out via `context.skipBatch === true`,
  *  - its encoded input fits the batch link's URL cap (`isTooLargeToBatch` — otherwise it
  *    would trip "Input is too big for a single dispatch"; excluded ops fall to the
@@ -362,6 +363,7 @@ export function shouldBatch(op: {
     !CACHEABLE_PROCEDURES.has(op.path) &&
     !NEVER_BATCH_PROCEDURES.has(op.path) &&
     !BLOCK_TOKEN_QUERY_PROCEDURES.has(op.path) &&
+    !PRIVATE_URL_QUERY_PROCEDURES.has(op.path) &&
     op.context.skipBatch !== true &&
     !isTooLargeToBatch(op)
   );

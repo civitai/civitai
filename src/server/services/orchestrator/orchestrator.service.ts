@@ -125,7 +125,8 @@ function imageScanSteps({
  */
 export async function submitSearchUploadScan({ blobUrl }: { blobUrl: string }) {
   // Backstop: the caller has already checked it is an uploaded blob; nothing else is scanned here.
-  if (!isTrustedOrchestratorUrl(blobUrl)) throw new ImageIngestionUrlBlockedError(blobUrl);
+  if (!isTrustedOrchestratorUrl(blobUrl))
+    throw new Error('search upload scan refused: not an orchestrator blob'); // never the URL
   const body: WorkflowTemplate = {
     externalId: randomUUID(),
     metadata: { searchUpload: true },

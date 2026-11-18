@@ -51,6 +51,8 @@ export type SearchUploadRecord = {
   scan?: Exclude<SearchUploadScan, { state: 'pending' }>;
   /** The blob's verdict once rated, so a later page's failed read cannot undo a pass. */
   blobBlockedReason?: string | null;
+  /** The blob's verdict first came in after the timeout. */
+  blobLate?: boolean;
 };
 
 const hashUrl = (url: string) => createHash('sha256').update(url).digest('hex');
@@ -207,6 +209,7 @@ async function blobFor(uploadId: string, record: SearchUploadRecord) {
   const blob = await readBlobState(record.blobId);
   if (blob.verdict !== 'rated') return { verdict: 'pending' as const };
   record.blobBlockedReason = blob.blockedReason;
+  record.blobLate = Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS;
   await saveRecord(uploadId, record);
   return { verdict: 'rated' as const, blockedReason: blob.blockedReason };
 }
@@ -222,13 +225,14 @@ async function decide(uploadId: string, record: SearchUploadRecord, isModerator:
   const scan = await scanFor(uploadId, record);
   const blob =
     scan.state === 'done' ? await blobFor(uploadId, record) : { verdict: 'pending' as const };
-  const decision: SearchUploadDecision = finishedLate(scan, record.createdAt)
-    ? { verdict: 'refused', reason: 'timed-out' }
-    : searchUploadVerdict(scan, blob, {
-        isModerator,
-        faceAnimeMin: searchUploadFaceAnimeMin(),
-        timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
-      });
+  const decision: SearchUploadDecision =
+    finishedLate(scan, record.createdAt) || record.blobLate
+      ? { verdict: 'refused', reason: 'timed-out' }
+      : searchUploadVerdict(scan, blob, {
+          isModerator,
+          faceAnimeMin: searchUploadFaceAnimeMin(),
+          timedOut: Date.now() - record.createdAt > SEARCH_UPLOAD_SCAN_TIMEOUT_MS,
+        });
   if (decision.verdict === 'refused') {
     // The face rule depends on the viewer's moderator view; every other refusal is the image's.
     if (decision.reason !== 'faces')

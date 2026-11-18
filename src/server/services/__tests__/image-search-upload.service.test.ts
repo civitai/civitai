@@ -315,6 +315,21 @@ describe('search upload status and search anchor', () => {
     await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('refuses a blob verdict that first came in after the timeout, without the kept refusal', async () => {
+    blob.readBlobState.mockResolvedValue({ verdict: 'pending' });
+    await status(true);
+    vi.useFakeTimers({ now: Date.now() + SEARCH_UPLOAD_SCAN_TIMEOUT_MS + 1000 });
+    blob.readBlobState.mockResolvedValue({
+      verdict: 'rated',
+      nsfwLevel: 'pg',
+      blockedReason: null,
+      location: null,
+    });
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    store.forEach((_v, k) => k.endsWith(':refused') && store.delete(k));
+    await expect(anchor(true)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it('keeps a timed-out refusal even when the scan later succeeds', async () => {
     wf.getWorkflow.mockResolvedValue({ status: 'processing', steps: [] });
     vi.useFakeTimers({ now: Date.now() + SEARCH_UPLOAD_SCAN_TIMEOUT_MS + 1000 });
