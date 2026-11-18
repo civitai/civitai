@@ -1,8 +1,5 @@
-import { Checkbox, Stack } from '@mantine/core';
-import {
-  useEmailNotificationSettings,
-  useToggleEmailSetting,
-} from '~/components/Notifications/useNotificationSettings';
+import { Stack } from '@mantine/core';
+import { EmailToggle } from '~/components/Notifications/NotificationTypeControl';
 import { systemEmailNotificationTypes } from '~/server/notifications/utils.notifications';
 
 /**
@@ -11,21 +8,12 @@ import { systemEmailNotificationTypes } from '~/server/notifications/utils.notif
  * off, here or by the email's one-click unsubscribe, which writes the same opt-out row.
  */
 export function SystemEmailSettings() {
-  const { emailTypes, isLoading } = useEmailNotificationSettings();
-  const emailMutation = useToggleEmailSetting();
   if (systemEmailNotificationTypes.length === 0) return null;
 
   return (
     <Stack gap="xs">
       {systemEmailNotificationTypes.map(({ type, displayName }) => (
-        <Checkbox
-          key={type}
-          size="sm"
-          label={displayName}
-          checked={emailTypes.includes(type)}
-          disabled={isLoading}
-          onChange={(e) => emailMutation.mutate({ type: [type], enabled: e.target.checked })}
-        />
+        <EmailToggle key={type} type={type} label={displayName} size="sm" />
       ))}
     </Stack>
   );
