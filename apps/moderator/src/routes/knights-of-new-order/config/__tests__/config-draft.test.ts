@@ -166,6 +166,55 @@ describe('confirmations', () => {
   });
 });
 
+describe('harvest rows', () => {
+  it('offers Default / Running / Paused, mapped to the stored harvest boolean', () => {
+    expect(TOGGLE_ROWS.harvest.options.map((o) => [o.value, o.label])).toEqual([
+      ['default', 'Default'],
+      ['on', 'Running'],
+      ['off', 'Paused'],
+    ]);
+    expect(toggleLabel('harvest', false)).toBe('Paused');
+  });
+
+  it('posts the share as a 0-1 rate and an explicit pause, and asks no kill switch confirmation', () => {
+    const seed = settings({ game: { harvestHiddenCheckShare: 0.2 } });
+    const draft = seedDraft(seed);
+    expect(draft.numbers.harvestHiddenCheckShare).toEqual({ text: '20', reset: false });
+    expect(draft.toggles.harvest).toBe('default');
+    draft.numbers.harvestHiddenCheckShare.text = '0';
+    draft.toggles.harvest = 'off';
+    expect(changeCount(seed, draft)).toBe(2);
+    expect(entries(gameFormData(seed, draft, false))).toEqual({
+      harvestHiddenCheckShare: '0',
+      harvest: 'false',
+    });
+    expect(killSwitchChanged(seed, draft)).toBe(false);
+    expect(fieldError('harvestHiddenCheckShare', '120')).toBe('Enter 0 to 100.');
+  });
+
+  it('clears a saved share and names harvest changes in the summary', () => {
+    const seed = settings({ game: { harvestHiddenCheckShare: 0.2, harvest: false } });
+    const draft = seedDraft(seed);
+    draft.numbers.harvestHiddenCheckShare.reset = true;
+    draft.toggles.harvest = 'default';
+    expect(entries(gameFormData(seed, draft, false))).toEqual({
+      'default.harvestHiddenCheckShare': 'true',
+      'default.harvest': 'true',
+    });
+    expect(
+      changeSummary(
+        { enabled: true, sfwRate: 1, nsfwRate: 0.3, game: { harvest: false } },
+        {
+          enabled: true,
+          sfwRate: 1,
+          nsfwRate: 0.3,
+          game: { harvest: true, harvestHiddenCheckShare: 0.1 },
+        }
+      )
+    ).toBe('Harvest: Paused to Running; Rulings used as skill checks: Default to 10%');
+  });
+});
+
 describe('changeSummary', () => {
   it('names what a recorded change moved, in page terms', () => {
     expect(

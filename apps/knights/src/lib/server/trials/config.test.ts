@@ -38,3 +38,28 @@ describe('harvestSettings', () => {
     }
   });
 });
+
+describe('harvestSettings with stored settings', () => {
+  it('lets the stored switch win over the environment either way', () => {
+    expect(harvestSettings({ KNIGHTS_HARVEST: 'off' }, { harvest: true }).paused).toBe(false);
+    expect(harvestSettings({ KNIGHTS_HARVEST: 'on' }, { harvest: false }).paused).toBe(true);
+    expect(harvestSettings({}, { harvest: false }).paused).toBe(true);
+  });
+
+  it('reports no unrecognized environment value while a saved switch decides', () => {
+    expect(harvestSettings({ KNIGHTS_HARVEST: 'paused' }, { harvest: true })).toEqual({
+      paused: false,
+      hiddenCheckShare: 0,
+    });
+  });
+
+  it('lets a stored share win, 0 included, and keeps the environment when none is stored', () => {
+    expect(
+      harvestSettings({ KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE: '0.3' }, { harvestHiddenCheckShare: 0 })
+        .hiddenCheckShare
+    ).toBe(0);
+    expect(
+      harvestSettings({ KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE: '0.3' }, { harvest: true })
+    ).toEqual({ paused: false, hiddenCheckShare: 0.3 });
+  });
+});
