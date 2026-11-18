@@ -2,6 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import { childBrowsingTagIds } from '@civitai/shared';
 import {
   MODELS_SEARCH_INDEX,
+  SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS,
   searchIndexQueueFallbackKey,
 } from '@civitai/shared/search-index-queue';
 import { REDIS_KEYS } from '@civitai/redis';
@@ -241,6 +242,24 @@ describe('spoke queueModelsForImageChildTagChanges', () => {
       await run();
 
       expect(await parked()).toEqual([{ key: MODELS_PARKED, value: [5, 100] }]);
+    });
+
+    it('adds nothing to a row at the cap, and logs it', async () => {
+      await db.query(
+        `INSERT INTO "KeyValue" SELECT $1, jsonb_agg(g) FROM generate_series(1, $2::int) g`,
+        [MODELS_PARKED, SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS]
+      );
+      vi.mocked(syncSearchIndexBulk).mockRejectedValue(new Error('main app down'));
+
+      await run();
+
+      const [row] = await parked();
+      expect(row.value).toHaveLength(SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS);
+      expect(row.value.at(-1)).toBe(SEARCH_INDEX_QUEUE_FALLBACK_MAX_IDS);
+      expect(vi.mocked(logAxiomError).mock.calls.at(-1)?.[1]).toMatchObject({
+        name: 'search-index-park',
+        modelIds: [100],
+      });
     });
 
     it('parks nothing when the retry queues them', async () => {

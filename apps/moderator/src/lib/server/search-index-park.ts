@@ -9,8 +9,8 @@ import { dbWrite } from './db';
 
 /**
  * For a models-index requeue the main app did not take: parks the ids in the main app's search-index
- * parking lot, which its `search-index-queue-drain` job replays onto the queue every 5 minutes. Never
- * throws: it follows a committed write.
+ * parking lot, which its `search-index-queue-drain` job replays onto the queue. Never throws: it
+ * follows a committed write.
  */
 export async function parkModelSearchUpdates(modelIds: number[]): Promise<void> {
   const ids = [...new Set(modelIds)];

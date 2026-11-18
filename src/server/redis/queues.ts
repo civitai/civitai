@@ -150,7 +150,7 @@ function getNewBucket(key: string) {
 
 const QUEUE_ADD_CHUNK_SIZE = 10000;
 
-/** Parks enqueues sysRedis refused in Postgres, the store that is, by construction, not the one failing. */
+/** Parks enqueues sysRedis refused in Postgres. */
 async function persistDroppedEnqueue(key: string, ids: number[]) {
   if (!ids.length) return;
   try {
