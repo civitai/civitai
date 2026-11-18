@@ -203,7 +203,7 @@ describe('getAllImagesIndex on the feed service', () => {
       });
     });
 
-    it('asks the feed for the hub as resolved for this viewer', async () => {
+    it('asks the feed for the hub as resolved for this viewer, on the owner view', async () => {
       resolveHubSources.mockResolvedValue(
         hubSources({
           userIds: [7],
@@ -214,6 +214,7 @@ describe('getAllImagesIndex on the feed service', () => {
       );
       const r = await getAllImagesIndex({
         ...hub(),
+        asOwner: true,
         hubExcludedSources: [{ type: 'User', targetId: 9 }],
       } as Parameters<typeof getAllImagesIndex>[0]);
 
@@ -231,6 +232,16 @@ describe('getAllImagesIndex on the feed service', () => {
       expect(q.get('excludedUserIds')).toBe('3');
       expect(q.get('excludedVersionIds')).toBe('298112');
       expect(q.get('excludedTagGroups')).toBe('66');
+    });
+
+    it("resolves a scoped key's hub as Public only: no owner id reaches the hub lookup", async () => {
+      resolveHubSources.mockResolvedValue(hubSources({ userIds: [7] }));
+      await getAllImagesIndex({ ...hub(), asOwner: false } as Parameters<
+        typeof getAllImagesIndex
+      >[0]);
+      expect(resolveHubSources).toHaveBeenCalledWith(
+        expect.objectContaining({ hubId: 12, userId: undefined, isModerator: false })
+      );
     });
 
     it('asks only for the held level of a held model the hub serves', async () => {

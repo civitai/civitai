@@ -15,11 +15,25 @@ penalty has been applied and cost you a heart.", so anything matching these smit
 Known-answer images (`KnightsReferenceImage`, pool `hiddenCheck`) served in a Knight's feed beside queue items. A check is an
 ordinary vote in every way a player can see.
 
+- Where checks come from: the ruling harvest (`trials/harvest.service.ts`) sends new rulings to `trials` unless
+  `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE` sends a share to `hiddenCheck`, and skips rulings from the moderator image queue.
+  `KNIGHTS_HARVEST` set to anything but unset, `on`, `true` or `1` (or "Paused" saved on the Config page, which wins over
+  the variable, as a saved share wins over `KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`; see
+  [game settings](knights-sources.md#game-settings)) pauses intake (the cursor holds) while references
+  whose ruling no longer stands are still retired. Rulings that aged past the window during a pause are skipped, logged and
+  counted (`knights_harvest_skipped_rulings_total`). A retired reference keeps its image, so that image is never harvested again.
+- `pnpm run rebuild:hidden-checks` (`trials/hidden-rebuild.service.ts`) retires every live harvested check that fewer than
+  `KEEP_MIN_PLAYERS` players answered or that most of its players answered differently, plus any `--exclude` image ids.
+  It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run
+  elsewhere, `--print-sql` prints the SELECT of the ids to retire, and `--print-sql --ids <ids>` a transaction that retires exactly
+  those ids and commits only if it retired all of them, both with their values written in.
+
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
   its size, so a mostly-PG pool does not mean mostly-PG checks. Inside the bucket it takes the first eligible check from a
   per-player point in the pool's id range. Whether a slot holds a check at all is the same rate roll as before
-  (`KNIGHTS_HIDDEN_CHECK_RATE`). The bucket order, start point and roll all come from one per-player digest (no random
+  (a rate saved on the moderator Config page, else `KNIGHTS_HIDDEN_CHECK_RATE`; every `KNIGHTS_HIDDEN_CHECK_*` setting
+  works this way, see [game settings](knights-sources.md#game-settings)). The bucket order, start point and roll all come from one per-player digest (no random
   numbers), so the same player and slot always get the same offer.
 - Every feed item, check or queue item, is addressed by a sealed token (`feed-token.ts`, key `FEED_TOKEN_SECRET`). The vote action
   opens the token and routes to `castVote` or `answerHiddenCheck`.

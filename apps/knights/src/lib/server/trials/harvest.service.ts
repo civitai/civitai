@@ -12,15 +12,38 @@ import {
   REFERENCE_STATUS,
   servableImage,
 } from '@civitai/db/knights';
-import { HARVEST, type HarvestConfig } from './config';
+import { HARVEST, type HarvestConfig, type HarvestSettings } from './config';
 import { poolFor } from './pool';
 
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
 const RERATING_ACTIVITIES = [MODERATOR_RULING_ACTIVITY, 'setNsfwLevelKono'];
 const DAY_MS = 86_400_000;
+/** The lock reason the moderator image queue records (apps/moderator image-queue.ts); not used as a grading reference. */
+export const MODERATOR_QUEUE_RATING_REASON = 'Moderator queue rating';
 
-export type HarvestResult = { scanned: number; added: number; retired: number };
+export type HarvestResult = {
+  scanned: number;
+  added: number;
+  retired: number;
+  /** Rulings past the cursor that were already older than the window, e.g. after a long pause; never harvested. */
+  skippedStale: number;
+};
+
+/**
+ * The harvest job. While paused it takes in no rulings and the cursor holds where it was, but references whose ruling
+ * no longer stands are still retired.
+ */
+export async function runHarvestJob(
+  db: Kysely<DB>,
+  { now, settings }: { now: Date; settings: HarvestSettings }
+): Promise<HarvestResult | { paused: true; retired: number }> {
+  if (settings.paused) return { paused: true, retired: await retireStale(db, now, HARVEST) };
+  return harvestRulings(db, {
+    now,
+    config: { ...HARVEST, hiddenCheckShare: settings.hiddenCheckShare },
+  });
+}
 
 /** Idempotent; safe to re-run. */
 export async function harvestRulings(
@@ -36,6 +59,12 @@ export async function harvestRulings(
   let lastActivityId = cursor?.lastActivityId ?? 0;
   let scanned = 0;
   let added = 0;
+  // Rulings past the cursor that aged out (e.g. during a pause) can never be harvested: count them once and move past.
+  const stale = cursor
+    ? await staleSinceCursor(db, lastActivityId, cutoff)
+    : { n: 0, lastId: null };
+  const skippedStale = stale.n;
+  if (stale.lastId !== null) lastActivityId = stale.lastId;
 
   for (let batch = 0; batch < config.maxBatches; batch++) {
     const activities = await db
@@ -65,6 +94,9 @@ export async function harvestRulings(
       .where('img.nsfwLevelLocked', '=', true)
       .where(
         sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
+      )
+      .where(
+        sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${MODERATOR_QUEUE_RATING_REASON}`
       )
       .where((eb) =>
         eb.not(
@@ -113,7 +145,7 @@ export async function harvestRulings(
     if (activities.length < config.batchSize) break;
   }
 
-  if (scanned > 0) {
+  if (scanned > 0 || skippedStale > 0) {
     await db
       .insertInto('KnightsHarvestCursor')
       .values({ name: config.cursorName, lastActivityId, updatedAt: utc(now) })
@@ -122,7 +154,21 @@ export async function harvestRulings(
   }
 
   const retired = await retireStale(db, now, config);
-  return { scanned, added, retired };
+  return { scanned, added, retired, skippedStale };
+}
+
+async function staleSinceCursor(db: Kysely<DB>, lastActivityId: number, cutoff: Date) {
+  const row = await db
+    .selectFrom('ModActivity')
+    .select((eb) => [eb.fn.countAll<string>().as('n'), eb.fn.max<number | null>('id').as('lastId')])
+    .where('id', '>', lastActivityId)
+    .where('activity', '=', MODERATOR_RULING_ACTIVITY)
+    .where('entityType', '=', 'image')
+    .where('entityId', 'is not', null)
+    .where('userId', 'is not', null)
+    .where('createdAt', '<', utc(cutoff))
+    .executeTakeFirstOrThrow();
+  return { n: Number(row.n), lastId: row.lastId };
 }
 
 async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Promise<number> {

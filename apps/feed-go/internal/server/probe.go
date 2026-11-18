@@ -67,15 +67,17 @@ const (
 	CacheBlockedTags     = "blocked-tags" // image.getInfinite only
 )
 
-// model.getAll's caches (internal/hydrate/models.go). Its probe runs the serving path itself and
-// reports the cache its fallback names; a miss Go computes (the model frames and decorations, the
-// version showcases, hydrate.MissCaches) is recorded instead (hydrate.WithPresence).
+// model.getAll's caches (internal/hydrate/models.go, official.go). Its probe runs the serving path
+// itself and reports the cache its fallback names; a miss Go computes (the model data and tags, the
+// model frames and decorations, the version showcases, the official models: hydrate.MissCaches) is
+// recorded instead (hydrate.WithPresence).
 const (
-	CacheModelData          = "model-data"
-	CacheModelTags          = "model-tags"
+	CacheModelData          = hydrate.MissModelData
+	CacheModelTags          = hydrate.MissModelTags
 	CacheModelFrames        = hydrate.MissModelFrames
 	CacheModelDecorations   = hydrate.MissModelDecorations
 	CacheVersionImages      = hydrate.MissVersionImages
+	CacheOfficialModels     = hydrate.MissOfficialModels
 	CacheCreatorMemberships = "creator-memberships"
 )
 
@@ -86,8 +88,9 @@ var preHydrateMissReasons = map[string]string{
 	"gallery-settings-stale": CacheGallerySettings, // a key from before the SFW hold is rebuilt
 	"blocked-tags-miss":      CacheBlockedTags,     // the blocked-tag list is rebuilt from the database
 	"blocked-tags-stale":     CacheBlockedTags,     // a value Node would replace
-	// model.getAll's hydration falls back on each of these cache misses (on a frame, decoration or
-	// showcase miss only without the miss computation).
+	// model.getAll's hydration falls back on each of these cache misses (on a model data, model tags,
+	// frame, decoration, showcase or official-models miss only without the miss computation).
+	"official-models-miss":  CacheOfficialModels,
 	"model-data-miss":       CacheModelData,
 	"model-tags-miss":       CacheModelTags,
 	"model-frame-miss":      CacheModelFrames,
@@ -116,13 +119,13 @@ func fallbackMissCache(reason string) string {
 
 // probeCaches is every `cache` label value, in report order.
 func probeCaches() []string {
-	out := make([]string, 0, 9+len(hydrate.PageCaches))
+	out := make([]string, 0, 10+len(hydrate.PageCaches))
 	out = append(out, CacheSessionUser, CacheGallerySettings, CacheBlockedTags)
 	for _, c := range hydrate.PageCaches {
 		out = append(out, c.Name)
 	}
 	return append(out, CacheModelData, CacheModelTags, CacheModelFrames, CacheModelDecorations,
-		CacheVersionImages, CacheCreatorMemberships)
+		CacheVersionImages, CacheOfficialModels, CacheCreatorMemberships)
 }
 
 // ProbeRequest is what the Node app posts at the start of a sampled request.

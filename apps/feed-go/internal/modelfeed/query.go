@@ -53,6 +53,10 @@ type PageQuery struct {
 	// collection (servePage); CollectionTagID narrows it to one collection tag (0 = none).
 	CollectionID    int
 	CollectionTagID int
+	// OnlyModelIDs / ExcludeModelIDs are getModelsRaw's onlyModelIds / excludeModelIds: the browse
+	// feed's official-checkpoint pin (Serve). Neither relaxes the private-model filter.
+	OnlyModelIDs    []int
+	ExcludeModelIDs []int
 }
 
 // SQL is one statement and its arguments.
@@ -372,6 +376,13 @@ func (q *PageQuery) Build() (SQL, error) {
 	}
 	if q.AllowNoCredit != nil {
 		and = append(and, `m."allowNoCredit" = `+b.arg(*q.AllowNoCredit))
+	}
+	// `ids` falls back; then onlyModelIds and excludeModelIds, as `IN (…)` / `NOT IN (…)`.
+	if len(q.OnlyModelIDs) > 0 {
+		and = append(and, `mm."modelId" = ANY(`+b.arg(q.OnlyModelIDs)+`::int[])`)
+	}
+	if len(q.ExcludeModelIDs) > 0 {
+		and = append(and, `mm."modelId" != ALL(`+b.arg(q.ExcludeModelIDs)+`::int[])`)
 	}
 	if q.CheckpointType != "" && (len(q.Types) == 0 || contains(q.Types, "Checkpoint")) {
 		or := []string{`m."checkpointType" = ` + b.arg(q.CheckpointType) + `::text::"CheckpointType"`}

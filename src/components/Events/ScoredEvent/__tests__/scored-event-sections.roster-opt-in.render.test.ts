@@ -75,6 +75,9 @@ vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: () =>
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
   HatTurfEventSection: () => null,
 }));
+vi.mock('~/components/Events/ScoredEvent/FlagRaceEventSection', () => ({
+  FlagRaceEventSection: () => null,
+}));
 
 const { ScoredEventSections } = await import('~/components/Events/ScoredEvent/ScoredEventSections');
 

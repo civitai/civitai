@@ -23,6 +23,14 @@ through `@civitai/flipt`; the `testers` segment is configured in Flipt, not here
 
 To open the app to everyone, drop the `accessFor` check in the hook.
 
+## Game settings (`src/lib/server/settings`)
+
+The game-tuning variables (`KNIGHTS_HIDDEN_CHECK_*`, `KNIGHTS_YESNO_*`, `KNIGHTS_APPRENTICE_SMITES`, `KNIGHTS_HARVEST`,
+`KNIGHTS_HARVEST_HIDDEN_CHECK_SHARE`, `KNIGHTS_SHOP_DISABLED`, `KNIGHTS_CONVERSION_DISABLED`) can also be saved on the moderator app's Config page, as the optional `game` (and `yesNoShare`) fields of
+`system:knights-v2-sources` (`KnightsSourcesConfig` in `@civitai/shared/new-order`). Every reader goes through `storedSettings()`
+(`settings/runtime.ts`, one cached read at most every 30 s): a saved value wins, a failed or slow read keeps the last value read, and
+with none read yet the environment applies. Kill switches follow the same rule. Detail: [game settings](../../docs/features/knights-sources.md#game-settings).
+
 ## Queue (`src/lib/server/queue`)
 
 Tables `KnightsQuestion`, `KnightsQueueItem` and `KnightsVote` (migration `20261210120000_knights_v2_tables`, applied by hand).
@@ -102,7 +110,7 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal, popup opt-out) and `Kn
 
 ## Conversion (`src/lib/server/conversion`)
 
-Gold -> Buzz, the label pass and the tick's retries. `CONVERSION.goldPerBuzz` is 400 (the shop's anchor, 400 gold = 1 Buzz); the header's Buzz value reads it. Buzz is only bought per shop pack (there is no straight gold-to-Buzz conversion). Conversion is on by default; the kill switch `KNIGHTS_CONVERSION_DISABLED` (`conversionEnabled()`) set to `true`, `1`, `yes` or `on` (any case) turns it off, and Buzz packs are then refused (the rest of the shop still sells). Apply by hand, in order: `20261209120000_knights_new_order_player_and_link_review`, `20261210120000_knights_v2_tables`, then deploy the main app, then Knights (never earlier: the previous main app's reset does not zero `goldEarned`). Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md). The gold shop (`/shop`, `src/lib/server/shop`, tables `KnightsShopItem` and `KnightsShopPurchase`, migration `20261210120000_knights_v2_tables` by hand, `KNIGHTS_SHOP_DISABLED`; spending adds to `NewOrderPlayer.goldConverted` under the player row lock): [`docs/features/knights-shop.md`](../../docs/features/knights-shop.md). The catalog is managed in the moderator app, `/knights-of-new-order/shop` (own page grant; `apps/moderator/src/lib/server/knights/shop-catalog.service.ts`), and every edit is recorded in `KnightsShopItemChange` (same migration). Item ids are serial integers. The rotation lives in `@civitai/shared/knights-shop`, so the page's preview draws the same rotation and deals Knights does (it flags items Knights would hide, and cannot show whether Buzz packs are closed).
+Gold -> Buzz, the label pass and the tick's retries. `CONVERSION.goldPerBuzz` is 400 (the shop's anchor, 400 gold = 1 Buzz); the header's Buzz value reads it. Buzz is only bought per shop pack (there is no straight gold-to-Buzz conversion). Conversion is on by default; the kill switch (saved on the moderator Config page, else `KNIGHTS_CONVERSION_DISABLED`; `conversionEnabled()`) set to `true`, `1`, `yes` or `on` (any case) turns it off, and Buzz packs are then refused (the rest of the shop still sells). Apply by hand, in order: `20261209120000_knights_new_order_player_and_link_review`, `20261210120000_knights_v2_tables`, then deploy the main app, then Knights (never earlier: the previous main app's reset does not zero `goldEarned`). Detail: [`docs/features/knights-conversion.md`](../../docs/features/knights-conversion.md). The gold shop (`/shop`, `src/lib/server/shop`, tables `KnightsShopItem` and `KnightsShopPurchase`, migration `20261210120000_knights_v2_tables` by hand, `KNIGHTS_SHOP_DISABLED`; spending adds to `NewOrderPlayer.goldConverted` under the player row lock): [`docs/features/knights-shop.md`](../../docs/features/knights-shop.md). The catalog is managed in the moderator app, `/knights-of-new-order/shop` (own page grant; `apps/moderator/src/lib/server/knights/shop-catalog.service.ts`), and every edit is recorded in `KnightsShopItemChange` (same migration). Item ids are serial integers. The rotation lives in `@civitai/shared/knights-shop`, so the page's preview draws the same rotation and deals Knights does (it flags items Knights would hide, and cannot show whether Buzz packs are closed).
 
 ## Reference images and the apprenticeship (`src/lib/server/trials`, `src/lib/server/apprenticeship`)
 

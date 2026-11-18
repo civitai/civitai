@@ -338,6 +338,12 @@ describe('the scope gate flag on models/[modelVersionId]', () => {
     expect(status).toBe(403);
     expect(scopeLog()).toEqual([expect.objectContaining({ mode: 'enforce' })]);
   });
+
+  it('off, under REST_SCOPE_ENFORCE=enforce: refuses', async () => {
+    holder.variant = null;
+    setEnv({ REST_SCOPE_ENFORCE: 'enforce' });
+    expect((await download(route, aiServicesOwner)).status).toBe(403);
+  });
 });
 
 describe('models/[modelVersionId], the internal system account', () => {

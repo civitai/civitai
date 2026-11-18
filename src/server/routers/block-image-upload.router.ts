@@ -1,3 +1,6 @@
+import { TRPCError } from '@trpc/server';
+import * as z from 'zod';
+
 import {
   gateBlockUploadImageSchema,
   generationSourceUsesScannedRowsSchema,
@@ -13,10 +16,16 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
  * let the user upload an image; the bytes flow through civitai's OWN authenticated
  * upload path (the block iframe never sees them), so these are `protectedProcedure`
  * (the logged-in user), NOT block-JWT routes and NOT a new block scope — a generic
- * peer of `OPEN_RESOURCE_PICKER`.
+ * peer of `OPEN_RESOURCE_PICKER`. The optional `share` + block token on `persist` only
+ * decide the provenance stamp; the session user is still what authorises the call.
  *
  *   - persist — materialise the CF upload into a scannable `Image` (real
- *     `createImage` + `ingestImage`, NO trust-stamp).
+ *     `createImage` + `ingestImage`, NO trust-stamp). PRIVATE by default: the row is
+ *     stamped `blockSharedUploadAppId` = the block token's verified appId ONLY when
+ *     the app asked to share this one upload (`share: true`) and the host showed the
+ *     viewer that it will be visible to the app's other viewers; the app can then
+ *     show it to them once scanned (see `persistPickedUploadAppId`). Returns
+ *     `shared`: true exactly when that stamp was written.
  *   - gate    — poll the scan; return the moderated id ONLY once scanned-clean,
  *     within the SFW ceiling, and unflagged (else throw). See the service + pure
  *     classifier.
@@ -31,24 +40,48 @@ export const blockImageUploadRouter = router({
         errorMessage: 'Too many image uploads — slow down.',
       })
     )
-    .input(persistBlockUploadImageSchema)
+    .input(
+      persistBlockUploadImageSchema.extend({
+        share: z.boolean().optional(),
+        blockToken: z.string().min(1).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { blockToken, share, ...upload } = input;
+      // Not shared unless asked: without `share: true` the token is ignored and the row stays
+      // private. A share request with no token is REFUSED, not stored private, so the app's
+      // "visible to other viewers" copy is never shown for an image nobody else will see.
+      let sharedWithAppId: string | undefined;
+      if (share === true) {
+        if (!blockToken) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'sharing an upload requires a block token',
+          });
+        }
+        sharedWithAppId = await persistPickedUploadAppId(blockToken, ctx.user.id);
+      }
       const { persistBlockUploadImage } = await import(
         '~/server/services/blocks/block-image-upload.service'
       );
-      return persistBlockUploadImage({ input, userId: ctx.user.id });
+      const { imageId } = await persistBlockUploadImage({
+        input: upload,
+        userId: ctx.user.id,
+        sharedWithAppId,
+      });
+      // `persistBlockUploadImage` writes the shared stamp whenever `sharedWithAppId` is set
+      // (createImage writes `blockProvenance` or throws), so this is true exactly when stamped.
+      return { imageId, shared: sharedWithAppId !== undefined };
     }),
 
-  gate: protectedProcedure
-    .input(gateBlockUploadImageSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
-      const { gateBlockUploadImage } = await import(
-        '~/server/services/blocks/block-image-upload.service'
-      );
-      return gateBlockUploadImage({ imageId: input.imageId, user: ctx.user });
-    }),
+  gate: protectedProcedure.input(gateBlockUploadImageSchema).mutation(async ({ ctx, input }) => {
+    if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+    const { gateBlockUploadImage } = await import(
+      '~/server/services/blocks/block-image-upload.service'
+    );
+    return gateBlockUploadImage({ imageId: input.imageId, user: ctx.user });
+  }),
 
   /**
    * Whether a PRIVATE generation source the host just uploaded as a consumer blob (the
@@ -71,3 +104,31 @@ export const blockImageUploadRouter = router({
       return { scannedRows: await appUsesScannedSourceRows(claims.appBlockId) };
     }),
 });
+
+/**
+ * The app a SHARED viewer-picked upload is stamped for: the appId of the host's block token, verified as
+ * every bridge call verifies it (`authorizeBlockBridgeToken`: signature, expiry, revocation, the
+ * backing app still approved), and only when the token's subject (`sub`, `user:<id>`) is the
+ * session user doing the upload. A token for anyone else, or an anonymous one, is REFUSED rather
+ * than ignored: a share request expects a stamped row, and silently writing an unstamped one would
+ * leave the app believing its viewers can see an image nobody else ever will.
+ *
+ * The appId never comes from the request: it is the verified claim or nothing.
+ */
+async function persistPickedUploadAppId(blockToken: string, userId: number): Promise<string> {
+  const [{ authorizeBlockBridgeToken }, { parseSubjectUserId }] = await Promise.all([
+    import('~/server/services/blocks/block-bridge-auth.service'),
+    import('~/server/middleware/block-scope.middleware'),
+  ]);
+  const claims = await authorizeBlockBridgeToken(blockToken);
+  let subject: number | null;
+  try {
+    subject = parseSubjectUserId(claims.sub);
+  } catch {
+    subject = null;
+  }
+  if (subject !== userId) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token is not for this viewer' });
+  }
+  return claims.appId;
+}
