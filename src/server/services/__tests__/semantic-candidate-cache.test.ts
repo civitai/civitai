@@ -42,6 +42,28 @@ beforeEach(() => {
 });
 
 describe('withCandidateCache', () => {
+  it('preserves image match scores across cached paging and separates different cutoffs', async () => {
+    const source = vi.fn<CandidateSource>(async () => ({
+      ids: [10, 20],
+      scores: { 10: 0.95, 20: 0.89 },
+    }));
+    const search = withCandidateCache('images', source, 'user');
+    const args = {
+      query: { similarTo: 1, minScore: 0.85 },
+      filter: filter(),
+      offset: 0,
+      limit: 1,
+      viewer,
+    };
+    const first = await search(args);
+    const second = await search({ ...args, offset: 1 });
+    expect(first.scores?.[10]).toBe(0.95);
+    expect(second.ids).toEqual([20]);
+    expect(second.scores?.[20]).toBe(0.89);
+    expect(source).toHaveBeenCalledTimes(1);
+    await search({ ...args, query: { similarTo: 1, minScore: 0.9 } });
+    expect(source).toHaveBeenCalledTimes(2);
+  });
   it('answers a repeated search from the cache', async () => {
     const { source, calls } = rankedSource();
     const search = withCandidateCache('images', source, 'user');

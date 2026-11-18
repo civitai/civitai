@@ -9,6 +9,7 @@ import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
 import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
+import { SimilarImagesHoverCard } from '~/components/Image/SimilarImagesHoverCard';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -28,7 +29,9 @@ import clsx from 'clsx';
 export function ImageCard(props: Props) {
   return (
     <HatTurfCardProvider>
-      <ImageCardContent {...props} />
+      <SimilarImagesHoverCard image={props.data}>
+        <ImageCardContent {...props} />
+      </SimilarImagesHoverCard>
     </HatTurfCardProvider>
   );
 }

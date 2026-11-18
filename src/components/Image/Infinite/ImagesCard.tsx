@@ -37,6 +37,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { MoreLikeThisButton } from '~/components/Image/MoreLikeThisButton';
+import { SimilarImagesHoverCard } from '~/components/Image/SimilarImagesHoverCard';
 import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
 import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
@@ -74,7 +75,9 @@ export function ImagesCard({
 }) {
   return (
     <HatTurfCardProvider>
-      <ImagesCardContent data={data} height={height} width={width} />
+      <SimilarImagesHoverCard image={data} height={height}>
+        <ImagesCardContent data={data} height={height} width={width} />
+      </SimilarImagesHoverCard>
     </HatTurfCardProvider>
   );
 }

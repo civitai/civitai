@@ -163,6 +163,35 @@ beforeEach(() => {
 });
 
 describe('a stale index cannot surface a hidden image', () => {
+  it('applies the score cutoff without disclosing scores for hidden images or the source', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102]));
+    const candidateSource: CandidateSource = async () => ({
+      ids: [ANCHOR, 999, 101, 102, 103],
+      scores: { [ANCHOR]: 1, 999: 0.99, 101: 0.9, 102: 0.84, 103: 0.88 },
+    });
+    const page = await searchSemanticImages({
+      input: input({ minSimilarity: 0.85 }),
+      user: VIEWER,
+      candidateSource,
+    });
+    expect(page.items.map((item) => item.id)).toEqual([101]);
+    expect(page.similarityScores).toEqual({ 101: 0.9 });
+  });
+
+  it('does not invent a match score when the upstream response has none', async () => {
+    h.fakeGetAllImages = visibleOnly(new Set([101, 102]));
+    const candidateSource: CandidateSource = async () => ({
+      ids: [101, 102],
+      scores: { 101: NaN },
+    });
+    const page = await searchSemanticImages({
+      input: input({ minSimilarity: 0.85 }),
+      user: VIEWER,
+      candidateSource,
+    });
+    expect(page.items).toEqual([]);
+    expect(page.similarityScores).toEqual({});
+  });
   // The index still holds all of these; Postgres says only the first, third and last are visible.
   const BLOCKED = 102;
   const UNPUBLISHED_POST = 104;
@@ -1154,6 +1183,26 @@ describe('the search service call', () => {
     await expect(
       searchSemanticImages({ ...SESSION_VIEWS, input: input({ imageId: ANCHOR }), user: VIEWER })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('uses Qdrant scores and sends the minimum similarity to the service', async () => {
+    const sent = stubService(() =>
+      Response.json({
+        result: {
+          points: [
+            { id: 101, score: 0.92 },
+            { id: 102, score: 0.85 },
+          ],
+        },
+      })
+    );
+    const page = await searchSemanticImages({
+      input: input({ minSimilarity: 0.85 }),
+      user: VIEWER,
+    });
+    expect(sent[0].body.score_threshold).toBe(0.85);
+    expect(page.items.map((item) => item.id)).toEqual([101, 102]);
+    expect(page.similarityScores).toEqual({ 101: 0.92, 102: 0.85 });
   });
 
   it('answers BAD_GATEWAY when the service fails', async () => {

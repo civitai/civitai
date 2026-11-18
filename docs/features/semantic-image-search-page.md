@@ -132,6 +132,20 @@ put in the URL, so a search by upload cannot be shared.
 
 Limits: per user 10 uploads per 10 minutes and 50 per day (the router's limits, which moderators skip), plus 100 uploads and 1,000 search pages per day that count moderators too and refuse when their counter cannot be read; one unscanned upload at a time; and a site-wide daily upload cap that also refuses when its counter cannot be read.
 
+## Similar images hover preview
+
+Image feed cards and search image cards offer a hover preview when More like this is available.
+After a 650 ms dwell, the preview requests up to six matches and caches the response for one minute.
+The minimum similarity slider starts at 85%; this is the vector similarity score multiplied by 100,
+not a probability of shared origin. The initial cutoff needs calibration against real examples.
+Touch devices keep the existing More like this button. Preview thumbnails link to image details on
+this site.
+
+`semanticImageSearch.search` accepts `minSimilarity` (0 to 1, image searches only), forwards it as
+Qdrant's `score_threshold`, and returns `similarityScores` keyed by visible result ids. Missing scores
+cannot pass a cutoff. Scores survive candidate caching; the normal visibility fetch still decides
+which images may be returned. The preview provides loading, empty and retry states.
+
 ## Feedback and logging
 
 - Every first page is logged to ClickHouse through `Tracker.search`, with index `images_semantic`.

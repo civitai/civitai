@@ -61,7 +61,11 @@ export function describeSemanticAuditContract({
       ['enforce', source(enforceFlag, [])],
     ])('in %s mode, the response carries no guard, rule or verdict', async (_, src) => {
       const result = await run({ source: src, user: AUDIT_VIEWER });
-      expect(Object.keys(result).filter((k) => !PAGE_KEYS.includes(k))).toEqual([]);
+      expect(
+        Object.keys(result).filter(
+          (k) => !PAGE_KEYS.includes(k) && !(index === 'images' && k === 'similarityScores')
+        )
+      ).toEqual([]);
       expect(JSON.stringify(result)).not.toMatch(/rule_a|guard|bypass|verdict/i);
     });
   });

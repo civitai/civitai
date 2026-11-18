@@ -12,6 +12,7 @@ export const semanticImageSearchSchema = baseQuerySchema
     query: z.string().trim().max(SEMANTIC_QUERY_MAX_LENGTH).optional(),
     // "More like this": the image whose vector is the query.
     imageId: z.number().int().positive().optional(),
+    minSimilarity: z.number().min(0).max(1).optional(),
     // "More like this" without the viewer's own images (results only, never the source image).
     excludeOwn: z.boolean().optional(),
     // Room for whatever the images feed can select: its filters carry into the search unchanged.
@@ -37,7 +38,11 @@ export const semanticImageSearchSchema = baseQuerySchema
     // stays in similarity order). Absent or relevance: similarity order.
     sort: z.enum(['relevance', 'newest']).optional(),
   })
-  .refine((x) => !!x.query || !!x.imageId, { message: 'Enter a query' });
+  .refine((x) => !!x.query || !!x.imageId, { message: 'Enter a query' })
+  .refine((x) => x.minSimilarity === undefined || !!x.imageId, {
+    message: 'A similarity threshold requires an image',
+    path: ['minSimilarity'],
+  });
 
 /** A moderator case's public reference (apps/moderator `PUBLIC_REF_PATTERN`). */
 const CASE_REF_PATTERN = /^TD-\d{2}-[0-9A-HJKMNP-TV-Z]{6}$/;
