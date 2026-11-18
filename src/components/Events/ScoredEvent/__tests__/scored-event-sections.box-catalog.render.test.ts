@@ -68,6 +68,9 @@ vi.mock('~/components/Events/ScoredEvent/EventRules', () => ({ EventRules: marke
 vi.mock('~/components/Events/ScoredEvent/HatTurfEventSection', () => ({
   HatTurfEventSection: () => null,
 }));
+vi.mock('~/components/Events/ScoredEvent/FlagRaceEventSection', () => ({
+  FlagRaceEventSection: () => null,
+}));
 vi.mock('~/components/Events/ScoredEvent/TeamStandings', () => ({
   TeamStandings: marker('standings'),
   TopHats: marker('topHats'),
