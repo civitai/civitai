@@ -6,6 +6,8 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { NsfwLevel } from '~/server/common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import type { SessionUser } from '~/types/session';
 
 /**
  * A model version's level is the bit_or of its owner's first 20 published images, by post id then
@@ -203,7 +205,12 @@ describe('model version level after a post edit', () => {
     const imageIds = twentyRThenPg.map((_, index) => POST * 100 + index);
     const pgFirst = [imageIds[20], ...imageIds.slice(0, 20)];
 
-    await reorderPostImages({ id: POST, imageIds: pgFirst });
+    await reorderPostImages({
+      id: POST,
+      imageIds: pgFirst,
+      user: { id: OWNER } as SessionUser,
+      servableLevels: allBrowsingLevelsFlag,
+    });
     await runNsfwJob();
 
     expect(await levels()).toEqual({ version: R | PG, model: R | PG });

@@ -698,7 +698,7 @@ describe('getScheduledPosts', () => {
         typeof value === 'object' &&
         value !== null &&
         'strings' in value &&
-        value.strings.join('').includes('"PostTag"')
+        (value as Sql).strings.join('').includes('"PostTag"')
     );
     const sql = fragment?.strings.join('?') ?? '';
     expect(sql).toMatch(/AND EXISTS \(/);
@@ -725,7 +725,7 @@ describe('getScheduledPosts', () => {
         typeof value === 'object' &&
         value !== null &&
         'strings' in value &&
-        value.strings.join('').includes('"modelVersionId"')
+        (value as Sql).strings.join('').includes('"modelVersionId"')
     );
     expect(fragment?.strings.join('?')).toMatch(/AND p\."modelVersionId" = \?/);
     expect(fragment?.values).toEqual([30]);

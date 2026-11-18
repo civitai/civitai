@@ -44,10 +44,12 @@ beforeAll(async () => {
   `);
   const { prisma } = harness;
   // The service's own where and data; only the returned columns are narrowed to this schema.
-  dbMock.dbWrite.image.update.mockImplementation(((args: { where: object; data: object }) =>
-    prisma.image.update({ ...args, select: { id: true } })) as never);
-  dbMock.dbWrite.postText.update.mockImplementation(((args: { where: object; data: object }) =>
-    prisma.postText.update({ ...args, select: { id: true } })) as never);
+  dbMock.dbWrite.image.update.mockImplementation(((
+    args: Parameters<typeof prisma.image.update>[0]
+  ) => prisma.image.update({ ...args, select: { id: true } })) as never);
+  dbMock.dbWrite.postText.update.mockImplementation(((
+    args: Parameters<typeof prisma.postText.update>[0]
+  ) => prisma.postText.update({ ...args, select: { id: true } })) as never);
   dbMock.dbWrite.image.findMany.mockImplementation(((
     ...args: Parameters<typeof prisma.image.findMany>
   ) => prisma.image.findMany(...args)) as never);

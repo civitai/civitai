@@ -2220,6 +2220,7 @@ async function editorHiddenImages(
   listedIds: number[],
   { user, servableLevels }: Editor
 ) {
+  // primary: decides which indexes the reorder write that follows may take
   const images = await dbWrite.image.findMany({
     where: { postId },
     select: { id: true, index: true, needsReview: true, nsfwLevel: true },
@@ -2279,6 +2280,7 @@ async function itemsReorder(
   const ids = (type: 'image' | 'text') => items.filter((i) => i.type === type).map((i) => i.id);
   const hidden = await editorHiddenImages(postId, ids('image'), editor);
   const movable = items.filter((item) => item.type === 'text' || !hidden.ids.has(item.id));
+  // primary: decides which indexes the reorder write that follows may take
   const unlistedTexts = await dbWrite.postText.findMany({
     where: { postId, id: { notIn: ids('text') } },
     select: { index: true },
