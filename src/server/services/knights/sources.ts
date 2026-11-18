@@ -65,10 +65,9 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
 }
 
 /**
- * Open Knight-stage rating items players can be served (`countOpenServableKnightItems`), counted only up to `limit`. Drafts,
- * scheduled posts, deleted and held images are left out, so they cannot fill the cap while players run out of work. Yes/no
- * questions share the queue table but not this intake, so they are left out too: an imported backlog must not stop sampling. The result is
- * cached for a minute whenever the query lands. A failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
+ * Open servable Knight-stage rating items (`countOpenServableKnightItems`), counted only up to `limit`. Yes/no questions share
+ * the queue table but not this intake: an imported backlog must not stop sampling. Cached for a minute whenever the query
+ * lands; a failure is not cached and pauses counting for `OPEN_COUNT_BACKOFF_MS`.
  */
 function startOpenCount(limit: number): Promise<number | null> {
   const read: Promise<number | null> = countOpenServableKnightItems(kyselyRead, limit)

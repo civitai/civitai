@@ -217,11 +217,10 @@ describe('intake backpressure', () => {
     openItems(5001);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
     expect(enqueue).not.toHaveBeenCalled();
-    // Open Knight-stage rating items players can be served (the servable filter's values sit between), counted to 5001.
+    // The servable filter's values sit between the item filter and the limit (the pglite test covers the filter).
     const values = openCount.mock.calls[0].slice(1);
     expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
     expect(values.at(-1)).toBe(5001);
-    expect(openCount.mock.calls[0][0].join('?')).toContain('"Post"');
 
     clearKnightsSourcesConfigCache();
     openItems(5000);

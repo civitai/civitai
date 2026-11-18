@@ -67,8 +67,8 @@ export const servableImage = (eb: ExpressionBuilder<Joined, 'img' | 'p'>) =>
 
 /**
  * Open Knight-stage rating items that players can be served, counted up to `limit` (the intake cap reads `maxOpen + 1`).
- * Items whose image is a draft, scheduled, deleted or held are left out: they cannot be judged, so they must not fill
- * the cap and pause intake while players run out of work.
+ * Items whose image fails `servableImage` cannot be judged, so they must not fill the cap and pause intake while players
+ * run out of work.
  */
 export async function countOpenServableKnightItems(db: Kysely<DB>, limit: number): Promise<number> {
   const row = await db
