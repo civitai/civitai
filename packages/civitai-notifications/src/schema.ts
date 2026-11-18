@@ -135,8 +135,6 @@ export const cleanupNotificationsInput = z.object({
 });
 export type CleanupNotificationsInput = z.infer<typeof cleanupNotificationsInput>;
 
-// --- Missed-notification digest (POST /notifications/unseen) ----------------------------------------
-
 /** Users per unseen-notification read; the digest job pages through its candidates in batches. */
 export const MAX_UNSEEN_USERS = 1000;
 /** Newest unseen notifications returned per user. */

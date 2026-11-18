@@ -355,6 +355,29 @@ describe('who gets the weekly digest', () => {
   });
 });
 
+describe('the type ages the silence check reads', () => {
+  it('are the earliest disabledAt per asked type, from the real grouped read', async () => {
+    // The suite mocks this module; this case runs the real query against the seeded rows.
+    const { silenceCheckTypeAges } = await vi.importActual<typeof SilenceAges>(
+      '~/server/notifications/silence-check-ages'
+    );
+    dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(h.pg).queryRaw as never);
+    // Earlier than the seeded 2026-06-01 rows, so a max() or a first-row read gives other values.
+    await h.pg.exec(`
+      INSERT INTO "UserNotificationSettings" ("userId", type, "disabledAt") VALUES
+        (9, 'new-comment', '2026-03-04 05:06:07'),
+        (6, 'new-mention', '2026-04-05 06:07:08'),
+        (6, 'new-like', '2026-01-01 00:00:00');
+    `);
+    const ages = await silenceCheckTypeAges(['new-comment', 'new-mention', 'new-follow']);
+    // 'new-like' was not asked for; 'new-follow' was, but nobody has switched it off.
+    expect([...ages].sort((a, b) => a.type.localeCompare(b.type))).toEqual([
+      { type: 'new-comment', firstSeen: '2026-03-04T05:06:07.000Z' },
+      { type: 'new-mention', firstSeen: '2026-04-05T06:07:08.000Z' },
+    ]);
+  });
+});
+
 describe('the notification-email kill switch', () => {
   it('with the switch off a run sends nothing and leaves the pass where it was', async () => {
     const result = await run({ emailEnabled: async () => false });

@@ -233,8 +233,7 @@ export enum FLIPT_FEATURE_FLAGS {
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Takedown CDN sync: the `cdn-access-sync` and `cdn-access-reconcile` jobs. Ships dark.
   CDN_ACCESS_SYNC = 'cdn-access-sync',
-  // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per
-  // user. Ships dark; a percentage rollout ramps who is emailed.
+  // The weekly missed-notification digest email (`missed-notification-digest` job), evaluated per user.
   MISSED_NOTIFICATION_DIGEST = 'missed-notification-digest',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows

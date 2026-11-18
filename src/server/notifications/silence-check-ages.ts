@@ -26,6 +26,7 @@ export const silenceCheckTypeAges = createSilenceCheckTypeAges({
  * counts against them. The same rule the Knights app applies to its players (`silencedAmong` in its
  * notify service), which reads the same type ages over HTTP.
  */
+// Copy of `silencedAmong` in apps/knights/src/lib/server/notify/notify.service.ts; change both.
 export async function silencedUsersAmong(
   db: Kysely<DB>,
   ids: number[],

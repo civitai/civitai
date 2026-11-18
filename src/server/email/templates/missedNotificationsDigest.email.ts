@@ -1,6 +1,6 @@
 import { escape as escapeHtml } from 'he';
 import { createEmail } from '~/server/email/templates/base.email';
-import { notificationSettingsUrl } from '~/server/email/templates/notification.email';
+import { absoluteUrl, notificationSettingsUrl } from '~/server/email/templates/notification.email';
 import { simpleEmailWithTemplate } from '~/server/email/templates/util';
 import { MISSED_DIGEST_DISPLAY_NAME } from '~/server/notifications/missed-digest.constants';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -19,9 +19,6 @@ export type MissedNotificationsDigestData = {
 };
 
 export const notificationsPageUrl = () => `${getBaseUrl()}/user/notifications`;
-
-const absoluteUrl = (url?: string) =>
-  !url ? undefined : /^https?:\/\//.test(url) ? url : `${getBaseUrl()}${url}`;
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 

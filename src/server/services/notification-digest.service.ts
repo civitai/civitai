@@ -183,26 +183,12 @@ async function renderItems(user: UnseenNotifications): Promise<MissedNotificatio
 }
 
 /**
- * One run of the weekly missed-notification digest. Walks every user in id order, a page at a
- * time, resuming where the last run stopped; a new pass starts once the last one has finished and
- * a week has passed since it started.
+ * One run of the weekly missed-notification digest, resuming where the last run stopped.
  *
- * Who is emailed: a user with a verified email, who has not opted out of the digest, is in the
- * flag's rollout (evaluated per user, so a percentage rollout ramps it), has not turned
- * every notification off, was not sent a digest in the last six days, and has at least one
- * notification they have not seen in the window. Types that send their own email when they happen
- * (`defaultEmail`) are left out of both the list and the count, so the digest never repeats one.
- * Eligibility is read again on the primary just before each send, and the send goes to the address
- * read there.
- *
- * Each send is claimed in `UserNotificationDigest` BEFORE the email goes out, and the claim only
- * lands when no digest was recorded in the last six days, so a run that dies mid-send can skip a
- * user's digest for the week, and two overlapping runs cannot both send it. Sends are spaced by
- * `minIntervalMs` (the shared bulk-email pace) and capped per run.
- *
- * Two stops: the Flipt flag, and the notification-email kill switch shared with the
- * per-notification emails. The switch is read before the run and again before every send, so
- * turning it off stops a run within the switch's cache lifetime.
+ * Types that send their own email (`defaultEmail`) are left out, so the digest never repeats one.
+ * Eligibility is re-read on the primary just before each send, and the send goes to the address
+ * read there. Each send is claimed in `UserNotificationDigest` BEFORE the email goes out, and the
+ * claim fails if a digest was recorded in the last six days, so overlapping runs cannot both send.
  */
 export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promise<DigestRunResult> {
   const {

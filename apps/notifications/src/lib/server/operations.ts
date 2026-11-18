@@ -268,7 +268,6 @@ export async function notificationExists(key: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-// --- unseen: the missed-notification digest's read ------------------------------------------------
 // Per user: how many notifications they have not seen (`viewed IS FALSE`) since their own `since`, and
 // the newest `limit` of them. One statement per call over the ("userId", "createdAt" DESC) index, each
 // user's scan bounded by their window. Reads the replica: a weekly digest can be a moment behind.
