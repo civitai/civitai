@@ -263,7 +263,8 @@ async function getVersionStatsForBatch(
   }>(
     // MIN(publishedAt), not the model's own publish date and not the newest version: a
     // model's first version in a new ecosystem should read as new in that ecosystem's feed,
-    // and a later version in the same one must not refresh it. Migration 20261012120000.
+    // and a later version in the same one must not refresh it (it earns its own capped credit
+    // in the trigger instead). Migrations 20261012120000 and 20271117190000.
     `-- aggregate version metrics by base model
     SELECT
       mv."modelId",

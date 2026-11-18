@@ -83,7 +83,6 @@ export const templates = [
   '{age} age',
   '{age} {years} {old}',
   '{age} {years}',
-  '{age}th birthday',
 ];
 
 /**
@@ -91,9 +90,7 @@ export const templates = [
  * words don't match — "eight" must not match "eighty" via the `{age} {years}` template
  * (the year unit can be a single "y"), nor "seven" match "seventy".
  *
- * The truncated/typo variants in `ages` are deliberately absent, so they skip that
- * boundary and still catch ordinal forms through `{age}th birthday`
- * ("eigh" + "th" -> "eighth birthday").
+ * The truncated/typo variants in `ages` are absent, so they match without that boundary.
  */
 export const canonicalNumberWords = new Set([
   'one',
