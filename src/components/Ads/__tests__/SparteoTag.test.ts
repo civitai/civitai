@@ -43,7 +43,8 @@ vi.mock('~/components/Ads/sparteo.config', async (importOriginal) => {
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => state.flags }));
 
 const SparteoModule = await import('~/components/Ads/SparteoTag');
-const { SparteoTag, SPARTEO_TAG_ID } = SparteoModule;
+const { SparteoTag, SPARTEO_TAG_ID, sparteoPage } = SparteoModule;
+const reload = vi.spyOn(sparteoPage, 'reload').mockImplementation(() => undefined);
 
 const act = (React as unknown as { act: (callback: () => void) => void }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -102,6 +103,46 @@ afterEach(() => {
 });
 
 describe('SparteoTag', () => {
+  beforeEach(() => reload.mockClear());
+
+  it('reloads the page when a gate closes after the tag loaded (client-side nav into a gated page)', () => {
+    mount();
+    expect(headTag()).not.toBeNull();
+    state.ads = { adsEnabled: false, useDirectAds: false, ready: true };
+    render(true);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads the page when the visitor withdraws site consent after the tag loaded', () => {
+    mount();
+    render(false);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads the page when the visitor withdraws TCF consent after the tag loaded', () => {
+    mount();
+    emitTcf(EU_REJECT_ALL);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload a page where the tag never loaded (control)', () => {
+    state.flags = {};
+    mount();
+    render(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('adds no second script when it mounts again with one already in the head', () => {
+    mount();
+    act(() => root?.unmount());
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    render(true);
+    expect(document.querySelectorAll(`#${SPARTEO_TAG_ID}`)).toHaveLength(1);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('adds one async head script for an EU visitor who accepts all', () => {
     mount();
     const tag = headTag();

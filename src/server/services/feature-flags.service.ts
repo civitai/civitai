@@ -156,8 +156,7 @@ const featureFlags = createFeatureFlags({
   // The generator's phone layout (docs/plans/mobile-generator.md). Dark until the Flipt
   // `mobile-generator` ramp; OFF = today's generator on phones, unchanged.
   mobileGenerator: { availability: [], fliptKey: 'mobile-generator' },
-  // Sparteo's head tag (`SparteoTag`) on .com, beside Snigel. `[]`: dark, fails CLOSED when the
-  // key is absent or Flipt is down, so the `sparteo-ads` flag is the only on-switch.
+  // Partner ad tag (`SparteoTag`).
   sparteoAds: { availability: [], fliptKey: 'sparteo-ads' },
   // SSR-CPU trial on `/models/[id]/[[...slug]]`: when ON, the model page's below-the-fold,
   // non-SEO sidebar sections (creator card, license/permissions, collection-showcase body) render

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   SPARTEO_TAG_SRC,
   SPARTEO_TCF,
@@ -62,6 +62,9 @@ function useTcfAllowsTag(active: boolean) {
   return active && allowed;
 }
 
+/** Indirection so tests can observe the reload. */
+export const sparteoPage = { reload: () => window.location.reload() };
+
 type SparteoTagProps = { adsEnabled: boolean; useDirectAds: boolean; ready: boolean };
 
 export function SparteoTag({ adsEnabled, useDirectAds, ready }: SparteoTagProps) {
@@ -73,8 +76,14 @@ export function SparteoTag({ adsEnabled, useDirectAds, ready }: SparteoTagProps)
   const tcfAllowed = useTcfAllowsTag(gated);
   const enabled = gated && tcfAllowed;
 
+  const wasEnabled = useRef(false);
   useEffect(() => {
-    if (!enabled || !src || document.getElementById(SPARTEO_TAG_ID)) return;
+    const loaded = !!document.getElementById(SPARTEO_TAG_ID);
+    // A loaded third-party script cannot be unloaded, and it places its own ads with no slot the gate
+    // can withhold; a full load is the only way to leave it behind on a page that must not run it.
+    if (!enabled && wasEnabled.current && loaded) return sparteoPage.reload();
+    wasEnabled.current = enabled;
+    if (!enabled || !src || loaded) return;
     // The partner's tag declares this queue inline before its loader runs.
     window._hbdbrk = window._hbdbrk || [];
     const script = document.createElement('script');
