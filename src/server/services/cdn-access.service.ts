@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import type { UnpublishReason } from '~/server/common/moderation-helpers';
@@ -7,10 +7,18 @@ import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedow
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
+import {
+  CSAM_HOLD_POST_UNPUBLISH_REASON as HOLD_POST_REASON,
+  EVIDENCE_VERIFIED_KEY as VERIFIED_KEY,
+  heldUrlSql,
+  imageCoveredText,
+  MATURE_UNDERAGE_REASON as MATURE_UNDERAGE,
+  ownerHeldText,
+  ownerReportedText,
+} from '@civitai/shared/held-url';
 import { CloudflarePurgeBusyError, purgeUrlsOrThrow } from '~/server/cloudflare/client';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
 import { keyIn, keyIssueRecords } from '~/server/services/image-url-ownership';
-import { holdMarkerSql } from '~/server/services/legal-hold.service';
 import {
   HELD_BACK,
   IMAGE_CACHER_WAIT_MS,
@@ -42,12 +50,12 @@ export function strongestAccess(values: CdnAccess[]): CdnAccess {
 }
 
 /** `Post.metadata.unpublishedReason` written by a csam-hold removal of a post. */
-export const CSAM_HOLD_POST_UNPUBLISH_REASON = 'csam-text-hold';
+export const CSAM_HOLD_POST_UNPUBLISH_REASON = HOLD_POST_REASON;
 /**
  * Written by a csam-hold removal of a model and by ordinary moderation alike; both are held until a
  * verified report covers the image.
  */
-export const MATURE_UNDERAGE_REASON: UnpublishReason = 'mature-underage';
+export const MATURE_UNDERAGE_REASON: UnpublishReason = MATURE_UNDERAGE;
 
 export type PostAccessFacts = {
   ownerId: number;
@@ -81,7 +89,12 @@ export type ImageAccessFacts = {
  */
 export type ModeratorDeleteFacts = { ownerId: number | null; held: boolean };
 
-export type UrlAccessFacts = { images: ImageAccessFacts[]; deletes: ModeratorDeleteFacts[] };
+export type UrlAccessFacts = {
+  images: ImageAccessFacts[];
+  deletes: ModeratorDeleteFacts[];
+  /** `heldUrlSql` for the url; true when it could not be read. Adds to the rows' own `held`. */
+  sqlHeld?: boolean;
+};
 
 function desiredPostAccess(post: PostAccessFacts | null): CdnAccess {
   if (!post || !post.unpublished || !post.stamped) return 'allow';
@@ -123,13 +136,13 @@ export function desiredImageAccess(image: ImageAccessFacts): CdnAccess {
  * evidence: it stops serving and nothing destructive runs until the hold ends), and when the rows
  * belong to more than one owner, since a retraction deletes what every owner of the url serves.
  */
-export function desiredUrlAccess({ images, deletes }: UrlAccessFacts): CdnAccess {
+export function desiredUrlAccess({ images, deletes, sqlHeld }: UrlAccessFacts): CdnAccess {
   const access = strongestAccess([
     ...images.map(desiredImageAccess),
     ...deletes.map((): CdnAccess => 'retract'),
   ]);
   if (access !== 'retract') return access;
-  const held = images.some((x) => x.held) || deletes.some((x) => x.held);
+  const held = images.some((x) => x.held) || deletes.some((x) => x.held) || sqlHeld === true;
   const owners = new Set([...images.map((x) => x.ownerId), ...deletes.map((x) => x.ownerId)]);
   return held || owners.size > 1 ? 'deny' : 'retract';
 }
@@ -453,7 +466,7 @@ async function loadFacts(urls: string[]) {
       SELECT url, "userId" FROM "ImageCdnShopTakedown" WHERE url = ANY(${urls})
     `,
   ]);
-  const [holds, covered] = await Promise.all([
+  const [holds, coverage, sqlHeld] = await Promise.all([
     ownerHolds([
       ...rows.map((r) => r.userId),
       ...[...deleteRows, ...shopRows].flatMap((r) => (r.userId === null ? [] : [r.userId])),
@@ -464,7 +477,9 @@ async function loadFacts(urls: string[]) {
         r.userId === null ? [] : [{ imageId: r.imageId, userId: r.userId }]
       ),
     ]),
+    heldUrls(urls),
   ]);
+  const { covered } = coverage;
   const entry = (url: string) => {
     let facts = byUrl.get(url);
     if (!facts) byUrl.set(url, (facts = { images: [], deletes: [] }));
@@ -513,7 +528,42 @@ async function loadFacts(urls: string[]) {
       ownerId: row.userId,
       held: row.userId === null || holds.held(row.userId) || holds.reported(row.userId),
     });
+  // Shadow read: the predicate only ever adds a hold here, until the two are shown to agree. A hold
+  // leg added to the rows above belongs in heldUrlSql too, or every url it holds logs a parity line.
+  const compare = sqlHeld.ok && !holds.failed && !coverage.failed;
+  for (const [url, facts] of byUrl) {
+    facts.sqlHeld = sqlHeld.held(url);
+    if (!compare) continue;
+    const tsHeld = facts.images.some((x) => x.held) || facts.deletes.some((x) => x.held);
+    if (tsHeld !== facts.sqlHeld)
+      logToAxiom({
+        type: 'error',
+        name: 'cdn-access-held-parity',
+        message: 'held differs between loadFacts and heldUrlSql',
+        payload: { urlHash: createHash('sha256').update(url).digest('hex').slice(0, 16), tsHeld },
+      });
+  }
   return byUrl;
+}
+
+/** `heldUrlSql` per url. A failed read holds every url and logs one line. */
+async function heldUrls(urls: string[]): Promise<{ ok: boolean; held: (url: string) => boolean }> {
+  try {
+    const rows = await dbWrite.$queryRaw<{ url: string; held: boolean }[]>`
+      SELECT u."url", ${Prisma.raw(heldUrlSql('u."url"'))} AS held
+      FROM unnest(${urls}::text[]) AS u("url")
+    `;
+    const held = new Set(rows.filter((r) => r.held !== false).map((r) => r.url));
+    return { ok: true, held: (url) => held.has(url) };
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'cdn-access-held-predicate-failed',
+      message: 'heldUrlSql lookup failed; treating every url as held',
+      error: safeError(error),
+    });
+    return { ok: false, held: () => true };
+  }
 }
 
 async function loadState(urls: string[]) {
@@ -524,21 +574,8 @@ async function loadState(urls: string[]) {
   return new Map(rows.map((r) => [r.url, r]));
 }
 
-/**
- * The `CsamReport.details` key written once a sent report's evidence copy has been verified. Absent
- * until that verification exists; `archivedAt` alone does not confirm a verified copy.
- */
-export const EVIDENCE_VERIFIED_KEY = 'evidenceVerifiedAt';
-
-/** SQL: report `c` has a verified evidence copy. */
-function evidenceVerifiedSql(c: Prisma.Sql) {
-  return Prisma.sql`COALESCE((${c}.details->>${EVIDENCE_VERIFIED_KEY}) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T', false)`;
-}
-
-/** SQL: report `c` names user `userId`, as its subject or its secondary user. */
-function reportNamesSql(userId: Prisma.Sql) {
-  return Prisma.sql`(c."userId" = ${userId} OR c.details->>'secondaryUserId' = (${userId})::text)`;
-}
+/** The `CsamReport.details` key written once a sent report's evidence copy has been verified. */
+export const EVIDENCE_VERIFIED_KEY = VERIFIED_KEY;
 
 /**
  * Which images a sent report with a verified evidence copy covers: it names the image's owner and
@@ -547,23 +584,18 @@ function reportNamesSql(userId: Prisma.Sql) {
  */
 async function reportCoverage(
   images: { imageId: number; userId: number }[]
-): Promise<(imageId: number, userId: number) => boolean> {
+): Promise<{ failed: boolean; covered: (imageId: number, userId: number) => boolean }> {
   const none = () => false;
-  if (!images.length) return none;
+  if (!images.length) return { failed: false, covered: none };
   try {
     const rows = await dbWrite.$queryRaw<{ imageId: number; userId: number }[]>`
       SELECT x."imageId", x."userId"
       FROM unnest(${images.map((x) => x.imageId)}::int[], ${images.map((x) => x.userId)}::int[])
         AS x("imageId", "userId")
-      WHERE EXISTS (
-        SELECT 1 FROM "CsamReport" c
-        WHERE ${reportNamesSql(Prisma.sql`x."userId"`)}
-          AND c."reportSentAt" IS NOT NULL AND ${evidenceVerifiedSql(Prisma.sql`c`)}
-          AND c.images @> jsonb_build_array(jsonb_build_object('id', x."imageId"))
-      )
+      WHERE ${Prisma.raw(imageCoveredText('x."imageId"', 'x."userId"'))}
     `;
     const keys = new Set(rows.map((r) => `${r.imageId}:${r.userId}`));
-    return (imageId, userId) => keys.has(`${imageId}:${userId}`);
+    return { failed: false, covered: (imageId, userId) => keys.has(`${imageId}:${userId}`) };
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -571,15 +603,9 @@ async function reportCoverage(
       message: 'report coverage lookup failed; treating every image as uncovered',
       error: safeError(error),
     });
-    return none;
+    return { failed: true, covered: none };
   }
 }
-
-/**
- * The hold lookup names the marker view: a database without it fails the lookup, which holds
- * everyone.
- */
-const NAME_MARKER_VIEW = true;
 
 type OwnerHolds = {
   /**
@@ -589,6 +615,8 @@ type OwnerHolds = {
   held: (userId: number) => boolean;
   /** Named on any CSAM report. */
   reported: (userId: number) => boolean;
+  /** The lookup failed, so `held` and `reported` hold everyone. */
+  failed: boolean;
 };
 
 /**
@@ -598,22 +626,19 @@ type OwnerHolds = {
 async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
   const ids = [...new Set(userIds)];
   const none = () => false;
-  if (!ids.length) return { held: none, reported: none };
+  if (!ids.length) return { held: none, reported: none, failed: false };
   try {
     const rows = await dbWrite.$queryRaw<{ id: number; held: boolean; reported: boolean }[]>`
       SELECT u.id,
-        ${holdMarkerSql(Prisma.sql`u.id`, NAME_MARKER_VIEW)} OR EXISTS (
-          SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}
-            AND (c."reportSentAt" IS NULL OR NOT ${evidenceVerifiedSql(Prisma.sql`c`)})
-        ) AS held,
-        EXISTS (SELECT 1 FROM "CsamReport" c WHERE ${reportNamesSql(Prisma.sql`u.id`)}) AS reported
+        ${Prisma.raw(ownerHeldText('u."id"'))} AS held,
+        ${Prisma.raw(ownerReportedText('u."id"'))} AS reported
       FROM unnest(${ids}::int[]) AS u(id)
     `;
     const set = (key: 'held' | 'reported') => {
       const s = new Set(rows.filter((r) => r[key]).map((r) => r.id));
       return (userId: number) => s.has(userId);
     };
-    return { held: set('held'), reported: set('reported') };
+    return { held: set('held'), reported: set('reported'), failed: false };
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -621,7 +646,7 @@ async function ownerHolds(userIds: number[]): Promise<OwnerHolds> {
       message: 'evidence hold lookup failed; treating every owner as held',
       error: safeError(error),
     });
-    return { held: () => true, reported: () => true };
+    return { held: () => true, reported: () => true, failed: true };
   }
 }
 

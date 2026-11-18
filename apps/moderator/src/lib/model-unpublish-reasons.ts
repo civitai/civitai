@@ -1,3 +1,5 @@
+import { MINOR_UNPUBLISH_REASONS as MINOR_REASONS } from '@civitai/shared/held-url';
+
 /**
  * The reasons a moderator may unpublish a MODEL, mirrored from the main app's `unpublishReasons`
  * (`src/server/common/moderation-helpers.ts`). `/api/mod/model/unpublish` refuses a key it does not
@@ -43,7 +45,4 @@ export const modelUnpublishReasonLabel = (key: string) =>
  * model as depicting a minor first, as the main app's `UnpublishModal` does. An unflagged model keeps
  * its rating and keeps generating, and comes back the moment someone republishes it.
  */
-export const MINOR_UNPUBLISH_REASONS: ReadonlySet<ModelUnpublishReason> = new Set([
-  'mature-underage',
-  'photo-real-underage',
-]);
+export const MINOR_UNPUBLISH_REASONS: ReadonlySet<ModelUnpublishReason> = new Set(MINOR_REASONS);

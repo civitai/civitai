@@ -200,12 +200,9 @@ describe('intake backpressure', () => {
 
     expect(queuedIds()).toEqual([3]);
     // Only rating items count: open yes/no questions never hold image intake back.
-    expect(openCount.mock.calls[0].slice(1)).toEqual([
-      'Open',
-      'Knight',
-      'knights.image.nsfwLevel',
-      11,
-    ]);
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(11);
   });
 
   it('queues scan samples again at the cap', async () => {
@@ -220,12 +217,10 @@ describe('intake backpressure', () => {
     openItems(5001);
     await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
     expect(enqueue).not.toHaveBeenCalled();
-    expect(openCount.mock.calls[0].slice(1)).toEqual([
-      'Open',
-      'Knight',
-      'knights.image.nsfwLevel',
-      5001,
-    ]);
+    // The servable filter's values sit between the item filter and the limit (the pglite test covers the filter).
+    const values = openCount.mock.calls[0].slice(1);
+    expect(values.slice(0, 3)).toEqual(['Open', 'Knight', 'knights.image.nsfwLevel']);
+    expect(values.at(-1)).toBe(5001);
 
     clearKnightsSourcesConfigCache();
     openItems(5000);
