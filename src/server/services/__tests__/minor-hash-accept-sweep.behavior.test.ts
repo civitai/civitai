@@ -1,8 +1,9 @@
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteFromSnapshot } from '~/__tests__/pglite-snapshot';
 
 // The sweep's hold is one NOT EXISTS over "Appeal". Which appeals hold a model back is a
 // predicate on status, category and context kind together, so it runs here against real Postgres
@@ -43,19 +44,21 @@ const EXPIRED_AUTO_FLAG = JSON.stringify({
 });
 
 beforeEach(async () => {
-  holder.db = new PGlite();
-  await holder.db.exec(`
-    CREATE TABLE "Model" (
-      id INTEGER PRIMARY KEY, minor BOOLEAN NOT NULL, meta JSONB, name TEXT, "userId" INTEGER,
-      status TEXT, poi BOOLEAN NOT NULL DEFAULT false
-    );
-    CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT);
-    CREATE TABLE "Appeal" (
-      id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-      status TEXT NOT NULL, category TEXT, context JSONB, "appealMessage" TEXT,
-      "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `);
+  // Built once in this file, then a fresh copy per test (pgliteFromSnapshot).
+  holder.db = await pgliteFromSnapshot('minor-hash-accept-sweep', async (db) => {
+    await db.exec(`
+      CREATE TABLE "Model" (
+        id INTEGER PRIMARY KEY, minor BOOLEAN NOT NULL, meta JSONB, name TEXT, "userId" INTEGER,
+        status TEXT, poi BOOLEAN NOT NULL DEFAULT false
+      );
+      CREATE TABLE "User" (id INTEGER PRIMARY KEY, username TEXT);
+      CREATE TABLE "Appeal" (
+        id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
+        status TEXT NOT NULL, category TEXT, context JSONB, "appealMessage" TEXT,
+        "createdAt" TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `);
+  });
 });
 
 afterEach(async () => {

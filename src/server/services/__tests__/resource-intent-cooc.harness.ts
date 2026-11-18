@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { PGlite } from '@electric-sql/pglite';
+import type { PGlite } from '@electric-sql/pglite';
+import { pgliteFromSnapshot } from '~/__tests__/pglite-snapshot';
 import type { Prisma } from '@prisma/client';
 import type { CoocDrawRow, CoocRawQuery } from '~/server/services/resource-intent-cooc/build';
 import type { CoocSql } from '~/server/services/resource-intent-cooc/store';
@@ -19,11 +20,17 @@ export const MIGRATION_SQL = readFileSync(
  * default would read it in the test host's local zone and shift every date.
  */
 export async function utcPglite(...migrations: string[]) {
-  const db = new PGlite({
-    parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) },
-  });
+  // Migrated once per migration set in this test file, then copied per call (pgliteFromSnapshot).
+  const db = await pgliteFromSnapshot(
+    `utcPglite:${migrations.join('\u0000')}`,
+    async (template) => {
+      await template.exec(`SET TIME ZONE 'UTC'`); // the migrations run in a UTC session, as before
+      for (const m of migrations) await template.exec(m);
+    },
+    { parsers: { 1114: (v: string) => new Date(`${v.replace(' ', 'T')}Z`) } }
+  );
+  // Session state is not in the data directory, so every copy gets it.
   await db.exec(`SET TIME ZONE 'UTC'`);
-  for (const m of migrations) await db.exec(m);
   return db;
 }
 

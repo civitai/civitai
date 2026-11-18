@@ -6,7 +6,7 @@
 // a suite exercises the module's own predicates alone.
 import { readFileSync } from 'fs';
 import path from 'path';
-import { PGlite } from '@electric-sql/pglite';
+import { pgliteFromSnapshot } from '~/__tests__/pglite-snapshot';
 import { Client } from 'pg';
 import type { DocStoreClient, DocStoreDb } from '~/server/services/apps/doc-store';
 import {
@@ -193,16 +193,21 @@ export async function createPgliteHarness(opts: {
   /** Apply the content-level columns migration too (default false). */
   docLevels?: boolean;
 }): Promise<Harness> {
-  const pg = new PGlite();
-  await pg.exec(readFileSync(MIGRATION_UP, 'utf8'));
-  if (opts.appPurgePolicy !== false) await pg.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
-  if (opts.schemaMajor) await pg.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
-  if (opts.docLevels) await pg.exec(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
-  if (!opts.rls) {
-    for (const t of APPDATA_TABLES) {
-      await pg.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
+  // Migrated once per option set in this test file, then a fresh copy per harness
+  // (pgliteFromSnapshot). Roles and RLS flags live in the data directory, so the copy has them.
+  const purge = opts.appPurgePolicy !== false;
+  const key = `doc-store:rls=${opts.rls}:purge=${purge}:major=${!!opts.schemaMajor}:levels=${!!opts.docLevels}`;
+  const pg = await pgliteFromSnapshot(key, async (db) => {
+    await db.exec(readFileSync(MIGRATION_UP, 'utf8'));
+    if (purge) await db.exec(readFileSync(MIGRATION_APP_PURGE_UP, 'utf8'));
+    if (opts.schemaMajor) await db.exec(readFileSync(MIGRATION_SCHEMA_MAJOR_UP, 'utf8'));
+    if (opts.docLevels) await db.exec(readFileSync(MIGRATION_DOC_LEVELS_UP, 'utf8'));
+    if (!opts.rls) {
+      for (const t of APPDATA_TABLES) {
+        await db.exec(`ALTER TABLE appdata.${t} DISABLE ROW LEVEL SECURITY`);
+      }
     }
-  }
+  });
 
   async function run(sql: string, params?: unknown[]): Promise<Row[]> {
     if (params && params.length > 0) return (await pg.query<Row>(sql, params)).rows;
