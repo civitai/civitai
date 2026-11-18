@@ -73,25 +73,33 @@ func (s *Server) noteFallback(ctx context.Context, mode, endpoint string, err er
 }
 
 // noteError records a compute error (not a fallback) on the request's span (error status with its
-// class, an `error` event with class and type — never the text) and its log line.
+// class, an `error` event with class and type — never the text), its count (feed_go_errors_total)
+// and its log line.
 func (s *Server) noteError(ctx context.Context, level slog.Level, msg, mode, endpoint string, err error) {
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		class := fallback.Class(err)
 		span.SetStatus(codes.Error, class)
 		span.AddEvent("error", trace.WithAttributes(attrErrClass.String(class), attrErrType.String(fallback.Type(err))))
 	}
+	if s.Metrics != nil {
+		s.Metrics.ObserveError(endpoint, mode, err)
+	}
 	s.events().Error(ctx, level, msg, mode, endpoint, err)
 }
 
-// NoteProxyError is the fallback proxy's onError: the error on the proxy hop's span and its log line,
-// under the endpoint of the request's path.
+// NoteProxyError is the fallback proxy's onError: the error on the proxy hop's span, its count
+// (feed_go_errors_total, mode proxy) and its log line, under the endpoint of the request's path.
 func (s *Server) NoteProxyError(r *http.Request, reason string, err error) {
 	ctx := r.Context()
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		span.SetStatus(codes.Error, reason)
 		span.AddEvent("error", trace.WithAttributes(attrErrClass.String(fallback.Class(err)), attrErrType.String(fallback.Type(err))))
 	}
-	s.events().ProxyError(ctx, PublicEndpoint(r.URL.Path), reason, err)
+	endpoint := PublicEndpoint(r.URL.Path)
+	if s.Metrics != nil {
+		s.Metrics.ObserveError(endpoint, "proxy", err)
+	}
+	s.events().ProxyError(ctx, endpoint, reason, err)
 }
 
 // PublicEndpoint is the feed_endpoint of a public path ("" for any other).

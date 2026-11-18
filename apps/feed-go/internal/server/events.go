@@ -23,8 +23,9 @@ const overflowReason = "(overflow)"
 // EventLog writes the per-request lines (DESIGN.md §10.3): one per fallback, per compute error and per
 // fallback-proxy error, each with the trace and span ids when the request has a span, rate-limited
 // per (kind, mode, endpoint, reason) by a token bucket of PerMinute lines (refilled continuously, burst
-// PerMinute). A line carries `suppressed`, the lines that key dropped since its last one; FlushSuppressed
-// (run every minute by Run) writes one `log lines suppressed` line per key that dropped any since.
+// PerMinute). A line carries `suppressed`, the lines that key dropped since its last one; nothing else
+// reports drops, and nothing is lost to them: feed_go_errors_total and feed_go_fallback_total count
+// every event.
 //
 // Only safe fields are written: the reason (a fixed label), the fallback's SafeDetail, an error's
 // Class and Type — never an error's text, the request input, a cookie or an id.
@@ -50,7 +51,7 @@ type eventBucket struct {
 	suppressed int
 }
 
-// Event kinds (the `kind` of a suppressed line).
+// Event kinds (part of the limiter's key).
 const (
 	eventFallback   = "fallback"
 	eventError      = "error"
@@ -167,40 +168,4 @@ func (l *EventLog) ProxyError(ctx context.Context, endpoint, reason string, err 
 		attrs = append(attrs, "suppressed", suppressed)
 	}
 	l.Log.Log(ctx, level, "fallback proxy: the Node app did not answer", attrs...)
-}
-
-// FlushSuppressed writes one `log lines suppressed` line per key that dropped lines since its last
-// line or flush, and resets those counts.
-func (l *EventLog) FlushSuppressed() {
-	type row struct {
-		k eventKey
-		n int
-	}
-	l.mu.Lock()
-	var rows []row
-	for k, b := range l.buckets {
-		if b.suppressed > 0 {
-			rows = append(rows, row{k, b.suppressed})
-			b.suppressed = 0
-		}
-	}
-	l.mu.Unlock()
-	for _, r := range rows {
-		l.Log.Info("log lines suppressed", "kind", r.k.kind, "mode", r.k.mode, "endpoint", r.k.endpoint,
-			"reason", r.k.reason, "suppressed", r.n)
-	}
-}
-
-// Run calls FlushSuppressed every interval until ctx ends.
-func (l *EventLog) Run(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			l.FlushSuppressed()
-		}
-	}
 }

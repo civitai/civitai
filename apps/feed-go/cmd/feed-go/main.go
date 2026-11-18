@@ -335,8 +335,6 @@ func run(log *slog.Logger) error {
 	if tp != nil {
 		srv.Tracer, srv.Propagator, prop = tp.Tracer, tp.Propagator, tp.Propagator
 	}
-	// The once-a-minute `log lines suppressed` lines; ends with ctx (SIGTERM).
-	go srv.Events.Run(ctx, time.Minute)
 	if cfg.FallbackURL != "" {
 		target, err := url.Parse(cfg.FallbackURL)
 		if err != nil {

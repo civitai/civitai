@@ -12,11 +12,8 @@
 package fallback
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"strings"
 )
 
@@ -110,38 +107,6 @@ func filter(s, extra string) string {
 	return string(b)
 }
 
-// Class names the kind of err without its text, for a log line or a span: deadline, canceled,
-// timeout, eof, pg:<SQLSTATE>, redis, net:<op>, or other ("" for nil). The text of a store error can
-// name a key or quote a value, so it is never what is logged.
-func Class(err error) string {
-	if err == nil {
-		return ""
-	}
-	var (
-		pg    interface{ SQLState() string }
-		rerr  interface{ RedisError() }
-		nerr  net.Error
-		operr *net.OpError
-	)
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.As(err, &pg):
-		return "pg:" + Token(pg.SQLState())
-	case errors.As(err, &rerr):
-		return "redis"
-	case errors.As(err, &nerr) && nerr.Timeout():
-		return "timeout"
-	case errors.As(err, &operr):
-		return "net:" + Token(operr.Op)
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return "eof"
-	}
-	return "other"
-}
-
 // Type is the Go type of the innermost error in err's chain (`%T`, e.g. `*pgconn.PgError`): a type
 // name, never the text. "" for nil.
 func Type(err error) string {
@@ -156,6 +121,3 @@ func Type(err error) string {
 		err = next
 	}
 }
-
-// ErrorClasses: API STUB (the next commit implements it).
-func ErrorClasses() []string { return nil }

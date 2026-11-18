@@ -783,7 +783,7 @@ func (s *Server) shadowHandler(w http.ResponseWriter, r *http.Request, endpoint 
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	// The sample's span, a child of the Node request's traceparent when the sampler sends one. It ends
+	// The sample's span: an independent root (the Node samplers send no traceparent; an inbound one is honoured). It ends
 	// with the comparison (in the goroutine below), or here when the sample is not taken.
 	spanCtx, span := s.startSpan(r.Context(), r.Header, "shadow", endpoint)
 	spanHandedOff := false

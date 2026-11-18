@@ -3,7 +3,7 @@
 // histograms (DESIGN.md §10.3).
 //
 // It mirrors the Node app's setup (src/instrumentation.node.ts) so one configuration drives both and a
-// trace continues across Node → feed-go → Node: OTLP over HTTP/protobuf to
+// trace continues across browser → feed-go → Node: OTLP over HTTP/protobuf to
 // `<OTEL_EXPORTER_OTLP_ENDPOINT>/v1/traces`, W3C `traceparent` (+ `baggage`) propagation, and
 // ParentBased over a trace-id ratio of OTEL_TRACES_SAMPLE_RATIO (default 0.1) applied to remote
 // sampled parents too, with the SAME trace-id → decision function as the JS sampler (NodeRatio), so
