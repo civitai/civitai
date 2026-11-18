@@ -41,7 +41,8 @@ function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSecond
     };
   }
   const key = `${RATE_KEYS.submit}:${subject}` as const;
-  // System Redis on purpose; do not swap in takeClusterWindowCount.
+  // Submit limits stay on sysRedis: durable across eviction, so a lost window cannot admit a burst
+  // of submits.
   return {
     take: async (): Promise<number> => {
       const reply = await withSysReadDeadline(

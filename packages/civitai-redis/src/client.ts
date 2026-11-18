@@ -3152,17 +3152,14 @@ const REDIS_KEYS_UNPREFIXED = {
      * Assistant's app-activity read for that same user (preview-errors.service.ts).
      */
     DEV_PREVIEW_ERRORS: 'system:blocks:dev-preview-errors',
-    /**
-     * FORKABLE APPS — per-user fork-start counters, keyed
-     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
-     * single-key MULTI (always created with its TTL); fail-closed on a redis error.
-     */
+    // FORKABLE APPS: per-user fork starts in one window
+    // (`system:blocks:fork-rate-limit:${userId}:${windowSeconds}`).
     FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
     // New-submission moderator alerts per submitter per UTC hour
     // (`system:blocks:review-submission-alerts:${userId}:${YYYY-MM-DDTHH}`).
     REVIEW_SUBMISSION_ALERTS: 'system:blocks:review-submission-alerts',
-    // Per-slug counter for git pushes recorded for review, and per-user for the web manifest
-    // editor's commits. `SET NX EX` + `INCR` in one single-key MULTI.
+    // Git pushes recorded for review, per slug, and the web manifest editor's commits, per user
+    // (`system:blocks:push-review-rate-limit:<slug:|user:><id>`).
     PUSH_REVIEW_RATE_LIMIT: 'system:blocks:push-review-rate-limit',
     // Model spend of the impersonation check on approved apps' listing edits, in US cents, per
     // UTC day (`system:blocks:listing-check-spend:${YYYY-MM-DD}`): added to the day's agent-review
@@ -3174,9 +3171,8 @@ const REDIS_KEYS_UNPREFIXED = {
     AGENT_REVIEW_AUTOSTART_RESERVED: 'system:blocks:agent-review-autostart-reserved',
     /**
      * Per-viewer UTC-day quota for App Blocks batch private uploads (`OPEN_MEDIA_UPLOAD_BATCH`),
-     * across all apps: `system:blocks:media-upload-batch-daily:<items|bytes>:<userId>:<yyyy-mm-dd>`.
-     * INCRBY reserve-and-refund, first-write EX ~2 days, fail-CLOSED. See
-     * media-upload-batch.service.
+     * across all apps: `system:blocks:media-upload-batch-daily:<items|bytes>:<userId>:<yyyy-mm-dd>`:
+     * the files or bytes charged that day.
      */
     MEDIA_UPLOAD_BATCH_DAILY: 'system:blocks:media-upload-batch-daily',
     /**
@@ -3209,8 +3205,7 @@ const REDIS_KEYS_UNPREFIXED = {
     PROVIDER: 'download:provider',
   },
   DOWNLOAD_LINK: {
-    // `dl:mint-rate:<cred|user>:<id>:<minute>` — fixed-window mint counters (INCRBY + EXPIRE in one
-    // single-key MULTI).
+    // `dl:mint-rate:<cred|user>:<id>:<minute>`: fixed-window mint counters.
     MINT_RATE: 'dl:mint-rate',
   },
   USER: {

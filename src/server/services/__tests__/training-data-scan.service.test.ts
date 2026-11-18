@@ -357,6 +357,23 @@ describe('healStalledTrainingDataScans', () => {
     dbMock.dbWrite.$queryRaw.mockReset().mockResolvedValue([{ id: 3 }]);
     redisMock.redis.get.mockReset().mockResolvedValue(null);
     redisMock.redis.incrBy.mockReset().mockResolvedValue(1);
+    // A resubmit is counted by SET NX EX + INCR in one MULTI; the INCR lands on the same
+    // `redis.incrBy` counter the tests read, so every count stays in one place.
+    redisMock.redis.multi.mockReset().mockImplementation(() => {
+      const queued: Array<() => unknown> = [];
+      const chain = {
+        set: vi.fn(() => {
+          queued.push(() => 'OK');
+          return chain;
+        }),
+        incr: vi.fn((key: string) => {
+          queued.push(() => redisMock.redis.incrBy(key, 1));
+          return chain;
+        }),
+        exec: vi.fn(async () => Promise.all(queued.map((op) => op()))),
+      };
+      return chain;
+    });
   });
 
   it('never picks a zip that was never submitted, nor one on a removed model', async () => {

@@ -3,6 +3,7 @@ import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   PUSH_REVIEW_RATE_LIMIT,
+  SUBMIT_RATE_LIMIT,
   takePushReviewSlot,
   takeSubmitSlot,
 } from '~/server/services/blocks/submit-rate-limit';
@@ -95,6 +96,21 @@ describe('takeSubmitSlot — the submit window stays in system Redis', () => {
 
     expect([...counters.sysRedis.entries()]).toEqual([[`${SUBMIT_KEY}:key:9`, 1]]);
     expect(counters.redis.size).toBe(0);
+    expect(redisMock.redis.multi).not.toHaveBeenCalled();
+  });
+
+  it('a submit past the max is limited, with retryAfter from the system Redis TTL', async () => {
+    for (let i = 0; i < SUBMIT_RATE_LIMIT.max; i++) {
+      expect(await takeSubmitSlot('user:7')).toEqual({ ok: true });
+    }
+    expect(await takeSubmitSlot('user:7')).toEqual({
+      ok: false,
+      reason: 'limited',
+      retryAfterSeconds: 55,
+    });
+
+    expect(redisMock.sysRedis.ttl).toHaveBeenCalledWith(`${SUBMIT_KEY}:user:7`);
+    expect(redisMock.redis.ttl).not.toHaveBeenCalled();
     expect(redisMock.redis.multi).not.toHaveBeenCalled();
   });
 

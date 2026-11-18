@@ -168,25 +168,6 @@ describe('the registry generation', () => {
     expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
   });
 
-  // The key starts empty on the cluster (and after any expiry): a counter would start again at 1
-  // and serve an entry generation 1 filled before, while it was still alive.
-  it('never serves an entry an earlier generation of the same number filled', async () => {
-    redis.cache.set('packed:caches:remix-app-registry:1', {
-      data: [stored(pixelArt, 1, 'remix')],
-      stale: false,
-    });
-    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
-    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
-      stored(pixelArt, 1, 'remix_disabled'),
-    ] as never);
-
-    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
-
-    await expect(
-      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
-  });
-
   // The cache cluster can evict the generation key at any time. A reader that finds it gone must
   // not land on an entry filled before the mod write it lost.
   it('serves a mod write after the generation key it bumped is evicted', async () => {

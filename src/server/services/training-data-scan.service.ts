@@ -10,6 +10,7 @@ import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { blobAir, uploadConsumerBlob } from '~/server/services/orchestrator/consumer-blob-scan';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { isDefiniteNotFound, resolveDownloadUrl } from '~/utils/delivery-worker';
 import { ModelModifier, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 
@@ -465,8 +466,8 @@ export async function healStalledTrainingDataScans() {
       if (!key) return;
       if (outcome === 'unreadable') unreadableRuns++;
       try {
-        await redis.incrBy(key, 1);
-        await redis.expire(key, HEAL_ATTEMPTS_TTL_SECONDS);
+        // One MULTI, so the count is never left without its TTL.
+        await takeClusterWindowCount('countHealResubmit', key, HEAL_ATTEMPTS_TTL_SECONDS);
       } catch {
         // An uncounted resubmit only allows one more.
       }
