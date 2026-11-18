@@ -118,7 +118,7 @@ describe('🔴 meta is ignored until REGISTRY_ADAPTER_TRUST_META is 1', () => {
   ])(
     'flag %s: meta DE does not release the header GB, nor an origin with no headers',
     async (_name, flag) => {
-      if (flag !== undefined) vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', flag);
+      vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', flag);
       const { regionRestricted } = await load(undefined);
       expect(
         regionRestricted({ headers: { 'cf-ipcountry': 'GB' }, meta: { country: 'DE' } }, NOW)
@@ -143,11 +143,9 @@ describe('🔴 a region value in the request’s meta is judged as its header is
   });
 
   it.each([
-    // The site's default block list: GB.
     ['meta GB, no headers: held', true, { country: 'GB' }, {}],
     ['meta isuk, no headers: held as GB', true, { isuk: 'true' }, {}],
     ['meta isuk, header DE: held as GB', true, { isuk: '1' }, { 'cf-ipcountry': 'DE' }],
-    // No headers is held, so only a read meta country can release it.
     ['positive control: meta DE, no headers: not held', false, { country: 'DE' }, {}],
     [
       'meta XX, header DE: meta wins and names no country',

@@ -18,11 +18,11 @@
  *     for rate-limit keys (`limits.ts`).
  *
  * An HTTP request's origin is its headers and socket address; a gRPC call's is its metadata and
- * peer address, the same header names a proxy sets on either. On both, a region value may also
- * come from the request's `meta` (the registry spec's rule 10) under the key
- * {@link REGION_META_KEYS} names for its header: a string there wins over the header, and a key
- * that is missing or not a string leaves the header to decide. Either way it is judged by the one
- * rule below.
+ * peer address, the same header names a proxy sets on either. With {@link metaTrusted} on
+ * (`REGISTRY_ADAPTER_TRUST_META=1`), a region value on both may also come from the request's
+ * `meta` (the registry spec's rule 10) under the key {@link REGION_META_KEYS} names for its
+ * header: a string there wins over the header, and a key that is missing or not a string leaves
+ * the header to decide. Either way it is judged by the one rule below.
  *
  * 🔴 Trust. Every value here is taken from the request as it arrives:
  *   - the region headers (`cf-ipcountry`, `cf-region-code`, `x-isuk`) and the forwarded client
@@ -35,9 +35,10 @@
  *     is held to SFW, whatever their region; one that does forward them is served as the region
  *     they name, so it must forward the edge's values and never a client's;
  *   - the per-address cap counts a relay as one address, however many users it serves;
- *   - the `meta` keys are taken as the registry gateway set them: it sets each from the edge's
- *     header, replacing what the caller sent, and it is the only caller that reaches the
- *     subscription path. A caller that reached this process another way could name its own.
+ *   - the `meta` keys are believed only with `REGISTRY_ADAPTER_TRUST_META=1`, once the registry
+ *     gateway sets each from the edge's header, replacing what the caller sent; it is the only
+ *     caller that reaches the subscription path. A caller that reached this process another way
+ *     could name its own.
  */
 import type { IncomingMessage } from 'node:http';
 import type { NextApiRequest } from 'next';
@@ -61,10 +62,7 @@ export type RequestOrigin = {
   remoteAddress?: string;
 };
 
-/**
- * The `meta` key each region header is read from, as the gateway sets them: a rename is a change
- * here alone.
- */
+/** The `meta` key each region header is read from, as the gateway names them. */
 export const REGION_META_KEYS = {
   'cf-ipcountry': 'country',
   'cf-region-code': 'region',

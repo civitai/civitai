@@ -1501,9 +1501,7 @@ describe('🔴 the production region rule reads the request’s meta', () => {
     ['null', 'null'],
     ['a country that is not a string', '{"country":["DE"]}'],
   ])('HTTP: malformed meta (%s) is none', async (_n, json) => {
-    // With no header it is held, as a request with no region is ...
     expect(await sent(meta(json), NO_REGION)).toEqual(['live']);
-    // ... and with one, the header decides.
     expect(await sent(meta(json), { 'cf-ipcountry': 'DE' })).toEqual(['upsert', 'live']);
   });
 
