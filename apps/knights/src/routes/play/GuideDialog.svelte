@@ -28,8 +28,11 @@
   } = $props();
 
   let form = $state<HTMLFormElement>();
+  // scrollIntoView would also scroll the overlay and push the dialog's top out of view.
   const scrollOnOpen = (node: HTMLElement, wanted: boolean) => {
-    if (wanted) node.scrollIntoView({ block: 'start' });
+    const box = node.closest<HTMLElement>('.scroll');
+    if (!wanted || !box) return;
+    box.scrollTop += node.getBoundingClientRect().top - box.getBoundingClientRect().top - 16;
   };
   // Escape is the same answer as the button: the guide is read.
   const close = () => {
