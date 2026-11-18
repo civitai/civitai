@@ -82,7 +82,9 @@ describe('search-upload-sweep', () => {
         (13, 5, NULL, 'Scanned', true, false, ${UPLOAD}, ${OLD}),
         (14, 5, NULL, 'Scanned', false, true, ${UPLOAD}, now() - interval '100 minutes'),
         (15, 8, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD}),
-        (16, 9, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD});
+        (16, 9, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD}),
+        (17, 5, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD});
+      UPDATE "Image" SET "blockedFor" = 'Moderated' WHERE id = 17;
       -- Uploader 8 has an unsent CSAM report; uploader 9's was sent.
       INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (8, NULL), (9, now());
       INSERT INTO "ScanLabelItem" ("imageId") VALUES (6);
