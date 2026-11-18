@@ -915,6 +915,15 @@ jobs:
             vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
             vite-unit-${{ runner.os }}-${{ runner.arch }}-
 
+      # MEMORY SAMPLER, diagnostic. Shard 4 was killed mid-run by the runner ("The runner has
+      # received a shutdown signal") several times on 2026-11-18, in the first minutes, when its
+      # heaviest PGlite files ran at once. Writes `free -m` every 5 s for the whole job, uploaded
+      # below as `unit-memory-<shard>-a<attempt>` even when the runner is starved, so the next
+      # kill shows its peak instead of a guess. Remove once the cap below is proven or replaced.
+      - name: Start memory sampler
+        run: |
+          nohup bash -c 'while true; do echo "=== $(date -u +%H:%M:%S)"; free -m; sleep 5; done' > "$RUNNER_TEMP/unit-memory.log" 2>&1 &
+
       # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
       # `vitest run --project unit* ...args`, and its queueDecision() returns
       # early on CI, so the dev-server queue never sees this.
@@ -943,8 +952,30 @@ jobs:
       #
       # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
+      #
+      # VITEST_MAX_WORKERS=2 (read by vitest.config.mts): uncapped, Vitest runs one fork per
+      # core and shard 4's PGlite-heavy files exhausted the hosted runner's 16 GB. At 3 workers
+      # (2026-11-18, four runs) memory still reached 15.4 GB used with 3 GB swap full inside
+      # 2 minutes, and one of the four runs was killed.
       - name: Unit tests
-        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+        env:
+          VITEST_MAX_WORKERS: 2
+        # The [mem] line also goes into this step's log, which streams live: a runner killed for
+        # memory never reaches the upload step below (observed 2026-11-18), but its log keeps
+        # every line up to the kill.
+        run: |
+          nohup bash -c 'while true; do echo "[mem] $(date -u +%H:%M:%S) $(free -m | awk '"'"'/^Mem:/{print "used=" $3 " avail=" $7} /^Swap:/{print "swap=" $3}'"'"' | tr "\n" " ")"; sleep 5; done' &
+          pnpm run test:unit:run --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      - name: Upload memory samples
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-memory-${{ matrix.shard }}-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unit-memory.log
+          if-no-files-found: ignore
+          retention-days: 8
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   signAgentCallbackToken,
   verifyAgentCallbackToken,
@@ -48,6 +48,21 @@ describe('signAgentCallbackToken / verifyAgentCallbackToken', () => {
       ttlSeconds: -1,
     });
     expect(verifyAgentCallbackToken(token, PUBREQ, { secret: SECRET })).toEqual({ ok: false });
+  });
+
+  it('a token is still accepted 70 minutes after minting (outlasts the 60m Job deadline)', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-11-18T12:00:00Z'));
+      const token = signAgentCallbackToken({ publishRequestId: PUBREQ, secret: SECRET });
+      vi.setSystemTime(new Date('2026-11-18T13:10:00Z'));
+      expect(verifyAgentCallbackToken(token, PUBREQ, { secret: SECRET }).ok).toBe(true);
+      // ...and it does expire: 76 minutes after minting it is refused.
+      vi.setSystemTime(new Date('2026-11-18T13:16:00Z'));
+      expect(verifyAgentCallbackToken(token, PUBREQ, { secret: SECRET }).ok).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('never throws on malformed input → ok:false', () => {
