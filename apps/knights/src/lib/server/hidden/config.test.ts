@@ -40,6 +40,15 @@ describe('hiddenCheckSettings', () => {
 
   it('serves no probation checks unless a share from 0 to 1 is set', () => {
     expect(DEFAULT_HIDDEN_CHECKS.probationShare).toBe(0);
+    for (const [raw, share] of [
+      ['0', 0],
+      ['1', 1],
+      ['0.5', 0.5],
+    ] as const) {
+      expect(
+        hiddenCheckSettings({ KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE: raw }).probationShare
+      ).toBe(share);
+    }
     for (const raw of ['-0.1', '1.5', 'half']) {
       expect(
         hiddenCheckSettings({ KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE: raw }).probationShare

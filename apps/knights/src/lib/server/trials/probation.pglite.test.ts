@@ -25,11 +25,18 @@ beforeEach(async () => {
 });
 
 let nextPlayer = 100;
-async function vote(itemId: number, imageId: number, answer: string, playerId = nextPlayer++) {
+async function vote(
+  itemId: number,
+  imageId: number,
+  answer: string,
+  playerId = nextPlayer++,
+  weight = 1,
+  questionKey = Q
+) {
   await pg.query(
     `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
-     VALUES ($1,$2,$3,$4,$5,'Knight',$6,1)`,
-    [itemId, playerId, NOW.toISOString(), Q, imageId, answer]
+     VALUES ($1,$2,$3,$4,$5,'Knight',$6,$7)`,
+    [itemId, playerId, NOW.toISOString(), questionKey, imageId, answer, weight]
   );
   return playerId;
 }
@@ -77,21 +84,30 @@ describe('reviewProbation', () => {
     expect(await statusOf(tie.id)).toBe('retired');
   });
 
-  it('retires an active harvested or agreement check its 5+ players mostly disagree with, never a core one', async () => {
-    const harvested = await check(10, { status: 'active', source: 'harvested' }, agree(2, 3));
+  it('leaves active checks to grading, whatever their players answered, and core and trials alone', async () => {
+    const harvested = await check(10, { status: 'active', source: 'harvested' }, agree(0, 5));
     const agreement = await check(11, { status: 'active', source: 'agreement' }, agree(1, 4));
-    const core = await check(12, { status: 'active', source: 'core' }, agree(0, 5));
-    const fine = await check(13, { status: 'active', source: 'harvested' }, agree(3, 2));
-    const few = await check(14, { status: 'active', source: 'harvested' }, agree(0, 4));
+    const core = await check(12, { status: 'probation', source: 'core' }, agree(0, 5));
     const trials = await check(15, { status: 'probation', pool: 'trials' }, agree(5, 0));
 
-    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 0, retired: 2 });
-    expect(await statusOf(harvested.id)).toBe('retired');
-    expect(await statusOf(agreement.id)).toBe('retired');
-    expect(await statusOf(core.id)).toBe('active');
-    expect(await statusOf(fine.id)).toBe('active');
-    expect(await statusOf(few.id)).toBe('active');
+    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 0, retired: 0 });
+    expect(await statusOf(harvested.id)).toBe('active');
+    expect(await statusOf(agreement.id)).toBe('active');
+    expect(await statusOf(core.id)).toBe('probation');
     expect(await statusOf(trials.id)).toBe('probation');
+  });
+
+  it('does not count held players, whose votes carry no weight', async () => {
+    // 3 agree and 2 disagree, but 2 of the agreeing are held: 1 of 3 weighted players is too few to decide.
+    const { id } = await check(10, {}, agree(1, 2));
+    for (let i = 0; i < 2; i++) await vote(-id, 10, '4', nextPlayer++, 0);
+    // 5 weighted players agreeing, plus 3 held dissenters: promoted.
+    const kept = await check(11, {}, agree(5, 0));
+    for (let i = 0; i < 3; i++) await vote(-kept.id, 11, '8', nextPlayer++, 0);
+
+    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 1, retired: 0 });
+    expect(await statusOf(id)).toBe('probation');
+    expect(await statusOf(kept.id)).toBe('active');
   });
 
   it('does not count the votes of players who also voted on the image in the queue', async () => {
@@ -106,5 +122,15 @@ describe('reviewProbation', () => {
     expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 0, retired: 1 });
     expect(await statusOf(id)).toBe('retired');
     expect(await statusOf(own.id)).toBe('probation');
+  });
+
+  it('still counts players whose queue votes were on other images or other questions', async () => {
+    const { id, players } = await check(10, {}, agree(3, 2));
+    await seedImage(pg, 99, { nsfwLevel: 4 });
+    await vote(57, 99, '4', players[0]);
+    await vote(58, 10, '4', players[1], 1, 'knights.test.other');
+
+    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 1, retired: 0 });
+    expect(await statusOf(id)).toBe('active');
   });
 });

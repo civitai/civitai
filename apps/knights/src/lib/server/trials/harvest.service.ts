@@ -34,11 +34,16 @@ export type HarvestResult = {
 
 /**
  * The harvest job. While paused it takes in no rulings or agreement verdicts and the cursor holds where it was, but
- * references whose ruling no longer stands are still retired and probation is still reviewed.
+ * references whose ruling no longer stands are still retired and probation is still reviewed. Agreement verdicts are
+ * taken in only while probation checks are served (`probationShare` above 0): each one claims its image for good.
  */
 export async function runHarvestJob(
   db: Kysely<DB>,
-  { now, settings }: { now: Date; settings: HarvestSettings }
+  {
+    now,
+    settings,
+    probationShare = 0,
+  }: { now: Date; settings: HarvestSettings; probationShare?: number }
 ): Promise<
   | (HarvestResult & { probation: ProbationReview; agreementAdded: number })
   | { paused: true; retired: number; probation: ProbationReview }
@@ -53,7 +58,7 @@ export async function runHarvestJob(
   });
   // Reviewed before the intake, so a level whose references were just retired refills in the same run.
   const probation = await reviewProbation(db, { now });
-  const { added } = await takeAgreementIntake(db, { now });
+  const { added } = probationShare > 0 ? await takeAgreementIntake(db, { now }) : { added: 0 };
   return { ...harvest, probation, agreementAdded: added };
 }
 

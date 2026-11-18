@@ -105,7 +105,42 @@ describe('serving probation checks', () => {
   });
 });
 
+describe('serving probation as the fallback', () => {
+  it('serves a probation check when active checks come first but none is left', async () => {
+    const probation = await reference(10, 'probation');
+    for (let user = 1; user <= 20; user++) {
+      await seedPlayer(pg, user);
+      expect((await pick(user, 0.01))?.referenceId).toBe(probation);
+    }
+  });
+});
+
 describe('answering a probation check', () => {
+  const gold = async (userId: number) =>
+    (
+      await pg.query<{ goldPending: number; goldEarned: number }>(
+        `SELECT "goldPending","goldEarned" FROM "NewOrderPlayer" WHERE "userId"=$1`,
+        [userId]
+      )
+    ).rows[0];
+
+  it('releases the pending gold an ungraded answer recorded, and pays none', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    // Control: an active check's answer holds pending gold until it is graded.
+    const active = await reference(11, 'active');
+    await answerHiddenCheck(
+      db,
+      { userId: 2, referenceId: active, answer: '4' },
+      { now: () => NOW }
+    );
+    expect((await gold(2)).goldPending).toBeGreaterThan(0);
+
+    const ref = await reference(10, 'probation');
+    await answerHiddenCheck(db, { userId: 1, referenceId: ref, answer: '4' }, { now: () => NOW });
+    expect(await gold(1)).toEqual({ goldPending: 0, goldEarned: 0 });
+  });
+
   it('grades nobody: a wrong answer is settled inconclusive at once, with no warning, smite or miss', async () => {
     await seedPlayer(pg, 1);
     const ref = await reference(10, 'probation', '16');

@@ -168,6 +168,48 @@ describe('takeAgreementIntake', () => {
   });
 });
 
+/** One more vote on an item, by `playerId`, at `stage`. */
+const extraVote = (
+  itemId: number,
+  imageId: number,
+  playerId: number,
+  answer: string,
+  stage = 'Knight'
+) =>
+  pg.query(
+    `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,1)`,
+    [itemId, playerId, hoursAgo(2.5), Q, imageId, answer, stage]
+  );
+const firstVoter = async (itemId: number) =>
+  (
+    await pg.query<{ playerId: number }>(
+      `SELECT "playerId" FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId" LIMIT 1`,
+      [itemId]
+    )
+  ).rows[0].playerId;
+
+describe('what counts toward a unanimous verdict', () => {
+  it('counts distinct players at the Knight stage, and only on a resolved item', async () => {
+    // 2 players, one of them voting twice: too few.
+    const twice = await verdict(1, { answers: ['4', '4'] });
+    await extraVote(twice, 1, await firstVoter(twice), '4');
+    // A dissent from another stage does not break a Knight verdict.
+    const otherStage = await verdict(2);
+    await extraVote(otherStage, 2, 900, '8', 'Templar');
+    // Votes from another stage do not make up the Knight players.
+    const padded = await verdict(3, { answers: ['4', '4'] });
+    await extraVote(padded, 3, 901, '4', 'Templar');
+    await extraVote(padded, 3, 902, '4', 'Templar');
+    // Written back but no longer resolved.
+    const reopened = await verdict(4);
+    await pg.query(`UPDATE "KnightsQueueItem" SET status='Inquisitor' WHERE id=$1`, [reopened]);
+
+    await takeAgreementIntake(db, { now: NOW });
+    expect((await references()).map((r) => r.imageId)).toEqual([2]);
+  });
+});
+
 describe('the harvest job', () => {
   it('takes agreement verdicts and reviews probation while running, and only reviews while paused', async () => {
     await verdict(1);
@@ -206,8 +248,18 @@ describe('the harvest job', () => {
       await runHarvestJob(db, { now: NOW, settings: { paused: true, hiddenCheckShare: 0 } })
     ).toMatchObject({ paused: true, probation: { promoted: 1, retired: 0 } });
 
+    // Running with no probation share: no agreement verdict is taken in.
     expect(
       await runHarvestJob(db, { now: NOW, settings: { paused: false, hiddenCheckShare: 0 } })
+    ).toMatchObject({ agreementAdded: 0 });
+    expect((await references()).some((r) => r.imageId === 1)).toBe(false);
+
+    expect(
+      await runHarvestJob(db, {
+        now: NOW,
+        settings: { paused: false, hiddenCheckShare: 0 },
+        probationShare: 0.5,
+      })
     ).toMatchObject({ agreementAdded: 1 });
     expect((await references()).map((r) => [r.imageId, r.status])).toEqual([
       [1, 'probation'],

@@ -27,14 +27,11 @@ ordinary vote in every way a player can see.
   It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run
   elsewhere, `--print-sql` prints the SELECT of the ids to retire, and `--print-sql --ids <ids>` a transaction that retires exactly
   those ids and commits only if it retired all of them, both with their values written in.
-- Probation (`trials/agreement-intake.service.ts`, `trials/probation.service.ts`, both run by the harvest job): a
-  Knight-stage verdict that 3 or more players gave unanimously, was written back, was not re-rated by a moderator since, and
-  whose image is still servable and locked at that level becomes a `probation` check (source `agreement`), newest first, up
-  to `AGREEMENT_INTAKE.probationPerLevel` live agreement checks per level bucket; intake pauses with `KNIGHTS_HARVEST`. A
-  probation check grades nobody: its answer is settled `inconclusive` when it is cast. Once `KEEP_MIN_PLAYERS` players
-  answered it (not counting anyone who also voted on its image in the queue) it becomes `active` if most of them gave its
-  answer, else it is retired; the same review retires an active harvested or agreement check most of its players disagree
-  with. It runs even while the harvest is paused. `core` is exempt (`EXEMPT_SOURCES`).
+- Probation (`trials/agreement-intake.service.ts`, `trials/probation.service.ts`, both run by the harvest job): while the
+  probation share is above 0, agreed Knight-stage verdicts are taken in as `probation` checks (source `agreement`), a
+  bounded number per level bucket. A probation check grades nobody. Once enough independent players have answered it, the
+  review promotes it to `active` or retires it; the review runs even while the harvest is paused. Active checks are not
+  reviewed this way. The rules live in those two services.
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
