@@ -4677,7 +4677,7 @@ async function approveRequestUnderClaim(
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
-  const { lateHoldIds } = await dbWrite.$transaction((tx) =>
+  const { lateHoldIds, revokedTokens } = await dbWrite.$transaction((tx) =>
     finaliseOnsiteApprove(tx, {
       holdDecision,
       reviewerUserId: params.reviewerUserId,
@@ -4710,6 +4710,8 @@ async function approveRequestUnderClaim(
     }
     const { takeDownLiveApp } = await import('./live-unpublish.service');
     const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
     return {
       publishRequestId: request.id,
       appBlockId,
