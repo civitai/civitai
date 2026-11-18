@@ -328,8 +328,8 @@ describe('a bulk block over held and other images', () => {
     expect(notifiedImages()).toEqual([`/images/${OTHER_REASON}`]);
     expect(actionedReports()).toEqual([report(OTHER_REASON)]);
     expect(await deferredImages()).toEqual([FLAG_ONLY, FLAGGED_LIVE]);
-    // The image removed with only its flag left repeats only its blocklist entry.
-    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '102': 'TOS', '103': 'TOS', '104': 'TOS' });
+    // The image removed with only its flag left is not blocked again, so it adds no entry.
+    expect(blocklistReasons()).toEqual({ '101': 'CSAM', '103': 'TOS', '104': 'TOS' });
   });
 
   it('completes when the blocklist check fails: one notice, reports actioned, the skip logged', async () => {

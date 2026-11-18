@@ -445,18 +445,17 @@ export async function blockImage({
     return { updated: !!updated, state };
   });
   if (!updated) {
-    if (!state?.held) return {};
-    // Already removed and held: a re-block repeats only the blocklist entry, which is how a moderator
+    // Removed for CSAM already: a re-block repeats only its CSAM entry, which is how a moderator
     // retries one that failed (CSAM_BLOCKLIST_RETRY). A failure again throws as on a first block.
-    await writeBlockBlocklistEntry(img, {
-      imageId,
-      actorUserId: userId,
-      csam: state.removedForCsam,
-    }).catch((e: unknown) => {
-      if (e instanceof CsamBlocklistWriteError) e.skipped = true;
-      throw e;
-    });
-    return { skipped: true };
+    // Only the CSAM entry: a TOS entry is best-effort and has no retry to honour.
+    if (state?.held && state.removedForCsam)
+      await writeBlockBlocklistEntry(img, { imageId, actorUserId: userId, csam: true }).catch(
+        (e: unknown) => {
+          if (e instanceof CsamBlocklistWriteError) e.skipped = true;
+          throw e;
+        }
+      );
+    return state?.held ? { skipped: true } : {};
   }
   const blocked = state!;
   await keepPendingAppealFlag(imageId);

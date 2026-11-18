@@ -64,6 +64,7 @@ describe('the blocklist insert on an image block', () => {
     });
 
     await expect(block()).rejects.toBeInstanceOf(CsamBlocklistWriteError);
+    await expect(block()).rejects.toMatchObject({ failedStore: 'blocklist' });
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'error',

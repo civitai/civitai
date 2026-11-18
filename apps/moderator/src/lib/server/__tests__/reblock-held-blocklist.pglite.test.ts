@@ -128,11 +128,37 @@ CREATE TRIGGER fail_copy BEFORE INSERT ON "BlockedImage" FOR EACH ROW EXECUTE FU
 `;
 
 let pg: PGlite;
+/** Copies into "BlockedImage" never answer, as over a dead connection. PGlite runs a statement on
+ *  this thread, so a pg_sleep would block the copy's timer rather than model a hang. */
+let hangCopies = false;
+
+/** `db`, with its executor's copy statements hanging while `hangCopies` is set. */
+const withHangingCopies = (db: Kysely<unknown>) =>
+  new Proxy(db, {
+    get(target, key) {
+      const value = Reflect.get(target, key);
+      if (key !== 'getExecutor') return typeof value === 'function' ? value.bind(target) : value;
+      return () => {
+        const executor = target.getExecutor();
+        return new Proxy(executor, {
+          get(ex, k) {
+            const v = Reflect.get(ex, k);
+            if (k === 'executeQuery')
+              return (query: { sql: string }, ...rest: unknown[]) =>
+                hangCopies && query.sql.includes('"BlockedImage"')
+                  ? new Promise(() => undefined)
+                  : v.call(ex, query, ...rest);
+            return typeof v === 'function' ? v.bind(ex) : v;
+          },
+        });
+      };
+    },
+  });
 
 beforeAll(async () => {
   pg = await freshPglite();
   await pg.exec(SCHEMA);
-  spies.dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
+  spies.dbHandle.current = withHangingCopies(new Kysely({ dialect: pgliteDialect(pg) }));
 });
 
 afterAll(async () => {
@@ -144,6 +170,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   ch.inserts = [];
   ch.fail = false;
+  hangCopies = false;
   await pg.exec(`
     TRUNCATE "Image", "CsamQueueSetAside", "ImageDeferredBlockEffect", "BlockedImage";
     UPDATE copy_failures SET fail_first = 0;
@@ -229,6 +256,18 @@ describe('a re-block of a removed, held image', () => {
     expect(await pgRows()).toEqual([]);
   });
 
+  it('gives up on a copy that hangs within its budget, naming the copy', async () => {
+    hangCopies = true;
+    const started = Date.now();
+    const outcome = await Promise.race([
+      failure(REMOVED),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting after 3 s'), 3_000)),
+    ]);
+
+    expect(outcome).toMatchObject({ failedStore: 'held-media-copy' });
+    expect(Date.now() - started).toBeLessThan(1_900);
+  });
+
   it('retries a copy that fails once, and succeeds', async () => {
     await failCopies(1);
 
@@ -250,10 +289,12 @@ describe('a re-block of a removed, held image', () => {
     expect(logged).not.toContain(HASH.slice(1));
   });
 
-  it('writes a TOS entry, and no copy, for one removed by a moderator', async () => {
+  // A TOS entry is best-effort, with no retry message to honour; its write and logs stay with the
+  // first block.
+  it('writes nothing for one removed by a moderator under the flag', async () => {
     expect(await reblock(REMOVED_TOS)).toEqual({ skipped: true });
 
-    expect(blocklistEntries()).toEqual([[{ hash: HASH, reason: 'TOS' }]]);
+    expect(blocklistEntries()).toEqual([]);
     expect(await pgRows()).toEqual([]);
   });
 
