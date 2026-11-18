@@ -18,7 +18,7 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, landVote, pendingGoldVotes, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
@@ -93,6 +93,7 @@
     inFlight.count = 0;
     inFlight.landed = 0;
     inFlight.landedOn = null;
+    inFlight.goldless = 0;
   });
   let dialogOpen = $derived(whatsNew.showing || guideOpen || data.progress?.kind === 'rank');
   let levelNotice = $derived(!guideOpen && data.progress?.kind === 'level' ? data.progress : null);
@@ -451,6 +452,8 @@
       if (counted && alive) inFlight.count = Math.max(0, inFlight.count - 1);
       counted = false;
     };
+    // Set when the server counted a stale judgment toward the Watch: it lands on the Watch but adds no gold.
+    let paysGold = true;
     return postVote(key, {
       queue: votes,
       tracker,
@@ -472,7 +475,8 @@
         }
       },
       onFailure: (outcome) => {
-        uncount();
+        if (outcome.watchCounted) paysGold = false;
+        else uncount();
         const message = refusalNote(outcome);
         if (message) stick(message);
         dropBuffered(key);
@@ -482,12 +486,15 @@
           refilling = false;
         }
       },
-      // The page's own data (status, rewards, level notices) is read again once the vote has landed; the vote stays counted
-      // against the data on screen until the refreshed data, which holds it, replaces it.
+      // The page's own data (status, rewards, level notices) is read again once the last vote in flight has landed; each vote
+      // stays counted against the data on screen until the refreshed data, which holds it, replaces it.
       onSuccess: (result) => cheer(result, smitesBefore),
       onSettled: async () => {
-        if (counted && alive) landVote(inFlight, data.daily);
+        if (counted && alive) landVote(inFlight, data.daily, { paysGold });
         counted = false;
+        // Votes post one at a time, so a vote still unlanded settles after this one and reads the page then. Reading it now
+        // as well would only be discarded when that read starts, and while reads kept replacing each other the status froze.
+        if (inFlight.count > 0) return;
         await invalidate('app:play').catch(() => {});
       },
     });
@@ -862,7 +869,7 @@
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
-    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
+    <PlayRail status={data.status} daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily), pendingGoldVotes(inFlight, data.daily))} rail={data.rail} ladder={data.ladder} />
   {/if}
   </div>
   {/if}
@@ -871,7 +878,7 @@
 {#if railSheetOpen && data.mode === 'queue' && !data.apprenticeMeter}
   <RailSheet
     status={data.status}
-    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily))}
+    daily={withVotesSent(data.daily, pendingVotes(inFlight, data.daily), pendingGoldVotes(inFlight, data.daily))}
     rail={data.rail}
     ladder={data.ladder}
     onclose={() => (railSheetOpen = false)}
