@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage, seedPlayer } from '../../../test/seed';
+import { lockImage, seedImage, seedPlayer } from '../../../test/seed';
 import {
   castVote,
   closeModeratorRuledItems,
@@ -42,9 +42,7 @@ it('leaves an item another path moved off Open after the sweep read it', async (
   );
   const applyConsensus = vi.fn();
   await castVote(db, { userId: 1, itemId: id, answer: '2' }, { applyConsensus, now: () => NOW });
-  await pg.query(
-    `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=4, metadata='{"nsfwLevelReason":"Moderator review"}' WHERE id=10`
-  );
+  await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
 
   // The connection is handed out in call order: the sweep reads the item Open, the hand-up to the Inquisitors commits, then the sweep's close runs.
   const [swept, escalated] = await Promise.all([
@@ -78,9 +76,7 @@ it('closes against the level the image has when the close runs, not when the swe
   );
   const applyConsensus = vi.fn();
   await castVote(db, { userId: 2, itemId: id, answer: '4' }, { applyConsensus, now: () => NOW });
-  await pg.query(
-    `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=4, metadata='{"nsfwLevelReason":"Moderator review"}' WHERE id=20`
-  );
+  await lockImage(pg, 20, { reason: 'Moderator review', level: 4 });
 
   // In call order: the sweep selects the item at level 4, the moderator re-rates the image to 8, then the sweep closes it.
   const [swept] = await Promise.all([

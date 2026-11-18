@@ -642,6 +642,19 @@ export async function castVote(
   return result;
 }
 
+const lockReasonSql = (metadata: 'metadata' | 'img.metadata') =>
+  sql<string | null>`${sql.ref(metadata)}->>'nsfwLevelReason'`;
+
+/** `moderatorRuling` giving a level, on an image with no `hasBlockMarker`, as SQL; change it with them. Expects `Image as img`. */
+const moderatorRuledImageSql = (eb: ExpressionBuilder<DB & { img: DB['Image'] }, 'img'>) =>
+  eb.and([
+    eb('img.nsfwLevelLocked', '=', true),
+    eb('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked]),
+    eb('img.ingestion', '!=', 'Blocked'),
+    eb('img.blockedFor', 'is', null),
+    eb(lockReasonSql('img.metadata'), 'is distinct from', KNIGHTS_VOTE_NSFW_LEVEL_REASON),
+  ]);
+
 async function readImageState(db: Executor, imageId: number): Promise<ImageState | null> {
   const image = await db
     .selectFrom('Image')
@@ -650,7 +663,7 @@ async function readImageState(db: Executor, imageId: number): Promise<ImageState
       'nsfwLevelLocked as locked',
       'ingestion',
       'blockedFor',
-      sql<string | null>`"metadata"->>'nsfwLevelReason'`.as('lockReason'),
+      lockReasonSql('metadata').as('lockReason'),
     ])
     .where('id', '=', imageId)
     .executeTakeFirst();
@@ -740,13 +753,7 @@ export async function closeModeratorRuledItems(
     .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
     .where('i.audience', 'is', null)
     .where('i.isHiddenCheck', '=', false)
-    .where('img.nsfwLevelLocked', '=', true)
-    .where('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked])
-    .where('img.ingestion', '!=', 'Blocked')
-    .where('img.blockedFor', 'is', null)
-    .where(
-      sql<SqlBool>`img."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
-    )
+    .where(moderatorRuledImageSql)
     .orderBy('i.id', 'asc')
     .limit(limit)
     .execute();

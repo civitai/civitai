@@ -100,7 +100,10 @@ export type WritebackDecision =
 const isKnightsLocked = (image: Pick<ImageState, 'locked' | 'lockReason'>) =>
   image.locked && image.lockReason === KNIGHTS_VOTE_NSFW_LEVEL_REASON;
 
-/** A lock other than Knights' own is a moderator's ruling: its level, or the Inquisitors when it carries no usable level. */
+/**
+ * A lock other than Knights' own is a moderator's ruling: its level, or the Inquisitors when it carries no usable level.
+ * `moderatorRuledImageSql` (queue.service.ts) is its SQL form with `hasBlockMarker`; change them together.
+ */
 export function moderatorRuling(
   image: Pick<ImageState, 'locked' | 'lockReason' | 'nsfwLevel'>
 ): Extract<WritebackDecision, { kind: 'moderator' | 'inquisitor' }> | null {

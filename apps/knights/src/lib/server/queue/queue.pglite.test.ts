@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { lockImage } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
@@ -848,12 +849,6 @@ describe('writing a settled rating back', () => {
   });
 
   describe('when the image is no longer the one the players judged', () => {
-    const lock = (id: number, reason: string, level: number) =>
-      pg.query(
-        `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
-        [id, level, reason]
-      );
-
     it('sends a blocked image to the Inquisitors without calling the main app', async () => {
       const id = await settledItem();
       await pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=10`);
@@ -872,7 +867,7 @@ describe('writing a settled rating back', () => {
 
     it('closes against a moderator ruling and grades the votes by it', async () => {
       const id = await settledItem();
-      await lock(10, 'Moderator review', 8);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 8 });
       applyConsensus.mockClear();
 
       expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
@@ -897,7 +892,7 @@ describe('writing a settled rating back', () => {
         await vote(u, id, answer);
       }
       expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '2' });
-      await lock(10, 'Moderator review', 1);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 1 });
 
       expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
       expect(await itemRow(id)).toMatchObject({
@@ -920,7 +915,7 @@ describe('writing a settled rating back', () => {
 
     it('grades the votes that match the moderator as correct', async () => {
       const id = await settledItem();
-      await lock(10, 'Moderator review', 4);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
       await pendingRun(10);
       expect((await verdicts(id)).every((v) => v.verdict === 'correct')).toBe(true);
     });
@@ -937,7 +932,7 @@ describe('writing a settled rating back', () => {
 
     it('counts an image already at the settled level and Knights-locked as written, without calling the main app', async () => {
       const id = await settledItem();
-      await lock(10, 'Knights Vote', 4);
+      await lockImage(pg, 10, { reason: 'Knights Vote', level: 4 });
       applyConsensus.mockClear();
       expect(await pendingRun(10)).toEqual({ applied: 1, failed: 0, rerouted: 0 });
       expect(applyConsensus).not.toHaveBeenCalled();
@@ -949,7 +944,7 @@ describe('writing a settled rating back', () => {
       await image(10, 8);
       const id = await item(10);
       applyConsensus.mockImplementationOnce(async () => {
-        await lock(10, 'Knights Vote', 4);
+        await lockImage(pg, 10, { reason: 'Knights Vote', level: 4 });
         throw new Error('timed out after the main app wrote');
       });
       vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -965,7 +960,7 @@ describe('writing a settled rating back', () => {
 
     it('hands a moderator-locked image with no usable level to the Inquisitors as moderator-locked', async () => {
       const id = await settledItem();
-      await lock(10, 'Moderator review', 0);
+      await lockImage(pg, 10, { reason: 'Moderator review', level: 0 });
       expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
       expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', reason: 'moderator-locked' });
     });
@@ -1442,11 +1437,6 @@ describe('escalation with empty ranks', () => {
 });
 
 describe('closeModeratorRuledItems', () => {
-  const lock = (id: number, reason: string, level: number) =>
-    pg.query(
-      `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
-      [id, level, reason]
-    );
   const exp = async (userId: number) =>
     (
       await pg.query<{ exp: number }>(`SELECT exp FROM "NewOrderPlayer" WHERE "userId"=$1`, [
@@ -1468,7 +1458,7 @@ describe('closeModeratorRuledItems', () => {
     const id = await item(10);
     await vote(1, id, '4');
     await vote(2, id, '8');
-    await lock(10, 'Moderator review', 4);
+    await lockImage(pg, 10, { reason: 'Moderator review', level: 4 });
     const before = { right: await exp(1), wrong: await exp(2) };
 
     expect(await sweep()).toEqual({ closed: 1, failed: 0 });
@@ -1499,13 +1489,13 @@ describe('closeModeratorRuledItems', () => {
     const noLevel = await item(14);
     const blocked = await item(15);
     const otherQuestion = await item(16, { question: 'knights.test.bool' });
-    await lock(11, 'Moderator review', 4);
-    await lock(12, 'Moderator review', 8);
-    await lock(13, 'Knights Vote', 4);
-    await lock(14, 'Moderator review', 0);
-    await lock(15, 'Moderator review', 4);
+    await lockImage(pg, 11, { reason: 'Moderator review', level: 4 });
+    await lockImage(pg, 12, { reason: 'Moderator review', level: 8 });
+    await lockImage(pg, 13, { reason: 'Knights Vote', level: 4 });
+    await lockImage(pg, 14, { reason: 'Moderator review', level: 0 });
+    await lockImage(pg, 15, { reason: 'Moderator review', level: 4 });
     await pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=15`);
-    await lock(16, 'Moderator review', 4);
+    await lockImage(pg, 16, { reason: 'Moderator review', level: 4 });
     const ids = [closed, resolved, knightsLocked, noLevel, blocked, otherQuestion];
     const snapshot = async () =>
       Promise.all(ids.map(async (id) => ({ item: await itemRow(id), votes: await verdicts(id) })));
