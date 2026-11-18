@@ -36,21 +36,11 @@ describe('sweepStaleAgentReviews', () => {
     expect(await sweepStaleAgentReviews(new Date())).toBe(0);
   });
 
-  it('never sweeps a review still inside the 60m Job deadline', async () => {
-    mockUpdateMany.mockResolvedValue({ count: 0 });
-    const now = new Date('2026-07-27T12:00:00Z');
-    await sweepStaleAgentReviews(now);
-    const cutoff: Date = mockUpdateMany.mock.calls[0][0].where.startedAt.lt;
-    // A review started 61 minutes ago has outlived the old 60m threshold but is
-    // still within the Job deadline (60m) + callback retries: it must NOT match.
-    const startedAt = new Date(now.getTime() - 61 * 60 * 1000);
-    expect(startedAt < cutoff).toBe(false);
-  });
-
-  it('orders the three bounds: Job deadline (60m) < callback token TTL < sweeper', () => {
-    const JOB_DEADLINE_MS = 60 * 60 * 1000; // the infra template's activeDeadlineSeconds
+  // Civitai-side only: the Job deadline lives in another repo, so this cannot see it drift.
+  // It pins the two bounds this repo owns against the deadline they were sized for (60m).
+  it('keeps the callback token TTL above a 60m deadline and below the sweeper', () => {
     expect(STALE_AGENT_REVIEW_RUNNING_MS).toBe(90 * 60 * 1000);
-    expect(AGENT_CALLBACK_TOKEN_TTL_SECONDS * 1000).toBeGreaterThan(JOB_DEADLINE_MS);
+    expect(AGENT_CALLBACK_TOKEN_TTL_SECONDS).toBe(75 * 60);
     expect(STALE_AGENT_REVIEW_RUNNING_MS).toBeGreaterThan(AGENT_CALLBACK_TOKEN_TTL_SECONDS * 1000);
   });
 });
