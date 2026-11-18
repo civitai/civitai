@@ -1311,11 +1311,12 @@ jobs:
       # (`Fetched 32.1 MB in 7min 53s (67.8 kB/s)`, mostly fonts and mesa), and
       # with three shards one of them nearly always drew a slow download, so it
       # sat on the Lint critical path. So the .deb files are cached too, and
-      # copied into apt's own archive dir before the install: apt takes a .deb
-      # it finds there whose name and checksum match the index, and downloads
-      # only what is missing or newer. The package set and versions stay
-      # exactly what `install-deps` asks apt for; only where the bytes come
-      # from changes.
+      # copied into apt's own archive dir before the install: apt reuses a .deb
+      # it finds there with the file name and size the index lists (it does not
+      # re-hash it), and downloads only what is missing or newer. The package
+      # set and versions stay exactly what `install-deps` asks apt for; only
+      # where the bytes come from changes. Trust boundary: the same as the
+      # browser cache above, a `main`-scoped Actions cache entry.
       #
       # Keyed by ISO week (with a prefix restore-key) so the entry is
       # re-saved once a week as Ubuntu's -updates move on, instead of freezing
