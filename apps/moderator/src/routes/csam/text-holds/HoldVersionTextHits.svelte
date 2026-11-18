@@ -26,7 +26,7 @@
     return browser ? fetchHoldVersionTexts(holdId) : new Promise<never>(() => {});
   });
 
-  const STATE_NOTES: Record<Exclude<VersionTextHitState, 'gone'>, string> = {
+  const STATE_NOTES: Record<Exclude<VersionTextHitState, 'gone' | 'moved'>, string> = {
     unchanged: 'Current value, unchanged since the hold.',
     edited: 'Current value, edited since the hold.',
     'in-held-text': 'Current value, also in the held text.',
@@ -76,7 +76,12 @@
           {#each loaded.hits as hit (versionTextHitKey(hit))}
             <li>
               <div>{@render place(hit)}</div>
-              {#if hit.state === 'gone' || hit.text === null}
+              {#if hit.state === 'moved' && hit.movedTo}
+                <p class="m-0 whitespace-pre-wrap break-words text-dark-0">{hit.text}</p>
+                <p class="m-0 text-[11px] text-dark-2">
+                  Moved since the hold, still on the model: now at {@render place(hit.movedTo)}
+                </p>
+              {:else if hit.state === 'gone' || hit.state === 'moved' || hit.text === null}
                 <p class="m-0 text-dark-2">No longer on this version.</p>
               {:else}
                 <p class="m-0 whitespace-pre-wrap break-words text-dark-0">{hit.text}</p>

@@ -11,20 +11,24 @@ export type VersionTextHit =
   | { versionId: number; field: 'trainedWords'; index: number };
 
 /**
- * How the current value compares with what was flagged. `unchanged` / `edited` come from the check
- * value the hold stored; holds written before it only say whether the held text has the value.
+ * How the current value compares with what was flagged. `unchanged` / `edited` / `moved` come from
+ * the check value the hold stored; holds written before it only say whether the held text has the
+ * value. `moved`: the flagged value is no longer at this position but is still on the model.
  */
 export type VersionTextHitState =
   | 'unchanged'
   | 'edited'
+  | 'moved'
   | 'gone'
   | 'in-held-text'
   | 'not-in-held-text';
 
 export type VersionTextHitText = VersionTextHit & {
-  /** The version's current value; null once it is gone. */
+  /** The version's current value; null once it is gone. For `moved`, the flagged value itself. */
   text: string | null;
   state: VersionTextHitState;
+  /** Where a `moved` value is now. */
+  movedTo?: VersionTextHit;
 };
 
 /** A position as stored, with its check value. The check value never leaves the server. */

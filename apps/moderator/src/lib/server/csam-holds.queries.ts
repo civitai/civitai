@@ -7,6 +7,7 @@ import {
   heldTextHas,
   holdVersionTextHits,
   publicVersionTextHit,
+  type StoredVersionTextHit,
   type VersionTextHit,
   type VersionTextHitState,
   type VersionTextHitText,
@@ -310,9 +311,28 @@ export async function getHoldVersionTexts(
     .selectFrom('ModelVersion')
     .select(['id', 'name', 'trainedWords'])
     .where('modelId', '=', hold.entityId)
-    .where('id', 'in', [...new Set(hits.map((hit) => hit.versionId))])
     .execute();
   const byId = new Map(versions.map((version) => [version.id, version]));
+  // Where each current value sits, so a flagged value the owner moved is found, not reported gone.
+  const positions: { hash: string; text: string; at: VersionTextHit }[] = versions.flatMap(
+    (version) =>
+      [
+        ...(version.name !== null
+          ? [{ text: version.name, at: { versionId: version.id, field: 'name' as const } }]
+          : []),
+        ...(version.trainedWords ?? []).map((text, index) => ({
+          text,
+          at: { versionId: version.id, field: 'trainedWords' as const, index },
+        })),
+      ].map((position) => ({ ...position, hash: sha256(position.text) }))
+  );
+  const movedTo = (hit: StoredVersionTextHit) =>
+    positions
+      .filter((position) => position.hash === hit.hash)
+      .sort(
+        (a, b) =>
+          Number(b.at.versionId === hit.versionId) - Number(a.at.versionId === hit.versionId)
+      )[0];
   return {
     hits: hits.map((hit) => {
       const version = byId.get(hit.versionId);
@@ -328,6 +348,16 @@ export async function getHoldVersionTexts(
           : heldTextHas(hold.text, hit.field, text)
           ? 'in-held-text'
           : 'not-in-held-text';
+      if (hit.hash && state !== 'unchanged') {
+        const moved = movedTo(hit);
+        if (moved)
+          return {
+            ...publicVersionTextHit(hit),
+            text: moved.text,
+            state: 'moved' as const,
+            movedTo: moved.at,
+          };
+      }
       return { ...publicVersionTextHit(hit), text, state };
     }),
   };

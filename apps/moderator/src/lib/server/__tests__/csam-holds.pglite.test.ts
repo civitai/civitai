@@ -1061,6 +1061,51 @@ describe('version text hits on Model holds', () => {
     });
   });
 
+  it('finds a flagged value the owner moved, on the same version first, instead of calling it gone', async () => {
+    await holdWith(99, {
+      comVersionTextHits: [
+        // Was trigger word 6; ' beta ' is now trigger word 2 of the same version.
+        { versionId: 700, field: 'trainedWords', index: 5, hash: sha(' beta ') },
+        // Was 700's first word; 'gamma' now sits only on version 701.
+        { versionId: 700, field: 'trainedWords', index: 0, hash: sha('gamma') },
+        // 'alpha' is on 700 and 702: the hit's own version wins.
+        { versionId: 700, field: 'name', hash: sha('alpha') },
+        { versionId: 701, field: 'name', hash: sha('v two') },
+        { versionId: 701, field: 'trainedWords', index: 2, hash: sha('flagged word') },
+      ],
+      comVersionTextHoldHash: 'h-99',
+    });
+    await expect(getHoldVersionTexts(99)).resolves.toEqual({
+      hits: [
+        {
+          versionId: 700,
+          field: 'trainedWords',
+          index: 5,
+          text: ' beta ',
+          state: 'moved',
+          movedTo: { versionId: 700, field: 'trainedWords', index: 1 },
+        },
+        {
+          versionId: 700,
+          field: 'trainedWords',
+          index: 0,
+          text: 'gamma',
+          state: 'moved',
+          movedTo: { versionId: 701, field: 'trainedWords', index: 0 },
+        },
+        {
+          versionId: 700,
+          field: 'name',
+          text: 'alpha',
+          state: 'moved',
+          movedTo: { versionId: 700, field: 'trainedWords', index: 0 },
+        },
+        { versionId: 701, field: 'name', text: 'v two', state: 'unchanged' },
+        { versionId: 701, field: 'trainedWords', index: 2, text: null, state: 'gone' },
+      ],
+    });
+  });
+
   it('falls back to the held text for a hold written without check values, never claiming unchanged', async () => {
     await holdWith(92, {
       comVersionTextHits: [
