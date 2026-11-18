@@ -4,6 +4,7 @@ import { withholdsModerator, type BearerCredential } from '~/server/auth/full-us
 import { logToAxiom } from '~/server/logging/client';
 import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { Session } from '~/types/session';
+import { safeDecodeURIComponent } from '~/utils/string-helpers';
 
 /**
  * The token scope a caller needs for the session to be returned to it. Omitted, a bearer credential
@@ -57,14 +58,6 @@ function requiredBits(scope: SessionScope | undefined): bigint {
 const WORD_SEGMENT = /^[a-z][a-z0-9-]{0,31}$/;
 const HEX_SEGMENT = /^[0-9a-f]+$/;
 
-function decodeSegment(segment: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-}
-
 /**
  * The route template, e.g. `/api/download/models/[modelVersionId]`: a segment equal to a value in
  * `query` (Next's route params, with the query string) is logged as that param's name. Any other
@@ -83,7 +76,7 @@ function routeTemplate(url: string | undefined, query: RouteQuery | undefined): 
   }
   const segments: string[] = [];
   for (const segment of path.split('/')) {
-    const param = paramNames.get(decodeSegment(segment));
+    const param = segment === '' ? undefined : paramNames.get(safeDecodeURIComponent(segment));
     const logged =
       param ??
       (segment === '' || (WORD_SEGMENT.test(segment) && !HEX_SEGMENT.test(segment))
@@ -143,8 +136,8 @@ type ScopedSession = { session: Session | null; insufficient: boolean };
 /**
  * Holds a bearer credential to `scope`. Reads the credential `getServerAuthSession` recorded on
  * `req.context`; a request with none there (a browser session, or no session) is returned as is.
- * Under `report` the decision is only logged. `query` names the route params for the log when
- * `req` has none (a page request's params are on its context).
+ * Under `report` the decision is only logged. `query`, when given, names the route params for the
+ * log in place of `req.query` (a page request's params are on its context).
  */
 export function applySessionScope(
   req: ScopeRequest,

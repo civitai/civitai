@@ -330,6 +330,11 @@ describe('REST_SCOPE_ENFORCE', () => {
     expect(route).toBe('/api/v1/creators/[username]');
   });
 
+  it('does not label the empty leading segment with an empty query value', async () => {
+    const { route } = await loggedRoute('/api/v1/models?cursor=', { cursor: '' });
+    expect(route).toBe('/api/v1/models');
+  });
+
   it("names a page's route params from the page context", async () => {
     setEnv({ REST_SCOPE_ENFORCE: 'report' });
     bearerKey(TokenScope.ModelsRead);
