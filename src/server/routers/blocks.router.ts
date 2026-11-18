@@ -35,6 +35,7 @@ import {
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
 import { authorizeBlockBridgeToken } from '~/server/services/blocks/block-bridge-auth.service';
+import { assertBlockSubjectIsSessionUser } from '~/server/services/block-token-session-subject';
 import type {
   BlockQuoteGrantKind,
   BlockQuoteGrantRecord,
@@ -2233,22 +2234,6 @@ async function createBlockTextToImageStep(opts: {
     modelSubstitutions,
     capOutput,
   };
-}
-
-/**
- * Refuses unless the block token's subject is the signed-in user the request
- * arrived with. For bridge writes that run as `protectedProcedure`s: the session
- * proves who is at the keyboard, the token proves which app and install is asking,
- * and the two must name the same person. Shared by `publishGenerationOutputs` and
- * both post procedures (via `authorizeBlockPostRequest`).
- */
-function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: number): void {
-  if (subjectUserId !== sessionUserId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'this app session belongs to a different account; reload the page to continue',
-    });
-  }
 }
 
 /**
@@ -7527,20 +7512,13 @@ export const blocksRouter = router({
    * owner affordance above does not widen it: an author's RATED above-ceiling
    * image is still `hidden` from them.
    *
-   * The read is scoped to bare (post-less) rows THIS app PUBLISHED, or viewer
-   * uploads it was allowed to SHARE (the `blockPublishedAppId` /
-   * `blockSharedUploadAppId` provenance marker = the token's own `appId`, both only
-   * ever stamped from a verified token), so a block reads only its OWN images —
-   * never another app's or a post-deletion-orphaned row. A viewer-picked upload
-   * carries the shared marker only when the app opted in to share it
-   * (`share: true`) and the host told the viewer so; a shared row is shown only once
-   * terminally scanned, rated, unflagged and within the viewer's AND the SFW
-   * ceiling, with no owner `ratingPending` branch (`getBlockGatedImagesByIds`). The
-   * app's bytes uploads (`blockUploadedAppId`) are never read here. Like the block catalog reads (public, maturity-
-   * clamped data), it authorizes ANY valid block token for the app — NOT the
-   * author capability (`assertViewerIsAppDeveloper`), so the grid renders for the
-   * app's real audience, not just developers. Auth is still required so the clamp
-   * + blocked-users/tags bind to a real viewer.
+   * Which rows the read may return: see `getBlockGatedImagesByIds`.
+   *
+   * Like the block catalog reads (public, maturity-clamped data), it authorizes
+   * ANY valid block token for the app — NOT the author capability
+   * (`assertViewerIsAppDeveloper`), so the grid renders for the app's real
+   * audience, not just developers. Auth is still required so the clamp +
+   * blocked-users/tags bind to a real viewer.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    *

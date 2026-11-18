@@ -91,8 +91,7 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ids: jobQueueIds.imageIds,
       action: SearchIndexUpdateQueueAction.Update,
     });
-    // Every write to Image."nsfwLevel", from any app, lands here through the image trigger. An
-    // article's document follows its cover's rating even when the article's own level holds.
+    // Every Image."nsfwLevel" write lands here through the image trigger.
     await queueArticlesAndComicsForImages(jobQueueIds.imageIds);
 
     const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);

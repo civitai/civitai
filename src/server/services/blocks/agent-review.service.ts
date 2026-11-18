@@ -1,7 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
-import { getDp1Target, k8sFetch, unwrap } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  assertAppsNamespaceWritable,
+  getDp1Target,
+  k8sFetch,
+  unwrap,
+} from '~/server/services/blocks/apps-pipeline.service';
 import {
   AGENT_REVIEW_SECTIONS,
   isAgentSectionFailureMarker,
@@ -383,6 +388,7 @@ type ProvisionAgentReviewJobArgs = {
 export async function provisionAgentReviewJob(
   args: ProvisionAgentReviewJobArgs
 ): Promise<{ name: string }> {
+  assertAppsNamespaceWritable('agent review Job');
   const target = await getDp1Target();
   const ns = env.APPS_KUBE_NAMESPACE;
   const jobName = `${args.agentName}-apply`;
@@ -568,6 +574,8 @@ export async function deleteAgentReviewResources(args: {
   slug: string;
   publishRequestId: string;
 }): Promise<void> {
+  // Build-only environments start no agent review Job, so there is nothing to tear down there.
+  if (env.APPS_REVIEW_BUILD_ONLY) return;
   let target: Awaited<ReturnType<typeof getDp1Target>>;
   try {
     target = await getDp1Target();
