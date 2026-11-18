@@ -222,6 +222,15 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
     ]);
   });
 
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    // The site rule holds CA unrestricted; the override holds it, and the line says so.
+    const { status, logged } = await lines(undefined, { opts: { regionRestricted: () => true } });
+    expect(status).toBe(200);
+    expect(logged).toEqual([
+      'subscription region: binding=http country=CA region=none source=header restricted=true',
+    ]);
+  });
+
   // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
   it('a request refused as malformed logs nothing', async () => {
     const { status, error, logged } = await lines('1', { query: '/subscribe' });

@@ -43,9 +43,8 @@ import { HTTP_STATUS, ProtocolError, subscribeRequest } from '~/server/registry-
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
-  describeRegion,
-  regionLine,
   regionRestricted,
+  subscriptionRegionLine,
 } from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
@@ -250,9 +249,7 @@ export function handleRequest(
         }
       );
       slot?.claim(principal.subject);
-      opts.onRegion?.(
-        regionLine('http', { ...describeRegion(origin), restricted: restricted(origin) })
-      );
+      opts.onRegion?.(subscriptionRegionLine('http', origin, restricted));
       const open = openStream(res, opts.slowConsumerMs ?? SLOW_CONSUMER_MS);
       stream = open;
       // The stream ends with `invalid_token` once its token does (auth extension, Relays 4).

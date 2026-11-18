@@ -16,6 +16,7 @@ import {
   listenGrpc,
 } from '~/server/registry-adapter/grpc';
 import type { Adapter, Change, Entity, StreamEvent } from '~/server/registry-adapter/protocol';
+import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import { createRegistryServer, sseFrame } from '~/server/registry-adapter/serve';
 import { createMemorySnapshotStore } from '../../../../scripts/registry-adapter-fixture/fixture-source';
 
@@ -74,9 +75,14 @@ async function viaGrpc(
     onRegion?: (line: string) => void;
     metadata?: grpc.Metadata;
     limiter?: SubscriptionLimiter;
+    regionRestricted?: (origin: RequestOrigin) => boolean;
   } = {}
 ): Promise<Outcome> {
-  const server = createGrpcServer(a, { onRegion: extra.onRegion, limiter: extra.limiter });
+  const server = createGrpcServer(a, {
+    onRegion: extra.onRegion,
+    limiter: extra.limiter,
+    regionRestricted: extra.regionRestricted,
+  });
   grpcServers.push(server);
   const port = await listenGrpc(server, 0);
   const PathClient = clientAt(path);
@@ -253,10 +259,12 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
       req = { meta: Buffer.from('{"country":"DE"}', 'utf8') },
       authorization,
       limiter,
+      regionRestricted,
     }: {
       req?: Parameters<typeof viaGrpc>[1];
       authorization?: string;
       limiter?: SubscriptionLimiter;
+      regionRestricted?: (origin: RequestOrigin) => boolean;
     } = {}
   ) {
     vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
@@ -271,7 +279,7 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
       req,
       (e) => e.some((x) => x.type === 'live'),
       SPEC_PATH,
-      { onRegion: (line) => logged.push(line), metadata, limiter }
+      { onRegion: (line) => logged.push(line), metadata, limiter, regionRestricted }
     );
     return { error: res.error, logged };
   }
@@ -292,6 +300,15 @@ describe('🔴 each gRPC subscription logs its region decision once, and no addr
     expect(error).toBeUndefined();
     expect(logged).toEqual([
       'subscription region: binding=grpc country=CA region=none source=header restricted=false',
+    ]);
+  });
+
+  it('an injected regionRestricted is the restricted logged, not the site rule', async () => {
+    // The site rule holds CA unrestricted; the override holds it, and the line says so.
+    const { error, logged } = await lines(undefined, { regionRestricted: () => true });
+    expect(error).toBeUndefined();
+    expect(logged).toEqual([
+      'subscription region: binding=grpc country=CA region=none source=header restricted=true',
     ]);
   });
 

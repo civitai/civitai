@@ -333,25 +333,11 @@ describe('🔴 describeRegion: the decision each subscription logs', () => {
 });
 
 describe('regionLine: the logged line', () => {
-  it.each([
-    [
-      'http',
-      { country: 'DE', source: 'meta', restricted: false },
-      'subscription region: binding=http country=DE region=none source=meta restricted=false',
-    ],
-    [
-      'grpc',
-      { country: 'US', region: 'NY', source: 'header', restricted: true },
-      'subscription region: binding=grpc country=US region=NY source=header restricted=true',
-    ],
-    [
-      'http',
-      { country: 'none', source: 'none', restricted: true },
-      'subscription region: binding=http country=none region=none source=none restricted=true',
-    ],
-  ] as const)('%s %j', async (binding, decision, line) => {
+  it('pins the format, a region code included', async () => {
     const { regionLine } = await load(undefined);
-    expect(regionLine(binding, decision)).toBe(line);
+    expect(
+      regionLine('grpc', { country: 'US', region: 'NY', source: 'header', restricted: true })
+    ).toBe('subscription region: binding=grpc country=US region=NY source=header restricted=true');
   });
 });
 

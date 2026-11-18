@@ -59,10 +59,9 @@ import { ProtocolError, subscribeRequest } from '~/server/registry-adapter/proto
 import type { RequestOrigin } from '~/server/registry-adapter/request-origin';
 import {
   clientAddress,
-  describeRegion,
   peerAddress,
-  regionLine,
   regionRestricted,
+  subscriptionRegionLine,
 } from '~/server/registry-adapter/request-origin';
 import type { EventSink } from '~/server/registry-adapter/subscription';
 import {
@@ -471,9 +470,7 @@ export function createGrpcServer(
             regionRestricted: () => restricted(origin),
           });
           slot?.claim(principal.subject);
-          opts.onRegion?.(
-            regionLine('grpc', { ...describeRegion(origin), restricted: restricted(origin) })
-          );
+          opts.onRegion?.(subscriptionRegionLine('grpc', origin, restricted));
           unwatch = watchPrincipal(
             principal,
             (err) => sink.fail(errorStatus(err.code, err.message, metadataUrl)),

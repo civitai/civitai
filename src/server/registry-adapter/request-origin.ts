@@ -133,7 +133,7 @@ export type RegionDecision = {
   restricted: boolean;
 };
 
-/** `origin`'s region decision at `at`, by the one rule {@link regionRestricted} applies. */
+/** `origin`'s region decision at `at`; {@link regionRestricted} is its `restricted` field. */
 export function describeRegion(origin: RequestOrigin, at: Date = new Date()): RegionDecision {
   const { headers, fromMeta } = regionHeaders(origin);
   const region = getRegion({ headers } as unknown as IncomingMessage);
@@ -171,6 +171,18 @@ export function regionLine(binding: 'http' | 'grpc', d: RegionDecision): string 
     `subscription region: binding=${binding} country=${d.country} ` +
     `region=${d.region ?? 'none'} source=${d.source} restricted=${d.restricted}`
   );
+}
+
+/**
+ * The line a subscription on `binding` logs as it starts: `origin`'s region decision, with the
+ * SFW hold `restricted` actually applies (a binding's injected rule, when it has one).
+ */
+export function subscriptionRegionLine(
+  binding: 'http' | 'grpc',
+  origin: RequestOrigin,
+  restricted: (origin: RequestOrigin) => boolean
+): string {
+  return regionLine(binding, { ...describeRegion(origin), restricted: restricted(origin) });
 }
 
 /** The client address of `origin`, as the site keys a per-client limit on it. */
