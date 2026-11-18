@@ -66,6 +66,14 @@
     lastChange = null;
   }
 
+  // An inline rename or find text left open must not ride onto the next opening; neither should a stale Undo.
+  function resetDrafts() {
+    renameFrom = null;
+    lastChange = null;
+    findDraft = '';
+    replaceDraft = '';
+  }
+
   function applyReplace() {
     if (!plan || plan.error || plan.changes.length === 0) return;
     const after = new Map(plan.changes.map((c) => [c.id, c.after]));
@@ -133,13 +141,7 @@
     () => open,
     (v) => {
       open = v;
-      // An inline rename left open must not ride onto the next opening; neither should a stale Undo.
-      if (!v) {
-        renameFrom = null;
-        lastChange = null;
-        findDraft = '';
-        replaceDraft = '';
-      }
+      if (!v) resetDrafts();
     }
   }
 >
@@ -257,6 +259,7 @@
                 onclick={() => {
                   onShowTag(tag);
                   open = false;
+                  resetDrafts();
                 }}
                 class="grid h-6 w-6 shrink-0 place-items-center rounded text-dark-2 transition-colors hover:bg-dark-5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >

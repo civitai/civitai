@@ -104,6 +104,20 @@ describe('planReplace guards', () => {
     }
   });
 
+  it('refuses a zero-width pattern that only shows on a real tag', () => {
+    for (const find of ['\\b', '(?=h)']) {
+      const p = planReplace(imgs(['red hair']), opts({ find, replace: 'X', regex: true }));
+      expect(p.error).toMatch(/empty text/);
+      expect(p.changes).toEqual([]);
+    }
+  });
+
+  it('does not count an image as affected when nothing in it matched, even with unnormalised tags', () => {
+    const p = planReplace(imgs([' a', 'a, b', 'zzz']), opts({ find: 'q', replace: 'x' }));
+    expect(p.error).toBeNull();
+    expect(p.changes).toEqual([]);
+  });
+
   it('accepts the same text in plain mode where it is not a pattern', () => {
     expect(compileFind(opts({ find: 'a*' })).error).toBeNull();
   });

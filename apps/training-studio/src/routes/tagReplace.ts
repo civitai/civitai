@@ -22,6 +22,8 @@ export interface ReplacePlan {
   emptied: number;
 }
 
+const EMPTY_MATCH = 'This pattern matches empty text, so it would match everywhere.';
+
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The pattern for these options, or an error to show inline. An empty find, an invalid regex and a
@@ -43,7 +45,7 @@ export function compileFind(
     };
   }
   if (new RegExp(re.source, re.flags).test('')) {
-    return { re: null, error: 'This pattern matches empty text, so it would match everywhere.' };
+    return { re: null, error: EMPTY_MATCH };
   }
   return { re, error: null };
 }
@@ -64,6 +66,18 @@ export function planReplace(
     const seen = new Set<string>();
     const after: string[] = [];
     for (const tag of img.tags) {
+      // A tag the pattern doesn't touch is kept verbatim: only matched tags go through splitTags, or an
+      // image holding an unnormalised tag would count as "affected" by a find that matches nothing.
+      if (tag.search(re) === -1) {
+        if (!seen.has(tag)) {
+          seen.add(tag);
+          after.push(tag);
+        }
+        continue;
+      }
+      // A zero-width match (\b, a lookahead) passes the compile-time empty check but still hits everywhere.
+      if (Array.from(tag.matchAll(re)).some((m) => m[0] === ''))
+        return { error: EMPTY_MATCH, changes: [], emptied: 0 };
       // Function replacer for plain text so a "$&" the user typed stays literal.
       const mapped = o.regex ? tag.replace(re, o.replace) : tag.replace(re, () => o.replace);
       for (const t of splitTags(mapped)) {
