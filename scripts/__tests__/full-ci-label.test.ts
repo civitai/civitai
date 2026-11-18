@@ -142,6 +142,7 @@ describe('the full-ci label', () => {
     ['lint.yml', 'component'],
     ['lint.yml', 'component-ledger'],
     ['apps.yml', 'apps'],
+    ['apps.yml', 'apps-typecheck'],
     ['moderator-boot.yml', 'boot'],
   ])('%s:%s runs on a labeled draft', (file, id) => {
     expect(conjuncts(load(file).jobs?.[id]?.if ?? '')).toContain(DRAFT_GATE);
@@ -165,7 +166,7 @@ describe('the full-ci label', () => {
         'unit-verify',
       ],
     ],
-    ['apps.yml', ['apps']],
+    ['apps.yml', ['apps', 'apps-typecheck']],
     ['moderator-boot.yml', ['boot']],
   ])('%s has exactly the jobs this guard was written for', (file, ids) => {
     expect(Object.keys(load(file).jobs ?? {}).sort()).toEqual(ids);

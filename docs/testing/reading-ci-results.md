@@ -30,7 +30,7 @@ the PR run has 10 `Lint` check-runs, one of them (`Typecheck`) skipped. Adding t
 checks list (`gh pr checks` lists pull_request runs only). They are on the head commit's check-runs
 and in the Actions tab, and that check's summary links them. Adding any other label leaves only a
 skipped `Start full CI on label`. A PR that touches `apps/`, `packages/` or
-the root files the app suites read also gets 1 `App suites` check-run (`App unit tests + typecheck`);
+the root files the app suites read also gets 2 `App suites` check-runs (`App unit tests`, `App typecheck`);
 any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
 `.github/workflows/apps.yml`). Expect `pr-review` on top, plus a check per job of any other workflow
 the PR's paths trigger. A count of
