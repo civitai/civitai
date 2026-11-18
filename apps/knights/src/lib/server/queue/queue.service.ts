@@ -98,6 +98,7 @@ export type RejectReason =
   | 'bad-answer'
   | 'bad-block-reason'
   | 'already-voted'
+  | 'own-image'
   | 'no-weight'
   | 'reset-pending';
 
@@ -175,6 +176,8 @@ function stageWindow(
   const candidates = () =>
     servableItems(db)
       .where('i.minRank', '=', stage)
+      // A player never judges an image they posted.
+      .where('img.userId', 'is distinct from', userId)
       .$if(exclude.length > 0, (qb) => qb.where('i.id', 'not in', exclude))
       .where((eb) =>
         eb.not(

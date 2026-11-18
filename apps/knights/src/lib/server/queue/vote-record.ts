@@ -30,6 +30,7 @@ export type VoteRejection =
   | 'bad-answer'
   | 'bad-block-reason'
   | 'already-voted'
+  | 'own-image'
   | 'no-weight'
   | 'reset-pending';
 
@@ -101,6 +102,15 @@ export async function insertVote(
     ? 'unexpected'
     : null;
   if (reasonProblem) return rejected('bad-block-reason');
+
+  // Every vote kind reaches the ledger here, so this one check covers ratings, hidden checks and yes/no.
+  const owned = await trx
+    .selectFrom('Image')
+    .select('id')
+    .where('id', '=', subject.imageId)
+    .where('userId', '=', input.userId)
+    .executeTakeFirst();
+  if (owned) return rejected('own-image');
 
   const already = await trx
     .selectFrom('KnightsVote')
