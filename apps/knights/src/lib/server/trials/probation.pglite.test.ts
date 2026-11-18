@@ -68,11 +68,13 @@ describe('reviewProbation', () => {
     const kept = await check(10, {}, agree(3, 2));
     const close = await check(11, {}, [...agree(2, 1), '2', '2']);
     const short = await check(12, {}, agree(4, 0));
+    const tie = await check(13, {}, agree(3, 3));
 
-    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 1, retired: 1 });
+    expect(await reviewProbation(db, { now: NOW })).toEqual({ promoted: 1, retired: 2 });
     expect(await statusOf(kept.id)).toBe('active');
     expect(await statusOf(close.id)).toBe('retired');
     expect(await statusOf(short.id)).toBe('probation');
+    expect(await statusOf(tie.id)).toBe('retired');
   });
 
   it('retires an active harvested or agreement check its 5+ players mostly disagree with, never a core one', async () => {

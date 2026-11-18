@@ -118,6 +118,8 @@ describe('takeAgreementIntake', () => {
       `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey") VALUES (11,'trials','4','harvested',$1)`,
       [Q]
     );
+    // Held votes count toward unanimity but not toward the players it needs.
+    await verdict(13, { answers: ['4', '4'], heldAnswers: ['4'] });
     // A ruling from before the verdict does not overrule it.
     await verdict(12);
     await ruling(12, 5);
