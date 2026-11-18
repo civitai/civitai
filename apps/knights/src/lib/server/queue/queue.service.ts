@@ -695,7 +695,9 @@ async function reroute(
       .set({
         ...left,
         status: 'Closed',
-        reason: route.kind === 'moderator' ? 'moderator-ruled' : 'missing',
+        ...(route.kind === 'moderator'
+          ? { reason: 'moderator-ruled', resolvedValue: String(route.level) }
+          : { reason: 'missing' }),
       })
       .where('id', '=', itemId)
       .execute();

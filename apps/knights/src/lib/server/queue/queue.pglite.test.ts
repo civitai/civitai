@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
 import {
   castVote,
@@ -876,6 +877,43 @@ describe('writing a settled rating back', () => {
       expect(applyConsensus).not.toHaveBeenCalled();
       expect(await itemRow(id)).toMatchObject({ status: 'Closed', reason: 'moderator-ruled' });
       expect((await verdicts(id)).every((v) => v.verdict === 'failed')).toBe(true);
+    });
+
+    it('settles on the moderator level, so a voter graded wrong sees that level as the verdict', async () => {
+      await fiveKnights();
+      await image(10, 2);
+      const id = await item(10);
+      applyConsensus.mockRejectedValueOnce(new Error('main app down'));
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      for (const [u, answer] of [
+        [1, '2'],
+        [2, '2'],
+        [3, '2'],
+        [4, '1'],
+        [5, '2'],
+      ] as const) {
+        await vote(u, id, answer);
+      }
+      expect(await itemRow(id)).toMatchObject({ status: 'Resolved', resolvedValue: '2' });
+      await lock(10, 'Moderator review', 1);
+
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(await itemRow(id)).toMatchObject({
+        status: 'Closed',
+        reason: 'moderator-ruled',
+        resolvedValue: '1',
+      });
+      expect((await verdicts(id)).map((v) => v.verdict)).toEqual([
+        'failed',
+        'failed',
+        'failed',
+        'correct',
+        'failed',
+      ]);
+      const [wrong] = (await listJudgments(db, 1, { page: 1 })).judgments;
+      expect(wrong).toMatchObject({ answerLabel: 'PG-13', status: 'wrong', verdictLabel: 'PG' });
+      const [right] = (await listJudgments(db, 4, { page: 1 })).judgments;
+      expect(right).toMatchObject({ answerLabel: 'PG', status: 'correct' });
     });
 
     it('grades the votes that match the moderator as correct', async () => {
