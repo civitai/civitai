@@ -9,10 +9,11 @@ import { createHash, randomUUID } from 'crypto';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
 import { reportConcernsUser } from '~/server/services/report-subject';
 import { resolveChatIdentity } from '~/server/utils/chat-group';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import {
   throwBadRequestError,
   throwConflictError,
@@ -144,15 +145,21 @@ export async function sendAsCivitai({ actorId, userId, message, context }: SendA
 
   // One send per target at a time: the cap is a count followed by an insert, and a first message creates
   // the thread, so two concurrent sends would each pass the count or race to create it.
-  const lockKey = `${REDIS_SYS_KEYS.MESSAGE_AS_CIVITAI.SEND_LOCK}:${userId}` as const;
+  const lockKey = `${REDIS_KEYS.MESSAGE_AS_CIVITAI.SEND_LOCK}:${userId}` as const;
   const owner = randomUUID();
-  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: SEND_LOCK_SECONDS })) === null)
+  // A cluster failure or timeout throws: no lock, no send.
+  const taken = await boundedClusterCall('sendAsCivitai.lock', () =>
+    redis.set(lockKey, owner, { NX: true, EX: SEND_LOCK_SECONDS })
+  );
+  if (taken === null)
     throw throwConflictError('Another message to this user is being sent; retry in a moment.');
   try {
     return await sendLocked({ actorId, userId, message, context, moderationId });
   } finally {
     // Only our own lock: a send that outlived the TTL must not free the next sender's.
-    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
+    await boundedClusterCall('sendAsCivitai.unlock', () => delIfValue(redis, lockKey, owner)).catch(
+      () => undefined
+    );
   }
 }
 

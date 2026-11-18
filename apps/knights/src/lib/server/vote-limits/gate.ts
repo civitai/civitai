@@ -1,7 +1,7 @@
 import { REDIS_TIMEOUT_MS, within } from '../redis-timeout';
 import type { VoteLimit } from '../queue/vote-rate';
 
-/** The Redis commands the gate uses; the shared sys client and the test double both fit. */
+/** The Redis commands the gate uses; the shared cache client and the test double both fit. */
 export type GateClient = {
   eval: (script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown>;
   pTTL: (key: string) => Promise<number>;

@@ -1,5 +1,5 @@
 import { sql } from '@civitai/db/kysely';
-import { REDIS_SYS_KEYS, type RedisKeyTemplateSys } from '@civitai/redis';
+import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { reviewSuspectImageSql, unreadableImageSql } from '@civitai/shared/held-media';
 import {
   imageAuditContentHash,
@@ -15,7 +15,7 @@ import {
 } from '@civitai/shared/review-batch';
 import { dbWrite } from './db';
 import { getClickhouse } from './clickhouse';
-import { getSysRedis } from './redis';
+import { getRedis } from './redis';
 import { HELD_MEDIA_PAGE } from './held-media';
 import { blockedForPatterns } from './blocked-for-patterns';
 
@@ -29,7 +29,7 @@ export const TIER_PAGE: Record<ReviewTier, string> = {
 export type LoadedBatch = ReviewBatchRecord & { hash: string };
 
 const batchKey = (hash: string) =>
-  `${REDIS_SYS_KEYS.APP.REVIEW_BATCH}:${hash}` as RedisKeyTemplateSys;
+  `${REDIS_KEYS.APP.REVIEW_BATCH}:${hash}` as RedisKeyTemplateCache;
 
 /** The live batch an id names, or null when it is malformed, expired or unreadable. */
 export async function getReviewBatch(batchId: string | undefined): Promise<LoadedBatch | null> {
@@ -39,7 +39,7 @@ export async function getReviewBatch(batchId: string | undefined): Promise<Loade
 }
 
 export async function getReviewBatchByHash(hash: string): Promise<LoadedBatch | null> {
-  const record = parseReviewBatchRecord(await getSysRedis().get(batchKey(hash)));
+  const record = parseReviewBatchRecord(await getRedis().get(batchKey(hash)));
   return record ? { ...record, hash } : null;
 }
 

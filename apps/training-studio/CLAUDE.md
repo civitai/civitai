@@ -8,12 +8,14 @@ The Training Studio is the LoRA training UI — a slicker replacement for the in
 (`src/components/Training/**`), built as a **separate app** that can be extracted later. Its training
 **data** comes from the orchestrator, not the repo DB. It follows the moderator app's spoke shape:
 `@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis`. The
-redis shim (`src/lib/server/redis.ts`) builds only a sys client, and these key families are on it: the
+redis shim (`src/lib/server/redis.ts`) builds a sys client and a cache client. On the sys client: the
 session revocation check (`auth.ts`), the orchestrator token get-or-mint cache (`orchestrator-token.ts`,
 `GENERATION.TOKENS` and `GENERATION.ORCHESTRATOR_TOKENS`), the from-price cache (`pricing.ts`,
-`TRAINING.STUDIO_FROM_PRICES`), and the dataset-rating cache and daily allowances (`dataset-rating.ts`,
-`TRAINING.STUDIO_DATASET_RATING*`). The caches among them predate the store rule and are not a pattern:
-new cached data goes on a cache client (`createCacheRedis`), never the sys client. No `@civitai/clickhouse`.
+`TRAINING.STUDIO_FROM_PRICES`) and the dataset-rating sent markers (`dataset-rating.ts`,
+`TRAINING.STUDIO_DATASET_RATING_SENT`). On the cache client (`getCacheRedis`): the dataset-rating cache
+and daily allowances (`REDIS_KEYS.TRAINING.STUDIO_DATASET_RATING*`). The caches on the sys client predate
+the store rule and are not a pattern: new cached data goes on the cache client, never the sys client.
+No `@civitai/clickhouse`.
 
 ## The flow (build to this)
 

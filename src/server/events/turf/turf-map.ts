@@ -1,12 +1,16 @@
 import { SignalTopic } from '~/server/common/enums';
-import { REDIS_SUB_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // Which team holds each turf image and whom an action on it credits. Built from the live stickers
-// (turf.service.ts), held in sysRedis, and followed into every app server's memory like the hat map,
-// so the view hot path never reads the database.
+// (turf.service.ts), held on the cache cluster, and followed into every app server's memory like the
+// hat map, so the view hot path never reads the database.
+//
+// Every key carries the event's `{<event>}` hash tag: the scripts that write the map, counts, stamps
+// and feed indexes together, and the one that sums team ranks, each run in one cluster slot. None
+// has a TTL; the every-5-minute reconcile (reconcileAllTurf) rebuilds them from Postgres.
 
 export function turfKeys(event: string) {
-  const root = `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.POINTS}:turf` as const;
+  const root = `${REDIS_KEYS.EVENT.TURF}:{${event}}` as const;
   return {
     // `Image:{id}` -> TurfEntry, only for images with a leader.
     map: `${root}:map` as const,
@@ -14,11 +18,10 @@ export function turfKeys(event: string) {
     log: `${root}:map-log` as const,
     // `Image:{id}` -> TurfCounts, for every image with a live sticker. Display only.
     counts: `${root}:counts` as const,
-    // A ticket each sync or reconcile batch takes before its read: a higher ticket read later.
-    // Reset only with `stamp`: alone, every later write would fall below the stored stamps.
-    seq: `${root}:seq` as const,
     // `Image:{id}` -> the ticket of the read last written for it, so an older read never overwrites a
     // newer one. Kept after an image empties: deleting it would let a stale read write the image back.
+    // Its `#ticket` field is the counter each sync or reconcile batch takes a ticket from before its
+    // read (TURF_TICKET_FIELD): one key, so the counter is never lost apart from the stamps.
     stamp: `${root}:stamp` as const,
     // Image ids on someone's screen -> when that lapses (ms): which counts to push (turf-watch.ts).
     watch: `${root}:watch` as const,

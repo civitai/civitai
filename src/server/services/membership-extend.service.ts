@@ -6,10 +6,11 @@ import { refreshSession } from '~/server/auth/session-invalidation';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { delIfValue } from '~/server/redis/atomic';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { MEMBERSHIP_EXTEND_MAX_DAYS } from '~/server/schema/membership-extend.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { throwBadRequestError, throwConflictError } from '~/server/utils/errorHandling';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripeKeyMode } from '~/server/utils/stripe-key-mode';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
@@ -326,14 +327,20 @@ async function load(stripe: Stripe, userId: number, now: number): Promise<Loaded
  * overwritten with an older copy (re-sync).
  */
 export async function withMemberLock<T>(userId: number, fn: () => Promise<T>): Promise<T> {
-  const lockKey = `${REDIS_SYS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
+  const lockKey = `${REDIS_KEYS.MEMBERSHIP_EXTEND.LOCK}:${userId}` as const;
   const owner = randomUUID();
-  if ((await sysRedis.set(lockKey, owner, { NX: true, EX: LOCK_SECONDS })) === null)
+  // A cluster failure or timeout throws: no lock, no change.
+  const taken = await boundedClusterCall('withMemberLock', () =>
+    redis.set(lockKey, owner, { NX: true, EX: LOCK_SECONDS })
+  );
+  if (taken === null)
     throw throwConflictError('Another membership change for this member is in progress');
   try {
     return await fn();
   } finally {
-    await delIfValue(sysRedis, lockKey, owner).catch(() => undefined);
+    await boundedClusterCall('withMemberLock.release', () =>
+      delIfValue(redis, lockKey, owner)
+    ).catch(() => undefined);
   }
 }
 

@@ -19,7 +19,9 @@ import type { SandboxClient } from '@civitai/app-assistant';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { delIfValue } from '~/server/redis/atomic';
+import { REDIS_KEYS, REDIS_SYS_KEYS, redis, sysRedis } from '~/server/redis/client';
+import { boundedClusterCall } from '~/server/utils/cluster-window-count';
 import {
   ASSISTANT_AUTHOR,
   ASSISTANT_BRANCH,
@@ -246,11 +248,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Run `fn` holding the slug's writer lock, or return `null` when it stays held for 30 s. */
 async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promise<T | null> {
-  const key = `${REDIS_SYS_KEYS.BLOCKS.SOURCE_REPO_LOCK}:${slug}` as const;
+  const key = `${REDIS_KEYS.BLOCKS.SOURCE_REPO_LOCK}:${slug}` as const;
   const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    const got = await sysRedis.set(key, token, { NX: true, EX: LOCK_TTL_SECONDS });
+    const got = await boundedClusterCall('withSourceRepoLock', () =>
+      redis.set(key, token, { NX: true, EX: LOCK_TTL_SECONDS })
+    );
     if (got) break;
     if (Date.now() >= deadline) return null;
     await sleep(LOCK_POLL_MS);
@@ -259,8 +263,9 @@ async function withSourceRepoLock<T>(slug: string, fn: () => Promise<T>): Promis
     return await fn();
   } finally {
     // Release only our own lock: one that outlived its TTL may be another writer's by now.
-    const held = await sysRedis.get(key).catch(() => null);
-    if (held === token) await sysRedis.del(key).catch(() => undefined);
+    await boundedClusterCall('withSourceRepoLock.release', () =>
+      delIfValue(redis, key, token)
+    ).catch(() => undefined);
   }
 }
 
