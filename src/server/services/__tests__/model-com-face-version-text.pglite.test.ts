@@ -76,6 +76,8 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
 const {
   comVersionTextQueueKey,
   comVersionTextVerdictKey,
+  COM_VERSION_TEXT_DUE_PER_RUN,
+  COM_VERSION_TEXT_GIVE_UP_MS,
   COM_VERSION_TEXT_MAX_ATTEMPTS,
   comVersionTextHitHash,
   COM_VERSION_TEXT_QUIET_MS,
@@ -636,7 +638,7 @@ describe('processComFaceVersionText', () => {
     expect(previewTextScanEach).not.toHaveBeenCalled();
   });
 
-  it(`drops a model from the queue after ${COM_VERSION_TEXT_MAX_ATTEMPTS} attempts, for the sweep to queue again`, async () => {
+  it(`parks a model after ${COM_VERSION_TEXT_MAX_ATTEMPTS} attempts, so neither the job nor the sweep spends on it again until an owner edit`, async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
     rateWith({ alpha: { status: 'unavailable' } });
     const entry = {
@@ -649,10 +651,38 @@ describe('processComFaceVersionText', () => {
       comVersionTextQueueKey(MODEL_ID),
       JSON.stringify(entry),
     ]);
-    await processComFaceVersionText(new Date());
-    expect(await queued()).toBeUndefined();
-    await expect(sweepComFaceVersionText()).resolves.toEqual([MODEL_ID]);
-    expect(await queued()).toMatchObject({ source: 'sweep' });
+    const now = new Date();
+    await processComFaceVersionText(now);
+    const parked = (await queued()) as { nextAt: string; gaveUpAt: string; attempt: number };
+    expect(parked).toMatchObject({ attempt: 0, gaveUpAt: now.toISOString() });
+    expect(Date.parse(parked.nextAt)).toBeGreaterThanOrEqual(
+      now.getTime() + COM_VERSION_TEXT_GIVE_UP_MS
+    );
+
+    previewTextScanEach.mockClear();
+    await expect(sweepComFaceVersionText()).resolves.toEqual([]);
+    await processComFaceVersionText(new Date(now.getTime() + 24 * 60 * 60_000));
+    expect(previewTextScanEach).not.toHaveBeenCalled();
+
+    await queueComFaceVersionText(MODEL_ID);
+    expect(await queued()).not.toHaveProperty('gaveUpAt');
+  });
+
+  it(`reads at most ${COM_VERSION_TEXT_DUE_PER_RUN} due queue rows in one run`, async () => {
+    const entry = JSON.stringify({ editAt: new Date(0).toISOString(), source: 'sweep' });
+    for (let modelId = 1000; modelId <= 1000 + COM_VERSION_TEXT_DUE_PER_RUN; modelId++)
+      await db.query(`INSERT INTO "KeyValue" VALUES ($1, $2)`, [
+        comVersionTextQueueKey(modelId),
+        entry,
+      ]);
+    // Models with nothing to rate finish without a workflow, so only the read bounds the run.
+    await expect(processComFaceVersionText(new Date())).resolves.toMatchObject({
+      complete: COM_VERSION_TEXT_DUE_PER_RUN,
+    });
+    const [{ left }] = await rows<{ left: number }>(
+      `SELECT count(*)::int AS left FROM "KeyValue" WHERE key LIKE 'com-face-version-text:m:%'`
+    );
+    expect(left).toBe(1);
   });
 
   it('keeps the queue row of an edit made while the model was being rated', async () => {

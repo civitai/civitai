@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
-import { createHash } from 'node:crypto';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { hashContent } from '~/server/services/entity-moderation.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
   COM_FACE_RESTORE_QUIET_MS,
@@ -52,6 +52,8 @@ type QueueEntry = {
   source: 'edit' | 'sweep';
   attempt?: number;
   nextAt?: string;
+  /** When the last attempt ran out, for a parked row. */
+  gaveUpAt?: string;
 };
 
 export const COM_VERSION_TEXT_LABELS: TextScanLabel[] = ['nsfw', 'minor', 'poi', 'csam'];
@@ -64,8 +66,12 @@ export const COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN = 5;
 export const COM_VERSION_TEXT_QUIET_MS = COM_FACE_RESTORE_QUIET_MS;
 export const COM_VERSION_TEXT_RUN_BUDGET_MS = COM_FACE_RUN_BUDGET_MS;
 export const COM_VERSION_TEXT_SWEEP_LIMIT = 500;
-/** Past this a model leaves the queue; the hourly sweep queues it again behind owner edits. */
+/** Past this a model is parked for {@link COM_VERSION_TEXT_GIVE_UP_MS}; an owner edit restarts it. */
 export const COM_VERSION_TEXT_MAX_ATTEMPTS = 8;
+/** Its parked queue row also keeps the hourly sweep from queuing it again meanwhile. */
+export const COM_VERSION_TEXT_GIVE_UP_MS = 7 * 24 * 60 * 60_000;
+/** Due queue rows one run reads; already-rated models cost no workflow, so a run can walk several. */
+export const COM_VERSION_TEXT_DUE_PER_RUN = 100;
 const WAIT_SECONDS = 10;
 
 /** Changes when the prompts or model that rate version text change, which makes old verdicts stale. */
@@ -148,8 +154,7 @@ function verdictOf(result: TextScanEachVerdict): Verdict | null {
 }
 
 /** SHA-256 hex of a flagged string, so a reader can tell whether a position still holds it. */
-export const comVersionTextHitHash = (text: string) =>
-  createHash('sha256').update(text).digest('hex');
+export const comVersionTextHitHash = hashContent;
 
 /** Where a string sits in the model's versions, so a hold can name it without its text. */
 const positionsOf = (
@@ -382,7 +387,9 @@ export async function processComFaceVersionText(
   const startedAt = Date.now();
   const counts = { complete: 0, partial: 0, unrated: 0, failed: 0, workflows: 0 };
   // primary: owner edits write these rows moments before a run; the replica can lag them.
-  const rows = await dbWrite.keyValue.findMany({ where: { key: { startsWith: QUEUE_PREFIX } } });
+  const rows = await dbWrite.$queryRaw<{ key: string; value: unknown }[]>(
+    comVersionTextDueSql(now, COM_VERSION_TEXT_DUE_PER_RUN)
+  );
 
   const due = rows
     .map((row) => ({
@@ -390,17 +397,8 @@ export async function processComFaceVersionText(
       modelId: Number(row.key.slice(QUEUE_PREFIX.length)),
       entry: (row.value ?? {}) as Partial<QueueEntry>,
     }))
-    .filter(({ row, modelId, entry }) => {
-      if (!Number.isInteger(modelId) || comVersionTextQueueKey(modelId) !== row.key) return false;
-      const editAt = Date.parse(entry.editAt ?? '');
-      if (now.getTime() - (Number.isFinite(editAt) ? editAt : 0) < COM_VERSION_TEXT_QUIET_MS)
-        return false;
-      return !(Date.parse(entry.nextAt ?? '') > now.getTime());
-    })
-    .sort(
-      (a, b) =>
-        Number(a.entry.source === 'sweep') - Number(b.entry.source === 'sweep') ||
-        (Date.parse(a.entry.editAt ?? '') || 0) - (Date.parse(b.entry.editAt ?? '') || 0)
+    .filter(
+      ({ row, modelId }) => Number.isInteger(modelId) && comVersionTextQueueKey(modelId) === row.key
     );
 
   for (const { row, modelId, entry } of due) {
@@ -426,20 +424,18 @@ export async function processComFaceVersionText(
     }
     if (result.status === 'partial') continue;
     const attempt = (entry.attempt ?? 0) + 1;
-    if (attempt > COM_VERSION_TEXT_MAX_ATTEMPTS) {
-      log('error', 'left the queue without verdicts', { modelId, attempts: attempt - 1 });
-      await dbWrite
-        .$executeRaw(Prisma.sql`DELETE FROM "KeyValue" WHERE ${unchanged}`)
-        .catch((error) => log('error', 'queue delete failed', { modelId, ...errorFields(error) }));
-      continue;
-    }
+    const gaveUp = attempt > COM_VERSION_TEXT_MAX_ATTEMPTS;
+    if (gaveUp) log('error', 'parked without verdicts', { modelId, attempts: attempt - 1 });
     const next: QueueEntry = {
       editAt: entry.editAt ?? new Date(0).toISOString(),
       source: entry.source ?? 'sweep',
-      attempt,
+      attempt: gaveUp ? 0 : attempt,
       nextAt: new Date(
-        now.getTime() + (Date.now() - startedAt) + comFaceRetryDelay(attempt)
+        now.getTime() +
+          (Date.now() - startedAt) +
+          (gaveUp ? COM_VERSION_TEXT_GIVE_UP_MS : comFaceRetryDelay(attempt))
       ).toISOString(),
+      ...(gaveUp && { gaveUpAt: now.toISOString() }),
     };
     await dbWrite
       .$executeRaw(
@@ -449,6 +445,22 @@ export async function processComFaceVersionText(
   }
   return counts;
 }
+
+/**
+ * Queue rows due at `now`: quiet since their last edit and past any retry time, owner edits first,
+ * then oldest edit first. Compares the stored ISO times as text, which sorts them, so a malformed
+ * value cannot fail the read.
+ */
+export const comVersionTextDueSql = (now: Date, limit: number) => Prisma.sql`
+  SELECT key, value FROM "KeyValue"
+  WHERE key LIKE ${QUEUE_PREFIX} || '%'
+    AND COALESCE(value->>'editAt', '') <= ${new Date(
+      now.getTime() - COM_VERSION_TEXT_QUIET_MS
+    ).toISOString()}
+    AND COALESCE(value->>'nextAt', '') <= ${now.toISOString()}
+  ORDER BY COALESCE(value->>'source', '') = 'sweep', COALESCE(value->>'editAt', '')
+  LIMIT ${limit}
+`;
 
 /**
  * Faced models with a .com-visible version whose verdicts are missing, still pending, or were

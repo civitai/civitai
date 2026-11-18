@@ -1,4 +1,5 @@
 import type * as CivitaiFlipt from '@civitai/flipt';
+import type * as FliptClient from '~/server/flipt/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import storeScopeSnapshot from './fixtures/flipt-store-scope.snapshot.json';
 import { startFliptFixtureServer, type FliptFixtureServer } from './fixtures/flipt-fixture-server';
@@ -15,8 +16,8 @@ type RealFlipt = ReturnType<typeof CivitaiFlipt.createFliptClient>;
 const live = vi.hoisted(() => ({ client: undefined as RealFlipt | undefined }));
 
 // Each case gets its own real client; the module the helper imports forwards to it.
-vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: { COM_FACE_VERSION_TEXT_HIDE: 'com-face-version-text-hide' },
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
   ensureFliptInitialized: () => live.client!.ensureInitialized(),
   isFliptSync: (...args: Parameters<RealFlipt['isEnabledSync']>) =>
     live.client!.isEnabledSync(...args),

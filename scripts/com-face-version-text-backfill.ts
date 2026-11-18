@@ -20,11 +20,14 @@ import { runScriptAndExit } from './lib/run-as-script';
  *   pnpm run tsscript scripts/com-face-version-text-backfill.ts --rate-dry-run 20
  *   pnpm run tsscript scripts/com-face-version-text-backfill.ts --apply [--limit N]
  *
+ * `--apply` queues at most {@link DEFAULT_BATCH} models unless `--limit` says otherwise, so the queue
+ * stays near what one day of runs drains; run it again for the next batch (queued models are skipped).
+ *
  * `--rate-dry-run N` rates the first N models of the set (preview workflows, so it spends) and
  * writes nothing: no verdicts, no queue rows, no holds. It prints how many would be held, so that
  * count can be reviewed before `--apply`.
  */
-const NO_LIMIT = 1_000_000;
+const DEFAULT_BATCH = 2_000;
 
 async function main() {
   const { values } = parseArgs({
@@ -34,7 +37,7 @@ async function main() {
       'rate-dry-run': { type: 'string' },
     },
   });
-  const limit = values.limit ? Number(values.limit) : NO_LIMIT;
+  const limit = values.limit ? Number(values.limit) : DEFAULT_BATCH;
   if (!Number.isInteger(limit) || limit < 1) throw new Error('--limit must be a positive integer');
   const policy = await getComVersionTextPolicy();
 
