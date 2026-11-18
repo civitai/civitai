@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
 // Redis as the registry sees it: cache entries by key (a bust only marks one stale, so the next
-// read refetches), and the sys keys.
+// read refetches), and the generation key, which is on the cache cluster too.
 const redis = vi.hoisted(() => ({
   cache: new Map<string, { data: unknown; stale: boolean }>(),
-  sys: new Map<string, number>(),
+  generation: new Map<string, { value: string; ex: number | undefined }>(),
 }));
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
@@ -56,12 +56,18 @@ const written = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   redis.cache.clear();
-  redis.sys.clear();
-  redisMock.sysRedis.get.mockImplementation((async (key: string) =>
-    redis.sys.has(key) ? String(redis.sys.get(key)) : null) as never);
-  redisMock.sysRedis.incr.mockImplementation((async (key: string) => {
-    redis.sys.set(key, (redis.sys.get(key) ?? 0) + 1);
-    return redis.sys.get(key);
+  redis.generation.clear();
+  redisMock.redis.get.mockImplementation(
+    (async (key: string) => redis.generation.get(key)?.value ?? null) as never
+  );
+  redisMock.redis.set.mockImplementation((async (
+    key: string,
+    value: string,
+    opts?: { EX?: number; NX?: boolean }
+  ) => {
+    if (opts?.NX && redis.generation.has(key)) return null;
+    redis.generation.set(key, { value, ex: opts?.EX });
+    return 'OK';
   }) as never);
   dbMock.dbWrite.oauthClient.findUnique.mockResolvedValue({ id: 'civitai-remix-apps' } as never);
 });
@@ -140,6 +146,47 @@ describe('the registry after a mod write', () => {
       getRegisteredRemixApp('pixel-art', { allowDisabled: false })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect((await listRemixAppsForAdmin())[0]).toMatchObject({ slug: 'pixel-art', enabled: false });
+  });
+});
+
+describe('the registry generation', () => {
+  const GENERATION_KEY = 'remix-app:registry-generation';
+
+  it('is a fresh token on the cache cluster after each mod write, with a day-long TTL', async () => {
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1)] as never);
+
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    const first = redis.generation.get(GENERATION_KEY);
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: true });
+    const second = redis.generation.get(GENERATION_KEY);
+
+    expect(first?.ex).toBe(24 * 60 * 60);
+    expect(second?.ex).toBe(24 * 60 * 60);
+    expect(first?.value).not.toBe(second?.value);
+    expect(redisMock.sysRedis.incr).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+  });
+
+  // The cache cluster can evict the generation key at any time. A reader that finds it gone must
+  // not land on an entry filled before the mod write it lost.
+  it('serves a mod write after the generation key it bumped is evicted', async () => {
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([stored(pixelArt, 1, 'remix')] as never);
+    expect((await getRegisteredRemixApp('pixel-art', { allowDisabled: false })).enabled).toBe(true);
+
+    dbMock.dbWrite.appBlock.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.appBlock.findMany.mockResolvedValue([
+      stored(pixelArt, 1, 'remix_disabled'),
+    ] as never);
+    await setRemixAppEnabled({ slug: 'pixel-art', enabled: false });
+    redis.generation.delete(GENERATION_KEY);
+
+    await expect(
+      getRegisteredRemixApp('pixel-art', { allowDisabled: false })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const minted = redis.generation.get(GENERATION_KEY);
+    expect(minted?.value).toMatch(/^[0-9a-f-]{36}$/);
+    expect(minted?.ex).toBe(24 * 60 * 60);
   });
 });
 

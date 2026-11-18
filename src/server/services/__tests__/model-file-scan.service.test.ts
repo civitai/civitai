@@ -13,6 +13,8 @@ const mockDbWrite = dbMock.dbWrite;
 const mockDbRead = dbMock.dbRead;
 const mockLogToAxiom = loggingMock.logToAxiom;
 const mockSetNxKeepTtlWithEx = redisMock.sysRedis.setNxKeepTtlWithEx;
+// The failed-scan bust throttle is a cache: it lives on the cluster client.
+const mockBustSetNx = redisMock.redis.setNxKeepTtlWithEx;
 
 const {
   mockGetWorkflow,
@@ -366,14 +368,27 @@ describe('model-file-scan.service', () => {
     describe('busting the orchestrator after a failed scan', () => {
       beforeEach(() => {
         const held = new Set<string>();
-        mockSetNxKeepTtlWithEx.mockImplementation(async (key: string) => {
+        mockBustSetNx.mockImplementation(async (key: string) => {
           if (held.has(key)) return false;
           held.add(key);
           return true;
         });
       });
 
-      afterEach(() => mockSetNxKeepTtlWithEx.mockReset());
+      afterEach(() => mockBustSetNx.mockReset());
+
+      it('keeps its once-per-window markers on the cache cluster, not in system Redis', async () => {
+        setupFileFound();
+        mockSetNxKeepTtlWithEx.mockClear();
+
+        await applyScanOutcome({ fileId: 1, failed: true });
+
+        expect(mockBustSetNx.mock.calls.map(([key]) => key)).toEqual([
+          'webhooks:model-file-scan:failure-bust:100',
+          'webhooks:model-file-scan:failure-bust:file:1',
+        ]);
+        expect(mockSetNxKeepTtlWithEx).not.toHaveBeenCalled();
+      });
 
       it('busts the version once per window, however many of its files fail', async () => {
         setupFileFound();
