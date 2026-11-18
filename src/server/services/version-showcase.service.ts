@@ -508,7 +508,9 @@ export async function refreshVersionShowcases(modelVersionIds: number[]) {
 /** The versions (and their models) whose showcase names any image in these posts. */
 export async function getShowcaseVersionsForPosts(postIds: number[]) {
   if (!postIds.length) return [];
-  return dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+  // The replica: this runs on every post bust, and a featured image and its showcase row are old
+  // by then; a deleted image is found by id (bustVersionShowcasesForImages).
+  return dbRead.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
     SELECT DISTINCT s."modelVersionId", mv."modelId"
     FROM "Image" i
     JOIN "ModelVersionShowcaseItem" s ON s."imageId" = i.id
