@@ -163,6 +163,15 @@ const removed = async (fileId: number) =>
     ])
   )[0]?.removedAt != null;
 
+const kept = async (fileId: number) =>
+  (await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [fileId])).length === 1;
+
+/** The sweep, then the purge that deletes what it marked and no hold keeps. */
+const sweepAndPurge = async () => {
+  await sweep();
+  return files.purgeRemovedFiles();
+};
+
 describe('the retention windows', () => {
   it.each(['Cancelled', 'Declined', 'Expired'] as const)(
     "removes a %s deal's files 30 days after it closed, and not a day before",
@@ -190,6 +199,13 @@ describe('the retention windows', () => {
     const open = await closedDeal('Cancelled', 60);
     await q(`UPDATE "ServiceDeal" SET status = 'Accepted' WHERE id = $1`, [open.dealId]);
     expect(await sweep()).toBe(0);
+  });
+
+  it('marks a closed deal that never held money', async () => {
+    const { finalId } = await closedDeal('Declined', 40);
+    await q(`UPDATE "ServiceDeal" SET "heldAt" = NULL, "settledAt" = NULL`);
+    await sweep();
+    expect(await removed(finalId)).toBe(true);
   });
 });
 
@@ -295,16 +311,20 @@ describe('holds', () => {
   it.each(holds)('%s on someone outside the deal keeps nothing', async (_name, sql) => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql(OTHER));
-    await sweep();
-    expect(await removed(finalId)).toBe(true);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
   });
 
-  it.each(cases)('%s keeps the deal files', async (_name, sql) => {
+  it.each(cases)('%s hides the deal files on schedule and keeps them', async (_name, sql) => {
     const { finalId, attachmentId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(sql);
-    expect(await sweep()).toBe(0);
-    expect(await removed(finalId)).toBe(false);
-    expect(await removed(attachmentId)).toBe(false);
+    expect(await sweep()).toBe(2);
+    expect(await removed(finalId)).toBe(true);
+    expect(await removed(attachmentId)).toBe(true);
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await kept(finalId)).toBe(true);
+    expect(await kept(attachmentId)).toBe(true);
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
   });
 
   it('an open report on another offering, or one being processed on this one, is told apart', async () => {
@@ -314,15 +334,15 @@ describe('holds', () => {
         VALUES (${OTHER}, 'Other', 'desc', 500, 3, 1, 'Image', 'Active', 'Scanned', now());
       INSERT INTO "Report" (status, "createdAt") VALUES ('Pending', ${daysAgo(1)});
       INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (2, 1);`);
-    await sweep();
-    expect(await removed(finalId)).toBe(true);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
 
     const other = await closedDeal('Cancelled', 40);
     await holder.db.exec(`
       INSERT INTO "Report" (status, "createdAt") VALUES ('Processing', ${daysAgo(45)});
       INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 2);`);
-    await sweep();
-    expect(await removed(other.finalId)).toBe(false);
+    await sweepAndPurge();
+    expect(await kept(other.finalId)).toBe(true);
   });
 
   it('an open report on the offering keeps them; a handled one does not', async () => {
@@ -330,11 +350,11 @@ describe('holds', () => {
     await holder.db.exec(`
       INSERT INTO "Report" (status, "createdAt") VALUES ('Pending', ${daysAgo(45)});
       INSERT INTO "ServiceOfferingReport" ("serviceOfferingId", "reportId") VALUES (1, 1);`);
-    await sweep();
-    expect(await removed(finalId)).toBe(false);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(true);
     await q(`UPDATE "Report" SET status = 'Unactioned', "statusSetAt" = ${daysAgo(35)}`);
-    await sweep();
-    expect(await removed(finalId)).toBe(true);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
   });
 
   it('a ban for another reason, or a handled report against them, keeps nothing', async () => {
@@ -345,8 +365,8 @@ describe('holds', () => {
         50
       )}, ${daysAgo(45)});
       INSERT INTO "UserReport" ("userId", "reportId") VALUES (${BUYER}, 1);`);
-    await sweep();
-    expect(await removed(finalId)).toBe(true);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
   });
 
   it('a released evidence hold and a resolved appeal keep nothing', async () => {
@@ -354,8 +374,59 @@ describe('holds', () => {
     await holder.db.exec(`
       INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${BUYER}, now());
       INSERT INTO "Appeal" ("userId", status) VALUES (${SELLER}, 'Rejected');`);
-    await sweep();
-    expect(await removed(finalId)).toBe(true);
+    await sweepAndPurge();
+    expect(await kept(finalId)).toBe(false);
+  });
+
+  const partyViews = (dealId: number) =>
+    Promise.all(
+      [BUYER, SELLER].map((userId) =>
+        files.listServiceDealFiles({ dealId, userId, isModerator: false })
+      )
+    );
+
+  it("past its window, a party's view of a held deal matches an unheld one's", async () => {
+    const unheld = await closedDeal('Cancelled', 40);
+    await sweepAndPurge();
+    const unheldViews = await partyViews(unheld.dealId);
+
+    const held = await closedDeal('Cancelled', 40);
+    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    await sweepAndPurge();
+    expect(await kept(held.finalId)).toBe(true);
+    expect(await partyViews(held.dealId)).toEqual(unheldViews);
+    expect(unheldViews).toEqual([[], []]);
+    for (const userId of [BUYER, SELLER])
+      expect(
+        await files.resolveServiceDealFileDownload({
+          fileId: held.finalId,
+          userId,
+          isModerator: false,
+        })
+      ).toBeNull();
+  });
+
+  it('a held, hidden file stays listed and downloadable for a moderator outside the deal', async () => {
+    const { dealId, finalId, attachmentId } = await closedDeal('Cancelled', 40);
+    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${SELLER})`);
+    await sweepAndPurge();
+    const listed = await files.listServiceDealFiles({
+      dealId,
+      userId: OTHER,
+      isModerator: true,
+      canReviewCsam: true,
+    });
+    expect(listed.map((f) => [f.id, f.canDownload, f.removedAt != null])).toEqual([
+      [finalId, true, true],
+      [attachmentId, true, true],
+    ]);
+    const download = await files.resolveServiceDealFileDownload({
+      fileId: finalId,
+      userId: OTHER,
+      isModerator: true,
+      canReviewCsam: true,
+    });
+    expect(download).toMatchObject({ key: `k/${dealId}/final`, removed: true });
   });
 });
 
@@ -416,6 +487,27 @@ describe('the purge after the sweep', () => {
     );
   });
 
+  it.each(['k/archive', 'wm-1'])(
+    'keeps the row and writes no record when only the delete of %s fails',
+    async (failing) => {
+      const { finalId } = await closedDeal('Cancelled', 40);
+      await q(
+        `UPDATE "ServiceDealFile" SET "deliveryKey" = 'k/archive', "watermarkedKey" = 'wm-1' WHERE id = $1`,
+        [finalId]
+      );
+      s3.purgeObjectVersions.mockImplementation(async ({ key }: { key: string }) =>
+        key === failing
+          ? { versionsDeleted: 0, remaining: 1 }
+          : { versionsDeleted: 1, remaining: 0 }
+      );
+      await sweepAndPurge();
+      expect(await kept(finalId)).toBe(true);
+      expect(
+        await q(`SELECT * FROM "ServiceDealFilePurge" WHERE "fileId" = $1`, [finalId])
+      ).toEqual([]);
+    }
+  );
+
   it('deletes every version of the objects and keeps a record with no name', async () => {
     const { dealId, finalId } = await closedDeal('Cancelled', 40);
     await sweep();
@@ -468,6 +560,7 @@ describe('the purge after the sweep', () => {
       ],
     ];
     for (const [, setUp] of runs) {
+      loggingMock.logToAxiom.mockClear();
       setUp();
       expect(await files.purgeRemovedFiles()).toBe(0);
       expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
@@ -478,6 +571,38 @@ describe('the purge after the sweep', () => {
     }
     s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 1, remaining: 0 });
     expect(await files.purgeRemovedFiles()).toBe(2);
+  });
+});
+
+describe('a party deleting a file', () => {
+  const openDeal = async () => {
+    const deal = await closedDeal('Cancelled', 1);
+    await q(`UPDATE "ServiceDeal" SET status = 'Accepted', "closedAt" = NULL WHERE id = $1`, [
+      deal.dealId,
+    ]);
+    return deal;
+  };
+  const deleteBoth = (deal: { finalId: number; attachmentId: number }) =>
+    Promise.all([
+      files.deleteServiceDealFile({ fileId: deal.finalId, userId: SELLER }),
+      files.deleteServiceDealAttachment({ fileId: deal.attachmentId, userId: BUYER }),
+    ]);
+
+  it('on a held deal hides the file and keeps its bytes, answered as an unheld delete is', async () => {
+    const unheld = await openDeal();
+    expect(await deleteBoth(unheld)).toEqual([{ id: unheld.finalId }, { id: unheld.attachmentId }]);
+    expect(await kept(unheld.finalId)).toBe(false);
+    expect(s3.purgeObjectVersions).toHaveBeenCalled();
+    s3.purgeObjectVersions.mockClear();
+
+    const held = await openDeal();
+    await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    expect(await deleteBoth(held)).toEqual([{ id: held.finalId }, { id: held.attachmentId }]);
+    expect(await removed(held.finalId)).toBe(true);
+    expect(await removed(held.attachmentId)).toBe(true);
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
+    expect(s3.deleteObject).not.toHaveBeenCalled();
+    expect(await q(`SELECT * FROM "ServiceDealFilePurge"`)).toEqual([]);
   });
 });
 
@@ -504,11 +629,14 @@ describe('account deletion', () => {
     expect(await removed(preview.id)).toBe(true);
   });
 
-  it('keeps them under a hold, and while the deal is open', async () => {
+  it('hides them under a hold but the purge keeps them; an open deal keeps them unhidden', async () => {
     const held = await closedDeal('Completed', 1);
     await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
     await dbMock.dbWrite.$executeRaw(retention.markUserDealUploadsRemovedSql(SELLER));
-    expect(await removed(held.finalId)).toBe(false);
+    expect(await removed(held.finalId)).toBe(true);
+    expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await kept(held.finalId)).toBe(true);
+    await q(`UPDATE "ServiceDealFile" SET "removedAt" = NULL`);
     await q(`DELETE FROM "EvidenceHold"`);
     await q(
       `UPDATE "ServiceDeal" SET status = 'Delivered', "releaseAt" = NULL, "settledAt" = NULL`

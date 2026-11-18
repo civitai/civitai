@@ -8,8 +8,9 @@ import {
   SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT,
 } from '~/shared/constants/creator-services.constants';
 
-// `d` names the deal row and `o` its offering in every fragment below. This only marks files
-// removed; purgeRemovedFiles deletes them, and re-checks the holds.
+// `d` names the deal row and `o` its offering in every fragment below. Marking (which hides a file
+// from the parties) runs on schedule whatever the holds, so what a party sees says nothing about
+// them; only purgeRemovedFiles, which deletes, honours `dealFilesHeld`.
 
 const ms = (value: number) => Prisma.sql`(${value}::bigint * interval '1 millisecond')`;
 
@@ -46,7 +47,7 @@ const retentionExpired = (effectiveAt: Date) => Prisma.sql`(
 
 const parties = Prisma.sql`(d."buyerId", d."sellerId")`;
 
-/** Anything that keeps a deal's files, on either party or the offering. */
+/** Anything that keeps a deal's removed files from being deleted, on either party or the offering. */
 export const dealFilesHeld = Prisma.sql`(
   ${ownerHeldSql(Prisma.sql`d."buyerId"`)}
   OR ${ownerHeldSql(Prisma.sql`d."sellerId"`)}
@@ -71,7 +72,7 @@ export const dealFilesHeld = Prisma.sql`(
       AND m."activity" LIKE 'chargeback:%')
 )`;
 
-/** Marks the files of deals past their retention, and not held, as removed. Returns how many. */
+/** Marks the files of deals past their retention as removed. Returns how many. */
 export async function markExpiredDealFiles({
   limit = 200,
   effectiveAt = SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT,
@@ -83,7 +84,7 @@ export async function markExpiredDealFiles({
       JOIN "ServiceDeal" d ON d."id" = f."dealId"
       JOIN "ServiceOffering" o ON o."id" = d."offeringId"
       WHERE f."removedAt" IS NULL
-        AND ${dealClosedAndSettled} AND ${retentionExpired(effectiveAt)} AND NOT ${dealFilesHeld}
+        AND ${dealClosedAndSettled} AND ${retentionExpired(effectiveAt)}
       ORDER BY f."id" LIMIT ${limit}::int
       FOR UPDATE OF f SKIP LOCKED
     )`;
@@ -92,7 +93,7 @@ export async function markExpiredDealFiles({
 
 /**
  * For a deleted account: marks the files the user uploaded (finals and previews as the seller,
- * attachments as the buyer) on their closed, settled deals as removed, under the same holds. A deal
+ * attachments as the buyer) on their closed, settled deals as removed. A deal
  * still open or unsettled keeps them on its own retention clock, as it does the other party's.
  */
 export const markUserDealUploadsRemovedSql = (userId: number) => Prisma.sql`
@@ -100,4 +101,4 @@ export const markUserDealUploadsRemovedSql = (userId: number) => Prisma.sql`
   FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
   WHERE f."dealId" = d."id" AND f."removedAt" IS NULL
     AND CASE WHEN f."kind"::text = 'Attachment' THEN d."buyerId" ELSE d."sellerId" END = ${userId}::int
-    AND ${dealClosedAndSettled} AND NOT ${dealFilesHeld}`;
+    AND ${dealClosedAndSettled}`;

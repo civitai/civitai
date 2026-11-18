@@ -510,10 +510,11 @@ async function deleteFile(fileId: number, scope: Prisma.Sql) {
       SELECT e."imageId" FROM "ServiceDealFileEntry" e
       WHERE e."fileId" = ${fileId}::int AND e."imageId" IS NOT NULL
         AND e."scanStatus" = 'Passed'::"ServiceDealFileScanStatus"`;
-    // A file that must be kept stays, with its entries and objects, out of the parties' sight.
+    // A file that must be kept, or is on a held deal, stays, with its entries and objects, out of
+    // the parties' sight. The caller is answered the same either way.
     const [kept] = await tx.$queryRaw<{ id: number; s3Key: string }[]>`
       UPDATE "ServiceDealFile" f SET "removedAt" = now()
-      WHERE f."id" = ${fileId}::int AND ${mustKeep(Prisma.sql`f`)}
+      WHERE f."id" = ${fileId}::int AND (${mustKeep(Prisma.sql`f`)} OR ${dealHeld(Prisma.sql`f`)})
       RETURNING f."id", f."s3Key"`;
     if (kept) {
       await tx.$executeRaw`
@@ -558,9 +559,9 @@ async function deleteImages(imageIds: number[]) {
 }
 
 /**
- * The row is the source of truth; an object left behind is unreachable. Every stored version of the
- * upload, a zip's archive and a published preview's copy goes, so a versioned bucket keeps no copy.
- * Returns the upload's ETag for the purge record.
+ * Deletes every stored version of the upload, a zip's archive and a published preview's copy, so a
+ * versioned bucket keeps no copy. `deleted` is false when any object may remain; `etag` is the
+ * upload's, for the purge record.
  */
 async function deleteFileObjects(
   file: FileObjects,
@@ -631,6 +632,12 @@ const scanOpen = (f: Prisma.Sql) => Prisma.sql`(
   OR (${f}."processingAt" IS NOT NULL AND ${f}."scanStatus" = 'Pending'::"ServiceDealFileScanStatus")
 )`;
 
+/** A hold keeps the file's deal; an unreadable hold counts as one. `f` names the file row. */
+const dealHeld = (f: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
+  WHERE d."id" = ${f}."dealId" AND (${dealFilesHeld}) IS NOT FALSE
+)`;
+
 /**
  * A removed file whose scans finished clean, with an uploader not on a report, no hold on its deal,
  * and its scan copies gone, has nothing left to keep. A removed file that failed stays for the
@@ -643,8 +650,7 @@ const purgeable = (f: Prisma.Sql) => Prisma.sql`(
   -- Scan copies of its images go first (deleteEntryScanCopies).
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
     WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL)
-  AND NOT EXISTS (SELECT 1 FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
-    WHERE d."id" = ${f}."dealId" AND (${dealFilesHeld}) IS NOT FALSE)
+  AND NOT ${dealHeld(f)}
 )`;
 
 export async function purgeRemovedFiles({ limit = 50 } = {}) {

@@ -1169,9 +1169,8 @@ describe('removing a file that must be kept', () => {
     expect(deletedKeys()).toEqual([uploaderKey]);
   });
 
-  it('still deletes a file whose images all passed, and one with no images', async () => {
+  it('deletes a file whose images all passed, and one with no images', async () => {
     const dealId = await accepted();
-    await q(`INSERT INTO "CsamReport" ("userId") VALUES ($1)`, [SELLER]);
     const zipId = await attach(dealId, 'dataset.zip', buildZip([{ name: 'a.png', data: IMAGE_A }]));
     const textId = await attach(dealId, 'notes.txt', TEXT);
     await unpack.unpackFinals();
