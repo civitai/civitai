@@ -18,9 +18,11 @@ export default defineConfig(({ mode }) => {
         '@civitai/auth',
         '@civitai/axiom',
         '@civitai/db',
+        '@civitai/db-queries',
         '@civitai/db-schema',
         '@civitai/email',
         '@civitai/redis',
+        '@civitai/shared',
       ],
     },
   };
