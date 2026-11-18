@@ -25,7 +25,7 @@ const {
   mockAnyImageHeld: vi.fn(),
 }));
 
-vi.mock('~/server/services/held-image-keys', () => ({ anyImageHeldForReview: mockAnyImageHeld }));
+vi.mock('~/server/services/held-image-keys', () => ({ anyImageHeldOrBlocked: mockAnyImageHeld }));
 
 vi.mock('~/server/services/orchestrator/civitai', () => ({
   invalidateCivitaiUser: vi.fn().mockResolvedValue(undefined),

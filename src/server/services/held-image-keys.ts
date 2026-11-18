@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { OWNER_HIDDEN_REVIEWS } from '~/server/common/owner-hidden-reviews';
 import {
+  blockMarkerText,
   clearHeldUserImagesStatement,
   dropStaleHeldImageMarkersStatement,
   restoreClearedUserImagesStatement,
@@ -13,16 +14,17 @@ type RawUnsafeQueryClient = {
 
 /**
  * Whether any image stored under one of `keys` (lowercased, as `keysIn` gives them) is under an
- * owner-hidden review hold. Upper-case forms are matched too; `lower(url)` would skip the url index.
+ * owner-hidden review hold or carries a block marker. Upper-case forms are matched too; `lower(url)`
+ * would skip the url index.
  */
-export async function anyImageHeldForReview(db: RawQueryClient, keys: string[]) {
+export async function anyImageHeldOrBlocked(db: RawQueryClient, keys: string[]) {
   if (!keys.length) return false;
   const rows = await db.$queryRaw<unknown[]>`
     SELECT 1 FROM "Image"
-    WHERE url IN (${Prisma.join([
-      ...keys,
-      ...keys.map((key) => key.toUpperCase()),
-    ])}) AND "needsReview" IN (${Prisma.join(OWNER_HIDDEN_REVIEWS)})
+    WHERE url IN (${Prisma.join([...keys, ...keys.map((key) => key.toUpperCase())])}) AND (
+      "needsReview" IN (${Prisma.join(OWNER_HIDDEN_REVIEWS)})
+      OR ${Prisma.raw(blockMarkerText('"Image"'))}
+    )
     LIMIT 1
   `;
   return rows.length > 0;
