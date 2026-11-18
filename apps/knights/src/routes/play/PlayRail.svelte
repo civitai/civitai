@@ -1,7 +1,7 @@
 <script lang="ts">
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
-  import { belowBarCue, heartBackShort, watchStrip, withArticle } from '$lib/chrome';
+  import { belowBarCue, goldToday, heartBackShort, watchStrip, withArticle } from '$lib/chrome';
   import { count, percent } from '$lib/format';
   import { nextRankRequirements, pendingSegment } from '$lib/gauge';
   import { bump } from '$lib/motion';
@@ -28,6 +28,7 @@
   const id = (name: string) => (sheet ? `sheet-${name}` : name);
 
   const strip = $derived(watchStrip(daily));
+  const gold = $derived(goldToday(daily));
   const belowBar = $derived(belowBarCue(status));
   const hearts = $derived(Math.max(0, status.maxSmites - status.smites));
   const standing = $derived(rail.standing);
@@ -89,6 +90,23 @@
         </p>
       </div>
     </div>
+    {#if gold}
+      <div class="gold-today">
+        <h3>Gold today</h3>
+        <p class="line"><b>{gold.label}</b></p>
+        <div
+          class="bar"
+          role="meter"
+          aria-label="Gold recorded today against the daily cap"
+          aria-valuemin={0}
+          aria-valuemax={daily.goldCap}
+          aria-valuenow={Math.min(daily.goldRecorded, daily.goldCap)}
+        >
+          <div style:width="{gold.ratio * 100}%"></div>
+        </div>
+        <p class="sub">{gold.reached ? 'Cap reached · XP still counts' : 'Daily cap · resets at 00:00 UTC'}</p>
+      </div>
+    {/if}
   </section>
 
   <section aria-labelledby={id('rail-fervor')}>
@@ -289,6 +307,12 @@
   .note .ok {
     margin-right: 4px;
     vertical-align: -2px;
+  }
+  .gold-today {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 16px;
   }
   .pair {
     display: grid;

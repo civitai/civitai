@@ -64,6 +64,16 @@ export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
   return { ...daily, votes, watchDone: daily.watchDone || completes, ...streak };
 }
 
+/** Today's gold against the daily cap, for the rail; null for a rank that earns no gold (cap 0). */
+export function goldToday({ goldRecorded, goldCap }: { goldRecorded: number; goldCap: number }) {
+  if (goldCap <= 0) return null;
+  return {
+    label: `${count(goldRecorded)} of ${count(goldCap)}`,
+    ratio: Math.min(1, goldRecorded / goldCap),
+    reached: goldRecorded >= goldCap,
+  };
+}
+
 /**
  * Votes to add on top of a page's daily: those still in flight, plus those that landed while that same daily object is on
  * screen. The refreshed daily holds a landed vote, so keying it to the object means it is never counted twice in the frame

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   accuracyLine,
+  goldToday,
   belowBarCue,
   headerDaily,
   landVote,
@@ -324,5 +325,23 @@ describe('headerDaily', () => {
     expect(headerDaily(pageDaily, layoutDaily, 0)).toBe(pageDaily);
     expect(headerDaily(null, layoutDaily, 2)).toBe(layoutDaily);
     expect(headerDaily(undefined, undefined, 0)).toBeUndefined();
+  });
+});
+
+describe('goldToday', () => {
+  it("reads today's gold against the cap, full once it is reached", () => {
+    expect(goldToday({ goldRecorded: 12_400, goldCap: 80_000 })).toEqual({
+      label: '12,400 of 80,000',
+      ratio: 0.155,
+      reached: false,
+    });
+    expect(goldToday({ goldRecorded: 80_000, goldCap: 80_000 })).toMatchObject({
+      ratio: 1,
+      reached: true,
+    });
+  });
+
+  it('is absent for a rank that earns no gold', () => {
+    expect(goldToday({ goldRecorded: 0, goldCap: 0 })).toBeNull();
   });
 });
