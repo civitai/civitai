@@ -206,7 +206,7 @@ describe('who gets the weekly digest', () => {
     });
   });
 
-  it('asks only about eligible users, leaves out the types already emailed, and never re-lists a sent item', async () => {
+  it('asks only about eligible users, leaves no type out, and never re-lists a sent item', async () => {
     await run();
     const asked = h.unseen.mock.calls.flatMap(
       ([input]) => (input as UnseenNotificationsInput).users
@@ -216,8 +216,8 @@ describe('who gets the weekly digest', () => {
     expect(asked.find((u) => u.userId === 1)!.since).toEqual(daysAgo(7));
     expect(asked.find((u) => u.userId === 9)!.since).toEqual(daysAgo(6.5));
     const excluded = (h.unseen.mock.calls[0]![0] as UnseenNotificationsInput).excludeTypes;
-    expect(excluded).toContain('service-deal-requested');
-    expect(excluded).not.toContain('system-message');
+    // A type with its own email is listed too: that email may have been capped or switched off.
+    expect(excluded).toEqual([]);
   });
 
   it('skips users outside the flag rollout before asking about them', async () => {
@@ -293,6 +293,54 @@ describe('who gets the weekly digest', () => {
     expect(result.skipped['opted-out']).toBe(2);
     const rows = await h.pg.query(`SELECT 1 FROM "UserNotificationDigest" WHERE "userId" = 1`);
     expect(rows.rows).toHaveLength(0);
+  });
+
+  // `inRollout` runs after the page is read and before any send, so it stands in for a write
+  // made by someone else in between.
+  const between =
+    (sqlText: string, params: unknown[] = []) =>
+    async (id: number) => {
+      if (id === 1) await h.pg.query(sqlText, params);
+      return true;
+    };
+
+  it('an address changed after the page was read: the digest goes to the new address', async () => {
+    await run({ inRollout: between(`UPDATE "User" SET email = 'new@example.com' WHERE id = 1`) });
+    expect(mailedTo()).toEqual(['new@example.com', 'nine@example.com']);
+  });
+
+  it('a user banned after the page was read is not emailed', async () => {
+    const result = await run({
+      inRollout: between(`UPDATE "User" SET "bannedAt" = '2026-11-16' WHERE id = 1`),
+    });
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(result.skipped['no-verified-email']).toBe(3);
+  });
+
+  it('a digest another run recorded after the page was read stops this run sending a second', async () => {
+    const result = await run({
+      inRollout: between(
+        `INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (1, $1)`,
+        [NOW.toISOString().replace('Z', '')]
+      ),
+    });
+    expect(mailedTo()).toEqual(['nine@example.com']);
+    expect(result.skipped['recently-sent']).toBe(2);
+  });
+
+  it('records the send as of when the unseen list was read, so nothing created during the send is lost', async () => {
+    // The notifications app answers five minutes after the page's read time.
+    h.unseen.mockImplementation(async (input: UnseenNotificationsInput) => {
+      clock = new Date(clock.getTime() + 5 * 60 * 1000);
+      return unseenFor(input);
+    });
+    const pageReadAt = NOW.toISOString().replace('Z', '');
+    await run();
+    const rows = await h.pg.query<{ ok: boolean }>(
+      `SELECT "lastSentAt" = $1::timestamp AS ok FROM "UserNotificationDigest" WHERE "userId" = 1`,
+      [pageReadAt]
+    );
+    expect(rows.rows).toEqual([{ ok: true }]);
   });
 
   it('a failed send is not recorded, so the user is tried again on the next pass', async () => {

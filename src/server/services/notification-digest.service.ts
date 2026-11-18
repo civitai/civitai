@@ -20,7 +20,6 @@ import {
   silencedUsersAmong,
 } from '~/server/notifications/silence-check-ages';
 import {
-  emailNotificationTypeList,
   getNotificationMessage,
   silenceCheckTypes,
 } from '~/server/notifications/utils.notifications';
@@ -119,27 +118,51 @@ async function readCandidates(db: Kysely<DB>, afterId: number, limit: number) {
   return rows;
 }
 
-/** The opt-out read on the primary, so one written since the replica read already holds. */
-async function optedOutOnPrimary(db: Kysely<DB>, userId: number) {
-  const { rows } = await sql<{ one: number }>`
-    SELECT 1 AS one FROM "UserEmailNotificationOptOut"
-    WHERE "userId" = ${userId} AND "type" = ${MISSED_DIGEST_EMAIL_TYPE}`.execute(db);
+/**
+ * The user re-read on the primary just before the send: the page was read from the replica up to
+ * minutes earlier, and an address change, a ban, a deletion or an opt-out since then must hold.
+ * The send goes to the address read here, never the page's copy.
+ */
+async function recipientOnPrimary(db: Kysely<DB>, userId: number) {
+  const { rows } = await sql<{ email: string | null; reachable: boolean; optedOut: boolean }>`
+    SELECT u.email,
+      (u.email IS NOT NULL AND u."emailVerified" IS NOT NULL
+        AND u."deletedAt" IS NULL AND u."bannedAt" IS NULL) AS "reachable",
+      EXISTS (
+        SELECT 1 FROM "UserEmailNotificationOptOut" o
+        WHERE o."userId" = u.id AND o."type" = ${MISSED_DIGEST_EMAIL_TYPE}
+      ) AS "optedOut"
+    FROM "User" u
+    WHERE u.id = ${userId}`.execute(db);
+  return rows[0] ?? null;
+}
+
+/**
+ * Claims this week's send for the user. The claim only lands when no digest was recorded within
+ * the minimum gap, so two overlapping runs (a lock that failed open, a retry after a crash) cannot
+ * both send: the second finds the first's row and gets nothing back.
+ */
+async function claimSend(db: Kysely<DB>, userId: number, at: Date) {
+  const cutoff = new Date(at.getTime() - DIGEST_MIN_GAP_MS);
+  const { rows } = await sql<{ userId: number }>`
+    INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (${userId}, ${utc(at)})
+    ON CONFLICT ("userId") DO UPDATE SET "lastSentAt" = excluded."lastSentAt"
+      WHERE "UserNotificationDigest"."lastSentAt" < ${utc(cutoff)}
+    RETURNING "userId"`.execute(db);
   return rows.length > 0;
 }
 
-async function recordSent(db: Kysely<DB>, userId: number, at: Date) {
-  await sql`
-    INSERT INTO "UserNotificationDigest" ("userId", "lastSentAt") VALUES (${userId}, ${utc(at)})
-    ON CONFLICT ("userId") DO UPDATE SET "lastSentAt" = excluded."lastSentAt"`.execute(db);
-}
-
-/** Puts back what the row held before a send that failed, so the next pass tries the user again. */
-async function unrecordSent(db: Kysely<DB>, userId: number, previous: Date | null) {
+/**
+ * Puts back what the row held before a send that failed, so the next pass tries the user again.
+ * Only this run's own claim is undone: a row another run has written since is left alone.
+ */
+async function unclaimSend(db: Kysely<DB>, userId: number, at: Date, previous: Date | null) {
   if (previous)
-    await sql`UPDATE "UserNotificationDigest" SET "lastSentAt" = ${utc(
-      previous
-    )} WHERE "userId" = ${userId}`.execute(db);
-  else await sql`DELETE FROM "UserNotificationDigest" WHERE "userId" = ${userId}`.execute(db);
+    await sql`UPDATE "UserNotificationDigest" SET "lastSentAt" = ${utc(previous)}
+      WHERE "userId" = ${userId} AND "lastSentAt" = ${utc(at)}`.execute(db);
+  else
+    await sql`DELETE FROM "UserNotificationDigest"
+      WHERE "userId" = ${userId} AND "lastSentAt" = ${utc(at)}`.execute(db);
 }
 
 /** The listed lines, rendered the way the bell renders them; a type with no message is left out. */
@@ -166,11 +189,13 @@ async function renderItems(user: UnseenNotifications): Promise<MissedNotificatio
  * Who is emailed: a user with a verified email, who has not opted out of the digest, is in the
  * flag's rollout (evaluated per user, so a percentage rollout ramps it), has not turned
  * every notification off, was not sent a digest in the last six days, and has at least one
- * notification they have not seen in the window. Types that send their own email when they happen
- * (`defaultEmail`) are left out of both the list and the count, so the digest never repeats one.
+ * notification they have not seen in the window. Types with their own email (`defaultEmail`) are
+ * listed too: that email may never have gone out, and the item is still unseen. Eligibility is
+ * read again on the primary just before each send, and the send goes to the address read there.
  *
- * Each send is recorded in `UserNotificationDigest` BEFORE the email goes out, so a run that dies
- * mid-send can skip a user's digest for the week but never send it twice. Sends are spaced by
+ * Each send is claimed in `UserNotificationDigest` BEFORE the email goes out, and the claim only
+ * lands when no digest was recorded in the last six days, so a run that dies mid-send can skip a
+ * user's digest for the week, and two overlapping runs cannot both send it. Sends are spaced by
  * `minIntervalMs` (the shared bulk-email pace) and capped per run.
  *
  * Two stops: the Flipt flag, and the notification-email kill switch shared with the
@@ -274,7 +299,10 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
               userId: user.id,
               since: new Date(Math.max(windowStart, user.lastSentAt?.getTime() ?? 0)),
             })),
-            excludeTypes: emailNotificationTypeList,
+            // Nothing is left out for having had its own email: that email can be skipped (kill
+            // switch, per-user or per-type cap, a failed send), and an item still unseen a week
+            // later is still missed.
+            excludeTypes: [],
             limit: DIGEST_ITEM_LIMIT,
           })
         : [];
@@ -299,18 +327,30 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
           continue;
         }
 
-        if (await optedOutOnPrimary(write, user.id)) {
+        const recipient = await recipientOnPrimary(write, user.id);
+        if (!recipient?.reachable || !recipient.email) {
+          result.skipped['no-verified-email']++;
+          continue;
+        }
+        if (recipient.optedOut) {
           result.skipped['opted-out']++;
           continue;
         }
+        const to = recipient.email;
 
         await pace();
-        const sentAt = now();
-        await recordSent(write, user.id, sentAt);
+        // Recorded as the moment the unseen list was read, not the moment of the send: the next
+        // digest starts its window here, so a notification created while this page was being
+        // sent is listed next time rather than in neither.
+        const sentAt = runAt;
+        if (!(await claimSend(write, user.id, sentAt))) {
+          result.skipped['recently-sent']++;
+          continue;
+        }
         try {
           await withThrottleRetry(() =>
             missedNotificationsDigestEmail.send({
-              to: user.email as string,
+              to,
               items,
               total: Math.max(missed.total, items.length),
               totalIsFloor: missed.floor,
@@ -327,7 +367,7 @@ export async function runMissedNotificationDigest(deps: DigestDeps = {}): Promis
             message: 'digest email could not be sent',
             payload: { userId: user.id, error: (e as Error)?.name },
           });
-          await unrecordSent(write, user.id, user.lastSentAt);
+          await unclaimSend(write, user.id, sentAt, user.lastSentAt);
         }
       }
 
