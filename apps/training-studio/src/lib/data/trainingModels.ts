@@ -929,8 +929,16 @@ export const catalogFlagKeys = (): string[] => [
  *  Flipt flag exists, then its segments decide. */
 export const KOHYA_FLAG_KEY = 'training-studio-kohya';
 
-/** Every gate a host evaluates for the flow: the catalog's, then the Kohya engine's. */
-export const hostFlagKeys = (): string[] => [...catalogFlagKeys(), KOHYA_FLAG_KEY];
+/** Gates the Manage tags find-and-replace row. Same fail-closed semantics: moderators only until the
+ *  Flipt flag exists, then its segments decide. */
+export const TAG_FIND_REPLACE_FLAG_KEY = 'training-studio-tag-find-replace';
+
+/** Every gate a host evaluates for the flow. */
+export const hostFlagKeys = (): string[] => [
+  ...catalogFlagKeys(),
+  KOHYA_FLAG_KEY,
+  TAG_FIND_REPLACE_FLAG_KEY,
+];
 
 /** The gates of the cards that train pairs — the edit helpers are offered only to a viewer who can see
  *  one. Null when a pair card is ungated, so nothing gates them. */

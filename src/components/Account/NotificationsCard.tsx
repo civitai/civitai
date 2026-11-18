@@ -6,6 +6,8 @@ import { NotificationTypeControl } from '~/components/Notifications/Notification
 import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
 import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
 import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { useDigestEmailSetting } from '~/components/Notifications/useDigestEmailSetting';
+import { SystemEmailSettings } from '~/components/Notifications/SystemEmailSettings';
 import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
@@ -14,6 +16,7 @@ import {
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { MISSED_DIGEST_DISPLAY_NAME } from '~/server/notifications/missed-digest.constants';
 import {
   notificationSettingGroups,
   notificationTypes,
@@ -29,6 +32,7 @@ export default function NotificationsCard() {
 
   const updateNotificationSettingMutation = useToggleNotificationSetting();
   const features = useFeatureFlags();
+  const digest = useDigestEmailSetting();
 
   // Asymmetric on purpose. Turning everything OFF must also unsubscribe opt-in types, or a user who
   // silences the site keeps receiving promos with no way back — the aggregates then hide the tree
@@ -116,6 +120,18 @@ export default function NotificationsCard() {
         </Card>
         <Divider label="Email Notifications" />
         <NewsletterToggle />
+        <Group gap="sm" wrap="nowrap" align="flex-start">
+          <SkeletonSwitch
+            loading={digest.isLoading}
+            checked={digest.enabled}
+            onChange={(e) => digest.setEnabled(e.target.checked)}
+          />
+          <Text size="sm">{MISSED_DIGEST_DISPLAY_NAME}</Text>
+        </Group>
+        <Text size="sm" fw={500}>
+          App review emails
+        </Text>
+        <SystemEmailSettings />
       </Stack>
     </Card>
   );

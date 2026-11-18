@@ -493,20 +493,83 @@ async function joinInvitedSender(
   tx: Prisma.TransactionClient,
   { chatId, memberId, username }: { chatId: number; memberId: number; username: string }
 ) {
+  const notice = await joinChatMember(tx, {
+    chatId,
+    memberId,
+    username,
+    from: ChatMemberStatus.Invited,
+  });
+  if (notice) return notice;
+  const now = await tx.chatMember.findUnique({
+    where: { id: memberId },
+    select: { status: true },
+  });
+  if (now?.status !== ChatMemberStatus.Joined)
+    throw throwBadRequestError(`Unable to post in this chat`);
+  return null;
+}
+
+/**
+ * After a join commits: into the realtime group first, so the joiner receives
+ * their own notice, then the notice. Awaited, because clients append in arrival
+ * order and anything sent after it must land after it.
+ */
+export async function signalJoined({
+  chatId,
+  userId,
+  notice,
+}: {
+  chatId: number;
+  userId: number;
+  notice: ChatAllMessages[number];
+}) {
+  await withSignals(() =>
+    outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
+      timeoutMs: 10_000,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(`chat:${chatId}`),
+    })
+  ).catch(() => undefined);
+  await signalNewMessage(chatId, notice);
+}
+
+/**
+ * The status changes a member may make to their own row. Kicked is the owner's
+ * call and Invited is only ever set by an invite, so neither is reachable here.
+ */
+const SELF_STATUS_CHANGES: Partial<Record<ChatMemberStatus, readonly ChatMemberStatus[]>> = {
+  [ChatMemberStatus.Invited]: [ChatMemberStatus.Joined, ChatMemberStatus.Ignored],
+  [ChatMemberStatus.Joined]: [ChatMemberStatus.Left, ChatMemberStatus.Ignored],
+  // "Unarchive" and "Rejoin": both undo the member's own choice.
+  [ChatMemberStatus.Ignored]: [ChatMemberStatus.Joined],
+  [ChatMemberStatus.Left]: [ChatMemberStatus.Joined],
+};
+
+export const canSetOwnChatStatus = (from: ChatMemberStatus, to: ChatMemberStatus) =>
+  SELF_STATUS_CHANGES[from]?.includes(to) ?? false;
+
+/**
+ * Joins a member and writes the "joined" notice. Guarded on `from`, the status
+ * the caller read: returns null, writing nothing, when the row has moved since.
+ */
+export async function joinChatMember(
+  tx: Prisma.TransactionClient,
+  {
+    chatId,
+    memberId,
+    username,
+    from,
+  }: { chatId: number; memberId: number; username: string; from: ChatMemberStatus }
+) {
   const joinedAt = new Date();
   const { count } = await tx.chatMember.updateMany({
-    where: { id: memberId, status: ChatMemberStatus.Invited },
-    data: { status: ChatMemberStatus.Joined, joinedAt },
+    where: { id: memberId, status: from },
+    // Accepting is what ends a request; leaving the mark set would strand the
+    // conversation in Requests forever.
+    data: { status: ChatMemberStatus.Joined, joinedAt, filteredAt: null },
   });
-  if (count === 0) {
-    const now = await tx.chatMember.findUnique({
-      where: { id: memberId },
-      select: { status: true },
-    });
-    if (now?.status !== ChatMemberStatus.Joined)
-      throw throwBadRequestError(`Unable to post in this chat`);
-    return null;
-  }
+  if (count === 0) return null;
   return tx.chatMessage.create({
     data: {
       chatId,
@@ -720,20 +783,7 @@ export const createMessage = async ({
     return { resp, joinNotice };
   });
 
-  if (joinNotice) {
-    // The same side effects as joining through modifyUser: into the realtime
-    // group first, so the joiner receives their own notice and message.
-    await withSignals(() =>
-      outboundFetch(`${env.SIGNALS_ENDPOINT}/users/${userId}/groups`, {
-        timeoutMs: 10_000,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${chatId}`),
-      })
-    ).catch(() => undefined);
-    // Awaited: clients append in arrival order, so the notice must land first.
-    await signalNewMessage(chatId, joinNotice);
-  }
+  if (joinNotice) await signalJoined({ chatId, userId, notice: joinNotice });
   signalNewMessage(chatId, resp);
   if (joinNotice) await signalChatMembersUpdated({ chatId, userIds: [userId] });
 
