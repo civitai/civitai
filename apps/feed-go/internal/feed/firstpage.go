@@ -119,7 +119,7 @@ func loadFirstPage(ctx context.Context, a firstPageArgs) (*firstPage, error) {
 		}
 		// Node's `.catch(() => undefined)` turns a failed lookup into no sponsored post, but this
 		// service cannot tell whether Node's lookup failed too.
-		return nil, fallback.Newf("sponsored-lookup", "%v", err)
+		return nil, fallback.Wrap("sponsored-lookup", err)
 	}
 	if pick == nil {
 		return out, nil

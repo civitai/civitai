@@ -164,7 +164,7 @@ func (s *Sources) fillMetrics(ctx context.Context, miss []int, out map[int]Metri
 	records, err := c.lookupShared(lctx, MissMetrics, miss, s.lookupImageMetrics)
 	if err != nil {
 		c.observe(MissMetrics, "error", len(miss))
-		return fallback.Newf("metrics-miss-failed", "%v", err)
+		return fallback.Wrap("metrics-miss-failed", err)
 	}
 	for _, id := range miss {
 		m := Metrics{}
