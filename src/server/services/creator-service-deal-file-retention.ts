@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
-import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
+import { ownerHeldSql } from '~/server/services/legal-hold.service';
 import {
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS,
   SERVICE_DEAL_FILE_RETENTION_COMPLETED_MS,
@@ -48,8 +48,8 @@ const parties = Prisma.sql`(d."buyerId", d."sellerId")`;
 
 /** Anything that keeps a deal's files, on either party or the offering. */
 export const dealFilesHeld = Prisma.sql`(
-  ${userUnderLegalHoldSql(Prisma.sql`d."buyerId"`)}
-  OR ${userUnderLegalHoldSql(Prisma.sql`d."sellerId"`)}
+  ${ownerHeldSql(Prisma.sql`d."buyerId"`)}
+  OR ${ownerHeldSql(Prisma.sql`d."sellerId"`)}
   OR EXISTS (SELECT 1 FROM "CsamReport" c
     WHERE c."userId" IN ${parties}
       OR c."details" ->> 'secondaryUserId' IN (d."buyerId"::text, d."sellerId"::text))

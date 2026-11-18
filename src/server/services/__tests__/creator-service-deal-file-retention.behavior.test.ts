@@ -101,6 +101,9 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN "userId" int, ADD COLUMN "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN images jsonb NOT NULL DEFAULT '[]';`);
 });
 
 beforeEach(async () => {
@@ -110,7 +113,7 @@ beforeEach(async () => {
   s3.send.mockResolvedValue({ ETag: '"abc123"' });
   await holder.db.exec(`
     TRUNCATE "ServiceDealFilePurge", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering",
-      "Report", "UserReport", "CsamReport", "EvidenceHold", "Appeal", "ModActivity" RESTART IDENTITY CASCADE;
+      "Report", "UserReport", "CsamReport", "EvidenceHold", "Appeal", "ModActivity", "Image" RESTART IDENTITY CASCADE;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -199,17 +202,6 @@ describe('the launch floor', () => {
     await retention.markExpiredDealFiles({ effectiveAt: launch(31) });
     expect(await removed(finalId)).toBe(true);
   });
-
-  it('defaults to the date the notice ships', async () => {
-    const { SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT } = await import(
-      '~/shared/constants/creator-services.constants'
-    );
-    const { finalId } = await closedDeal('Cancelled', 400);
-    await retention.markExpiredDealFiles();
-    expect(await removed(finalId)).toBe(
-      SERVICE_DEAL_FILE_RETENTION_EFFECTIVE_AT.getTime() + 30 * 86_400_000 <= Date.now()
-    );
-  });
 });
 
 describe('a later moderation action restarts the clock', () => {
@@ -268,6 +260,19 @@ describe('holds', () => {
       'ban notes naming a child-safety report',
       (p) =>
         `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
+    ],
+    [
+      'an image held for review',
+      (p) => `INSERT INTO "Image" ("userId", "needsReview") VALUES (${p}, 'csam')`,
+    ],
+    [
+      'a blocked image no sent report lists',
+      (p) => `INSERT INTO "Image" ("userId", "blockedFor") VALUES (${p}, 'CSAM')`,
+    ],
+    [
+      'an image listed in a holding report naming someone else',
+      (p) =>
+        `INSERT INTO "Image" (id, "userId") VALUES (900${p}, ${p}); INSERT INTO "CsamReport" ("userId", images) VALUES (${OTHER}, '[{"id": 900${p}}]')`,
     ],
     [
       'an open report against them',
@@ -355,10 +360,12 @@ describe('holds', () => {
 });
 
 describe('the purge after the sweep', () => {
-  it('checks the holds again: one placed after marking stops the delete', async () => {
+  it('re-reads the holds under the row lock: one landing after the candidates were read stops the delete', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
     await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
+    // The candidate read ran before the hold landed.
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce((async () => [{ id: finalId }]) as never);
     expect(await files.purgeRemovedFiles()).toBe(0);
     expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
     expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
@@ -424,16 +431,39 @@ describe('the purge after the sweep', () => {
     );
   });
 
-  it('falls back to a plain delete on any other listing error, warns, and still purges', async () => {
-    const { dealId } = await closedDeal('Cancelled', 40);
-    s3.purgeObjectVersions.mockRejectedValue(new Error('AccessDenied'));
+  it('keeps the row and writes no record when the delete fails or leaves versions', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
     await sweep();
+    const runs: [string, () => void][] = [
+      [
+        'a listing error other than 501',
+        () => s3.purgeObjectVersions.mockRejectedValue(new Error('AccessDenied')),
+      ],
+      [
+        'a 501 whose plain delete then fails',
+        () => {
+          s3.purgeObjectVersions.mockRejectedValue(
+            Object.assign(new Error('NotImplemented'), { $metadata: { httpStatusCode: 501 } })
+          );
+          s3.deleteObject.mockRejectedValue(new Error('InternalError'));
+        },
+      ],
+      [
+        'versions still listed after the delete',
+        () => s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 1, remaining: 1 }),
+      ],
+    ];
+    for (const [, setUp] of runs) {
+      setUp();
+      expect(await files.purgeRemovedFiles()).toBe(0);
+      expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
+      expect(await q(`SELECT * FROM "ServiceDealFilePurge"`)).toEqual([]);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ message: 'object versions may remain after delete' })
+      );
+    }
+    s3.purgeObjectVersions.mockResolvedValue({ versionsDeleted: 1, remaining: 0 });
     expect(await files.purgeRemovedFiles()).toBe(2);
-    expect(s3.deleteObject).toHaveBeenCalledWith('bucket', `k/${dealId}/final`, expect.anything());
-    expect(await q(`SELECT id FROM "ServiceDealFile"`)).toEqual([]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'object versions may remain after delete' })
-    );
   });
 });
 

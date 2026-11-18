@@ -306,6 +306,9 @@ beforeAll(async () => {
       "tosViolation" boolean NOT NULL DEFAULT false);
   `);
   for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  await holder.db.exec(`
+    ALTER TABLE "Image" ADD COLUMN IF NOT EXISTS "userId" int, ADD COLUMN IF NOT EXISTS "blockedFor" text;
+    ALTER TABLE "CsamReport" ADD COLUMN IF NOT EXISTS images jsonb NOT NULL DEFAULT '[]';`);
 });
 
 beforeEach(async () => {

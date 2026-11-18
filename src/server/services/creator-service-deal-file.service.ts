@@ -577,17 +577,22 @@ async function deleteFileObjects(file: FileObjects) {
       ? [{ client: imageStore.s3, bucket: imageStore.bucket, key: file.watermarkedKey }]
       : []),
   ];
+  let deleted = true;
   for (const { client, bucket, key } of targets) {
     const remaining = await purgeObjectVersions({ client, bucket, key })
       .then((result) => result.remaining)
       .catch(async (error: { name?: string; $metadata?: { httpStatusCode?: number } }) => {
-        await deleteObject(bucket, key, client).catch(() => null);
-        // A store without versioning answers 501: the plain delete is the whole delete there.
+        // A store without versioning answers 501: there the plain delete is the whole delete.
         const unversioned =
           error?.$metadata?.httpStatusCode === 501 || error?.name === 'NotImplemented';
-        return unversioned ? 0 : null;
+        const plain = await deleteObject(bucket, key, client).then(
+          () => true,
+          () => false
+        );
+        return unversioned && plain ? 0 : null;
       });
-    if (remaining !== 0)
+    if (remaining !== 0) {
+      deleted = false;
       logToAxiom({
         name: 'creator-service-deal-file',
         type: 'warning',
@@ -595,10 +600,11 @@ async function deleteFileObjects(file: FileObjects) {
         fileId: file.id,
         payload: { remaining },
       });
+    }
   }
   // A preview deleted mid-scan: its hidden copy goes with it.
   if (file.imageId) await deleteImages([file.imageId]);
-  return etag;
+  return { etag, deleted };
 }
 
 /**
@@ -643,27 +649,27 @@ export async function purgeRemovedFiles({ limit = 50 } = {}) {
     ORDER BY f."id" LIMIT ${limit}::int`;
   let purged = 0;
   for (const { id } of candidates) {
-    const done = await dbWrite.$transaction(
-      async (tx) => {
-        // Re-read under the row lock, so a hold that landed since the candidates were read wins.
-        const [file] = await tx.$queryRaw<(FileObjects & { dealId: number; size: number })[]>`
-          SELECT f."id", f."s3Key", f."deliveryKey", f."watermarkedKey", f."imageId", f."dealId", f."size"
-          FROM "ServiceDealFile" f
-          WHERE f."id" = ${id}::int AND ${purgeable(Prisma.sql`f`)}
-          FOR UPDATE OF f SKIP LOCKED`;
-        if (!file) return false;
-        // Objects before the row: a failure here leaves the row for the next run to try again.
-        const etag = await deleteFileObjects(file);
-        await tx.$executeRaw`
-          INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size", "etag")
-          VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${etag})
-          ON CONFLICT ("fileId") DO NOTHING`;
-        await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
-        await tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
-        return true;
-      },
-      { timeout: 120_000 }
+    // Re-read under the row lock, so a hold that landed since the candidates were read wins.
+    const [file] = await dbWrite.$transaction(
+      (tx) => tx.$queryRaw<(FileObjects & { dealId: number; size: number })[]>`
+        SELECT f."id", f."s3Key", f."deliveryKey", f."watermarkedKey", f."imageId", f."dealId", f."size"
+        FROM "ServiceDealFile" f
+        WHERE f."id" = ${id}::int AND ${purgeable(Prisma.sql`f`)}
+        FOR UPDATE OF f SKIP LOCKED`
     );
+    if (!file) continue;
+    // Objects before the row, outside any transaction: a delete that failed or left versions
+    // keeps the row, and writes no record, for the next run to try again.
+    const { etag, deleted } = await deleteFileObjects(file);
+    if (!deleted) continue;
+    const done = await dbWrite.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        INSERT INTO "ServiceDealFilePurge" ("fileId", "dealId", "size", "etag")
+        VALUES (${file.id}::int, ${file.dealId}::int, ${file.size}::int, ${etag})
+        ON CONFLICT ("fileId") DO NOTHING`;
+      await tx.$executeRaw`DELETE FROM "ServiceDealFileEntry" WHERE "fileId" = ${file.id}::int`;
+      return tx.$executeRaw`DELETE FROM "ServiceDealFile" WHERE "id" = ${file.id}::int`;
+    });
     if (done) purged++;
   }
   return purged;
