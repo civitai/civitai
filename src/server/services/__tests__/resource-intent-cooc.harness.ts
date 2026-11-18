@@ -15,10 +15,10 @@ export const MIGRATION_SQL = readFileSync(
   'utf8'
 );
 
-// A PGlite keeps its WASM heap (~230 MB) for as long as anything references it, closed or not, and
-// a test's `vi.fn` closures stay referenced for the rest of the file (vitest keeps every mock). So
-// after each test, close every instance made so far and drop the heap and filesystem it holds; an
-// instance made in a `beforeAll` would not outlive the first test.
+// A PGlite holds its WASM heap for as long as anything references it, closed or not, and a test's
+// `vi.fn` closures stay referenced for the rest of the file (vitest keeps every mock). So after each
+// test, close every instance made so far and drop its `mod`/`fs`. An instance made in a `beforeAll`
+// would be closed after the first test.
 const open = new Set<PGlite>();
 afterEach(async () => {
   const dbs = [...open];
