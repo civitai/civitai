@@ -75,10 +75,10 @@ async function verdict(imageId: number, v: Verdict = {}) {
   return itemId;
 }
 
-const ruling = (imageId: number, hours: number) =>
+const ruling = (imageId: number, hours: number, activity = 'setNsfwLevel') =>
   pg.query(
-    `INSERT INTO "ModActivity" ("userId","activity","entityType","entityId","createdAt") VALUES (7,'setNsfwLevel','image',$1,$2)`,
-    [imageId, hoursAgo(hours)]
+    `INSERT INTO "ModActivity" ("userId","activity","entityType","entityId","createdAt") VALUES (7,$3,'image',$1,$2)`,
+    [imageId, hoursAgo(hours), activity]
   );
 
 const references = async () =>
@@ -123,11 +123,14 @@ describe('takeAgreementIntake', () => {
     // A ruling from before the verdict does not overrule it.
     await verdict(12);
     await ruling(12, 5);
+    // Knights' own write-back logs setNsfwLevelKono after the verdict; that is not an overrule.
+    await verdict(14);
+    await ruling(14, 1, 'setNsfwLevelKono');
 
     await takeAgreementIntake(db, { now: NOW });
     expect(
       (await references()).filter((r) => r.source === 'agreement').map((r) => r.imageId)
-    ).toEqual([12]);
+    ).toEqual([12, 14]);
   });
 
   it('fills each level up to the quota of live agreement checks, newest first, and leaves a thin level short', async () => {
