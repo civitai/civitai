@@ -179,7 +179,7 @@ const extraVote = (
   pg.query(
     `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
      VALUES ($1,$2,$3,$4,$5,$6,$7,1)`,
-    [itemId, playerId, hoursAgo(2.5), Q, imageId, answer, stage]
+    [itemId, playerId, hoursAgo(2.5), Q, imageId, stage, answer]
   );
 const firstVoter = async (itemId: number) =>
   (
