@@ -408,7 +408,14 @@ function terminatingLink({
       feedTransportTimingLink({ transport: 'go', isAuthed: isAuthedBrowser }),
       httpLink({ transformer: clientTransformer, url: GO_TRANSPORT_URL, headers }),
     ],
-    false: [feedTransportTimingLink({ transport: 'node', isAuthed: isAuthedBrowser }), defaultLink],
+    false: [
+      feedTransportTimingLink({
+        transport: 'node',
+        isAuthed: isAuthedBrowser,
+        skip: shouldSendQueryAsPost,
+      }),
+      defaultLink,
+    ],
   });
 }
 

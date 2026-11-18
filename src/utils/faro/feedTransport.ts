@@ -1,5 +1,5 @@
 import { faro } from '@grafana/faro-web-sdk';
-import type { TRPCLink } from '@trpc/client';
+import type { Operation, TRPCLink } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
 import type { AppRouter } from '~/server/routers';
 import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
@@ -11,8 +11,9 @@ import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
  *
  * `transport` is STRUCTURAL: `~/utils/trpc` puts this link inside each branch of its
  * `shouldUseGoTransport` split, so the tag is the link the request left on, never a re-derived
- * predicate. Both arms time one unbatched request: the procedures are in `NEVER_BATCH_PROCEDURES`
- * (`~/utils/trpc`), so a node timing never includes a batch window or sibling queries. Not recorded: a signed-out request (it can never take the Go path, so it is in
+ * predicate. Like-for-like: both arms are GET-sized, unbatched requests. The procedures are in
+ * `NEVER_BATCH_PROCEDURES` (`~/utils/trpc`), and the node arm skips a request that would be sent as
+ * POST (`skip`), which the go arm can never carry. Not recorded: a signed-out request (it can never take the Go path, so it is in
  * neither arm), and an aborted one (a cancel is neither arm's latency).
  */
 
@@ -58,6 +59,8 @@ export interface FeedTransportTimingOptions {
   transport: FeedTransport;
   /** Whether the browser session is signed in (`isAuthedBrowser` in `~/utils/trpc`). */
   isAuthed: () => boolean;
+  /** An operation this arm does not measure (node: `shouldSendQueryAsPost` from `~/utils/trpc`). */
+  skip?: (op: Operation) => boolean;
   /** Milliseconds clock. Default `performance.now`, read per call. */
   now?: () => number;
   /** Faro's `pushMeasurement`. Default: the global Faro's, a no-op until Faro is initialised. */
@@ -66,6 +69,14 @@ export interface FeedTransportTimingOptions {
 
 function defaultPushMeasurement(): PushMeasurement | undefined {
   return faro?.api?.pushMeasurement?.bind(faro.api) as PushMeasurement | undefined;
+}
+
+function skipped(skip: FeedTransportTimingOptions['skip'], op: Operation): boolean {
+  try {
+    return skip?.(op) === true;
+  } catch {
+    return true;
+  }
 }
 
 function signedIn(isAuthed: () => boolean): boolean {
@@ -90,7 +101,8 @@ export function feedTransportTimingLink(options: FeedTransportTimingOptions): TR
         typeof window === 'undefined' ||
         op.type !== 'query' ||
         !GO_TRANSPORT_PROCEDURES.has(op.path) ||
-        !signedIn(isAuthed)
+        !signedIn(isAuthed) ||
+        skipped(options.skip, op)
       ) {
         return next(op);
       }
