@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ImageBackgroundRemovalModel } from '@civitai/orchestration-client';
 import { defineGraph } from 'form-graph';
 import type { GenerationCtx } from '~/shared/generation/context';
 import {
@@ -6,6 +7,7 @@ import {
   preprocessKinds,
   type PreprocessKind,
 } from '~/shared/generation/preprocess-specs';
+import { enumDef } from '../../defs';
 import { optionFallback, imagesDef, sliderDef } from '../defs';
 
 /**
@@ -18,23 +20,17 @@ import { optionFallback, imagesDef, sliderDef } from '../defs';
  * the graph engine, and duplicating 36 kinds' specs would only drift.
  */
 
-export const backgroundRemovalModels = ['birefnet', 'rmbg3'] as const;
-export type BackgroundRemovalModel = (typeof backgroundRemovalModels)[number];
-
 export const imageRemoveBackground = defineGraph<GenerationCtx>()
   .field('images', imagesDef({}))
-  .field('backgroundRemovalModel', {
-    input: z.enum(backgroundRemovalModels).optional(),
-    output: z.enum(backgroundRemovalModels),
-    default: 'birefnet' as BackgroundRemovalModel,
-    correct: optionFallback(backgroundRemovalModels, 'birefnet' as BackgroundRemovalModel),
-    meta: {
+  .field(
+    'backgroundRemovalModel',
+    enumDef({
       options: [
         { label: 'Standard', value: 'birefnet' },
         { label: 'RMBG 3.0', value: 'rmbg3' },
-      ] as { label: string; value: BackgroundRemovalModel }[],
-    },
-  });
+      ] satisfies { label: string; value: ImageBackgroundRemovalModel }[],
+    })
+  );
 
 const kindParamsSchema = z.record(z.string(), z.unknown());
 const kindParamsInput = kindParamsSchema.optional();

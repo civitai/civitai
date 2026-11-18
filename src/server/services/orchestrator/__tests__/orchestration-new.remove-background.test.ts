@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * Remove Background keeps BiRefNet as its default and sends RMBG 3.0 only when the
- * user picks it. The module preamble mirrors `orchestration-new.generation-input-gate.test.ts`.
+ * Remove Background sends the orchestrator's imageBackgroundRemoval step for both
+ * models: BiRefNet by default, RMBG 3.0 when the user picks it. The module preamble mirrors `orchestration-new.generation-input-gate.test.ts`.
  */
 
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
@@ -78,7 +78,10 @@ beforeEach(() => {
 
 describe('remove background model choice', () => {
   it('runs BiRefNet when no model is picked', async () => {
-    expect((await stepFor({})).$type).toBe('comfy');
+    const step = await stepFor({});
+
+    expect(step.$type).toBe('imageBackgroundRemoval');
+    expect(step.input).toMatchObject({ image: SOURCE, model: 'birefnet' });
   });
 
   it('sends RMBG 3.0 to the orchestrator when picked', async () => {

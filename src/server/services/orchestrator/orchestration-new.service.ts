@@ -11,7 +11,7 @@
  *    - vid2vid:interpolate → videoInterpolation step
  *    - vid2vid:upscale → videoUpscaler step
  *    - img2img:upscale → comfy step (img2img-upscale)
- *    - img2img:remove-background → comfy step
+ *    - img2img:remove-background → imageBackgroundRemoval step
  *    - img2img:preprocess → preprocessImage step
  *    - vid2vid:preprocess → preprocessVideo step
  *    - All other workflows → ecosystem discriminator
@@ -22,6 +22,7 @@
 
 import { assertGenerationLicenseAccepted } from '~/server/services/generation-license.service';
 import type {
+  ImageBackgroundRemovalModel,
   ImageBackgroundRemovalStepTemplate,
   PreprocessImageInput,
   PreprocessImageStepTemplate,
@@ -1008,33 +1009,23 @@ async function createImageUpscaleSteps(
 /**
  * Handle img2img:remove-background workflow
  */
-async function createImageRemoveBackgroundInput(
+function createImageRemoveBackgroundInput(
   data: LooseGenerationData,
   sourceCtx?: SourceCtx
-): Promise<StepInput> {
+): StepInput {
   const sourceImage = data.images?.[0];
   if (!sourceImage?.url) {
     throw throwBadRequestError('Image URL is required for background removal');
   }
 
-  if (data.backgroundRemovalModel === 'rmbg3') {
-    // The pinned @civitai/orchestration-client predates the step's `model` field.
-    const step = {
-      $type: 'imageBackgroundRemoval',
-      input: { image: sourceImage.url, format: 'png', model: 'rmbg3' },
-    } as ImageBackgroundRemovalStepTemplate as StepInput;
-    if (!sourceCtx) return step;
-    return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
-  }
-
-  const step = await createComfyInput({
-    key: 'img2img-background-removal',
-    params: {
+  const step = {
+    $type: 'imageBackgroundRemoval',
+    input: {
       image: sourceImage.url,
-      width: sourceImage.width,
-      height: sourceImage.height,
+      format: 'png',
+      model: data.backgroundRemovalModel as ImageBackgroundRemovalModel | undefined,
     },
-  });
+  } as ImageBackgroundRemovalStepTemplate as StepInput;
 
   if (!sourceCtx) return step;
   return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
@@ -1121,7 +1112,7 @@ async function createStepInputs(
       break;
 
     case 'img2img:remove-background':
-      rawResult = await createImageRemoveBackgroundInput(
+      rawResult = createImageRemoveBackgroundInput(
         data as LooseGenerationData,
         metadataCtx.sourceCtx
       );

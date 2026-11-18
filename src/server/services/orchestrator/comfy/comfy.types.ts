@@ -25,16 +25,6 @@ export const workflowDefinitionFeatures = ['draft', 'denoise', 'upscale', 'image
 export const workflowDefinitions: WorkflowDefinition[] = [
   {
     type: 'img2img',
-    key: 'img2img-background-removal',
-    name: 'Background Removal',
-    features: ['image'],
-    selectable: false,
-    memberOnly: true,
-    template:
-      '{"1":{"inputs":{"model":"urn:air:other:birefnet:huggingface:ZhengPeng7/BiRefNet@main/model.safetensors","device":"AUTO","use_weight":false,"dtype":"float32"},"class_type":"LoadRembgByBiRefNetModel","_meta":{"title":"LoadRembgByBiRefNetModel"}},"3":{"inputs":{"image":"{{image}}","upload":"image"},"class_type":"LoadImage","_meta":{"title":"Load Image"}},"4":{"class_type":"SaveImage","inputs":{"format":"png","images":["8",0]},"_meta":{"title":"SaveImage"}},"8":{"inputs":{"model":["1",0],"images":["3",0]},"class_type":"RembgByBiRefNet","_meta":{"title":"RembgByBiRefNet"}}}',
-  },
-  {
-    type: 'img2img',
     key: 'img2img-facefix',
     name: 'Face fix',
     description: 'Find and regenerate faces in the image',
