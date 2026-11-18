@@ -497,8 +497,8 @@ const featureFlags = createFeatureFlags({
   // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
   moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
   // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
-  // and never wider than it. Mods until the Flipt flag exists; once it does, keep mods in its rule.
-  imageSearchUpload: { availability: ['mod'], fliptKey: 'image-search-upload' },
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the
