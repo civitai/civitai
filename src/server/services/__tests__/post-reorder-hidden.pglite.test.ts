@@ -357,6 +357,41 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(await indexes()).toEqual(before);
   });
 
+  it('saves an unchanged order with a Blocked image after a gap behind a held one', async () => {
+    // PG 10 at 0, held XXX 1 at 3, Blocked 60 at 5.
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (10, ${POST}, ${PG}, 0, NULL), (1, ${POST}, ${XXX}, 3, 'minor'), (60, ${POST}, 32, 5, NULL);
+    `);
+    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [10, 60] });
+    const after = await indexes();
+    expect(after[1]).toBe(3);
+    expect(after[60]).toBeGreaterThan(3);
+  });
+
+  it('with `items`, moving only a text saves when a Blocked image is listed', async () => {
+    // PG 10 at 0, Blocked 60 at 1, held XXX 1 at 2, text 5 at 3; the text moves to the front.
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (10, ${POST}, ${PG}, 0, NULL), (60, ${POST}, 32, 1, NULL), (1, ${POST}, ${XXX}, 2, 'minor');
+      INSERT INTO "PostText" VALUES (5, ${POST}, 3);
+    `);
+    await reorderPostImages({
+      ...OWNER_EDITOR,
+      id: POST,
+      imageIds: [],
+      items: [
+        { type: 'text', id: 5 },
+        { type: 'image', id: 10 },
+        { type: 'image', id: 60 },
+      ],
+    });
+    const after = await indexes();
+    expect(after[1]).toBe(2);
+    expect(after[10]).toBeLessThan(2);
+    expect(after[60]).toBeLessThan(2);
+  });
+
   // The editor gets every id from post.getImageIds, so a crafted list can name a hidden image.
   it.each([
     [

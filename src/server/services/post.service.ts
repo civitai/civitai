@@ -2306,9 +2306,10 @@ const sortedIndexes = (items: Placed[], hidden: Hidden) =>
 /**
  * Indexes for `order`, in order. `ownSlots`: the images trade the indexes they already hold.
  * Otherwise items are numbered from 0 in the editor's order, skipping the pinned images' and
- * `reserved` indexes. Either way each pinned image keeps the same number of images the version
- * level counts ahead of it: those images fill the stretches between pinned images up to the count
- * each held before, and texts and uncounted images take the room left over.
+ * `reserved` indexes. Either way each pinned image keeps the same images-ahead counts
+ * `shiftsPinnedRank` checks: own slots trade within the images the version level counts and
+ * within the rest; numbered, every image fills the stretches between pinned images up to the
+ * count each held before, and texts take the room left over.
  */
 function placeAroundPinned(
   order: Placed[],
@@ -2322,6 +2323,7 @@ function placeAroundPinned(
   });
   const isCounted = (item: Placed) =>
     item.type === 'image' && !!hidden.movable.get(item.id)?.counted;
+  const isImage = (item: Placed) => item.type === 'image' && hidden.movable.has(item.id);
 
   const index = new Map<Placed, number>();
   if (ownSlots) {
@@ -2346,7 +2348,7 @@ function placeAroundPinned(
     return free;
   });
   const quota = pins.map(() => 0);
-  for (const item of items.filter(isCounted)) {
+  for (const item of items.filter(isImage)) {
     const k = stretchOf(hidden.movable.get(item.id)!.index);
     if (k < last) quota[k]++;
   }
@@ -2356,7 +2358,7 @@ function placeAroundPinned(
   let k = 0;
   for (const item of items) {
     let at;
-    if (isCounted(item)) {
+    if (isImage(item)) {
       while (k < last && usedCounted[k] >= quota[k]) k++;
       at = k;
       if (at < last) usedCounted[at]++;
