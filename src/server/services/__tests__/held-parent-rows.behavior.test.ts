@@ -77,6 +77,7 @@ const OWNER = 1;
 const HELD = 2; // named on a pending report
 const OTHER = 3;
 const MARKED = 4; // held only by a hold marker
+const MODERATOR = 9;
 
 let db: PGlite;
 const run = (sql: Prisma.Sql) => db.query(sql.text, sql.values as unknown[]);
@@ -579,7 +580,7 @@ describe("a held author's comments go with their parent", () => {
         'bountyEntry',
         61,
         bountyEntryParent,
-        () => deleteBountyEntry({ id: 61, isModerator: true }),
+        () => deleteBountyEntry({ id: 61, userId: MODERATOR, isModerator: true }),
       ],
       [
         'deleteArticleById',
@@ -762,13 +763,14 @@ describe("a bounty entry's images", () => {
       .mockImplementationOnce((async () => [{ id: 61, awardedUnitAmount: 0 }]) as never);
 
   it.each([
-    ['a moderator', true, { moderatorDelete: true }],
-    ['a member', false, {}],
+    ['a moderator', MODERATOR, true, { moderatorDelete: true }],
+    ['a member', OWNER, false, {}],
+    ['a moderator who wrote it', OWNER, true, {}],
   ])(
     "are queued with %s's delete, the author's own only, and left to image-deletes",
-    async (_, isModerator, queuedAs) => {
+    async (_, userId, isModerator, queuedAs) => {
       if (!isModerator) noAward();
-      await deleteBountyEntry({ id: 61, isModerator });
+      await deleteBountyEntry({ id: 61, userId, isModerator });
 
       expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);
       expect(await queuedData()).toEqual([{ entityId: 80, data: queuedAs }]);

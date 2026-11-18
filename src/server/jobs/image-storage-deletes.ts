@@ -30,13 +30,9 @@ export const imageStorageDeletes = createJob(
     // The budget only stops new batches; this bounds the one in flight, before the lock lapses.
     const deadline = AbortSignal.timeout(LOCK_SECONDS * 1000 - DEADLINE_MARGIN_MS);
 
-    // Most of a run goes to the newest first attempts, so one delete is not queued behind a whole
-    // account's wipe; a share goes to the oldest, so a run that works through its batch reaches the
-    // oldest first attempts (one cut short by the budget can leave them unattempted). Retries come
-    // last in that share, so keys that keep failing cannot hold back new deletes, and wait out a
-    // backlog of first attempts. Failed rows keep their original
-    // `createdAt`: it is what the overdue check in `JOB_QUEUE_OVERDUE_MINUTES` reads, so a key that
-    // never clears has to age.
+    // Mostly the newest first attempts, so one delete is not queued behind a whole account's wipe;
+    // a share of the oldest, retries last, so keys that keep failing cannot hold back new deletes.
+    // Failed rows keep their `createdAt`, which the overdue check (`JOB_QUEUE_OVERDUE_MINUTES`) reads.
     const queued = await dbWrite.$queryRaw<QueueRow[]>`
       (SELECT "entityId" AS id, data FROM "JobQueue"
        WHERE type = ${JobQueueType.ImageStorageDelete}::"JobQueueType"

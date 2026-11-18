@@ -1027,7 +1027,7 @@ describe('deleteBountyEntry', () => {
   it('refuses, and keeps the entry, while an unsettled payout cannot be paid', async () => {
     recordUnsettledAward();
     buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
-    await expect(deleteBountyEntry({ id: 10, isModerator: true })).rejects.toThrow(
+    await expect(deleteBountyEntry({ id: 10, userId: 1, isModerator: true })).rejects.toThrow(
       'payout still pending'
     );
     expect(moved('delete-entry')).toBe(0);
@@ -1035,7 +1035,7 @@ describe('deleteBountyEntry', () => {
 
   it('settles an unsettled payout, then deletes', async () => {
     recordUnsettledAward();
-    await deleteBountyEntry({ id: 10, isModerator: true });
+    await deleteBountyEntry({ id: 10, userId: 1, isModerator: true });
     expect(events).toEqual(['commit', 'award', 'delete-entry', 'commit']);
     expect(bounty?.payoutSettledAt).toBeInstanceOf(Date);
   });
@@ -1045,7 +1045,7 @@ describe('deleteBountyEntry', () => {
     ['not recorded', {}],
   ])('just deletes when the payout is %s', async (_label, state) => {
     Object.assign(bounty!, state);
-    await deleteBountyEntry({ id: 10, isModerator: true });
+    await deleteBountyEntry({ id: 10, userId: 1, isModerator: true });
     expect(events).toEqual(['delete-entry', 'commit']);
   });
 });
@@ -1227,7 +1227,7 @@ describe('a moderator going past an award no retry can pay', () => {
   it('refunds and deletes the entry when no supporter is marked as awarding the award', async () => {
     recordAward();
     benefactors[0].awardedAt = null;
-    await deleteBountyEntry({ id: 10, isModerator: true });
+    await deleteBountyEntry({ id: 10, userId: 1, isModerator: true });
     expect(moved('refund')).toBe(2);
     expect(moved('delete-entry')).toBe(1);
     expect(bounty?.refunded).toBe(true);
@@ -2072,7 +2072,7 @@ describe('a moderator closing a bounty whose award has a supporter with no charg
           recordedById: 99,
         },
       ]);
-      await deleteBountyEntry({ id: 10, isModerator: true });
+      await deleteBountyEntry({ id: 10, userId: 1, isModerator: true });
       expect(unpaidAwards.get(5)).toMatchObject({ unitAmount: 100, winnerUserId: 9 });
       expect(bounty).toMatchObject({ payoutWinnerUserId: 9 });
     });

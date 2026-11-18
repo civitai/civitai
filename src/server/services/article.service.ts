@@ -2064,7 +2064,8 @@ export const deleteArticleById = async ({
       // A cover or banner saved since the read is checked too, though it was not locked.
       await queueImageDeletes(kyselyOver(tx), [...imageIds, ...articleOwnImageIds(deleted)], {
         ownerId: article.userId,
-        moderatorDelete: !!isModerator,
+        // A moderator deleting their own article deletes it as its owner.
+        moderatorDelete: !!isModerator && article.userId !== userId,
       });
       return deleted;
     });

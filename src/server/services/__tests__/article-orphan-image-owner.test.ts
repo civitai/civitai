@@ -182,16 +182,15 @@ describe('deleteArticleById', () => {
   });
 
   it.each([
-    ['the author', AUTHOR, false],
-    ['a moderator', MODERATOR, true],
+    ['the author', AUTHOR, false, false],
+    ['a moderator', MODERATOR, true, true],
+    ['a moderator who wrote it', AUTHOR, true, false],
   ])(
     "queues the cover and content images as the author's when %s deletes it",
-    async (_, userId, isModerator) => {
+    async (_, userId, isModerator, moderatorDelete) => {
       await deleteArticleById({ id: ARTICLE_ID, userId, isModerator });
 
-      expect(queued()).toEqual([
-        { ids: [...UNLINKED, COVER], ownerId: AUTHOR, moderatorDelete: isModerator },
-      ]);
+      expect(queued()).toEqual([{ ids: [...UNLINKED, COVER], ownerId: AUTHOR, moderatorDelete }]);
     }
   );
 

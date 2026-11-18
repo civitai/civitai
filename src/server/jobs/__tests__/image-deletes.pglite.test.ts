@@ -11,7 +11,13 @@ vi.mock('~/server/services/image.service', () => ({ deleteImages: mockDeleteImag
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import { imageDeletes, queuedImageDeleteGuard } from '~/server/jobs/image-deletes';
+import type { RawBuilder } from 'kysely';
+import { pgliteKysely } from '~/__tests__/pglite-kysely';
+import {
+  imageDeletes,
+  queuedImageDeleteCondition,
+  queuedImageDeleteGuard,
+} from '~/server/jobs/image-deletes';
 
 vi.setConfig({ hookTimeout: 60_000 });
 
@@ -75,12 +81,14 @@ const remaining = async () =>
     )
   ).rows.map(({ entityId, type, data }) => ({ entityId, type, data }));
 
-// As the system, exactly as queued, unless the owner is held.
+// As the system, under the re-check for the way it was queued.
 const how = (moderatorDelete: boolean) => ({
   actor: { system: 'image-deletes' },
-  onlyWhere: expect.objectContaining({ sql: queuedImageDeleteGuard().sql }),
+  onlyWhere: expect.anything(),
   moderatorDelete,
 });
+const compiled = (condition: unknown) =>
+  (condition as RawBuilder<boolean>).compile(pgliteKysely(() => db)).sql;
 
 describe('image-deletes', () => {
   it('deletes each row the way it was queued, and clears it whether or not a row came back', async () => {
@@ -89,6 +97,10 @@ describe('image-deletes', () => {
     expect(mockDeleteImages.mock.calls).toEqual([
       [[1, 2, 7], how(false)],
       [[5], how(true)],
+    ]);
+    expect(mockDeleteImages.mock.calls.map(([, { onlyWhere }]) => compiled(onlyWhere))).toEqual([
+      compiled(queuedImageDeleteCondition(false)),
+      compiled(queuedImageDeleteCondition(true)),
     ]);
     expect(await remaining()).toEqual([
       { entityId: 1, type: 'ImageStorageDelete', data: { url: 'a' } },

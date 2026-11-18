@@ -35,11 +35,14 @@ export type ImageFiles = {
   keepShopArtwork?: RawBuilder<boolean>;
 };
 
+/** Not under CSAM review or blocked for CSAM. Read against the image row, unqualified. */
+const notCsamFlagged = sql<boolean>`"needsReview" IS DISTINCT FROM 'csam' AND "blockedFor" IS DISTINCT FROM 'CSAM'`;
+
 /**
  * A moderator's delete purges every version of the stored object, except for an image under CSAM
  * review or blocked for CSAM, which goes by key alone.
  */
-export const moderatorPurge = sql<boolean>`"needsReview" IS DISTINCT FROM 'csam' AND "blockedFor" IS DISTINCT FROM 'CSAM'`;
+export const moderatorPurge = notCsamFlagged;
 
 type DeleteOptions = {
   ids: number[];
@@ -244,8 +247,7 @@ const notUnderModeration = sql`"Image"."needsReview" IS NULL
  * Not under CSAM review, blocked for CSAM, reported for CSAM or listed in a `CsamReport`, which
  * lists an image as `{"id": n}`, `n` or `"n"`.
  */
-const notCsamReported = sql`"Image"."needsReview" IS DISTINCT FROM 'csam'
-    AND "Image"."blockedFor" IS DISTINCT FROM 'CSAM'
+const notCsamReported = sql`${notCsamFlagged}
     AND NOT EXISTS (
       SELECT 1 FROM "ImageReport" ir JOIN "Report" r ON r.id = ir."reportId"
       WHERE ir."imageId" = "Image".id AND r.reason = 'CSAM'
@@ -258,11 +260,18 @@ const notCsamReported = sql`"Image"."needsReview" IS DISTINCT FROM 'csam'
     )`;
 
 /**
- * An image a parent's delete may take with it, read against the unaliased "Image": `ownerId`'s own,
- * in no post, used nowhere in `IMAGE_USES` and its stored object not shop artwork. An owner's delete
- * also leaves any image under moderation; a moderator's leaves only those reported for CSAM.
+ * An image a parent's delete may take with it, read against the unaliased "Image": `ownerId`'s own
+ * (when given), in no post, used nowhere in `IMAGE_USES` and its stored object not shop artwork. An
+ * owner's delete also leaves any image under moderation; a moderator's leaves only those reported for
+ * CSAM. Checked when the delete is queued, and again by the delete itself.
  */
-function unusedImage(ownerId: number, moderatorDelete: boolean) {
+export function unusedImage({
+  ownerId,
+  moderatorDelete,
+}: {
+  ownerId?: number;
+  moderatorDelete: boolean;
+}) {
   const id = sql.ref('Image.id');
   const uses = Object.values(IMAGE_USES).map(
     ([table, column]) =>
@@ -270,8 +279,8 @@ function unusedImage(ownerId: number, moderatorDelete: boolean) {
   );
   // A stored "Image".url is the bare key, so its first key is the one.
   const imageKey = key('"Image".url');
-  return sql`"Image"."userId" = ${ownerId}
-    AND "Image"."postId" IS NULL
+  const owner = ownerId === undefined ? sql`` : sql`"Image"."userId" = ${ownerId} AND`;
+  return sql<boolean>`${owner} "Image"."postId" IS NULL
     AND ${moderatorDelete ? notCsamReported : notUnderModeration}
     AND ${sql.join(uses, sql` AND `)}
     AND NOT EXISTS (
@@ -288,7 +297,7 @@ function unusedImage(ownerId: number, moderatorDelete: boolean) {
 
 /**
  * Of `imageIds`, records the ones `ownerId`'s parent no longer needs (`unusedImage`) for deletion, in
- * the transaction that unlinks them: the main app's `image-deletes` job deletes them once it commits.
+ * the transaction that unlinks them: the main app's `image-deletes` job deletes those still unused.
  */
 export async function queueImageDeletes(
   db: Kysely<DB>,
@@ -302,7 +311,7 @@ export async function queueImageDeletes(
     SELECT id, 'Image'::"EntityType", 'ImageDelete'::"JobQueueType",
       ${JSON.stringify(moderatorDelete ? { moderatorDelete: true } : {})}::jsonb
     FROM "Image"
-    WHERE id = ANY(${ids}::int[]) AND ${unusedImage(ownerId, moderatorDelete)}
+    WHERE id = ANY(${ids}::int[]) AND ${unusedImage({ ownerId, moderatorDelete })}
     -- In id order, so two deletes upserting the same rows cannot lock them in opposite orders.
     ORDER BY id
     -- A moderator's flag is added to a row already queued, never taken off it.

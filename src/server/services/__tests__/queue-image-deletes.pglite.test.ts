@@ -1,12 +1,15 @@
 import { PGlite } from '@electric-sql/pglite';
 import {
+  deleteImageRows,
   dequeueImageDeletes,
   IMAGE_USES,
   queueImageDeletes,
   queueImageStorageDelete,
+  unusedImage,
 } from '@civitai/db-queries/content-deletion';
 import { imageUseTablesSql } from '@civitai/db-queries/test/image-uses';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteKysely } from '~/__tests__/pglite-kysely';
 
@@ -22,14 +25,18 @@ const db = pgliteKysely(() => pg);
 beforeAll(async () => {
   pg = new PGlite();
   await pg.exec(`
-    CREATE TYPE "EntityType" AS ENUM ('Image');
-    CREATE TYPE "JobQueueType" AS ENUM ('ImageDelete', 'ImageStorageDelete');
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+    CREATE TYPE "JobQueueType" AS ENUM (
+      'ImageDelete', 'ImageStorageDelete', 'UpdateNsfwLevel', 'CdnAccessSync'
+    );
     CREATE TABLE "JobQueue" (
       "entityId" int NOT NULL, "entityType" "EntityType" NOT NULL, type "JobQueueType" NOT NULL,
-      data jsonb, UNIQUE ("entityType", "entityId", type)
+      data jsonb, "createdAt" timestamp NOT NULL DEFAULT now(), UNIQUE ("entityType", "entityId", type)
     );
   `);
   await pg.exec(imageUseTablesSql);
+  // Returned by `deleteImageRows`.
+  await pg.exec(`ALTER TABLE "Image" ADD COLUMN metadata jsonb`);
 });
 afterAll(() => pg.close());
 
@@ -226,6 +233,38 @@ describe('queueImageDeletes', () => {
       await queue([1, 2], true);
 
       expect(await queued()).toEqual([]);
+    });
+  });
+
+  // The image-deletes job's DELETE re-checks it, with no owner: the queue already chose the owner's.
+  describe('re-checked when the delete runs', () => {
+    const stillUnused = async (moderatorDelete = false) =>
+      (
+        await sql<{ id: number }>`SELECT id FROM "Image" WHERE ${unusedImage({
+          moderatorDelete,
+        })}`.execute(db)
+      ).rows.map((row) => row.id);
+
+    it('leaves an image linked again after it was queued', async () => {
+      await addImage(1);
+      await addImage(2);
+      await queue([1, 2]);
+      await pg.exec(`INSERT INTO "Article" ("coverId") VALUES (1)`);
+
+      const deleted = await deleteImageRows(db, {
+        ids: [1, 2],
+        actor: { system: 'test' },
+        where: unusedImage({ moderatorDelete: false }),
+      });
+
+      expect(deleted.map((row) => row.id)).toEqual([2]);
+    });
+
+    it("keeps the moderator's rule", async () => {
+      await addImage(1, { ingestion: 'Blocked' });
+      await addImage(2, { needsReview: 'csam' });
+
+      expect([await stillUnused(), await stillUnused(true)]).toEqual([[], [1]]);
     });
   });
 

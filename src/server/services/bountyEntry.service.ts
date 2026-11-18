@@ -423,9 +423,11 @@ export const getBountyEntryFilteredFiles = async ({
 
 export const deleteBountyEntry = async ({
   id,
+  userId,
   isModerator,
 }: {
   id: number;
+  userId: number;
   isModerator: boolean;
 }) => {
   const entryFindArgs = {
@@ -468,7 +470,8 @@ export const deleteBountyEntry = async ({
       async (tx) => {
         const locked = await lockBountyForPayout(tx, entry.bountyId);
         if (!evenIfPending && locked && isPayoutPending(locked)) return PAYOUT_PENDING;
-        return deleteEntryRows(tx, id, isModerator);
+        // A moderator deleting their own entry deletes it as its owner.
+        return deleteEntryRows(tx, id, isModerator && entry.userId !== userId);
       },
       { maxWait: 10000, timeout: 30000 }
     );

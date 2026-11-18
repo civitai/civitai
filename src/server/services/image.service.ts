@@ -325,6 +325,7 @@ import {
   type DeletedImage as DeletedImageWithFiles,
   type DeletedImageRow,
 } from '@civitai/db-queries/content-deletion';
+import type { RawBuilder } from 'kysely';
 import { kyselyOver } from '~/server/db/prisma-kysely';
 import { fromPrismaSql } from '~/server/db/prisma-sql-kysely';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -931,7 +932,7 @@ type ImageDeleteOptions = {
   actor: DeleteActor;
   /** Extra condition on the DELETE itself; ids it (or a member actor's ownership limit) excludes
    *  are skipped and not returned. */
-  onlyWhere?: Prisma.Sql;
+  onlyWhere?: Prisma.Sql | RawBuilder<boolean>;
   /** A moderator or moderation job ordered it: the stored file goes with every version (see
    *  `moderatorPurge`) and each url's CDN takedown is queued. Every other delete is by key alone.
    *  Defaults to whether the actor is a moderator. */
@@ -1004,7 +1005,10 @@ export async function deleteImages(
     const rows = await deleteImageRows(kyselyOver(dbWrite), {
       ids,
       actor,
-      where: onlyWhere ? fromPrismaSql<boolean>(onlyWhere) : undefined,
+      where:
+        !onlyWhere || 'toOperationNode' in onlyWhere
+          ? onlyWhere
+          : fromPrismaSql<boolean>(onlyWhere),
       files: keepStoredFiles
         ? undefined
         : {
