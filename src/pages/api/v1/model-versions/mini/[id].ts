@@ -13,7 +13,7 @@ import { trainingDataListing } from '~/server/services/training-data-restricted.
 import {
   getGateRuleState,
   getShouldChargeForResources,
-  isHiddenFromNonModerators,
+  getModsOnlyVersionIds,
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
@@ -610,22 +610,8 @@ export default MixedAuthEndpoint(async function handler(
       gateRuleState,
     }
   );
-  // An alias generates with its target, so a rule naming the target hides the alias too.
-  const aliasId = modelVersion.generationAlias?.versionId;
-  const aliasTarget = aliasId
-    ? {
-        id: aliasId,
-        baseModel:
-          (
-            await dbRead.modelVersion.findUnique({
-              where: { id: aliasId },
-              select: { baseModel: true },
-            })
-          )?.baseModel ?? modelVersion.baseModel,
-      }
-    : undefined;
-  const modsOnly = [modelVersion, aliasTarget].some(
-    (v) => !!v && isHiddenFromNonModerators(v, gateRuleState)
+  const modsOnly = (await getModsOnlyVersionIds([modelVersion], gateRuleState)).has(
+    modelVersion.id
   );
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,
@@ -823,7 +809,9 @@ export default MixedAuthEndpoint(async function handler(
     // Computed, not written to the flag, so the pin lifts by itself when the promotion ends.
     evictable: !modelVersion.isPromoted && isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
-    checkPermission: modelVersion.checkPermission,
+    // The orchestrator calls /api/v1/permissions/check only when this is set, and that check
+    // refuses PoI versions and refuses mods-only ones to non-moderators.
+    checkPermission: modelVersion.checkPermission || modsOnly || modelVersion.poi,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],

@@ -58,7 +58,7 @@ vi.mock('~/server/auth/session-client', () => ({
 }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
-  isHiddenFromNonModerators: vi.fn(() => false),
+  getModsOnlyVersionIds: vi.fn(async () => new Set<number>()),
   resolveCanGenerateForVersions: vi.fn(
     async () => new Map([[VERSION_ID, { canGenerate: h.canGenerate.value }]])
   ),

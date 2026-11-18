@@ -65,7 +65,7 @@ vi.mock('~/server/db/client', () => ({
 
 vi.mock('~/server/services/generation/generation.service', () => ({
   getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
-  isHiddenFromNonModerators: vi.fn(() => false),
+  getModsOnlyVersionIds: vi.fn(async () => new Set<number>()),
   resolveCanGenerateForVersions: mockResolveCanGenerateForVersions,
   getShouldChargeForResources: mockGetShouldChargeForResources,
 }));

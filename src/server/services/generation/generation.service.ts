@@ -1295,14 +1295,15 @@ function isHiddenByGates(
 }
 
 /**
- * Members-only rules do not count. True while the rules are unknown, so a rule-store outage does not
- * release every hidden model.
+ * The versions a hidden gate rule keeps from non-moderators, whoever is asking. An alias generates
+ * with its target, so a rule on the target counts. Members-only rules do not. Every version counts
+ * while the rules are unknown, so a rule-store outage does not release every hidden model.
  */
-export function isHiddenFromNonModerators(
-  resource: { id: number; baseModel: string },
+export async function getModsOnlyVersionIds(
+  versions: { id: number; baseModel: string; generationAlias?: GenerationAlias | null }[],
   ruleState: LastKnownRead<GateRule[]>
-): boolean {
-  if (!ruleState.known) return true;
+): Promise<Set<number>> {
+  if (!ruleState.known) return new Set(versions.map((v) => v.id));
   const hiddenGates = canGenerateBlockedTargets(
     applicableRulesFor(ruleState.value, {
       isModerator: false,
@@ -1310,7 +1311,27 @@ export function isHiddenFromNonModerators(
       hasTestingAccess: false,
     })
   );
-  return isHiddenByGates(resource, hiddenGates);
+  const targetIds = versions.flatMap((v) => v.generationAlias?.versionId ?? []);
+  const targets = targetIds.length
+    ? await dbRead.modelVersion.findMany({
+        where: { id: { in: targetIds } },
+        select: { id: true, baseModel: true },
+      })
+    : [];
+  const targetById = new Map(targets.map((t) => [t.id, t]));
+  return new Set(
+    versions
+      .filter((v) => {
+        const targetId = v.generationAlias?.versionId;
+        const target = targetId
+          ? targetById.get(targetId) ?? { id: targetId, baseModel: v.baseModel }
+          : undefined;
+        return (
+          isHiddenByGates(v, hiddenGates) || (!!target && isHiddenByGates(target, hiddenGates))
+        );
+      })
+      .map((v) => v.id)
+  );
 }
 
 /**

@@ -25,12 +25,13 @@ vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   __resetGenerationConfigLastKnownForTests,
   getGateRuleState,
   getGenerationConfig,
-  isHiddenFromNonModerators,
+  getModsOnlyVersionIds,
   saveGateRule,
 } from '~/server/services/generation/generation.service';
 import { baseModelByName, ecosystemById } from '~/shared/constants/basemodel.constants';
@@ -161,30 +162,39 @@ describe('getGenerationConfig gate rules', () => {
   });
 });
 
-describe('isHiddenFromNonModerators', () => {
-  const [baseModel, ecosystemKey] = [...baseModelByName]
+describe('getModsOnlyVersionIds', () => {
+  const withEcosystem = [...baseModelByName]
     .map(([name, bm]) => [name, ecosystemById.get(bm.ecosystemId)?.key] as const)
-    .find(([, key]) => !!key)!;
+    .filter((e): e is readonly [string, string] => !!e[1]);
+  const [baseModel, ecosystemKey] = withEcosystem[0];
+  const [otherBaseModel, otherEcosystemKey] = withEcosystem.find(
+    ([, key]) => key !== ecosystemKey
+  )!;
 
-  const hidden = async (id: number) =>
-    isHiddenFromNonModerators({ id, baseModel }, await getGateRuleState());
+  const modsOnly = async (id: number, aliasTo?: number) =>
+    (
+      await getModsOnlyVersionIds(
+        [{ id, baseModel, generationAlias: aliasTo ? { versionId: aliasTo } : null }],
+        await getGateRuleState()
+      )
+    ).has(id);
 
-  it('is true for a version a moderators-only hidden rule names', async () => {
-    expect(await hidden(101)).toBe(true);
+  it('counts a version a moderators-only hidden rule names', async () => {
+    expect(await modsOnly(101)).toBe(true);
   });
 
-  it("is true for any version in a hidden rule's ecosystem", async () => {
+  it("counts any version in a hidden rule's ecosystem", async () => {
     await saveGateRule({
       ...rules[0],
       id: 'rule-eco',
-      ecosystems: [ecosystemKey!],
+      ecosystems: [ecosystemKey],
       modelVersionIds: [],
     });
-    expect(await hidden(999)).toBe(true);
+    expect(await modsOnly(999)).toBe(true);
   });
 
-  it('is false for a version only a disabled rule names', async () => {
-    expect(await hidden(202)).toBe(false);
+  it('does not count a version only a disabled rule names', async () => {
+    expect(await modsOnly(202)).toBe(false);
   });
 
   it('counts a hidden testers rule, not a hidden members rule', async () => {
@@ -200,13 +210,31 @@ describe('isHiddenFromNonModerators', () => {
       availableTo: 'members',
       modelVersionIds: [404],
     });
-    expect(await hidden(303)).toBe(true);
-    expect(await hidden(404)).toBe(false);
+    expect(await modsOnly(303)).toBe(true);
+    expect(await modsOnly(404)).toBe(false);
   });
 
-  it('is true while the rules have never been read', async () => {
+  it('counts an alias whose target a rule names', async () => {
+    expect(await modsOnly(999, 101)).toBe(true);
+    expect(await modsOnly(999, 998)).toBe(false);
+  });
+
+  it("matches an alias target's ecosystem by the target's own base model", async () => {
+    await saveGateRule({
+      ...rules[0],
+      id: 'rule-other-eco',
+      ecosystems: [otherEcosystemKey],
+      modelVersionIds: [],
+    });
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValueOnce([
+      { id: 998, baseModel: otherBaseModel },
+    ] as never);
+    expect(await modsOnly(999, 998)).toBe(true);
+  });
+
+  it('counts every version while the rules have never been read', async () => {
     __resetGenerationConfigLastKnownForTests();
     redisMock.sysRedis.hGetAll.mockRejectedValue(new Error('down'));
-    expect(await hidden(999)).toBe(true);
+    expect(await modsOnly(999)).toBe(true);
   });
 });

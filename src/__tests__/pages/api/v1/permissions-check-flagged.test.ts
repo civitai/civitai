@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CommonService from '~/server/services/common.service';
+import type * as GenerationService from '~/server/services/generation/generation.service';
 
-const { mockHasEntityAccess, mockGetSessionUserById } = vi.hoisted(() => ({
+const { mockHasEntityAccess, mockGetSessionUserById, mockModsOnly } = vi.hoisted(() => ({
   mockHasEntityAccess: vi.fn(),
   mockGetSessionUserById: vi.fn(),
+  mockModsOnly: vi.fn<(...args: unknown[]) => Promise<Set<number>>>(),
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
@@ -15,6 +17,11 @@ vi.mock('~/server/services/common.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CommonService>()),
   hasEntityAccess: mockHasEntityAccess,
 }));
+vi.mock('~/server/services/generation/generation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof GenerationService>()),
+  getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
+  getModsOnlyVersionIds: mockModsOnly,
+}));
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: mockGetSessionUserById },
 }));
@@ -22,31 +29,35 @@ vi.mock('~/server/auth/session-client', () => ({
 import permissionsHandler from '~/pages/api/v1/permissions/check';
 
 /**
- * The generation permission answered for a version of a model flagged `poi`: true only for the
- * model's owner and moderators, whatever the access grant says. Other versions keep the grant's
- * answer.
+ * The generation permission for a PoI version is false for everyone, its owner and moderators
+ * included; for a mods-only version it is false for everyone but moderators. Other versions keep the
+ * access grant's answer.
  */
 
 const OWNER = 7;
-const FLAGGED_VERSION = 100;
+const POI_VERSION = 100;
 const CONTROL_VERSION = 200;
+const MODS_ONLY_VERSION = 300;
 
 async function check(userId: number | undefined, isModerator = false) {
   mockGetSessionUserById.mockResolvedValue(userId ? { id: userId, isModerator } : null);
-  mockHasEntityAccess.mockResolvedValue([
-    { entityId: FLAGGED_VERSION, hasAccess: true },
-    { entityId: CONTROL_VERSION, hasAccess: true },
-  ]);
-  dbMock.dbRead.modelVersion.findMany.mockImplementation(async (args: any) =>
-    args.where.model.poi === true && args.where.id.in.includes(FLAGGED_VERSION)
-      ? [{ id: FLAGGED_VERSION, model: { userId: OWNER } }]
-      : []
+  mockHasEntityAccess.mockResolvedValue(
+    [POI_VERSION, CONTROL_VERSION, MODS_ONLY_VERSION].map((entityId) => ({
+      entityId,
+      hasAccess: true,
+    }))
   );
+  mockModsOnly.mockResolvedValue(new Set([MODS_ONLY_VERSION]));
+  dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+    { id: POI_VERSION, baseModel: 'SDXL 1.0', meta: null, model: { poi: true, userId: OWNER } },
+    { id: CONTROL_VERSION, baseModel: 'SDXL 1.0', meta: null, model: { poi: false } },
+    { id: MODS_ONLY_VERSION, baseModel: 'SDXL 1.0', meta: null, model: { poi: false } },
+  ] as never);
   const req = {
     method: 'GET',
     headers: {},
     query: {
-      entityIds: `${FLAGGED_VERSION},${CONTROL_VERSION}`,
+      entityIds: `${POI_VERSION},${CONTROL_VERSION},${MODS_ONLY_VERSION}`,
       ...(userId ? { userId: String(userId) } : {}),
     },
   };
@@ -58,24 +69,24 @@ async function check(userId: number | undefined, isModerator = false) {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('GET /api/v1/permissions/check, flagged model versions', () => {
+describe('GET /api/v1/permissions/check, PoI and mods-only versions', () => {
   it.each([
-    ['no user', undefined, false],
-    ['a non-owner', 8, false],
-  ])('answers false for %s, and keeps the control version', async (_l, userId, isMod) => {
-    expect(await check(userId, isMod)).toEqual({
-      [FLAGGED_VERSION]: false,
+    ['no user', undefined],
+    ['a non-owner', 8],
+    ['the owner', OWNER],
+  ])('refuses both to %s, and keeps the control version', async (_l, userId) => {
+    expect(await check(userId)).toEqual({
+      [POI_VERSION]: false,
       [CONTROL_VERSION]: true,
+      [MODS_ONLY_VERSION]: false,
     });
   });
 
-  it.each([
-    ['the owner', OWNER, false],
-    ['a moderator', 1, true],
-  ])('keeps true for %s', async (_l, userId, isMod) => {
-    expect(await check(userId, isMod)).toEqual({
-      [FLAGGED_VERSION]: true,
+  it('refuses a moderator the PoI version only', async () => {
+    expect(await check(1, true)).toEqual({
+      [POI_VERSION]: false,
       [CONTROL_VERSION]: true,
+      [MODS_ONLY_VERSION]: true,
     });
   });
 });

@@ -7,14 +7,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * owner and to moderators, and to everyone else answered exactly as an unknown id is.
  */
 
-const { currentUser, mockIsHidden } = vi.hoisted(() => ({
-  mockIsHidden: vi.fn<(resource: { id: number; baseModel: string }) => boolean>(() => false),
+const { currentUser, mockModsOnly } = vi.hoisted(() => ({
+  mockModsOnly: vi.fn<(...args: unknown[]) => Promise<Set<number>>>(async () => new Set()),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
 }));
 
 vi.mock('~/server/services/generation/generation.service', () => ({
   getGateRuleState: vi.fn(async () => ({ known: true, value: [], source: 'live', ageMs: 0 })),
-  isHiddenFromNonModerators: mockIsHidden,
+  getModsOnlyVersionIds: mockModsOnly,
   resolveCanGenerateForVersions: vi.fn(async () => new Map([[VERSION_ID, { canGenerate: true }]])),
   getShouldChargeForResources: vi.fn(async () => ({ 77: false })),
 }));
@@ -106,7 +106,7 @@ async function request(rows: object[]) {
 beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockReset();
   currentUser.value = undefined;
-  mockIsHidden.mockReset().mockReturnValue(false);
+  mockModsOnly.mockReset().mockResolvedValue(new Set());
 });
 
 describe('mini/[id], flagged model', () => {
@@ -141,36 +141,20 @@ describe('mini/[id], flagged model', () => {
 });
 
 describe('mini/[id], orchestrator markers', () => {
-  it('carries poi, so a caller that is served a flagged version can refuse it', async () => {
+  it('carries poi, and asks for a permission check on a flagged version', async () => {
     currentUser.value = { id: 1, isModerator: true };
-    expect((await request([versionRow])).body.poi).toBe(true);
-    expect((await request([{ ...versionRow, poi: false }])).body.poi).toBe(false);
+    const flagged = (await request([versionRow])).body;
+    expect(flagged).toMatchObject({ poi: true, checkPermission: true });
+    const control = (await request([{ ...versionRow, poi: false }])).body;
+    expect(control).toMatchObject({ poi: false, checkPermission: false });
   });
 
   it.each([true, false])('modsOnly is the gate answer for this version (%s)', async (hidden) => {
-    mockIsHidden.mockReturnValue(hidden);
+    mockModsOnly.mockResolvedValue(new Set(hidden ? [VERSION_ID] : []));
     const { body } = await request([{ ...versionRow, poi: false }]);
-    expect(body.modsOnly).toBe(hidden);
-    expect(mockIsHidden).toHaveBeenCalledWith(
-      expect.objectContaining({ id: VERSION_ID, baseModel: versionRow.baseModel }),
-      expect.objectContaining({ known: true })
-    );
-  });
-
-  it('modsOnly follows a generation alias to its hidden target', async () => {
-    mockIsHidden.mockImplementation(({ id }) => id === 9);
-    const aliased = { ...versionRow, poi: false, generationAlias: { versionId: 9 } };
-    expect((await request([aliased])).body.modsOnly).toBe(true);
-    expect((await request([{ ...versionRow, poi: false }])).body.modsOnly).toBe(false);
-  });
-
-  it("checks an alias target under the target's own base model", async () => {
-    dbMock.dbRead.modelVersion.findUnique.mockResolvedValueOnce({ baseModel: 'Flux.1 D' } as never);
-    mockIsHidden.mockImplementation(({ baseModel }) => baseModel === 'Flux.1 D');
-    const aliased = { ...versionRow, poi: false, generationAlias: { versionId: 9 } };
-    expect((await request([aliased])).body.modsOnly).toBe(true);
-    expect(mockIsHidden).toHaveBeenCalledWith(
-      { id: 9, baseModel: 'Flux.1 D' },
+    expect(body).toMatchObject({ modsOnly: hidden, checkPermission: hidden });
+    expect(mockModsOnly).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: VERSION_ID, baseModel: versionRow.baseModel })],
       expect.objectContaining({ known: true })
     );
   });

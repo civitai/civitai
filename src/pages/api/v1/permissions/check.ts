@@ -2,7 +2,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
+import {
+  getGateRuleState,
+  getModsOnlyVersionIds,
+} from '~/server/services/generation/generation.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { sessionClient } from '~/server/auth/session-client';
 import { getApiAuthSession } from '~/server/auth/api-auth-session';
@@ -74,13 +78,23 @@ export default PublicEndpoint(
         data[r.entityId] = r.hasAccess;
       });
 
-      const restricted = await dbRead.modelVersion.findMany({
-        where: { id: { in: entityIds }, model: { poi: true } },
-        select: { id: true, model: { select: { userId: true } } },
+      const versions = await dbRead.modelVersion.findMany({
+        where: { id: { in: entityIds } },
+        select: { id: true, baseModel: true, meta: true, model: { select: { poi: true } } },
       });
-      const viewer = userId != null ? { id: userId, isModerator: sessionUser?.isModerator } : null;
-      for (const version of restricted) {
-        if (version.id in data && !canViewPoiModel(true, version.model.userId, viewer))
+      const modsOnly = sessionUser?.isModerator
+        ? new Set<number>()
+        : await getModsOnlyVersionIds(
+            versions.map((v) => ({
+              id: v.id,
+              baseModel: v.baseModel,
+              generationAlias: (v.meta as ModelVersionMeta | null)?.generationAlias,
+            })),
+            await getGateRuleState()
+          );
+      // Nobody generates with a PoI model, its owner and moderators included.
+      for (const version of versions) {
+        if (version.id in data && (version.model.poi || modsOnly.has(version.id)))
           data[version.id] = false;
       }
 
