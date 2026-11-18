@@ -1057,6 +1057,82 @@ describe('working a deal', () => {
     expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  describe('while the seller is unavailable', () => {
+    const UNAVAILABLE = [
+      ['banned', `"bannedAt" = now()`],
+      ['deleted', `"deletedAt" = now()`],
+      ['restricted', `muted = true`],
+    ] as const;
+    const makeUnavailable = (set: string) => q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
+    const unavailable = () => makeUnavailable(UNAVAILABLE[2][1]);
+    const viewActions = async (id: number, userId: number) => {
+      const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
+      (
+        dbMock.dbWrite as unknown as { serviceDeal: { findUnique: ReturnType<typeof vi.fn> } }
+      ).serviceDeal.findUnique = vi
+        .fn()
+        .mockResolvedValue({ ...row, offering: OFFERING_ROW, events: [] });
+      return (await deals.getServiceDealView({ dealId: id, userId, servicesEnabled: true }))
+        .actions;
+    };
+
+    it.each(UNAVAILABLE)(
+      'lets the buyer of a %s seller leave at once with a full refund, long before the due date',
+      async (_name, set) => {
+        const id = await accepted();
+        await makeUnavailable(set);
+        expect(await viewActions(id, BUYER)).toEqual(['cancelAndRefund', 'requestCancellation']);
+        await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+        expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
+        expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('pays one refund when the cancel is sent twice', async () => {
+      const id = await accepted();
+      await unavailable();
+      await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('also during a revision', async () => {
+      const id = await accepted();
+      await deliver(id);
+      await deals.requestServiceDealRevision({ dealId: id, userId: BUYER, comment: 'tweak' });
+      await unavailable();
+      await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
+      expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses it otherwise: the seller is available, the seller asks, or it was delivered', async () => {
+      const id = await accepted();
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
+      await unavailable();
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: SELLER })
+      ).rejects.toEqual(conflict);
+      await deliver(id);
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+    });
+
+    it('offers it to the buyer only, and only while it applies', async () => {
+      const id = await accepted();
+      expect(await viewActions(id, BUYER)).not.toContain('cancelAndRefund');
+      await unavailable();
+      expect(await viewActions(id, BUYER)).toEqual(['cancelAndRefund', 'requestCancellation']);
+      expect(await viewActions(id, SELLER)).not.toContain('cancelAndRefund');
+    });
+  });
+
   it('counts revisions against the snapshot and completes with a 48h dispute window', async () => {
     const id = await accepted();
     await deliver(id);
@@ -1205,7 +1281,7 @@ describe('an overdue deal nothing was delivered for', () => {
       expect.objectContaining({
         userId: -1,
         chatId: 77,
-        content: `This deal was cancelled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
+        content: `This deal was canceled automatically because nothing was delivered within 7 days of the due date. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${id})`,
       })
     );
   });
@@ -1256,7 +1332,7 @@ describe('an overdue deal nothing was delivered for', () => {
     expect(chat.createMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         chatId: 77,
-        content: `This deal was cancelled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
+        content: `This deal was canceled automatically because the requested revision wasn't delivered within 7 days. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${stale})`,
       })
     );
   });

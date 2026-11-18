@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
 /**
  * `blocks.persistUploadedGenerationSource` — the server half of a picked generation source
@@ -240,6 +241,16 @@ describe('blocks.persistUploadedGenerationSource — the preamble', () => {
       code: 'FORBIDDEN',
       message: 'this app session belongs to a different account; reload the page to continue',
     });
+    expect(h.persistUploaded).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed token subject with the real parser’s error, and never reaches the service', async () => {
+    const { parseSubjectUserId } = await vi.importActual<typeof BlockScopeMiddleware>(
+      '~/server/middleware/block-scope.middleware'
+    );
+    h.parseSubject.mockImplementation((sub: string) => parseSubjectUserId(sub));
+    h.authorize.mockResolvedValue(claims({ sub: 'user:abc' }));
+    await expect(call()).rejects.toMatchObject({ message: 'malformed sub claim' });
     expect(h.persistUploaded).not.toHaveBeenCalled();
   });
 

@@ -14,6 +14,7 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { ingestionResolveRefusal } from '@civitai/shared/image-ingestion';
+import { mirrorBlockedHashesSql } from '@civitai/shared/held-media';
 import { randomUUID } from 'crypto';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
@@ -59,8 +60,11 @@ import {
   imageReviewedSql,
   isMinorMatureImage,
   keepPermanentScanFailureSql,
+  notHeldForReviewSql,
+  notHeldForReviewWhere,
   pendingLevelImageSql,
   pendingOthersImageConditions,
+  servableLevelWhere,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   minorMatureImageVisibleSql,
 } from '~/server/common/image-visibility';
@@ -235,7 +239,7 @@ import {
   refreshProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { Limiter, limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import pLimit, { type LimitFunction } from 'p-limit';
 import {
   HELD_BACK,
@@ -256,9 +260,7 @@ import {
 } from '~/server/utils/errorHandling';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { Flags } from '~/shared/utils/flags';
 import {
-  allBrowsingLevelsFlag,
   browsingLevels as selectableBrowsingLevels,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
@@ -5016,6 +5018,8 @@ export const getImagesByEntity = async ({
   }
 
   const AND = entityImageVisibilityConditions({ userId, isModerator });
+  // Owner-hidden review holds are left out here even for the owner; bounty images keep their own rule.
+  if (!isModerator) AND.push(notHeldForReviewSql());
 
   const images = await dbRead.$queryRaw<GetImageConnectionRaw[]>`
     WITH targets AS (
@@ -7158,6 +7162,81 @@ function logBlocklistCheckFailed(
   });
 }
 
+/** The blocklist entries were written but their Postgres copy failed. Its message holds no hash. */
+export class HeldMediaCopyError extends Error {
+  readonly store = 'held-media-copy';
+  /** Only the driver error's class and code: its message can quote the statement. */
+  constructor(failure: unknown) {
+    super('the held-media copy of the blocklist entries failed', {
+      cause: {
+        name: (failure as Error)?.name,
+        code: (failure as { code?: unknown })?.code,
+      },
+    });
+  }
+}
+
+/** It runs inside a moderator's request, so every attempt and wait fits in this. */
+const COPY_BUDGET_MS = 1_500;
+const COPY_ATTEMPTS = 3;
+const COPY_BACKOFF_MS = [100, 300];
+/** An attempt with less time than this left would only time out. */
+const COPY_MIN_ATTEMPT_MS = 50;
+
+/**
+ * The Postgres copy of the CSAM entries, which review routing reads. Retried within COPY_BUDGET_MS,
+ * then throws HeldMediaCopyError, so a block whose copy failed reports failure. An abandoned attempt
+ * may still land, which is harmless: the upsert is idempotent. Twin: apps/moderator
+ * image-moderation-effects.ts addImagesToBlocklist.
+ */
+async function mirrorCsamEntries(hashes: bigint[], context?: BlocklistWriteContext) {
+  const sql = mirrorBlockedHashesSql(hashes);
+  if (!sql) return;
+  const deadline = Date.now() + COPY_BUDGET_MS;
+  let lastError: unknown = new Error('no attempt fit the budget');
+  let attempts = 0;
+  while (attempts < COPY_ATTEMPTS && Date.now() < deadline) {
+    if (attempts > 0) {
+      await sleep(Math.min(COPY_BACKOFF_MS[attempts - 1], deadline - Date.now()));
+      if (deadline - Date.now() < COPY_MIN_ATTEMPT_MS) break;
+    }
+    attempts++;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        dbWrite.$executeRawUnsafe(sql),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('copy attempt timed out')),
+            Math.max(deadline - Date.now(), 0)
+          );
+        }),
+      ]);
+      return;
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  // The driver's message can quote the statement, so only its class and code are logged.
+  logToAxiom({
+    type: 'error',
+    name: 'held-media-copy-failed',
+    message: 'the held-media copy of the blocklist entries failed',
+    payload: {
+      step: context?.step,
+      imageIds: context?.imageIds,
+      actorUserId: context?.actorUserId,
+      hashCount: hashes.length,
+      attempts,
+      errorName: (lastError as Error)?.name,
+      errorCode: (lastError as { code?: unknown })?.code,
+    },
+  });
+  throw new HeldMediaCopyError(lastError);
+}
+
 export function addBlockedImage({
   hash,
   reason,
@@ -7197,19 +7276,36 @@ export async function bulkAddBlockedImages({
 
   const csamRows = data.filter(({ reason }) => reason === BlockImageReason.CSAM);
   await write(csamRows);
-  const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
-  const others = data.filter(
-    ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
-  );
-  if (!others.length) return;
-  let csam: Set<string>;
+  let othersError: unknown;
   try {
-    csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+    const inBatch = new Set(csamRows.map(({ hash }) => hash.toString()));
+    const others = data.filter(
+      ({ hash, reason }) => reason !== BlockImageReason.CSAM && !inBatch.has(hash.toString())
+    );
+    if (!others.length) return;
+    let csam: Set<string>;
+    try {
+      csam = await csamBlockedHashes(others.map(({ hash }) => hash));
+    } catch (error) {
+      logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
+      return;
+    }
+    await write(others.filter(({ hash }) => !csam.has(hash.toString())));
   } catch (error) {
-    logBlocklistCheckFailed('blocklist-insert-skipped', others, context, error);
-    return;
+    othersError = error;
+  } finally {
+    // Last, so a failed copy still leaves the other rows written. When both fail, the blocklist
+    // error is the one thrown; the copy failure is already logged.
+    try {
+      await mirrorCsamEntries(
+        csamRows.map(({ hash }) => hash),
+        context
+      );
+    } catch (copyError) {
+      if (othersError === undefined) throw copyError;
+    }
   }
-  await write(others.filter(({ hash }) => !csam.has(hash.toString())));
+  if (othersError !== undefined) throw othersError;
 }
 
 /**
@@ -7552,15 +7648,6 @@ export async function createImageResources({
   return resources;
 }
 
-/** `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
-const notHeldForReviewWhere: Prisma.ImageWhereInput = {
-  OR: [{ needsReview: null }, { needsReview: { notIn: ['csam', 'minor'] } }],
-};
-
-/** Held to the request's servable levels: a capped request gets no unrated upload either. */
-const servableLevelWhere = (levels: number): Prisma.ImageWhereInput =>
-  levels === allBrowsingLevelsFlag ? {} : { nsfwLevel: { in: Flags.instanceToArray(levels) } };
-
 // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
 // over a crucible's maxClipSeconds before the user spends a click on them.
 const myImagesSelect = {
@@ -7665,7 +7752,7 @@ export const getMyImages = async ({
           : {}),
         // The unpublished path has no review gate of its own; these holds stay out of it too,
         // for moderators as well: they review held media in the mod tools.
-        AND: [notHeldForReviewWhere, servableLevelWhere(servableLevels)],
+        AND: [notHeldForReviewWhere(), servableLevelWhere(servableLevels)],
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

@@ -136,7 +136,7 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 	}
 	if miss := Missing(models, frameEntries); len(miss) > 0 {
 		// No miss computation (FEED_GO_COMPUTE_MISSES off): the frame lookup reads the primary.
-		return nil, nil, fallback.Newf("model-frame-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Safef("model-frame-miss", "%d ids", len(miss))
 	}
 	var frameCIDs []int
 	for _, e := range frameEntries {
@@ -175,7 +175,7 @@ func (s *Sources) modelCosmetics(ctx context.Context, owners, models []int, user
 // s.Compute, fillModelEvents has computed the misses into got first).
 func modelDecorations(ids []int, got map[int]Entry, visible map[string]bool) (map[int]superjson.Object, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, fallback.Newf("model-decoration-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-decoration-miss", "%d ids", len(miss))
 	}
 	return VisibleEventDecorations(ids, got, visible)
 }
@@ -211,7 +211,7 @@ func (s *Sources) modelData(ctx context.Context, models []int, data, tags *Packe
 // replica, existence being all that is read of a tag here.
 func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags map[int]Entry) (map[int]ModelData, error) {
 	if miss := Missing(models, data); len(miss) > 0 {
-		return nil, fallback.Newf("model-data-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-data-miss", "%d ids", len(miss))
 	}
 	// The appendFn asks the tag cache for the models the data cache answered only.
 	var found []int
@@ -221,7 +221,7 @@ func (s *Sources) modelDataFrom(ctx context.Context, models []int, data, tags ma
 		}
 	}
 	if miss := Missing(found, tags); len(miss) > 0 {
-		return nil, fallback.Newf("model-tags-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-tags-miss", "%d ids", len(miss))
 	}
 	out := make(map[int]ModelData, len(models))
 	tagIDsOf := map[int][]int{}
@@ -389,7 +389,7 @@ func (s *Sources) VersionImages(ctx context.Context, versionIDs []int) (map[int]
 	}
 	if miss := Missing(ids, got); len(miss) > 0 {
 		// No miss computation (FEED_GO_COMPUTE_MISSES off): the lookup is lag-aware.
-		return nil, fallback.Newf("model-images-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("model-images-miss", "%d ids", len(miss))
 	}
 	var imageIDs []int
 	for _, id := range ids {
@@ -470,7 +470,7 @@ func (s *Sources) CreatorMemberships(ctx context.Context, userIDs []int) (map[in
 			if errors.Is(err, redis.Nil) {
 				return nil, fallback.New("membership-miss")
 			}
-			return nil, fallback.Newf("membership-read-failed", "%v", err)
+			return nil, fallback.Wrap("membership-read-failed", err)
 		}
 		v, err := Unpack(raw)
 		if err != nil {

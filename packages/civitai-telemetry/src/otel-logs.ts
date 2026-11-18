@@ -247,8 +247,8 @@ export function resetOtelLogBridge(): void {
 //     entries too far in the future and holding through a large correction would drop
 //     every record until the wall clock caught up.
 //   - Uniqueness holds only if every emitter in the process shares ONE sequence. Module
-//     scope is enough because this module is a build-checked SINGLETON
-//     (`scripts/server-graph-watchlist.mjs`); a second copy would have its own counter.
+//     scope is enough only while the bundler emits this module once; nothing checks that,
+//     and a second copy would have its own counter.
 const NANOS_PER_MS = 1_000_000;
 
 /** The largest backward wall-clock step the sequence holds through; see above. */

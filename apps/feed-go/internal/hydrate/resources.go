@@ -42,7 +42,7 @@ type ImageResource struct {
 func imageResourcesFrom(imageIDs []int, got map[int]Entry) (map[int][]ImageResource, error) {
 	out := map[int][]ImageResource{}
 	if miss := Missing(imageIDs, got); len(miss) > 0 {
-		return nil, fallback.Newf("image-resources-miss", "%d ids", len(miss))
+		return nil, fallback.Safef("image-resources-miss", "%d ids", len(miss))
 	}
 	for id, e := range got {
 		if e.NotFound {

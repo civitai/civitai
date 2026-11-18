@@ -11,7 +11,6 @@
     recap,
     action,
     message,
-    submitting,
     submit,
   }: {
     /** Null when the player has no play day to recap yet. */
@@ -19,7 +18,6 @@
     action: string;
     /** A failure to show instead of, or under, the recap. */
     message: string | null;
-    submitting: boolean;
     submit: SubmitFunction;
   } = $props();
 
@@ -31,7 +29,7 @@
 
   // Escape, like the X, closes the dialog and so dismisses today's recap.
   const close = () => {
-    if (!submitting) form?.requestSubmit();
+    form?.requestSubmit();
   };
 </script>
 
@@ -45,7 +43,7 @@
     use:modal={{ onescape: close }}
   >
     <form method="POST" {action} use:enhance={submit} bind:this={form}>
-      <button type="submit" class="x" aria-label="Close" disabled={submitting}>
+      <button type="submit" class="x" aria-label="Close">
         <Icon name="x" size={20} />
       </button>
       <p class="ov-eyebrow">Your verdicts are in</p>
@@ -75,7 +73,7 @@
         <p class="error" role="alert">{message}</p>
       {/if}
 
-      <button type="submit" name="begin" value="1" class="ov-primary begin" disabled={submitting} data-autofocus>
+      <button type="submit" name="begin" value="1" class="ov-primary begin" data-autofocus>
         Back to judging
       </button>
     </form>

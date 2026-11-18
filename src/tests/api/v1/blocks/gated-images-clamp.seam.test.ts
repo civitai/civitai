@@ -82,13 +82,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string, opts?: { width?: number }) => `edge:${url}@${opts?.width}`,
 }));
-// The provenance-marker constant, stubbed so the test does not pull the image
-// upload service's env/S3 graph. Same stub the service's own unit test uses.
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-  BLOCK_SHARED_UPLOAD_APP_ID_META_KEY: 'blockSharedUploadAppId',
-}));
-
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { baseHandler } from '~/pages/api/v1/blocks/gated-images';
 

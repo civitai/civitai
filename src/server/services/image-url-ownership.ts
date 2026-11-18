@@ -39,8 +39,13 @@ const SCHEME = /^[\x00-\x20]*([a-z][a-z0-9+.-]*):/i;
  * before its upload finishes. It names no stored object, so it holds no upload key.
  */
 export function isUnfinishedUploadUrl(url: string | null | undefined) {
-  const scheme = url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
+  const scheme = urlScheme(url);
   return !!scheme && scheme !== 'http' && scheme !== 'https';
+}
+
+/** The url's scheme, lowercased, as a url parser reads it; undefined for a relative url or key. */
+export function urlScheme(url: string | null | undefined) {
+  return url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
 }
 
 /** Refuses a save holding an image url that names no stored object. */

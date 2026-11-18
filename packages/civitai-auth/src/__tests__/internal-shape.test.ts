@@ -65,9 +65,9 @@ describe('client request shape', () => {
     await m.hub.refreshInternalParity();
 
     await m.createSessionTokenClient().refresh('cur.jwt', { deviceCookie: 'dev-1' });
-    await m.createDeviceAccountClient().list('civ-token=cur.jwt; civ-device=dev-1');
-    await m.createDeviceAccountClient().switch('civ-token=cur.jwt; civ-device=dev-1', 9);
-    await m.createImpersonationClient().impersonate('civ-token=cur.jwt', 7);
+    await m.createDeviceAccountClient().list('civ-token=cur.jwt; civ-device=dev-1', null);
+    await m.createDeviceAccountClient().switch('civ-token=cur.jwt; civ-device=dev-1', 9, null);
+    await m.createImpersonationClient().impersonate('civ-token=cur.jwt', 7, null);
     await m.createSessionTokenClient().revoke('cur.jwt', { deviceId: 'dev-1' });
 
     const calls = hubCalls(fetch);
@@ -94,7 +94,7 @@ describe('client request shape', () => {
     await m.hub.refreshInternalParity();
 
     await m.createSessionTokenClient().refresh('cur.jwt');
-    await m.createDeviceAccountClient().list('civ-token=cur.jwt');
+    await m.createDeviceAccountClient().list('civ-token=cur.jwt', null);
 
     const [refresh, list] = hubCalls(fetch);
     expect(refresh[1].headers.authorization).toBe('Bearer cur.jwt');

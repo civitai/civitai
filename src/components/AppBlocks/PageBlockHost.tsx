@@ -4661,14 +4661,9 @@ export function PageBlockHost({
   //     routes through civitai's SESSION-AUTHED path → REAL createImage +
   //     ingestImage scan → server-side gate (blockImageUpload.persist + gate), and
   //     ONLY a moderated image id that is scanned-clean, within the SFW ceiling,
-  //     and unflagged is returned. PRIVATE by default. Only when the request carries
-  //     `share: true` (exactly) does the dialog tell the viewer, before they pick, that
-  //     the image will be visible to the app's other viewers, and the persist carry the
-  //     block token so the row is stamped `blockSharedUploadAppId` = this app's verified
-  //     id: the app may then show it to its other viewers through the gated read once it
-  //     is scanned (never another app, never before the scan). Every reply to a share
-  //     request echoes `shared` (true only when the server stamped it); a reply to an
-  //     unshared request omits it.
+  //     and unflagged is returned. PRIVATE by default: only `share: true` (exactly) shares
+  //     it with the app's other viewers, and only replies to a share request carry `shared`.
+  //     Read rules: BLOCK_SHARED_UPLOAD_APP_ID_META_KEY.
   //
   //   • 'generationSource' (PRIVATE generation input — an img2img source): the
   //     upload routes through the SAME lightweight consumer-blob util the generator
@@ -4834,12 +4829,9 @@ export function PageBlockHost({
         return;
       }
 
-      // SHARE (display only): read off the RAW payload, strictly `=== true` — anything else is a
-      // private upload. A share needs the block token the server verifies to stamp the row, so a
-      // share request with none is refused here rather than silently stored private.
+      // Read off the RAW payload: a share needs the block token the server verifies, so a share
+      // request with none is refused rather than stored private.
       const shareRequested = (raw as { share?: unknown } | undefined)?.share === true;
-      // `shared` ECHO: every reply to a share request carries `shared` (true only when the server
-      // wrote the share stamp); a reply to an unshared request omits it, so its wire is unchanged.
       const echo = (shared: boolean) => (shareRequested ? { shared } : {});
       if (shareRequested && !token) {
         reportNoToken('OPEN_IMAGE_UPLOAD');
@@ -4889,7 +4881,6 @@ export function PageBlockHost({
               send('IMAGE_UPLOAD_RESULT', {
                 requestId,
                 selected: { status: 'pending', imageId, url },
-                // Reflects the stamp written at persist time; the scan has not run yet.
                 ...echo(shared === true),
               });
               setImageScanPollers((prev) =>
@@ -4924,7 +4915,6 @@ export function PageBlockHost({
           share: shareWith,
           onResolved: (result: BlockUploadedImageInfo, meta?: { shared: boolean }) => {
             resolved = result;
-            // Strict: only the server's own `true` reports a share.
             resolvedShared = meta?.shared === true;
           },
         },

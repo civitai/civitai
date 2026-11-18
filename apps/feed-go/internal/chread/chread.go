@@ -40,6 +40,17 @@ type Config struct {
 	MaxInFlight int
 	// HTTP is the client (nil: a dedicated one). Request deadlines come from the caller's context.
 	HTTP *http.Client
+	// Tracer observes every query (nil: none, and Query does no tracing work at all).
+	// tracing.ClickHouseTracer is the one this service sets when tracing is on.
+	Tracer Tracer
+}
+
+// Tracer observes one query, as pgx's QueryTracer does: QueryStart is called before anything else
+// (the read slot included) and returns the context the query runs on; QueryEnd is called with that
+// context, the number of rows returned and the query's error once it has finished.
+type Tracer interface {
+	QueryStart(ctx context.Context, sql string) context.Context
+	QueryEnd(ctx context.Context, rows int, err error)
 }
 
 // Client sends read-only queries. Safe for concurrent use.
@@ -49,6 +60,7 @@ type Client struct {
 	pass     string
 	http     *http.Client
 	slots    chan struct{}
+	tracer   Tracer
 }
 
 // ErrBusy is a read refused because MaxInFlight reads are already running.
@@ -65,6 +77,9 @@ type ServerError struct {
 func (e *ServerError) Error() string {
 	return fmt.Sprintf("clickhouse: code %d (http %d): %s", e.Code, e.Status, e.Message)
 }
+
+// HTTPStatus is the response's HTTP status (fallback.Class reads it as http_4xx / http_5xx).
+func (e *ServerError) HTTPStatus() int { return e.Status }
 
 // IsServerTimeout is whether err is ClickHouse's TIMEOUT_EXCEEDED (code 159): the server stopped the
 // query at its max_execution_time.
@@ -95,7 +110,8 @@ func New(cfg Config) (*Client, error) {
 	if hc == nil {
 		hc = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 	}
-	return &Client{endpoint: u, user: cfg.Username, pass: cfg.Password, http: hc, slots: make(chan struct{}, n)}, nil
+	return &Client{endpoint: u, user: cfg.Username, pass: cfg.Password, http: hc, slots: make(chan struct{}, n),
+		tracer: cfg.Tracer}, nil
 }
 
 // Setting is one ClickHouse setting sent with a query, in order.
@@ -112,8 +128,19 @@ const maxErrorBody = 4 << 10
 
 // Query runs sql (without a FORMAT clause) with settings, as a GET, and returns its rows, each a
 // column-name map whose numbers are json.Number. It holds one read slot until the response is
-// read; ctx bounds the whole read.
+// read; ctx bounds the whole read. A Config.Tracer sees the whole call, a refused one (ErrBusy)
+// included.
 func (c *Client) Query(ctx context.Context, sql string, settings []Setting) ([]map[string]any, error) {
+	if c.tracer == nil {
+		return c.query(ctx, sql, settings)
+	}
+	ctx = c.tracer.QueryStart(ctx, sql)
+	rows, err := c.query(ctx, sql, settings)
+	c.tracer.QueryEnd(ctx, len(rows), err)
+	return rows, err
+}
+
+func (c *Client) query(ctx context.Context, sql string, settings []Setting) ([]map[string]any, error) {
 	select {
 	case c.slots <- struct{}{}:
 	default:

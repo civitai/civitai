@@ -34,13 +34,13 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *     cannot fire at all, and (b) asserts the source guard's own distinct
  *     wording — including that the message does NOT mention `AIR type`.
  *
- *   GUARD 2 — the SUBSCRIPTION requirement on Private / epoch resources
- *     (`if (hasPrivateOrEpoch && !opts.user.isModerator)`).
+ *   GUARD 2 — the SUBSCRIPTION requirement on Private resources
+ *     (`if (hasPrivate && !opts.user.isModerator)`). Epochs need only ownership.
  *
  *     🔴 READ THIS BEFORE ASSUMING WHAT THESE TESTS COVER. This gate does NOT
  *     stop an untrusted developer pinning a Private resource they do not own.
  *     A DIFFERENT guard does that, one check EARLIER — `!resource.canGenerate`
- *     — and a non-owner never reaches line 452 at all. Establishing that took a
+ *     — and a non-owner never reaches the subscription guard. Establishing that took a
  *     live production run; two prior drafts of this comment described the wrong
  *     population, so the mechanism is written out here rather than re-guessed.
  *
@@ -50,11 +50,11 @@ import { assertViewerEntitledToInlineResources } from '~/server/services/blocks/
  *                     (!isPrivate || isOwnedByUser || user.isModerator)
  *     and `getEpochDetails` returns non-null ONLY when `status !== 'Published'`,
  *     so an epoch resource is always Draft/Training. Therefore EVERY resource
- *     that can set `hasPrivateOrEpoch` also sets `isPrivate` — which forces
- *     `canGenerate = false` for a non-owner non-moderator, and the canGenerate
- *     guard throws before `hasPrivateOrEpoch` is ever computed.
+ *     that can set `hasPrivate`, and every epoch, also sets `isPrivate` — which
+ *     forces `canGenerate = false` for a non-owner non-moderator, and the
+ *     canGenerate guard throws before `hasPrivate` is ever computed.
  *
- *     🔴 SO WHAT LINE 452 ACTUALLY GATES: the OWNER of a Private/epoch resource
+ *     🔴 SO WHAT THE SUBSCRIPTION GUARD ACTUALLY GATES: the OWNER of a Private resource
  *     who lacks an active subscription. Owners get `canGenerate: true` on their
  *     own private resources, so they are the population that arrives here.
  *     Moderators are exempt at BOTH layers.
@@ -314,10 +314,10 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GUARD 2 — the SUBSCRIPTION requirement on a Private / epoch resource the
-// viewer can already generate with, i.e. ITS OWNER.
+// GUARD 2 — the SUBSCRIPTION requirement on a Private resource the viewer can
+// already generate with, i.e. ITS OWNER. An owned epoch needs no subscription.
 //
-//   if (hasPrivateOrEpoch && !opts.user.isModerator) { …require subscription… }
+//   if (hasPrivate && !opts.user.isModerator) { …require subscription… }
 //
 // 🔴 THE POPULATION IS OWNERS, NOT ARBITRARY DEVELOPERS. A non-owner is refused
 // one guard EARLIER by `!resource.canGenerate` and never arrives here — see the
@@ -331,7 +331,7 @@ describe('assertViewerEntitledToInlineResources — the AIR `source` allowlist',
 // deleting the guard but NOT by dropping `!`; a test that only asserts the
 // moderator exemption is killed by dropping `!` but not by deleting the guard.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('assertViewerEntitledToInlineResources — the owner Private/epoch subscription gate', () => {
+describe('assertViewerEntitledToInlineResources — the owner Private subscription gate', () => {
   it('🔴 REJECT LEG — a NON-moderator OWNER with no subscription is refused their PRIVATE resource', async () => {
     mockGetResourceData.mockResolvedValue([
       row({ id: PRIVATE_VERSION_ID, availability: 'Private' }),
@@ -354,7 +354,7 @@ describe('assertViewerEntitledToInlineResources — the owner Private/epoch subs
   });
 
   it('🔴 MIXED MANIFEST — ONE Private resource among Public ones still rejects (`.some`, not `.every`)', async () => {
-    // 🔴 THE FIXTURE SHAPE IS THE ASSERTION HERE. `hasPrivateOrEpoch` is a
+    // 🔴 THE FIXTURE SHAPE IS THE ASSERTION HERE. `hasPrivate` is a
     // `.some` over the returned rows. Every OTHER fixture in this file and in
     // the sibling suite is SINGLE-RESOURCE — and on a one-element array `.some`
     // and `.every` are INDISTINGUISHABLE. So `.some` → `.every` was a live
@@ -384,13 +384,10 @@ describe('assertViewerEntitledToInlineResources — the owner Private/epoch subs
     expect(mockGetHighestTierSubscription).toHaveBeenCalledWith(NON_MODERATOR.id);
   });
 
-  it('🔴 REJECT LEG — the same holds for an OWNED EPOCH (early-access) resource', async () => {
-    // The right-hand leg of `availability === Private || !!epochDetails`. A
-    // distinct version id and a Public availability, so this case cannot be
-    // satisfied by the Private branch. (In production an epoch resource is
-    // always Draft/Training — `getEpochDetails` returns non-null only when
-    // `status !== 'Published'` — which is itself `isPrivate`, so this row's
-    // `canGenerate: true` again encodes the OWNER.)
+  it('a NON-moderator OWNER with no subscription may use their own EPOCH resource', async () => {
+    // In production an epoch resource is always Draft/Training (`getEpochDetails`
+    // returns non-null only when `status !== 'Published'`), which is itself
+    // `isPrivate`, so this row's `canGenerate: true` encodes the OWNER.
     mockGetResourceData.mockResolvedValue([
       row({
         id: EPOCH_VERSION_ID,
@@ -400,13 +397,29 @@ describe('assertViewerEntitledToInlineResources — the owner Private/epoch subs
     ]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
 
+    await expect(
+      assertViewerEntitledToInlineResources({ airs: [EPOCH_AIR], user: NON_MODERATOR })
+    ).resolves.toBeUndefined();
+  });
+
+  it("a NON-moderator is refused someone else's EPOCH resource", async () => {
+    // A non-owner's unpublished version resolves with `canGenerate: false`.
+    mockGetResourceData.mockResolvedValue([
+      row({
+        id: EPOCH_VERSION_ID,
+        availability: 'Public',
+        canGenerate: false,
+        epochDetails: { epochNumber: 5, isExpired: false },
+      }),
+    ]);
+    mockGetHighestTierSubscription.mockResolvedValue({ id: 'sub_fixture', tier: 'gold' });
+
     const { code, message } = await captureRejection(
       assertViewerEntitledToInlineResources({ airs: [EPOCH_AIR], user: NON_MODERATOR })
     );
 
     expect(code).toBe('FORBIDDEN');
-    expect(message).toBe('Using Private resources requires an active subscription.');
-    expect(mockGetHighestTierSubscription).toHaveBeenCalledWith(NON_MODERATOR.id);
+    expect(message).toBe(`model version ${EPOCH_VERSION_ID} is not available for generation`);
   });
 
   it('🔴 EXEMPT LEG — a MODERATOR passes the same PRIVATE fixture with no subscription', async () => {
@@ -420,22 +433,6 @@ describe('assertViewerEntitledToInlineResources — the owner Private/epoch subs
     ).resolves.toBeUndefined();
     // Not merely "allowed": the subscription lookup was never even attempted,
     // which is what `!opts.user.isModerator` short-circuiting actually does.
-    expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
-  });
-
-  it('🔴 EXEMPT LEG — a MODERATOR passes the same EPOCH fixture with no subscription', async () => {
-    mockGetResourceData.mockResolvedValue([
-      row({
-        id: EPOCH_VERSION_ID,
-        availability: 'Public',
-        epochDetails: { epochNumber: 5, isExpired: false },
-      }),
-    ]);
-    mockGetHighestTierSubscription.mockResolvedValue(null);
-
-    await expect(
-      assertViewerEntitledToInlineResources({ airs: [EPOCH_AIR], user: MODERATOR })
-    ).resolves.toBeUndefined();
     expect(mockGetHighestTierSubscription).not.toHaveBeenCalled();
   });
 
@@ -459,9 +456,9 @@ describe('assertViewerEntitledToInlineResources — the owner Private/epoch subs
     // `canGenerate` / anti-drop / anti-substitute checks are NOT moderator-gated
     // and reject with their own FORBIDDEN. This case holds the viewer, the
     // subscription state and the row shape fixed and changes ONLY
-    // availability/epoch — and it passes. So the rejections above cannot have
+    // availability — and it passes. So the rejections above cannot have
     // come from those checks; the only thing that changed is what
-    // `hasPrivateOrEpoch` evaluates to.
+    // `hasPrivate` evaluates to.
     mockGetResourceData.mockResolvedValue([row({ id: PUBLIC_VERSION_ID, availability: 'Public' })]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
 

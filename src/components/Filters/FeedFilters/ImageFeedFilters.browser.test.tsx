@@ -109,4 +109,20 @@ describe('ImageFeedFilters sort while searching', () => {
     await tapLock('Everyone');
     await expect.element(page.getByText('Clear the search to filter by who posted')).toBeVisible();
   });
+
+  test.each([
+    { saved: 'Followed', audience: { followed: 'true' } },
+    { saved: 'New & Upcoming', audience: { newCreators: 'true' } },
+  ])(
+    'the locked audience reads Everyone even when the feed is set to $saved',
+    async ({ saved, audience }) => {
+      flags.value = { feedSearch: true };
+      currentUser.value = { id: 1 };
+      router.query = { query: 'red dragon', ...audience };
+      renderFilters();
+
+      await expect.element(page.getByRole('button', { name: 'Everyone' })).toBeDisabled();
+      expect(page.getByRole('button', { name: saved }).query()).toBeNull();
+    }
+  );
 });

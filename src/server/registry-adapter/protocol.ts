@@ -39,7 +39,11 @@ export interface SubscribeRequest {
   cursor?: string;
   urns: string[];
   filter?: JsonSchema;
+  /** What the caller tells the origin (spec rule 10): a JSON object; absent when none. */
+  meta?: RequestMeta;
 }
+
+export type RequestMeta = Record<string, unknown>;
 
 /**
  * The spec's error names, the auth extension's two, and `unavailable` for the spec's "anything
@@ -112,13 +116,15 @@ export interface Adapter {
 /**
  * A request as either binding received it, validated into a {@link SubscribeRequest}. `filter`
  * is the JSON text (both bindings carry it as a string); empty means none, as an empty `cursor`
- * does.
+ * does. `meta` is JSON text over HTTP and its UTF-8 bytes over gRPC; anything but a JSON object
+ * is none, since the spec gives no error for it and an origin ignores what it does not know.
  */
 export function subscribeRequest(raw: {
   schema: string | null | undefined;
   cursor: string | null | undefined;
   urns: readonly string[];
   filter: string | null | undefined;
+  meta?: string | Uint8Array | null;
 }): SubscribeRequest {
   if (!raw.schema) throw new ProtocolError('bad_request', 'schema is required');
   let filter: JsonSchema | undefined;
@@ -129,5 +135,24 @@ export function subscribeRequest(raw: {
       throw new ProtocolError('bad_request', 'filter is not JSON');
     }
   }
-  return { schema: raw.schema, cursor: raw.cursor || undefined, urns: [...raw.urns], filter };
+  return {
+    schema: raw.schema,
+    cursor: raw.cursor || undefined,
+    urns: [...raw.urns],
+    filter,
+    meta: requestMeta(raw.meta),
+  };
+}
+
+function requestMeta(raw: string | Uint8Array | null | undefined): RequestMeta | undefined {
+  if (!raw || raw.length === 0) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(typeof raw === 'string' ? raw : Buffer.from(raw).toString('utf8'));
+  } catch {
+    return undefined;
+  }
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as RequestMeta)
+    : undefined;
 }

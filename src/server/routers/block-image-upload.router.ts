@@ -7,6 +7,8 @@ import {
   persistBlockUploadImageSchema,
 } from '~/server/schema/blocks/block-image-upload.schema';
 import { rateLimit } from '~/server/middleware.trpc';
+import { assertBlockSubjectIsSessionUser } from '~/server/services/block-token-session-subject';
+import { subjectUserIdOrNull } from '~/server/services/block-token-subject';
 import { protectedProcedure, router } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 
@@ -70,8 +72,7 @@ export const blockImageUploadRouter = router({
         userId: ctx.user.id,
         sharedWithAppId,
       });
-      // `persistBlockUploadImage` writes the shared stamp whenever `sharedWithAppId` is set
-      // (createImage writes `blockProvenance` or throws), so this is true exactly when stamped.
+      // True only because persistBlockUploadImage stamps whenever sharedWithAppId is set, or throws.
       return { imageId, shared: sharedWithAppId !== undefined };
     }),
 
@@ -116,19 +117,15 @@ export const blockImageUploadRouter = router({
  * The appId never comes from the request: it is the verified claim or nothing.
  */
 async function persistPickedUploadAppId(blockToken: string, userId: number): Promise<string> {
-  const [{ authorizeBlockBridgeToken }, { parseSubjectUserId }] = await Promise.all([
-    import('~/server/services/blocks/block-bridge-auth.service'),
-    import('~/server/middleware/block-scope.middleware'),
-  ]);
+  const { authorizeBlockBridgeToken } = await import(
+    '~/server/services/blocks/block-bridge-auth.service'
+  );
   const claims = await authorizeBlockBridgeToken(blockToken);
-  let subject: number | null;
-  try {
-    subject = parseSubjectUserId(claims.sub);
-  } catch {
-    subject = null;
-  }
-  if (subject !== userId) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token is not for this viewer' });
-  }
+  // An anonymous or malformed subject reads as null and is refused like another user's.
+  assertBlockSubjectIsSessionUser(
+    subjectUserIdOrNull(claims.sub),
+    userId,
+    'block token is not for this viewer'
+  );
   return claims.appId;
 }

@@ -79,18 +79,15 @@ type Role =
   | 'source-reader';
 
 const LEDGER: Readonly<Record<string, Role>> = Object.freeze({
-  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_PUBLISHED_APP_ID_META_KEY':
-    'declaration',
-  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_UPLOADED_APP_ID_META_KEY':
-    'declaration',
-  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_POSTABLE_APP_ID_META_KEYS':
-    'declaration',
-  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY':
+  'src/shared/utils/block-provenance-metadata.ts#BLOCK_PUBLISHED_APP_ID_META_KEY': 'declaration',
+  'src/shared/utils/block-provenance-metadata.ts#BLOCK_UPLOADED_APP_ID_META_KEY': 'declaration',
+  'src/shared/utils/block-provenance-metadata.ts#BLOCK_POSTABLE_APP_ID_META_KEYS': 'declaration',
+  'src/shared/utils/block-provenance-metadata.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY':
     'declaration',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': 'writer',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage':
     'writer',
-  'src/server/services/blocks/block-image-upload.service.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY':
+  'src/shared/utils/block-provenance-metadata.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY':
     'declaration',
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage':
     'writer',
@@ -257,9 +254,9 @@ describe('App Blocks image provenance-key sites', () => {
       .sort();
     expect(naming).toEqual([
       'src/server/services/blocks/block-gated-images.service.ts#getBlockGatedImagesByIds',
-      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY',
       'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage',
       'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_SHARED_UPLOAD_APP_ID_META_KEY',
     ]);
   });
 
@@ -288,8 +285,8 @@ describe('App Blocks image provenance-key sites', () => {
       .map(([site]) => site)
       .sort();
     expect(spelled).toEqual([
-      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_UPLOADED_APP_ID_META_KEY',
       'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_UPLOADED_APP_ID_META_KEY',
     ]);
   });
 
@@ -304,13 +301,13 @@ describe('App Blocks image provenance-key sites', () => {
       .sort();
     expect(naming).toEqual([
       'src/server/services/blocks/block-generation-source.service.ts#findBlockGenerationSourceImage',
-      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY',
       'src/server/services/blocks/block-image-upload.service.ts#persistBlockGenerationSourceImage',
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_GENERATION_SOURCE_APP_ID_META_KEY',
       'src/shared/utils/block-provenance-metadata.ts#BLOCK_PROVENANCE_METADATA_KEYS',
     ]);
     // And the postable set does not carry it: every POST reader accepts the postable set.
     const postable = sites.get(
-      'src/server/services/blocks/block-image-upload.service.ts#BLOCK_POSTABLE_APP_ID_META_KEYS'
+      'src/shared/utils/block-provenance-metadata.ts#BLOCK_POSTABLE_APP_ID_META_KEYS'
     );
     expect([...(postable ?? [])].sort()).toEqual([POSTABLE, PUBLISHED, UPLOADED].sort());
   });

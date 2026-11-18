@@ -15,6 +15,9 @@ import { MODERATOR_QUEUE_RATING_REASON } from './harvest.service';
 /** A harvested hidden check stays only once this many players answered it and most of them gave its answer. */
 export const KEEP_MIN_PLAYERS = 5;
 
+/** Over half of a check's distinct players gave its answer. Expects `KnightsReferenceImage as k` and `KnightsVote as v`, grouped by check. */
+export const majorityAgrees = sql<boolean>`2 * count(DISTINCT "v"."playerId") FILTER (WHERE "v"."answer" = "k"."answer") > count(DISTINCT "v"."playerId")`;
+
 type Executor = Kysely<DB>;
 const LIVE = [REFERENCE_STATUS.active, REFERENCE_STATUS.pending];
 
@@ -33,9 +36,7 @@ function agreed(db: Executor, excludeImageIds: number[]) {
     .$if(excludeImageIds.length > 0, (qb) => qb.where('k.imageId', 'not in', excludeImageIds))
     .groupBy(['k.id', 'k.answer'])
     .having(sql<boolean>`count(DISTINCT "v"."playerId") >= ${KEEP_MIN_PLAYERS}`)
-    .having(
-      sql<boolean>`2 * count(DISTINCT "v"."playerId") FILTER (WHERE "v"."answer" = "k"."answer") > count(DISTINCT "v"."playerId")`
-    );
+    .having(majorityAgrees);
 }
 
 export type RebuildInput = { now: Date; excludeImageIds: number[] };

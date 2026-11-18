@@ -3,7 +3,7 @@ import { Webhook } from 'standardwebhooks';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { hqTaskClosedSchema, hqWebhookSchema } from '~/server/schema/bug.schema';
 import { resolveBugsByClickupTaskId } from '~/server/services/bug.service';
 import { PayloadTooLarge, readRawBody } from '~/server/utils/raw-body';
@@ -18,8 +18,7 @@ export const config = {
 // Outlasts a Standard Webhooks sender's retry schedule (about 27h in the reference implementation).
 const DEDUPE_TTL_SECONDS = 3 * 24 * 60 * 60;
 
-const log = (data: MixedObject) =>
-  logToAxiom({ name: 'hq-webhook', ...data }, 'webhooks');
+const log = (data: MixedObject) => logToAxiom({ name: 'hq-webhook', ...data }, 'webhooks');
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   instrumentApiResponse(req, res);
@@ -91,11 +90,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // work is done, so a delivery that failed part-way is retried rather than lost. The cost: that
   // retry also re-closes any entry reopened in between, and concurrent duplicates both write the
   // same idempotent close.
-  const processedKey =
-    `${REDIS_SYS_KEYS.WEBHOOKS.HQ_PROCESSED}:${req.headers['webhook-id']}` as const;
+  const processedKey = `${REDIS_KEYS.WEBHOOKS.HQ_PROCESSED}:${req.headers['webhook-id']}` as const;
   try {
-    if (await sysRedis.exists(processedKey))
-      return res.status(200).json({ duplicate: true, taskId });
+    if (await redis.exists(processedKey)) return res.status(200).json({ duplicate: true, taskId });
   } catch (error: any) {
     await log({ type: 'error', message: 'Dedupe check failed', error: error.stack });
     return res.status(500).send('Internal Server Error');
@@ -113,7 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   // 5xx so the sender retries the entries that failed.
   if (result.failed.length) return res.status(500).send('Internal Server Error');
 
-  await sysRedis
+  await redis
     .set(processedKey, '1', { EX: DEDUPE_TTL_SECONDS })
     .catch((error) => log({ type: 'error', message: 'Dedupe mark failed', error: error.stack }));
   return res.status(200).json({ received: true, taskId, ...result });

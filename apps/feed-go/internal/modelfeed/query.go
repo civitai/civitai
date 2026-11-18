@@ -198,7 +198,7 @@ const (
 func parseCursor(fields []sortField, cursor string) ([]any, error) {
 	toks := strings.Split(cursor, "|")
 	if len(toks) != len(fields) {
-		return nil, fallback.Newf("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
+		return nil, fallback.Safef("model-cursor", "%d tokens for %d fields", len(toks), len(fields))
 	}
 	out := make([]any, len(toks))
 	for i, tok := range toks {

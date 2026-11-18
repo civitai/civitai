@@ -15,7 +15,7 @@ import { getAllHiddenForUser } from '~/server/services/user-preferences.service'
 import {
   BLOCK_PUBLISHED_APP_ID_META_KEY,
   BLOCK_SHARED_UPLOAD_APP_ID_META_KEY,
-} from '~/server/services/blocks/block-image-upload.service';
+} from '~/shared/utils/block-provenance-metadata';
 
 /**
  * App Blocks (Phase-1 seam) — cross-user gated image read for
@@ -23,18 +23,11 @@ import {
  * ids a benchmark grid stored) + the REQUESTING viewer, returns a per-viewer
  * `BlockGatedImage` for each RESOLVABLE id.
  *
- * SECURITY — the read is scoped to bare (`postId IS NULL`) images THIS app
- * published, or viewer uploads it was explicitly allowed to share:
- * `metadata.blockPublishedAppId` or `metadata.blockSharedUploadAppId` = <caller
- * appId>, markers only ever stamped server-side from a verified block token (the
- * shared key only when the app asked to share that one viewer-picked upload,
- * `share: true`, and the host's dialog told the viewer it will be visible to the
- * app's other viewers). 🔴 NEVER `blockUploadedAppId`: the app's own bytes uploads
- * carry that key with no share and no dialog, so they stay private to their owner
- * (read only by the owner-bound post path). So a block can only read its OWN
- * app's images — never another app's (the value must EQUAL the verified appId),
- * nor a post-deletion-orphaned row. On top of that, the per-viewer clamp
- * (mirroring canonical `getAllImages`' non-owner path) applies:
+ * SECURITY — the read is scoped to bare (`postId IS NULL`) images whose
+ * {@link BLOCK_PUBLISHED_APP_ID_META_KEY} or {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY}
+ * EQUALS the caller's verified appId. 🔴 NEVER `blockUploadedAppId`: the app's own
+ * bytes uploads carry it with no share and no dialog. On top of that, the per-viewer
+ * clamp (mirroring canonical `getAllImages`' non-owner path) applies:
  *   - blocked-users / blocked-tags → EXCLUDED at the query level (omitted),
  *   - above-ceiling / flagged / hard-blocked / scan-refused → `hidden` (NO url),
  *   - not yet rated → `hidden` (NO url) for everyone EXCEPT the image's own
@@ -43,12 +36,9 @@ import {
  * The load-bearing per-row decision is {@link classifyGatedImageForViewer} (pure,
  * unit-tested); an unclamped `getEdgeUrl` is NEVER returned for a hidden image.
  *
- * 🔴 A SHARED-UPLOAD ROW (only the shared key matches) IS HELD TO MORE: it is
- * judged at the viewer's ceiling INTERSECTED WITH SFW, PG / PG-13 (uploads are
- * SFW-only, as on the post path and at the upload's own scan gate), and its
- * `pending` verdict is `hidden` for EVERYONE, its uploader included — no
- * `ratingPending` owner branch. So a shared upload reaches another viewer only
- * once it is terminally `Scanned`, rated, unflagged and within both ceilings.
+ * 🔴 A SHARED-UPLOAD ROW (only the shared key matches) is judged at the viewer's
+ * ceiling INTERSECTED WITH SFW, with no `ratingPending` owner branch: `pending` is
+ * `hidden` for everyone, its uploader included.
  */
 
 /** Bound the read — a grid page never needs more, and each id is a row lookup. */
@@ -141,8 +131,8 @@ type GatedImageRow = Pick<
   | 'blockedFor'
   | 'modelRestricted'
 > & {
-  /** The PUBLISHED key matches this app. Otherwise only the shared-upload key did, and the row
-   *  is judged as a shared upload (see the module note). */
+  /** The PUBLISHED key matches this app. Otherwise only
+   *  {@link BLOCK_SHARED_UPLOAD_APP_ID_META_KEY} did (see the module note). */
   viaPublished: boolean | null;
 };
 
@@ -192,10 +182,8 @@ export async function getBlockGatedImagesByIds(input: {
       )`
     : Prisma.empty;
 
-  // Bare rows ONLY (`postId IS NULL`) AND scoped to images THIS app published or was
-  // allowed to share (the provenance markers, compared for EQUALITY with the verified
-  // appId) — so the bridge is never a cross-app / orphaned-row read oracle. The
-  // per-row clamp below is the maturity security boundary.
+  // Bare rows scoped by equality to the verified appId: keeps the bridge from being a
+  // cross-app / orphaned-row read oracle.
   const rows = await dbRead.$queryRaw<GatedImageRow[]>`
     SELECT
       i."id", i."userId", i."url", i."nsfwLevel", i."ingestion", i."width", i."height",

@@ -363,19 +363,8 @@ describe.skipIf(!parityUrl)('hot reads 12: Kysely returns exactly what Prisma re
     });
     expect(users.get(U_PENDING)?.profilePicture).toBeNull();
     expect(users.get(U_CSAM)?.profilePicture).toBeNull();
-    expect(users.get(U_MINOR)?.profilePicture).toStrictEqual({
-      id: IMG_MINOR,
-      name: null,
-      url: 'minor-uuid',
-      nsfwLevel: 4,
-      hash: null,
-      userId: U_UNREAD,
-      ingestion: 'Scanned',
-      type: 'video',
-      width: 96,
-      height: 128,
-      metadata: { duration: 3 },
-    });
+    // A minor hold is owner-hidden, like csam: no picture on either side.
+    expect(users.get(U_MINOR)?.profilePicture).toBeNull();
     expect(users.get(U_DANGLING)?.profilePicture).toBeNull();
   });
 

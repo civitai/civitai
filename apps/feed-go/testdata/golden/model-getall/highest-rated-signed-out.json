@@ -549,7 +549,7 @@
       },
       "packed": "3gADp21vZGVsSWTNE5GmdGFnSWRzkc0CvqhjYWNoZWRBdNb/ai/oFA=="
     },
-    "packed:caches:profile-pictures:v3:1001": {
+    "packed:caches:profile-pictures:v4:1001": {
       "value": {
         "id": 8901,
         "name": null,
@@ -571,7 +571,7 @@
       },
       "packed": "3gAMomlkzSLFpG5hbWXAo3VybNkkMDAwMDAwMDAtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDA4OTAxqW5zZndMZXZlbAGkaGFzaKhVUFJPRklMRaZ1c2VySWTNA+mpaW5nZXN0aW9up1NjYW5uZWSkdHlwZaVpbWFnZaV3aWR0aM0CAKZoZWlnaHTNAgCobWV0YWRhdGHeAAKld2lkdGjNAgCmaGVpZ2h0zQIAqGNhY2hlZEF01v9qL+gU"
     },
-    "packed:caches:profile-pictures:v3:1002": {
+    "packed:caches:profile-pictures:v4:1002": {
       "value": {
         "userId": 1002,
         "notFound": true,

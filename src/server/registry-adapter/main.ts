@@ -10,6 +10,8 @@
  *   REGISTRY_ADAPTER_GRPC_PORT     gRPC listen port (default 7131; see `grpc.ts` for why it is
  *                                  a port of its own)
  *   REGISTRY_ADAPTER_POLL_SECONDS  how often a subscription re-reads the catalog
+ *   KEEP_ALIVE_TIMEOUT             the HTTP/SSE server's idle keep-alive timeout in ms (default
+ *                                  100000, above a fronting proxy's 90 s; `serve.ts`)
  *   NEXT_PUBLIC_BASE_URL           the site origin the runtime record links to
  *   REGISTRY_ADAPTER_RESOURCE_URL  this source's public URL, its OAuth resource identifier; when
  *                                  set (with AUTH_JWT_ISSUER, the issuer whose tokens it
@@ -27,6 +29,9 @@
  *                                  here (`request-origin.ts`), and logged at startup. Unlike the
  *                                  site, a request with no region (no country header) is held
  *                                  to SFW as well
+ *   REGISTRY_ADAPTER_TRUST_META    "1" to judge the region from a request's `meta` as well as its
+ *                                  headers; set only once the gateway sets those keys itself
+ *                                  (`request-origin.ts`)
  *
  * Auth (the registry's auth extension, `auth.ts`): no token is anonymous; a civitai OAuth access
  * token is verified as every `/api/v1` route verifies it, and an access token the auth hub issued
@@ -53,7 +58,7 @@ import {
   createSubscriptionLimiter,
   subscriptionLimitsFromEnv,
 } from '~/server/registry-adapter/limits';
-import { createRegistryServer } from '~/server/registry-adapter/serve';
+import { createRegistryServer, keepAliveTimeoutFromEnv } from '~/server/registry-adapter/serve';
 import { describeRegionConfig } from '~/server/registry-adapter/request-origin';
 import { createRedisSnapshotStore } from '~/server/registry-adapter/snapshot-store.redis';
 import { REGISTRY_NAMESPACE } from '~/server/registry-adapter/urn';
@@ -94,7 +99,8 @@ function main() {
       'registry-adapter: WARNING: REGISTRY_ADAPTER_RESOURCE_URL is unset; no hub access token is accepted'
     );
   }
-  const auth = { verifyToken, resource, limiter };
+  const onRegion = (line: string) => console.log('registry-adapter:', line);
+  const auth = { verifyToken, resource, limiter, onRegion };
 
   const deps = liveCatalogReadDeps();
   // Every subscription polls; they share one catalog read per half poll interval.
@@ -126,7 +132,11 @@ function main() {
   });
   const adapter = composeAdapter(entities, docs);
 
-  const server = createRegistryServer(adapter, { onError, ...auth });
+  const server = createRegistryServer(adapter, {
+    onError,
+    ...auth,
+    keepAliveTimeoutMs: keepAliveTimeoutFromEnv(process.env),
+  });
   server.listen(port, () =>
     console.log(
       `registry-adapter: ${REGISTRY_NAMESPACE} serving ${SERVED_SCHEMAS.join(', ')} on :${port}`

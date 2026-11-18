@@ -23,7 +23,9 @@ export function rewardDeltas(before: Standing | null, after: Standing) {
   const goldPending = after.goldPending - before.goldPending;
   return {
     xp: Math.max(0, xp),
-    gold: Math.max(0, goldEarned) + Math.max(0, goldPending),
+    // Earned and pending together: a vote raises pending, and settling moves the same gold into earned, so counting them
+    // apart floated it twice.
+    gold: Math.max(0, goldEarned + goldPending),
     goldEarned: Math.max(0, goldEarned),
   };
 }

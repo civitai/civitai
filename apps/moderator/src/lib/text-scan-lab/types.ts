@@ -15,7 +15,8 @@ export const LAB_ENTITY_TYPES = [
 ] as const;
 export type LabEntityType = (typeof LAB_ENTITY_TYPES)[number];
 
-export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam';
+/** `model-com-face-intent` is in no entity type's labels: only the pinned intent set asks for it. */
+export type LabLabel = 'nsfw' | 'poi' | 'minor' | 'scam' | 'csam' | 'model-com-face-intent';
 
 // Mirrors each main-app profile's `labels` (src/server/services/text-scan/profiles/*.profile.ts).
 export const LAB_LABELS: Record<LabEntityType, readonly LabLabel[]> = {

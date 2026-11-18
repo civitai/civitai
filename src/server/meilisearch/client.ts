@@ -304,8 +304,7 @@ type LimiterKey = MeiliBackend | 'resourceSelect';
 // One shared object means every copy's withMeili() admits against the same circuit and the same
 // per-backend concurrency cap, and every copy's collect() reads that state, whichever one won.
 // `??=`, not `=`: with `=`, a later copy would REPLACE the state, orphan the first copy's
-// in-flight slots and reopen the bug. Enrolled in scripts/server-graph-watchlist.mjs so the
-// build fails if an emitted copy loses this pin. Vitest loads each module once and cannot see
+// in-flight slots and reopen the bug. Vitest loads each module once and cannot see
 // any of this unless it is made to (src/server/meilisearch/__tests__/client-gauges.dual-graph.test.ts).
 declare global {
   // eslint-disable-next-line no-var

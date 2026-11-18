@@ -97,6 +97,22 @@ export type WritebackDecision =
   | { kind: 'inquisitor'; reason: KnightsWritebackReason }
   | { kind: 'moderator'; level: number };
 
+const isKnightsLocked = (image: Pick<ImageState, 'locked' | 'lockReason'>) =>
+  image.locked && image.lockReason === KNIGHTS_VOTE_NSFW_LEVEL_REASON;
+
+/**
+ * A lock other than Knights' own is a moderator's ruling: its level, or the Inquisitors when it carries no usable level.
+ * `moderatorRuledImageSql` (queue.service.ts) is its SQL form with `hasBlockMarker`; change them together.
+ */
+export function moderatorRuling(
+  image: Pick<ImageState, 'locked' | 'lockReason' | 'nsfwLevel'>
+): Extract<WritebackDecision, { kind: 'moderator' | 'inquisitor' }> | null {
+  if (!image.locked || isKnightsLocked(image)) return null;
+  return image.nsfwLevel > 0
+    ? { kind: 'moderator', level: image.nsfwLevel }
+    : { kind: 'inquisitor', reason: 'moderator-locked' };
+}
+
 /**
  * Whether a settled rating may still be written. `resolvedFromLevel` is the level the players'
  * image had when they settled; an image that has since moved is a moderator's to look at. An image
@@ -109,15 +125,11 @@ export function decideWriteback(
 ): WritebackDecision {
   if (!image) return { kind: 'missing' };
   if (hasBlockMarker(image)) return { kind: 'inquisitor', reason: 'blocked' };
-  const knightsLocked = image.locked && image.lockReason === KNIGHTS_VOTE_NSFW_LEVEL_REASON;
-  if (knightsLocked && String(image.nsfwLevel) === settled.resolvedValue) {
+  if (isKnightsLocked(image) && String(image.nsfwLevel) === settled.resolvedValue) {
     return { kind: 'already-applied' };
   }
-  if (image.locked && !knightsLocked) {
-    return image.nsfwLevel > 0
-      ? { kind: 'moderator', level: image.nsfwLevel }
-      : { kind: 'inquisitor', reason: 'moderator-locked' };
-  }
+  const ruling = moderatorRuling(image);
+  if (ruling) return ruling;
   if (settled.resolvedFromLevel !== null && image.nsfwLevel !== settled.resolvedFromLevel) {
     return { kind: 'inquisitor', reason: 'level-moved' };
   }

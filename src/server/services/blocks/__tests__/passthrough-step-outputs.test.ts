@@ -27,10 +27,6 @@ const getAllHiddenForUser = vi.fn(async () => ({
 vi.mock('~/server/services/user-preferences.service', () => ({
   getAllHiddenForUser: (...a: unknown[]) => getAllHiddenForUser(...(a as [])),
 }));
-vi.mock('~/server/services/blocks/block-image-upload.service', () => ({
-  BLOCK_PUBLISHED_APP_ID_META_KEY: 'blockPublishedAppId',
-  BLOCK_SHARED_UPLOAD_APP_ID_META_KEY: 'blockSharedUploadAppId',
-}));
 
 import { BLOCK_STEP_NAME, projectAppWorkflow, snapshotFromWorkflow } from '../workflow.service';
 import { splitPassThroughStepOutput } from '../steps';

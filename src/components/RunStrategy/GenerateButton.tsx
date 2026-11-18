@@ -91,7 +91,6 @@ export function GenerateButton({
       price={shownPrice ?? 0}
       acceptsBlueBuzz={acceptsBlueBuzz}
       listedOnly={isListedOnly}
-      decimals={0}
     />
   );
 

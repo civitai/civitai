@@ -38,6 +38,20 @@ describe('syncSearchIndexBulk', () => {
     expect(String((error as Error).message)).not.toContain('token');
   });
 
+  it('logs a network error without the request URL', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Invalid URL: https://main/api?token=t'));
+
+    await syncSearchIndexBulk(batch);
+
+    const logged = vi
+      .mocked(console.error)
+      .mock.calls.flat()
+      .map((a) => (a instanceof Error ? `${a.name} ${a.message} ${a.stack}` : String(a)))
+      .join(' ');
+    expect(logged).toContain('TypeError');
+    expect(logged).not.toContain('token=');
+  });
+
   it('only logs it by default', async () => {
     fetchMock.mockResolvedValue(new Response('no', { status: 503 }));
 

@@ -399,3 +399,47 @@ describe('BlockImageUploadModal — an upload the app asked to share', () => {
     expect('blockToken' in sent).toBe(false);
   });
 });
+
+describe('BlockImageUploadModal — the BLOCKING path reports the server’s `shared` answer', () => {
+  const READY = {
+    imageId: 4242,
+    nsfwLevel: 1,
+    contentRating: 'pg' as const,
+    url: 'https://image.example/ready-4242.jpeg',
+  };
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    mocks.uploadToCF.mockReset().mockResolvedValue({ id: 'cf-key' });
+    mocks.persistMutate.mockReset();
+    mocks.gateMutate.mockReset().mockResolvedValue({ status: 'ready', ...READY });
+  });
+
+  test.each([
+    ['a share request the server stamped', { blockToken: 'tok_abc', appName: 'Gen App' }, true],
+    ['an unshared request', undefined, false],
+    [
+      'a share request the server did not stamp',
+      { blockToken: 'tok_abc', appName: 'Gen App' },
+      false,
+    ],
+  ])(
+    '🔴 %s: onResolved gets the scanned result and the server’s `shared`',
+    async (_label, share, serverShared) => {
+      mocks.persistMutate.mockResolvedValue({ imageId: READY.imageId, shared: serverShared });
+      const onResolved = vi.fn();
+      renderWithProviders(<DialogProvider />);
+      // No `onAccepted`: the modal polls the gate itself and resolves through onResolved.
+      dialogStore.trigger({
+        id: 'blocking-share-echo-test',
+        component: BlockImageUploadModal,
+        props: { onResolved, ...(share ? { share } : {}) },
+      });
+      await chooseFiles(fileInputEl(), [await pngFile('photo-0.png')]);
+
+      await vi.waitFor(() => expect(onResolved).toHaveBeenCalledTimes(1));
+      expect(mocks.gateMutate.mock.calls).toEqual([[{ imageId: READY.imageId }]]);
+      expect(onResolved.mock.calls).toEqual([[READY, { shared: serverShared }]]);
+    }
+  );
+});

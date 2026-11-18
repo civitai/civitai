@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * `blockImageUpload.persist` — the VIEWER-PICKED upload behind `OPEN_IMAGE_UPLOAD`. PRIVATE by
- * default: the row is stamped `blockUploadedAppId` with the block token's VERIFIED appId only when
- * the request carries `share: true`, and only when the token's subject is the session user doing
- * the upload. Without `share: true` the token is ignored and the row is unstamped, as before. The
+ * default: the row is stamped `blockSharedUploadAppId` with the block token's VERIFIED appId only
+ * when the request carries `share: true`, and only when the token's subject is the session user
+ * doing the upload. Without `share: true` the token is ignored and the row is unstamped, as before. The
  * appId never comes from the request.
  *
  * The fakes sit at the token verifier and the persist service, so the assertions read exactly
@@ -62,6 +62,8 @@ beforeEach(() => {
         ? `user:${VIEWER}`
         : token === 'tok_anon'
         ? 'anon'
+        : token === 'tok_malformed'
+        ? 'user:abc'
         : `user:${OTHER_USER}`,
   }));
 });
@@ -135,6 +137,7 @@ describe('blockImageUpload.persist — the provenance stamp is opt-in per upload
   it.each([
     ['another user’s token', 'tok_other'],
     ['an anonymous token', 'tok_anon'],
+    ['a token with a malformed subject', 'tok_malformed'],
   ])('🔴 share with %s is refused and writes nothing', async (_label, blockToken) => {
     await expect(
       caller({ id: VIEWER }).persist({ ...upload(), share: true, blockToken })

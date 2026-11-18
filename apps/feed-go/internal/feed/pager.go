@@ -126,10 +126,10 @@ func (s *indexSource) serve(ctx context.Context, q feedsvc.Query) ([]Image, Curs
 		}
 		// Node answers a failed call with a 503, or (feed-service-degrade on) with the pod's last good
 		// copy of the page, which this service does not hold.
-		return nil, Cursor{}, fallback.Newf("feed-unavailable", "%v", err)
+		return nil, Cursor{}, fallback.Wrap("feed-unavailable", err)
 	}
 	if ans.Status != 200 {
-		return nil, Cursor{}, fallback.Newf("feed-status", "%d", ans.Status)
+		return nil, Cursor{}, fallback.Safef("feed-status", "%d", ans.Status)
 	}
 	var next Cursor
 	if ans.NextCursor != "" {
