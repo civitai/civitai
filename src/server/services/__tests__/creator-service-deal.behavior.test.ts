@@ -1058,7 +1058,13 @@ describe('working a deal', () => {
   });
 
   describe('while the seller is unavailable', () => {
-    const unavailable = () => q(`UPDATE "User" SET muted = true WHERE id = $1`, [SELLER]);
+    const UNAVAILABLE = [
+      ['banned', `"bannedAt" = now()`],
+      ['deleted', `"deletedAt" = now()`],
+      ['restricted', `muted = true`],
+    ] as const;
+    const makeUnavailable = (set: string) => q(`UPDATE "User" SET ${set} WHERE id = $1`, [SELLER]);
+    const unavailable = () => makeUnavailable(UNAVAILABLE[2][1]);
     const viewActions = async (id: number, userId: number) => {
       const row = (await q(`SELECT * FROM "ServiceDeal" WHERE id = $1`, [id]))[0];
       (
@@ -1070,11 +1076,25 @@ describe('working a deal', () => {
         .actions;
     };
 
-    it('lets the buyer leave at once with a full refund, long before the due date', async () => {
+    it.each(UNAVAILABLE)(
+      'lets the buyer of a %s seller leave at once with a full refund, long before the due date',
+      async (_name, set) => {
+        const id = await accepted();
+        await makeUnavailable(set);
+        expect(await viewActions(id, BUYER)).toEqual(['cancelAndRefund', 'requestCancellation']);
+        await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
+        expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
+        expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('pays one refund when the cancel is sent twice', async () => {
       const id = await accepted();
       await unavailable();
       await deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER });
-      expect(await deal(id)).toMatchObject({ status: 'Cancelled', closeReason: 'buyer_refund' });
+      await expect(
+        deals.cancelServiceDealSellerUnavailable({ dealId: id, userId: BUYER })
+      ).rejects.toEqual(conflict);
       expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     });
 

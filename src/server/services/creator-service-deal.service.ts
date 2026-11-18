@@ -643,7 +643,7 @@ export const cancelLateServiceDeal = ({ dealId, userId }: { dealId: number; user
   });
 
 const sellerUnavailable = (sellerId: Prisma.Sql) =>
-  Prisma.sql`EXISTS (SELECT 1 FROM "User" s WHERE s."id" = ${sellerId} AND s."muted")`;
+  Prisma.sql`NOT ${sellerInGoodStanding(sellerId)}`;
 
 /** The seller's state is read in the same statement as the transition, so it cannot change between check and close. */
 export const cancelServiceDealSellerUnavailable = ({
