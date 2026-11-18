@@ -611,9 +611,21 @@ export default MixedAuthEndpoint(async function handler(
     }
   );
   // An alias generates with its target, so a rule naming the target hides the alias too.
-  const modsOnly = [modelVersion.id, modelVersion.generationAlias?.versionId].some(
-    (id) =>
-      !!id && isHiddenFromNonModerators({ id, baseModel: modelVersion.baseModel }, gateRuleState)
+  const aliasId = modelVersion.generationAlias?.versionId;
+  const aliasTarget = aliasId
+    ? {
+        id: aliasId,
+        baseModel:
+          (
+            await dbRead.modelVersion.findUnique({
+              where: { id: aliasId },
+              select: { baseModel: true },
+            })
+          )?.baseModel ?? modelVersion.baseModel,
+      }
+    : undefined;
+  const modsOnly = [modelVersion, aliasTarget].some(
+    (v) => !!v && isHiddenFromNonModerators(v, gateRuleState)
   );
   const moderation = getMiniModerationState({
     versionStatus: modelVersion.status,

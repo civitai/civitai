@@ -8,7 +8,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const { currentUser, mockIsHidden } = vi.hoisted(() => ({
-  mockIsHidden: vi.fn<(resource: { id: number }) => boolean>(() => false),
+  mockIsHidden: vi.fn<(resource: { id: number; baseModel: string }) => boolean>(() => false),
   currentUser: { value: undefined as undefined | Record<string, unknown> },
 }));
 
@@ -162,5 +162,16 @@ describe('mini/[id], orchestrator markers', () => {
     const aliased = { ...versionRow, poi: false, generationAlias: { versionId: 9 } };
     expect((await request([aliased])).body.modsOnly).toBe(true);
     expect((await request([{ ...versionRow, poi: false }])).body.modsOnly).toBe(false);
+  });
+
+  it("checks an alias target under the target's own base model", async () => {
+    dbMock.dbRead.modelVersion.findUnique.mockResolvedValueOnce({ baseModel: 'Flux.1 D' } as never);
+    mockIsHidden.mockImplementation(({ baseModel }) => baseModel === 'Flux.1 D');
+    const aliased = { ...versionRow, poi: false, generationAlias: { versionId: 9 } };
+    expect((await request([aliased])).body.modsOnly).toBe(true);
+    expect(mockIsHidden).toHaveBeenCalledWith(
+      { id: 9, baseModel: 'Flux.1 D' },
+      expect.objectContaining({ known: true })
+    );
   });
 });

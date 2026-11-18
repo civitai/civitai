@@ -1295,10 +1295,8 @@ function isHiddenByGates(
 }
 
 /**
- * Whether a hidden gate rule for moderators, testers or nobody covers this version, whoever is
- * asking (a members-only rule does not count). `canGenerate`
- * answers for the caller, so it cannot tell the orchestrator that moderators may still use it. True
- * while the rules are unknown, so a rule-store outage does not release every hidden model.
+ * Members-only rules do not count. True while the rules are unknown, so a rule-store outage does not
+ * release every hidden model.
  */
 export function isHiddenFromNonModerators(
   resource: { id: number; baseModel: string },
