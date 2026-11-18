@@ -335,3 +335,38 @@ func TestReadGranted(t *testing.T) {
 		}
 	}
 }
+
+// The official pin's id filters (getModelsRaw's onlyModelIds / excludeModelIds, `mm."modelId" IN (…)`
+// and `NOT IN (…)`): placed after the licensing filters as Node pushes them, the ids bound as one array
+// each in the order given; neither is emitted for an empty list. On a single base model the filters
+// still read mm, which every path joins.
+func TestBuildOfficialPinFilters(t *testing.T) {
+	no := false
+	stmt := build(t, PageQuery{Take: 2, Sort: SortHot, BrowsingLevel: 1, BaseModels: []string{"Pony"}, AllowNoCredit: &no,
+		OnlyModelIDs: []int{30, 10}})
+	if !strings.Contains(norm(stmt.Text), `AND m."allowNoCredit" = $2 AND mm."modelId" = ANY($3::int[]) AND mbm."availability" != 'Private'::"Availability"`) {
+		t.Fatalf("onlyModelIds clause:\n%s", norm(stmt.Text))
+	}
+	if strings.Contains(stmt.Text, `!= ALL(`) {
+		t.Fatal("an exclusion with no excludeModelIds")
+	}
+	if want := []any{"Pony", false, []int{30, 10}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	stmt = build(t, PageQuery{Take: 2, Sort: SortHot, BrowsingLevel: 1, BaseModels: []string{"Pony"}, ExcludeModelIDs: []int{30, 10}})
+	if !strings.Contains(norm(stmt.Text), `AND mm."modelId" != ALL($2::int[]) AND mbm."availability" != 'Private'::"Availability"`) {
+		t.Fatalf("excludeModelIds clause:\n%s", norm(stmt.Text))
+	}
+	if strings.Contains(stmt.Text, `= ANY($`) && strings.Contains(stmt.Text, `mm."modelId" = ANY(`) {
+		t.Fatal("a restriction with no onlyModelIds")
+	}
+	if want := []any{"Pony", []int{30, 10}, 1, 3}; !reflect.DeepEqual(stmt.Args, want) {
+		t.Fatalf("args %#v, want %#v", stmt.Args, want)
+	}
+	for _, q := range []PageQuery{{Take: 2, Sort: SortHot, BrowsingLevel: 1}, {Take: 2, Sort: SortHot, BrowsingLevel: 1,
+		OnlyModelIDs: []int{}, ExcludeModelIDs: []int{}}} {
+		if s := build(t, q).Text; strings.Contains(s, `mm."modelId" = ANY(`) || strings.Contains(s, `mm."modelId" != ALL(`) {
+			t.Fatalf("an id filter for no ids:\n%s", s)
+		}
+	}
+}

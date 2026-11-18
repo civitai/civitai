@@ -23,7 +23,10 @@ import type {
   ModelVersionPaidAccessInputSchema,
 } from '~/server/schema/model-version.schema';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
+import {
+  freePublishedVersionExistsSql,
+  paidAccessLiveSql,
+} from '~/server/services/paid-access-sql';
 import { REDIS_KEYS } from '~/server/redis/client';
 import {
   bustFetchThroughCache,
@@ -811,6 +814,8 @@ export type ModelPaidAccessGate = {
   earlyAccessDeadline: Date | null;
   /** Any live gate, timed or permanent — the model costs money right now. */
   gated: boolean;
+  /** The model's versions behind a live gate. */
+  versionIds: number[];
 };
 
 /**
@@ -828,8 +833,10 @@ export async function getModelPaidAccessGates(
 ): Promise<Map<number, ModelPaidAccessGate>> {
   if (!modelIds.length) return new Map();
 
-  const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date | null }[]>`
-    SELECT mv."modelId", MAX(pa."endsAt") AS deadline
+  const rows = await dbRead.$queryRaw<
+    { modelId: number; deadline: Date | null; versionIds: number[] }[]
+  >`
+    SELECT mv."modelId", MAX(pa."endsAt") AS deadline, array_agg(pa."entityId") AS "versionIds"
     FROM "PaidAccess" pa
     JOIN "ModelVersion" mv ON mv.id = pa."entityId"
     WHERE ${paidAccessLiveSql}
@@ -840,7 +847,14 @@ export async function getModelPaidAccessGates(
   // A row reaching here is live by the predicate, so its presence IS the gate. `deadline` stays
   // separate because only a timed window has a clock to show.
   return new Map(
-    rows.map((r) => [Number(r.modelId), { earlyAccessDeadline: r.deadline ?? null, gated: true }])
+    rows.map((r) => [
+      Number(r.modelId),
+      {
+        earlyAccessDeadline: r.deadline ?? null,
+        gated: true,
+        versionIds: r.versionIds.map(Number),
+      },
+    ])
   );
 }
 
@@ -875,19 +889,8 @@ export async function getModelVersionPaidAccessTerms(
 }
 
 /**
- * Every model with a live gate, unbounded. The batched `getModelPaidAccessGates` cannot serve this —
- * the feed filter needs the whole set before it knows which models it is choosing between.
- *
- * The predicate is deliberately identical to the badge's. A filter that hides "paid" models using a
- * different rule from the one that labels them is the divergence 868m1r2u7 exists to close, one layer
- * up: a card reading Paid that the hide filter leaves on screen.
- */
-const GATED_MODEL_IDS_CACHE_KEY = `${REDIS_KEYS.CACHES.PAID_ACCESS}:GatedModelIds:v1` as const;
-
-/**
- * The query itself, uncached. Separate from the cached entry point below so a test can observe the
- * statement — through `fetchThroughCache` the origin never runs under a mocked redis, and the
- * assertion would be over a lock failure rather than over SQL.
+ * Every model with a live gate, unbounded: the set the paid-models reindex walks. The predicate is
+ * deliberately identical to the badge's (`getModelPaidAccessGates`), so the two cannot disagree.
  */
 export async function queryGatedModelIds(): Promise<number[]> {
   const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
@@ -899,10 +902,31 @@ export async function queryGatedModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
-export async function getGatedModelIds(): Promise<number[]> {
+/**
+ * Every gated model with no free Public, Published version — what Hide Paid hides on the Prisma
+ * `getModels` path. A model with one paid and one free version is not in it. Viewer-independent, so it
+ * takes the signed-out feed's rule: a Private free version does not count. Same live-gate predicate as
+ * the badge.
+ *
+ * Uncached here so a test can run the statement; `getAllPaidModelIds` is the cached entry point.
+ */
+export async function queryAllPaidModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE ${paidAccessLiveSql}
+      AND NOT ${freePublishedVersionExistsSql(Prisma.sql`mv."modelId"`, { publicOnly: true })}
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
+const ALL_PAID_MODEL_IDS_CACHE_KEY = `${REDIS_KEYS.CACHES.PAID_ACCESS}:AllPaidModelIds:v1` as const;
+
+export async function getAllPaidModelIds(): Promise<number[]> {
   return fetchThroughCache(
-    GATED_MODEL_IDS_CACHE_KEY,
-    queryGatedModelIds,
+    ALL_PAID_MODEL_IDS_CACHE_KEY,
+    queryAllPaidModelIds,
     // Short, and load-bearing rather than conventional: this set decays with the wall clock as timed
     // windows cross `endsAt`, so bust-on-write alone would keep an expired gate hidden until the next
     // edit to some unrelated version.
@@ -911,5 +935,5 @@ export async function getGatedModelIds(): Promise<number[]> {
 }
 
 export async function bustGatedModelIdsCache() {
-  await bustFetchThroughCache(GATED_MODEL_IDS_CACHE_KEY);
+  await bustFetchThroughCache(ALL_PAID_MODEL_IDS_CACHE_KEY);
 }

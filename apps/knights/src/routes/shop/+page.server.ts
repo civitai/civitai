@@ -21,13 +21,13 @@ import type { Actions, PageServerLoad } from './$types';
 const POSTGRES_INT_MAX = 2_147_483_647;
 const CLOSED_TEXT = "The shop isn't open yet. Your gold keeps accruing.";
 
-const buzzPacksOpen = () => conversionEnabled() && buzzConfigured();
+const buzzPacksOpen = async () => (await conversionEnabled()) && buzzConfigured();
 
 let warnedNoEndpoint = false;
 
 export const load: PageServerLoad = async ({ locals }) => {
   const now = new Date();
-  const open = shopEnabled();
+  const open = await shopEnabled();
   const status = await getPlayerStatusOrNew(db, locals.user.id);
   const [balance, shop, recent] = await Promise.all([
     getGoldBalance(db, locals.user.id),
@@ -36,7 +36,7 @@ export const load: PageServerLoad = async ({ locals }) => {
           playerId: locals.user.id,
           rank: status.rank,
           now,
-          buzzPacksOpen: buzzPacksOpen(),
+          buzzPacksOpen: await buzzPacksOpen(),
         })
       : null,
     open ? recentPurchases(db, locals.user.id) : [],
@@ -60,7 +60,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 
 export const actions: Actions = {
   buy: async ({ locals, request }) => {
-    if (!shopEnabled()) return fail(403, { message: CLOSED_TEXT });
+    if (!(await shopEnabled())) return fail(403, { message: CLOSED_TEXT });
     const form = await request.formData();
     const rawItemId = String(form.get('itemId') ?? '').trim();
     const itemId = /^\d+$/.test(rawItemId) ? Number(rawItemId) : NaN;
@@ -76,8 +76,8 @@ export const actions: Actions = {
       return fail(400, { message: refusalText('bad-key'), reason: 'bad-key' as const });
     }
 
-    const open = buzzPacksOpen();
-    if (!open && conversionEnabled() && !warnedNoEndpoint) {
+    const open = await buzzPacksOpen();
+    if (!open && (await conversionEnabled()) && !warnedNoEndpoint) {
       warnedNoEndpoint = true;
       logToAxiom({
         type: 'warning',

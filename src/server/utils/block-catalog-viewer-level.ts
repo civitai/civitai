@@ -1,6 +1,7 @@
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import {
+  allowMatureContentForCeiling,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -37,4 +38,17 @@ export function resolveCatalogViewerBrowsingLevel(
       ? viewer
       : publicBrowsingLevelsFlag;
   return onlySelectableLevels(requested & cap) || cap;
+}
+
+/**
+ * `resolveCatalogViewerBrowsingLevel`, plus whether that level is a SFW ceiling:
+ * no mature level in it (`allowMatureContentForCeiling` is `false`). An empty
+ * level (0) counts as SFW.
+ */
+export function resolveCatalogViewerMaturity(
+  claims: Pick<BlockTokenClaims, 'maxBrowsingLevel' | 'viewerBrowsingLevel'>,
+  opts: { regionRestricted?: boolean } = {}
+): { browsingLevel: number; isSfwCeiling: boolean } {
+  const browsingLevel = resolveCatalogViewerBrowsingLevel(claims, opts);
+  return { browsingLevel, isSfwCeiling: allowMatureContentForCeiling(browsingLevel) === false };
 }
