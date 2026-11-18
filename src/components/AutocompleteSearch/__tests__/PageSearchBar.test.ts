@@ -39,9 +39,7 @@ const mount = () => {
   document.body.appendChild(container);
   const root = createRoot(container);
   act(() =>
-    root.render(
-      createElement(PageSearchBar, { placeholder: 'Search the shop', onSubmit, onClear })
-    )
+    root.render(createElement(PageSearchBar, { placeholder: 'Search the shop', onSubmit, onClear }))
   );
 };
 const input = () => container.querySelector('input') as HTMLInputElement;
