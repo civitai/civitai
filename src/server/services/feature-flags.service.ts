@@ -407,6 +407,11 @@ const featureFlags = createFeatureFlags({
   },
   // Training Studio's Kohya engine; `kohyaTraining` gates the old trainer's.
   trainingStudioKohya: { availability: ['mod'], fliptKey: 'training-studio-kohya' },
+  // Training Studio's Manage tags find-and-replace row.
+  trainingStudioTagFindReplace: {
+    availability: ['mod'],
+    fliptKey: 'training-studio-tag-find-replace',
+  },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
@@ -491,6 +496,9 @@ const featureFlags = createFeatureFlags({
   // bar, and the images feed's ?similarTo=. Checked on top of `imageSearch` / `feedSearch`, so its
   // rollout is its own. Mods until the Flipt flag exists; once it does, keep mods in its rule.
   moreLikeThis: { availability: ['mod'], fliptKey: 'more-like-this' },
+  // Search by uploaded image: drop or pick a file in image search. Checked on top of `moreLikeThis`
+  // and never wider than it. Dark for everyone, mods included, until Flipt turns it on.
+  imageSearchUpload: { availability: [], fliptKey: 'image-search-upload' },
   // Newest matches in the feed search's sort menu. Dark: Flipt is its only switch.
   imageSearchNewestSort: { availability: [], fliptKey: 'image-search-newest-sort' },
   // Article search (/search/articles, the header and the quick-search dropdown) answers from the

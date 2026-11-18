@@ -22,7 +22,8 @@ import {
 } from '~/server/services/headless-post.service';
 import type { ProtectedContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
 import {
   assertInputsUsable,
   assertWithinQuote,
@@ -265,18 +266,18 @@ async function optionPrices({
 const NONE_SHOWN = 'None of the results can be shown here.';
 const OPTION_PRICES_TTL_SECONDS = 5 * 60;
 
-/** Prices for one open ask: a repeated advance at it re-prices nothing. */
+/** Prices for one open ask: a repeated advance at it re-prices nothing. A cache, on the cluster. */
 async function cachedOptionPrices(
   [runId, segment, step]: [string, number, number],
   price: () => Promise<Record<string, number>>
 ) {
-  const key = `${REDIS_SYS_KEYS.REMIX_APP.OPTION_PRICES}:${runId}:${segment}:${step}` as const;
-  const cached = await sysRedis.get(key).catch(() => null);
+  const key = `${REDIS_KEYS.REMIX_APP.OPTION_PRICES}:${runId}:${segment}:${step}` as const;
+  const cached = await clusterCacheGuard.readOr('cachedOptionPrices', () => redis.get(key), null);
   if (cached) return JSON.parse(cached) as Record<string, number>;
   const prices = await price();
-  await sysRedis
-    .set(key, JSON.stringify(prices), { EX: OPTION_PRICES_TTL_SECONDS })
-    .catch(() => undefined);
+  await clusterCacheGuard.writeBestEffort('cachedOptionPrices', () =>
+    redis.set(key, JSON.stringify(prices), { EX: OPTION_PRICES_TTL_SECONDS })
+  );
   return prices;
 }
 

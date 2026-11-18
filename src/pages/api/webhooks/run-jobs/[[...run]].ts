@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { acquireJobLock, NOOP_LOCK, type JobLock } from '~/server/jobs/job-lock';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
+import { searchUploadSweepJob } from '~/server/jobs/search-upload-sweep';
 import { voidOrphanedAppealsJob } from '~/server/jobs/void-orphaned-appeals';
 import {
   appealDecisionRecordsJob,
@@ -99,6 +100,7 @@ import {
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { cdnAccessReconcile, cdnAccessSync } from '~/server/jobs/cdn-access-sync';
+import { missedNotificationDigest } from '~/server/jobs/missed-notification-digest';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import type { Job } from '~/server/jobs/job';
@@ -226,6 +228,7 @@ export const jobs: Job[] = [
   removeBlockedImages,
   cdnAccessSync,
   cdnAccessReconcile,
+  missedNotificationDigest,
   removeReplacedImages,
   purgeFeedbackCaptures,
   retryImageStorageDeletes,
@@ -366,6 +369,7 @@ export const jobs: Job[] = [
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
   announcementDismissalCleanupJob,
+  searchUploadSweepJob,
   voidOrphanedAppealsJob,
   appealDecisionRecordsJob,
   appealTrainingCopyJob,

@@ -36,7 +36,16 @@ const article = (coverImage: unknown, cover: string | null = 'cover-key') => ({
 
 async function send(articles: unknown[], ids: number[] = []) {
   withheld.ids = new Set(ids);
-  const findMany = vi.fn(async () => articles);
+  // A cover read without `minor` comes back without it, so a select that drops the flag fails here.
+  const findMany = vi.fn(
+    async (args: { select?: { coverImage?: { select?: { minor?: boolean } } } }) =>
+      articles.map((row) => {
+        const { coverImage } = row as { coverImage?: Record<string, unknown> | null };
+        if (!coverImage || args?.select?.coverImage?.select?.minor) return row;
+        const { minor: _minor, ...unflagged } = coverImage;
+        return { ...(row as object), coverImage: unflagged };
+      })
+  );
   const payload = await articleWebhooks['new-article'].getData({
     lastSent: new Date(0),
     prisma: { article: { findMany } },
@@ -86,17 +95,6 @@ describe('new-article webhook payload', () => {
       expect(payload[0].coverImage).toMatchObject({ id: 10 });
       expect(payload[0].coverImage).not.toHaveProperty('minor');
     }
-  });
-
-  it('reads the flag for the cover', async () => {
-    const { findMany } = await send([]);
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        select: expect.objectContaining({
-          coverImage: { select: expect.objectContaining({ minor: true }) },
-        }),
-      })
-    );
   });
 
   it('keeps the cover URL of an article with no cover image', async () => {

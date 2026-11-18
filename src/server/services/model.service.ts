@@ -317,10 +317,13 @@ import {
   bustPaidAccessCache,
   getPaidAccess,
   getPublicPaidAccessForModelVersions,
-  getGatedModelIds,
+  getAllPaidModelIds,
   getModelPaidAccessGates,
 } from '~/server/services/paid-access.service';
-import { paidAccessLiveSql } from '~/server/services/paid-access-sql';
+import {
+  freePublishedVersionExistsSql,
+  paidAccessLiveSql,
+} from '~/server/services/paid-access-sql';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -1049,13 +1052,16 @@ export const getModelsRaw = async ({
     // NOT EXISTS rather than an id list: the gated set is ~3k models and grows ~2.5k/month, and this
     // keeps the probe on PaidAccess_pkey. Measured 1.09ms -> 2.06ms on a p50 feed page; the planner
     // places it above every other predicate, so it only sees rows that already survived them.
+    // The OR arm runs only for a gated model, and keeps it when it has a free version to show.
     AND.push(
-      Prisma.sql`NOT EXISTS (
+      Prisma.sql`(NOT EXISTS (
         SELECT 1 FROM "PaidAccess" pa
         JOIN "ModelVersion" mv ON mv.id = pa."entityId"
         WHERE ${paidAccessLiveSql}
           AND mv."modelId" = m.id
-      )`
+      ) OR ${freePublishedVersionExistsSql(Prisma.sql`m.id`, {
+        publicOnly: hidePrivateModels || !!publicVersionsOnly,
+      })})`
     );
   }
   if (onSale) {
@@ -1433,7 +1439,8 @@ export const getModelsRaw = async ({
     ])
   );
   for (const model of models) {
-    const gate = paidAccessGates.get(model.id);
+    // Under Hide Paid the card shows only free versions, so the model-level chip would contradict it.
+    const gate = hidePaid ? undefined : paidAccessGates.get(model.id);
     model.earlyAccessDeadline = gate?.earlyAccessDeadline ?? null;
     model.hasActivePaidAccess = gate?.gated ?? false;
   }
@@ -1485,6 +1492,11 @@ export const getModelsRaw = async ({
 
           if (hidePrivateModels || publicVersionsOnly) {
             modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+          }
+
+          if (hidePaid) {
+            const gatedVersionIds = paidAccessGates.get(model.id)?.versionIds ?? [];
+            modelVersions = modelVersions.filter((mv) => !gatedVersionIds.includes(mv.id));
           }
 
           // Distinct base models across the visible versions — surfaced to the card
@@ -1709,7 +1721,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   if (hidePaid) {
-    AND.push({ id: { notIn: await getGatedModelIds() } });
+    AND.push({ id: { notIn: await getAllPaidModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -2013,8 +2025,9 @@ export const getModelsWithImagesAndModelVersions = async ({
       coverId: pickCoverImageId(model, showSfwFace),
     })),
     modelVersionImages,
-    // Under a base-model filter the card shows that version, so a cover from another stays put.
-    sameVersionOnly: !!input.baseModels?.length,
+    // Under a base-model filter or Hide Paid the card shows a chosen version, so a cover from another
+    // (under Hide Paid, possibly a paid one) stays put.
+    sameVersionOnly: !!input.baseModels?.length || !!input.hidePaid,
   });
   // A cover found outside the held images is read unheld, so it is held here too.
   const coverImages = holdExempt?.isModerator

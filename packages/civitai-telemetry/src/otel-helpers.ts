@@ -13,8 +13,7 @@ const tracer = trace.getTracer('civitai-app');
 // The gate behind `withSpan`'s unsampled-parent shortcut (see `withSpan`). Kept on `globalThis`
 // because this module can be emitted into more than one bundled server chunk, and the app sets
 // the gate ONCE at boot: a module-scope variable would arm only the copy that boot imported and
-// leave every other copy's call sites on the old path, with no error. Enrolled as SHARED_STATE
-// in scripts/server-graph-watchlist.mjs. Unset (the default, and always in tests that do not
+// leave every other copy's call sites on the old path, with no error. Unset (the default, and always in tests that do not
 // set it) means withSpan behaves exactly as before the gate existed.
 type WithSpanGateState = { gate: (() => boolean) | undefined };
 declare global {

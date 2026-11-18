@@ -27,6 +27,7 @@ import {
   unfollowUserHub,
   upsertUserHub,
 } from '~/server/services/user-hub.service';
+import { credentialViews } from '~/server/auth/full-user-credential';
 import { publicUserHubProcedure, router, userHubProcedure } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -56,20 +57,28 @@ export const userHubRouter = router({
       getUserHubByKey({
         key: input.key,
         userId: ctx.user?.id,
-        isModerator: ctx.user?.isModerator,
+        isModerator: credentialViews(ctx).asModerator,
       })
     ),
   upsert: userHubProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(upsertUserHubSchema)
     .mutation(({ input, ctx }) =>
-      upsertUserHub({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      upsertUserHub({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: credentialViews(ctx).asModerator,
+      })
     ),
   sourceScope: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(getHubSourceScopeSchema)
     .query(({ input, ctx }) =>
-      getHubSourceScope({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      getHubSourceScope({
+        ...input,
+        userId: ctx.user.id,
+        isModerator: credentialViews(ctx).asModerator,
+      })
     ),
   sourceCandidates: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
@@ -78,7 +87,7 @@ export const userHubRouter = router({
       getHubSourceCandidates({
         ...input,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
+        isModerator: credentialViews(ctx).asModerator,
       })
     ),
   addSource: userHubProcedure
@@ -93,7 +102,11 @@ export const userHubRouter = router({
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(getByIdSchema)
     .mutation(({ input, ctx }) =>
-      deleteUserHub({ id: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      deleteUserHub({
+        id: input.id,
+        userId: ctx.user.id,
+        isModerator: credentialViews(ctx).asModerator,
+      })
     ),
   resolveSource: userHubProcedure
     .meta({ requiredScope: TokenScope.UserRead })
@@ -102,7 +115,7 @@ export const userHubRouter = router({
       resolveHubSourceFromUrl({
         ...input,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
+        isModerator: credentialViews(ctx).asModerator,
       })
     ),
   setOrder: userHubProcedure

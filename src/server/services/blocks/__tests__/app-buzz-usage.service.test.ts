@@ -24,15 +24,18 @@ import {
 const USER = { id: 42 } as never;
 const counterReads = (value: string | null) =>
   redisMock.sysRedis.get.mockImplementation(async () => value);
-/** Today's counter and refusal record, by key; every other key reads null. */
-const reads = (v: { counter?: string; refused?: string }) =>
+/**
+ * Today's counter (system Redis) and refusal record (the cache cluster), by key; every other key
+ * reads null. Each is answered only by the client it lives on.
+ */
+const reads = (v: { counter?: string; refused?: string }) => {
   redisMock.sysRedis.get.mockImplementation(async (key: string) =>
-    key.startsWith('system:blocks:buzz-cap:42:')
-      ? v.counter ?? null
-      : key.startsWith('system:blocks:buzz-refused:42:')
-      ? v.refused ?? null
-      : null
+    key.startsWith('system:blocks:buzz-cap:42:') ? v.counter ?? null : null
   );
+  redisMock.redis.get.mockImplementation(async (key: string) =>
+    key.startsWith('system:blocks:buzz-refused:42:') ? v.refused ?? null : null
+  );
+};
 
 const TODAY: UserAppCaps = {
   buzzPerDay: 50_000,
@@ -58,6 +61,9 @@ beforeEach(() => {
   redisMock.sysRedis.get.mockReset();
   redisMock.sysRedis.set.mockReset();
   redisMock.sysRedis.del.mockReset();
+  redisMock.redis.get.mockReset();
+  redisMock.redis.set.mockReset();
+  redisMock.redis.del.mockReset();
 });
 
 describe('getMyAppBuzzToday', () => {
@@ -99,6 +105,7 @@ describe('getMyAppBuzzCap (the paused notice)', () => {
     expect(await getMyAppBuzzCap(USER)).toBeNull();
     expect(resolveCaps).not.toHaveBeenCalled();
     expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+    expect(redisMock.redis.get).not.toHaveBeenCalled();
   });
 
   it('no refusal recorded: not paused, even one Buzz under the cap', async () => {
@@ -147,6 +154,7 @@ describe('optInAppBuzzToday', () => {
     promptOn.mockResolvedValue(false);
     await expect(optInAppBuzzToday(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+    expect(redisMock.redis.set).not.toHaveBeenCalled();
   });
 
   // The opt-in is one per-viewer record for the UTC day. It names no app and no other user, and
@@ -155,17 +163,18 @@ describe('optInAppBuzzToday', () => {
     resolveCaps.mockResolvedValue(CAN_OPT_IN);
     counterReads('40000');
     await optInAppBuzzToday(USER);
-    expect(redisMock.sysRedis.set.mock.calls).toEqual([
+    // On the cache cluster: a lost flag only asks the viewer to opt in again.
+    expect(redisMock.redis.set.mock.calls).toEqual([
       ['system:blocks:buzz-opt-in:42:2026-11-09', '1', { EX: 90_000 }],
     ]);
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 
   it("clears today's refusal record, so the notice unpauses", async () => {
     resolveCaps.mockResolvedValue(CAN_OPT_IN);
     reads({ counter: '39999', refused: '40000' });
     await optInAppBuzzToday(USER);
-    expect(redisMock.sysRedis.del.mock.calls).toEqual([
-      ['system:blocks:buzz-refused:42:2026-11-09'],
-    ]);
+    expect(redisMock.redis.del.mock.calls).toEqual([['system:blocks:buzz-refused:42:2026-11-09']]);
+    expect(redisMock.sysRedis.del).not.toHaveBeenCalled();
   });
 });

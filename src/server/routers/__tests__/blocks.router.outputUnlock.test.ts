@@ -59,6 +59,7 @@ vi.mock('~/server/services/orchestrator/orchestration-new.service', async (impor
   ...(await importOriginal<typeof OrchestrationNewModule>()),
   assertUnlockReleasesOutput: (...a: unknown[]) => h.assertUnlockReleasesOutput(...(a as [])),
 }));
+// No session resolves, and the serve flag is off: the unlock behaves as it does today.
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: vi.fn(async () => null) },
 }));
