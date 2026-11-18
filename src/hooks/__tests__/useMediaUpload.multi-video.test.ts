@@ -10,8 +10,9 @@ const act = (React as unknown as { act: ActFn }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+const uploadContext = vi.hoisted(() => ({ current: undefined as unknown }));
 vi.mock('~/components/FileUpload/FileUploadProvider', () => ({
-  useFileUploadContext: () => undefined,
+  useFileUploadContext: () => uploadContext.current,
 }));
 vi.mock('~/components/MediaUploadSettings/MediaUploadSettingsProvider', () => ({
   useMediaUploadSettingsContext: () => ({
@@ -71,11 +72,17 @@ import { useMediaUpload } from '~/hooks/useMediaUpload';
 const video = (name: string) => ({ file: new File(['x'], name, { type: 'video/mp4' }) });
 const fiveVideos = () => ['1.mp4', '2.mp4', '3.mp4', '4.mp4', '5.mp4'].map(video);
 
-async function mount() {
+async function mount(onComplete?: (props: MediaUploadOnCompleteProps) => void) {
   const completed: MediaUploadOnCompleteProps[] = [];
   let upload!: ReturnType<typeof useMediaUpload>['upload'];
   function Harness() {
-    upload = useMediaUpload({ count: 0, onComplete: (props) => completed.push(props) }).upload;
+    upload = useMediaUpload({
+      count: 0,
+      onComplete: (props) => {
+        completed.push(props);
+        onComplete?.(props);
+      },
+    }).upload;
     return null;
   }
   const root = createRoot(document.createElement('div'));
@@ -119,6 +126,31 @@ describe('useMediaUpload: five videos in one pick', () => {
     expect(uploadToS3).toHaveBeenCalledTimes(5);
     expect(editor.completed.map((x) => x.status)).toEqual(Array(5).fill('added'));
   });
+
+  it('uploads the rest when the error callback throws', async () => {
+    // One failure per worker: if a throw from onComplete ended its worker, both would stop here.
+    uploadToS3
+      .mockRejectedValueOnce(new Error('network'))
+      .mockRejectedValueOnce(new Error('network'));
+    const editor = await mount((props) => {
+      if (props.status === 'error') throw new Error('callback');
+    });
+    let picking!: Promise<void>;
+    await act(async () => {
+      picking = editor.pick();
+    });
+    await settleAll();
+    await act(async () => picking);
+    expect(uploadToS3).toHaveBeenCalledTimes(5);
+    expect(editor.completed.map((x) => x.status).sort()).toEqual([
+      'added',
+      'added',
+      'added',
+      'error',
+      'error',
+    ]);
+    await editor.unmount();
+  });
 });
 
 const unloadWarned = () => {
@@ -132,7 +164,6 @@ describe('useMediaUpload: leaving the page mid-upload', () => {
     vi.clearAllMocks();
     dropPending();
   });
-  // Settles whatever a failed test left in flight, so its warning does not leak into the next.
   afterEach(settleAll);
 
   it('warns before unload while a pick is prepared or uploaded, and not once it is done', async () => {
@@ -189,5 +220,34 @@ describe('useMediaUpload: leaving the page mid-upload', () => {
     expect(editor.completed.map((x) => x.status).sort()).toEqual(['added', 'error']);
     expect(unloadWarned()).toBe(false);
     await editor.unmount();
+  });
+
+  it('stops warning once the queued uploads are cancelled', async () => {
+    type Tracked = { file: File; abort: () => void };
+    let tracked: Tracked[] = [];
+    const setFiles = (next: Tracked[] | ((prev: Tracked[]) => Tracked[])) => {
+      tracked = typeof next === 'function' ? next(tracked) : next;
+    };
+    uploadContext.current = [tracked, setFiles];
+    try {
+      const editor = await mount();
+      let picking!: Promise<void>;
+      await act(async () => {
+        picking = editor.pick();
+      });
+      await act(async () => finishPreparing());
+      await act(async () => picking);
+      expect(uploadToS3).toHaveBeenCalledTimes(2); // 3 queued behind the two workers
+      tracked
+        .filter((x) => ['3.mp4', '4.mp4', '5.mp4'].includes(x.file.name))
+        .forEach((x) => x.abort());
+      await settleAll();
+      expect(uploadToS3).toHaveBeenCalledTimes(2);
+      expect(editor.completed).toHaveLength(2);
+      expect(unloadWarned()).toBe(false);
+      await editor.unmount();
+    } finally {
+      uploadContext.current = undefined;
+    }
   });
 });

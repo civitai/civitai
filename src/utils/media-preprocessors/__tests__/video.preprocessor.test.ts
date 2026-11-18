@@ -96,6 +96,19 @@ describe('preprocessVideo', () => {
     expect(maxActive).toBe(2);
   });
 
+  it('frees the decoder of a video that fails to load', async () => {
+    const video = fakeVideo();
+    Object.defineProperty(video, 'src', { set: () => queueMicrotask(() => video.onerror?.()) });
+    const create = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) =>
+      tag === 'video' ? video : create(tag)) as typeof document.createElement);
+    const file = new File([readFileSync(join(FIXTURES, 'plain.mp4'))], 'clip.mp4', {
+      type: 'video/mp4',
+    });
+    await expect(preprocessVideo(file)).rejects.toBeDefined();
+    expect(video.removeAttribute).toHaveBeenCalledWith('src');
+  });
+
   describe('a seek that cannot finish', () => {
     const file = () =>
       new File([readFileSync(join(FIXTURES, 'plain.mp4'))], 'clip.mp4', { type: 'video/mp4' });
