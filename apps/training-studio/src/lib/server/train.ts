@@ -9,7 +9,6 @@ import { getTrainingServiceStatus } from './service-status';
 import * as core from '$lib/train-core';
 import type { ContinueOpts, SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 import type { DatasetRating } from '$lib/dataset-rating';
-import { warmDatasetRating } from './dataset-rating';
 
 export type { ContinueOpts, TrainingItem, TrainingRunInput } from '$lib/train-core';
 export { MatureAckRequiredError } from '$lib/train-core';
@@ -89,7 +88,6 @@ export async function continueTraining(
 /** Price a "keep training" continuation without submitting (the same body, `whatif`). */
 export async function continueTrainingWhatIf(
   token: string,
-  userId: number,
   opts: ContinueOpts,
   datasetRating?: DatasetRating,
   kohyaAllowed = false
@@ -98,10 +96,6 @@ export async function continueTrainingWhatIf(
     status: await getTrainingServiceStatus(),
     kohyaAllowed,
     datasetRating,
-    // The quote is the continuation's Review: rate the source's unrated images before the submit.
-    onMatureCount: datasetRating
-      ? ({ unratedKeys }) => warmDatasetRating(token, userId, unratedKeys)
-      : undefined,
     traceMode: TRACE_MODE,
   });
 }

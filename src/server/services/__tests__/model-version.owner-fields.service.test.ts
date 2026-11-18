@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 // `modelVersion.upsert` is reachable by every model owner, so a field only a moderator or a dedicated
 // endpoint may change must be refused here too. The mock scaffold mirrors
@@ -111,9 +111,11 @@ const VERSION_ID = 100;
 function seedExisting({
   status = ModelStatus.Draft,
   trainingStatus = null,
+  usageControl = ModelUsageControl.Download,
 }: {
   status?: ModelStatus;
   trainingStatus?: TrainingStatus | null;
+  usageControl?: ModelUsageControl;
 } = {}) {
   dbMock.dbWrite.model.findUniqueOrThrow.mockResolvedValue({
     nsfw: false,
@@ -126,6 +128,7 @@ function seedExisting({
     id: VERSION_ID,
     status,
     trainingStatus,
+    usageControl,
     meta: null,
     model: { id: MODEL_ID, userId: OWNER_ID, meta: null, availability: 'Public' },
     monetization: null,
@@ -255,6 +258,70 @@ describe('upsertModelVersion — an owner cannot reopen a started run for a new 
     await edit({ trainingStatus: TrainingStatus.Pending });
 
     expect(written().trainingStatus).toBe(TrainingStatus.Pending);
+  });
+});
+
+describe('upsertModelVersion — Internal and External generation are moderator-managed', () => {
+  const { Download, Generation, InternalGeneration, ExternalGeneration } = ModelUsageControl;
+
+  it.each([
+    [ExternalGeneration, Download],
+    [ExternalGeneration, Generation],
+    [InternalGeneration, Download],
+    [InternalGeneration, ExternalGeneration],
+    [Download, ExternalGeneration],
+    [Generation, InternalGeneration],
+  ] as const)('refuses a non-moderator moving %s to %s', async (from, to) => {
+    seedExisting({ usageControl: from });
+
+    await expect(edit({ usageControl: to })).rejects.toThrowError(/managed by moderators/i);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
+  });
+
+  it('lets an owner resubmit the stored External control with another edit', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ usageControl: ExternalGeneration, name: 'renamed' });
+
+    expect(written().usageControl).toBe(ExternalGeneration);
+    expect(written().name).toBe('renamed');
+  });
+
+  it('lets an owner edit that omits usageControl through on an External version', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ name: 'renamed' });
+
+    expect(written().name).toBe('renamed');
+    expect(written().usageControl).toBeUndefined();
+  });
+
+  it('lets an owner move between Download and Generation', async () => {
+    seedExisting({ usageControl: Download });
+
+    await edit({ usageControl: Generation });
+
+    expect(written().usageControl).toBe(Generation);
+  });
+
+  it('leaves a moderator free to move External to Download', async () => {
+    seedExisting({ usageControl: ExternalGeneration });
+
+    await edit({ usageControl: Download }, true);
+
+    expect(written().usageControl).toBe(Download);
+  });
+
+  it('judges the change against the locked row, not the earlier read', async () => {
+    seedExisting({ usageControl: Download });
+    mockTx.$queryRaw.mockResolvedValueOnce([
+      { name: 'v1', trainedWords: [], trainingStatus: null, usageControl: ExternalGeneration },
+    ] as never);
+
+    await expect(edit({ usageControl: Generation })).rejects.toThrowError(/managed by moderators/i);
+
+    expect(mockTx.modelVersion.update).not.toHaveBeenCalled();
   });
 });
 

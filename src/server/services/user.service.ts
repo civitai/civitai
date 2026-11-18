@@ -1,3 +1,4 @@
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   assertCollectionItemsVisibleToViewer,
   type CollectionItemKey,
@@ -6,7 +7,11 @@ import {
   FEEDBACK_CAPTURE_OWNER_REFUSAL,
   isFeedbackCaptureOwner,
 } from '@civitai/shared/feedback-capture';
-import { servableProfilePictureSql } from '~/server/services/profile-picture.sql';
+import {
+  fallbackUserImageColumn,
+  servableProfilePictureSql,
+} from '~/server/services/profile-picture.sql';
+import { clearHeldUserImages } from '~/server/services/held-image-keys';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -109,6 +114,7 @@ import {
   userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { bustEventEngineProfilePictures } from '@civitai/redis';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   DeleteUserInput,
@@ -390,7 +396,7 @@ export const getUsers = async ({
       END AS status`);
   if (include?.includes('avatar'))
     select.push(
-      'COALESCE(i.url, u.image) AS "avatarUrl"',
+      `COALESCE(i.url, ${fallbackUserImageColumn}) AS "avatarUrl"`,
       'COALESCE(i."nsfwLevel", 0) AS "avatarNsfwLevel"'
     );
 
@@ -2408,6 +2414,9 @@ export async function getCosmeticsAndProfilePicturesForUsers(
 
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.refresh(userId);
+  await bustEventEngineProfilePictures(redis, [userId]).catch((error) =>
+    logProfilePictureRefreshError(error, { userIds: String(userId), step: 'event-engine-cache' })
+  );
 }
 
 /** The users whose profile picture is one of `imageIds`, from the primary. */
@@ -2420,6 +2429,8 @@ export async function getProfilePictureUserIds(imageIds: number[]) {
   return users.map((x) => x.id);
 }
 
+export const PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY = 10;
+
 function logProfilePictureRefreshError(error: unknown, meta: Record<string, unknown>) {
   logToAxiom({
     type: 'error',
@@ -2430,17 +2441,48 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
 }
 
 /**
- * Re-reads these users' cached profile pictures after a write changed or removed one. Never throws:
- * the write it follows has committed, and a moderation action must not fail on a cache refill.
+ * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
+ * their sessions, whose shape carries the picture's url. For a user whose picture is under an
+ * owner-hidden hold, a `User.image` naming it is cleared first (`clearHeldUserImages`), and their
+ * basic-user cache entry and search document are refreshed too. The event engine's copy of the
+ * picture is busted as well. Never throws: the write it follows has committed, and a moderation
+ * action must not fail on a cache refill.
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {
   const ids = [...new Set(userIds)];
   if (!ids.length) return;
-  try {
-    await profilePictureCache.refresh(ids);
-  } catch (error) {
-    logProfilePictureRefreshError(error, { userIds: ids.join(',') });
+  const step = async (name: string, run: () => Promise<unknown>) => {
+    try {
+      await run();
+    } catch (error) {
+      logProfilePictureRefreshError(error, { userIds: ids.join(','), step: name });
+    }
+  };
+  let heldIds: number[] = [];
+  await step('clear-image', async () => {
+    heldIds = await clearHeldUserImages(dbWrite, ids);
+  });
+  await step('picture-cache', () => profilePictureCache.refresh(ids));
+  await step('event-engine-cache', () => bustEventEngineProfilePictures(redis, ids));
+  if (heldIds.length) {
+    await step('basic-cache', () => userBasicCache.refresh(heldIds));
+    await step('search-index', () =>
+      usersSearchIndex.queueUpdate(
+        heldIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      )
+    );
   }
+  // Bulk moderation (an adjust-tag-level batch, a bulk block) can pass many users.
+  await limitConcurrency(
+    ids.map((id) => async () => {
+      try {
+        await refreshSession(id, { sendSignal: false, caller: 'profile' });
+      } catch (error) {
+        logProfilePictureRefreshError(error, { userIds: String(id) });
+      }
+    }),
+    PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY
+  );
 }
 
 /**

@@ -10,6 +10,8 @@ export type HiddenCheckSettings = {
   retireMinAnswers: number;
   /** A check failed by more than this share of its answers is retired: its known answer is likely wrong or unclear. */
   retireFailureRate: number;
+  /** Share (0 to 1) of served checks drawn from the probation pool; 0 serves none. */
+  probationShare: number;
 };
 
 /** Used when neither the moderator Config page nor the environment sets a value. */
@@ -20,6 +22,7 @@ export const DEFAULT_HIDDEN_CHECKS: HiddenCheckSettings = {
   settleDelayMinutes: 30,
   retireMinAnswers: 20,
   retireFailureRate: 0.5,
+  probationShare: 0,
 };
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
@@ -71,5 +74,10 @@ export function hiddenCheckSettings(
         DEFAULT_HIDDEN_CHECKS.retireFailureRate,
         (n) => n > 0 && n <= 1
       ),
+    probationShare: read(
+      env.KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE,
+      DEFAULT_HIDDEN_CHECKS.probationShare,
+      (n) => n >= 0 && n <= 1
+    ),
   };
 }
