@@ -15,7 +15,10 @@
  *     through the edge, so a missing header cannot mean "unrestricted". A US request with a
  *     country but no `cf-region-code` is judged by its country alone, as on the site;
  *   - the client address a per-client limit is keyed on: `resolveClientIp`, the site's predicate
- *     for rate-limit keys (`limits.ts`).
+ *     for rate-limit keys (`limits.ts`);
+ *   - the one line each subscription logs as it starts (`describeRegion`, `regionLine`): the
+ *     country and region judged, whether they came from `meta` or a header, and the SFW hold,
+ *     so production shows which source decided. Never the address, token or user.
  *
  * An HTTP request's origin is its headers and socket address; a gRPC call's is its metadata and
  * peer address, the same header names a proxy sets on either. With {@link metaTrusted} on
@@ -77,15 +80,25 @@ export function metaTrusted(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.REGISTRY_ADAPTER_TRUST_META === '1';
 }
 
-/** `origin`'s headers with each region header replaced by its `meta` key, when that is a string. */
-function regionHeaders(origin: RequestOrigin): RequestOrigin['headers'] {
+/**
+ * `origin`'s headers with each region header replaced by its `meta` key, when that is a string,
+ * and the names of the headers so replaced.
+ */
+function regionHeaders(origin: RequestOrigin): {
+  headers: RequestOrigin['headers'];
+  fromMeta: Set<string>;
+} {
   const headers = { ...origin.headers };
-  if (!metaTrusted()) return headers;
+  const fromMeta = new Set<string>();
+  if (!metaTrusted()) return { headers, fromMeta };
   for (const [header, key] of Object.entries(REGION_META_KEYS)) {
     const value = origin.meta?.[key];
-    if (typeof value === 'string') headers[header] = value;
+    if (typeof value === 'string') {
+      headers[header] = value;
+      fromMeta.add(header);
+    }
   }
-  return headers;
+  return { headers, fromMeta };
 }
 
 /** The edge's country codes that name no country: `XX`, no country known; `T1`, Tor. */
@@ -103,13 +116,74 @@ export function countryKnown(region: Pick<RegionInfo, 'countryCode'>): boolean {
 }
 
 /**
+ * The region decision for one request, as {@link regionLine} logs it:
+ *   - `country`: the two-letter code judged, uppercase, or `none` when it names no country
+ *     (`countryKnown`); a value that is not a code is never echoed;
+ *   - `region`: the region code beside a known country, when it is one to three letters or
+ *     digits (`NY`); otherwise `undefined`;
+ *   - `source`: where the country value judged came from: `meta` when meta supplied it (only
+ *     with {@link metaTrusted}) and nothing overrode it, even a value that names no country
+ *     (`""`, `XX`); otherwise `header` when the value judged is non-empty (the `cf-ipcountry`
+ *     header, or the `GB` that `x-isuk` sets, which overrides a different meta country), or
+ *     `none` when it is missing or empty;
+ *   - `restricted`: whether the request is held to SFW (see the file comment).
+ */
+export type RegionDecision = {
+  country: string;
+  region?: string;
+  source: 'meta' | 'header' | 'none';
+  restricted: boolean;
+};
+
+/** `origin`'s region decision at `at`; {@link regionRestricted} is its `restricted` field. */
+export function describeRegion(origin: RequestOrigin, at: Date = new Date()): RegionDecision {
+  const { headers, fromMeta } = regionHeaders(origin);
+  const region = getRegion({ headers } as unknown as IncomingMessage);
+  const raw = region.countryCode;
+  // A country `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
+  let source: RegionDecision['source'] = 'none';
+  if (fromMeta.has('cf-ipcountry') && raw === headers['cf-ipcountry']) source = 'meta';
+  else if (typeof raw === 'string' && raw !== '') source = 'header';
+  if (!countryKnown(region)) return { country: 'none', source, restricted: true };
+  const country = (raw as string).trim().toUpperCase();
+  const code = typeof region.regionCode === 'string' ? region.regionCode.trim().toUpperCase() : '';
+  return {
+    country,
+    region: /^[A-Z0-9]{1,3}$/.test(code) ? code : undefined,
+    source,
+    restricted: isRegionRestricted(region, at) || isRegionBlocked(region, at),
+  };
+}
+
+/**
  * Whether `origin` is held to SFW content at `at`: a request whose country cannot be told
  * (`countryKnown`), a region the site restricts to SFW, or one it blocks (see the file comment).
  */
 export function regionRestricted(origin: RequestOrigin, at: Date = new Date()): boolean {
-  const region = getRegion({ headers: regionHeaders(origin) } as unknown as IncomingMessage);
-  if (!countryKnown(region)) return true;
-  return isRegionRestricted(region, at) || isRegionBlocked(region, at);
+  return describeRegion(origin, at).restricted;
+}
+
+/**
+ * The one log line for a subscription's region decision on `binding`: its country, region,
+ * source and SFW hold, and nothing else of the request (no address, token or user).
+ */
+export function regionLine(binding: 'http' | 'grpc', d: RegionDecision): string {
+  return (
+    `subscription region: binding=${binding} country=${d.country} ` +
+    `region=${d.region ?? 'none'} source=${d.source} restricted=${d.restricted}`
+  );
+}
+
+/**
+ * The line a subscription on `binding` logs as it starts: `origin`'s region decision, with the
+ * SFW hold `restricted` actually applies (a binding's injected rule, when it has one).
+ */
+export function subscriptionRegionLine(
+  binding: 'http' | 'grpc',
+  origin: RequestOrigin,
+  restricted: (origin: RequestOrigin) => boolean
+): string {
+  return regionLine(binding, { ...describeRegion(origin), restricted: restricted(origin) });
 }
 
 /** The client address of `origin`, as the site keys a per-client limit on it. */
