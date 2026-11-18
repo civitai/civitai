@@ -2,6 +2,11 @@ import { error, isHttpError, json } from '@sveltejs/kit';
 import { RETRACTED_MEDIA_MAX_BYTES } from '@civitai/shared/retracted-media';
 import type { RequestHandler } from './$types';
 import { canAccess } from '$lib/server/access';
+import {
+  COVERED_REFUSED,
+  coveredViewEnabled,
+  getCoveredRetractedMedia,
+} from '$lib/server/csam-view';
 import { HELD_MEDIA_PAGE } from '$lib/server/held-media';
 import { streamStoredMedia } from '$lib/server/held-media-stream';
 import {
@@ -38,10 +43,15 @@ const serve: RequestHandler = async ({ params, locals, request, url }) => {
   const imageId = Number(params.imageId);
   if (!Number.isInteger(imageId) || imageId <= 0 || imageId > MAX_INT) error(400, 'Bad image id.');
   const moderatorId = locals.user.id;
+  const csamReview = canAccess(locals.user, HELD_MEDIA_PAGE);
 
-  const media = await getRetractedMedia(imageId, {
-    csamReview: canAccess(locals.user, HELD_MEDIA_PAGE),
-  });
+  // Without the CSAM page's grant, the covered view first: anything blocked but reported bytes.
+  const covered =
+    !csamReview && coveredViewEnabled()
+      ? await getCoveredRetractedMedia(imageId, moderatorId)
+      : null;
+  if (covered === COVERED_REFUSED) error(404, 'Not available here.');
+  const media = covered ?? (await getRetractedMedia(imageId, { csamReview }));
   if (media === NEEDS_CSAM_QUEUE) error(403, 'Needs CSAM-queue access.');
   if (!media) error(404, 'Not available here.');
   // Eligibility alone, so a tile whose load failed can say why; nothing is served or audited.

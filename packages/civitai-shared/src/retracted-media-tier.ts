@@ -17,8 +17,12 @@ export type RetractedTier = 'plain' | 'suspect';
 
 /** Whether this route may serve the "Image" row aliased `image` at all, to anyone: it is blocked
  *  (or, with `cdnLeg`, scanned with its url retracted and not held), not held media, and not under
- *  an evidence hold. */
-export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): string {
+ *  an evidence hold. With `covered`, held media, evidence holds and held urls are eligible too; the
+ *  caller refuses reported bytes (`reportListedUrlSql`) itself. */
+export function retractedImageWhereSql(
+  image: string,
+  { cdnLeg = false, covered = false } = {}
+): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(image)) throw new Error(`Bad table alias: ${image}`);
   const eligible = cdnLeg
     ? `(${image}.ingestion = 'Blocked' OR (
@@ -26,14 +30,16 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
       AND EXISTS (
         SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
       )
-      AND NOT ${heldUrlSql(`${image}."url"`)}
-      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
+${
+  covered ? '' : `      AND NOT ${heldUrlSql(`${image}."url"`)}\n`
+}      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
       -- url must be this row's alone, with no deleted or taken-down copy behind it either.
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
       AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
     ))`
     : `${image}.ingestion = 'Blocked'`;
+  if (covered) return `(${eligible})`;
   return `(
     ${eligible}
     -- NULL for an image with no review flag or block reason, so COALESCE before the NOT.

@@ -1,4 +1,4 @@
-import { sqlRef } from './held-media';
+import { CSAM_REPORT_LISTED_IMAGE_IDS_SQL, sqlRef } from './held-media';
 
 /**
  * When the image CDN must not retract a stored url: the url-level hold that the main app's
@@ -122,6 +122,35 @@ export function heldUrlSql(url: string): string {
         ht."userId" IS NULL
         OR ${ownerHeldText('ht."userId"')}
         OR ${ownerReportedText('ht."userId"')}
+      )
+    )
+  )`;
+}
+
+/** The ids `CSAM_REPORT_LISTED_IMAGE_IDS_SQL` lists, as bigints, so a join on "Image".id can use its
+ *  primary key. An entry that is not a number lists nothing. */
+const LISTED_IMAGE_IDS_SQL = `SELECT (rl_ids.id)::bigint FROM (${CSAM_REPORT_LISTED_IMAGE_IDS_SQL}) rl_ids
+  WHERE rl_ids.id ~ '^[0-9]{1,18}$'`;
+
+/**
+ * Whether the url `url` (a column reference) carries reported bytes: an image row or moderator delete
+ * on it is listed on any CsamReport, whatever the report's state, or an image row on it has the pHash
+ * of a listed image. A copy under another url counts through its pHash only.
+ */
+export function reportListedUrlSql(url: string): string {
+  const u = sqlRef(url);
+  if (/^rl_/.test(u)) throw new Error(`Alias taken inside reportListedUrlSql: ${u}`);
+  return `(
+    EXISTS (SELECT 1 FROM "Image" rl_i WHERE rl_i.url = ${u} AND rl_i.id IN (${LISTED_IMAGE_IDS_SQL}))
+    OR EXISTS (
+      SELECT 1 FROM "ImageCdnModeratorDelete" rl_d
+      WHERE rl_d.url = ${u} AND rl_d."imageId" IN (${LISTED_IMAGE_IDS_SQL})
+    )
+    OR EXISTS (
+      SELECT 1 FROM "Image" rl_p
+      WHERE rl_p.url = ${u} AND rl_p."pHash" IN (
+        SELECT rl_x."pHash" FROM "Image" rl_x
+        WHERE rl_x.id IN (${LISTED_IMAGE_IDS_SQL}) AND rl_x."pHash" IS NOT NULL
       )
     )
   )`;
