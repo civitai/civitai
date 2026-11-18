@@ -14,6 +14,7 @@ import {
 import { DISMISS_FAILED } from '$lib/notice-copy';
 import { consented, consentFailure, requireConsent, requireMember } from '$lib/server/membership';
 import { getPlayerStatus } from '$lib/server/player-status';
+import { goldForRank } from '$lib/server/progression/config';
 import { isRank, RANK_RULES } from '$lib/server/ranks';
 import { getStanding, mutedFailure } from '$lib/server/standing';
 import { rankTable } from '$lib/server/progression/rating';
@@ -29,6 +30,8 @@ import {
 import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
+import { creditLateJudgment } from '$lib/server/queue/vote-record';
+import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -176,7 +179,11 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     banner: picked?.banner ?? null,
     category: picked?.category ?? null,
     ...common,
-    daily,
+    // `goldPerVote` lets the rail move today's gold the moment a vote is cast (`withVotesSent`).
+    daily: {
+      ...daily,
+      goldPerVote: isRank(status.rank) ? goldForRank(status.rank, status.rating.belowBar) : 0,
+    },
     rail,
     resetPending,
     apprenticeMeter,
@@ -280,6 +287,20 @@ function refused(reason: string, vote: Pick<ParsedVote, 'ref' | 'itemId'> | null
   );
 }
 
+/** A rating judgment on an item that settled while it waited in the buffer still counts toward the Daily Watch. */
+async function creditLate(userId: number, itemId: number, answer: string): Promise<boolean> {
+  try {
+    return await creditLateJudgment(db, { userId, itemId, answer, now: queueDeps.now() });
+  } catch (error) {
+    console.error('knights: could not count a late judgment toward the Watch', {
+      userId,
+      itemId,
+      error,
+    });
+    return false;
+  }
+}
+
 async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
   try {
     const result =
@@ -319,9 +340,14 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
     }
     if (result.status === 'rejected') {
       refused(result.reason, { ref, itemId }, locals.user.id);
+      const watchCounted =
+        ref.kind === 'queue' &&
+        STALE_REASONS.has(result.reason) &&
+        (await creditLate(locals.user.id, itemId, answer));
       return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
         message: REJECTION_TEXT[result.reason],
         reason: result.reason,
+        ...(watchCounted ? { watchCounted } : {}),
       });
     }
     return 'check' in result && result.check

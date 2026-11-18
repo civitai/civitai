@@ -98,8 +98,8 @@
       {@render row(data.self, true, data.self.behind)}
     {:else}
       <p class="note">
-        You are not on the board this week. Judge as a Knight or above and your fervor will place
-        you.
+        You have no fervor from the last {data.windowDays} days. Judge as a Knight or above and your
+        fervor will place you.
       </p>
     {/if}
   </section>
@@ -108,7 +108,7 @@
 <div class="page-wide">
   <header class="title">
     <div>
-      <p class="eyebrow">This week's vigil</p>
+      <p class="eyebrow">The vigil · last {data.windowDays} days</p>
       <h1 class="heading">Most devoted</h1>
     </div>
     <p class="meta">
@@ -133,7 +133,7 @@
   </details>
 
   {#if data.entries.length === 0}
-    <p class="note">No one has earned fervor this week yet.</p>
+    <p class="note">No one has earned fervor in the last {data.windowDays} days yet.</p>
   {/if}
 
   {#if podium.length}
@@ -164,7 +164,7 @@
   {@render standing('m')}
 
   {#if rows.length}
-    <ul class="list" role="list" aria-label="Most devoted this week">
+    <ul class="list" role="list" aria-label="Most devoted in the last {data.windowDays} days">
       {#each rows as entry (entry.userId)}
         <li class="item">{@render row(entry, entry.userId === data.viewerId, null)}</li>
       {/each}

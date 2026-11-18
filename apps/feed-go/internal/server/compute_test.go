@@ -93,7 +93,7 @@ func newComputeFixture(t *testing.T) *computeFixture {
 			Verifier:    &auth.Verifier{Issuer: computeIssuer, JWKSURL: jwks.URL, HTTP: jwks.Client()},
 			Revocation:  &auth.Revocation{Redis: sys},
 			Sessions:    &hydrate.PackedReader{Redis: cache},
-			CookieNames: []string{"civ-token"},
+			CookieNames: auth.FixedCookieNames("civ-token"),
 		},
 		Deps: &feed.Deps{
 			DB:      &testkit.DB{},

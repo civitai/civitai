@@ -7,6 +7,7 @@ import {
   dealStatusBadge,
   dealQueryError,
   escrowCopy,
+  sellerHeldLine,
   disputeNotice,
   groupEventsByRound,
   isModeratorHold,
@@ -188,6 +189,21 @@ describe('deal page access', () => {
   });
 });
 
+describe('seller held line', () => {
+  it('tells the seller the held amount and the payout timings while the deal is open', () => {
+    for (const status of ['Requested', 'Accepted', 'InRevision', 'Delivered'] as const)
+      expect(sellerHeldLine({ status, held: true, price: 5000 })).toBe(
+        "5,000 Buzz from the buyer is already held in escrow, so the money is there before you start. After you deliver, it's paid to you 48 hours after the buyer accepts, or 120 hours after your latest delivery if they don't respond, unless they report a problem in that time. It goes back to the buyer if the request is declined, withdrawn or expires, or the deal is canceled."
+      );
+  });
+
+  it('says nothing before the hold is confirmed, or once the deal is closed or contested', () => {
+    expect(sellerHeldLine({ status: 'Requested', held: false, price: 5000 })).toBeNull();
+    for (const status of ['Completed', 'Cancelled', 'Disputed', 'CancellationRequested'] as const)
+      expect(sellerHeldLine({ status, held: true, price: 5000 })).toBeNull();
+  });
+});
+
 describe('escrow state', () => {
   it('says "Confirming payment" until the hold is confirmed, never "held"', () => {
     const state = dealEscrowState({ status: 'Requested', held: false, settled: false });
@@ -356,7 +372,7 @@ describe('deal list status badge', () => {
   });
 
   it('leaves deals no moderator settled on their status label', () => {
-    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Cancelled');
+    expect(dealStatusBadge({ status: 'Cancelled', disputeResolution: null })).toBe('Canceled');
     expect(dealStatusBadge({ status: 'Completed' })).toBe('Complete');
   });
 });
