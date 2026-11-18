@@ -23,11 +23,16 @@ import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withs
  */
 
 // Mirrors event-engine-common/services/metrics.ts (REFRESH_AFTER, UNSTAMPED_REFRESH_CHANCE,
-// POPULATED_AT_FIELD). Not imported: the submodule does not export them. image-metrics-swr.test.ts
-// reads them from the submodule's source and fails if these drift.
+// POPULATED_AT_FIELD, POINT_LOOKUP_MAX_IDS). Not imported: the submodule does not export them.
+// image-metrics-swr.test.ts reads them from the submodule's source and fails if these drift.
 export const SWR_REFRESH_AFTER_SECONDS = 60 * 60;
 export const SWR_UNSTAMPED_REFRESH_CHANCE = 0.05;
 export const SWR_POPULATED_AT_FIELD = '_populatedAt';
+// MetricService runs a populate with its point-lookup settings (one thread, a short server-side
+// execution cap) only when it names at most this many ids; a larger one runs with the server's
+// defaults (multi-threaded, no cap). The refresher's default batch size is this, so every
+// background refresh stays a point lookup.
+export const SWR_POINT_LOOKUP_MAX_IDS = 100;
 // The cached entry's TTL is 12h and a served entry is refreshed after 1h, so an entry this old
 // means its refreshes are not landing (dropped, failing, or its key never read). Past it the id is
 // read the flag-OFF way, which still serves the entry and repopulates it itself.
@@ -73,7 +78,10 @@ export function classifyMetricHash(
 export type MetricRefresherOptions = {
   /** How long ids collect before a batch runs. */
   flushMs?: number;
-  /** Ids per repopulate. Below MetricService's 1000-id ClickHouse batch, so one query each. */
+  /**
+   * Ids per repopulate. Defaults to `SWR_POINT_LOOKUP_MAX_IDS`, so each one keeps MetricService's
+   * point-lookup settings (and stays below its 1000-id ClickHouse batch, so one query each).
+   */
   batchSize?: number;
   /** Repopulates in flight at once, per process. */
   maxConcurrent?: number;
@@ -97,7 +105,7 @@ export function createMetricRefresher(
   refresh: (ids: number[]) => Promise<unknown>,
   {
     flushMs = 1_000,
-    batchSize = 200,
+    batchSize = SWR_POINT_LOOKUP_MAX_IDS,
     maxConcurrent = 2,
     maxPending = 2_000,
     cooldownMs = 60_000,

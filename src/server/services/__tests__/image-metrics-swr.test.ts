@@ -35,6 +35,7 @@ import {
   resetImageMetricsSwrGateForTests,
   resolveMetricsStaleWhileRevalidate,
   SWR_MAX_STALE_SECONDS,
+  SWR_POINT_LOOKUP_MAX_IDS,
   SWR_POPULATED_AT_FIELD,
   SWR_REFRESH_AFTER_SECONDS,
   SWR_UNSTAMPED_REFRESH_CHANCE,
@@ -94,12 +95,13 @@ describe('classifyMetricHash', () => {
     expect(classifyMetricHash(stamped(10, { notFound: '1' }), NOW)).toBe('fresh');
   });
 
-  it('mirrors event-engine-common: the same refresh age, unstamped share and stamp field', () => {
+  it('mirrors event-engine-common: the same refresh age, unstamped share, stamp field and point-lookup threshold', () => {
     // Read from the submodule's source: it does not export these. A missing constant fails here
     // rather than skipping (`readMirrored` asserts the match).
     expect(SWR_REFRESH_AFTER_SECONDS).toBe(readMirrored('REFRESH_AFTER'));
     expect(SWR_UNSTAMPED_REFRESH_CHANCE).toBe(readMirrored('UNSTAMPED_REFRESH_CHANCE'));
     expect(SWR_POPULATED_AT_FIELD).toBe(readMirrored('POPULATED_AT_FIELD'));
+    expect(SWR_POINT_LOOKUP_MAX_IDS).toBe(readMirrored('POINT_LOOKUP_MAX_IDS'));
   });
 
   it('bounds the max staleness between the refresh age and the 12h TTL', () => {
@@ -337,6 +339,26 @@ describe('createMetricRefresher', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(refresher.stats().pending).toBe(1);
+  });
+
+  it('splits a large stale queue into batches of at most 100 ids by default', async () => {
+    // MetricService keeps its point-lookup settings only for lookups of <= 100 ids. No batchSize
+    // is passed: this pins the DEFAULT the production refresher uses.
+    const refresh = vi.fn(async (_ids: number[]) => undefined);
+    const refresher = createMetricRefresher(refresh, { flushMs: 0 });
+    const ids = Array.from({ length: 250 }, (_, i) => i + 1);
+
+    refresher.enqueue(ids);
+    refresher.flushNow();
+    await vi.waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(3);
+      expect(refresher.stats().running).toBe(0);
+    });
+
+    expect(refresh.mock.calls.map(([batch]) => batch.length)).toEqual([100, 100, 50]);
+    // Every id refreshed exactly once, in queue order.
+    expect(refresh.mock.calls.flatMap(([batch]) => batch)).toEqual(ids);
+    expect(refresher.stats()).toMatchObject({ pending: 0, inFlight: 0 });
   });
 
   it('drops ids past maxPending instead of growing without bound', () => {
