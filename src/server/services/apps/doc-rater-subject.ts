@@ -7,7 +7,7 @@
 import type { DocForRating, RatedDocAddress } from '~/server/services/apps/doc-store';
 import { getDocStoreRater } from '~/server/services/apps/doc-store-rater.instance';
 import { collectSharedDataLeaves } from '~/server/services/apps/shared-data-leaves';
-import type { TextScanSubject } from '~/server/services/text-scan/types';
+import type { TextScanField, TextScanSubject } from '~/server/services/text-scan/types';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const APP_DOC_ENTITY_TYPE = 'AppDoc' as const;
@@ -26,13 +26,18 @@ export function appDocTexts(data: unknown): string[] {
   return [JSON.stringify(data)];
 }
 
+/** The scan's fields for a document's data: its texts, one per line. */
+export function appDocFields(data: unknown): TextScanField[] {
+  return [{ heading: 'Shared app content', text: appDocTexts(data).join('\n') }];
+}
+
 export function appDocTextScanSubject(
   address: RatedDocAddress,
   doc: DocForRating
 ): TextScanSubject {
   const meta: AppDocSubjectMeta = { ...address, seq: doc.seq, version: doc.version };
   return {
-    fields: [{ heading: 'Shared app content', text: appDocTexts(doc.data).join('\n') }],
+    fields: appDocFields(doc.data),
     // An author cannot rate their own document: any level found is the level.
     declared: {},
     ...(doc.authorUid !== null ? { userId: doc.authorUid } : {}),

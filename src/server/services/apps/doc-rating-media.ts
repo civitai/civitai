@@ -6,13 +6,15 @@
  * A reference is any image key (a public image CDN key, uuid-shaped) found anywhere in the
  * document's text: in a string value or an object key, whole or inside a url, percent-encoded or
  * written with escaped dashes (`keysInText`, the same reader the image-ownership checks use). A key
- * names an image when an `Image` row stores it as its `url`; any other uuid in the data names
- * nothing and adds no level. Private generation media cannot be in a shared document at all (the
- * shared write refuses it), so public images are the only media to resolve.
+ * names an image when an `Image` row stores it as its `url`. Private generation media cannot be in
+ * a shared document at all (the shared write refuses it), so public images are the only media to
+ * resolve.
  *
  * Fails closed: an image that is not rated yet (no level, or its scan has not finished) leaves the
  * whole document unrated, so it stays hidden from other viewers until the next pass; a Blocked
- * image makes the document Blocked.
+ * image makes the document Blocked; and a key inside a url (a text holding `://`) that names no
+ * `Image` row is treated as an image not rated yet. A key in any other text that names no row (an
+ * app's own uuid ids) adds no level.
  */
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
@@ -29,7 +31,13 @@ export const DOC_MEDIA_MAX_KEYS = 200;
 /** Characters of percent-decoding spent per document while looking for keys. */
 const DECODE_BUDGET_CHARS = 512_000;
 
-export type DocMediaKeys = { keys: string[] } | { overflow: 'too-many' | 'decode-budget' };
+export type DocMediaKeys =
+  | {
+      keys: string[];
+      /** The keys found inside a url: one that names no `Image` row keeps the document pending. */
+      urlKeys: string[];
+    }
+  | { overflow: 'too-many' | 'decode-budget' };
 
 /**
  * Every image key in a document's texts (its string values and object keys, or its whole stored
@@ -38,14 +46,17 @@ export type DocMediaKeys = { keys: string[] } | { overflow: 'too-many' | 'decode
 export function docMediaKeys(texts: readonly string[]): DocMediaKeys {
   const budget = { left: DECODE_BUDGET_CHARS };
   const keys = new Set<string>();
+  const urlKeys = new Set<string>();
   for (const text of texts) {
+    const inUrl = text.includes('://');
     for (const key of keysInTextWithin(text, budget)) {
       keys.add(key);
+      if (inUrl) urlKeys.add(key);
       if (keys.size > DOC_MEDIA_MAX_KEYS) return { overflow: 'too-many' };
     }
     if (budget.left < 0) return { overflow: 'decode-budget' };
   }
-  return { keys: [...keys] };
+  return { keys: [...keys], urlKeys: [...urlKeys] };
 }
 
 export type DocMediaLevel =
@@ -65,12 +76,17 @@ export function imageLevel(row: Pick<ImageRow, 'nsfwLevel' | 'ingestion'>): Nsfw
 }
 
 /** The level of the images `keys` name (see the module header). */
-export async function resolveDocMediaLevel(keys: readonly string[]): Promise<DocMediaLevel> {
+export async function resolveDocMediaLevel(
+  keys: readonly string[],
+  urlKeys: readonly string[] = []
+): Promise<DocMediaLevel> {
   if (keys.length === 0) return { status: 'rated', level: NsfwLevel.PG };
   const rows = await dbRead.image.findMany({
     where: { url: { in: [...keys] } },
     select: { url: true, nsfwLevel: true, ingestion: true },
   });
+  const found = new Set(rows.map((r) => r.url));
+  if (urlKeys.some((key) => !found.has(key))) return { status: 'pending' };
   let level: NsfwLevel = NsfwLevel.PG;
   for (const row of rows) {
     const own = imageLevel(row);

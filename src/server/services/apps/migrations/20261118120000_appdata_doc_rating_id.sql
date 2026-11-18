@@ -24,7 +24,7 @@
 --
 -- SAFE BEFORE THE CODE: additive only. A nullable column with no default (catalog-only), a
 --   sequence, a grant and a policy that admits nothing until the setting is set. Until this is
---   applied the rater does nothing (`raterReady` checks `pg_policies` for this policy).
+--   applied the rater does nothing (the rater's `ready` checks `pg_policies` for this policy).
 --
 -- Same lock discipline as `20261116120000_appdata_doc_levels.sql`: a 1s lock_timeout, below the
 --   store's own 3s. If the ALTER times out, re-run it.

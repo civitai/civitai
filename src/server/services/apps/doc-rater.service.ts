@@ -27,23 +27,36 @@
  */
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { TEXT_MODERATION_RETRY_LIMIT } from '~/server/jobs/text-moderation-retry.constants';
 import { logToAxiom } from '~/server/logging/client';
 import { isSharedDocLevelsKnownOn } from '~/server/services/apps/doc-levels';
 import { docMediaKeys, resolveDocMediaLevel } from '~/server/services/apps/doc-rating-media';
-import { PUBLISHED_NS } from '~/server/services/apps/doc-store';
+import { PUBLISHED_NS, type UnratedDoc } from '~/server/services/apps/doc-store';
 import { declaredCollections } from '~/server/services/apps/doc-store-access';
 import { getDocStoreRater } from '~/server/services/apps/doc-store-rater.instance';
 import {
   APP_DOC_ENTITY_TYPE,
-  appDocTexts,
-  appDocTextScanSubject,
+  appDocFields,
   type AppDocSubjectMeta,
 } from '~/server/services/apps/doc-rater-subject';
 import { syncSubListingRatingFromDoc } from '~/server/services/blocks/app-sub-listing.service';
-import { getTextScanMode } from '~/server/services/text-scan/mode';
-import { subjectTextLength, textScanTextHash } from '~/server/services/text-scan/prompt';
+import {
+  getTextScanMode,
+  isTextScanEnabled,
+  readTextScanRollouts,
+  textScanEmEntityType,
+} from '~/server/services/text-scan/mode';
+import {
+  getTextScanConfig,
+  subjectTextLength,
+  textScanTextHash,
+} from '~/server/services/text-scan/prompt';
 import { scanEntity } from '~/server/services/text-scan/submit';
-import type { TextScanOutcome, TextScanSubject } from '~/server/services/text-scan/types';
+import type {
+  TextScanField,
+  TextScanOutcome,
+  TextScanSubject,
+} from '~/server/services/text-scan/types';
 import { REMIX_STATUSES } from '~/shared/remix-apps/row.schema';
 
 export type RateResult =
@@ -51,22 +64,28 @@ export type RateResult =
   | { status: 'media-pending' }
   | { status: 'changed' | 'gone' | 'hidden' | 'counter' };
 
+/** A document's texts, line by line: where its image references are looked for. */
+function lines(fields: readonly TextScanField[]): string[] {
+  return fields.flatMap((f) => (f.text ?? '').split('\n'));
+}
+
 /**
- * Rate one document at the revision `seq` whose text was rated `textLevel`: the higher of that and
- * its images' levels. Images not rated yet leave it pending. A rated App Store card follows.
+ * Rate one document at the revision `meta.seq`, whose text (`fields`) was rated `textLevel`: the
+ * higher of that and its images' levels. Images not rated yet leave it pending. A revision the
+ * document has left is refused (`changed`). A rated App Store card follows.
  */
 export async function rateAppDoc(
   meta: AppDocSubjectMeta,
-  data: unknown,
+  fields: readonly TextScanField[],
   textLevel: number
 ): Promise<RateResult> {
-  const keys = docMediaKeys(appDocTexts(data));
+  const keys = docMediaKeys(lines(fields));
   if ('overflow' in keys) {
     // More image references than are read per document: never rated on a subset.
     logToAxiom({ name: 'app-doc-rater', type: 'warning', message: 'too many image references' });
     return { status: 'media-pending' };
   }
-  const media = await resolveDocMediaLevel(keys.keys);
+  const media = await resolveDocMediaLevel(keys.keys, keys.urlKeys);
   if (media.status === 'pending') return { status: 'media-pending' };
   const level = Math.max(textLevel, media.level);
   const applied = await getDocStoreRater().applyRating(
@@ -96,36 +115,39 @@ export function textLevelOf(outcome: Pick<TextScanOutcome, 'nsfw' | 'nsfwLevel'>
 
 /**
  * The text scan's callback, active verdicts only (`AppDoc` adapter, `applyTextScan`). `subject` is
- * the document as it is NOW; `textHash` is the hash of the text that was scanned. A document whose
- * text changed since is left pending: the next pass scans its new text.
+ * the document as the callback loaded it; `textHash` is the hash of the text that was scanned. The
+ * rating is bound to the revision that subject was loaded at (`subject.meta.seq`), so an edit at any
+ * point after the load drops it (`changed`), and a document whose text changed before the load is
+ * left pending (`stale`): either way the next pass scans its new text.
+ *
+ * A text too long to be scanned in one call is never rated from a verdict: a verdict on it may
+ * cover only part of it (a cut input, or the partial verdict of a failed multi-segment scan).
  */
 export async function applyAppDocTextScan(args: {
   outcome: TextScanOutcome;
   subject: TextScanSubject;
   textHash: string;
-}): Promise<RateResult | { status: 'stale' | 'no-level' }> {
+}): Promise<RateResult | { status: 'stale' | 'no-level' | 'too-long' }> {
   if (textScanTextHash(args.subject) !== args.textHash) return { status: 'stale' };
   const textLevel = textLevelOf(args.outcome);
   if (textLevel === null) return { status: 'no-level' };
-  const meta = args.subject.meta as AppDocSubjectMeta;
-  const doc = await getDocStoreRater().getForRating(meta.appId, meta.ns, meta.collection, meta.key);
-  if (!doc) return { status: 'gone' };
-  // The text matched at load; rate the revision read now, and `applyRating` refuses it if an edit
-  // lands in between.
-  return rateAppDoc({ ...meta, seq: doc.seq, version: doc.version }, doc.data, textLevel);
+  const { maxInputChars } = await getTextScanConfig();
+  if (subjectTextLength(args.subject) > maxInputChars) return { status: 'too-long' };
+  return rateAppDoc(args.subject.meta as AppDocSubjectMeta, args.subject.fields, textLevel);
 }
 
-/** Documents read per page; acted on per pass; read per pass at most. */
+/** Documents read per page; scans submitted per pass; documents read per pass at most. */
 export const RATER_PAGE = 50;
 export const RATER_PER_PASS = 500;
 export const RATER_READ_CAP = 5_000;
-/** A submitted scan counts as in flight this long (the text scan's own window). */
-const IN_FLIGHT_MS = 30 * 60_000;
+/** How often the job runs: the app order rotates by one each period. */
+const RATER_PERIOD_MS = 5 * 60_000;
 
 export type RatePassResult = {
   ready: boolean;
   apps: number;
   read: number;
+  /** Scans submitted (or attempted): what the per-pass budget counts. */
   acted: number;
   submitted: number;
   rated: number;
@@ -134,75 +156,109 @@ export type RatePassResult = {
   failed: number;
 };
 
-/** The rating ids among `ids` whose scan was submitted within the in-flight window. */
-async function inFlight(ids: number[]): Promise<Set<number>> {
-  if (!ids.length) return new Set();
+type ScanRow = {
+  entityType: string;
+  entityId: number;
+  status: string;
+  retryCount: number;
+  nsfwLevel: number | null;
+  result: unknown;
+};
+
+/** The live and shadow verdict rows of these rating ids, by `<row entity type>:<id>`. */
+async function scanRows(ids: number[]): Promise<Map<string, ScanRow>> {
+  if (!ids.length) return new Map();
   const rows = await dbWrite.entityModeration.findMany({
     where: {
-      entityType: { in: [APP_DOC_ENTITY_TYPE, `${APP_DOC_ENTITY_TYPE}:shadow`] },
+      entityType: {
+        in: [APP_DOC_ENTITY_TYPE, textScanEmEntityType(APP_DOC_ENTITY_TYPE, 'shadow')],
+      },
       entityId: { in: ids },
-      status: 'Pending',
-      updatedAt: { gte: new Date(Date.now() - IN_FLIGHT_MS) },
     },
-    select: { entityId: true },
+    select: {
+      entityType: true,
+      entityId: true,
+      status: true,
+      retryCount: true,
+      nsfwLevel: true,
+      result: true,
+    },
   });
-  return new Set(rows.map((r) => r.entityId));
+  return new Map(rows.map((r) => [`${r.entityType}:${r.entityId}`, r as ScanRow]));
 }
 
+const scannedHashOf = (row: ScanRow | undefined) =>
+  (row?.result as { textHash?: string } | null | undefined)?.textHash;
+
 /**
- * Rate one unrated document: give it its rating id, submit its text scan, or rate it straight away
- * when the scan already has a verdict for this exact text (`unchanged`) or there is no text.
+ * A scan the pipeline still owns: submitted and not answered, or failed with retries left. The
+ * retry job resubmits those (reading the document's text at that time), so a pass must not: it
+ * would bill a second workflow and reset the retry budget.
  */
-async function rateOne(
+const owned = (row: ScanRow | undefined) =>
+  !!row && row.status !== 'Succeeded' && row.retryCount < TEXT_MODERATION_RETRY_LIMIT;
+
+/**
+ * One document of a pass. Cheap paths first, from the verdict rows read for the whole page:
+ * - a scan the pipeline owns: wait;
+ * - an ACTIVE verdict stored for exactly its current text: rate it now;
+ * - a SHADOW verdict stored for exactly its current text: nothing to do until the rollout changes.
+ * Otherwise give it a rating id and submit its scan (`scanEntity`), the one step the budget counts.
+ */
+async function rateDoc(
   appId: string,
   collection: string,
-  doc: { key: string; seq: number },
-  out: RatePassResult
+  doc: UnratedDoc,
+  rows: Map<string, ScanRow>,
+  out: RatePassResult,
+  canScan: () => boolean
 ): Promise<void> {
-  const rater = getDocStoreRater();
-  const ratingId = await rater.assignRatingId(appId, PUBLISHED_NS, collection, doc.key);
+  const meta: AppDocSubjectMeta = {
+    appId,
+    ns: PUBLISHED_NS,
+    collection,
+    key: doc.key,
+    seq: doc.seq,
+    version: doc.version,
+  };
+  const fields = appDocFields(doc.data);
+  const hash = textScanTextHash({ fields, declared: {} });
+  const id = doc.ratingId;
+  if (id !== null) {
+    const live = rows.get(`${APP_DOC_ENTITY_TYPE}:${id}`);
+    const shadow = rows.get(`${textScanEmEntityType(APP_DOC_ENTITY_TYPE, 'shadow')}:${id}`);
+    if (owned(live) || owned(shadow)) return void out.waiting++;
+    const mode = await getTextScanMode(APP_DOC_ENTITY_TYPE, id);
+    if (mode === 'active' && live?.status === 'Succeeded' && scannedHashOf(live) === hash) {
+      const level = textLevelOf({ nsfwLevel: live.nsfwLevel });
+      if (level === null) return void out.skipped++;
+      return count(await rateAppDoc(meta, fields, level), out);
+    }
+    if (mode === 'shadow' && shadow?.status === 'Succeeded' && scannedHashOf(shadow) === hash)
+      return void out.skipped++;
+    if (mode === 'off') return void out.skipped++;
+  }
+  if (!canScan()) return;
+  out.acted++;
+  const ratingId =
+    id ?? (await getDocStoreRater().assignRatingId(appId, PUBLISHED_NS, collection, doc.key));
   if (ratingId === null) return void out.skipped++;
   const scan = await scanEntity({ entityType: APP_DOC_ENTITY_TYPE, entityId: ratingId });
   if (scan.status === 'submitted') return void out.submitted++;
   if (scan.status === 'failed') return void out.failed++;
-  const now = scan.reason === 'unchanged' || scan.reason === 'too-short';
-  if (!now) return void (scan.reason === 'in-flight' ? out.waiting++ : out.skipped++);
-  // A verdict for this text is stored (or there is no text): rate now, but only as an ACTIVE
-  // verdict would; shadow rates nothing.
-  if ((await getTextScanMode(APP_DOC_ENTITY_TYPE, ratingId)) !== 'active')
-    return void out.skipped++;
-  const current = await rater.getForRating(appId, PUBLISHED_NS, collection, doc.key);
-  if (!current) return void out.skipped++;
-  const address = { appId, ns: PUBLISHED_NS, collection, key: doc.key };
-  const subject = appDocTextScanSubject(address, current);
-  let textLevel: number | null = null;
-  if (scan.reason === 'too-short') {
-    // No text when the scan looked: PG, unless an edit has added text since.
-    if (subjectTextLength(subject) === 0) textLevel = NsfwLevel.PG;
-  } else {
-    const row = await dbWrite.entityModeration.findUnique({
-      where: { entityType_entityId: { entityType: APP_DOC_ENTITY_TYPE, entityId: ratingId } },
-      select: { status: true, nsfwLevel: true, result: true },
-    });
-    // The stored verdict counts only for the text it was given for: the document's text now.
-    const scannedHash = (row?.result as { textHash?: string } | null)?.textHash;
-    if (row?.status === 'Succeeded' && scannedHash === textScanTextHash(subject)) {
-      textLevel = textLevelOf({ nsfwLevel: row.nsfwLevel });
-    }
+  if (scan.reason === 'in-flight') return void out.waiting++;
+  // No text to scan (`too-short`) rates PG, raised by its images, but only as an ACTIVE verdict
+  // would, and only while this read's text is still empty (`rateAppDoc` binds the revision).
+  if (scan.reason === 'too-short' && subjectTextLength({ fields, declared: {} }) === 0) {
+    if ((await getTextScanMode(APP_DOC_ENTITY_TYPE, ratingId)) !== 'active')
+      return void out.skipped++;
+    return count(await rateAppDoc(meta, fields, NsfwLevel.PG), out);
   }
-  if (textLevel === null) return void out.skipped++;
-  const result = await rateAppDoc(
-    {
-      appId,
-      ns: PUBLISHED_NS,
-      collection,
-      key: doc.key,
-      seq: current.seq,
-      version: current.version,
-    },
-    current.data,
-    textLevel
-  );
+  // `unchanged` (a verdict for this text exists): the next pass reads it from the page's rows.
+  out.skipped++;
+}
+
+function count(result: RateResult, out: RatePassResult) {
   if (result.status === 'rated') out.rated++;
   else if (result.status === 'media-pending') out.waiting++;
   else out.skipped++;
@@ -220,11 +276,27 @@ async function sharedCollections(appBlockId: string): Promise<string[]> {
     .map(([name]) => name);
 }
 
+/** Whether the text scan can scan an `AppDoc` at all: its kill switch, and any rollout share. */
+async function appDocScanOn(): Promise<boolean> {
+  if (!(await isTextScanEnabled())) return false;
+  const rollout = (await readTextScanRollouts())[APP_DOC_ENTITY_TYPE];
+  return !!rollout && (rollout.active > 0 || rollout.shadow > 0);
+}
+
+/** `items` starting at a position that moves by one every job period. */
+function rotated<T>(items: readonly T[]): T[] {
+  if (items.length < 2) return [...items];
+  const start = Math.floor(Date.now() / RATER_PERIOD_MS) % items.length;
+  return [...items.slice(start), ...items.slice(0, start)];
+}
+
 /**
  * One rating pass over `appIds`: each shared collection's unrated documents, oldest change first,
- * paged by seq so documents still waiting (a scan in flight, an image not rated yet) never starve
- * the ones behind them. Acts on at most `perPass` documents ({@link RATER_PER_PASS}) and reads at
- * most {@link RATER_READ_CAP}. Nothing at all until the rating-id migration is applied (`ready`).
+ * paged by seq. Submits at most `perPass` scans ({@link RATER_PER_PASS}) and reads at most
+ * {@link RATER_READ_CAP} documents; documents that are only waiting cost a read, never the budget,
+ * and the app order rotates every period, so neither one app nor documents stuck waiting starve the
+ * rest. One app's failure (an unreadable manifest) is logged and the pass moves on. Nothing at all
+ * until the rating-id migration is applied (`ready`), or while the text scan cannot scan `AppDoc`.
  */
 export async function rateUnratedDocs(
   appIds: readonly string[],
@@ -244,46 +316,52 @@ export async function rateUnratedDocs(
   const rater = getDocStoreRater();
   if (!(await rater.ready())) return out;
   out.ready = true;
+  if (!(await appDocScanOn())) return out;
   const budget = opts.perPass ?? RATER_PER_PASS;
-  const spent = () => out.acted >= budget || out.read >= RATER_READ_CAP;
-  for (const appId of appIds) {
-    if (spent()) break;
+  const canScan = () => out.acted < budget;
+  for (const appId of rotated(appIds)) {
+    if (!canScan() || out.read >= RATER_READ_CAP) break;
     out.apps++;
-    for (const collection of await sharedCollections(appId)) {
-      let afterSeq = 0;
-      while (!spent()) {
-        const docs = await rater.listUnrated(appId, PUBLISHED_NS, collection, {
-          afterSeq,
-          limit: RATER_PAGE,
-        });
-        if (!docs.length) break;
-        afterSeq = docs[docs.length - 1].seq;
-        out.read += docs.length;
-        const waiting = await inFlight(
-          docs.map((d) => d.ratingId).filter((id): id is number => id !== null)
-        );
-        for (const doc of docs) {
-          if (out.acted >= budget) break;
-          if (doc.ratingId !== null && waiting.has(doc.ratingId)) {
-            out.waiting++;
-            continue;
+    try {
+      for (const collection of await sharedCollections(appId)) {
+        let afterSeq = 0;
+        while (canScan() && out.read < RATER_READ_CAP) {
+          const docs = await rater.listUnrated(appId, PUBLISHED_NS, collection, {
+            afterSeq,
+            limit: RATER_PAGE,
+          });
+          if (!docs.length) break;
+          afterSeq = docs[docs.length - 1].seq;
+          out.read += docs.length;
+          const rows = await scanRows(
+            docs.map((d) => d.ratingId).filter((id): id is number => id !== null)
+          );
+          for (const doc of docs) {
+            try {
+              await rateDoc(appId, collection, doc, rows, out, canScan);
+            } catch (error) {
+              out.failed++;
+              logToAxiom({
+                name: 'app-doc-rater',
+                type: 'error',
+                message: 'rating a document threw',
+                appId,
+                error: (error as Error).message,
+              });
+            }
           }
-          out.acted++;
-          try {
-            await rateOne(appId, collection, doc, out);
-          } catch (error) {
-            out.failed++;
-            logToAxiom({
-              name: 'app-doc-rater',
-              type: 'error',
-              message: 'rating a document threw',
-              appId,
-              error: (error as Error).message,
-            });
-          }
+          if (docs.length < RATER_PAGE) break;
         }
-        if (docs.length < RATER_PAGE) break;
       }
+    } catch (error) {
+      out.failed++;
+      logToAxiom({
+        name: 'app-doc-rater',
+        type: 'error',
+        message: 'rating an app threw',
+        appId,
+        error: (error as Error).message,
+      });
     }
   }
   return out;

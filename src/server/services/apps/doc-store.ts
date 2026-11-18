@@ -3954,8 +3954,9 @@ const SQL_RATER_LOCK = `SELECT d.seq, d.author_kind, d.hidden_at IS NOT NULL AS 
 // (`CURRENT_LEVEL`). Returns the level readers now get. $1 app, $2 ns, $3 coll, $4 key,
 // $5 level, $6 seq
 const SQL_RATER_APPLY = `UPDATE appdata.doc d
-  SET level = $5::int, rating_status = 'rated', rated_version = d.version, rated_at = now(),
-    seq = $6::bigint
+  SET level = $5::int, rated_version = d.version, rated_at = now(), seq = $6::bigint,
+    rating_status = CASE WHEN d.override_level IS NOT NULL AND d.override_version = d.version
+      THEN 'overridden' ELSE 'rated' END
   WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = $3 AND d.scope_uid = 0 AND d.key = $4
   RETURNING ${CURRENT_LEVEL} AS current_level`;
 

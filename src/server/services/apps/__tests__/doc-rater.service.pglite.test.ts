@@ -8,6 +8,7 @@ import {
 import type { DocStoreDb } from '~/server/services/apps/doc-store';
 import type * as DocLevels from '~/server/services/apps/doc-levels';
 import type * as TextScanMode from '~/server/services/text-scan/mode';
+import type * as TextScanPrompt from '~/server/services/text-scan/prompt';
 import { createPgliteHarness, type Harness } from './doc-store.harness';
 import { BOARD, ctx, freshApp, NS_PROD } from './doc-store.functional';
 
@@ -17,9 +18,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * THE RATER (content levels, build 3), end to end over a real store (PGlite, RLS on, the
  * content-level and rating-id migrations applied): a pass submits each unrated shared document's
  * text scan under its rating id; the scan's callback rates it as the higher of the text's level
- * and its images' levels, only while its text is the text that was scanned, and bound to its
- * revision; a stored verdict for the same text rates it straight away; and a document whose
- * images are not rated yet stays pending.
+ * and its images' levels, only while its text is the text that was scanned, and bound to the
+ * revision the callback loaded; a stored active verdict for the same text rates it straight away;
+ * a document whose images are not rated yet stays pending; and a scan the pipeline still owns is
+ * never resubmitted.
  *
  * The text scan itself (`scanEntity`, the mode) and the image rows are stubbed; their own suites
  * cover them. Levels are NsfwLevel bits (PG 1, PG-13 2, R 4, X 8, XXX 16, Blocked 32), and the
@@ -31,8 +33,14 @@ const h = vi.hoisted(() => ({
   scans: [] as { entityType: string; entityId: number }[],
   scanResult: { status: 'submitted', workflowId: 'wf-1' } as Record<string, unknown>,
   mode: 'active' as 'off' | 'shadow' | 'active',
+  scanOn: true,
+  maxInputChars: 200_000,
   levelsOn: new Set<string>(),
   synced: [] as { appBlockId: string; itemKey: string; level: number }[],
+  /** Verdict rows by `<entity type>:<rating id>`. */
+  rows: new Map<string, Record<string, unknown>>(),
+  /** App ids whose manifest read throws. */
+  brokenApps: new Set<string>(),
 }));
 
 vi.mock('~/server/services/apps/doc-store-rater.instance', async () => {
@@ -49,7 +57,21 @@ vi.mock('~/server/services/text-scan/submit', () => ({
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanMode>()),
   getTextScanMode: async () => h.mode,
+  isTextScanEnabled: async () => h.scanOn,
+  readTextScanRollouts: async () => ({ AppDoc: { shadow: 0, active: 100 } }),
 }));
+vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => {
+  const real = await importOriginal<typeof TextScanPrompt>();
+  return {
+    ...real,
+    getTextScanConfig: async () => ({
+      model: 'm',
+      maxInputChars: h.maxInputChars,
+      maxSegments: 10,
+      thinking: false,
+    }),
+  };
+});
 vi.mock('~/server/services/apps/doc-levels', async (importOriginal) => ({
   ...(await importOriginal<typeof DocLevels>()),
   isSharedDocLevelsKnownOn: async (appId: string) => h.levelsOn.has(appId),
@@ -83,9 +105,10 @@ const MANIFEST = {
     },
   },
 };
-// Two image keys, as an app stores public image urls in its data.
+// Image keys, as an app stores public image urls in its data.
 const IMG_R = '11111111-2222-4333-8444-555555555555';
 const IMG_UNSCANNED = '66666666-7777-4888-9999-aaaaaaaaaaaa';
+const IMG_NO_ROW = '12345678-90ab-4cde-8f01-234567890abc';
 const imageUrl = (key: string) => `https://image.example/abc/${key}/width=450/${key}.jpeg`;
 
 let harness: Harness;
@@ -106,10 +129,15 @@ beforeEach(() => {
   h.synced.length = 0;
   h.scanResult = { status: 'submitted', workflowId: 'wf-1' };
   h.mode = 'active';
+  h.scanOn = true;
+  h.maxInputChars = 200_000;
   h.levelsOn.clear();
-  dbMock.dbRead.appBlock.findUnique.mockImplementation((async () => ({
-    manifest: MANIFEST,
-  })) as never);
+  h.rows.clear();
+  h.brokenApps.clear();
+  dbMock.dbRead.appBlock.findUnique.mockImplementation((async (args: { where: { id: string } }) => {
+    if (h.brokenApps.has(args.where.id)) throw new Error('manifest read failed');
+    return { manifest: MANIFEST };
+  }) as never);
   dbMock.dbRead.image.findMany.mockImplementation((async (args: {
     where: { url: { in: string[] } };
   }) =>
@@ -117,32 +145,78 @@ beforeEach(() => {
       { url: IMG_R, nsfwLevel: 4, ingestion: 'Scanned' },
       { url: IMG_UNSCANNED, nsfwLevel: 0, ingestion: 'Pending' },
     ].filter((r) => args.where.url.in.includes(r.url))) as never);
-  dbMock.dbWrite.entityModeration.findMany.mockImplementation((async () => []) as never);
-  dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async () => null) as never);
+  dbMock.dbWrite.entityModeration.findMany.mockImplementation((async (args: {
+    where: { entityId: { in: number[] } };
+  }) =>
+    [...h.rows.values()].filter((r) =>
+      args.where.entityId.in.includes(r.entityId as number)
+    )) as never);
 });
 
-async function ratingOf(app: string, key: string) {
+type Rating = {
+  level: number | null;
+  rating_status: string | null;
+  rated_version: number | null;
+  rating_id: number;
+};
+
+async function ratingOf(app: string, key: string): Promise<Rating> {
   const [row] = await harness.raw(
     `SELECT d.level, d.rating_status, d.rated_version, d.rating_id FROM appdata.doc d
      WHERE d.app_id = $1 AND d.ns = $2 AND d.coll = 'board' AND d.key = $3`,
     [app, NS_PROD, key]
   );
-  return row;
+  return row as Rating;
 }
 
-/** The scan's callback for `ratingId`, with a verdict of `level` for the text it scanned. */
-async function callback(ratingId: number, level: number, scannedTextHash?: string) {
-  const subject = (await loadAppDocSubjects([ratingId])).get(ratingId)!;
-  const outcome: TextScanOutcome = {
+/** The hash of the text the doc with this rating id holds now. */
+async function currentHash(ratingId: number) {
+  return textScanTextHash((await loadAppDocSubjects([ratingId])).get(ratingId)!);
+}
+
+/** A verdict row for `ratingId`: `Succeeded` for the doc's current text unless said otherwise. */
+async function verdictRow(
+  ratingId: number,
+  opts: { level?: number; status?: string; retryCount?: number; shadow?: boolean; hash?: string }
+) {
+  const entityType = opts.shadow ? 'AppDoc:shadow' : 'AppDoc';
+  h.rows.set(`${entityType}:${ratingId}`, {
+    entityType,
+    entityId: ratingId,
+    status: opts.status ?? 'Succeeded',
+    retryCount: opts.retryCount ?? 0,
+    nsfwLevel: opts.level ?? 1,
+    result: { version: 1, textHash: opts.hash ?? (await currentHash(ratingId)) },
+  });
+}
+
+/** The scan's callback for `ratingId`, as the callback loads the doc now. */
+async function load(ratingId: number) {
+  return (await loadAppDocSubjects([ratingId])).get(ratingId)!;
+}
+
+function outcome(level: number): TextScanOutcome {
+  return {
     nsfw: { detectedLevel: level, declaredLevel: 0, raised: level > 1, reason: 'test' },
     nsfwLevel: level,
     triggeredLabels: [],
   };
+}
+
+async function callback(ratingId: number, level: number) {
+  const subject = await load(ratingId);
   return applyAppDocTextScan({
-    outcome,
+    outcome: outcome(level),
     subject,
-    textHash: scannedTextHash ?? textScanTextHash(subject),
+    textHash: textScanTextHash(subject),
   });
+}
+
+/** One doc written and submitted: its rating id. */
+async function submitted(app: string, key: string, data: Record<string, unknown>) {
+  await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, key, data);
+  await rateUnratedDocs([app]);
+  return (await ratingOf(app, key)).rating_id;
 }
 
 describe('a pass submits each unrated shared document’s text scan under its rating id', () => {
@@ -153,33 +227,65 @@ describe('a pass submits each unrated shared document’s text scan under its ra
     expect(out).toMatchObject({ ready: true, apps: 1, read: 1, acted: 1, submitted: 1 });
     const { rating_id: id } = await ratingOf(app, 'b1');
     expect(h.scans).toEqual([{ entityType: 'AppDoc', entityId: id }]);
-    const subject = (await loadAppDocSubjects([id])).get(id)!;
-    expect(subject.fields[0].text.split('\n').sort()).toEqual(['blue', 'hello', 'tags', 'title']);
+    const subject = await load(id);
+    expect(subject.fields[0].text?.split('\n').sort()).toEqual(['blue', 'hello', 'tags', 'title']);
     expect(subject.userId).toBe(AUTHOR);
     // Nothing is rated until the verdict arrives.
     expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
-  it('a document whose scan is in flight is not resubmitted', async () => {
-    const app = freshApp('RSVFLIGHT');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'x' });
-    await rateUnratedDocs([app]);
-    const { rating_id: id } = await ratingOf(app, 'b1');
-    dbMock.dbWrite.entityModeration.findMany.mockImplementation((async () => [
-      { entityId: id },
-    ]) as never);
+  it.each([
+    ['Pending', 0],
+    ['Failed', 3],
+    ['Expired', 0],
+  ])(
+    '🔴 a scan the pipeline still owns (%s, %i retries) is not resubmitted and spends no budget',
+    async (status, retryCount) => {
+      const app = freshApp('RSVOWNED');
+      const id = await submitted(app, 'b1', { t: 'x' });
+      await verdictRow(id, { status, retryCount });
+      h.scans.length = 0;
+      expect(await rateUnratedDocs([app])).toMatchObject({ read: 1, acted: 0, waiting: 1 });
+      expect(h.scans).toEqual([]);
+    }
+  );
+
+  it('a failed scan out of retries is submitted again', async () => {
+    const app = freshApp('RSVSPENT');
+    const id = await submitted(app, 'b1', { t: 'x' });
+    await verdictRow(id, { status: 'Failed', retryCount: 9 });
     h.scans.length = 0;
-    const out = await rateUnratedDocs([app]);
-    expect(out).toMatchObject({ read: 1, acted: 0, waiting: 1 });
-    expect(h.scans).toEqual([]);
+    expect(await rateUnratedDocs([app])).toMatchObject({ acted: 1, submitted: 1 });
   });
 
-  it('pages past documents still waiting, so they never starve the ones behind them', async () => {
-    const app = freshApp('RSVPAGE');
-    for (let i = 0; i < 3; i++) await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, `k${i}`, { i });
-    const out = await rateUnratedDocs([app], { perPass: 2 });
-    expect(out).toMatchObject({ acted: 2, submitted: 2 });
-    expect((await ratingOf(app, 'k2')).rating_id).toBeNull();
+  it('the budget counts submissions only: documents still waiting never use it up', async () => {
+    const app = freshApp('RSVBUDGET');
+    for (let i = 0; i < 3; i++) await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, `w${i}`, { i });
+    await rateUnratedDocs([app]);
+    for (let i = 0; i < 3; i++)
+      await verdictRow((await ratingOf(app, `w${i}`)).rating_id, { status: 'Pending' });
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'new', { t: 'behind them' });
+    h.scans.length = 0;
+    const out = await rateUnratedDocs([app], { perPass: 1 });
+    expect(out).toMatchObject({ waiting: 3, acted: 1, submitted: 1 });
+    expect(h.scans).toHaveLength(1);
+  });
+
+  it('one app whose manifest cannot be read does not stop the others', async () => {
+    const broken = freshApp('RSVBROKEN');
+    const fine = freshApp('RSVFINE');
+    await store.put(ctx(fine, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'x' });
+    h.brokenApps.add(broken);
+    const out = await rateUnratedDocs([broken, fine]);
+    expect(out).toMatchObject({ apps: 2, failed: 1, submitted: 1 });
+  });
+
+  it('with the text scan unable to scan AppDoc (kill switch), nothing is read or submitted', async () => {
+    const app = freshApp('RSVKILL');
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'x' });
+    h.scanOn = false;
+    expect(await rateUnratedDocs([app])).toMatchObject({ ready: true, read: 0, acted: 0 });
+    expect((await ratingOf(app, 'b1')).rating_id).toBeNull();
   });
 });
 
@@ -188,9 +294,7 @@ describe('🔴 the callback rates the document', () => {
     const app = freshApp('RSVMAX');
     // Text rated PG-13 (2); it references an image rated R (4): the document is R.
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { pic: imageUrl(IMG_R), t: 'v1' });
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { pic: imageUrl(IMG_R), t: 'v2' });
-    await rateUnratedDocs([app]);
-    const { rating_id: id } = await ratingOf(app, 'b1');
+    const id = await submitted(app, 'b1', { pic: imageUrl(IMG_R), t: 'v2' });
     expect(await callback(id, 2)).toEqual({ status: 'rated', level: 4 });
     expect(await ratingOf(app, 'b1')).toEqual({
       level: 4,
@@ -203,80 +307,95 @@ describe('🔴 the callback rates the document', () => {
 
   it('a text level above its images is the level', async () => {
     const app = freshApp('RSVTEXT');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { pic: imageUrl(IMG_R) });
-    await rateUnratedDocs([app]);
-    const { rating_id: id } = await ratingOf(app, 'b1');
+    const id = await submitted(app, 'b1', { pic: imageUrl(IMG_R) });
     expect(await callback(id, 16)).toEqual({ status: 'rated', level: 16 });
   });
 
   it('🔴 a verdict for text the document no longer has is dropped; the document stays pending', async () => {
     const app = freshApp('RSVSTALE');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'scanned text' });
-    await rateUnratedDocs([app]);
-    const { rating_id: id } = await ratingOf(app, 'b1');
-    const scanned = textScanTextHash((await loadAppDocSubjects([id])).get(id)!);
+    const id = await submitted(app, 'b1', { t: 'scanned text' });
+    const scanned = await currentHash(id);
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'edited before the verdict' });
-    expect(await callback(id, 1, scanned)).toEqual({ status: 'stale' });
+    const subject = await load(id);
+    expect(await applyAppDocTextScan({ outcome: outcome(1), subject, textHash: scanned })).toEqual({
+      status: 'stale',
+    });
     expect((await ratingOf(app, 'b1')).level).toBeNull();
     expect(h.synced).toEqual([]);
   });
 
+  it('🔴 an edit AFTER the callback loaded the document drops the rating: it is bound to that load', async () => {
+    const app = freshApp('RSVRACE');
+    const id = await submitted(app, 'b1', { t: 'benign text' });
+    const subject = await load(id);
+    // The edit lands between the callback's load (and its hash check) and the rating.
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'something else entirely' });
+    expect(
+      await applyAppDocTextScan({
+        outcome: outcome(1),
+        subject,
+        textHash: textScanTextHash(subject),
+      })
+    ).toEqual({ status: 'changed' });
+    expect((await ratingOf(app, 'b1')).level).toBeNull();
+  });
+
   it('an image not rated yet leaves it pending', async () => {
     const app = freshApp('RSVMEDIA');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { pic: imageUrl(IMG_UNSCANNED) });
-    await rateUnratedDocs([app]);
-    const { rating_id: id } = await ratingOf(app, 'b1');
+    const id = await submitted(app, 'b1', { pic: imageUrl(IMG_UNSCANNED) });
     expect(await callback(id, 1)).toEqual({ status: 'media-pending' });
+    expect((await ratingOf(app, 'b1')).level).toBeNull();
+  });
+
+  it('🔴 an image key in a url that names no image row leaves it pending; a bare id does not', async () => {
+    const app = freshApp('RSVNOROW');
+    const inUrl = await submitted(app, 'u1', { pic: imageUrl(IMG_NO_ROW) });
+    expect(await callback(inUrl, 1)).toEqual({ status: 'media-pending' });
+    const bare = await submitted(app, 'u2', { id: IMG_NO_ROW });
+    expect(await callback(bare, 2)).toEqual({ status: 'rated', level: 2 });
+  });
+
+  it('a text longer than one scan call is never rated from a verdict (it may cover only part)', async () => {
+    const app = freshApp('RSVLONG');
+    const id = await submitted(app, 'b1', { t: 'x'.repeat(40) });
+    h.maxInputChars = 20;
+    expect(await callback(id, 1)).toEqual({ status: 'too-long' });
     expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 });
 
 describe('without a submit: a stored verdict for the same text, or no text', () => {
-  /** The stored live verdict: `level`, for the doc's current text unless `textHash` says other. */
-  function storedVerdict(level: number, textHash?: string) {
-    dbMock.dbWrite.entityModeration.findUnique.mockImplementation((async (args: {
-      where: { entityType_entityId: { entityId: number } };
-    }) => {
-      const id = args.where.entityType_entityId.entityId;
-      const subject = (await loadAppDocSubjects([id])).get(id)!;
-      return {
-        status: 'Succeeded',
-        nsfwLevel: level,
-        result: { version: 1, textHash: textHash ?? textScanTextHash(subject) },
-      };
-    }) as never);
-  }
-
-  it('🔴 an unchanged text is rated from its stored active verdict', async () => {
+  it('🔴 an active verdict stored for the current text rates it, with no scan', async () => {
     const app = freshApp('RSVSAME');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'same' });
-    h.scanResult = { status: 'skipped', reason: 'unchanged' };
-    storedVerdict(8);
-    const out = await rateUnratedDocs([app]);
-    expect(out).toMatchObject({ rated: 1 });
+    const id = await submitted(app, 'b1', { t: 'same' });
+    await verdictRow(id, { level: 8 });
+    h.scans.length = 0;
+    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 1, acted: 0 });
+    expect(h.scans).toEqual([]);
     expect((await ratingOf(app, 'b1')).level).toBe(8);
   });
 
-  it('🔴 a stored verdict for other text (an edit after the scan looked) rates nothing', async () => {
+  it('🔴 a stored verdict for other text (an edit since) is not used: the new text is scanned', async () => {
     const app = freshApp('RSVSAMESTALE');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'now' });
-    h.scanResult = { status: 'skipped', reason: 'unchanged' };
-    storedVerdict(1, 'the hash of some earlier text');
-    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, skipped: 1 });
+    const id = await submitted(app, 'b1', { t: 'before' });
+    await verdictRow(id, { level: 1, hash: 'the hash of some earlier text' });
+    h.scans.length = 0;
+    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, submitted: 1 });
     expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
-  it('in shadow a stored verdict rates nothing', async () => {
+  it('in shadow a stored shadow verdict rates nothing and submits nothing', async () => {
     const app = freshApp('RSVSHADOW');
-    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'same' });
-    h.scanResult = { status: 'skipped', reason: 'unchanged' };
+    const id = await submitted(app, 'b1', { t: 'same' });
+    await verdictRow(id, { level: 8, shadow: true });
     h.mode = 'shadow';
-    storedVerdict(8);
-    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, skipped: 1 });
+    h.scans.length = 0;
+    expect(await rateUnratedDocs([app])).toMatchObject({ rated: 0, skipped: 1, acted: 0 });
+    expect(h.scans).toEqual([]);
     expect((await ratingOf(app, 'b1')).level).toBeNull();
   });
 
-  it('a document with no text rates PG, raised by its images', async () => {
+  it('a document with no text rates PG, raised by its images; one with text is not', async () => {
     const app = freshApp('RSVEMPTY');
     // No string value and no object key.
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', {});
@@ -289,7 +408,7 @@ describe('without a submit: a stored verdict for the same text, or no text', () 
     expect(out).toMatchObject({ rated: 1, skipped: 1 });
   });
 
-  it('the text scan off (kill switch or rollout) rates nothing: the document stays pending', async () => {
+  it('the text scan off for this document (rollout) rates nothing: the document stays pending', async () => {
     const app = freshApp('RSVOFF');
     await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'b1', { t: 'x' });
     h.scanResult = { status: 'skipped', reason: 'off' };

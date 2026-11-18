@@ -149,19 +149,24 @@ export async function syncSubListingRatingFromDoc(args: {
       where,
       select: { id: true, contentRating: true, pendingContentRating: true },
     });
+    // Only a card whose rating moves is written, and the catalog is busted only then: the rater
+    // calls this on every rating, and most items have no card.
+    let changed = false;
     for (const row of rows) {
+      const contentRating = effectiveSubListingRating(rating, row.contentRating);
+      const pendingContentRating =
+        row.pendingContentRating == null
+          ? null
+          : effectiveSubListingRating(rating, row.pendingContentRating);
+      if (contentRating === row.contentRating && pendingContentRating === row.pendingContentRating)
+        continue;
+      changed = true;
       await dbWrite.appSubListing.update({
         where: { id: row.id },
-        data: {
-          contentRating: effectiveSubListingRating(rating, row.contentRating),
-          pendingContentRating:
-            row.pendingContentRating == null
-              ? null
-              : effectiveSubListingRating(rating, row.pendingContentRating),
-        },
+        data: { contentRating, pendingContentRating },
       });
     }
-    await bustCatalog();
+    if (changed) await bustCatalog();
   } catch (err) {
     if (isMissingTableError(err)) return;
     logToAxiom({
