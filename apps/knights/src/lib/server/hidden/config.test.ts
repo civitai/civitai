@@ -69,6 +69,8 @@ describe('hiddenCheckSettings with stored settings', () => {
       settleDelayMinutes: 0,
       retireMinAnswers: 50,
       retireFailureRate: 0.8,
+      // Not a Config page setting: the environment's, else the default.
+      probationShare: 0,
     });
   });
 
