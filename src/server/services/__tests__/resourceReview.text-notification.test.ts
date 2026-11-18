@@ -2,9 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DbLag from '~/server/db/db-lag-helpers';
 
-// A Like writes a bare review and stays silent; the model's owner hears about the review when an
-// edit first gives it text.
-
 const { createNotification } = vi.hoisted(() => ({
   createNotification: vi.fn<(row: unknown) => Promise<void>>(async () => undefined),
 }));
@@ -124,9 +121,12 @@ describe('new-review notification on the first text', () => {
     expect(createNotification).not.toHaveBeenCalled();
   });
 
-  it('stays silent when the review already had text', async () => {
+  it.each([
+    ['update', edit],
+    ['upsert', upsertEdit],
+  ])('stays silent when the review already had text (%s)', async (_path, write) => {
     stored('<p>Good</p>');
-    await edit('<p>Great model</p>');
+    await write('<p>Great model</p>');
     expect(createNotification).not.toHaveBeenCalled();
   });
 

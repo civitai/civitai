@@ -66,6 +66,7 @@ import type {
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { removeTags } from '~/utils/string-helpers';
 import {
   createResourceReviewNotification,
   pendingPostIdFor,
@@ -286,7 +287,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
 const storedReview = async (id: number) =>
   dbWrite.resourceReview.findUnique({ where: { id }, select: { modelId: true, details: true } });
 
-const hasText = (details?: string | null) => !!details?.replace(/<[^>]*>/g, '').trim();
+const hasText = (details?: string | null) => !!removeTags(details ?? '');
 
 /**
  * A Like writes a bare review and notifies nobody; the owner hears about it once an edit gives it
