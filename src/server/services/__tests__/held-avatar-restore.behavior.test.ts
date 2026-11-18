@@ -181,3 +181,14 @@ describe('a User.image naming a blocked profile picture', () => {
     expect(await user(1)).toEqual({ image: 'key-1', meta: {} });
   });
 });
+
+describe("a cleared User.image whose picture is not the user's own", () => {
+  it("is never restored from another user's servable image", async () => {
+    await pg.exec(`
+      INSERT INTO "Image" (id, url, "userId") VALUES (1, 'key-other', 2);
+      INSERT INTO "User" VALUES (1, 1, NULL, '${marker(1)}');
+    `);
+    expect(await restoreClearedUserImages(db, [1])).toEqual([]);
+    expect((await user(1)).image).toBeNull();
+  });
+});
