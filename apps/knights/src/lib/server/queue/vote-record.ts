@@ -243,12 +243,16 @@ export async function creditLateJudgment(
         'i.imageId',
         'i.minRank',
         'i.updatedAt',
+        'i.appliedAt',
         'q.options',
       ])
       .where('i.id', '=', itemId)
       .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
       .executeTakeFirst();
     if (!item || item.status === 'Open') return false;
+    // A settled rating still waiting on its write-back can be rerouted, and a reroute regrades every vote on the item
+    // (`regradeVotes`), this row included.
+    if (item.status === 'Resolved' && item.appliedAt === null) return false;
     if (now.getTime() - item.updatedAt.getTime() > LATE_JUDGMENT_WINDOW_MS) return false;
     const options = (item.options as { value: string }[] | null) ?? [];
     if (!options.some((option) => option.value === answer)) return false;

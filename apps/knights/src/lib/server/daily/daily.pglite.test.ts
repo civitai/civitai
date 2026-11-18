@@ -323,6 +323,19 @@ describe('a judgment on an item that settled while it waited in the buffer', () 
     expect(await dayRow(1, D1)).toBeUndefined();
   });
 
+  it('refuses an item whose write-back is still pending, which a reroute could regrade', async () => {
+    await seedPlayer(pg, 1);
+    const itemId = await settledItem(NOON(D1));
+    await pg.query(
+      `UPDATE "KnightsQueueItem" SET status='Resolved', "appliedAt"=NULL WHERE id=$1`,
+      [itemId]
+    );
+    expect(await late(itemId, NOON(D1))).toBe(false);
+
+    await pg.query(`UPDATE "KnightsQueueItem" SET "appliedAt"=$2 WHERE id=$1`, [itemId, NOON(D1)]);
+    expect(await late(itemId, NOON(D1))).toBe(true);
+  });
+
   it('counts on the day of a career reset, whose Watch is read from the ledger', async () => {
     await seedPlayer(pg, 1);
     await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$1 WHERE "userId"=1`, [
