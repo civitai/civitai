@@ -2,12 +2,14 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { IconArrowBackUp, IconFilter, IconPencil, IconPlus, IconX } from '@tabler/icons-svelte';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
   import { mediaCount, type Media } from '$lib/data/trainingModels';
   import { splitTags, type Img } from './trainingFlow';
+  import { planReplace } from './tagReplace';
 
-  // Dataset-wide add/rename/remove of one tag. `images` is the flow's own state proxy, so mutating a
+  // Dataset-wide add/rename/remove of one tag, plus (behind `findReplace`) a find-and-replace across every tag. `images` is the flow's own state proxy, so mutating a
   // tile's tags here applies live to the grid (the label editor's contract). Exact-string tag
   // identity — the rows come from the stored tags themselves. Every change is undoable once: a
   // dataset-wide edit that lands wrong has no other way back.
@@ -16,6 +18,7 @@
     tagFreq,
     images,
     media,
+    findReplace = false,
     onShowTag,
   }: {
     open: boolean;
@@ -23,6 +26,8 @@
     tagFreq: [string, number][];
     images: Img[];
     media: Media;
+    /** Show the find-and-replace row (its Flipt gate; off by default). */
+    findReplace?: boolean;
     /** Filters the dataset grid to the images carrying this tag. */
     onShowTag: (tag: string) => void;
   } = $props();
@@ -30,12 +35,24 @@
   let renameFrom = $state<string | null>(null);
   let renameDraft = $state('');
   let addDraft = $state('');
+  let findDraft = $state('');
+  let replaceDraft = $state('');
+  let useRegex = $state(false);
+  let matchCase = $state(false);
 
   // Keyed by image id, never index, so an image removed from the dataset in between simply drops
   // out of the restore.
   let lastChange = $state<{ summary: string; before: Map<number, string[]> } | null>(null);
 
   const trainableWithTags = $derived(images.filter((i) => i.tags.length > 0).length);
+
+  const plan = $derived(
+    findReplace
+      ? planReplace(images, { find: findDraft, replace: replaceDraft, regex: useRegex, matchCase })
+      : null
+  );
+  const affected = $derived(plan && !plan.error ? plan.changes.length : 0);
+  const emptied = $derived(plan && !plan.error ? plan.emptied : 0);
 
   function record(summary: string, touched: Img[]) {
     lastChange = { summary, before: new Map(touched.map((img) => [img.id, [...img.tags]])) };
@@ -47,6 +64,19 @@
       if (tags) img.tags = tags;
     }
     lastChange = null;
+  }
+
+  function applyReplace() {
+    if (!plan || plan.error || plan.changes.length === 0) return;
+    const after = new Map(plan.changes.map((c) => [c.id, c.after]));
+    const touched = images.filter((img) => after.has(img.id));
+    record(
+      `Replaced "${findDraft}" with "${replaceDraft}" on ${mediaCount(touched.length, media)}`,
+      touched
+    );
+    for (const img of touched) img.tags = after.get(img.id)!;
+    findDraft = '';
+    replaceDraft = '';
   }
 
   function startTagRename(tag: string) {
@@ -107,6 +137,8 @@
       if (!v) {
         renameFrom = null;
         lastChange = null;
+        findDraft = '';
+        replaceDraft = '';
       }
     }
   }
@@ -136,6 +168,57 @@
         <IconPlus size={13} stroke={2} class="mr-1 inline" />Add to all
       </Button>
     </form>
+    {#if findReplace}
+      <form
+        class="flex flex-col gap-2 rounded-md border border-dark-4 bg-dark-7 p-2.5"
+        aria-label="Find and replace in tags"
+        onsubmit={(e) => {
+          e.preventDefault();
+          applyReplace();
+        }}
+      >
+        <div class="flex flex-col gap-2 sm:flex-row">
+          <Input
+            bind:value={findDraft}
+            placeholder={useRegex ? 'Find (regex)…' : 'Find in tags…'}
+            aria-label="Text to find in tags"
+            aria-invalid={plan?.error ? true : undefined}
+            class="h-8 flex-1 font-mono text-xs"
+          />
+          <Input
+            bind:value={replaceDraft}
+            placeholder="Replace with (blank removes)…"
+            aria-label="Replacement text"
+            class="h-8 flex-1 font-mono text-xs"
+          />
+        </div>
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <label class="inline-flex items-center gap-1.5 font-mono text-xs text-dark-2">
+            <Checkbox bind:checked={useRegex} />
+            Regex
+          </label>
+          <label class="inline-flex items-center gap-1.5 font-mono text-xs text-dark-2">
+            <Checkbox bind:checked={matchCase} />
+            Match case
+          </label>
+          <Button type="submit" size="sm" variant="outline" class="ml-auto" disabled={affected === 0}>
+            Replace in all
+          </Button>
+        </div>
+        {#if plan?.error}
+          <p class="m-0 font-mono text-xs text-red-400" role="alert">{plan.error}</p>
+        {:else if findDraft}
+          <p class="m-0 font-mono text-xs text-dark-1" role="status">
+            {affected === 0 ? 'No images affected' : `${mediaCount(affected, media)} affected`}
+          </p>
+        {/if}
+        {#if emptied > 0}
+          <p class="m-0 font-mono text-xs text-amber-400" role="status">
+            {mediaCount(emptied, media)} would end up with no tags and become unlabeled.
+          </p>
+        {/if}
+      </form>
+    {/if}
     {#if tagFreq.length === 0}
       <p class="font-mono text-xs text-dark-2">No tags in this dataset.</p>
     {:else}
