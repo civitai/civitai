@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Adapter, Change, Entity } from '~/server/registry-adapter/protocol';
 import { ProtocolError } from '~/server/registry-adapter/protocol';
 import { FILTER_MAX_BYTES, filterRefusal } from '~/server/registry-adapter/json-schema';
+import { createSubscriptionLimiter } from '~/server/registry-adapter/limits';
+import type { ServeOptions } from '~/server/registry-adapter/serve';
 import { createRegistryServer, handleRequest } from '~/server/registry-adapter/serve';
 import { bindCursor, requestBinding } from '~/server/registry-adapter/subscription';
 
@@ -172,11 +174,21 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
 
   const META_DE = `&meta=${encodeURIComponent('{"country":"DE"}')}`;
 
-  /** One subscription from the edge's CA, with meta DE, read to its end; its region lines. */
-  async function lines(trustMeta: string | undefined, query = sub(APPS, META_DE)) {
+  /**
+   * One subscription from the edge's CA, with meta DE, read to its end; its region lines and the
+   * error code it was refused with, if any.
+   */
+  async function lines(
+    trustMeta: string | undefined,
+    {
+      query = sub(APPS, META_DE),
+      headers = {},
+      opts = {},
+    }: { query?: string; headers?: Record<string, string>; opts?: ServeOptions } = {}
+  ) {
     vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', trustMeta);
     const logged: string[] = [];
-    server = createRegistryServer(adapter(), { onRegion: (line) => logged.push(line) });
+    server = createRegistryServer(adapter(), { ...opts, onRegion: (line) => logged.push(line) });
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
     const res = await fetch(`http://127.0.0.1:${port}${query}`, {
@@ -184,10 +196,12 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
         'cf-ipcountry': 'CA',
         'cf-connecting-ip': '192.0.2.7',
         'x-forwarded-for': '198.51.100.1',
+        ...headers,
       },
     });
-    await res.text();
-    return { status: res.status, logged };
+    const text = await res.text();
+    const error = res.status === 200 ? undefined : (JSON.parse(text) as { error: string }).error;
+    return { status: res.status, error, logged };
   }
 
   it('flag on: the meta country, one line', async () => {
@@ -208,9 +222,26 @@ describe('🔴 each HTTP subscription logs its region decision once, and no addr
     ]);
   });
 
-  it('a request refused before it starts logs nothing', async () => {
-    const { status, logged } = await lines('1', '/subscribe');
-    expect(status).toBe(400);
+  // Each refusal at a later step than the last, so a line moved ahead of any of them shows.
+  it('a request refused as malformed logs nothing', async () => {
+    const { status, error, logged } = await lines('1', { query: '/subscribe' });
+    expect([status, error]).toEqual([400, 'bad_request']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused over the subscription cap logs nothing', async () => {
+    const limiter = createSubscriptionLimiter({ total: 0, perSubject: 100, perAddress: 100 });
+    const { status, error, logged } = await lines('1', { opts: { limiter } });
+    expect([status, error]).toEqual([503, 'unavailable']);
+    expect(logged).toEqual([]);
+  });
+
+  it('a request refused for its token logs nothing', async () => {
+    // No verifyToken: any token is invalid_token.
+    const { status, error, logged } = await lines('1', {
+      headers: { authorization: 'Bearer x' },
+    });
+    expect([status, error]).toEqual([401, 'invalid_token']);
     expect(logged).toEqual([]);
   });
 });

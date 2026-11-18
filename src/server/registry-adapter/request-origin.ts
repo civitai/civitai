@@ -121,8 +121,9 @@ export function countryKnown(region: Pick<RegionInfo, 'countryCode'>): boolean {
  *     (`countryKnown`); a value that is not a code is never echoed;
  *   - `region`: the region code beside a known country, when it is one to three letters or
  *     digits (`NY`); otherwise `undefined`;
- *   - `source`: where the country value came from: `meta` (only with {@link metaTrusted}),
- *     `header`, or `none` when neither carried one;
+ *   - `source`: where the country value judged came from: `meta` whenever meta supplied it
+ *     (only with {@link metaTrusted}), even a value that names no country (`""`, `XX`);
+ *     otherwise `header`, or `none` when no header carried one;
  *   - `restricted`: whether the request is held to SFW (see the file comment).
  */
 export type RegionDecision = {
@@ -137,11 +138,11 @@ export function describeRegion(origin: RequestOrigin, at: Date = new Date()): Re
   const { headers, fromMeta } = regionHeaders(origin);
   const region = getRegion({ headers } as unknown as IncomingMessage);
   const raw = region.countryCode;
-  // A country `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
+  // Meta whenever it supplied the value judged, even one naming no country (`""`); a country
+  // `getRegion` took from elsewhere (`x-isuk`) is the header's, even beside meta.
   let source: RegionDecision['source'] = 'none';
-  if (typeof raw === 'string' && raw !== '') {
-    source = fromMeta.has('cf-ipcountry') && raw === headers['cf-ipcountry'] ? 'meta' : 'header';
-  }
+  if (fromMeta.has('cf-ipcountry') && raw === headers['cf-ipcountry']) source = 'meta';
+  else if (typeof raw === 'string' && raw !== '') source = 'header';
   if (!countryKnown(region)) return { country: 'none', source, restricted: true };
   const country = (raw as string).trim().toUpperCase();
   const code = typeof region.regionCode === 'string' ? region.regionCode.trim().toUpperCase() : '';

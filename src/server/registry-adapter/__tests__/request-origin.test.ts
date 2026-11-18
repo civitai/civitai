@@ -318,17 +318,17 @@ describe('🔴 describeRegion: the decision each subscription logs', () => {
     );
   });
 
-  it('regionRestricted is its restricted', async () => {
+  it('flag on, meta with an empty country: meta overrides the header CA, none, held', async () => {
     vi.stubEnv('REGISTRY_ADAPTER_TRUST_META', '1');
-    const { describeRegion, regionRestricted } = await load('ZZ:2026-01-01');
-    for (const origin of [
-      CA_DE,
-      { headers: {}, meta: { country: 'ZZ' } },
-      { headers: { 'cf-ipcountry': 'ZZ' }, meta: { country: 'DE' } },
-      { headers: {} },
-    ]) {
-      expect(regionRestricted(origin, NOW)).toBe(describeRegion(origin, NOW).restricted);
-    }
+    const { describeRegion, regionLine } = await load(undefined);
+    const decision = describeRegion(
+      { headers: { 'cf-ipcountry': 'CA' }, meta: { country: '' } },
+      NOW
+    );
+    expect(decision).toEqual({ country: 'none', source: 'meta', restricted: true });
+    expect(regionLine('http', decision)).toBe(
+      'subscription region: binding=http country=none region=none source=meta restricted=true'
+    );
   });
 });
 
