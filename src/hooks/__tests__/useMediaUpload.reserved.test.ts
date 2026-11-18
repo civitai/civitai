@@ -1,10 +1,9 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
-import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 
-const act = (React as unknown as { act: typeof actType }).act;
+const act = (React as unknown as { act: (cb: () => unknown) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
