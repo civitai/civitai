@@ -197,11 +197,14 @@ describe('standalone arm vs the tRPC route', () => {
     expect(trpc.body).toContain(`"modelId":${modelId}`);
   });
 
-  it('no input at all: same answer', async () => {
+  // The schema reads a missing input as `undefined`; whatever it decides, both arms decide the same.
+  // Error bodies are not compared (the standalone arm does not port tRPC's error shape).
+  it('no input at all: same status, and the same answer when it is one', async () => {
     const { trpc, standalone, trpcCall, standaloneCall } = await both({
       host: 'blue.example.test',
     });
-    expect(standalone).toEqual(trpc);
+    expect(standalone.status).toBe(trpc.status);
+    if (trpc.status === 200) expect(standalone).toEqual(trpc);
     expect(standaloneCall).toEqual(trpcCall);
   });
 
@@ -247,10 +250,14 @@ describe('standalone arm vs the tRPC route', () => {
     expect(out.trpc.cacheControl).not.toBe(inn.trpc.cacheControl);
   });
 
+  // Two inputs that differ AFTER parsing and clamping (a different model): two golden inputs can
+  // parse to the same input once the signed-out clamp and the schema defaults apply.
   it('negative control: two different inputs give different bodies', async () => {
-    const a = await get(standaloneBase, { input: goldens[0][1].input, host: 'blue.example.test' });
-    const b = await get(standaloneBase, { input: goldens[1][1].input, host: 'blue.example.test' });
+    const input = (modelId: number) => JSON.stringify({ json: { modelId, limit: 3 } });
+    const a = await get(standaloneBase, { input: input(5001), host: 'blue.example.test' });
+    const b = await get(standaloneBase, { input: input(5002), host: 'blue.example.test' });
     expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
     expect(a.body).not.toBe(b.body);
   });
 

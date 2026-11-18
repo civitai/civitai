@@ -15,6 +15,7 @@
  * No dependencies beyond Node. Every flag is `--name value`; `--target` repeats (`name=baseUrl`).
  */
 
+/* eslint-disable @typescript-eslint/no-var-requires */
 const fs = require('node:fs');
 const http = require('node:http');
 const https = require('node:https');
