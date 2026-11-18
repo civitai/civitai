@@ -74,7 +74,7 @@
     {/if}
   </div>
   <form method="POST" action="?/dismissNotices" use:enhance={submit} bind:this={form}>
-    <button type="submit">Understood</button>
+    <button type="submit" class="ov-ack">Understood</button>
   </form>
   <span class="countdown" aria-hidden="true"></span>
 </section>
@@ -94,6 +94,7 @@
     border-radius: 12px;
     background: #14110d;
     color: var(--io-crimson-text);
+    --ack-tone: var(--io-crimson-text);
     font: 400 13px/1.4 var(--io-font-ui);
   }
   /* Over the bottom of the image stage, as the level card floats over its top (z-index 4): the answer row stays clear. */
@@ -112,6 +113,7 @@
   .toast.calm {
     border-color: var(--io-gold);
     color: var(--io-gold);
+    --ack-tone: var(--io-gold);
   }
   /* A faint track for the time used; the bar on it drains over the auto-hide delay and stops while the timer waits. */
   .countdown {
@@ -169,14 +171,6 @@
     color: var(--io-parchment);
     opacity: 0.8;
   }
-  .toast button {
-    min-height: 36px;
-    padding: 8px 16px;
-    border-color: var(--io-crimson);
-    background: var(--io-crimson);
-    color: var(--io-parchment);
-    font-size: 13px;
-  }
   @media (max-width: 40rem) {
     /* The stage's full width, its bottom edge on the stage's, just above the answer row. */
     .toast.anchored {
@@ -187,9 +181,6 @@
     }
     .check-thumb {
       display: none;
-    }
-    .toast button {
-      min-height: 44px;
     }
   }
 </style>

@@ -18,7 +18,7 @@
   import Icon from '$lib/Icon.svelte';
   import { sound } from '$lib/sound';
   import WatchMeta from '$lib/WatchMeta.svelte';
-  import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
+  import { heartsLeft, holdsAnswers, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
   import { answerForKey, answerForKeyPress, blockedByRuling, optionsOnScreen, spaceSkips } from './keys';
@@ -74,12 +74,13 @@
   let reasonItem = $state<string | null>(null);
   let choosingReason = $derived(!!view && reasonItem === view.item.key);
   let blockReason = $state<BlockReason | null>(null);
-  // The ruling toast floats over the image stage; nothing answers or skips until it is dismissed.
+  // The ruling toast floats over the image stage; with a warning or smite in it, nothing answers or skips until it is
+  // dismissed and the server has the dismissal. Close calls alone hold nothing.
   const rulingNotice = dismissible(
     () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
     { noticeFailed: true }
   );
-  let rulingPending = $derived(rulingNotice.holding);
+  let rulingPending = $derived(rulingNotice.holding && holdsAnswers(data.notices));
   const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();

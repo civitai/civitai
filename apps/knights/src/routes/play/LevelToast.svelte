@@ -44,7 +44,7 @@
     {#if message}<p class="notice" role="alert">{message}</p>{/if}
   </div>
   <form method="POST" action="?/dismissProgress" use:enhance={submit} bind:this={form}>
-    <button type="submit" class="dismiss">Onward</button>
+    <button type="submit" class="ov-ack">Onward</button>
   </form>
   <span class="countdown" aria-hidden="true"></span>
 </section>
@@ -123,14 +123,6 @@
     color: var(--io-gold);
     font: 600 16px/1.3 var(--io-font-body);
   }
-  .dismiss {
-    min-height: 0;
-    padding: 6px 10px;
-    border-color: var(--io-gold-muted);
-    background: transparent;
-    color: var(--io-gold);
-    font: 600 12px/1.2 var(--io-font-ui);
-  }
 
   @media (max-width: 40rem) {
     .toast.floating {
@@ -150,9 +142,6 @@
     }
     .heading {
       font-size: 14px;
-    }
-    .dismiss {
-      min-height: 36px;
     }
   }
 </style>

@@ -18,6 +18,10 @@ export const heartBackShort = (heartBack: { done: number; needed: number } | nul
 export const noticeTone = (notices: { consequence: string }[]): 'calm' | 'alarm' =>
   notices.length > 0 && notices.every((n) => n.consequence === 'close') ? 'calm' : 'alarm';
 
+/** Whether the ruling toast holds the answers until it is dismissed: a warning or smite does, close calls alone do not. */
+export const holdsAnswers = (notices: { consequence: string }[]): boolean =>
+  notices.length > 0 && noticeTone(notices) === 'alarm';
+
 export type Watch = {
   votes: number;
   watchSize: number;
