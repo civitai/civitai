@@ -119,6 +119,32 @@ beforeEach(() => {
   dbMock.dbWrite.image.update.mockResolvedValue({} as never);
 });
 
+describe('a bulk picture refresh', () => {
+  it('refreshes every session, never more than the cap at once', async () => {
+    const { refreshProfilePicturesForUsers, PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY } =
+      await import('../user.service');
+    let inFlight = 0;
+    let peak = 0;
+    vi.mocked(refreshSession).mockImplementation(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return undefined as never;
+    });
+    const ids = Array.from({ length: 250 }, (_, i) => i + 1);
+
+    await refreshProfilePicturesForUsers(ids);
+
+    expect(
+      vi
+        .mocked(refreshSession)
+        .mock.calls.map(([id]) => id)
+        .sort((a, b) => a - b)
+    ).toEqual(ids);
+    expect(peak).toBe(PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY);
+  });
+});
+
 describe('a moderator re-rate', () => {
   it('refreshes the cached profile picture of the user whose avatar it is', async () => {
     await reRate(AVATAR);

@@ -1,3 +1,4 @@
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   assertCollectionItemsVisibleToViewer,
   type CollectionItemKey,
@@ -2420,6 +2421,8 @@ export async function getProfilePictureUserIds(imageIds: number[]) {
   return users.map((x) => x.id);
 }
 
+export const PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY = 10;
+
 function logProfilePictureRefreshError(error: unknown, meta: Record<string, unknown>) {
   logToAxiom({
     type: 'error',
@@ -2442,12 +2445,15 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
   } catch (error) {
     logProfilePictureRefreshError(error, { userIds: ids.join(',') });
   }
-  await Promise.all(
-    ids.map((id) =>
-      refreshSession(id, { sendSignal: false, caller: 'profile' }).catch((error) =>
-        logProfilePictureRefreshError(error, { userIds: String(id) })
-      )
-    )
+  // Bulk moderation (an adjust-tag-level batch, a bulk block) can pass many users.
+  await limitConcurrency(
+    ids.map(
+      (id) => () =>
+        refreshSession(id, { sendSignal: false, caller: 'profile' }).catch((error) =>
+          logProfilePictureRefreshError(error, { userIds: String(id) })
+        )
+    ),
+    PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY
   );
 }
 
