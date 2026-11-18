@@ -6,6 +6,7 @@ import { dbRead } from '~/server/db/client';
 import type { SearchUploadSource } from '~/server/schema/semantic-image-search.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { countSearchUpload } from '~/server/metrics/semantic-search.metrics';
+import { delIfValue } from '~/server/redis/atomic';
 import { redis, REDIS_KEYS, type RedisKeyTemplateCache } from '~/server/redis/client';
 import { uploadedSourceBlobId } from '~/server/services/blocks/block-generation-source.service';
 import { readBlobState } from '~/server/services/orchestrator/blobRatings';
@@ -143,9 +144,6 @@ export async function claimSearchUploadUserDay({
 const searchingKey = (userId: number) =>
   `${REDIS_KEYS.CACHES.SEARCH_UPLOAD_SEARCHING}:${userId}` as RedisKeyTemplateCache;
 const SEARCHING_HOLD_SECONDS = 60;
-// Deletes the hold only if this request still owns it: a request outliving its hold must not free
-// the next request's.
-const RELEASE_IF_OWNER = `if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0`;
 
 /**
  * Runs one of the viewer's upload searches at a time: the daily claim reads then writes its count,
@@ -165,7 +163,8 @@ export async function withSearchUploadSearch<T>(userId: number, run: () => Promi
   } finally {
     // A failed release must not replace the search's own result or refusal; the hold expires.
     try {
-      await redis.eval(RELEASE_IF_OWNER, { keys: [searchingKey(userId)], arguments: [token] });
+      // Only while this request still owns it: one that outlived its hold must not free the next's.
+      await delIfValue(redis, searchingKey(userId), token);
     } catch (error) {
       logToAxiom({
         type: 'error',
