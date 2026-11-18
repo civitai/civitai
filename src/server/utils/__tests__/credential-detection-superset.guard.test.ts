@@ -78,6 +78,8 @@ const NON_CREDENTIAL_MODULES: Record<string, string> = {
   'server/utils/webhook-token.ts':
     'compares a value the entry point already read with config; takes no request',
   'env/server.ts': 'environment config; reads nothing off the request',
+  'server/auth/session-scope.ts':
+    'narrows a session already resolved, from the credential the entry point recorded on req.context; reads req.url only to name the route in a log',
 };
 
 /** Workspace packages the entry point imports. Not scanned, so declared. */

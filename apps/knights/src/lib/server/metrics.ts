@@ -70,6 +70,10 @@ function counter(name: string, help: string, labels: LabelValues = {}) {
 const bounded = (value: string, allowed: readonly string[]) =>
   allowed.includes(value) ? value : 'other';
 
+const harvestSkipped = counter(
+  'knights_harvest_skipped_rulings_total',
+  'Moderator rulings the harvest passed over because they were older than its window when it reached them.'
+);
 const votes = counter('knights_votes_total', 'Votes written to the ledger, by kind.', {
   kind: VOTE_KINDS,
 });
@@ -152,6 +156,10 @@ function safely(record: () => void) {
 
 export const metrics = {
   vote: (kind: VoteKind) => safely(() => votes.inc({ kind })),
+  harvestSkipped: (count: number) =>
+    safely(() => {
+      if (count > 0) harvestSkipped.inc(count);
+    }),
   goldEarned: (source: GoldSource, gold: number) =>
     safely(() => {
       if (gold > 0) goldEarned.inc({ source }, gold);
@@ -193,7 +201,8 @@ export const metrics = {
       type: 'info',
       name: 'knights-vote-refused',
       message: `A ${action} was refused`,
-      details: { reason, kind, playerId, itemId, action },
+      details: { reason, playerId },
+      payload: { kind, itemId, action },
     });
   },
   // No table records these three, so each also leaves one Axiom event.

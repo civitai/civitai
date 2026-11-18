@@ -105,8 +105,8 @@ describe('queue-paid-models-reindex', () => {
   });
 
   it('reads the gated ids UNCACHED, so a stale cached set cannot decide the backfill', async () => {
-    // `getGatedModelIds` is the cached entry point and carries a live TTL; a reindex must see the
-    // set as it is now. Swap the call and this mock is never reached.
+    // A reindex must see the set as it is now, never a cached copy. Swap the call and this mock is
+    // never reached.
     await call({});
 
     expect(queryGatedModelIds).toHaveBeenCalledTimes(1);

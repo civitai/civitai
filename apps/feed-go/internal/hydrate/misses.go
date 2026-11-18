@@ -28,13 +28,16 @@ const (
 	MissModelFrames      = "model-frames"      // cosmeticEntityCaches.Model (model.getAll)
 	MissModelDecorations = "model-decorations" // eventDecorationEntityCaches.Model (model.getAll)
 	MissVersionImages    = "version-images"    // imagesForModelVersionsCache (model.getAll)
+	MissModelData        = "model-data"        // dataForModelsCache (model.getAll)
+	MissModelTags        = "model-tags"        // modelTagCache (model.getAll)
+	MissOfficialModels   = "official-models"   // getOfficialModelIds' fetchThroughCache entry (model.getAll)
 )
 
 // MissCaches lists every MissXxx label, for seeding the counter. A label that is also a page cache
 // (PageCaches) or a model.getAll cache is the same string as that cache's probe label: the probe reads
 // this list to tell a miss Go answers from one it falls back on (Sources.MissReason).
 var MissCaches = []string{MissUserCosmetics, MissImageFrames, MissEventDecorations, MissImageMeta, MissTagIDs, MissModelFrames,
-	MissModelDecorations, MissVersionImages, MissMetrics}
+	MissModelDecorations, MissVersionImages, MissModelData, MissModelTags, MissOfficialModels, MissMetrics}
 
 // MissCompute is how hydration answers a miss on the per-entity caches Node fills on read: with the
 // Node lookup's own query, batched once per page and cache, instead of falling back. A Sources
@@ -52,8 +55,9 @@ type MissCompute struct {
 	// failed read), and as SET NX: a key another writer filled since the read is never overwritten.
 	// The frame and event-decoration lookups (image and model) then read Primary, as Node's do
 	// (entityDB); the user-cosmetics and tag-ids lookups read the replica either way, as Node's fetch
-	// does (dbRead); the version-images lookup reads Primary for a version a recent write flagged, as
-	// Node's lag-aware read does (versionImagesDB).
+	// does (dbRead); the version-images and model-data lookups read Primary for a version or model a
+	// recent write flagged, as Node's lag-aware reads do (lagAwareDB). The model-tags and
+	// official-models lookups read the replica, as Node's fetch does (dbRead).
 	WriteBack bool
 	// Primary is the primary database (DATABASE_URL, Node's dbWrite), required with WriteBack: the
 	// frame and event-decoration lookups write what they read, so they must not read a lagging replica
@@ -346,7 +350,8 @@ var (
 
 // missSpecs are the computed caches' write shapes, one per cache fill runs for; their reasons are
 // the fallbacks those misses raise without a computation (Sources.MissReason).
-var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec}
+var missSpecs = []lookupSpec{userCosmeticsSpec, frameSpec, modelFrameSpec, eventSpec, modelEventSpec, tagIDsSpec, versionImagesSpec,
+	modelDataSpec, modelTagsSpec, officialModelsSpec}
 
 // specReason is the fallback reason of the named cache's lookup spec ("" for none).
 func specReason(cache string) string {
