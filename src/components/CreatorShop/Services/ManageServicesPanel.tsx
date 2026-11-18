@@ -61,6 +61,9 @@ const reviewBadge: Record<
 const openForm = (offering?: ServiceOffering) =>
   dialogStore.trigger({ component: ServiceOfferingFormModal, props: { offering } });
 
+const openDuplicateForm = (copyOf: ServiceOffering) =>
+  dialogStore.trigger({ component: ServiceOfferingFormModal, props: { copyOf } });
+
 export type ShopPublishState = { onPublish: () => void; publishing: boolean };
 
 /**
@@ -145,7 +148,7 @@ export function ManageServicesPanel({
           emptyText={
             requestsStatus === 'open'
               ? 'No open requests. They show up here when a buyer requests one of your services.'
-              : 'No closed requests yet. Declined, expired, cancelled and completed requests show up here.'
+              : 'No closed requests yet. Declined, expired, canceled and completed requests show up here.'
           }
         />
       </Stack>
@@ -243,6 +246,9 @@ function OfferingRow({
             </Menu.Target>
             <Menu.Dropdown>
               {canSell && <Menu.Item onClick={() => openForm(offering)}>Edit</Menu.Item>}
+              {canSell && (
+                <Menu.Item onClick={() => openDuplicateForm(offering)}>Duplicate</Menu.Item>
+              )}
               {isActive ? (
                 <Menu.Item onClick={() => setStatus.mutate({ id: offering.id, status: 'Paused' })}>
                   Pause

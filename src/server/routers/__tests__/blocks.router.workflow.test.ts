@@ -7131,7 +7131,8 @@ describe('customComfy bridge (submit/estimate/settle)', () => {
       );
       // Machine-readable, and marked, so the host may offer the viewer the raise.
       expect(result.snapshot.errorCode).toBe('daily-limit-exceeded');
-      expect(mockSysRedis.set).toHaveBeenCalledWith(
+      // The refusal record is a 5-minute flag on the cache cluster.
+      expect(mockRedis.set).toHaveBeenCalledWith(
         expect.stringMatching(/^system:blocks:consent-limit-refused:\d+:/),
         '100',
         { EX: 300 }

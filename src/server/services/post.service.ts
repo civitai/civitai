@@ -1,4 +1,11 @@
+import { ilikeContains } from '~/server/utils/ilike';
 import { Prisma } from '@prisma/client';
+import {
+  isHeldForReview,
+  isServableLevelOrOwnUnrated,
+  notHeldForReviewWhere,
+  servableLevelOrOwnUnratedWhere,
+} from '~/server/common/image-visibility';
 import {
   onStorySparkLost,
   onStorySparkPostsHidden,
@@ -8,7 +15,12 @@ import { chunk, uniq } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NsfwLevel,
+  PostSort,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustContestCollectionItemsCache } from '~/server/services/contest-collection-items.cache';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
@@ -411,8 +423,14 @@ export const getPostsInfinite = async ({
       WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
     )`);
 
-  // Applies to owner requests too, unlike the tag filter.
-  if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
+  // Applies to owner requests too, unlike the tag filter. One creator's posts (a profile search)
+  // match the words anywhere in the title, cheap over that one user's rows; across everyone, a prefix.
+  if (query)
+    AND.push(
+      targetUser
+        ? Prisma.sql`p.title ILIKE ${ilikeContains(query)}`
+        : Prisma.sql`p.title ILIKE ${query + '%'}`
+    );
 
   if (period !== 'AllTime') {
     const interval = period.toLowerCase();
@@ -795,11 +813,17 @@ export type PostEditImageDetail = PostDetailEditable['images'][number] & { index
 export type PostEditTextDetail = PostDetailEditable['texts'][number];
 export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 
-export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+type PostEditInput = GetByIdInput & {
+  user: SessionUser;
+  /** `requestServableLevels(ctx)`: the editor takes no level, so the domain cap is applied here. */
+  servableLevels: number;
+};
+
+export const getPostEditDetail = async ({ id, user, servableLevels }: PostEditInput) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const [editImages, texts] = await Promise.all([
-    getPostEditImages({ id, user }),
+    getPostEditImages({ id, user, servableLevels }),
     getPostEditTexts(id),
   ]);
   const images = await withReactionCounts(editImages, post.publishedAt);
@@ -957,10 +981,16 @@ async function getPostEditTexts(postId: number) {
   });
 }
 
-export const getPostEditImages = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
+export const getPostEditImages = async ({ id, user, servableLevels }: PostEditInput) => {
   const db = await getDbWithoutLag('postImages', id);
   const images = await db.image.findMany({
-    where: { postId: id },
+    where: {
+      postId: id,
+      AND: [
+        user.isModerator ? {} : notHeldForReviewWhere(),
+        servableLevelOrOwnUnratedWhere(servableLevels, user.id),
+      ],
+    },
     select: editPostImageSelect,
   });
   return combinePostEditImageData(images, user);
@@ -1661,6 +1691,27 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
 
+/** Whether an upload may stay at the index its client sent (`addPostImage`). */
+export async function keepSentIndex(postId: number, index: number) {
+  if (!Number.isInteger(index) || index < 0) return false;
+  const [holder, hiddenEnd] = await Promise.all([
+    // primary: decides the index this upload is written at
+    dbWrite.image.findFirst({ where: { postId, index }, select: { id: true } }),
+    // primary: decides the index this upload is written at
+    dbWrite.image.aggregate({
+      where: {
+        postId,
+        OR: [
+          { NOT: notHeldForReviewWhere() },
+          { nsfwLevel: { notIn: [0, NsfwLevel.PG, NsfwLevel.PG13] } },
+        ],
+      },
+      _max: { index: true },
+    }),
+  ]);
+  return !holder && index > (hiddenEnd?._max.index ?? -1);
+}
+
 export const addPostImage = async ({
   modelVersionId,
   meta,
@@ -1755,18 +1806,20 @@ export const addPostImage = async ({
 
   const { generationWorkflowId, ...imageProps } = props;
   // On a post with storyline text items, a new image goes after the last item whatever index the
-  // client sent: an editor without text items counts only images.
+  // client sent. Without text, a sent index may repeat an image's the editor is not served and so
+  // does not count: `keepSentIndex` decides, and otherwise the image goes last.
   const lastText = await dbWrite.postText.findFirst({
     where: { postId: props.postId },
     orderBy: { index: 'desc' },
     select: { index: true },
   });
-  if (lastText) {
+  const sentIndex = imageProps.index;
+  if (lastText || sentIndex == null || !(await keepSentIndex(props.postId, sentIndex))) {
     const imageEnd = await dbWrite.image.aggregate({
       where: { postId: props.postId },
       _max: { index: true },
     });
-    imageProps.index = Math.max(lastText.index, imageEnd._max.index ?? -1) + 1;
+    imageProps.index = Math.max(lastText?.index ?? -1, imageEnd?._max.index ?? -1) + 1;
   }
   const verifiedSourceImageIds = await resolveVerifiedSourceImageIds({
     userId: user.id,
@@ -1884,7 +1937,7 @@ export async function bustCachesForPosts(postIds: number | number[]) {
 
 /**
  * After every image of an account is blocked: the showcases and search documents of the models it
- * owns. Bounded by that account's own models and versions, in chunks of `SHOWCASE_CHUNK`.
+ * owns.
  */
 export async function refreshShowcasesForUserModels(userId: number) {
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
@@ -2192,36 +2245,235 @@ export const removeResourceFromPostImage = async ({
   return deleted;
 };
 
+type Editor = { user: SessionUser; servableLevels: number };
+
 /**
- * Without `items` (an editor from before text items, or with them off), a post that has text keeps
- * every text row where it is: the listed images take, in order, the indexes those images already hold.
+ * Whether an image counts, or will once scanned, toward the version level
+ * (`imageDerivedVersionLevelSql`): an unrated image counts as soon as its scan rates it.
  */
-async function imageOnlyReorder(postId: number, imageIds: number[]) {
-  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
-  if (!hasText) return imageIds.map((id, index) => ({ id, index }));
-  const held = await dbWrite.image.findMany({
-    where: { postId, id: { in: imageIds } },
-    select: { index: true },
+const countsTowardVersionLevel = (nsfwLevel: number) => nsfwLevel !== NsfwLevel.Blocked;
+
+/**
+ * The post's images this editor may not move (`ids`, `indexes`): those it did not list, and those
+ * `getPostEditImages` does not serve it (held for review unless a moderator, or outside the
+ * request's levels and not the editor's own unrated upload) even if it lists them. They keep their
+ * index. `movable` holds the others the editor listed, with their current index and whether the
+ * version level counts them.
+ */
+async function editorHiddenImages(
+  postId: number,
+  listedIds: number[],
+  { user, servableLevels }: Editor
+) {
+  // primary: decides which indexes the reorder write that follows may take
+  const images = await dbWrite.image.findMany({
+    where: { postId },
+    select: { id: true, index: true, needsReview: true, nsfwLevel: true, userId: true },
   });
-  const indexes = held.map((image) => image.index ?? 0).sort((a, b) => a - b);
-  return imageIds.slice(0, indexes.length).map((id, i) => ({ id, index: indexes[i] }));
+  const listed = new Set(listedIds);
+  const isHidden = (image: (typeof images)[number]) =>
+    !listed.has(image.id) ||
+    (!user.isModerator && isHeldForReview(image.needsReview)) ||
+    !isServableLevelOrOwnUnrated(image, servableLevels, user.id);
+  const hidden = images.filter(isHidden);
+  const movable = new Map(
+    images
+      .filter((image) => !isHidden(image))
+      .map((image) => [
+        image.id,
+        { index: image.index ?? 0, counted: countsTowardVersionLevel(image.nsfwLevel) },
+      ])
+  );
+  return {
+    ids: new Set(hidden.map((image) => image.id)),
+    indexes: new Set(hidden.map((image) => image.index ?? 0)),
+    movable,
+    images: images.map((image) => ({
+      id: image.id,
+      index: image.index,
+      nsfwLevel: image.nsfwLevel,
+      pinned: isHidden(image),
+    })),
+  };
 }
 
+// `index` as stored: the version level sorts a null index after every number.
+type RankedImage = { id: number; index: number | null; nsfwLevel: number; pinned: boolean };
+
+/**
+ * Whether writing `positions` would change, for any pinned image, how many images the version
+ * level counts sit ahead of it (or level with it): now, once unrated images are rated, or if any
+ * Blocked image is later cleared. The reorder refuses such a write.
+ */
+export function shiftsPinnedRank(
+  images: RankedImage[],
+  positions: Array<{ type: 'image' | 'text'; id: number; index: number }>
+) {
+  const moved = new Map(positions.filter((p) => p.type === 'image').map((p) => [p.id, p.index]));
+  const before = (image: RankedImage) => image.index ?? Infinity;
+  const after = (image: RankedImage) => moved.get(image.id) ?? image.index ?? Infinity;
+  const views = [
+    (image: RankedImage) => image.nsfwLevel !== 0 && countsTowardVersionLevel(image.nsfwLevel),
+    (image: RankedImage) => countsTowardVersionLevel(image.nsfwLevel),
+    // Every image: a Blocked verdict can be lifted on review, and the image then counts.
+    () => true,
+  ];
+  return views.some((counts) => {
+    const rank = (pin: RankedImage, at: (image: RankedImage) => number) => {
+      const others = images.filter((image) => counts(image) && image.id !== pin.id);
+      const pinAt = at(pin);
+      return `${others.filter((image) => at(image) < pinAt).length}:${
+        others.filter((image) => at(image) === pinAt).length
+      }`;
+    };
+    return images.some((pin) => pin.pinned && rank(pin, before) !== rank(pin, after));
+  });
+}
+
+type Hidden = Awaited<ReturnType<typeof editorHiddenImages>>;
+type Placed = { type: 'image' | 'text'; id: number };
+
+const sortedIndexes = (items: Placed[], hidden: Hidden) =>
+  items.map((item) => hidden.movable.get(item.id)?.index ?? 0).sort((a, b) => a - b);
+
+/**
+ * Indexes for `order`, in order. `ownSlots`: the images trade the indexes they already hold.
+ * Otherwise items are numbered from 0 in the editor's order, skipping the pinned images' and
+ * `reserved` indexes. Either way each pinned image keeps the same images-ahead counts
+ * `shiftsPinnedRank` checks: own slots trade within the images the version level counts and
+ * within the rest; numbered, every image fills the stretches between pinned images up to the
+ * count each held before, and texts take the room left over.
+ */
+function placeAroundPinned(
+  order: Placed[],
+  hidden: Hidden,
+  { ownSlots, reserved = new Set<number>() }: { ownSlots: boolean; reserved?: Set<number> }
+) {
+  const seen = new Set<string>();
+  const items = order.filter((item) => {
+    const key = `${item.type}:${item.id}`;
+    return !seen.has(key) && !!seen.add(key);
+  });
+  const isCounted = (item: Placed) =>
+    item.type === 'image' && !!hidden.movable.get(item.id)?.counted;
+  const isImage = (item: Placed) => item.type === 'image' && hidden.movable.has(item.id);
+
+  const index = new Map<Placed, number>();
+  if (ownSlots) {
+    const groups = hidden.ids.size
+      ? [items.filter(isCounted), items.filter((item) => !isCounted(item))]
+      : [items];
+    for (const group of groups) {
+      const slots = sortedIndexes(group, hidden);
+      group.forEach((item, i) => index.set(item, slots[i]));
+    }
+    return items.map((item) => ({ ...item, index: index.get(item)! }));
+  }
+
+  // Stretch k runs up to the k-th pinned index; the last one is open.
+  const pins = [...hidden.indexes].sort((a, b) => a - b);
+  const last = pins.length;
+  const stretchOf = (at: number) => pins.filter((pin) => pin < at).length;
+  const blocked = new Set([...pins, ...reserved]);
+  const room = pins.map((pin, k) => {
+    let free = 0;
+    for (let at = k ? pins[k - 1] + 1 : 0; at < pin; at++) if (!blocked.has(at)) free++;
+    return free;
+  });
+  const quota = pins.map(() => 0);
+  for (const item of items.filter(isImage)) {
+    const k = stretchOf(hidden.movable.get(item.id)!.index);
+    if (k < last) quota[k]++;
+  }
+  const used = pins.map(() => 0);
+  const usedCounted = pins.map(() => 0);
+  const stretch = new Map<Placed, number>();
+  let k = 0;
+  for (const item of items) {
+    let at;
+    if (isImage(item)) {
+      while (k < last && usedCounted[k] >= quota[k]) k++;
+      at = k;
+      if (at < last) usedCounted[at]++;
+    } else {
+      at = k;
+      while (at < last && room[at] - used[at] <= quota[at] - usedCounted[at]) at++;
+    }
+    if (at < last) used[at]++;
+    stretch.set(item, at);
+  }
+
+  let at = 0;
+  for (let s = 0; s <= last; s++) {
+    if (s) at = Math.max(at, pins[s - 1] + 1);
+    for (const item of items.filter((item) => stretch.get(item) === s)) {
+      while (blocked.has(at)) at++;
+      index.set(item, at++);
+    }
+  }
+  return items.map((item) => ({ ...item, index: index.get(item)! }));
+}
+
+/**
+ * Without `items` (an editor from before text items, or with them off), a post that has text keeps
+ * every text row where it is: the listed images trade the indexes those images already hold.
+ * Otherwise they are numbered from 0, around the images the editor may not move.
+ */
+async function imageOnlyReorder(postId: number, imageIds: number[], editor: Editor) {
+  const hidden = await editorHiddenImages(postId, imageIds, editor);
+  const hasText = await dbWrite.postText.count({ where: { postId }, take: 1 });
+  const order = imageIds
+    .filter((id) => !hidden.ids.has(id) && (!hasText || hidden.movable.has(id)))
+    .map((id) => ({ type: 'image' as const, id }));
+  return { hidden, positions: placeAroundPinned(order, hidden, { ownSlots: !!hasText }) };
+}
+
+/**
+ * The editor's whole reading order, numbered from 0 around the images it may not move and any
+ * text rows it did not send.
+ */
+async function itemsReorder(
+  postId: number,
+  items: NonNullable<ReorderPostImagesInput['items']>,
+  editor: Editor
+) {
+  const ids = (type: 'image' | 'text') => items.filter((i) => i.type === type).map((i) => i.id);
+  const hidden = await editorHiddenImages(postId, ids('image'), editor);
+  const order = items.filter((item) => item.type === 'text' || !hidden.ids.has(item.id));
+  // primary: decides which indexes the reorder write that follows may take
+  const unlistedTexts = await dbWrite.postText.findMany({
+    where: { postId, id: { notIn: ids('text') } },
+    select: { index: true },
+  });
+  return {
+    hidden,
+    positions: placeAroundPinned(order, hidden, {
+      ownSlots: false,
+      reserved: new Set(unlistedTexts.map((text) => text.index)),
+    }),
+  };
+}
+
+/** Writes the editor's order and returns the index each item it may move now has. */
 export const reorderPostImages = async ({
   id: postId,
   imageIds,
   items,
-}: ReorderPostImagesInput) => {
-  const writes = items
-    ? items.map(({ type, id }, index) =>
-        type === 'image'
-          ? dbWrite.image.update({ where: { id, postId }, data: { index } })
-          : dbWrite.postText.update({ where: { id, postId }, data: { index } })
-      )
-    : (await imageOnlyReorder(postId, imageIds)).map(({ id, index }) =>
-        dbWrite.image.update({ where: { id, postId }, data: { index } })
-      );
-  const transaction = await dbWrite.$transaction(writes);
+  ...editor
+}: ReorderPostImagesInput & Editor) => {
+  const { hidden, positions } = items
+    ? await itemsReorder(postId, items, editor)
+    : await imageOnlyReorder(postId, imageIds, editor);
+  // Fail closed: placement is meant to keep this, and a write that breaks it is refused.
+  if (shiftsPinnedRank(hidden.images, positions))
+    throw throwBadRequestError('This order could not be saved.');
+  await dbWrite.$transaction(
+    positions.map(({ type, id, index }) =>
+      type === 'image'
+        ? dbWrite.image.update({ where: { id, postId }, data: { index } })
+        : dbWrite.postText.update({ where: { id, postId }, data: { index } })
+    )
+  );
 
   await updatePostNsfwLevel(postId);
   await bustCachesForPosts(postId);
@@ -2230,7 +2482,7 @@ export const reorderPostImages = async ({
     { entityId: postId, entityType: EntityType.Post, type: JobQueueType.UpdateNsfwLevel },
   ]);
 
-  return transaction;
+  return positions;
 };
 
 /**

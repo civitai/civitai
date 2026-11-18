@@ -11,6 +11,9 @@
 // cycle to reason about.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Another leaf (no imports of its own), so this module stays one.
+import { stripPlainUrlFields } from '~/server/services/blocks/steps/plain-url-fields';
+
 /**
  * One piece of output media a registered step produced.
  *
@@ -272,11 +275,9 @@ const PASS_THROUGH_OUTPUT_WALK_DEPTH = 32;
  * invisible to a shape test, and reaches the app through `stepOutputs` unseen by
  * the publish path or the per-viewer gated read. Sniffing every string for
  * something url-shaped is NOT the fix — it would strip prose that merely contains
- * a link. Handling a named field by position is; `splitPassThroughStep` does
- * that for the training `$type`s (incl. the plain-string
- * `imageResourceTraining.epochs[].blobUrl` and `sampleImages`). `blobArchive`
- * remains open, as does `imageResourceTraining.sampleInputImages` (images the
- * run selected from the app's own training input).
+ * a link. Handling a named field by position is: `PLAIN_URL_FIELDS`
+ * (`plain-url-fields.ts`) names every such field, and `splitPassThroughStep`
+ * strips or lifts each one before this walk.
  *
  * 🔴 IT REBUILDS RATHER THAN FORWARDS. Every object and array it descends into
  * is reconstructed, so "forward verbatim" is true of VALUES and not of identity:
@@ -404,13 +405,14 @@ export function splitPassThroughStep(
   /** Subtrees nested past the walk cap, nulled rather than forwarded. */
   truncated: number;
 } {
+  const visible = stripPlainUrlFields(stepType, output);
   const trainingType = canonicalTrainingStepType(stepType);
   if (!trainingType) {
-    return { ...splitPassThroughStepOutput(output), trainedEpochs: [] };
+    return { ...splitPassThroughStepOutput(visible), trainedEpochs: [] };
   }
   const trainedEpochs: TrainedEpoch[] = [];
   const sampleUrls: string[] = [];
-  const stripped = stripTrainingEpochs(trainingType, output, trainedEpochs, sampleUrls);
+  const stripped = stripTrainingEpochs(trainingType, visible, trainedEpochs, sampleUrls);
   const { media, rest, model3d, slots, truncated } = splitPassThroughStepOutput(stripped);
   // 🔴 These plain-string samples carry NO rating, and none will ever arrive, so as
   // output positions they are `neverRated`: restricted `'unrated'` wherever a rating

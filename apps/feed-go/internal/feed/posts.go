@@ -264,6 +264,9 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 		ExcludedUsers:  in.ExcludedUserIDs,
 		ViewerID:       viewer.ID,
 		IsModerator:    viewer.IsModerator,
+		// Every fetch below reads it: the page, the post completion, the hydrate of the feed's ids,
+		// and the pinned and sponsored posts (`...input` in each of the handler's getAllImages calls).
+		Tools: in.Tools,
 	}
 
 	overscan := int(math.Ceil(float64(in.Limit) * 2)) // so posts can be merged
@@ -293,6 +296,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Result, error) {
 				HasGeneration:   len(in.Generation) > 0,
 				HasRemixOfID:    in.HasRemixOfID,
 				RequiringMeta:   in.RequiringMeta,
+				Tools:           in.Tools,
 			},
 			hydrate: func(ctx context.Context, ids, postIDs []int) ([]Image, error) {
 				h := hq

@@ -30,7 +30,14 @@ export function resolveSearchTarget(
 
 type ImageSearchFlags = Partial<Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>>;
 type FeedSearchFlags = Partial<
-  Pick<FeatureAccess, 'feedSearch' | 'modelFeedSearch' | 'articleFeedSearch' | 'servicesFeedSearch'>
+  Pick<
+    FeatureAccess,
+    | 'feedSearch'
+    | 'modelFeedSearch'
+    | 'articleFeedSearch'
+    | 'servicesFeedSearch'
+    | 'semanticBountySearch'
+  >
 >;
 
 /**
@@ -54,8 +61,12 @@ const FEED_SEARCH = {
     pathname: '/articles',
     profilePathname: '/user/[username]/articles',
   },
+  bounties: { flag: 'semanticBountySearch', pathname: '/bounties', profilePathname: undefined },
 } as const satisfies Partial<
-  Record<SearchIndexKey, { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string }>
+  Record<
+    SearchIndexKey,
+    { flag: keyof FeedSearchFlags; pathname: string; profilePathname: string | undefined }
+  >
 >;
 
 /** The feed a search on `index` lands on, when that feed answers `?query=` for this viewer. */
@@ -122,4 +133,34 @@ export function legacyImageSearchDestination(
   if (features.feedSearch) return 'images-feed';
   if (!features.imageSearch) return 'models-search';
   return undefined;
+}
+
+type PageSearchFlags = Partial<
+  Pick<
+    FeatureAccess,
+    'semanticChallengeSearch' | 'semanticCrucibleSearch' | 'servicesFeedSearch' | 'pageSearch'
+  >
+>;
+
+// Pages outside the search indexes that answer their own `?query=`, each behind a flag: there the
+// header bar is a plain search of that page, whatever the page does with the text.
+const PAGE_SEARCH: Record<string, { flag: keyof PageSearchFlags; placeholder: string }> = {
+  '/challenges': { flag: 'semanticChallengeSearch', placeholder: 'Search challenges' },
+  '/crucibles': { flag: 'semanticCrucibleSearch', placeholder: 'Search crucibles' },
+  '/services': { flag: 'servicesFeedSearch', placeholder: 'Search services' },
+  '/shop': { flag: 'pageSearch', placeholder: 'Search the shop' },
+  '/apps/store': { flag: 'pageSearch', placeholder: 'Search apps' },
+  '/changelog': { flag: 'pageSearch', placeholder: 'Search updates' },
+  // A creator's tabs without a search index: their own feeds filter by text.
+  '/user/[username]/posts': { flag: 'pageSearch', placeholder: 'Search their posts' },
+  '/user/[username]/collections': { flag: 'pageSearch', placeholder: 'Search their collections' },
+};
+
+/**
+ * The header bar's search on a page that answers its own `?query=`, or undefined elsewhere.
+ * `pathname` is the route pattern (`router.pathname`).
+ */
+export function pageSearchFor(features: PageSearchFlags, pathname: string) {
+  const page = PAGE_SEARCH[pathname];
+  return page && features[page.flag] ? { placeholder: page.placeholder } : undefined;
 }

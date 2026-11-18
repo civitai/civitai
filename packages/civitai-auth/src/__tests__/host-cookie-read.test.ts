@@ -13,7 +13,7 @@ import {
 
 const HOST = '__Host-civ-token';
 const SHARED = '__Secure-civ-token';
-const secure = { secure: true } satisfies CookieReadOptions;
+const secure = { host: null, secure: true } satisfies CookieReadOptions;
 const shared = { ...secure, mode: 'shared' } satisfies CookieReadOptions;
 const host = { ...secure, mode: 'host' } satisfies CookieReadOptions;
 
@@ -34,20 +34,20 @@ describe('sessionCookieMode / legacyCookieReadEnabled (env)', () => {
 
   it('defaults to shared, and only the exact value host selects host', () => {
     delete process.env.AUTH_SESSION_COOKIE_MODE;
-    expect(sessionCookieMode()).toBe('shared');
+    expect(sessionCookieMode(null)).toBe('shared');
     process.env.AUTH_SESSION_COOKIE_MODE = 'Host';
-    expect(sessionCookieMode()).toBe('shared');
+    expect(sessionCookieMode(null)).toBe('shared');
     process.env.AUTH_SESSION_COOKIE_MODE = 'host';
-    expect(sessionCookieMode()).toBe('host');
+    expect(sessionCookieMode(null)).toBe('host');
   });
 
   it('reads the shared slot unless AUTH_LEGACY_READ is explicitly false', () => {
     delete process.env.AUTH_LEGACY_READ;
-    expect(legacyCookieReadEnabled()).toBe(true);
+    expect(legacyCookieReadEnabled(null)).toBe(true);
     process.env.AUTH_LEGACY_READ = 'true';
-    expect(legacyCookieReadEnabled()).toBe(true);
+    expect(legacyCookieReadEnabled(null)).toBe(true);
     process.env.AUTH_LEGACY_READ = 'false';
-    expect(legacyCookieReadEnabled()).toBe(false);
+    expect(legacyCookieReadEnabled(null)).toBe(false);
   });
 });
 

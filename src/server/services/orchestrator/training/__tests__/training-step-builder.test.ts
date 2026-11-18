@@ -93,3 +93,49 @@ describe('the training form’s ai-toolkit step (zip dataset)', () => {
     expect(Object.keys(step)).toEqual(['$type', 'metadata', 'priority', 'retries', 'input']);
   });
 });
+
+it('preserves explicit advanced settings and returns preview warnings', async () => {
+  mockSubmitWorkflow.mockResolvedValueOnce({
+    cost: { total: 100 },
+    steps: [{ warnings: [{ code: 'fieldIgnored', message: 'Unsupported setting.' }] }],
+  });
+  const result = await createTrainingWhatIfWorkflow({
+    token: 't',
+    model: 'sdxl',
+    priority: OrchPriorityTypes.Low,
+    trainingDataImagesCount: 12,
+    ...PARAMS,
+    lrScheduler: 'constant',
+    lrWarmupSteps: 100,
+    captionDropoutRate: 0,
+    rankDropout: 0.1,
+    trainConv: true,
+  } as never);
+  expect(mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input).toMatchObject({
+    lrWarmupSteps: 100,
+    captionDropoutRate: 0,
+    rankDropout: 0.1,
+    trainConv: true,
+  });
+  expect(result.warnings).toEqual(['Unsupported setting.']);
+});
+
+it('drops settings unsupported by the selected model and scheduler', async () => {
+  await createTrainingWhatIfWorkflow({
+    token: 't',
+    model: 'yue2',
+    priority: OrchPriorityTypes.Low,
+    trainingDataImagesCount: 12,
+    ...PARAMS,
+    ecosystem: 'yue2',
+    lrWarmupSteps: 100,
+    captionDropoutRate: 0.5,
+    rankDropout: 0,
+    trainConv: true,
+  } as never);
+  const input = mockSubmitWorkflow.mock.calls[0][0].body.steps[0].input;
+  expect(input).not.toHaveProperty('lrWarmupSteps');
+  expect(input).not.toHaveProperty('captionDropoutRate');
+  expect(input).not.toHaveProperty('trainConv');
+  expect(input.rankDropout).toBe(0);
+});

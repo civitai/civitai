@@ -4,6 +4,7 @@ import { logAxiomError } from './axiom';
 import { bustCachedObject } from './cache';
 import { dbWrite } from './db';
 import { syncSearchIndexBulk } from './search-index';
+import { parkModelSearchUpdates } from './search-index-park';
 
 const CHILD_TAG_IDS = [...childBrowsingTagIds];
 const childTagIds = new Set<number>(CHILD_TAG_IDS);
@@ -24,7 +25,8 @@ type ImageChildTagChanges = {
  * For this app's tag, level and minor-flag writes: drops the cached tags and showcase images of the models whose
  * posts hold these images, then queues those models for a models-index rewrite. Never throws: it runs
  * after the tag, level or minor-flag write has committed. A failed attempt, the queue call included, is retried
- * once; a second failure is logged, with the image and model ids, and the requeue is dropped.
+ * once; a second failure is logged, with the image and model ids, and the models found are parked for
+ * the main app to replay.
  */
 export async function queueModelsForImageChildTagChanges(
   changes: ImageChildTagChanges
@@ -41,7 +43,7 @@ export async function queueModelsForImageChildTagChanges(
         imageIds: found.imageIds ?? changedImageIds(changes),
         modelIds: found.modelIds,
       });
-      if (attempt >= ATTEMPTS) return;
+      if (attempt >= ATTEMPTS) return parkModelSearchUpdates(found.modelIds ?? []);
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
   }

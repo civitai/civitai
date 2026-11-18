@@ -22,6 +22,7 @@ import {
   getTagsFromPrompt,
   includesInappropriate,
   includesMinorAge,
+  includesNsfw,
   includesPoi,
 } from '~/utils/metadata/audit';
 import { decideAgeRegexHit } from '~/server/services/age-prompt-shadow.service';
@@ -51,8 +52,8 @@ import { queueScanSampleForKnights } from '~/server/services/knights/sources';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
-  deleteUserProfilePictureCache,
   refreshProfilePicturesForImages,
+  refreshProfilePicturesForUsers,
 } from '~/server/services/user.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import {
@@ -352,6 +353,7 @@ export async function loadImageForScan(imageId: number) {
       ingestion: true,
       blockedFor: true,
       needsReview: true,
+      minor: true,
     },
   });
 
@@ -939,7 +941,10 @@ async function auditScanResults(args: {
     (cartoonTags.length === 0 || minorRestrictedScan);
   let newUserReview = false;
 
-  const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
+  const inappropriate = includesInappropriate(
+    { prompt, negativePrompt },
+    nsfw || !!includesNsfw(normalizeText(args.prompt))
+  );
   if (inappropriate === 'minor') minorReview = true;
   if (inappropriate === 'poi') poiReview = true;
 
@@ -1194,7 +1199,7 @@ export async function applyIngestionSideEffects({
       typeof image.metadata === 'object' &&
       (image.metadata as MediaMetadata | undefined)?.profilePicture
     ) {
-      await deleteUserProfilePictureCache(image.userId);
+      await refreshProfilePicturesForUsers([image.userId]);
     } else {
       // A rescan of an image picked as an avatar after its upload can change its rating too.
       await refreshProfilePicturesForImages([image.id]);
@@ -1216,11 +1221,13 @@ export async function applyIngestionSideEffects({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Update,
     });
-    // The scan writes "minor", which no trigger watches.
-    await queueArticlesAndComicsForImages([image.id]);
+    // The scan writes "minor", which no trigger watches. A changed flag requeues the articles and
+    // comics through minorImageIds; otherwise they are queued here.
+    const minorChanged = !!outcome.audit && !!outcome.audit.minor !== !!image.minor;
+    if (!minorChanged) await queueArticlesAndComicsForImages([image.id]);
     await queueModelsForImageChildTagChanges({
       levelImageIds: [image.id],
-      ...(outcome.audit?.minor && { minorImageIds: [image.id] }),
+      ...(minorChanged && { minorImageIds: [image.id] }),
     });
 
     // Not awaited, and never allowed to throw: the shadow must not fail or slow ingestion.

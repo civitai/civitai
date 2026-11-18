@@ -34,25 +34,22 @@ export const buzzBalance = {
 };
 
 /** `matureSpend` against the live Blue balance, for every spend site. `mature` = the dataset has
- *  mature images (then the non-Blue part is Yellow, never Green); `member` = a paid membership, which
- *  lets Blue pay for mature content. Unknown membership counts as not a member. With Blue first off, Blue
- *  is not charged, so the whole price is non-Blue. */
+ *  mature images (then the non-Blue part is Yellow, never Green). With Blue first off, Blue is not
+ *  charged, so the whole price is non-Blue. */
 export function nonBlueSpend(
   price: number | null | undefined,
   mode: 'yellow' | 'green',
-  opts: { mature?: boolean; member?: boolean } = {}
+  opts: { mature?: boolean } = {}
 ): Spend | null {
   return matureSpend({
     price,
     blue: buzzMode.blueFirst ? balances?.blue : 0,
     mode,
     mature: opts.mature ?? false,
-    member: opts.member ?? false,
   });
 }
 
-// The main app's `isMature` (src/shared/constants/orchestrator.constants.ts) — the ratings Blue can't
-// pay for without a membership.
+// The main app's `isMature` (src/shared/constants/orchestrator.constants.ts).
 const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 
 export function isMatureNsfwLevel(level: string | null | undefined): boolean {

@@ -1,3 +1,4 @@
+import { useRouter } from 'next/router';
 import { Button, Center, Group, Loader, LoadingOverlay, Text } from '@mantine/core';
 import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -26,7 +27,10 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageFeedSearchSort } from '~/components/Image/Infinite/image-feed-search';
-import { toSemanticImageSearchInput } from '~/components/Image/Infinite/image-feed-search';
+import {
+  parseExcludeOwn,
+  toSemanticImageSearchInput,
+} from '~/components/Image/Infinite/image-feed-search';
 import { SearchRefusalNotice } from '~/components/Search/SearchRefusalNotice';
 import { useSearchRefusal } from '~/components/Search/useSearchRefusal';
 import type { SearchRefusal } from '~/components/Search/search-refusal';
@@ -170,6 +174,7 @@ function ImagesFeed({
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;
+  const excludeOwn = parseExcludeOwn(useRouter().query.excludeOwn);
   const searchInput = useMemo(
     () =>
       searchQuery || similarTo
@@ -179,14 +184,18 @@ function ImagesFeed({
             filters,
             browsingLevel,
             sort: feedSearch?.sort,
+            excludeOwn,
           })
         : undefined,
-    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort]
+    [searchQuery, similarTo, filters, browsingLevel, feedSearch?.sort, excludeOwn]
   );
   const search = useSemanticImageFeed(searchInput);
   useScrollToTopOnChange(searchInput && JSON.stringify(searchInput));
   // A search that fails falls back to the plain feed with a banner, never an empty page.
   const searchFailed = !!searchInput && search.isError;
+  // "More like this" from an image it can't search answers NOT_FOUND: say so, rather than outage.
+  const similarUnavailable =
+    searchFailed && !!searchInput?.imageId && search.error?.data?.code === 'NOT_FOUND';
   const searching = !!searchInput && !searchFailed;
   const feed = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
@@ -319,6 +328,7 @@ function ImagesFeed({
           correctedQuery={searching ? search.correctedQuery : undefined}
           filters={filters}
           failed={searchFailed}
+          unavailable={similarUnavailable}
           onRetry={() => search.refetch()}
         />
       )}

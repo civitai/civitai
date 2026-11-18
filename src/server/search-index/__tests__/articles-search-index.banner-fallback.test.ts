@@ -74,6 +74,8 @@ describe('articles search index', () => {
 
   const restricted = (id: number) => ({ ...image(id, 4), minor: true });
 
+  // transformData takes fetched rows, so only the select shows the flag is read. Without it `minor`
+  // is undefined, which the rule reads as unrestricted: the cover would be indexed for everyone.
   it('reads the flag for the cover and the banner', () => {
     expect(articleSelect.coverImage.select.minor).toBe(true);
     expect(articleSelect.bannerImage.select.minor).toBe(true);

@@ -529,7 +529,7 @@ describe('assertViewerEntitledToInlineResources — the silent fail-opens', () =
   });
 });
 
-describe('assertViewerEntitledToInlineResources — Private / epoch subscription', () => {
+describe('assertViewerEntitledToInlineResources — Private subscription', () => {
   it('rejects a Private resource for a viewer with no subscription', async () => {
     mockGetResourceData.mockResolvedValue([resourceRow({ availability: 'Private' })]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
@@ -546,14 +546,14 @@ describe('assertViewerEntitledToInlineResources — Private / epoch subscription
     ).resolves.toBeUndefined();
   });
 
-  it('an EPOCH resource takes the same subscription path', async () => {
+  it('an owned EPOCH resource needs no subscription', async () => {
     mockGetResourceData.mockResolvedValue([
       resourceRow({ epochDetails: { epochNumber: 3, isExpired: false } }),
     ]);
     mockGetHighestTierSubscription.mockResolvedValue(null);
     await expect(
       assertViewerEntitledToInlineResources({ airs: [LORA_AIR], user: VIEWER })
-    ).rejects.toThrow(/requires an active subscription/);
+    ).resolves.toBeUndefined();
   });
 
   it('an EXPIRED epoch is rejected even for a subscriber', async () => {

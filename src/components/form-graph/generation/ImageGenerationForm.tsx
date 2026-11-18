@@ -202,6 +202,19 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
+      <Controller
+        graph={generationHub}
+        name="backgroundRemovalModel"
+        render={({ value, meta, onChange, note }) => (
+          <SegmentedEnumField
+            label="Model"
+            value={value}
+            onChange={onChange}
+            options={meta.options}
+            note={note}
+          />
+        )}
+      />
       <AvatarFormFields store={store} />
       <Controller
         graph={generationHub}

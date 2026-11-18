@@ -72,4 +72,14 @@ describe('image reaction bars carry the Buzz tip total', () => {
       .map((s) => s.rel);
     expect(offenders, 'these image reaction bars build their counts by hand').toEqual([]);
   });
+
+  // A POI image takes no Buzz tips: the image viewer modal once offered one because its bar
+  // omitted this prop while every other image bar passed it. The prop is bare (the card draws its
+  // own tip, POI-gated) or tied to the image's `poi`; `={false}` or an unrelated value fails.
+  it('passes disableBuzzTip, bare or from poi, to every image reaction bar', () => {
+    const offenders = sites
+      .filter(({ tag }) => !/\bdisableBuzzTip(?:\s*$|\s+[\w{]|=\{[^}]*\bpoi\b)/m.test(tag))
+      .map((s) => s.rel);
+    expect(offenders, 'these image reaction bars offer a tip on POI images').toEqual([]);
+  });
 });

@@ -35,7 +35,6 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import type { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -179,21 +178,19 @@ const EpochRow = ({
                       : 'Download'}
                   </Menu.Item>
                   {canGenerate && (
-                    <SubscriptionRequiredBlock feature="private-models">
-                      <GenerateButton
-                        versionId={modelVersionId}
-                        modelId={modelId}
-                        epochNumber={epoch.epochNumber}
-                        data-activity="create:training-select"
+                    <GenerateButton
+                      versionId={modelVersionId}
+                      modelId={modelId}
+                      epochNumber={epoch.epochNumber}
+                      data-activity="create:training-select"
+                    >
+                      <Menu.Item
+                        leftSection={<IconBrush size={16} />}
+                        disabled={!canGenerateWithEpochs(currentUser)}
                       >
-                        <Menu.Item
-                          leftSection={<IconBrush size={16} />}
-                          disabled={!canGenerateWithEpochs(currentUser)}
-                        >
-                          Generate
-                        </Menu.Item>
-                      </GenerateButton>
-                    </SubscriptionRequiredBlock>
+                        Generate
+                      </Menu.Item>
+                    </GenerateButton>
                   )}
                   {!!onContinueTraining && (
                     <Menu.Item
@@ -221,20 +218,17 @@ const EpochRow = ({
                 </Text>
               </DownloadButton>
               {canGenerate && (
-                <SubscriptionRequiredBlock feature="private-models">
-                  {/* TODO will this work? */}
-                  <GenerateButton
-                    versionId={modelVersionId}
-                    modelId={modelId}
-                    disabled={!canGenerateWithEpochs(currentUser)}
-                    epochNumber={epoch.epochNumber}
-                    data-activity="create:training-select"
-                    // Default render uses padding '12px 20px' on a fixed-height button, which
-                    // clips the 20px brush icon. py={8} gives the icon room (matches the same
-                    // fix applied to GenerateButton in ModelVersionDetails).
-                    py={8}
-                  />
-                </SubscriptionRequiredBlock>
+                <GenerateButton
+                  versionId={modelVersionId}
+                  modelId={modelId}
+                  disabled={!canGenerateWithEpochs(currentUser)}
+                  epochNumber={epoch.epochNumber}
+                  data-activity="create:training-select"
+                  // Default render uses padding '12px 20px' on a fixed-height button, which
+                  // clips the 20px brush icon. py={8} gives the icon room (matches the same
+                  // fix applied to GenerateButton in ModelVersionDetails).
+                  py={8}
+                />
               )}
               {!!onContinueTraining && (
                 <Tooltip

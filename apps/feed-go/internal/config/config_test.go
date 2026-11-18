@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -392,6 +393,32 @@ func TestLoadMaxInFlight(t *testing.T) {
 		}
 		if c.MaxInFlight != want {
 			t.Errorf("FEED_GO_MAX_IN_FLIGHT=%q -> %d, want %d", in, c.MaxInFlight, want)
+		}
+	}
+}
+
+// AUTH_SESSION_COOKIE_MODE_BY_SITE: a site listed host reads only the host-only slot; every other site keeps the
+// global mode (shared here), and an entry with a mistyped mode leaves its site unlisted.
+func TestCookieNamesPerSite(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("AUTH_JWT_ISSUER", "https://auth.civitai.com")
+	t.Setenv("AUTH_SESSION_COOKIE_MODE_BY_SITE", "civitai.red:host, civitai.example:Host")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		"civitai.red":         "__Host-civ-token",
+		"www.civitai.red:443": "__Host-civ-token",
+		"civitai.com":         "__Secure-civ-token,__Host-civ-token",
+		"civitai.example":     "__Secure-civ-token,__Host-civ-token",
+		"":                    "__Secure-civ-token,__Host-civ-token",
+	}
+	for host, want := range cases {
+		if got := strings.Join(c.CookieNames(host), ","); got != want {
+			t.Errorf("CookieNames(%q) = %s, want %s", host, got, want)
 		}
 	}
 }

@@ -282,11 +282,6 @@ export type SubmitListingReadiness = {
 
 const MANIFEST_PATH = 'block.manifest.json';
 
-/** Org holding the per-slug in-review snapshot repos a review preview builds
- *  from. Deliberately separate from the canonical build org so commits here
- *  never fire the production build webhook. */
-const REVIEW_REPO_ORG = FORGEJO_REVIEW_ORG;
-
 // Diff threshold: fields that exceed N bytes when serialized are summarised
 // rather than embedded verbatim in the diff so manifestDiffSummary stays
 // scannable in the mod-review UI.
@@ -1482,7 +1477,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
     await ensureReviewRepo(slug);
     await commitFiles({
-      org: REVIEW_REPO_ORG,
+      org: FORGEJO_REVIEW_ORG,
       slug,
       files: reviewFiles,
       message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
@@ -4682,7 +4677,7 @@ async function approveRequestUnderClaim(
   // whose sha is NOT this approved one is treated as unreviewed and parked in
   // the review queue instead of deploying.
   const { finaliseOnsiteApprove } = await import('./publish-request-finalise.service');
-  const { lateHoldIds } = await dbWrite.$transaction((tx) =>
+  const { lateHoldIds, revokedTokens } = await dbWrite.$transaction((tx) =>
     finaliseOnsiteApprove(tx, {
       holdDecision,
       reviewerUserId: params.reviewerUserId,
@@ -4715,6 +4710,8 @@ async function approveRequestUnderClaim(
     }
     const { takeDownLiveApp } = await import('./live-unpublish.service');
     const { liveNote } = await takeDownLiveApp(request.slug).catch(() => ({ liveNote: undefined }));
+    const { forgetRevokedAppTokens } = await import('./app-block-token-revoke.service');
+    await forgetRevokedAppTokens(revokedTokens);
     return {
       publishRequestId: request.id,
       appBlockId,
@@ -5566,6 +5563,11 @@ export type ReviewPreviewDetail = {
    * value.
    */
   sharedServer?: boolean;
+  /**
+   * Set (with state `preview-failed`) when the review build PASSED in a build-only environment
+   * (APPS_REVIEW_BUILD_ONLY, PR previews): the build is recorded and no preview is served.
+   */
+  buildOnly?: boolean;
 };
 
 /** Pack a ReviewPreviewDetail into the deploy_detail string column. */
@@ -5713,7 +5715,7 @@ async function reviewRepoAlreadyHoldsTree(
 ): Promise<boolean> {
   try {
     const { listRepoTree } = await import('./forgejo.service');
-    const tree = await listRepoTree(slug, 'main', REVIEW_REPO_ORG);
+    const tree = await listRepoTree(slug, 'main', FORGEJO_REVIEW_ORG);
     if (tree.size !== files.length) return false;
     const seen = new Set<string>();
     for (const file of files) {
@@ -5794,7 +5796,7 @@ async function resolveReviewSourceSha(request: {
   }
 
   const { sha } = await commitFiles({
-    org: REVIEW_REPO_ORG,
+    org: FORGEJO_REVIEW_ORG,
     slug: request.slug,
     files,
     message: `Review source for pushed commit ${request.forgejoCommitSha.slice(0, 12)}`,

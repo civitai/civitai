@@ -73,7 +73,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { calledHybridNodes } from '~/__tests__/mocks/hybrid';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { FORKABLE_OFFSITE_MESSAGE } from '~/server/services/blocks/app-fork.service';
 import {
   FORK_BUSY_MESSAGE,
@@ -204,7 +204,8 @@ function installRedis() {
     }
   );
   redisMock.sysRedis.del.mockImplementation(async (key: string) => (store.delete(key) ? 1 : 0));
-  redisMock.sysRedis.multi.mockImplementation(() => {
+  // The fork-start windows are on the cache cluster; the fork sessions above stay in system Redis.
+  redisMock.redis.multi.mockImplementation(() => {
     let key = '';
     const chain = {
       set: (k: string) => {
@@ -426,10 +427,16 @@ describe('startAppFork — refusals (exact errors)', () => {
       message: FORK_RATE_LIMITED_MESSAGE,
     });
     expect(m.reconstruct).toHaveBeenCalledTimes(5);
+    // The windows are counted on the cache cluster, not in system Redis.
+    expect([...counters.keys()].sort()).toEqual([
+      `system:blocks:fork-rate-limit:${FORKER_ID}:3600`,
+      `system:blocks:fork-rate-limit:${FORKER_ID}:86400`,
+    ]);
+    expect(redisMock.sysRedis.multi).not.toHaveBeenCalled();
   });
 
   it('rate limit: 20 a day — refused past it even with the hour window fresh', async () => {
-    counters.set(`${REDIS_SYS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
+    counters.set(`${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${FORKER_ID}:86400`, 20);
     await expect(start()).rejects.toMatchObject({
       code: 'TOO_MANY_REQUESTS',
       message: FORK_RATE_LIMITED_MESSAGE,

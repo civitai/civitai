@@ -344,6 +344,7 @@ describe('on real rows: the stored level after the nsfw flag moves', () => {
   afterEach(() => {
     // A once-implementation left unconsumed by a failing test would read a closed PGlite later.
     vi.mocked(SearchIndexUpdate.queueUpdate).mockReset();
+    mockDbWrite.bounty.findUnique.mockReset();
     mockDbWrite.$queryRaw.mockImplementation(saved.queryRaw as never);
     mockDbWrite.$executeRaw.mockImplementation(saved.executeRaw as never);
   });
@@ -381,33 +382,65 @@ describe('on real rows: the stored level after the nsfw flag moves', () => {
     expect(await queued()).toBe(1);
   });
 
-  it('reindexes at R or above when a blurb edit trips the profanity gate over a PG-13 rating', async () => {
-    await pg.db.exec(`
-      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
-      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13});
-    `);
-    const stored = await readRow();
-    mockDbWrite.bounty.findUnique.mockResolvedValueOnce({
-      ...stored,
-      name: 'A bounty',
-      lockedProperties: [],
-      details: null,
-    });
+  // The blurb fan-out reads the row once unlocked, then again under the row lock; `between` runs
+  // after the first read, where a concurrent write would land.
+  const blurbEdit = async (between?: () => Promise<unknown>) => {
+    let reads = 0;
+    mockDbWrite.bounty.findUnique.mockImplementation((async () => {
+      const row = { ...(await readRow()), name: 'A bounty', lockedProperties: [], details: null };
+      if (++reads === 1) await between?.();
+      return row;
+    }) as never);
     mockEvaluateContent.mockReturnValue({
       shouldMarkNSFW: true,
       matchedWords: ['x'],
       reason: 'r',
       metrics: { matchCount: 1 },
     });
+    await applyBountyContentChange({ id: BOUNTY_ID, description: 'blurb text' });
+  };
+  const seedPg13 = () =>
+    pg.db.exec(`
+      DELETE FROM "Bounty"; DELETE FROM "JobQueue";
+      INSERT INTO "Bounty" VALUES (${BOUNTY_ID}, false, ${NsfwLevel.PG13}, ${NsfwLevel.PG13});
+    `);
+
+  it('reindexes at R or above when a blurb edit trips the profanity gate over a PG-13 rating', async () => {
+    await seedPg13();
     let indexedLevel: number | undefined;
     vi.mocked(SearchIndexUpdate.queueUpdate).mockImplementationOnce((async () => {
       indexedLevel = (await readRow()).nsfwLevel;
     }) as never);
 
-    await applyBountyContentChange({ id: BOUNTY_ID, description: 'blurb text' });
+    await blurbEdit();
 
     expect(ratedLevel(indexedLevel ?? 0)).toBeGreaterThanOrEqual(NsfwLevel.R);
     expect(await queued()).toBe(1);
+  });
+
+  it('keeps a moderator rating written after the unlocked read', async () => {
+    await seedPg13();
+
+    await blurbEdit(() =>
+      pg.db.query(`UPDATE "Bounty" SET "moderatorNsfwLevel" = $2 WHERE id = $1`, [
+        BOUNTY_ID,
+        NsfwLevel.X,
+      ])
+    );
+
+    const row = await readRow();
+    expect(row.moderatorNsfwLevel).toBe(NsfwLevel.X);
+    expect(ratedLevel(row.nsfwLevel)).toBe(NsfwLevel.X);
+    expect(row.nsfw).toBe(true);
+    // One connection here, so the lock cannot block; check the second read is taken under it.
+    const lockAt = mockDbWrite.$queryRaw.mock.calls.findIndex(([q]) =>
+      (Array.isArray(q) ? q.join('') : (q as { text: string }).text).includes('FOR UPDATE')
+    );
+    expect(lockAt, 'row lock statement issued').toBeGreaterThanOrEqual(0);
+    expect(
+      mockDbWrite.$queryRaw.mock.invocationCallOrder[lockAt],
+      'row lock taken before the locked re-read'
+    ).toBeLessThan(mockDbWrite.bounty.findUnique.mock.invocationCallOrder[1]);
   });
 });
 

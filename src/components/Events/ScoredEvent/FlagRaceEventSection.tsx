@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import { useMemo } from 'react';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { FlagRacePanel } from '~/components/HatTurf/FlagRace/FlagRacePanel';
+import { FlagRaceTotals } from '~/components/HatTurf/FlagRace/FlagRaceTotals';
 import flagClasses from '~/components/HatTurf/FlagRace/FlagRacePanel.module.scss';
 import { FlagRowProviders, useFlagRow } from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import partyClasses from '~/components/HomeBlocks/ScoredEventHomeBlock.module.scss';
@@ -13,8 +14,19 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImageSort } from '~/server/common/enums';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
-/** The home row's Flag Race on the event page: shown to everyone while a flag day runs. */
-export function FlagRaceEventSection({ event }: { event: string }) {
+/**
+ * The home row's Flag Race on the event page, signed in or not: while a flag day runs and the viewer
+ * may see one of its flags. Under it, each team's race so far.
+ */
+export function FlagRaceEventSection({
+  event,
+  myTeam,
+  teamHats,
+}: {
+  event: string;
+  myTeam?: string;
+  teamHats?: { team: string; url: string | null }[];
+}) {
   const features = useFeatureFlags();
   const row = useFlagRow(features.flagRace ? event : undefined);
   const ids = useMemo(() => row?.summary.flags.map((f) => f.imageId) ?? [], [row]);
@@ -60,6 +72,7 @@ export function FlagRaceEventSection({ event }: { event: string }) {
             </FlagRowProviders>
           )}
         </div>
+        <FlagRaceTotals event={event} myTeam={myTeam} teamHats={teamHats} />
       </section>
     </div>
   );

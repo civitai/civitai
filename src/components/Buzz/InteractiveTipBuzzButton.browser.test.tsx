@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as Notifications from '@mantine/notifications';
 import type * as TrackUtils from '../TrackView/track.utils';
@@ -9,7 +9,8 @@ import type * as BuzzUtils from './buzz.utils';
 // CONFIRMATION_TIMEOUT in InteractiveTipBuzzButton.tsx. Not exported, so the two are kept
 // in step by hand. `closes on its own` brackets the deadline from both sides, which catches
 // a constant moved OUTSIDE roughly [3500, 5400]ms — 5000 -> 4000 passes both halves. The
-// bracket is loose on purpose: tightening it trades mutation sensitivity for flake.
+// width was chosen to absorb real-time jitter; these tests now run on a fake clock, so that
+// reason no longer applies and nothing else justifies the width. Tightening it is open.
 const CONFIRMATION_TIMEOUT = 5000;
 const WELL_BEFORE_CLOSE = CONFIRMATION_TIMEOUT - 1500;
 const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
@@ -87,6 +88,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { InteractiveTipBuzzButton } from './InteractiveTipBuzzButton';
 import { renderWithProviders } from '../../../test/component-setup';
+import { advanceBy, fakeTimeouts } from '../../../test/fakeTimeouts';
 
 const amountField = () => document.querySelector<HTMLElement>('[contenteditable="true"]');
 
@@ -104,13 +106,10 @@ const sendButton = () => {
   return button;
 };
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// The confirm timer is armed by the click, not by the assertion that follows it, so waits
-// are measured from the click. Otherwise opening cost (~165ms, and worse on a loaded box)
-// comes out of the margin the lower bracket below depends on.
-let openedAt = 0;
-const waitFromOpen = (ms: number) => wait(Math.max(0, ms - (performance.now() - openedAt)));
+// The auto-close tests run the component's setTimeouts on a FAKE clock (test/fakeTimeouts),
+// installed before render, so the confirm timer armed by the click is fake. Waits are then
+// measured from the click by construction (the fake clock does not move while the pop-up
+// opens), and each bracket below costs milliseconds instead of ~5.5 s of real time.
 
 // Deliberately matches contenteditable="false" too. React renders the attribute either way,
 // so the narrow selector above goes null in the 'confirmed' state as well as on close — it
@@ -125,7 +124,6 @@ const openTipPopover = async () => {
   );
 
   await userEvent.click(page.getByText('tip', { exact: true }));
-  openedAt = performance.now();
   await expect.element(page.getByText('Tipping')).toBeInTheDocument();
   return requireAmountField();
 };
@@ -147,35 +145,41 @@ describe('InteractiveTipBuzzButton', () => {
     // satisfied before the act — it was, and it could not fail.
     vi.mocked(showErrorNotification).mockClear();
   });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   // Brackets the deadline from both sides. The upper half alone passed with
   // CONFIRMATION_TIMEOUT cut to 1500ms — closing EARLY is the regression that matches
   // the bug being fixed, so the lower half is the half that matters.
   test('closes on its own after the confirmation timeout, and not before', async () => {
+    fakeTimeouts({ animationFrames: true });
     await openTipPopover();
 
-    await waitFromOpen(WELL_BEFORE_CLOSE);
+    await advanceBy(WELL_BEFORE_CLOSE, 100);
     expect(amountField()).not.toBeNull();
 
-    await waitFromOpen(PAST_CLOSE);
+    await advanceBy(PAST_CLOSE - WELL_BEFORE_CLOSE, 100);
     expect(anyAmountField()).toBeNull();
   });
 
   test('keeps the pop-up open past the confirmation timeout while the amount field is focused', async () => {
+    fakeTimeouts({ animationFrames: true });
     const field = await openTipPopover();
 
     field.focus();
-    await waitFromOpen(PAST_CLOSE);
+    await advanceBy(PAST_CLOSE, 100);
 
     expect(amountField()).not.toBeNull();
   });
 
   test('re-arms the confirmation timeout once the amount field is blurred again', async () => {
+    fakeTimeouts({ animationFrames: true });
     const field = await openTipPopover();
 
     field.focus();
     field.blur();
-    await wait(PAST_CLOSE);
+    await advanceBy(PAST_CLOSE, 100);
 
     expect(anyAmountField()).toBeNull();
   });
@@ -395,13 +399,14 @@ describe('InteractiveTipBuzzButton', () => {
   // placed after sendTip's teardown would clear it and strand a spendable pop-up open.
   test('a refusal while the balance loads leaves the auto-close running', async () => {
     balanceLoading = true;
+    fakeTimeouts({ animationFrames: true });
     const field = await openTipPopover();
     field.textContent = String(TYPED_AMOUNT);
 
     await userEvent.click(sendButton());
     expect(tipMutate).not.toHaveBeenCalled();
 
-    await waitFromOpen(PAST_CLOSE);
+    await advanceBy(PAST_CLOSE, 100);
     expect(anyAmountField()).toBeNull();
   });
 

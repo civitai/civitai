@@ -55,6 +55,9 @@ type Input struct {
 	HideChallenges  bool
 	ExcludedTagIDs  []int
 	ExcludedUserIDs []int
+	// Tools is `tools` as sent (order, duplicates, zero and negative ids kept): getAllImages keeps the
+	// images whose tool ids contain every one of them; the feed-service query sends the positive ones.
+	Tools []int
 	// IncludeProfilePictures is `include` holding 'profilePictures'. The gallery handler adds it
 	// anyway; image.getInfinite hydrates profile pictures only when the client asked.
 	IncludeProfilePictures bool
@@ -91,7 +94,7 @@ var (
 		"limit", "cursor", "sort", "period", "periodMode", "browsingLevel", "preCapBrowsingLevel",
 		"modelId", "modelVersionId", "model3dId", "types", "generation", "withMeta", "requiringMeta",
 		"remixOfId", "fromPlatform", "disablePoi", "disableMinor", "hideChallenges", "excludedTagIds",
-		"excludedUserIds", "include",
+		"excludedUserIds", "include", "tools",
 	}
 	ignoredKeys = []string{
 		"hatSort", "hatTeams", "hatTurfMine", "hideTurfHats", "hideWornHats", "includePG13",
@@ -104,7 +107,7 @@ var (
 // the feed-service path, where the query mapper refuses them (Input.RequiringMeta / HasRemixOfID).
 var unsupportedKeys = []string{
 	"collectionId", "collectionTagId", "postId", "postIds", "userId", "username", "hubId",
-	"hubExcludedSources", "imageId", "reviewId", "skip", "ids", "tags", "techniques", "tools",
+	"hubExcludedSources", "imageId", "reviewId", "skip", "ids", "tags", "techniques",
 	"prioritizedUserIds", "reactions", "followed", "hidden", "newCreators", "includeBaseModel",
 	"pending", "pendingReviewOnly", "poiOnly", "minorOnly", "withTags", "jumpTo", "baseModels",
 	"notPublished", "scheduled", "publishedOnly",
@@ -136,7 +139,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	}
 	// After unsupported keys so the reason names the parity gap.
 	if k, ok := imagesSchema.Unknown(mapKeys(m), absent); ok {
-		return nil, fallback.Newf("input-unknown-key", "%s", k)
+		return nil, fallback.NewfSafe("input-unknown-key", fallback.Token(k), "%s", k)
 	}
 	in := &Input{
 		Limit: imagesDefaults.limit, Sort: imagesDefaults.sort, Period: imagesDefaults.period,
@@ -145,7 +148,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	var err error
 	if v, ok := m["limit"]; ok && v != nil {
 		if in.Limit, err = intIn(v, 0, 200); err != nil {
-			return nil, fallback.Newf("input-invalid", "limit: %v", err)
+			return nil, fallback.NewfSafe("input-invalid", "limit", "limit: %v", err)
 		}
 	}
 	if v, ok := m["cursor"]; ok && v != nil {
@@ -156,21 +159,21 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	if v, ok := m["sort"]; ok && v != nil {
 		s, _ := v.(string)
 		if !knownSorts[s] {
-			return nil, fallback.Newf("input-sort", "%v", v)
+			return nil, fallback.NewfSafe("input-sort", fallback.Token(s), "%v", v)
 		}
 		in.Sort = s
 	}
 	if v, ok := m["period"]; ok && v != nil {
 		s, _ := v.(string)
 		if !knownPeriods[s] {
-			return nil, fallback.Newf("input-invalid", "period %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "period", "period %v", v)
 		}
 		in.Period = s
 	}
 	if v, ok := m["periodMode"]; ok && v != nil {
 		s, _ := v.(string)
 		if s != "published" && s != "stats" {
-			return nil, fallback.Newf("input-invalid", "periodMode %v", v)
+			return nil, fallback.NewfSafe("input-invalid", "periodMode", "periodMode %v", v)
 		}
 		in.PeriodMode = s
 	}
@@ -178,7 +181,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 		if v, ok := m[key]; ok && v != nil {
 			n, err := intIn(v, 0, math.MaxInt32)
 			if err != nil {
-				return nil, fallback.Newf("input-invalid", "%s: %v", key, err)
+				return nil, fallback.NewfSafe("input-invalid", key, "%s: %v", key, err)
 			}
 			*dst = &n
 		}
@@ -187,7 +190,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 		if v, ok := m[key]; ok && v != nil {
 			n, err := intIn(v, math.MinInt32, math.MaxInt32)
 			if err != nil {
-				return nil, fallback.Newf("input-invalid", "%s: %v", key, err)
+				return nil, fallback.NewfSafe("input-invalid", key, "%s: %v", key, err)
 			}
 			*dst = n
 		}
@@ -214,6 +217,9 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 	if in.ExcludedUserIDs, err = ints(m["excludedUserIds"]); err != nil {
 		return nil, err
 	}
+	if in.Tools, err = toolIDs(m["tools"]); err != nil {
+		return nil, err
+	}
 	if v, ok := m["include"]; ok && v != nil {
 		// The default is ['cosmetics']; 'meta' is what withMeta adds. Anything else hydrates more
 		// (tags, report, count, metaSelect) and is not ported.
@@ -233,7 +239,7 @@ func parseInput(m map[string]any, unsupported []string, absent map[string]bool) 
 			case "tagIds":
 				// Both handlers add it.
 			default:
-				return nil, fallback.Newf("input-include", "%v", e)
+				return nil, fallback.NewfSafe("input-include", includeToken(e), "%v", e)
 			}
 		}
 		in.IncludeCosmetics = hasCosmetics
@@ -330,7 +336,7 @@ func cursor(v any) (int, string, error) {
 	case json.Number, float64:
 		n, err := intIn(t, 0, math.MaxInt32)
 		if err != nil {
-			return 0, "", fallback.Newf("input-invalid", "cursor: %v", err)
+			return 0, "", fallback.NewfSafe("input-invalid", "cursor", "cursor: %v", err)
 		}
 		return n, "", nil
 	case string:
@@ -343,7 +349,7 @@ func cursor(v any) (int, string, error) {
 		}
 		return n, t, nil
 	}
-	return 0, "", fallback.Newf("input-cursor", "%T", v)
+	return 0, "", fallback.Safef("input-cursor", "%T", v)
 }
 
 // NumericCursor reports whether the cursor is one the Postgres page source reads as this service
@@ -356,6 +362,13 @@ func (in *Input) NumericCursor() bool {
 	}
 	n, err := strconv.Atoi(in.CursorText)
 	return err == nil && n > 0
+}
+
+// includeToken is an unported `include` entry's loggable detail: the enum value when it is a string
+// (fallback.Token), else "" (a number or object is not logged).
+func includeToken(e any) string {
+	s, _ := e.(string)
+	return fallback.Token(s)
 }
 
 func isZero(v any) bool {
@@ -381,6 +394,32 @@ func stringList(v any, allowed map[string]bool) ([]string, error) {
 			return nil, fallback.Newf("input-invalid", "%v", e)
 		}
 		out = append(out, s)
+	}
+	return out, nil
+}
+
+// toolIDs reads `tools` (z.number().array()). Not a list, or an entry that is not a number, is the
+// schema's BAD_REQUEST (input-invalid). A number the schema accepts is kept as sent, except one that
+// is not an int4 (a fraction, or past the int4 range): Node binds it into `ARRAY[…]::integer[]`,
+// and what that cast does with it (round, or fail the query) is not reproduced here (input-tools).
+func toolIDs(v any) ([]int, error) {
+	if v == nil {
+		return nil, nil
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return nil, fallback.New("input-invalid")
+	}
+	out := make([]int, 0, len(list))
+	for _, e := range list {
+		f, err := number(e)
+		if err != nil {
+			return nil, fallback.Newf("input-invalid", "%v", e)
+		}
+		if f != math.Trunc(f) || f < math.MinInt32 || f > math.MaxInt32 {
+			return nil, fallback.NewfSafe("input-tools", "not-int4", "tools: %v", e)
+		}
+		out = append(out, int(f))
 	}
 	return out, nil
 }

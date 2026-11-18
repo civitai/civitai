@@ -22,6 +22,7 @@ import { isDefined } from '~/utils/type-guards';
  *  this map is hidden in the embed for everyone. */
 export const studioModelFlagFeatures = {
   'training-studio-kohya': 'trainingStudioKohya',
+  'training-studio-tag-find-replace': 'trainingStudioTagFindReplace',
   'ming-training': 'mingTraining',
   'qwen21-training': 'qwen21Training',
   'yue2-training': 'yue2Training',
@@ -52,11 +53,10 @@ export function enabledStudioModelFlags(
 
 /** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
  *  definition behind the training-results Generate affordances and the Training Studio embed's
- *  `canGenerateUnpublished` host config — a tier change here must reach all of them at once. */
-export function canGenerateWithEpochs(
-  user: { isMember?: boolean; isModerator?: boolean } | null | undefined
-): boolean {
-  return !!(user?.isMember || user?.isModerator);
+ *  `canGenerateUnpublished` host config — a change here must reach all of them at once. Ownership
+ *  and the epoch window are enforced on the server. */
+export function canGenerateWithEpochs(user: { id?: number } | null | undefined): boolean {
+  return !!user?.id;
 }
 
 /** The Training Studio embed's `isPaidMember` host config. `undefined` = no session to read, which the
