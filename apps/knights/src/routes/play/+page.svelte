@@ -150,12 +150,22 @@
   }
   // Inert controls take no pointer events, so a press on the dimmed answers or Skip lands on the row itself. An action, not
   // an `onpointerdown` attribute: the row is not a control of its own, and the press only explains the hold.
+  // The mousedown's default (also sent after a tap) would move focus off Understood right after the nudge focused it.
   function nudgeFromRow(row: HTMLElement) {
     const press = (event: PointerEvent) => {
       if (rulingPending && event.target === row) nudgeRuling();
     };
+    const keepFocus = (event: MouseEvent) => {
+      if (rulingPending && event.target === row) event.preventDefault();
+    };
     row.addEventListener('pointerdown', press);
-    return { destroy: () => row.removeEventListener('pointerdown', press) };
+    row.addEventListener('mousedown', keepFocus);
+    return {
+      destroy: () => {
+        row.removeEventListener('pointerdown', press);
+        row.removeEventListener('mousedown', keepFocus);
+      },
+    };
   }
 
   function pickReason(reason: BlockReason) {
