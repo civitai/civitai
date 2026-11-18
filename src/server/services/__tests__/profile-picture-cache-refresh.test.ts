@@ -3,6 +3,7 @@ import type * as Caches from '~/server/redis/caches';
 import type * as ReDerive from '~/server/services/blocks/app-listing-rating-rederive.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { refreshSession } from '~/server/auth/session-invalidation';
 
 /**
  * Avatars are gated in the browser on the profile picture's `nsfwLevel` and `ingestion`, and the hot
@@ -124,6 +125,11 @@ describe('a moderator re-rate', () => {
 
     expect(pictureLookups()).toEqual([[AVATAR]]);
     expect(refreshPicture).toHaveBeenCalledWith([AVATAR_OWNER]);
+    // The session shape carries the picture's url too.
+    expect(refreshSession).toHaveBeenCalledWith(
+      AVATAR_OWNER,
+      expect.objectContaining({ caller: 'profile' })
+    );
     // After the write, or the refresh re-reads the old rating.
     expect(dbMock.dbWrite.image.update.mock.invocationCallOrder[0]).toBeLessThan(
       refreshPicture.mock.invocationCallOrder[0]

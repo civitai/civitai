@@ -2430,8 +2430,9 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
 }
 
 /**
- * Re-reads these users' cached profile pictures after a write changed or removed one. Never throws:
- * the write it follows has committed, and a moderation action must not fail on a cache refill.
+ * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
+ * their sessions, whose shape carries the picture's url. Never throws: the write it follows has
+ * committed, and a moderation action must not fail on a cache refill.
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {
   const ids = [...new Set(userIds)];
@@ -2441,6 +2442,13 @@ export async function refreshProfilePicturesForUsers(userIds: number[]) {
   } catch (error) {
     logProfilePictureRefreshError(error, { userIds: ids.join(',') });
   }
+  await Promise.all(
+    ids.map((id) =>
+      refreshSession(id, { sendSignal: false, caller: 'profile' }).catch((error) =>
+        logProfilePictureRefreshError(error, { userIds: String(id) })
+      )
+    )
+  );
 }
 
 /**
