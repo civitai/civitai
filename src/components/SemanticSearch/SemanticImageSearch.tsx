@@ -15,7 +15,7 @@ import { SemanticSearchFeedback } from '~/components/SemanticSearch/SemanticSear
 import type { PickedTag } from '~/components/SemanticSearch/TagMultiPicker';
 import { TagMultiPicker } from '~/components/SemanticSearch/TagMultiPicker';
 import { SEMANTIC_QUERY_MAX_LENGTH } from '~/server/schema/semantic-image-search.schema';
-import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
+import { imageBaseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { useScrollToTopOnChange } from '~/hooks/useScrollToTopOnChange';
@@ -123,7 +123,7 @@ export function SemanticImageSearch() {
         <MultiSelect
           label="Base model"
           placeholder="All base models"
-          data={baseModelSelectData}
+          data={imageBaseModelSelectData}
           value={baseModels}
           onChange={setBaseModels}
           searchable

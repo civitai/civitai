@@ -197,21 +197,25 @@ describe('base model filter (Models and Images)', () => {
 });
 
 describe('base model filter on images', () => {
-  // Images made with a generation-only base (no model uploads, so hidden) can still be filtered.
-  const nanoBanana = async (includeHidden?: boolean) => {
+  // Images made with a hidden base (generation-only or retired, so no model uploads) can still be
+  // filtered. SDXL 1.0 is a visible base, so it proves the list rendered before an absence is read.
+  const sdxlTurbo = async (includeHidden?: boolean) => {
     renderWithProviders(
       <BaseModelFilterSelect includeHidden={includeHidden} value={[]} onChange={vi.fn()} />
     );
-    await page.getByPlaceholder('All Base Models').fill('Nano');
-    return page.getByRole('option', { name: /^Nano Banana/ });
+    await page.getByPlaceholder('All Base Models').fill('SDXL');
+    await expect
+      .element(page.getByRole('option', { name: 'SDXL 1.0', exact: true }))
+      .toBeInTheDocument();
+    return page.getByRole('option', { name: /^SDXL Turbo/ });
   };
 
   test('lists the hidden bases when asked', async () => {
-    await expect.element(await nanoBanana(true)).toBeInTheDocument();
+    await expect.element(await sdxlTurbo(true)).toBeInTheDocument();
   });
 
   test('leaves them out otherwise', async () => {
-    await expect.element(await nanoBanana()).not.toBeInTheDocument();
+    await expect.element(await sdxlTurbo()).not.toBeInTheDocument();
   });
 });
 
