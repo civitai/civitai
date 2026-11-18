@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { describe, expect, it, vi } from 'vitest';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
+import type * as MantineOverlays from '~/components/MantineOverlays';
 
 // JoinPopover shows its prompt only after a click, which static markup cannot do; the marker
 // records whether the button was wrapped in it, and with what message.
@@ -15,6 +16,13 @@ vi.mock('~/components/JoinPopover/JoinPopover', () => ({
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
   useFeatureFlags: () => ({}),
+}));
+
+// A closed tooltip renders nothing to static markup; the marker exposes the label it would show.
+vi.mock('~/components/MantineOverlays', async (importOriginal) => ({
+  ...(await importOriginal<typeof MantineOverlays>()),
+  Tooltip: ({ children, label }: { children: ReactNode; label?: ReactNode }) =>
+    createElement('div', { 'data-tooltip': typeof label === 'string' ? label : '' }, children),
 }));
 
 const { DownloadVariantDropdown } = await import(
@@ -29,6 +37,13 @@ const file = {
   visibility: 'Public',
   metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
   hashes: [],
+} as never;
+
+const secondFile = {
+  ...(file as object),
+  id: 12,
+  name: 'model-fp8.safetensors',
+  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp8' },
 } as never;
 
 type Props = Parameters<typeof DownloadVariantDropdown>[0];
@@ -55,7 +70,15 @@ describe('download button on a non-commercially locked version', () => {
     const html = render({ notCommerciallyLocked: true });
     expect(html).not.toContain('data-join-popover');
     expect(html).toContain('Not available for download');
-    expect(html).not.toMatch(/href="[^"]*\/api\/download/);
+    expect(html).toContain('data-tooltip="Not commercially available at the moment"');
+    expect(html).toMatch(/<a[^>]*data-disabled="true"[^>]*>/);
+  });
+
+  it('shows the same state on the multi-file "Download Selected" button', () => {
+    const html = render({ files: [file, secondFile], notCommerciallyLocked: true });
+    expect(html).not.toContain('data-join-popover');
+    expect(html).not.toContain('Download Selected');
+    expect(html).toContain('data-tooltip="Not commercially available at the moment"');
   });
 
   it('keeps the membership prompt for a locked version that is not non-commercial', () => {

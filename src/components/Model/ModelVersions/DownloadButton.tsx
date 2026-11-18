@@ -57,8 +57,7 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       </Button>
     );
 
-    // Nothing the viewer can buy or join unlocks it, so no membership prompt. The span takes the
-    // hover and tap a disabled button swallows, so the reason still shows.
+    // A disabled button swallows hover and tap; the span keeps the reason tooltip reachable.
     if (unavailableReason)
       return (
         <Tooltip
