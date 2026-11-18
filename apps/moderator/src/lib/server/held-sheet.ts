@@ -167,7 +167,7 @@ let verifier: ReturnType<typeof createAuthVerifier> | undefined;
 
 /** The claims of the web session this request carries, for binding a sheet session to it. */
 export async function webSessionClaims(cookieHeader: string): Promise<SessionClaims | null> {
-  const read = readSessionToken(parseCookieHeader(cookieHeader));
+  const read = readSessionToken(parseCookieHeader(cookieHeader), { host: null });
   if (!read) return null;
   return (verifier ??= createAuthVerifier({ isRevoked })).verifyToken(read.value);
 }

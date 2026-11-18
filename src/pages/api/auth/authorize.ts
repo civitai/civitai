@@ -63,7 +63,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   const cookieOps: string[] = [];
   // The cookie the callback writes in this app's mode; a shared-slot cookie still present in host mode must not
   // hide a host-only cookie that failed to land.
-  const writtenCookie = sessionCookieNameForSlot(sessionCookieMode());
+  const writtenCookie = sessionCookieNameForSlot(sessionCookieMode(req.headers.host));
   if (req.cookies[POST_LOGIN_MARKER] && !req.cookies[writtenCookie]) {
     const retries = Number.parseInt(req.cookies[LOGIN_RETRY_COOKIE] ?? '', 10) || 0;
     if (retries >= 1) {

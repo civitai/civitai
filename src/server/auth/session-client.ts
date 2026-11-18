@@ -44,9 +44,10 @@ const sessionTokenClient = createSessionTokenClient();
  */
 export async function getHubSession(req: {
   cookies?: Partial<Record<string, string>>;
+  headers: { host?: string };
 }): Promise<Session | null> {
-  // The hub's THIN cookie (`civ-token`, either slot), distinct from next-auth's legacy `civitai-token`.
-  const token = readSessionToken(req.cookies)?.value;
+  // The hub's THIN cookie (`civ-token`, in the slots this site reads), distinct from next-auth's legacy `civitai-token`.
+  const token = readSessionToken(req.cookies, { host: req.headers.host })?.value;
   if (!token) return null;
   const user = await sessionClient.getSessionUser(token);
   if (!user || refuseModerationAccountSession(user, 'session-token')) return null;
