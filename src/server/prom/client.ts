@@ -16,6 +16,7 @@ import {
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
+  redisSysReadonlyRetryCounter,
 } from '@civitai/telemetry/client';
 import {
   batchedDurationHistogram,
@@ -75,6 +76,7 @@ const redisMetricsBridge = {
   redisSelfHealReconnectCounter,
   redisSelfHealDeadlineHitsWindow,
   redisRoutingRetryCounter,
+  redisSysReadonlyRetryCounter,
 } satisfies RedisMetricsBridge & Record<keyof RedisMetricsBridge, unknown>;
 
 (globalThis as unknown as { __civitaiRedisMetrics?: unknown }).__civitaiRedisMetrics =
@@ -674,26 +676,6 @@ export const restrictedImageReconcileLastSuccessGauge = registerInstrumentationM
     new client.Gauge({
       name: PROM_PREFIX + 'restricted_image_reconcile_last_success_timestamp',
       help: 'Unix seconds at which the restricted-base-model reconcile last completed',
-      registers: [instrumentationRegistry],
-    })
-);
-
-/**
- * Base models the code licence data and the `RestrictedBaseModels` table disagree about.
- *
- * `missing_in_db` is the failure that produced the 2025-10 exposure: a licence
- * restricting NSFW was added in code, nobody added the DB row, and every Postgres
- * read path went on treating that base model as unrestricted while search hid it.
- * Nothing reconciles the two by design — restricting a base model hides live
- * creator content, so it stays a deliberate act rather than a deploy artifact.
- */
-export const restrictedBaseModelDivergenceGauge = registerInstrumentationMetric(
-  PROM_PREFIX + 'restricted_base_model_divergence',
-  () =>
-    new client.Gauge({
-      name: PROM_PREFIX + 'restricted_base_model_divergence',
-      help: 'Base models present in one restricted list and not the other',
-      labelNames: ['direction'],
       registers: [instrumentationRegistry],
     })
 );

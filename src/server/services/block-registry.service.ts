@@ -300,7 +300,7 @@ export interface ResolvedBlockInstance {
     status: string;
     manifest: Record<string, unknown>;
     approvedScopes: string[];
-    app: { allowedScopes: number } | null;
+    app: { allowedScopes: bigint } | null;
     // DEPLOY-GATE: NULL ⇔ this app has NEVER successfully deployed its
     // `<slug>.<APPS_DOMAIN>` origin (set to now() ONLY on a successful apply in
     // build-callback.ts; left UNCHANGED on build failure/timeout AND while a

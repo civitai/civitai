@@ -8,7 +8,7 @@ import { createRegistryServer } from '~/server/registry-adapter/serve';
  * A request's `filter` is evaluated synchronously, per entity and per poll, on the one event loop
  * that serves every stream. One whose cost is not bounded by its size is refused with
  * `bad_request` (the registry spec's rule 6: applied in full or refused, never ignored), so an
- * anonymous consumer cannot stall the source. Before, each refused case was streamed unfiltered.
+ * anonymous consumer cannot stall the source. Its patterns run on a linear-time engine.
  */
 
 const APPS = 'urn:schema:apps.civitai.com:app@v1';
@@ -43,8 +43,8 @@ const refused = (res: { status: number; text: string }) => [
   (JSON.parse(res.text) as { error?: unknown }).error,
 ];
 
-async function get(filter: unknown) {
-  server = createRegistryServer(adapter);
+async function get(filter: unknown, source: Adapter = adapter) {
+  server = createRegistryServer(source);
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   const started = performance.now();
@@ -91,6 +91,19 @@ describe('🔴 a filter whose evaluation cost is unbounded by its size is bad_re
     expect(refused(res)).toEqual([400, 'bad_request']);
   });
 
+  // An async validator answers a promise, which the synchronous predicate does not support.
+  it.each([
+    ['at the root', { $async: true, properties: { slug: {} } }],
+    ['under allOf', { allOf: [{ $async: true }] }],
+  ])('a filter using $async %s is bad_request, naming it', async (_name, filter) => {
+    const res = await get(filter);
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.text)).toMatchObject({
+      error: 'bad_request',
+      message: expect.stringContaining('filter uses "$async"'),
+    });
+  });
+
   it('a filter nested deeper than the bound is bad_request, naming the bound', async () => {
     let deep: Record<string, unknown> = { not: {} };
     for (let i = 0; i < 40; i++) deep = { allOf: [deep] };
@@ -112,5 +125,97 @@ describe('🔴 a filter whose evaluation cost is unbounded by its size is bad_re
   ])('positive control: a %s filter is still applied (the entity is excluded)', async (_n, f) => {
     const res = await get(f);
     expect(res.text.startsWith('event: live')).toBe(true);
+  });
+});
+
+/** A source serving one entity whose `slug` is `slug`. */
+const serving = (slug: string): Adapter => ({
+  ...adapter,
+  // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+  snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities: [{ ...one, body: { slug } }] }),
+});
+
+describe('🔴 a backtracking pattern is applied in linear time', () => {
+  // First: the filter's patterns run on the linear-time engine, not the platform RegExp. A
+  // lookahead is valid ECMA-262 that the engine refuses, so a filter compiled with the platform
+  // RegExp would apply it (200) where the engine makes it bad_request. The engine itself is
+  // checked in `filter-pattern.test.ts`.
+  it('a lookahead is bad_request: the filter runs on the linear-time engine', async () => {
+    const res = await get({ properties: { slug: { pattern: '(?=o)orbit' } } });
+    // The status first: an applied filter answers with the stream, which is not JSON.
+    expect(res.status).toBe(400);
+    expect(JSON.parse(res.text)).toMatchObject({
+      error: 'bad_request',
+      message: expect.stringContaining('a lookahead'),
+    });
+  });
+
+  // `^(a+)+$` against a run of `a` then `b`: the platform RegExp backtracks through every way to
+  // split the run, 2^n of them. The run is short enough that it would still return at once, so a
+  // regression to it fails the test above rather than hanging here. This must return, with the
+  // entity excluded (no match).
+  it.each([[20]])(
+    '^(a+)+$ against %i a then b: applied, the entity excluded, and the stream ends',
+    async (n) => {
+      const res = await get(
+        { properties: { slug: { pattern: '^(a+)+$' } } },
+        serving(`${'a'.repeat(n)}b`)
+      );
+      expect(res.status).toBe(200);
+      expect(res.text.startsWith('event: live')).toBe(true);
+    }
+  );
+
+  it('positive control: the same pattern against a run of a only matches, and is sent', async () => {
+    const res = await get(
+      { properties: { slug: { pattern: '^(a+)+$' } } },
+      serving('a'.repeat(30))
+    );
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+});
+
+// Built from the literal 16384 (the bound, `FILTER_PATTERN_MAX_INPUT_LENGTH`), so moving the bound
+// fails here. `^a` matches any run of `a`, so only the bound excludes the longer slug.
+describe('🔴 a filter pattern is not run on a value longer than the input bound', () => {
+  it('a slug of exactly 16384 a matches ^a, and the entity is sent', async () => {
+    const res = await get({ properties: { slug: { pattern: '^a' } } }, serving('a'.repeat(16384)));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: upsert')).toBe(true);
+  });
+
+  it('a slug of 16385 a is not matched: the filter is applied, the entity excluded', async () => {
+    const res = await get({ properties: { slug: { pattern: '^a' } } }, serving('a'.repeat(16385)));
+    expect(res.status).toBe(200);
+    expect(res.text.startsWith('event: live')).toBe(true);
+  });
+});
+
+/** A source serving one entity per `tags` list, each with that list as its body's `tags`. */
+const servingTags = (...lists: string[][]): Adapter => {
+  const entities = lists.map((tags, i) => ({ ...one, urn: `${one.urn}-${i}`, body: { tags } }));
+  return {
+    ...adapter,
+    // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- a snapshot is one call, not a page loop
+    snapshot: async () => ({ cursor: 'c1.snapshot-cursor', entities }),
+  };
+};
+
+// Literals: 65536 is the per-body budget, 4 × 16384.
+describe('🔴 each body a filter is evaluated on gets 65536 characters of pattern input', () => {
+  const A = 'a'.repeat(16384);
+  const filter = { properties: { tags: { items: { pattern: '^a' } } } };
+  const upserts = (text: string) => text.split('event: upsert').length - 1;
+
+  it('two entities that each spend the whole budget are both sent', async () => {
+    const res = await get(filter, servingTags([A, A, A, A], [A, A, A, A]));
+    expect([res.status, upserts(res.text)]).toEqual([200, 2]);
+  });
+
+  it('an entity whose values run past the budget is excluded; the next one is still sent', async () => {
+    const res = await get(filter, servingTags([A, A, A, A, 'a'], [A, A, A, A]));
+    expect([res.status, upserts(res.text)]).toEqual([200, 1]);
+    expect(res.text).toContain(`"${one.urn}-1"`);
+    expect(res.text).not.toContain(`"${one.urn}-0"`);
   });
 });

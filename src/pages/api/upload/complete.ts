@@ -13,6 +13,7 @@ import {
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 import { env } from '~/env/server';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 /**
  * Timeout budget for the post-completion existence probe. The user has already waited
@@ -44,7 +45,10 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
   if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {
@@ -163,17 +167,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     const enforcing = env.UPLOAD_COMPLETE_VERIFY_ENFORCE === true;
 
     /**
-     * 🔴 DECIDE AND SEND THE RESPONSE BEFORE ANY TELEMETRY. The logging below used to
-     * run FIRST, which put three awaited `logToAxiom` calls between a completed upload
-     * and the client's answer.
-     *
-     * On 2026-08-23 Axiom's ingest host went unreachable for 44 minutes. `logToAxiom`
-     * awaited it uncontained, so the first of those calls threw AFTER
-     * `completeMultipartUpload` had already stored the object — and the browser was told
-     * 500. ~5,300 requests, 350 users, every one of them an upload that had in fact
-     * succeeded. `@civitai/axiom` now contains and time-boxes that write, so it can no
-     * longer throw; this ordering is the half that does not depend on it staying that
-     * way, and it also keeps the telemetry budget off the client's latency.
+     * 🔴 DECIDE AND SEND THE RESPONSE BEFORE ANY TELEMETRY. A slow or failing log must not
+     * turn a stored object into a 500, or add its latency to the client's answer.
      *
      * The response is a pure function of `verdict` + `enforcing`, so hoisting it changes
      * no status, no header and no body — only when they are written.
@@ -237,9 +232,9 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
      * 🔴 CONTAINED, because this telemetry now runs INSIDE the S3 try/catch but AFTER the
      * response. Without this guard a logging failure unwinds into the `catch (e)` below,
      * where it is classified as an S3 fault, logged as `s3-upload-complete-error`, and
-     * answered with a SECOND response — on a request that already succeeded. A test
-     * (`telemetry failure cannot change the client response`) caught exactly that while
-     * this fix was being written.
+     * answered with a SECOND response — on a request that already succeeded. `logToAxiom`
+     * never rejects (pinned in packages/civitai-axiom), so the call is not awaited and this
+     * `try` guards only a synchronous throw.
      *
      * Swallowing is right here and is not silent: `@civitai/axiom` reports its own ingest
      * failures (`axiom-ingest-failed`), and the stderr/Loki line has already been written
@@ -250,7 +245,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       // probe's verdict — so a silently-empty completion is distinguishable from a
       // healthy one in the log, which is exactly what the incident lacked.
       // partCount also catches a truncated manifest.
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-complete',
         userId,
         type,
@@ -270,7 +265,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       // see the bucket is measurable on its own rather than being folded into either the
       // healthy or the defective count.
       if (verdict === 'indeterminate') {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-complete-verify-unknown',
           userId,
           type,
@@ -284,7 +279,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         // Distinct event name so this class is alertable on its own rather than hiding
         // inside the generic completion log. `verifyEnforced` separates "we would have
         // rejected this" during the observe-only phase from an actual rejection.
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-complete-unverified',
           userId,
           type,
@@ -309,21 +304,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     console.error('Upload complete error:', error.message, error.stack);
 
     /**
-     * 🔴 CLASSIFY AND RESPOND BEFORE LOGGING — the `await logToAxiom` below used to sit
-     * HERE, above the classifier, and that ordering is what made this entire taxonomy
-     * unreachable during the 2026-08-23 Axiom outage.
-     *
-     * The mechanism, because it is not obvious from either line on its own: when the
-     * telemetry await throws, nothing after it runs, so `classifyS3MultipartError` was
-     * never called and no branch below could execute. Every fault — including 1,009
-     * terminal `NoSuchUpload`s that belong at 409 — left the handler as an unhandled
-     * rejection, i.e. a 500. 500 is retryable to both clients, so they retried, and each
-     * retry hit an already-consumed session and re-failed. Spanmetrics for the whole
-     * 44-minute episode recorded ZERO 409/422/503 on this route: not a rare path, a
-     * structurally dead one.
-     *
-     * A response written from the error classification must therefore never be sequenced
-     * behind a side-channel that can fail or stall. The logging moved to the `finally`.
+     * 🔴 CLASSIFY AND RESPOND BEFORE LOGGING. Telemetry must never gate the response: the
+     * classifier and the branch it picks run first, and the logging lives in the `finally`.
      */
     const errorClass = classifyS3MultipartError(e);
     try {
@@ -368,11 +350,11 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       }
     } finally {
       // `finally`, not a trailing statement: the event must be recorded whichever branch
-      // ran, and — unlike before — it can no longer decide which branch runs. Contained
+      // ran, and it runs after the response, so it cannot decide which branch runs. Contained
       // for the same reason as the success path above: nothing about the client's
       // outcome may depend on telemetry.
       try {
-        await logToAxiom({
+        logToAxiom({
           name: 's3-upload-complete-error',
           userId,
           type,

@@ -2,6 +2,7 @@ import {
   Accordion,
   ActionIcon,
   Alert,
+  Anchor,
   Badge,
   Button,
   Card,
@@ -51,6 +52,8 @@ import {
   useNowTick,
 } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
+import { reviewProvenanceLines } from '~/components/Apps/reviewSourceProvenance';
+import type { ReviewSourceProvenance } from '~/server/schema/blocks/actions-run-source.schema';
 import { PREVIEW_CHIP_COLORS, previewChipState } from '~/components/Apps/reviewQueueSignals';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
@@ -67,7 +70,11 @@ import {
 } from '~/shared/constants/block-analytics.constants';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  isSensitiveBlockScope,
+  resolvePerCallBuzzBudget,
+} from '~/shared/constants/block-scope.constants';
+import { PASS_THROUGH_MAX_BUZZ } from '~/server/schema/blocks/workflow.schema';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
@@ -119,6 +126,8 @@ export type ReviewedRequestCommon = {
   id: string;
   appBlockId: string | null;
   slug: string;
+  /** Pending rows: open review holds on the app (`listPendingRequests`); null = unreadable. */
+  openHoldCount?: number | null;
   version: string;
   submittedAt: string | Date;
   bundleSizeBytes: string;
@@ -130,6 +139,9 @@ export type ReviewedRequestCommon = {
   // PUSH-ORIGINATED requests (git-push, empty bundle) have no review-org
   // snapshot — this links the mod to the canonical repo at the exact pushed sha.
   pushCommitUrl?: string | null;
+  /** The client's claimed commit and the checked GitHub Actions run, as two separate facts.
+   *  Set by the pending list and the single-request read; absent elsewhere (renders nothing). */
+  sourceProvenance?: ReviewSourceProvenance | null;
   submittedBy: ReviewUserChip;
   /** Lifetime store opens for this app's listing, joined on slug by the list/detail
    *  reads. Optional so a fixture need not spell it; `undefined` is "unknown", which the
@@ -304,6 +316,56 @@ export function ReviewSubmitterMeta({
         · {formatBytes(request.bundleSizeBytes)}
       </Text>
     </Group>
+  );
+}
+
+/**
+ * Where the submitted bundle came from, on two labelled lines: the commit the CLIENT claimed
+ * (unchecked) and the GitHub Actions run the server VERIFIED from a GitHub-signed token. Built by
+ * the pure `reviewProvenanceLines`; renders nothing when the request carries no provenance block.
+ * The run line's note says what verification does not cover (the bundle itself).
+ */
+export function ReviewSourceProvenanceMeta({
+  provenance,
+}: {
+  provenance: ReviewSourceProvenance | null | undefined;
+}) {
+  const lines = reviewProvenanceLines(provenance);
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2} data-testid="apps-review-source-provenance">
+      {lines.map((line) => (
+        <div key={line.key} data-review-provenance-line={line.key}>
+          <Text size="xs">
+            <Text span size="xs" c="dimmed">
+              {line.heading}:{' '}
+            </Text>
+            <Text span size="xs" ff="monospace">
+              {line.value}
+            </Text>
+            {line.links.map((link) => (
+              <Text span size="xs" key={link.label}>
+                {' · '}
+                <Anchor
+                  size="xs"
+                  href={link.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  data-review-provenance-link={`${line.key}-${link.label}`}
+                >
+                  {link.label}
+                </Anchor>
+              </Text>
+            ))}
+          </Text>
+          {line.note ? (
+            <Text size="xs" c="dimmed">
+              {line.note}
+            </Text>
+          ) : null}
+        </div>
+      ))}
+    </Stack>
   );
 }
 
@@ -701,6 +763,7 @@ export function OnsiteReviewModalBody({
   return (
     <Stack gap="md">
       <ReviewSubmitterMeta request={request} now={now} />
+      <ReviewSourceProvenanceMeta provenance={request.sourceProvenance} />
 
       <ReviewDecisionAlert selection={selection} now={now} />
 
@@ -1690,6 +1753,32 @@ export function ManifestScopeRow({
   );
 }
 
+function ManifestPerJobBudget({ manifest }: { manifest: Record<string, unknown> }) {
+  const declared = (manifest.page as { buzzBudgetPerGen?: unknown } | undefined)?.buzzBudgetPerGen;
+  const budget = resolvePerCallBuzzBudget(declared);
+  const usesDefault = !(typeof declared === 'number' && Number.isInteger(declared));
+  const overPassThroughMax = budget > PASS_THROUGH_MAX_BUZZ;
+  return (
+    <Group gap={6} data-testid="apps-review-per-job-budget">
+      <IconCoin size={14} />
+      <Text size="sm">
+        Per-job Buzz budget: <b>{budget}</b>
+        {usesDefault && ' (default)'}
+      </Text>
+      {overPassThroughMax && (
+        <Badge
+          color="orange"
+          variant="light"
+          size="sm"
+          data-testid="apps-review-per-job-budget-over"
+        >
+          Over {PASS_THROUGH_MAX_BUZZ}: approve only if intended
+        </Badge>
+      )}
+    </Group>
+  );
+}
+
 export function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
@@ -1753,6 +1842,9 @@ export function ManifestScopes({ manifest }: { manifest: Record<string, unknown>
                 {sensitiveScopes.map((s) => (
                   <ManifestScopeRow key={s} scope={s} justifications={justifications} />
                 ))}
+                {scopes.includes('ai:write:budgeted') && (
+                  <ManifestPerJobBudget manifest={manifest} />
+                )}
               </Stack>
             )}
             <Group gap={6}>

@@ -16,8 +16,8 @@ const mocks = vi.hoisted(() => ({
   dealsEnabled: [] as boolean[],
 }));
 
-vi.mock('~/components/CreatorShop/Services/ReportServiceButton', () => ({
-  ReportServiceButton: () => createElement('span', null, 'Report'),
+vi.mock('~/components/CreatorShop/Services/ServiceOfferingMenu', () => ({
+  ServiceOfferingMenu: () => null,
 }));
 vi.mock('~/components/LoginRedirect/LoginRedirect', () => ({
   LoginRedirect: ({ children }: { children: ReactNode }) => children,
@@ -70,6 +70,8 @@ vi.mock('~/hooks/useDomainColor', async (importOriginal) => ({
 const { ServicesSection } = await import('~/components/CreatorShop/Storefront/ServicesSection');
 
 const MANAGE = '/user/seller/shop/manage?tab=services';
+// The card's own Manage opens that service's edit form.
+const MANAGE_THIS = `${MANAGE}&edit=42`;
 const deal = (id: number, offeringId = 42) => ({ id, offering: { id: offeringId } });
 const render = () =>
   renderToStaticMarkup(
@@ -95,10 +97,10 @@ beforeEach(() => {
 });
 
 describe("seller's own service card", () => {
-  it('shows Manage, linking to the services tab, and no Request', () => {
+  it('shows Manage, linking to that service on the services tab, and no Request', () => {
     const html = render();
     expect(html).toContain('Manage');
-    expect(hrefs(html)).toContain(MANAGE);
+    expect(hrefs(html)).toContain(MANAGE_THIS);
     expect(html).not.toContain('Request');
     expect(html).not.toContain('Open deal');
   });
@@ -115,7 +117,8 @@ describe("seller's own service card", () => {
     mocks.deals = [deal(7), deal(6)];
     const html = render();
     expect(html).toContain('Open deal (2)');
-    expect(hrefs(html).filter((h) => h === MANAGE)).toHaveLength(2);
+    expect(hrefs(html).filter((h) => h === MANAGE)).toHaveLength(1);
+    expect(hrefs(html)).toContain(MANAGE_THIS);
     expect(hrefs(html).some((h) => h.startsWith('/services/deals/'))).toBe(false);
   });
 

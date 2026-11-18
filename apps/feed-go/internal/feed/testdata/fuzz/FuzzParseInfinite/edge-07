@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"json\":{\"postId\":3,\"cursor\":5,\"include\":[\"cosmetics\",\"tagIds\"]}}")

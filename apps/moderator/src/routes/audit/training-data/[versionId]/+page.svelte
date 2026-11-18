@@ -26,6 +26,7 @@
 
 {#key detail.versionId}
   <ReviewActions
+    gate={data.gate}
     modelHref={modelVersionUrl(data.civitaiUrl, detail.modelId, detail.versionId)}
     csamContents={data.csamContents}
     canReportCsam={!!data.grants['csam.report.file']}

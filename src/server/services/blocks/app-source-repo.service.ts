@@ -40,7 +40,7 @@ import {
   type SourceFile,
 } from '~/server/services/blocks/app-source-repo.plan';
 import { isMissingTableError } from '~/server/services/blocks/app-access.service';
-import { FORGEJO_SOURCE_ORG } from '~/shared/constants/app-source-repo.constants';
+import { FORGEJO_SOURCE_ORG } from '~/server/services/blocks/forgejo-orgs';
 
 export type SourceRepoOrigin = 'fork' | 'assistant' | 'backfill';
 
@@ -60,9 +60,7 @@ export type SourceRepoRow = {
 export type SourceRepoRead = { available: boolean; row: SourceRepoRow | null };
 
 const log = (type: 'info' | 'warning' | 'error', message: string, data: Record<string, unknown>) =>
-  logToAxiom({ name: 'app-source-repo', type, message, ...data }, 'webhooks').catch(
-    () => undefined
-  );
+  logToAxiom({ name: 'app-source-repo', type, message, ...data }, 'webhooks');
 
 /**
  * Read a slug's source-repo row. A missing table reads as `{ available: false }` (the feature is

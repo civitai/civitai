@@ -7,6 +7,9 @@ import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-setti
 import { getBlockedBrowsingTags, getBrowsingSettingAddons } from '~/server/services/system-cache';
 import { isBlockedTagName, stripBlockedTagIds } from '~/server/utils/blocked-browsing-tags';
 import { isViewerUsername } from '~/utils/is-viewer';
+import type { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
+import { relatedPostsBrowsingLevel } from '~/server/utils/browsing-level';
 
 type AddonTarget = {
   excludedTagIds?: number[];
@@ -45,9 +48,13 @@ function applyAddonExclusions(
 
   input.disableMinor = input.disableMinor || resolved.disableMinor;
 
-  const isOwnScoped =
-    !!(viewer.id && input.userId && viewer.id === input.userId) ||
-    isViewerUsername(viewer, input.username);
+  // Own-scoped on the identifier the feed FILTERS by: a `userId` whenever present (the feeds read
+  // `userId ?? <username lookup>`), so a `userId` naming another creator is their feed whatever
+  // `username` says, and the viewer's own `userId` is their feed even beside a username that does
+  // not match (the profile media page sends a slugified one). Without a `userId`, the `username`.
+  const isOwnScoped = input.userId
+    ? !!(viewer.id && viewer.id === input.userId)
+    : isViewerUsername(viewer, input.username);
   if (!isOwnScoped && resolved.excludedTagIds.length) {
     input.excludedTagIds = [
       ...new Set([...(input.excludedTagIds ?? []), ...resolved.excludedTagIds]),
@@ -81,7 +88,7 @@ async function loadBlockedBrowsingContext(input: AddonTarget, viewer: Viewer) {
  *  - W1: re-derives the browsing-settings addon exclusions server-side and
  *    unions them in. Moderators bypass (resolveBrowsingSettingsAddons); a
  *    viewer's own-content feed keeps its tag exclusions off (own POI stays
- *    visible), matching the client's `isOwnImages` behavior.
+ *    visible).
  */
 export async function enforceBlockedBrowsingTags(
   input: AddonTarget & { tags?: number[] },
@@ -123,4 +130,88 @@ export async function enforceBlockedBrowsingTagsForModels(
 
   applyAddonExclusions(input, resolved, viewer, opts);
   return { emptyResult: false };
+}
+
+type ShowcaseImage = {
+  userId?: number;
+  poi?: boolean | null;
+  minor?: boolean | null;
+  tags?: number[] | null;
+};
+
+/**
+ * The browsing-settings exclusions (tags, poi, minor) for a showcase at `browsingLevel`. Resolved onto
+ * a target of its own, which names no owner, so none of the tag exclusions are skipped.
+ */
+export async function resolveShowcaseExclusions({
+  browsingLevel,
+  viewer = {},
+}: {
+  browsingLevel?: number;
+  viewer?: Viewer;
+}) {
+  const rules: AddonTarget = { browsingLevel };
+  await enforceBlockedBrowsingTagsForModels(rules, viewer);
+  return {
+    excludedTagIds: rules.excludedTagIds ?? [],
+    disablePoi: !!rules.disablePoi,
+    disableMinor: !!rules.disableMinor,
+  };
+}
+
+/**
+ * `resolveShowcaseExclusions` as a filter over showcase images. The viewer's own images pass; an
+ * image with no tag ids read is hidden while any tag is excluded.
+ */
+export async function getShowcaseImageFilter({
+  browsingLevel,
+  viewer = {},
+  excludedTagIds,
+}: {
+  browsingLevel?: number;
+  viewer?: Viewer;
+  excludedTagIds?: number[];
+}) {
+  const rules = await resolveShowcaseExclusions({ browsingLevel, viewer });
+  const excluded = new Set([...rules.excludedTagIds, ...(excludedTagIds ?? [])]);
+  return (image: ShowcaseImage) =>
+    (!!viewer.id && image.userId === viewer.id) ||
+    (!(rules.disablePoi && image.poi) &&
+      !(rules.disableMinor && image.minor) &&
+      (!excluded.size || (image.tags != null && !image.tags.some((tagId) => excluded.has(tagId)))));
+}
+
+/**
+ * `getShowcaseImageFilter` for a listing of other people's images: the request's viewer, at the
+ * level `relatedPostsBrowsingLevel` resolves. Takes tags as ids or as `{ id }` rows.
+ */
+export async function getRequestImageFilter(
+  ctx: Pick<Context, 'user' | 'features' | 'req'>,
+  requestedBrowsingLevel?: number
+) {
+  const showsImage = await getShowcaseImageFilter({
+    browsingLevel: relatedPostsBrowsingLevel(ctx, requestedBrowsingLevel),
+    viewer: { id: ctx.user?.id, username: ctx.user?.username, isModerator: ctx.user?.isModerator },
+  });
+  // Unread tags stay unread, so `getShowcaseImageFilter` hides the image while any tag is excluded.
+  return (image: Omit<ShowcaseImage, 'tags'> & { tags?: (number | { id: number })[] | null }) =>
+    showsImage({
+      ...image,
+      tags: image.tags?.map((tag) => (typeof tag === 'number' ? tag : tag.id)),
+    });
+}
+
+/** Whether the viewer's browsing-settings rules (tags, POI, minor) let them see this cover. */
+export async function isCoverShownByBrowsingRules(
+  image: { id: number; userId: number; tags: { tag: { id: number } }[] } | null,
+  ctx: Pick<Context, 'user' | 'features' | 'req'>
+) {
+  if (!image) return true;
+  const [showsImage, flags] = await Promise.all([
+    getRequestImageFilter(ctx),
+    dbRead.image.findUnique({ where: { id: image.id }, select: { poi: true, minor: true } }),
+  ]);
+  // No row means its flags are unread: hidden, as unread tags are.
+  if (!flags) return false;
+  return showsImage({ ...image, ...flags, tags: image.tags.map(({ tag }) => tag) });
 }

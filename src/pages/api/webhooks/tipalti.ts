@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
+import tipaltiCaller, { TipaltiCaller } from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { TipaltiStatus } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
@@ -47,7 +47,7 @@ function parsePayeeStatus(status: unknown) {
         details: { status },
       },
       'webhooks'
-    ).catch(() => null);
+    );
   }
 
   return parsed;
@@ -89,9 +89,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      const client = await tipaltiCaller();
-      const { isValid } = client.validateWebhookEvent(sig as string, rawPayload);
-      const { isValid: isValid2 } = client.validateWebhookEvent(sig as string, req.body as string);
+      const { isValid } = TipaltiCaller.validateWebhookEvent(sig as string, rawPayload);
+      const { isValid: isValid2 } = TipaltiCaller.validateWebhookEvent(
+        sig as string,
+        req.body as string
+      );
       if (!isValid && !isValid2) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
@@ -165,8 +167,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 }
 
 const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
-  const client = await tipaltiCaller();
-
   switch (event.type) {
     case 'paymentGroupApproved':
     case 'paymentGroupDeclined': {
@@ -274,7 +274,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+      const paymentRecord = await (await tipaltiCaller()).getPaymentByRefCode(payment.refCode);
 
       if (!paymentRecord) {
         throw new Error('Could not fetch payment record');
@@ -305,8 +305,6 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
 };
 
 const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
-  const client = await tipaltiCaller();
-
   switch (event.type) {
     case 'paymentGroupApproved':
     case 'paymentGroupDeclined': {
@@ -317,23 +315,23 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       if (
         event.type === 'paymentGroupApproved' &&
         (await hasPayoutHold(cashWithdrawal.userId).catch(async (e: unknown) => {
-          await logToAxiom({
+          logToAxiom({
             name: 'creator-program-payout-hold-unchecked',
             type: 'error',
             userId: cashWithdrawal.userId,
             withdrawalId: cashWithdrawal.id,
             refCode: payment.refCode,
             message: e instanceof Error ? e.message : String(e),
-          }).catch(() => undefined);
+          });
           return false;
         }))
       )
-        await logToAxiom({
+        logToAxiom({
           name: 'creator-program-payout-approved-while-held',
           type: 'error',
           userId: cashWithdrawal.userId,
           withdrawalId: cashWithdrawal.id,
-          refCode: payment.refCode,
+          payload: { refCode: payment.refCode },
         });
 
       // Update the status of the withdrawal request:
@@ -416,7 +414,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
       const cashWithdrawal = await findCashWithdrawalByRefCode(payment.refCode);
 
-      const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+      const paymentRecord = await (await tipaltiCaller()).getPaymentByRefCode(payment.refCode);
 
       if (!paymentRecord) {
         throw new Error('Could not fetch payment record');

@@ -8,7 +8,7 @@ import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 import { agentLog, getDebugContext } from './freshdesk-debug';
 
 const log = (data: Record<string, unknown>) =>
-  logToAxiom({ name: 'freshdesk-agent', ...data }, 'webhooks').catch(() => null);
+  logToAxiom({ name: 'freshdesk-agent', ...data }, 'webhooks');
 
 export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
   const { ticket_id, phase } = payload;

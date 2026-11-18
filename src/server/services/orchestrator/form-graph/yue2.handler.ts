@@ -8,6 +8,7 @@ import type { EcosystemData } from './types';
 
 export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>((data) => {
   const shared = {
+    ...(data.instrumental ? { instrumental: true } : {}),
     maxDuration: data.duration,
     seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
   };
@@ -21,12 +22,15 @@ export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>
         // The orchestrator resolves template references before validating YuE2Input;
         // the generated client only describes the resolved string fields.
         style: { $ref: '$0', path: 'output.parsed.caption' } as unknown as string,
-        lyrics: { $ref: '$0', path: 'output.parsed.lyrics' } as unknown as string,
+        // Not left to the draft: an instrumental must never reach YuE2 with sung lyrics.
+        lyrics: data.instrumental
+          ? ''
+          : ({ $ref: '$0', path: 'output.parsed.lyrics' } as unknown as string),
         steps: yue2Steps.default,
         mode: 'full',
       },
     };
-    return [createMusicConceptStep(data.prompt, data.duration), music];
+    return [createMusicConceptStep(data.prompt, data.duration, data.instrumental), music];
   }
 
   return [
@@ -36,7 +40,7 @@ export const createYuE2Input = defineHandler<EcosystemData<'YuE2'>, StepInput[]>
         loras: {},
         ...shared,
         style: data.musicDescription,
-        lyrics: data.lyrics,
+        lyrics: data.instrumental ? '' : data.lyrics ?? '',
         steps: data.steps,
         mode: data.yue2Mode,
         abc: data.yue2Mode !== 'off' ? data.yue2Abc?.trim() || undefined : undefined,

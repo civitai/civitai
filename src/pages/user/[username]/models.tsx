@@ -133,6 +133,7 @@ function UserModelsPage() {
                   }}
                   showEmptyCta={selfView}
                   disableStoreFilters
+                  searchable
                 />
               </>
             ) : viewingPrivate ? (

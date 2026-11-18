@@ -12,12 +12,16 @@ import type { UploadBackend } from '~/utils/s3-utils';
 import { buildUploadKey } from '~/utils/upload-key';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_SCOPE } from '~/server/auth/route-scopes';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
   instrumentApiResponse(req, res);
-  const session = await getApiAuthSession({ req, res }, { whenBanned: 'refuse' });
+  const session = await getApiAuthSession(
+    { req, res },
+    { whenBanned: 'refuse', scope: UPLOAD_SCOPE, insufficient: 'refuse' }
+  );
   if (session === false) return;
   const userId = session?.user?.id;
   if (!userId) {
@@ -78,7 +82,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // 🔴 CONTAINED: after the response, but still inside the try — an uncontained throw
     // would land in the catch below and answer a successful request with a 500.
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload',
         userId,
         type,
@@ -116,7 +120,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // The event that makes a create failure diagnosable — key/backend/filename plus the
     // real message. Contained for the same reason as the success path.
     try {
-      await logToAxiom({
+      logToAxiom({
         name: 's3-upload-create-error',
         userId,
         type,

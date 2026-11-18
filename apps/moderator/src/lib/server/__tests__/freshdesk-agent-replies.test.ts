@@ -16,7 +16,7 @@ const saved = { key: process.env.FRESHDESK_API_KEY, domain: process.env.FRESHDES
 let fetchMock: ReturnType<typeof vi.fn>;
 
 const convo = (over: Record<string, unknown>) => ({
-  id: 150003911207,
+  id: 990000000001,
   incoming: false,
   private: false,
   body_text: 'Clear the cache and sign in again.',
@@ -55,7 +55,7 @@ describe('getPublicAgentReplies', () => {
         convo({ id: 16, incoming: true, private: true, body_text: 'customer + private' }),
       ])
     );
-    const out = await getPublicAgentReplies('73618');
+    const out = await getPublicAgentReplies('990200000');
     expect(out).toEqual({
       status: 'found',
       replies: [{ conversationId: '11', createdAt: '2026-10-01T10:00:00Z', text: 'agent public' }],
@@ -65,10 +65,10 @@ describe('getPublicAgentReplies', () => {
 
   it('asks the configured host for that ticket, with the key as basic auth', async () => {
     fetchMock.mockResolvedValueOnce(page([]));
-    await getPublicAgentReplies('73618');
+    await getPublicAgentReplies('990200000');
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(
-      `https://help.example.test/api/v2/tickets/73618/conversations?per_page=${CONVERSATIONS_PER_PAGE}&page=1`
+      `https://help.example.test/api/v2/tickets/990200000/conversations?per_page=${CONVERSATIONS_PER_PAGE}&page=1`
     );
     expect(init.headers.authorization).toBe(
       `Basic ${Buffer.from('test-key:X').toString('base64')}`
@@ -85,7 +85,7 @@ describe('getPublicAgentReplies', () => {
       .mockResolvedValueOnce(
         page([convo({ id: 9001, created_at: '2026-10-05T00:00:00Z', body_text: 'latest' })])
       );
-    const out = await getPublicAgentReplies('73618');
+    const out = await getPublicAgentReplies('990200000');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][0]).toMatch(/[?&]page=2$/);
     expect(out.status).toBe('found');
@@ -98,7 +98,7 @@ describe('getPublicAgentReplies', () => {
   it('stops at the page cap, and says the list may be missing replies', async () => {
     const full = Array.from({ length: CONVERSATIONS_PER_PAGE }, (_, i) => convo({ id: 1 + i }));
     fetchMock.mockImplementation(async () => page(full));
-    const out = await getPublicAgentReplies('73618');
+    const out = await getPublicAgentReplies('990200000');
     expect(fetchMock).toHaveBeenCalledTimes(CONVERSATION_PAGE_CAP);
     expect(out).toMatchObject({ status: 'found', truncated: true });
   });
@@ -108,21 +108,21 @@ describe('getPublicAgentReplies', () => {
       convo({ id: 1 + i, incoming: true })
     );
     fetchMock.mockImplementation(async () => page(full));
-    const out = await getPublicAgentReplies('73618');
+    const out = await getPublicAgentReplies('990200000');
     expect(out.status).toBe('unavailable');
     expect(out.status === 'unavailable' && out.reason).toMatch(/Only the first 500 conversations/);
   });
 
   it("is 'none' when the ticket has no public agent reply", async () => {
     fetchMock.mockResolvedValueOnce(page([convo({ incoming: true }), convo({ private: true })]));
-    expect(await getPublicAgentReplies('73618')).toEqual({ status: 'none' });
+    expect(await getPublicAgentReplies('990200000')).toEqual({ status: 'none' });
   });
 
   it('drops a reply with no text or no usable id', async () => {
     fetchMock.mockResolvedValueOnce(
       page([convo({ id: 21, body_text: '   ' }), convo({ id: undefined }), convo({ id: 'x9' })])
     );
-    expect(await getPublicAgentReplies('73618')).toEqual({ status: 'none' });
+    expect(await getPublicAgentReplies('990200000')).toEqual({ status: 'none' });
   });
 
   // 🔴 Every one of these is "could not ask" — never "no reply".
@@ -141,24 +141,24 @@ describe('getPublicAgentReplies', () => {
     ['a non-array body', () => page({ errors: [] }), /unexpected/],
   ])('is unavailable on %s', async (_label, response, reason) => {
     fetchMock.mockResolvedValueOnce(response());
-    const out = await getPublicAgentReplies('73618');
+    const out = await getPublicAgentReplies('990200000');
     expect(out.status).toBe('unavailable');
     expect(out.status === 'unavailable' && out.reason).toMatch(reason);
   });
 
   it('is unavailable on a timeout or network error', async () => {
     fetchMock.mockRejectedValueOnce(new DOMException('timed out', 'TimeoutError'));
-    expect((await getPublicAgentReplies('73618')).status).toBe('unavailable');
+    expect((await getPublicAgentReplies('990200000')).status).toBe('unavailable');
   });
 
   it('is unavailable, without asking, when no key is configured or the id is not one', async () => {
     delete process.env.FRESHDESK_API_KEY;
-    expect(await getPublicAgentReplies('73618')).toEqual({
+    expect(await getPublicAgentReplies('990200000')).toEqual({
       status: 'unavailable',
       reason: 'Freshdesk is not configured.',
     });
     process.env.FRESHDESK_API_KEY = 'test-key';
-    expect((await getPublicAgentReplies('73618/../contacts')).status).toBe('unavailable');
+    expect((await getPublicAgentReplies('990200000/../contacts')).status).toBe('unavailable');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

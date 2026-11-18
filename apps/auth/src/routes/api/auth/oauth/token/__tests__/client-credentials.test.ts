@@ -45,7 +45,10 @@ vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),
   maybeCreateSessionSigner: () => undefined,
 }));
-vi.mock('$lib/server/oauth/rate-limit', () => ({ checkOAuthRateLimit: async () => true }));
+vi.mock('$lib/server/oauth/rate-limit', () => ({
+  checkOAuthRateLimit: async () => true,
+  tokenSecretChecksExhausted: async () => false,
+}));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: vi.fn() }));
 vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn(async () => undefined) }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => '203.0.113.9' }));
@@ -71,11 +74,12 @@ function confidentialClient(over: Record<string, unknown> = {}) {
   };
 }
 
-async function token(scope: number | null, secret = SECRET) {
+async function token(scope: bigint | null, secret = SECRET, extra: Record<string, string> = {}) {
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
     client_id: 'game-frame',
     client_secret: secret,
+    ...extra,
   });
   if (scope !== null) body.set('scope', String(scope));
   const res = await POST({
@@ -112,7 +116,11 @@ describe('client_credentials grant', () => {
       type: 'Access',
       userId: OWNER,
       clientId: 'game-frame',
-      tokenScope: CATALOG | TokenScope.UserRead,
+      // AppStoreCatalogWrite (268435456) | UserRead (1), in both scope columns.
+      tokenScope: 268435457,
+      tokenScopeWide: '268435457',
+      // Marks the token as the client's own, which the user token exchange refuses as a subject.
+      name: 'oauth-cc:game-frame',
     });
   });
 
@@ -194,6 +202,38 @@ describe('client_credentials grant — scope in a JSON body', () => {
     } as never);
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.inserts).toHaveLength(0);
+  });
+});
+
+describe('client_credentials grant — with a resource', () => {
+  it('answers a client that is not a service client exactly as without one', async () => {
+    const plain = await token(CATALOG);
+    const insertsWithout = [...h.inserts];
+    h.inserts.length = 0;
+    const withResource = await token(CATALOG, SECRET, { resource: 'https://orchestration.test' });
+
+    expect(withResource.status).toBe(plain.status);
+    expect(Object.keys(withResource.body).sort()).toEqual(Object.keys(plain.body).sort());
+    expect({ ...withResource.body, access_token: 'x' }).toEqual({
+      ...plain.body,
+      access_token: 'x',
+    });
+    const withoutTime = (rows: Record<string, unknown>[]) =>
+      rows.map(({ expiresAt: _, ...row }) => row);
+    expect(withoutTime(h.inserts)).toEqual(withoutTime(insertsWithout));
+    expect(h.inserts).toHaveLength(1);
+  });
+
+  it('refuses a service client on the library path, which it does not reach without a resource', async () => {
+    h.client = confidentialClient({
+      userId: -1,
+      grants: ['urn:civitai:grant:service'],
+      redirectUris: [],
+    });
+    const res = await token(null);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('unauthorized_client');
     expect(h.inserts).toHaveLength(0);
   });
 });

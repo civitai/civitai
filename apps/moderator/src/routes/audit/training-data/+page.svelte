@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { dateTime } from '$lib/format';
+  import { dateTime, LINK_CLASS } from '$lib/format';
   import WorkflowGateQueue from './WorkflowGateQueue.svelte';
   import type { PageData } from './$types';
   import type { TrainingReviewRow } from '$lib/server/training-moderation.service';
@@ -22,7 +22,7 @@
   <p class="text-sm text-dark-2">
     {partial ? 'At least ' : ''}{underReview.toLocaleString()} model
     {underReview === 1 ? 'version' : 'versions'} under review.
-    Under review first, then the other paused versions; oldest first within each.
+    Under review first, then the unchecked; oldest first within each.
   </p>
 </header>
 
@@ -68,6 +68,28 @@
       </li>
     {/each}
   </ul>
+{/if}
+
+{#if data.closed.length}
+  <details class="mt-6">
+    <summary class="cursor-pointer text-sm text-dark-2">
+      Not under review, no action ({data.closed.length.toLocaleString()})
+    </summary>
+    <ul class="mt-3 flex flex-col gap-3">
+      {#each data.closed as item (item.id)}
+        <li
+          class="flex items-center justify-between gap-3 rounded-xl border border-dark-4 bg-dark-6 p-4"
+        >
+          <div class="min-w-0">
+            <p class="truncate text-sm text-dark-0">{item.modelName} — {item.name}</p>
+            <p class="text-xs text-dark-2">{item.reason}</p>
+            <p class="text-xs text-dark-2">Workflow: {item.workflowId ?? 'none'}</p>
+          </div>
+          <a href="/audit/training-data/{item.id}" class={LINK_CLASS}>View</a>
+        </li>
+      {/each}
+    </ul>
+  </details>
 {/if}
 
 <WorkflowGateQueue gates={data.workflowGates} />

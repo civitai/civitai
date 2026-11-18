@@ -4,15 +4,18 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconDotsVertical,
   IconDownload,
+  IconMoonStars,
   IconPlayerPause,
   IconPlayerPlay,
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError, isRunningLimit } from '~/components/Apps/AppAssistant/sandboxClient';
 import type { SandboxesState } from '~/components/Apps/AppAssistant/useSandboxes';
+import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import dayjs from '~/shared/utils/dayjs';
 
 export const APP_STATUS: Record<Sandbox['state'], string> = {
@@ -36,6 +39,15 @@ export function AppError({ error }: { error: unknown }) {
       <Alert color="yellow" variant="light" title="Only one app can run at a time">
         Another of your apps started at the same moment. Send your message again: starting this app
         pauses the others.
+      </Alert>
+    );
+  // App hibernate: the SLEEPING apps are at their limit (a start had to put one to sleep and could
+  // not). The kept apps are not the problem, so the copy below would send the user to the wrong list.
+  if (error instanceof SandboxApiError && error.code === 'sleeping_limit')
+    return (
+      <Alert color="yellow" variant="light" title="You have as many sleeping apps as you can keep">
+        Delete a sleeping app you no longer need from the app switcher at the top of the page, then
+        try again.
       </Alert>
     );
   if (error instanceof SandboxApiError && error.kind === 'limit')
@@ -92,6 +104,15 @@ interface AppActions {
   starting: string | null;
   /** The sandbox being exported (its name), for its menu's busy state; one export at a time. */
   exporting: string | null;
+  /**
+   * App hibernate (the `app-hibernate` flag on): puts the app to sleep, from its menu. Unset, the
+   * menu is as before.
+   */
+  onSleep?: (sandbox: Sandbox) => void;
+  /** The sandboxes going to sleep now (their names). */
+  goingToSleep?: readonly string[];
+  /** App hibernate: told after a delete the user confirmed in the app's menu, and only then. */
+  onDeleted?: (sandbox: Sandbox) => void;
 }
 
 /** Start, Pause, Export and Delete for one app. */
@@ -103,11 +124,19 @@ export function AppMenu({
   onExport,
   starting,
   exporting,
+  onSleep,
+  goingToSleep,
+  onDeleted,
 }: AppActions & { sandbox: Sandbox }) {
   const { suspend, remove } = sandboxes;
   const confirmDelete = () =>
     confirmDeleteApp(sandbox.app, () =>
-      remove.mutate(sandbox.name, { onSuccess: () => onRemoved(sandbox.name) })
+      remove.mutate(sandbox.name, {
+        onSuccess: () => {
+          onRemoved(sandbox.name);
+          onDeleted?.(sandbox);
+        },
+      })
     );
   const pauses = runningOtherApp(sandboxes.list.data ?? [], sandbox);
 
@@ -124,7 +153,8 @@ export function AppMenu({
             (suspend.isPending && suspend.variables === sandbox.name) ||
             (remove.isPending && remove.variables === sandbox.name) ||
             starting === sandbox.app ||
-            exporting === sandbox.name
+            exporting === sandbox.name ||
+            !!goingToSleep?.includes(sandbox.name)
           }
         >
           <IconDotsVertical size={18} />
@@ -169,6 +199,20 @@ export function AppMenu({
             </Text>
           )}
         </Menu.Item>
+        {onSleep && canSleep(sandbox) && (
+          <Menu.Item
+            leftSection={<IconMoonStars size={16} />}
+            disabled={!!goingToSleep?.includes(sandbox.name)}
+            onClick={() => onSleep(sandbox)}
+          >
+            <Text component="span" size="sm" display="block">
+              Put to sleep
+            </Text>
+            <Text component="span" size="xs" c="dimmed" display="block">
+              Frees a slot; wake it any time
+            </Text>
+          </Menu.Item>
+        )}
         <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={confirmDelete}>
           Delete app
         </Menu.Item>
@@ -177,11 +221,25 @@ export function AppMenu({
   );
 }
 
-function statusLine(sandbox: Sandbox): string {
+/**
+ * Whether an app can be put to sleep: only an app whose key is a block slug that is not an empty
+ * failed fork. Any other keeps the 14-day delete when idle, with app hibernate on too.
+ */
+export function canSleep(sandbox: Sandbox): boolean {
+  return sandbox.state !== 'seed_lost' && isAppBlockId(sandbox.app);
+}
+
+/**
+ * A kept app's status line. With app hibernate on, an idle app that {@link canSleep} goes to sleep
+ * rather than being deleted (`expiresAt` is then when it goes to sleep).
+ */
+function statusLine(sandbox: Sandbox, hibernate: boolean, goingToSleep: boolean): string {
+  if (goingToSleep) return 'Going to sleep…';
   const status = APP_STATUS[sandbox.state];
-  return sandbox.state === 'suspended' && sandbox.expiresAt
-    ? `${status} · deleted ${dayjs(sandbox.expiresAt).fromNow()} if unused`
-    : status;
+  if (sandbox.state !== 'suspended' || !sandbox.expiresAt) return status;
+  return hibernate && canSleep(sandbox)
+    ? `${status} · goes to sleep ${dayjs(sandbox.expiresAt).fromNow()} if unused`
+    : `${status} · deleted ${dayjs(sandbox.expiresAt).fromNow()} if unused`;
 }
 
 /** The user's apps: open one, start a new one, or start, pause, export or delete one from its menu. */
@@ -190,13 +248,20 @@ export function YourAppsList({
   activeName,
   onOpen,
   onNewApp,
+  sleepingRows,
   ...actions
 }: AppActions & {
   activeName: string | null;
   onOpen: (sandbox: Sandbox) => void;
   onNewApp: () => void;
+  /**
+   * App hibernate (the flag on): the sleeping apps' rows, listed after the kept ones. Unset, the
+   * list and its notes are as before.
+   */
+  sleepingRows?: ReactNode;
 }) {
   const apps = sandboxes.list.data ?? [];
+  const hibernate = sleepingRows !== undefined;
 
   return (
     <Stack gap="md">
@@ -212,6 +277,11 @@ export function YourAppsList({
       <Stack gap={4} component="ul" className="m-0 list-none p-0">
         {apps.map((sandbox) => {
           const isActive = sandbox.name === activeName;
+          const status = statusLine(
+            sandbox,
+            hibernate,
+            !!actions.goingToSleep?.includes(sandbox.name)
+          );
           return (
             <Group
               key={sandbox.name}
@@ -229,19 +299,29 @@ export function YourAppsList({
                   {sandbox.app}
                 </Text>
                 <Text size="xs" c="dimmed" truncate>
-                  {isActive ? `Open now · ${statusLine(sandbox)}` : statusLine(sandbox)}
+                  {isActive ? `Open now · ${status}` : status}
                 </Text>
               </UnstyledButton>
               <AppMenu sandbox={sandbox} sandboxes={sandboxes} {...actions} />
             </Group>
           );
         })}
+        {sleepingRows}
       </Stack>
-      <Text size="xs" c="dimmed">
-        You can keep 3 apps, and one runs at a time: picking a paused app, or sending it a message,
-        starts it and pauses the one that runs. An app also pauses after 30 minutes idle or 8 hours
-        running, and is deleted after 14 days unused.
-      </Text>
+      {hibernate ? (
+        <Text size="xs" c="dimmed">
+          You can keep 3 apps awake, and one runs at a time: picking a paused app, or sending it a
+          message, starts it and pauses the one that runs. An app pauses after 30 minutes idle or 8
+          hours running, and goes to sleep after 14 days unused, or when you need room for another:
+          a sleeping app keeps its files, and Wake brings it back.
+        </Text>
+      ) : (
+        <Text size="xs" c="dimmed">
+          You can keep 3 apps, and one runs at a time: picking a paused app, or sending it a
+          message, starts it and pauses the one that runs. An app also pauses after 30 minutes idle
+          or 8 hours running, and is deleted after 14 days unused.
+        </Text>
+      )}
     </Stack>
   );
 }

@@ -67,6 +67,51 @@ describe('civitaiEmbed node through an article save', () => {
   });
 });
 
+describe('civitaiEmbed full-width display', () => {
+  const one = [{ type: 'image', id: 13 }];
+
+  it('keeps display full through an article save', () => {
+    const html = generateHTML(doc({ items: one, display: 'full' }), tiptapExtensions);
+    expect(html).toContain('data-display="full"');
+    expect(embedOf(save(html))?.attrs).toEqual({ items: one, display: 'full' });
+  });
+
+  it('leaves an embed saved before the attribute existed as a card, with unchanged HTML', () => {
+    const old =
+      '<div data-type="civitaiEmbed"><a href="/images/13" data-entity="image" data-id="13">/images/13</a></div>';
+    const json = save(old);
+    expect(embedOf(json)?.attrs).toEqual({ items: one, display: 'card' });
+    const out = generateHTML(json as any, tiptapExtensions);
+    expect(out).toContain('data-type="civitaiEmbed"><a href="/images/13"');
+    expect(out).not.toContain('data-display');
+  });
+
+  it('reads any other display value as a card', () => {
+    const html =
+      '<div data-type="civitaiEmbed" data-display="huge"><a href="/images/13" data-entity="image" data-id="13">x</a></div>';
+    expect(embedOf(generateJSON(html, tiptapExtensions))?.attrs.display).toBe('card');
+  });
+
+  it('keeps no display value but full on the embed, on the article save path', () => {
+    const content = upsertArticleInput.shape.content.parse(
+      '<div data-type="civitaiEmbed" data-display="anything"><a href="/images/13" data-entity="image" data-id="13">x</a></div>'
+    );
+    expect(content).not.toContain('anything');
+  });
+
+  it('drops data-display from any div that is not the embed, on the article save path', () => {
+    const content = upsertArticleInput.shape.content.parse(
+      '<div data-type="civitaiembed" data-display="full">a</div>' +
+        '<div data-type="civitaiEmbed2" data-display="full">b</div>' +
+        '<div data-display="full">c</div>' +
+        '<p data-display="full">d</p><span data-display="full">e</span>' +
+        '<div data-type="civitaiEmbed" data-display="full"><a href="/images/13" data-entity="image" data-id="13">x</a></div>'
+    );
+    expect(content.match(/data-display/g)).toHaveLength(1);
+    expect(content).toContain('<div data-type="civitaiEmbed" data-display="full">');
+  });
+});
+
 describe('parseCivitaiEmbedUrl', () => {
   it.each([
     ['https://civitai.com/models/123/some-slug', { type: 'model', id: 123 }],

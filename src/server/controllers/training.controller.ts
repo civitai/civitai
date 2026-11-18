@@ -31,7 +31,7 @@ const logWebhook = (data: MixedObject) => {
       ...data,
     },
     'webhooks'
-  ).catch();
+  );
 };
 
 export const getModelData = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {

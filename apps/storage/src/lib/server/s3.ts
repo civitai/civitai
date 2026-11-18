@@ -10,6 +10,7 @@ import {
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectVersionsCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -102,6 +103,47 @@ export type HeadResult = {
 
 export type S3Backend = ReturnType<typeof createS3Client>;
 
+export type PurgeVersionsResult = { versionsDeleted: number; remaining: number };
+
+/** Every version and delete marker stored under exactly `key` (a prefix listing also returns longer keys). */
+async function listKeyVersions(client: Pick<S3Client, 'send'>, bucket: string, key: string) {
+  const versionIds: string[] = [];
+  let keyMarker: string | undefined;
+  let versionIdMarker: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectVersionsCommand({
+        Bucket: bucket,
+        Prefix: key,
+        KeyMarker: keyMarker,
+        VersionIdMarker: versionIdMarker,
+      })
+    );
+    for (const v of [...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])])
+      if (v.Key === key && v.VersionId) versionIds.push(v.VersionId);
+    keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+    versionIdMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+  } while (keyMarker);
+  return versionIds;
+}
+
+/**
+ * Deletes every version and delete marker of `key` by VersionId, then lists again: `remaining` is what
+ * that second listing found, not a count of what was sent. On a versioned bucket a key-only delete
+ * only adds a delete marker.
+ */
+export async function purgeObjectVersions(
+  client: Pick<S3Client, 'send'>,
+  bucket: string,
+  key: string
+): Promise<PurgeVersionsResult> {
+  const versionIds = await listKeyVersions(client, bucket, key);
+  for (const VersionId of versionIds)
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key, VersionId }));
+  const remaining = (await listKeyVersions(client, bucket, key)).length;
+  return { versionsDeleted: versionIds.length, remaining };
+}
+
 export function createS3Client(config: S3BackendConfig, options: S3ClientOptions = {}) {
   const uploadExpiration = options.uploadExpiration ?? DEFAULT_UPLOAD_EXPIRATION;
   const downloadExpiration = options.downloadExpiration ?? DEFAULT_DOWNLOAD_EXPIRATION;
@@ -118,6 +160,10 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
 
   function deleteObject(key: string, bucket?: string) {
     return client.send(new DeleteObjectCommand({ Bucket: requireBucket(bucket), Key: key }));
+  }
+
+  function purgeVersions(key: string, bucket?: string) {
+    return purgeObjectVersions(client, requireBucket(bucket), key);
   }
 
   // DeleteObjects caps at 1000 keys/call — chunk so callers can pass any count.
@@ -277,6 +323,7 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
 
   return {
     deleteObject,
+    purgeObjectVersions: purgeVersions,
     deleteManyObjects,
     getPutUrl,
     getMultipartPutUrl,

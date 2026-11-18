@@ -1,4 +1,8 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import {
+  GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
+  GenerationConfigUnavailableError,
+} from '~/server/services/generation/generation-kill-switch';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import { stopsCreatorEarnings } from '~/server/common/constants';
 import {
@@ -26,7 +30,6 @@ import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helper
 import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { TRPCError } from '@trpc/server';
 import { lastKnownGood, type LastKnownRead } from '~/server/services/generation/last-known-good';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -165,18 +168,10 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
   );
 }
 
-/**
- * What a generation request is told when the generation settings (the kill switch or the gate
- * rules) cannot be read and this process has never read them.
- */
-export const GENERATION_CONFIG_UNAVAILABLE_MESSAGE =
-  'Generation is temporarily unavailable. Please try again in a few minutes.';
+export { GENERATION_CONFIG_UNAVAILABLE_MESSAGE };
 
 export function generationConfigUnavailableError() {
-  return new TRPCError({
-    code: 'SERVICE_UNAVAILABLE',
-    message: GENERATION_CONFIG_UNAVAILABLE_MESSAGE,
-  });
+  return new GenerationConfigUnavailableError();
 }
 
 const failOpenExtra = (last: { ageMs: number } | undefined) => ({

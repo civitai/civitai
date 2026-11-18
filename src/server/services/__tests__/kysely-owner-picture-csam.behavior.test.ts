@@ -50,10 +50,10 @@ afterAll(async () => {
   }
 });
 
-// User 1's picture is flagged csam, user 2's is clean; both Scanned.
+// User 1's picture is flagged csam, user 2's is clean; both Scanned and rated.
 const PICTURES = `
-  INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview") VALUES
-    (11, 'flagged', 1, 'Scanned', 'csam'), (12, 'clean', 2, 'Scanned', NULL);
+  INSERT INTO "Image" (id, url, "userId", ingestion, "needsReview", "nsfwLevel") VALUES
+    (11, 'flagged', 1, 'Scanned', 'csam', 1), (12, 'clean', 2, 'Scanned', NULL, 1);
 `;
 
 describe('Kysely profile picture reads drop a csam-flagged picture', () => {

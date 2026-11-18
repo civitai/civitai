@@ -82,7 +82,7 @@ type Ctx = {
   // header: `responseMeta` only sets one when `errors.length === 0`.
   acceptableOrigin: boolean;
   // `enforceTokenScope` runs ahead of the cache middlewares too.
-  tokenScope: number;
+  tokenScope: bigint;
   cache: {
     browserTTL: number;
     edgeTTL: number;

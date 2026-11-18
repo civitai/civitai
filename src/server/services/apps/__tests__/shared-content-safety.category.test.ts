@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
 
 import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -179,11 +180,7 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
  */
 describe('assertSharedTextSafe — the platform audit unable to run', () => {
   const input = { title: 'A listing', body: 'some text', userId: 1 };
-  const unavailable = () =>
-    new TRPCError({
-      code: 'SERVICE_UNAVAILABLE',
-      message: 'The prompt check is temporarily unavailable. Please try again in a moment.',
-    });
+  const unavailable = () => new PromptCheckUnavailableError();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -228,5 +225,33 @@ describe('assertSharedTextSafe — the platform audit unable to run', () => {
 
     expect((error as SharedContentBlockedError).category).toBe('audit');
     expect(isEscalatedServerFault(error)).toBe(false);
+  });
+});
+
+describe('assertSharedTextSafe — orchestrator media links', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    throwOnBlockedUserContent.mockResolvedValue(undefined);
+    getBlocklistData.mockResolvedValue([]);
+  });
+
+  it('refuses a consumer-blob url in the body as a link block', async () => {
+    const err = await assertSharedTextSafe({
+      title: 'my set',
+      body: 'see https://orchestration.civitai.com/v2/consumer/blobs/XYZ987.png?sig=a',
+      userId: 1,
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SharedContentBlockedError);
+    expect((err as SharedContentBlockedError).category).toBe('link');
+  });
+
+  it('lets a public image url through', async () => {
+    await expect(
+      assertSharedTextSafe({
+        title: 'my set',
+        body: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=450/1.jpeg',
+        userId: 1,
+      })
+    ).resolves.toMatchObject({ title: 'my set' });
   });
 });

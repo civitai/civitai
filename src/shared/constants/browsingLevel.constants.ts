@@ -255,6 +255,19 @@ export const modelBrowsingLevelLimit = (model: { minor: boolean; sfwOnly: boolea
     ? sfwBrowsingLevelsFlag
     : allBrowsingLevelsFlag;
 
+/**
+ * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
+ * the model's limit. A setting that allows none of them, or none at all, serves the whole limit: the
+ * gallery reads 0 as no cap.
+ */
+export function heldGalleryLevel(
+  stored: number | undefined,
+  model: { minor: boolean; sfwOnly: boolean }
+) {
+  const limit = modelBrowsingLevelLimit(model);
+  return Flags.intersection(stored ?? 0, limit) || limit;
+}
+
 /** The level a minor model's gallery and carousel are forced to for a viewer who is not a moderator. */
 export const forcedMinorModelBrowsingLevel = (signedIn: boolean) =>
   signedIn

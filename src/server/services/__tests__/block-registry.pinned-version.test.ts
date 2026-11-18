@@ -38,7 +38,7 @@ const LIVE_BLOCK = {
     scopes: ['models:read:self', 'ai:write:budgeted'],
   },
   approvedScopes: ['models:read:self', 'ai:write:budgeted'],
-  app: { allowedScopes: 33554431 },
+  app: { allowedScopes: 33554431n },
 };
 
 // v1 publish-request manifest — only scope A.

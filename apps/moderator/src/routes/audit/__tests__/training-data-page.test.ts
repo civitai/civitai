@@ -27,7 +27,10 @@ const STUBS: Record<string, string> = {
 const IMPORTS: [RegExp, string][] = [
   [/import \{ Badge \} from '[^']+';/, "import Badge from './Badge.js';"],
   [/import \{ Button \} from '[^']+';/, "import Button from './Button.js';"],
-  [/import \{ dateTime \} from '\$lib\/format';/, 'const dateTime = (d) => String(d);'],
+  [
+    /import \{ dateTime, LINK_CLASS \} from '\$lib\/format';/,
+    "const dateTime = (d) => String(d); const LINK_CLASS = '';",
+  ],
   [
     /import WorkflowGateQueue from '[^']+';/,
     "import WorkflowGateQueue from './WorkflowGateQueue.js';",
@@ -79,11 +82,12 @@ const row = (id: number, underReview: boolean, checked: boolean) => ({
   checked,
 });
 
-function header(flags: { unanswered: boolean }) {
+function header(flags: { unanswered: boolean; closed?: unknown[] }) {
   const body = render(Page, {
     props: {
       data: {
         items: [row(1, true, true), row(2, false, false)],
+        closed: [],
         workflowFilterUnavailable: true,
         truncated: false,
         workflowGates: new Promise(() => {}),
@@ -106,5 +110,17 @@ describe('the training data review page', () => {
     const page = header({ unanswered: true });
     expect(page).toContain('At least 1 model version under review.');
     expect(page).toContain('may have no workflow left, or be under review');
+  });
+
+  it('lists a row not under review apart, with its reason and no Review button', () => {
+    const { underReview: _u, checked: _c, ...closedRow } = row(3, false, true);
+    const page = header({
+      unanswered: false,
+      closed: [{ ...closedRow, reason: 'The gate is not under review (run: succeeded).' }],
+    });
+    expect(page).toContain('Not under review, no action (1)');
+    expect(page).toContain('The gate is not under review (run: succeeded).');
+    expect(page).toMatch(/href="\/audit\/training-data\/3"[^>]*>View</);
+    expect(page.match(/>Review</g)).toHaveLength(2);
   });
 });

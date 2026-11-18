@@ -15,6 +15,8 @@
     "./hot-reads-8": "./src/hot-reads-8.db.ts",
     "./hot-reads-9": "./src/hot-reads-9.db.ts",
     "./hot-reads-10": "./src/hot-reads-10.db.ts",
+    "./hot-reads-11": "./src/hot-reads-11.db.ts",
+    "./hot-reads-12": "./src/hot-reads-12.db.ts",
     "./image": "./src/image.db.ts",
     "./model": "./src/model.db.ts",
     "./page-access": "./src/page-access.db.ts",
@@ -23,6 +25,8 @@
     "./image-removal-confirmation": "./src/image-removal-confirmation.db.ts",
     "./evidence-hold": "./src/evidence-hold.db.ts",
     "./csam-queue": "./src/csam-queue.db.ts",
+    "./evidence-archive-queue": "./src/evidence-archive-queue.db.ts",
+    "./profile-picture-clear": "./src/profile-picture-clear.db.ts",
     "./test-harness": "./src/test/compile-harness.ts"
   },
   "scripts": {
@@ -31,6 +35,7 @@
   },
   "dependencies": {
     "@civitai/db-schema": "workspace:*",
+    "@civitai/shared": "workspace:*",
     "kysely": "^0.28.7"
   },
   "devDependencies": {

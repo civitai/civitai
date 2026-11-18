@@ -32,5 +32,5 @@ export function dealOverdueCancelledChatLine({
   const why = revision
     ? `the requested revision wasn't delivered within ${days} days`
     : `nothing was delivered within ${days} days of the due date`;
-  return `This deal was cancelled automatically because ${why}. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${dealId})`;
+  return `This deal was canceled automatically because ${why}. The buyer's Buzz has been refunded. [Open the deal](/services/deals/${dealId})`;
 }

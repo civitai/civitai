@@ -76,7 +76,7 @@ export async function payDueCompensation(now: Date) {
         oldestDue: formatDate(due[0], 'YYYY-MM-DD', true),
         datesDue: due.length,
       },
-    }).catch(() => undefined);
+    });
   }
 
   for (const date of due.slice(0, MAX_PAYOUT_DATES_PER_RUN)) {

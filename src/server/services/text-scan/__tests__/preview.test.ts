@@ -110,6 +110,7 @@ describe('previewComFaceIntent', () => {
     await expect(previewComFaceIntent({ fields, waitSeconds: 10 })).resolves.toEqual({
       status: 'ok',
       output: { detected: true, reason: 'stub reason' },
+      promptId: 3,
     });
   });
 });

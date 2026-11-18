@@ -6,6 +6,7 @@ import {
   REDIS_KEYS,
   REDIS_SYS_KEYS,
   sysRedis,
+  withSysReadBreaker,
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
@@ -516,7 +517,7 @@ export async function getLiveNow() {
 // SSR every-render read, so collapsing the per-render sysRedis GET into ~1/TTL/pod
 // is the win; parsing the small cached string per call is negligible.
 const getBrowsingSettingAddonsRawMemo = createTtlMemo<string | null>(
-  () => withSysReadDeadline(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)),
+  () => withSysReadBreaker(sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS)),
   SYSTEM_CACHE_INPROC_TTL_MS
 );
 

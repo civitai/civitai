@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clickupTaskIdFromUrl, isClickupTaskUrl } from '../clickup-url';
+import { clickupTaskIdFromUrl, hqTaskFromUrl, isClickupTaskUrl } from '../clickup-url';
 
 /**
  * The ONE parser two apps share. The main app's ClickUp webhook uses it to decide WHICH board entry
@@ -196,10 +196,32 @@ describe('isClickupTaskUrl, HQ links', () => {
   });
 
   it.each([
+    [
+      'an id with underscores, as HQ issues them now',
+      'https://hq.civitai.com/t/abc_def_9xyz',
+      'abc_def_9xyz',
+    ],
+    ['an id with a hyphen', 'https://hq.civitai.com/t/abc-def-9xyz', 'abc-def-9xyz'],
+    [
+      'an id of exactly 100 characters',
+      `https://hq.civitai.com/t/${'a'.repeat(100)}`,
+      'a'.repeat(100),
+    ],
+  ])('accepts %s, and the matcher reads the same id back', (_label, input, id) => {
+    expect(isClickupTaskUrl(input)).toBe(true);
+    expect(clickupTaskIdFromUrl(input)).toBe(id);
+  });
+
+  it.each([
     ['a task sub-path, whose last segment is not the task', 'https://hq.civitai.com/t/868kfwm3j/x'],
+    ['a two-segment id path', 'https://hq.civitai.com/t/a/b'],
     ['an HQ page that is not a task', 'https://hq.civitai.com/868kfwm3j'],
+    ['no id', 'https://hq.civitai.com/t/'],
+    ['an id over 100 characters', `https://hq.civitai.com/t/${'a'.repeat(101)}`],
+    ['an upper-cased underscored id', 'https://hq.civitai.com/t/ABC_DEF_9XYZ'],
+    ['an underscored id on a non-HQ host', 'https://example.com/t/abc_def_9xyz'],
     ['a team-style ClickUp path on the HQ host', 'https://hq.civitai.com/t/8459928/868kfwm3j'],
-    ['a hyphenated id', 'https://hq.civitai.com/t/DEV-1234'],
+    ['an upper-cased custom id', 'https://hq.civitai.com/t/DEV-1234'],
     // HQ ids are lower-case and completions match case-sensitively, so this would never close.
     ['an upper-cased id', 'https://hq.civitai.com/t/868KFWM3J'],
     ['another civitai host', 'https://civitai.com/t/868kfwm3j'],
@@ -211,5 +233,57 @@ describe('isClickupTaskUrl, HQ links', () => {
     ['a tab inside the id', 'https://hq.civitai.com/t/868k\tfwm3j'],
   ])('refuses %s', (_label, input) => {
     expect(isClickupTaskUrl(input)).toBe(false);
+  });
+});
+
+/**
+ * The HQ task link a feedback row records (`context.hq`) and the triage API accepts. Strict, and
+ * strict by EXACT TEXT: the stored URL is rendered as a link and its id is what HQ's completion
+ * webhook names, so anything the raw string and the parsed URL could disagree on is refused.
+ */
+describe('hqTaskFromUrl', () => {
+  it.each([
+    ['a plain id', 'https://hq.civitai.com/t/868kfwm3j', '868kfwm3j'],
+    [
+      'an id with underscores, as HQ issues them now',
+      'https://hq.civitai.com/t/abc_def_9xyz',
+      'abc_def_9xyz',
+    ],
+    ['an id with a hyphen', 'https://hq.civitai.com/t/abc-def', 'abc-def'],
+  ])('reads %s', (_label, input, id) => {
+    expect(hqTaskFromUrl(input)).toEqual({ id, url: input });
+  });
+
+  it.each([
+    ['nothing', undefined],
+    ['an empty string', ''],
+    ['a bare id', 'abc_def_9xyz'],
+    ['http', 'http://hq.civitai.com/t/abc_def_9xyz'],
+    ['another host', 'https://example.com/t/abc_def_9xyz'],
+    ['a host merely ending in the HQ one', 'https://hq.civitai.com.attacker.test/t/abc_def_9xyz'],
+    ['a host merely starting with the HQ one', 'https://hq.civitai.community/t/abc_def_9xyz'],
+    ['an upper-cased host', 'https://HQ.civitai.com/t/abc_def_9xyz'],
+    ['an explicit port', 'https://hq.civitai.com:443/t/abc_def_9xyz'],
+    ['credentials', 'https://a:b@hq.civitai.com/t/abc_def_9xyz'],
+    ['a trailing slash', 'https://hq.civitai.com/t/abc_def_9xyz/'],
+    ['a query', 'https://hq.civitai.com/t/abc_def_9xyz?x=1'],
+    ['a fragment', 'https://hq.civitai.com/t/abc_def_9xyz#c1'],
+    ['a sub-path', 'https://hq.civitai.com/t/abc_def_9xyz/comments'],
+    ['a page that is not a task', 'https://hq.civitai.com/recordings/42'],
+    ['no id', 'https://hq.civitai.com/t/'],
+    ['an upper-cased id', 'https://hq.civitai.com/t/ABC'],
+    ['a dot segment', 'https://hq.civitai.com/t/../t/abc'],
+    ['an encoded character', 'https://hq.civitai.com/t/abc%5Fdef'],
+    ['an id over 100 characters', `https://hq.civitai.com/t/${'a'.repeat(101)}`],
+  ])('refuses %s', (_label, input) => {
+    expect(hqTaskFromUrl(input)).toBeNull();
+  });
+
+  it('accepts an id of exactly 100 characters', () => {
+    const id = 'a'.repeat(100);
+    expect(hqTaskFromUrl(`https://hq.civitai.com/t/${id}`)).toEqual({
+      id,
+      url: `https://hq.civitai.com/t/${id}`,
+    });
   });
 });

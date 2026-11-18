@@ -1,0 +1,37 @@
+{
+  "name": "numeric-strings",
+  "endpoint": "ping",
+  "request": {
+    "method": "POST",
+    "target": "/api/internal/ping",
+    "headers": {
+      "host": "www.example.test",
+      "referer": "https://www.example.test/models/123/some-slug",
+      "user-agent": "Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0",
+      "cf-connecting-ip": "203.0.113.7",
+      "cf-ipcountry": "US"
+    },
+    "body": "{\"ads\":\"true\",\"duration\":\"  42.7 \",\"windowWidth\":\"0x10\",\"windowHeight\":\"abc\",\"path\":\"/images\"}"
+  },
+  "session": null,
+  "trackerEnabled": true,
+  "fallback": "",
+  "expect": {
+    "status": 200,
+    "headers": {
+      "vary": "Authorization",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "Authorization, Content-Type, *",
+      "access-control-allow-methods": "POST",
+      "cache-control": "public, s-maxage=300, stale-while-revalidate=150"
+    },
+    "body": "",
+    "writes": [
+      {
+        "table": "pageViews",
+        "body": "{\"userId\":0,\"memberType\":\"undefined\",\"ip\":\"203.0.113.7\",\"pageId\":\"/images\",\"path\":\"/images\",\"host\":\"www.example.test\",\"country\":\"US\",\"ads\":false,\"duration\":42,\"windowWidth\":16,\"windowHeight\":0}"
+      }
+    ]
+  },
+  "shadow": "{\"method\":\"POST\",\"target\":\"/api/internal/ping\",\"query\":\"\",\"headers\":{\"host\":\"www.example.test\",\"referer\":\"https://www.example.test/models/123/some-slug\",\"user-agent\":\"Mozilla/5.0 (X11; Linux x86_64) ExampleBrowser/1.0\",\"cf-ipcountry\":\"US\",\"cf-connecting-ip\":\"203.0.113.7\"},\"body\":\"{\\\"ads\\\":\\\"true\\\",\\\"duration\\\":\\\"  42.7 \\\",\\\"windowWidth\\\":\\\"0x10\\\",\\\"windowHeight\\\":\\\"abc\\\",\\\"path\\\":\\\"/images\\\"}\",\"bodyIsString\":true,\"node\":{\"status\":200,\"headers\":{\"access-control-allow-origin\":\"*\",\"access-control-allow-headers\":\"Authorization, Content-Type, *\",\"access-control-allow-methods\":\"POST\",\"vary\":\"Authorization\",\"cache-control\":\"public, s-maxage=300, stale-while-revalidate=150\"},\"body\":\"\",\"writes\":[{\"table\":\"pageViews\",\"body\":\"{\\\"userId\\\":0,\\\"memberType\\\":\\\"undefined\\\",\\\"ip\\\":\\\"203.0.113.7\\\",\\\"pageId\\\":\\\"/images\\\",\\\"path\\\":\\\"/images\\\",\\\"host\\\":\\\"www.example.test\\\",\\\"country\\\":\\\"US\\\",\\\"ads\\\":false,\\\"duration\\\":42,\\\"windowWidth\\\":16,\\\"windowHeight\\\":0}\"}]}}"
+}

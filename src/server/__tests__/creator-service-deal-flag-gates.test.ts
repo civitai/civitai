@@ -33,6 +33,7 @@ const UNGATED = [
   'decline',
   'acceptDelivery',
   'cancelLate',
+  'cancelAndRefund',
   'requestCancellation',
   'respondCancellation',
   'openDispute',

@@ -10,8 +10,7 @@ import {
   withdrawRequest,
   WithdrawRequestError,
 } from '~/server/services/blocks/publish-request.service';
-import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { Flags } from '~/shared/utils/flags';
+import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -126,7 +125,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // withdraw its own submission; an un-scoped OAuth token → 403 (before the
   // flag/db/work, no leak).
   if (session.subject?.type === 'oauth') {
-    if (!Flags.hasFlag(session.tokenScope, TokenScope.AppBlocksSubmit)) {
+    if (!hasScope(session.tokenScope, TokenScope.AppBlocksSubmit)) {
       res.status(403).json({
         message:
           'Withdrawing an App requires a personal API key or an OAuth token with the Apps submit scope',

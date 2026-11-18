@@ -6,6 +6,7 @@ import { claimDaily, datasetRatingFor, warmDatasetRating } from '$lib/server/dat
 import { countDatasetMature } from '$lib/train-core';
 import type { DatasetRatingCount } from '$lib/dataset-rating';
 import { isDatasetBlobIds } from '$lib/orchestrator-core';
+import { textCheckCookie } from '$lib/server/text-check';
 
 // Review's mature count under the v2 rating, the count the submit will make from what is rated now,
 // and a background start on rating the rest so the submit finds them rated. Off for this user: `enabled`
@@ -23,7 +24,13 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     return json({ enabled: false } satisfies DatasetRatingCount);
   const token = await requireToken(locals, 'Rating is unavailable right now.');
   const count = await countDatasetMature(orchestratorClient(token), blobIds, rating);
-  warmDatasetRating(token, locals.user.id, count.unratedKeys);
+  warmDatasetRating(
+    token,
+    locals.user.id,
+    rating.matureLevel,
+    count.unratedKeys,
+    textCheckCookie(locals, request)
+  );
   // A blob this request could not read would count as not mature here, though Review's own upload count
   // knows its rating, so Review keeps that count.
   if (count.failed > 0) return json({ enabled: false } satisfies DatasetRatingCount);

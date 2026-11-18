@@ -25,6 +25,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: () => undefined }),
 }));
+// The uploader needs a signed-in session; these tests are about publishing.
+vi.mock('~/libs/form/components/SimpleImageUpload', () => ({ SimpleImageUpload: () => null }));
 
 const { ServiceOfferingFormModal } = await import(
   '~/components/CreatorShop/Services/ServiceOfferingFormModal'

@@ -39,17 +39,17 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockModelFindUnique = dbMock.dbRead.model.findUnique;
 const mockModel3DFindUnique = dbMock.dbRead.model3D.findUnique;
 
-function ctxUser(id = 602767) {
+function ctxUser(id = 990100013) {
   return { user: { id }, features: { isGreen: false } } as never;
 }
 
 const baseInput = {
-  entityId: 2186217,
+  entityId: 990100031,
   entityType: EntityType.Model,
   message: 'This is my own character design.',
 } as const;
 
-const flaggedModel = { userId: 602767, minor: true, meta: { minorFlagSnapshot: {} } };
+const flaggedModel = { userId: 990100013, minor: true, meta: { minorFlagSnapshot: {} } };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -79,27 +79,27 @@ describe('createEntityAppealHandler — Model ownership + flag gates', () => {
     });
 
     await expect(
-      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
+      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 
   it('throws BAD_REQUEST when the model is not flagged as minor', async () => {
     mockModelFindUnique.mockResolvedValue({
-      userId: 602767,
+      userId: 990100013,
       minor: false,
       meta: { minorFlagSnapshot: {} },
     });
 
     await expect(
-      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
+      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
   it('throws BAD_REQUEST when minor but the meta carries no minorFlagSnapshot (legacy flag)', async () => {
-    mockModelFindUnique.mockResolvedValue({ userId: 602767, minor: true, meta: {} });
+    mockModelFindUnique.mockResolvedValue({ userId: 990100013, minor: true, meta: {} });
 
     await expect(
-      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
+      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
@@ -114,10 +114,10 @@ describe('createEntityAppealHandler — Model re-request', () => {
   });
 
   it('creates a new appeal when the owner has never asked', async () => {
-    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
+    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) });
 
     expect(mockCreateEntityAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityId: 2186217, userId: 602767, skipFee: true })
+      expect.objectContaining({ entityId: 990100031, userId: 990100013, skipFee: true })
     );
     expect(mockReopenAppeal).not.toHaveBeenCalled();
   });
@@ -126,7 +126,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 7, context: null }] as never);
 
     await expect(
-      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
+      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
@@ -137,7 +137,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Rejected', resolvedAt: new Date() });
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 7, status: 'Rejected' }] as never);
 
-    const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
+    const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) });
 
     expect(mockReopenAppeal).toHaveBeenCalledWith({
       id: 7,
@@ -153,7 +153,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Approved', resolvedAt: new Date() });
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 7, status: 'Approved' }] as never);
 
-    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
+    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) });
 
     expect(mockReopenAppeal).toHaveBeenCalled();
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
@@ -168,7 +168,7 @@ describe.each([
     owned: () =>
       mockGetImageById.mockResolvedValue({
         id: 99,
-        userId: 602767,
+        userId: 990100013,
         blockedFor: 'moderated',
         needsReview: null,
       }),
@@ -178,7 +178,8 @@ describe.each([
   {
     entityType: EntityType.Model3D,
     entityId: 77,
-    owned: () => mockModel3DFindUnique.mockResolvedValue({ userId: 602767, status: 'Unpublished' }),
+    owned: () =>
+      mockModel3DFindUnique.mockResolvedValue({ userId: 990100013, status: 'Unpublished' }),
     // Approving a 3D model appeal restores nothing, so the model is still under the same removal.
     allowedAfter: [null],
     refusedAfter: ['Pending', 'Rejected', 'Approved'],
@@ -189,7 +190,7 @@ describe.each([
     const appeal = () =>
       createEntityAppealHandler({
         input: { entityId, entityType, message: 'Please review again.' },
-        ctx: ctxUser(602767),
+        ctx: ctxUser(990100013),
       });
 
     beforeEach(() => owned());
@@ -198,7 +199,7 @@ describe.each([
       await appeal();
 
       expect(mockGetLatestAppeal).toHaveBeenCalledWith(
-        expect.objectContaining({ entityType, entityId, userId: 602767 })
+        expect.objectContaining({ entityType, entityId, userId: 990100013 })
       );
     });
 
@@ -229,12 +230,12 @@ describe.each([
 
 describe('createEntityAppealHandler — Model3D eligibility', () => {
   it('refuses a 3D model that moderators have not removed, before any charge', async () => {
-    mockModel3DFindUnique.mockResolvedValue({ userId: 602767, status: 'Published' });
+    mockModel3DFindUnique.mockResolvedValue({ userId: 990100013, status: 'Published' });
 
     await expect(
       createEntityAppealHandler({
         input: { entityId: 77, entityType: EntityType.Model3D, message: 'Please review again.' },
-        ctx: ctxUser(602767),
+        ctx: ctxUser(990100013),
       })
     ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
@@ -249,19 +250,19 @@ const poiEntry = { at: 'x', workflowId: 'wf-1', reason: 'Names a real actor.' };
 describe('createEntityAppealHandler — Model text-scan poi', () => {
   it('accepts an appeal against an open text-scan poi flag', async () => {
     mockModelFindUnique.mockResolvedValue({
-      userId: 602767,
+      userId: 990100013,
       minor: false,
       poi: true,
       meta: { textScanFlags: { poi: poiEntry } },
     });
-    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
+    await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) });
     expect(mockCreateEntityAppeal).toHaveBeenCalledWith(expect.objectContaining({ skipFee: true }));
   });
 
   it('refuses a self-declared poi with no text-scan snapshot', async () => {
-    mockModelFindUnique.mockResolvedValue({ userId: 602767, minor: false, poi: true, meta: {} });
+    mockModelFindUnique.mockResolvedValue({ userId: 990100013, minor: false, poi: true, meta: {} });
     await expect(
-      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })
+      createEntityAppealHandler({ input: baseInput, ctx: ctxUser(990100013) })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 });
@@ -273,7 +274,11 @@ describe('createEntityAppealHandler — Bounty', () => {
     message: 'Fictional.',
   } as const;
   const mockBountyFindUnique = dbMock.dbRead.bounty.findUnique;
-  const flaggedBounty = { userId: 602767, poi: true, meta: { textScanFlags: { poi: poiEntry } } };
+  const flaggedBounty = {
+    userId: 990100013,
+    poi: true,
+    meta: { textScanFlags: { poi: poiEntry } },
+  };
 
   it('404s a missing bounty and refuses a non-owner', async () => {
     mockBountyFindUnique.mockResolvedValue(null);
@@ -298,7 +303,7 @@ describe('createEntityAppealHandler — Bounty', () => {
     mockBountyFindUnique.mockResolvedValue(flaggedBounty);
     await createEntityAppealHandler({ input: bountyInput, ctx: ctxUser() });
     expect(mockGetLatestAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: EntityType.Bounty, entityId: 9, userId: 602767 })
+      expect.objectContaining({ entityType: EntityType.Bounty, entityId: 9, userId: 990100013 })
     );
     expect(mockCreateEntityAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: EntityType.Bounty, entityId: 9, skipFee: true })
@@ -327,7 +332,7 @@ describe('createEntityAppealHandler — Storyline', () => {
   } as const;
   const mockStorylineFindUnique = dbMock.dbRead.storyline.findUnique;
   const scanTakenDown = {
-    userId: 602767,
+    userId: 990100013,
     tosViolationByScan: true,
     tosViolationByModerator: false,
   };
@@ -388,7 +393,7 @@ describe('createEntityAppealHandler — Storyline', () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 8, status: 'Rejected', resolvedAt: new Date() });
     await createEntityAppealHandler({ input: storylineInput, ctx: ctxUser() });
     expect(mockGetLatestAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, userId: 602767 })
+      expect.objectContaining({ entityType: EntityType.Storyline, entityId: 31, userId: 990100013 })
     );
     expect(mockReopenAppeal).toHaveBeenCalledWith({ id: 8, message: storylineInput.message });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
@@ -401,7 +406,7 @@ describe('createEntityAppealHandler — an image a hold keeps or a CSAM report n
   it('refuses, before any charge, in the usual words', async () => {
     mockGetImageById.mockResolvedValue({
       id: 99,
-      userId: 602767,
+      userId: 990100013,
       blockedFor: 'moderated',
       needsReview: null,
     });
@@ -410,10 +415,10 @@ describe('createEntityAppealHandler — an image a hold keeps or a CSAM report n
     await expect(
       createEntityAppealHandler({
         input: { entityId: 99, entityType: EntityType.Image, message: 'Please review again.' },
-        ctx: ctxUser(602767),
+        ctx: ctxUser(990100013),
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: IMAGE_NOT_APPEALABLE });
-    expect(mockIsImageAppealRefused).toHaveBeenCalledWith({ imageId: 99, userId: 602767 });
+    expect(mockIsImageAppealRefused).toHaveBeenCalledWith({ imageId: 99, userId: 990100013 });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
   });
 });

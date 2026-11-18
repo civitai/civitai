@@ -2,6 +2,7 @@ import type * as PromClient from '~/server/prom/client';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as CosmeticPackService from '~/server/services/cosmetic-pack.service';
 import type * as EventShopItem from '~/server/events/event-shop-item';
+import type * as UserPreferences from '~/server/services/user-preferences.service';
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,6 +13,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mocks } = vi.hoisted(() => ({
   mocks: {
     createMultiTx: vi.fn(),
+    createTx: vi.fn(),
+    blockedPairIds: vi.fn(),
     refundMultiTx: vi.fn(),
     listMultiTx: vi.fn(),
     purchaseCosmeticPack: vi.fn(),
@@ -29,11 +32,15 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   refreshOwnedStickerCache: vi.fn(async () => undefined),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
-  createBuzzTransaction: vi.fn(),
+  createBuzzTransaction: mocks.createTx,
   createMultiAccountBuzzTransaction: mocks.createMultiTx,
   refundMultiAccountTransaction: mocks.refundMultiTx,
   getMultiAccountTransactionsByPrefix: mocks.listMultiTx,
   refundTransaction: vi.fn(),
+}));
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferences>()),
+  getBlockedPairIds: mocks.blockedPairIds,
 }));
 vi.mock('~/server/services/image.service', () => ({
   createEntityImages: vi.fn(),
@@ -69,6 +76,7 @@ import {
 } from '~/test-utils/shopPurchaseClaimFake';
 
 const BUYER_ID = 1;
+const SELLER_ID = 10;
 const SHOP_ITEM_ID = 42;
 // Another listing selling the same box (a re-priced or event-page copy).
 const SECOND_LISTING_ID = 43;
@@ -96,7 +104,14 @@ const listing = {
   cosmetic: null,
   _count: { purchases: 0 },
 };
-const boxRow = { id: BOX_ID, type: 'box', status: 'published', version: VERSION, params: {} };
+const boxRow = {
+  id: BOX_ID,
+  type: 'box',
+  status: 'published',
+  version: VERSION,
+  params: {},
+  sellerId: null as number | null,
+};
 
 type Content = {
   id: number;
@@ -322,6 +337,7 @@ const buy = ({
   expectedUnitAmount = PRICE,
   payWith,
   mysteryBoxEnabled = true,
+  creatorMysteryPacksEnabled = true,
   countryCode = 'US',
   isModerator,
 }: {
@@ -333,6 +349,7 @@ const buy = ({
   isModerator?: boolean;
   payWith?: 'default' | 'blue-first';
   mysteryBoxEnabled?: boolean;
+  creatorMysteryPacksEnabled?: boolean;
   countryCode?: string | null;
 } = {}) =>
   purchaseCosmeticShopItem({
@@ -346,6 +363,7 @@ const buy = ({
     buzzType: 'yellow',
     packsEnabled: true,
     mysteryBoxEnabled,
+    creatorMysteryPacksEnabled,
     countryCode,
   });
 
@@ -408,6 +426,13 @@ beforeEach(() => {
   mocks.createMultiTx.mockResolvedValue(legs());
   mocks.refundMultiTx.mockResolvedValue({ totalRefunded: PRICE });
   mocks.listMultiTx.mockResolvedValue([]);
+  mocks.createTx.mockResolvedValue({ transactionId: 'payout-tx' });
+  mocks.blockedPairIds.mockResolvedValue([]);
+  dbMock.dbWrite.$executeRaw.mockReset();
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+  dbMock.dbWrite.$queryRaw.mockReset();
+  // creatorIsRestricted's read: an active seller.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ muted: false, bannedAt: null, deletedAt: null }]);
   mocks.assertEventPurchasable.mockResolvedValue(undefined);
   mocks.getEventBuyerTeam.mockResolvedValue(undefined);
 });
@@ -675,9 +700,25 @@ describe('buying a mystery box', () => {
       await refused(buy(), 'not available');
     });
 
-    // A creator's pack isn't sold until its sale pays the creator; approval alone doesn't open it.
-    it("a creator's mystery pack, even approved", async () => {
-      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: 10 });
+    it("a creator's mystery pack while its flag is off", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+        ...boxRow,
+        sellerId: SELLER_ID,
+      });
+      await refused(buy({ creatorMysteryPacksEnabled: false }), 'not available');
+    });
+
+    it("the creator's own mystery pack, saying so", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: BUYER_ID });
+      await refused(buy(), "You can't buy your own mystery pack");
+    });
+
+    it("a creator's mystery pack whose creator blocked the buyer", async () => {
+      dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({
+        ...boxRow,
+        sellerId: SELLER_ID,
+      });
+      mocks.blockedPairIds.mockResolvedValue([SELLER_ID]);
       await refused(buy(), 'not available');
     });
 
@@ -1409,5 +1450,74 @@ describe('the mystery box region block', () => {
   it('refuses everywhere on a malformed list rather than nowhere', async () => {
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue({ value: 'BE' });
     await expect(getMysteryBoxBlockedRegions()).rejects.toThrow('not available right now');
+  });
+});
+
+describe("buying a creator's mystery pack", () => {
+  const recordedMeta = () => {
+    const call = dbMock.dbWrite.$executeRaw.mock.calls.find((c) =>
+      (c[0] as TemplateStringsArray).join('?').includes('UserCosmeticShopPurchases')
+    );
+    const json = call?.slice(1).find((v) => typeof v === 'string' && v.startsWith('{'));
+    return json ? JSON.parse(json as string) : undefined;
+  };
+
+  beforeEach(() => {
+    dbMock.dbWrite.itemDefinition.findUnique.mockResolvedValue({ ...boxRow, sellerId: SELLER_ID });
+  });
+
+  it('pays the creator exactly their pool once the box is granted, and records it', async () => {
+    await buy();
+
+    expect(world.items).toHaveLength(1);
+    expect(mocks.createTx).toHaveBeenCalledTimes(1);
+    expect(mocks.createTx.mock.calls[0][0]).toMatchObject({
+      fromAccountId: 0,
+      toAccountId: SELLER_ID,
+      toAccountType: 'yellow',
+      // floor(500 * 0.7)
+      amount: 350,
+      externalTransactionId: `${txId(KEY_A)}:sell:${SELLER_ID}:yellow`,
+    });
+    expect(recordedMeta()).toEqual({
+      payouts: [{ userId: SELLER_ID, amount: 350, color: 'yellow', transactionId: 'payout-tx' }],
+      platformCut: 150,
+    });
+  });
+
+  // A resumed claim can be charged under another domain's colour than this request's.
+  it('pays in the colour the charge came from, not the request’s', async () => {
+    mocks.createMultiTx.mockResolvedValue({
+      ...legs(),
+      transactionIds: [{ transactionId: 'tx-0', accountType: 'green', amount: PRICE }],
+    });
+
+    await buy();
+
+    expect(mocks.createTx.mock.calls[0][0]).toMatchObject({
+      toAccountType: 'green',
+      externalTransactionId: `${txId(KEY_A)}:sell:${SELLER_ID}:green`,
+    });
+  });
+
+  it('keeps the sale when the payout fails: the buyer is not refunded and keeps the box', async () => {
+    mocks.createTx.mockRejectedValue(new Error('buzz down'));
+
+    const result = await buy();
+
+    expect(mocks.createTx).toHaveBeenCalled();
+    expect(result).toMatchObject({ kind: 'box', boxItemIds: [expect.any(String)] });
+    expect(mocks.refundMultiTx).not.toHaveBeenCalled();
+    expect(recordedMeta()).toBeUndefined();
+  }, 15_000);
+});
+
+describe('buying a platform mystery box', () => {
+  it('pays nobody: no payout and no payout record', async () => {
+    await buy();
+
+    expect(world.items).toHaveLength(1);
+    expect(mocks.createTx).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

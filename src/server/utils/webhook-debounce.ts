@@ -48,7 +48,7 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
         try {
           await updateArticleImageScanStatus([articleId]);
         } catch (error) {
-          await logToAxiom({
+          logToAxiom({
             name: 'article-scan-debounce',
             type: 'error',
             message: `updateArticleImageScanStatus failed: ${
@@ -56,24 +56,24 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
             }`,
             articleId,
             stack: error instanceof Error ? error.stack : undefined,
-          }).catch(() => null);
+          });
         }
       }, 1000);
     }
     // If key exists, the in-flight cycle will pick up this webhook's state
     // after it releases the lock and starts fresh on the next webhook.
   } catch (error) {
-    await logToAxiom({
+    logToAxiom({
       name: 'article-scan-debounce',
       type: 'error',
       message: `Debounce failed, falling back to direct update: ${
         error instanceof Error ? error.message : 'Unknown error'
       }`,
       articleId,
-    }).catch(() => null);
+    });
     // Fallback: run update immediately when Redis is unavailable.
     await updateArticleImageScanStatus([articleId]).catch(async (err) => {
-      await logToAxiom({
+      logToAxiom({
         name: 'article-scan-debounce',
         type: 'error',
         message: `Fallback updateArticleImageScanStatus failed: ${
@@ -81,7 +81,7 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
         }`,
         articleId,
         stack: err instanceof Error ? err.stack : undefined,
-      }).catch(() => null);
+      });
     });
   }
 }

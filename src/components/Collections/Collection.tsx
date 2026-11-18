@@ -94,6 +94,13 @@ import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingContro
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { collectionHidesHatTurf } from '~/components/HatTurf/hat-turf.utils';
+import { FlagRaceHeader } from '~/components/HatTurf/FlagRace/FlagCountdown';
+import { FlagEnterButton } from '~/components/HatTurf/FlagRace/FlagEnterButton';
+import {
+  FlagRowProviders,
+  useCollectionFlagRace,
+  useFlagRow,
+} from '~/components/HatTurf/FlagRace/FlagRowProviders';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsContestBanned } from '~/hooks/useIsContestBanned';
@@ -251,6 +258,7 @@ const ImageCollection = ({
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
+  const flagRow = useFlagRow(useCollectionFlagRace(collection.id), { past: true });
 
   const [toolSearchOpened, setToolSearchOpened] = useState(false);
 
@@ -329,6 +337,12 @@ const ImageCollection = ({
     >
       <Stack gap="xs">
         <IsClient>
+          {flagRow && (
+            <Group justify="space-between" gap="xs">
+              <FlagRaceHeader summary={flagRow.summary} />
+              <FlagEnterButton event={flagRow.event} />
+            </Group>
+          )}
           {!isContestCollection && (
             <>
               <Group justify="flex-end" gap={4}>
@@ -390,12 +404,14 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite
-              filters={filters}
-              disableStoreFilters
-              collectionId={collection.id}
-              hideHatTurf={collectionHidesHatTurf(collection)}
-            />
+            <FlagRowProviders row={flagRow}>
+              <ImagesInfinite
+                filters={filters}
+                disableStoreFilters
+                collectionId={collection.id}
+                hideHatTurf={collectionHidesHatTurf(collection)}
+              />
+            </FlagRowProviders>
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>

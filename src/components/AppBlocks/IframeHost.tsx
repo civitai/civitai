@@ -79,6 +79,8 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { useDailyLimitRaiseBridge } from './useDailyLimitRaiseBridge';
+import { useOutputUnlockBridge, type OutputUnlockBridgeResult } from './useOutputUnlockBridge';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
 import type { BlockHostSurface } from './blockInitFragmentGate';
@@ -2214,6 +2216,11 @@ export function IframeHost({
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
   const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
   const getMyBuzzBalanceMutation = trpc.blocks.getMyBuzzBalance.useMutation();
+  const dailyLimitRaise = useDailyLimitRaiseBridge({
+    appBlockId: install.appBlockId,
+    appName: install.manifest.name,
+  });
+  const outputUnlock = useOutputUnlockBridge({ appName: install.manifest.name });
 
   useEffect(() => {
     const off = onMessage<
@@ -2238,6 +2245,7 @@ export function IframeHost({
         });
         reportAppSubmitResult(install.appBlockId, 'submit', { snapshot });
         send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        dailyLimitRaise.onRelayedSnapshot(snapshot);
       } catch (err) {
         reportAppSubmitError(install.appBlockId, 'submit', err);
         send('WORKFLOW_SUBMITTED', {
@@ -2247,7 +2255,67 @@ export function IframeHost({
       }
     });
     return off;
-  }, [onMessage, send, token, submitWorkflowMutation, countAppSubmit, install.appBlockId]);
+  }, [
+    onMessage,
+    send,
+    token,
+    submitWorkflowMutation,
+    countAppSubmit,
+    install.appBlockId,
+    dailyLimitRaise,
+  ]);
+
+  // REQUEST_DAILY_LIMIT_RAISE → DAILY_LIMIT_RAISE_ACK, then DAILY_LIMIT_RAISE_RESULT. Same
+  // handler as PageBlockHost; see `useDailyLimitRaiseBridge` for when the dialog may open.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'REQUEST_DAILY_LIMIT_RAISE',
+      (raw) => {
+        const requestId = raw?.requestId;
+        if (typeof requestId !== 'string' || requestId.length === 0) return;
+        void dailyLimitRaise.onRaiseRequest({
+          ack: (opened) => send('DAILY_LIMIT_RAISE_ACK', { requestId, opened }),
+          result: (raised) => send('DAILY_LIMIT_RAISE_RESULT', { requestId, raised }),
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send, dailyLimitRaise]);
+
+  // REQUEST_OUTPUT_UNLOCK → OUTPUT_UNLOCK_RESULT { result }. The app names one restricted output
+  // by workflow and position; the server decides what may be offered and the host's own dialog
+  // (`useOutputUnlockBridge`) draws it. The app's word never sets a price or a url.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; workflowId?: unknown; position?: unknown } | undefined
+    >('REQUEST_OUTPUT_UNLOCK', (raw) => {
+      const requestId = raw?.requestId;
+      if (typeof requestId !== 'string' || requestId.length === 0) return;
+      const reply = (result: OutputUnlockBridgeResult) =>
+        send('OUTPUT_UNLOCK_RESULT', { requestId, result });
+      const workflowId = raw?.workflowId;
+      const position = raw?.position;
+      if (
+        typeof workflowId !== 'string' ||
+        workflowId.length === 0 ||
+        typeof position !== 'number' ||
+        !Number.isInteger(position) ||
+        position < 0
+      ) {
+        reply({
+          outcome: 'unavailable',
+          message: 'workflowId and a non-negative integer position are required',
+        });
+        return;
+      }
+      if (!token) {
+        reply({ outcome: 'unavailable', message: 'The app session is not ready yet.' });
+        return;
+      }
+      void outputUnlock.onUnlockRequest({ blockToken: token, workflowId, position }, reply);
+    });
+    return off;
+  }, [onMessage, send, token, outputUnlock]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(

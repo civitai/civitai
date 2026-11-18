@@ -69,7 +69,17 @@ export class SiteSearchError extends Error {
   }
 }
 
-export type SiteSearchResponse = { status: number; body: unknown };
+/**
+ * `raw` is set only on a passthrough: Meilisearch's 200 body, unparsed, to be sent as-is with a
+ * JSON content type. `body` is then undefined.
+ */
+export type SiteSearchResponse = { status: number; body: unknown; raw?: Buffer };
+
+/**
+ * Passthrough is asked for by the caller (the `site-search-passthrough` switch) and granted only
+ * where `hitsNeedShaping` says no hit of the response would be changed for this viewer.
+ */
+export type SiteSearchOptions = { passthrough?: boolean };
 
 /**
  * The clauses every query on `indexUid` is held to, on top of whatever the client sends.
@@ -112,9 +122,13 @@ type ModelHit = Record<string, unknown> & {
 
 type RatedImage = { id?: unknown; nsfwLevel?: unknown };
 
-/** Drops the images the site may not serve; the hit-level cap does not reach them. */
+/**
+ * Drops the images the site may not serve; the hit-level cap does not reach them. Under a cap, a
+ * value that is not a list is dropped whole, since its ratings cannot be read.
+ */
 function capImages(images: unknown, browsingLevelCap: number | undefined) {
-  if (browsingLevelCap === undefined || !Array.isArray(images)) return images;
+  if (browsingLevelCap === undefined) return images;
+  if (!Array.isArray(images)) return [];
   return images.filter((image: RatedImage) =>
     isRatingWithinCap(image?.nsfwLevel, browsingLevelCap)
   );
@@ -126,7 +140,7 @@ function capImages(images: unknown, browsingLevelCap: number | undefined) {
  * its numbers as strings.
  */
 function keepCopiesOf(copies: unknown, kept: unknown) {
-  if (!Array.isArray(copies)) return copies;
+  if (!Array.isArray(copies)) return [];
   const keptIds = new Set(
     (Array.isArray(kept) ? (kept as RatedImage[]) : [])
       .filter((image) => image?.id != null)
@@ -227,7 +241,81 @@ function shapeCollectionHit(
   return shaped;
 }
 
+/**
+ * Whether `shapeHits` can change a hit of `indexUid` for this viewer. Model hits always can (their
+ * `sfwName` is never sent); comic, bounty, collection, article and user hits only under a
+ * browsing-level cap; every other index never. `shapeHits` itself returns early on `false`, so this is the one rule
+ * both it and the passthrough decision read: a response is passed through unparsed only where
+ * shaping it would have been a no-op.
+ */
+export function hitsNeedShaping(
+  indexUid: string | undefined,
+  viewer: Pick<SiteSearchViewer, 'browsingLevelCap'>
+) {
+  if (indexUid === MODELS_SEARCH_INDEX) return true;
+  if (
+    indexUid === COMICS_SEARCH_INDEX ||
+    indexUid === BOUNTIES_SEARCH_INDEX ||
+    indexUid === COLLECTIONS_SEARCH_INDEX ||
+    indexUid === ARTICLES_SEARCH_INDEX ||
+    indexUid === USERS_SEARCH_INDEX
+  )
+    return viewer.browsingLevelCap !== undefined;
+  return false;
+}
+
+type AvatarHit = Record<string, unknown> & { _formatted?: Record<string, unknown> };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * The caller shapes what a hit carries (`attributesToRetrieve`, highlight and crop), so the
+ * picture's rating is read from the hit itself, never the copy, and a missing or unreadable one
+ * fails closed. `image` has no rating and is never sent. A users hit is the user itself.
+ */
+function capHitAvatar(indexUid: string | undefined, hit: AvatarHit, cap: number): AvatarHit {
+  const userOf = (doc: Record<string, unknown>) =>
+    indexUid === USERS_SEARCH_INDEX ? doc : doc.user;
+  const picture = (holder: unknown) => (isRecord(holder) ? holder.profilePicture : undefined);
+  const raw = picture(userOf(hit));
+  const kept = isRecord(raw) && isRatingWithinCap(raw.nsfwLevel, cap);
+  const capHolder = (holder: unknown) =>
+    isRecord(holder)
+      ? { ...holder, image: null, profilePicture: kept ? holder.profilePicture : null }
+      : holder;
+  const capDoc = (doc: Record<string, unknown>) =>
+    indexUid === USERS_SEARCH_INDEX
+      ? (capHolder(doc) as Record<string, unknown>)
+      : 'user' in doc
+      ? { ...doc, user: capHolder(doc.user) }
+      : doc;
+  const shaped = capDoc(hit) as AvatarHit;
+  if (isRecord(hit._formatted)) shaped._formatted = capDoc(hit._formatted);
+  return shaped;
+}
+
+const AVATAR_INDEXES = [
+  MODELS_SEARCH_INDEX,
+  ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
+  COMICS_SEARCH_INDEX,
+  USERS_SEARCH_INDEX,
+];
+
 function shapeHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
+  if (!hitsNeedShaping(indexUid, viewer)) return hits;
+  const cap = viewer.browsingLevelCap;
+  if (!Array.isArray(hits)) return cap === undefined ? hits : [];
+  if (cap === undefined || !indexUid || !AVATAR_INDEXES.includes(indexUid))
+    return shapeIndexHits(indexUid, hits, viewer);
+  const shaped = shapeIndexHits(indexUid, hits, viewer);
+  if (!Array.isArray(shaped)) return shaped;
+  return shaped.map((hit: AvatarHit) => (isRecord(hit) ? capHitAvatar(indexUid, hit, cap) : hit));
+}
+
+function shapeIndexHits(indexUid: string | undefined, hits: unknown, viewer: SiteSearchViewer) {
   if (!Array.isArray(hits)) return hits;
   if (indexUid === MODELS_SEARCH_INDEX)
     return hits.map((hit: ModelHit) => shapeModelHit(hit, viewer));
@@ -268,13 +356,40 @@ const searchUnavailable = () =>
     SITE_SEARCH_RETRY_AFTER_SECONDS
   );
 
+const isJsonWhitespace = (byte: number) =>
+  byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
+
+/**
+ * The body as bytes, or undefined if unreadable or not `{...}`. The bracket check only catches an
+ * empty or cut-off body; a cut after an inner `}` relies on arrayBuffer() rejecting.
+ */
+async function readJsonObjectBytes(res: Response): Promise<Buffer | undefined> {
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(await res.arrayBuffer());
+  } catch {
+    return undefined;
+  }
+  let start = 0;
+  let end = bytes.length - 1;
+  while (start <= end && isJsonWhitespace(bytes[start])) start++;
+  while (end >= start && isJsonWhitespace(bytes[end])) end--;
+  if (start >= end || bytes[start] !== 0x7b || bytes[end] !== 0x7d) return undefined;
+  return bytes;
+}
+
 /**
  * POSTs to Meilisearch with the server's search key. A 4xx that rejects the query is returned
  * as-is so the client can tell a bad filter from an outage. An unreachable, timed-out or 5xx
  * backend is a retryable 503. A refused key (401/403) is a 502 with no Retry-After: retrying
- * cannot fix our own credentials.
+ * cannot fix our own credentials. With `passthrough`, a 200 comes back as `raw` bytes, unparsed
+ * (`readJsonObjectBytes`); every other status is parsed exactly as without it.
  */
-async function postToSearch(path: string, body: unknown): Promise<SiteSearchResponse> {
+async function postToSearch(
+  path: string,
+  body: unknown,
+  { passthrough = false }: SiteSearchOptions = {}
+): Promise<SiteSearchResponse> {
   const host = env.NEXT_PUBLIC_SEARCH_HOST;
   const apiKey = env.SEARCH_TOKEN_API_KEY ?? env.SEARCH_API_KEY;
   if (!host) throw new SiteSearchError(503, 'search_unavailable', 'Search is not configured');
@@ -298,11 +413,18 @@ async function postToSearch(path: string, body: unknown): Promise<SiteSearchResp
       message: 'Search backend unreachable',
       cause: (error as Error).message,
       path,
-    }).catch(() => undefined);
+    });
     throw searchUnavailable();
   }
 
-  const responseBody = await res.json().catch(() => undefined);
+  let responseBody: unknown;
+  if (passthrough && res.status === 200) {
+    const raw = await readJsonObjectBytes(res);
+    if (raw) return { status: 200, body: undefined, raw };
+    // not a JSON object: falls through to the failure handling below
+  } else {
+    responseBody = await res.json().catch(() => undefined);
+  }
   if (
     (res.ok && responseBody !== undefined) ||
     (res.status >= 400 && res.status < 500 && ![401, 403].includes(res.status))
@@ -316,18 +438,28 @@ async function postToSearch(path: string, body: unknown): Promise<SiteSearchResp
     status: res.status,
     code: (responseBody as { code?: string } | undefined)?.code,
     path,
-  }).catch(() => undefined);
+  });
   if (res.status >= 500) throw searchUnavailable();
   throw new SiteSearchError(502, 'search_unavailable', 'Search is temporarily unavailable');
 }
 
-export async function siteMultiSearch(input: SiteMultiSearchInput, viewer: SiteSearchViewer) {
+export async function siteMultiSearch(
+  input: SiteMultiSearchInput,
+  viewer: SiteSearchViewer,
+  options: SiteSearchOptions = {}
+): Promise<SiteSearchResponse> {
   for (const query of input.queries) assertSiteSearchIndex(query.indexUid);
 
-  const response = await postToSearch('/multi-search', {
-    queries: input.queries.map((query) => withViewer(query.indexUid, query, viewer)),
-  });
-  if (response.status !== 200) return response;
+  // Each result answers the query at its position, so the queries say which hits get shaped.
+  const passthrough =
+    !!options.passthrough &&
+    !input.queries.some((query) => hitsNeedShaping(query.indexUid, viewer));
+  const response = await postToSearch(
+    '/multi-search',
+    { queries: input.queries.map((query) => withViewer(query.indexUid, query, viewer)) },
+    { passthrough }
+  );
+  if (response.status !== 200 || response.raw) return response;
 
   const body = response.body as { results?: { indexUid?: string; hits?: unknown }[] };
   return {
@@ -345,15 +477,17 @@ export async function siteMultiSearch(input: SiteMultiSearchInput, viewer: SiteS
 export async function siteIndexSearch(
   indexUid: string,
   params: SiteSearchParams,
-  viewer: SiteSearchViewer
-) {
+  viewer: SiteSearchViewer,
+  options: SiteSearchOptions = {}
+): Promise<SiteSearchResponse> {
   assertSiteSearchIndex(indexUid);
 
   const response = await postToSearch(
     `/indexes/${indexUid}/search`,
-    withViewer(indexUid, params, viewer)
+    withViewer(indexUid, params, viewer),
+    { passthrough: !!options.passthrough && !hitsNeedShaping(indexUid, viewer) }
   );
-  if (response.status !== 200) return response;
+  if (response.status !== 200 || response.raw) return response;
 
   const body = response.body as { hits?: unknown };
   return { status: 200, body: { ...body, hits: shapeHits(indexUid, body.hits, viewer) } };
@@ -362,8 +496,12 @@ export async function siteIndexSearch(
 export async function siteFacetSearch(
   indexUid: string,
   params: SiteFacetSearchInput,
-  viewer: SiteSearchViewer
-) {
+  viewer: SiteSearchViewer,
+  options: SiteSearchOptions = {}
+): Promise<SiteSearchResponse> {
   assertSiteSearchIndex(indexUid);
-  return postToSearch(`/indexes/${indexUid}/facet-search`, withViewer(indexUid, params, viewer));
+  // Facet values carry no hits, so nothing in this response is ever shaped.
+  return postToSearch(`/indexes/${indexUid}/facet-search`, withViewer(indexUid, params, viewer), {
+    passthrough: !!options.passthrough,
+  });
 }

@@ -46,8 +46,11 @@ describe('the pack submission fee currency', () => {
     // Anchored to the PAYLOAD, not to the file. A bare `toContain('buzzType,')`
     // is satisfied by the `useState` declaration, so deleting the field from the
     // mutation — and letting the schema's `.default('yellow')` supply it — would
-    // restore the whole bug with the picker still on screen and this test green.
-    expect(modalSource).toMatch(/submitPack\.mutateAsync\(\{[\s\S]*?\n\s+buzzType,/);
+    // restore the whole bug with the picker still on screen and this test green. The payload is
+    // built as `submission` (its content keys the submission's idempotency key) and sent whole.
+    expect(modalSource).toMatch(
+      /const submission = \{(?:(?!\n {6}\};)[\s\S])*?\n\s+buzzType,[\s\S]*?submitPack\.mutateAsync\(\{ \.\.\.submission,/
+    );
   });
 
   it('offers every currency the server would accept', () => {

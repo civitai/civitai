@@ -31,6 +31,16 @@ const { mockGetVaeFiles, mockGetImages, mockGetPaidAccess, mockFindUnique, mockF
     mockFileFindFirst: vi.fn(),
   }));
 
+// The showcase exclusions are covered in showcase-exclusions.test.ts; here every image passes them.
+vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getShowcaseImageFilter: async () => () => true,
+  resolveShowcaseExclusions: async () => ({
+    excludedTagIds: [],
+    disablePoi: false,
+    disableMinor: false,
+  }),
+}));
 vi.mock('~/server/db/client', () => {
   const stub = {
     modelVersion: { findUnique: mockFindUnique },
@@ -428,12 +438,12 @@ describe('GET /api/v1/model-versions/by-hash/[hash] — same shaper, same pin', 
       );
     });
 
-    it('shows everyone else the stored listing, cacheable as before', async () => {
+    it('shows everyone else the stored listing, also kept out of the shared cache', async () => {
       const res = await invokeByHash();
 
       expect(res.body.model.name).toBe('Model 77');
       expect(res.body.description).toBe('<p>Red version notes</p>');
-      expect(res.headers['Cache-Control']).toBeUndefined();
+      expect(res.headers['Cache-Control']).toBe('private, no-store');
     });
   });
 

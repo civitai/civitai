@@ -53,6 +53,7 @@ vi.mock('~/server/redis/client', async () => ({
   redis: redisMock.redis,
   sysRedis: redisMock.sysRedis,
   withSysReadDeadline: redisMock.withSysReadDeadline,
+  withSysReadBreaker: redisMock.withSysReadBreaker,
 }));
 
 // The orchestrator SDK is ESM-only with directory imports Node refuses, so the unit suite stubs
@@ -60,7 +61,18 @@ vi.mock('~/server/redis/client', async () => ({
 function orchestratorClientMock() {
   return {
     // Enums
-    BuzzClientAccount: { System: 'System', User: 'User' },
+    // The four spend accounts carry the package's REAL values (`types.gen.d.ts`), so a
+    // test can assert the exact `currencies` order a submit sends. Without them
+    // `BuzzTypes.toOrchestratorType` maps every pool to `undefined`, and a test cannot
+    // tell `['yellow','blue']` from `['blue','yellow']`.
+    BuzzClientAccount: {
+      System: 'System',
+      User: 'User',
+      YELLOW: 'yellow',
+      BLUE: 'blue',
+      GREEN: 'green',
+      FAKE_RED: 'fakeRed',
+    },
     TransactionType: { Credit: 'Credit', Debit: 'Debit' },
     Priority: { Normal: 'Normal', High: 'High' },
     NsfwLevel: { PG: 'pg', PG13: 'pg13', R: 'r', X: 'x', XXX: 'xxx', NA: 'na' },
@@ -173,6 +185,19 @@ process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432
 delete process.env.NOTIFICATIONS_ENDPOINT;
 delete process.env.NOTIFICATIONS_TOKEN;
 delete process.env.NOTIFICATIONS_NOTICES_TOKEN;
+// @civitai/email reads EMAIL_* from process.env, not the ~/env/server mock below, so a shell
+// exporting real SMTP settings would send real mail.
+for (const key of [
+  'EMAIL_HOST',
+  'EMAIL_PORT',
+  'EMAIL_SECURE',
+  'EMAIL_USER',
+  'EMAIL_PASS',
+  'EMAIL_FROM',
+  'EMAIL_TIMEOUTS',
+]) {
+  delete process.env[key];
+}
 vi.mock('~/server/notifications/client', () => ({
   notifications: createNotificationsClientStub(),
 }));
@@ -188,10 +213,12 @@ afterAll(failOnUnmockedNotificationCalls);
 // The test env has no Flipt, and from 2026-11-10 an unanswered `app-blocks-legacy-stores-removed`
 // removes the legacy App Blocks stores (legacy-store-shutdown.ts). Pin it explicitly off so the
 // suites exercising those stores do not all flip on that date; the shutdown's own suites mock or
-// clear this.
+// clear this. An unanswered `app-blocks-workflow-media-serve` restricts every App Block media
+// output (block-media-serving.ts), so it is pinned off too; the serving suites mock it.
 process.env.FLIPT_LOCAL_OVERRIDES = [
   process.env.FLIPT_LOCAL_OVERRIDES,
   'app-blocks-legacy-stores-removed=off',
+  'app-blocks-workflow-media-serve=off',
 ]
   .filter(Boolean)
   .join(',');
@@ -266,7 +293,6 @@ vi.mock('~/server/prom/client', () => ({
   serviceDealUnconfirmedHoldsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
   restrictedImageReconcileLastSuccessGauge: promMetricStub(),
-  restrictedBaseModelDivergenceGauge: promMetricStub(),
   restrictedImageOverhiddenGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),

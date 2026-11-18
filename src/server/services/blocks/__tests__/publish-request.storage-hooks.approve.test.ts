@@ -266,7 +266,7 @@ describe('approveRequest — App Storage permission hooks', () => {
         appId: 'appblk-hooks',
         repoUrl: null,
         trustTier: 'unverified',
-        app: { allowedScopes: 0, allowedOrigins: [], userId: SUBMITTER },
+        app: { allowedScopes: 0n, allowedOrigins: [], userId: SUBMITTER },
       });
       const approved = { ...manifestPinning(approvedSha), version: '0.9.0' };
       dbMock.dbWrite.appBlock.findFirst.mockResolvedValue({ id: 'ab_hooks', manifest: approved });

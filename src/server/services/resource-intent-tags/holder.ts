@@ -328,7 +328,7 @@ export function tagIndexSnapshotHolder(): TagIndexSnapshotHolder {
         logToAxiom(
           { type: 'resource-intent-tag-index-loaded', snapshotId, seconds },
           'temp-search'
-        ).catch(() => undefined);
+        );
     },
     onHeld: setHeldTagIndex,
     onLoadFailure: (reason, error, seconds) => {
@@ -340,7 +340,7 @@ export function tagIndexSnapshotHolder(): TagIndexSnapshotHolder {
           error: error instanceof Error ? error.message : String(error),
         },
         'temp-search'
-      ).catch(() => undefined);
+      );
     },
   }));
 }

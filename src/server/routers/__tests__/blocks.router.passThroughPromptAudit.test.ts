@@ -5,6 +5,7 @@ import type * as FlagModule from '~/server/services/app-blocks-flag';
 import type * as FeatureFlagsModule from '~/server/services/feature-flags.service';
 import type * as RateLimitModule from '~/server/utils/block-catalog-rate-limit';
 import type * as FliptModule from '~/server/flipt/client';
+import type * as ModerationModule from '~/server/integrations/moderation';
 
 /**
  * The App Blocks pass-through prompt gate, through `blocksRouter`: a text-in generation
@@ -39,6 +40,7 @@ const h = vi.hoisted(() => ({
     }> => ({ outcome: 'pass', source: null, externalError: null })
   ),
   variant: vi.fn(async (): Promise<string | null> => null),
+  moderationConfigured: vi.fn(() => true),
   getUserById: vi.fn(async () => ({ id: 42, isModerator: false })),
   catalogRate: vi.fn(async () => ({ allowed: true })),
   buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ({ blue: 0, green: 5000 })),
@@ -74,6 +76,10 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (input: Parameters<typeof h.audit>[0]) => h.audit(input),
   classifyPromptServer: (input: { prompt: string }) => h.classify(input),
+}));
+vi.mock('~/server/integrations/moderation', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModerationModule>()),
+  isExternalModerationConfigured: () => h.moderationConfigured(),
 }));
 vi.mock('~/server/flipt/client', async (importOriginal) => {
   const real = await importOriginal<typeof FliptModule>();
@@ -113,6 +119,12 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { TRPCError } from '@trpc/server';
+import { PromptCheckUnavailableError } from '~/server/services/orchestrator/prompt-check-unavailable';
+import {
+  PROMPT_CHECK_UNAVAILABLE_ERROR_CODE,
+  PROMPT_POLICY_REFUSED_ERROR_CODE,
+} from '~/shared/constants/block-scope.constants';
 
 const VIEWER = 42;
 const REFUSED = 'prompt refused';
@@ -313,6 +325,7 @@ describe('enforce: a `kind:workflow`', () => {
           $type: 'videoGen',
           input: {
             engine: 'wan',
+            provider: 'comfy',
             prompt: 'it runs',
             images: [{ $ref: 'gen', path: 'output.images[0].url' }],
           },
@@ -321,6 +334,63 @@ describe('enforce: a `kind:workflow`', () => {
     ).catch(() => undefined);
     expect(h.audit).toHaveBeenCalledTimes(1);
     expect(whatIfCalls()).toHaveLength(1);
+  });
+});
+
+describe('enforce: a refusal the app can branch on', () => {
+  // The real gate's refusal: a BAD_REQUEST whose cause names the reasons.
+  const refuseWithReasons = () =>
+    h.audit.mockImplementation(async () => {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'Your prompt was flagged: violence. Your account has been muted.',
+        cause: { blockedFor: ['violence'] },
+      });
+    });
+  const coded = {
+    snapshot: {
+      workflowId: 'failed',
+      status: 'failed',
+      error: 'Your prompt was flagged: violence',
+      errorCode: PROMPT_POLICY_REFUSED_ERROR_CODE,
+    },
+  };
+
+  it('a pass-through step returns the coded failed snapshot, before any quote', async () => {
+    refuseWithReasons();
+    await expect(submit(stepBody({ prompt: 'a calm lake' }))).resolves.toEqual(coded);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+  });
+
+  it('a workflow returns it, before any quote', async () => {
+    refuseWithReasons();
+    await expect(
+      submit(workflowBody([{ $type: 'videoGen', input: { prompt: 'a calm lake' } }]))
+    ).resolves.toEqual(coded);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('a confirmed step returns it, before its quote is read', async () => {
+    refuseWithReasons();
+    const body = { ...stepBody({ prompt: 'a calm lake' }), quoteId: `sq_${'a'.repeat(32)}` };
+    await expect(submit(body)).resolves.toEqual(coded);
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    expect(store.size).toBe(0);
+  });
+
+  it('a check that could not run is the unavailable code', async () => {
+    h.audit.mockImplementation(async () => {
+      throw new PromptCheckUnavailableError();
+    });
+    await expect(submit(stepBody({ prompt: 'a calm lake' }))).resolves.toMatchObject({
+      snapshot: { status: 'failed', errorCode: PROMPT_CHECK_UNAVAILABLE_ERROR_CODE },
+    });
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('control: an error that is not a gate refusal still throws', async () => {
+    await expect(submit(stepBody({ prompt: 'badword' }))).rejects.toThrow(REFUSED);
   });
 });
 

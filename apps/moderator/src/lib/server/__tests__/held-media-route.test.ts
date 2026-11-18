@@ -434,6 +434,16 @@ describe('the held-media sheet', () => {
   const TOKEN = 'T'.repeat(43);
   const sheetCall = () => call('/api/held-media/7', {}, '7', 'GET', { token: TOKEN });
 
+  // A sheet session lives up to 2 h; the page grant is checked on every fetch so pulling it ends the
+  // sheet's access within the grant cache's refresh, not when the session expires. Keep this check
+  // on the sheet path too.
+  it('refuses a sheet fetch once the CSAM queue grant is pulled, before reading the image', async () => {
+    grants.paths = new Set(['/images/minor']);
+    expect((await sheetCall()).status).toBe(403);
+    expect(getHeldMedia).not.toHaveBeenCalled();
+    expect(insertModActivity).not.toHaveBeenCalled();
+  });
+
   it('records the sheet credential on the view row and slides its cookie', async () => {
     const { status, res } = await sheetCall();
     expect(status).toBe(200);

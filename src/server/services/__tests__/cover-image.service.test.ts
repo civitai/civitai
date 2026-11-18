@@ -23,6 +23,7 @@ import {
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   isReusableCoverImage,
   productionCoverImageDeps,
+  RESTRICTED_COVER_IMAGE_MESSAGE,
   resolveCoverImageId,
 } from '../cover-image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -41,6 +42,7 @@ function makeDeps(overrides: Partial<CoverImageDeps> = {}): CoverImageDeps {
     assertUrlUsable: vi.fn().mockResolvedValue(undefined),
     createImage: vi.fn().mockResolvedValue({ id: 999 }),
     logExistenceUnknown: vi.fn(),
+    assertNotRestricted: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -68,7 +70,7 @@ describe('resolveCoverImageId — the client supplied an id (the hot path)', () 
 
     expect(result).toBe(42);
     // 🔴 This is the whole point of keeping the check off the hot path: an id-carrying cover
-    // must not pay for a db probe or a HeadObject.
+    // must not pay for a url lookup or a HeadObject.
     expect(deps.findReusableImageId).not.toHaveBeenCalled();
     expect(deps.objectExists).not.toHaveBeenCalled();
     expect(deps.createImage).not.toHaveBeenCalled();
@@ -90,9 +92,62 @@ describe('resolveCoverImageId — the client supplied an id (the hot path)', () 
   });
 });
 
+describe('resolveCoverImageId — an image restricted by its base model', () => {
+  const refuse = () => vi.fn().mockRejectedValue(new Error(RESTRICTED_COVER_IMAGE_MESSAGE));
+
+  it('refuses a client-supplied id', async () => {
+    const deps = makeDeps({ assertNotRestricted: refuse() });
+    await expect(
+      resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, deps)
+    ).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
+    expect(deps.assertNotRestricted).toHaveBeenCalledWith(42);
+  });
+
+  it("keeps the entity's current cover, so a later flag doesn't block unrelated edits", async () => {
+    const deps = makeDeps({ assertNotRestricted: refuse() });
+    await expect(
+      resolveCoverImageId(
+        { coverImage: { ...coverImage, id: 42 }, userId: 7, currentCoverId: 42 },
+        deps
+      )
+    ).resolves.toBe(42);
+  });
+
+  it('refuses a reused row', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: true }),
+    });
+    await expect(resolveCoverImageId({ coverImage, userId: 7 }, deps)).rejects.toThrow(
+      RESTRICTED_COVER_IMAGE_MESSAGE
+    );
+  });
+
+  it('keeps a reused row that is already the current cover', async () => {
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: true }),
+    });
+    await expect(
+      resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps)
+    ).resolves.toBe(1234);
+  });
+
+  it.each([
+    ['a mature restricted image', { nsfwLevel: 4, modelRestricted: true }, true],
+    ['a SFW image from a restricting model', { nsfwLevel: 1, modelRestricted: true }, false],
+    ['a mature unrestricted image', { nsfwLevel: 8, modelRestricted: false }, false],
+  ])('in production, decides %s (refused: %s)', async (_, row, refused) => {
+    dbWriteMock.image.findUnique.mockResolvedValue(row as never);
+    const result = productionCoverImageDeps.assertNotRestricted(42);
+    if (refused) await expect(result).rejects.toThrow(RESTRICTED_COVER_IMAGE_MESSAGE);
+    else await expect(result).resolves.toBeUndefined();
+  });
+});
+
 describe('resolveCoverImageId — no id (a raw upload key)', () => {
   it('reuses an existing row for the same url instead of minting a duplicate', async () => {
-    const deps = makeDeps({ findReusableImageId: vi.fn().mockResolvedValue(1234) });
+    const deps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
+    });
 
     const result = await resolveCoverImageId({ coverImage, userId: 7, currentCoverId: 1234 }, deps);
 
@@ -199,7 +254,9 @@ describe('resolveCoverImageId — the fail-open branch is observable', () => {
     await resolveCoverImageId({ coverImage: { ...coverImage, id: 42 }, userId: 7 }, idDeps);
     expect(idDeps.logExistenceUnknown).not.toHaveBeenCalled();
 
-    const reuseDeps = makeDeps({ findReusableImageId: vi.fn().mockResolvedValue(1234) });
+    const reuseDeps = makeDeps({
+      findReusableImageId: vi.fn().mockResolvedValue({ id: 1234, restricted: false }),
+    });
     await resolveCoverImageId({ coverImage, userId: 7 }, reuseDeps);
     expect(reuseDeps.logExistenceUnknown).not.toHaveBeenCalled();
   });
@@ -241,7 +298,7 @@ describe('productionCoverImageDeps.findReusableImageId', () => {
       userId: 7,
     });
 
-    expect(result).toBe(10);
+    expect(result).toEqual({ id: 10, restricted: false });
     // 🔴 `Image.url` is the bare object key and is visible in public image URLs. An unscoped
     // lookup would let anyone attach someone else's image by reading a key off the site.
     expect(dbWriteMock.image.findMany).toHaveBeenCalledWith(
@@ -330,21 +387,6 @@ describe('productionCoverImageDeps.logExistenceUnknown', () => {
     // The object key is deliberately NOT logged — the decision is what needs counting.
     expect(logToAxiomMock.mock.calls[0][0]).not.toHaveProperty('url');
   });
-
-  // The `.catch()` on that `logToAxiom(...)` — the thing that stops a logging failure surfacing
-  // as an unhandled rejection — is pinned in `cover-image.service.logging.test.ts`, NOT here.
-  //
-  // 🔴 The reason is a trap worth knowing: it cannot be tested through THIS file's mocks. The
-  // only observable difference between having and not having the `.catch()` is whether Node
-  // emits `unhandledRejection`, and a `vi.fn()` mock suppresses that by construction — it
-  // attaches `returnValue.then(onFulfilled, onRejected)` to whatever the implementation returns
-  // (that is how `mock.settledResults` is populated), which marks a returned rejected promise
-  // handled. Measured both ways: with `logToAxiom` mocked as a `vi.fn()`, an assertion that no
-  // `unhandledRejection` fires passes whether or not the production `.catch()` exists —
-  // unfalsifiable, which is worse than no test. Mocked as a PLAIN function returning a rejected
-  // promise, the same assertion fails the moment the `.catch()` is deleted. Since this file's
-  // other tests need `logToAxiom` to be a `vi.fn()` to assert on payloads, and `vi.mock` is
-  // per-file, the falsifiable version lives in its own file.
 });
 
 describe('resolveCoverImageId with its production deps', () => {
@@ -374,9 +416,9 @@ describe('resolveCoverImageId with its production deps', () => {
     const MODERATOR = 9;
     beforeEach(() => {
       dbWriteMock.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
-      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(OTHER)] as never);
     });
-    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+    afterEach(() => redisMock.redis.mGet.mockReset());
 
     it('is refused before a row is created', async () => {
       await expect(resolveCoverImageId({ coverImage, userId: 7 })).rejects.toMatchObject({
@@ -394,7 +436,7 @@ describe('resolveCoverImageId with its production deps', () => {
     });
 
     it('is accepted when that user uploaded it for the owner', async () => {
-      redisMock.sysRedis.mGet.mockResolvedValue([String(MODERATOR)] as never);
+      redisMock.redis.mGet.mockResolvedValue([String(MODERATOR)] as never);
 
       await expect(
         resolveCoverImageId({ coverImage, userId: 7, uploaderId: MODERATOR })

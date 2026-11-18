@@ -98,13 +98,17 @@ beforeEach(() => {
 });
 
 /** One check, for the caller, naming the source url and not the url inside the prompt. */
-const expectChecked = (entry: string, isApiCaller: boolean) => {
+const expectChecked = (
+  entry: string,
+  isApiCaller: boolean,
+  appBlockLog?: { appBlockId: string }
+) => {
   expect(mocks.assertInputs).toHaveBeenCalledTimes(1);
   const [{ urls, userId, ...gate }] = mocks.assertInputs.mock.calls[0] as [
     { urls: string[]; userId: number; entry: string; isApiCaller: boolean }
   ];
   expect(userId).toBe(USER_ID);
-  expect(gate).toEqual({ entry, isApiCaller });
+  expect(gate).toEqual(appBlockLog ? { entry, isApiCaller, appBlockLog } : { entry, isApiCaller });
   expect(urls).toEqual([SOURCE]);
   expect(mocks.resolveSourceImageIds).not.toHaveBeenCalled();
 };
@@ -144,10 +148,11 @@ describe('graph entry points check their input urls', () => {
         input: graphInput(),
         externalCtx: externalCtx(),
         user: { id: USER_ID, isModerator: false },
-        inputGate: { entry: 'appBlocks', isApiCaller: false },
+        inputGate: { entry: 'appBlocks', isApiCaller: false, appBlockLog: { appBlockId: 'apb_1' } },
       })
     ).rejects.toBe(refused);
-    expectChecked('appBlocks', false);
+    // The app rides through to the gate, which reads the per-app source flag for it.
+    expectChecked('appBlocks', false, { appBlockId: 'apb_1' });
   });
 
   it('skips the check only for input its caller already checked', async () => {
