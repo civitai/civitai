@@ -3267,6 +3267,9 @@ const REDIS_KEYS_UNPREFIXED = {
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
   },
   TRAINING: {
+    // What a Studio auto-label submit counted against the daily quota ({ userId, day, count } JSON),
+    // key :<workflowId>. Only a workflow with this record can give items back; lost, they stay counted.
+    STUDIO_AUTO_LABEL_SUBMITTED: 'training:studio-auto-label-submitted',
     // Steps of a Studio auto-label workflow whose failure already gave its item back to the daily
     // quota (set of step names), key :<workflowId>. Lost early, a later poll gives those items
     // back again: at most one workflow's failed items, and only to today's quota.
