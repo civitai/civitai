@@ -13,7 +13,8 @@ export function watchBell(start: WatchReading): (now: WatchReading) => boolean {
   return (now) => {
     if (now.watch !== watch) {
       watch = now.watch;
-      rung = false;
+      rung = complete(now);
+      return false;
     }
     if (rung || !complete(now)) return false;
     rung = true;

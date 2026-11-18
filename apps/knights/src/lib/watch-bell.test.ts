@@ -28,4 +28,8 @@ describe('watchBell', () => {
       ])
     ).toBe(2);
   });
+
+  it('does not ring for a new Watch that arrives already complete', () => {
+    expect(rings(at(MAX - 1), [at(MAX, '2026-11-19'), at(MAX + 1, '2026-11-19')])).toBe(0);
+  });
 });
