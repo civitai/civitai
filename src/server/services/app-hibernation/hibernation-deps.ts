@@ -32,7 +32,7 @@ async function cacheRedisClient() {
 // orphan.
 const redisAttempts: AttemptStore = {
   async claim(rec, ttlSeconds) {
-    const { redis, keys } = await cacheRedisClient();
+    const { sysRedis: redis, keys } = await sysRedisClient();
     const key = `${keys.HIBERNATION_ATTEMPT}:${rec.attemptId}` as const;
     const set = await redis.set(key, JSON.stringify(rec), { NX: true, EX: ttlSeconds });
     if (set) return rec;
@@ -41,7 +41,7 @@ const redisAttempts: AttemptStore = {
     return JSON.parse(raw) as AttemptRecord;
   },
   async get(attemptId) {
-    const { redis, keys } = await cacheRedisClient();
+    const { sysRedis: redis, keys } = await sysRedisClient();
     const raw = await redis.get(`${keys.HIBERNATION_ATTEMPT}:${attemptId}` as const);
     return raw ? (JSON.parse(raw) as AttemptRecord) : null;
   },
