@@ -55,10 +55,11 @@ export function startRefreshers(
     const store = domain.store?.();
     // Orphans held on the last full pass: still orphans a pass later, they are rows really deleted.
     let heldLastPass = new Set<number>();
+    // This pass's holds; kept when a pass fails partway, since its next tick resumes the same pass.
+    let held = new Set<number>();
     let cursor = 0;
     let running = false;
     const pass = async () => {
-      const held = new Set<number>();
       do {
         if (queue.isFull) await queue.flush();
         const { ids, next } = await nextRefreshIds(pg, domain, cursor, refresh.batch);
@@ -79,7 +80,9 @@ export function startRefreshers(
         const emptyTable = cursor === 0 && ids.length === 0;
         const fresh = emptyTable ? orphans : orphans.filter((id) => !heldLastPass.has(id));
         if (orphanBrake(fresh.length, points.length)) {
-          for (const id of fresh) held.add(id);
+          // An empty read's orphans are never let through, so remembering them would only exempt
+          // them from the brake on the next pass.
+          if (!emptyTable) for (const id of fresh) held.add(id);
           logger.error(
             { orphans: fresh.length, points: points.length, from, sample: fresh.slice(0, 10) },
             `${domain.name}-sync: refresh found too many points with no row in one batch; holding them a pass`
@@ -91,6 +94,7 @@ export function startRefreshers(
         cursor = next;
       } while (cursor !== 0);
       heldLastPass = held;
+      held = new Set();
     };
     const tick = () => {
       if (running) return;

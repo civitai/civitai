@@ -23,6 +23,39 @@ const bounded =
   };
 
 describe('refresh walk timers', () => {
+  test('an empty read does not exempt the next pass from the brake', async () => {
+    vi.useFakeTimers();
+    try {
+      const added: number[] = [];
+      let rows: number[] = [];
+      const pg = {
+        query: bounded(async (_sql: string, [cursor, batch]: [number, number]) => ({
+          rows: rows
+            .filter((id) => id > cursor)
+            .slice(0, batch)
+            .map((id) => ({ id })),
+        })),
+      };
+      const queue = {
+        lanes: new Map([['storyline', { add: (r: { id: number }) => void added.push(r.id) }]]),
+        isFull: false,
+      };
+      const points = Array.from({ length: 50 }, (_, i) => i + 1);
+      const timers = startRefreshers(
+        [domain('storyline', { everyMs: 1000, batch: 100 }, points)],
+        queue as never,
+        pg as never
+      );
+      await vi.advanceTimersByTimeAsync(1000); // empty read
+      rows = [1, 2]; // then a lagging read missing most rows
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(added).toEqual([1, 2]);
+      for (const t of timers) clearInterval(t);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('held orphans are let through the next pass even when the batch ranges shifted', async () => {
     vi.useFakeTimers();
     try {
