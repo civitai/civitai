@@ -32,6 +32,7 @@ import type { AiReviewDecision } from '~/server/services/ai/collection-review.se
 import { describeProviderError } from '~/server/services/ai/provider-error';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { bustCachesForPosts } from '~/server/services/post.service';
+import { refreshProfilePicturesForImagesLazy } from '~/server/services/refresh-profile-pictures-lazy';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -381,6 +382,8 @@ export async function flagForMinorReview({
     bustCachesForPosts(postIds).catch((error) =>
       logFlagError(collectionId, `Post cache bust failed: ${(error as Error).message}`)
     ),
+    // A held image that is someone's profile picture stops being served as one now, not at the TTL.
+    refreshProfilePicturesForImagesLazy([...flaggedIds]),
   ]);
   return true;
 }

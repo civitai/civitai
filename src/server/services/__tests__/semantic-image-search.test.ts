@@ -1227,3 +1227,79 @@ describe('the showcase picker ranks images tagged with the query first', () => {
     expect(calls.some((call) => call.filter.tagIds?.includes(601))).toBe(false);
   });
 });
+
+describe('search by uploaded image', () => {
+  const ALL_LEVELS = 1 | 2 | 4 | 8 | 16;
+  const R = 4;
+  const IMAGE_URL = 'https://image.test/upload.jpeg';
+  const run = (nsfwLevel: number, browsingLevel: number, user: SessionUser = VIEWER) => {
+    const { source, calls } = rankedSource([101, 102]);
+    h.fakeGetAllImages = async (args) => ({
+      items: args.ids.map((id) => ({ id, nsfwLevel: PG })),
+      nextCursor: undefined,
+    });
+    return searchSemanticImages({
+      ...SESSION_VIEWS,
+      input: { browsingLevel, limit: 50 } as SemanticImageSearchInput,
+      user,
+      candidateSource: source,
+      uploadAnchor: { nsfwLevel, imageUrl: IMAGE_URL },
+    }).then((page) => ({ page, calls }));
+  };
+
+  it('queries by the image, capped at the upload level', async () => {
+    const { page, calls } = await run(PG, ALL_LEVELS);
+    expect(calls[0].query).toEqual({ imageUrl: IMAGE_URL });
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([PG]);
+    expect(page.items.map((i) => i.id)).toEqual([101, 102]);
+  });
+
+  it('returns nothing for an upload above the viewer, without asking the index', async () => {
+    const { page, calls } = await run(R, PG | 2);
+    expect(page.items).toEqual([]);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('serves the same upload to a viewer who may see its level', async () => {
+    const { page, calls } = await run(R, ALL_LEVELS);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4]);
+    expect(page.items.length).toBeGreaterThan(0);
+  });
+
+  it('never serves an upload from the shared candidate cache', async () => {
+    const counted = (user: SessionUser) => {
+      const { source, calls } = rankedSource([101, 102]);
+      h.fakeGetAllImages = async (args) => ({
+        items: args.ids.map((id) => ({ id, nsfwLevel: PG })),
+        nextCursor: undefined,
+      });
+      const once = (over: object) =>
+        searchSemanticImages({
+          ...SESSION_VIEWS,
+          input: { browsingLevel: ALL_LEVELS, limit: 50 } as SemanticImageSearchInput,
+          user,
+          candidateSource: source,
+          ...over,
+        });
+      return { calls, once };
+    };
+    const upload = counted(VIEWER);
+    await upload.once({ uploadAnchor: { nsfwLevel: PG, imageUrl: IMAGE_URL } });
+    await upload.once({ uploadAnchor: { nsfwLevel: PG, imageUrl: IMAGE_URL } });
+    expect(upload.calls).toHaveLength(2);
+    // Control: the same repeat as a text search is answered from the cache the second time.
+    const text = counted({ id: 502, isModerator: false } as SessionUser);
+    await text.once({
+      input: { browsingLevel: ALL_LEVELS, limit: 50, query: 'fox' } as SemanticImageSearchInput,
+    });
+    await text.once({
+      input: { browsingLevel: ALL_LEVELS, limit: 50, query: 'fox' } as SemanticImageSearchInput,
+    });
+    expect(text.calls).toHaveLength(1);
+  });
+
+  it('leaves a moderator at every level', async () => {
+    const { calls } = await run(PG, ALL_LEVELS, { id: 501, isModerator: true } as SessionUser);
+    expect(calls[0].filter.gate.nsfwLevels).toEqual([1, 2, 4, 8, 16]);
+  });
+});

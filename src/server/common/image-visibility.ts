@@ -14,8 +14,9 @@ import { isRestrictedImage } from '~/shared/utils/restricted-image';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { isMinorContentRestricted } from '@civitai/shared/minor-content-gate';
 import { minorContentRestrictedSql } from '~/server/utils/minor-content-gate.sql';
+import { OWNER_HIDDEN_REVIEWS, isHeldForReview } from '~/server/common/owner-hidden-reviews';
 
-export { KNIGHTS_VOTE_NSFW_LEVEL_REASON };
+export { KNIGHTS_VOTE_NSFW_LEVEL_REASON, isHeldForReview };
 const PERMANENT_SCAN_FAILURE = ImageScanFailureClass.Permanent;
 
 /**
@@ -119,9 +120,6 @@ export const imageReviewedSql = (alias = 'i') => {
   )`;
 };
 
-/** Review holds not served even to the image's owner; their other review states stay visible to them. */
-const OWNER_HIDDEN_REVIEWS = ['csam', 'minor'];
-
 /** Not under an owner-hidden review hold. `needsReview` is nullable: `notIn` alone would drop every unflagged image. */
 export const notHeldForReviewWhere = (): Prisma.ImageWhereInput => ({
   OR: [{ needsReview: null }, { needsReview: { notIn: OWNER_HIDDEN_REVIEWS } }],
@@ -132,10 +130,6 @@ export const notHeldForReviewSql = () =>
   Prisma.sql`(i."needsReview" IS NULL OR i."needsReview" NOT IN (${Prisma.join(
     OWNER_HIDDEN_REVIEWS
   )}))`;
-
-/** TS twin of `notHeldForReviewWhere`: whether a row's review state is an owner-hidden hold. */
-export const isHeldForReview = (needsReview: string | null | undefined) =>
-  !!needsReview && OWNER_HIDDEN_REVIEWS.includes(needsReview);
 
 /** `servableLevelWhere` as SQL over `Image` aliased `i`. */
 export const servableLevelSql = (levels: number) =>

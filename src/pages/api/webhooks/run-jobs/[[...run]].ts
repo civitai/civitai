@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import { acquireJobLock, NOOP_LOCK, type JobLock } from '~/server/jobs/job-lock';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
+import { searchUploadSweepJob } from '~/server/jobs/search-upload-sweep';
 import { voidOrphanedAppealsJob } from '~/server/jobs/void-orphaned-appeals';
 import {
   appealDecisionRecordsJob,
@@ -368,6 +369,7 @@ export const jobs: Job[] = [
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
   announcementDismissalCleanupJob,
+  searchUploadSweepJob,
   voidOrphanedAppealsJob,
   appealDecisionRecordsJob,
   appealTrainingCopyJob,
