@@ -59,6 +59,7 @@ const EXEMPT: Record<string, string> = {
   SQL_MIGRATE_LOCK_DOC: 'a schema migration rewriting the body server-side; returns nothing',
   SQL_MOD_GET: 'the moderator tooling: moderators see every document',
   SQL_RATER_UNRATED: 'the rater: read server-side to be rated, never returned to a viewer',
+  SQL_RATER_GET: 'the rater: one document read server-side to be rated, never returned to a viewer',
   SQL_PUBLISH_SOURCES:
     "server-side publish: the CALLER'S OWN private documents, copied server-side, never returned",
   SQL_PUBLISH_TARGETS:

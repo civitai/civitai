@@ -32,8 +32,8 @@ const doc = (key: string, seq: number) => ({
 /** Each document's level, as the store would hold it once rated. */
 const LEVEL: Record<string, number> = { pg13: 2, x: 8 };
 
-const SFW: Audience = { key: 'm', allowed: { r: false, x: false } };
-const MATURE: Audience = { key: 'mrx', allowed: { r: true, x: true } };
+const SFW: Audience = { key: 'm', allowed: { r: false, x: false, xxx: false } };
+const MATURE: Audience = { key: 'mrx', allowed: { r: true, x: true, xxx: false } };
 
 function setup() {
   const cat: FixtureCatalog = {

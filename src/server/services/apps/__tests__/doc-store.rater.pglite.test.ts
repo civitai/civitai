@@ -17,8 +17,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
  * The RATER's store operations (content levels, build 3): which shared documents need a rating
- * (`listUnrated`), and recording one (`applyRating`) only for the revision the rater read. Real
- * migrations (the content-level columns included) on PGlite, row-level security ON, as
+ * (`listUnrated`), recording one (`applyRating`) only for the revision the rater read, and the
+ * rating id the text scan keys a document on (`assignRatingId`, `findByRatingId`, `getForRating`,
+ * `ready`). Real migrations (the content-level and rating-id ones included) on PGlite, row-level security ON, as
  * `appdata_rw`; the harness's runtime isolation recorder checks every statement.
  *
  * Levels are NsfwLevel bits (PG 1, PG-13 2, R 4, X 8, XXX 16, Blocked 32). Every rating applied
@@ -39,7 +40,7 @@ let rater: DocStoreRater;
 let feed: DocStoreFeed;
 
 beforeAll(async () => {
-  h = await createPgliteHarness({ rls: true, docLevels: true });
+  h = await createPgliteHarness({ rls: true, docLevels: true, docRatingId: true });
   store = createDocStore({ db: h.db });
   rater = createDocStoreRater({ db: h.db });
   feed = createDocStoreFeed({ db: h.db });
@@ -262,5 +263,95 @@ describe('applyRating', () => {
       t: 'after',
     }));
     expect(keysOf(await unrated(app))).toEqual(['m1']);
+  });
+});
+
+describe('the rating id', () => {
+  it('🔴 is given once per document, kept across a rating, and finds the document by its address', async () => {
+    const app = freshApp('RTID');
+    const plain = ctx(app, NS_PROD, AUTHOR);
+    await store.put(plain, BOARD, 'a', { t: 'first' });
+    await store.put(plain, BOARD, 'b', { t: 'second' });
+    const a1 = await rater.assignRatingId(app, NS_PROD, BOARD.name, 'a');
+    const b1 = await rater.assignRatingId(app, NS_PROD, BOARD.name, 'b');
+    expect(a1).toEqual(expect.any(Number));
+    expect(b1).not.toBe(a1);
+    expect(await rater.assignRatingId(app, NS_PROD, BOARD.name, 'a')).toBe(a1);
+    expect(await rater.findByRatingId(a1!)).toEqual({
+      appId: app,
+      ns: NS_PROD,
+      collection: BOARD.name,
+      key: 'a',
+    });
+    const doc = await rater.getForRating(app, NS_PROD, BOARD.name, 'a');
+    expect(doc).toMatchObject({
+      data: { t: 'first' },
+      version: 1,
+      authorUid: AUTHOR,
+      ratingId: a1,
+    });
+    // Assigning an id is not a change a reader sees: the seq does not move.
+    expect((await unrated(app)).map((d) => [d.key, d.ratingId])).toEqual([
+      ['a', a1],
+      ['b', b1],
+    ]);
+  });
+
+  it('a deleted and re-created key gets a new id; the old id finds nothing', async () => {
+    const app = freshApp('RTIDRE');
+    const plain = ctx(app, NS_PROD, AUTHOR);
+    await store.put(plain, BOARD, 'k', { t: 'x' });
+    const before = await rater.assignRatingId(app, NS_PROD, BOARD.name, 'k');
+    await store.delete(plain, BOARD, 'k');
+    await store.put(plain, BOARD, 'k', { t: 'y' });
+    const after = await rater.assignRatingId(app, NS_PROD, BOARD.name, 'k');
+    expect(after).not.toBe(before);
+    expect(await rater.findByRatingId(before!)).toBeNull();
+    expect(await rater.assignRatingId(app, NS_PROD, BOARD.name, 'gone')).toBeNull();
+  });
+
+  it('🔴 the lookup policy admits the ONE shared row its id names, read only, and nothing without it', async () => {
+    const app = freshApp('RTRLS');
+    await store.put(ctx(app, NS_PROD, AUTHOR), BOARD, 'k', { t: 'x' });
+    await store.put(ctx(app, NS_PROD, AUTHOR), PREFS, 'mine', { theme: 'moss' });
+    const id = await rater.assignRatingId(app, NS_PROD, BOARD.name, 'k');
+    // A private document cannot be given an id (shared rows only), so give one by hand to show the
+    // policy still refuses it.
+    await h.raw(
+      `UPDATE appdata.doc d SET rating_id = 999999 WHERE d.app_id = $1 AND d.coll = 'prefs'`,
+      [app]
+    );
+    const conn = await h.rawAsRole();
+    try {
+      const read = async (setting: string) => {
+        await conn.query('BEGIN');
+        await conn.query(`SELECT set_config('appdata.rater_lookup_id', $1, true)`, [setting]);
+        const rows = await conn.query(`SELECT d.key FROM appdata.doc d`);
+        await conn.query('ROLLBACK');
+        return rows.map((r) => r.key);
+      };
+      expect(await read(String(id))).toEqual(['k']);
+      expect(await read('999999')).toEqual([]);
+      expect(await read('')).toEqual([]);
+      await conn.query('BEGIN');
+      await conn.query(`SELECT set_config('appdata.rater_lookup_id', $1, true)`, [String(id)]);
+      await conn.query(`UPDATE appdata.doc d SET level = 32`);
+      await conn.query('COMMIT');
+    } finally {
+      await conn.close();
+    }
+    // The UPDATE under the lookup setting reached no row.
+    expect((await stored(app, 'k')).level).toBeNull();
+  });
+
+  it('ready: true once the migration is applied, false on a store without it', async () => {
+    expect(await rater.ready()).toBe(true);
+    const bare = await createPgliteHarness({ rls: true, docLevels: true });
+    try {
+      expect(await createDocStoreRater({ db: bare.db }).ready()).toBe(false);
+      expect(bare.violations).toEqual([]);
+    } finally {
+      await bare.close();
+    }
   });
 });
