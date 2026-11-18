@@ -6,6 +6,7 @@
 --   is neither a failed answer nor the image's level is an earlier moderator level: `left_already_moderator_level`.
 -- `tierN_to_fix` is what apply.sql updates; `consistent` already holds its level; every `left_*` row is left as it is
 -- (`left_contradicted`: of those, the ones whose resolvedValue is an answer graded failed). `sample`: up to 20 rows to fix.
+-- shared CTE: identical in dry-run.sql and apply.sql (the backfill test checks)
 WITH ruled AS (
   SELECT id, "imageId", "resolvedValue"
   FROM "KnightsQueueItem"
@@ -56,6 +57,7 @@ targeted AS (
     CASE tier WHEN 'tier1' THEN correct_answers[1] WHEN 'tier2' THEN "nsfwLevel"::text END AS truth
   FROM classified
 )
+-- end of shared CTE
 SELECT
   count(*) FILTER (WHERE tier = 'tier1' AND truth IS DISTINCT FROM "resolvedValue") AS tier1_to_fix,
   count(*) FILTER (WHERE tier = 'tier2' AND truth IS DISTINCT FROM "resolvedValue") AS tier2_to_fix,

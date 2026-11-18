@@ -1,11 +1,12 @@
 -- Sets resolvedValue on moderator-ruled items to the level their votes were graded against, by the tiers dry-run.sql
--- describes (keep the two CTEs identical). Every other row is left alone. Safe to run again: a second run updates 0 rows.
+-- describes (the same shared CTE). Every other row is left alone. Safe to run again: a second run updates 0 rows.
 -- Apply after the S1 fix (moderator-ruled closes record the moderator level) is deployed, so no new contradicted rows appear.
 -- Run dry-run.sql first, then this from an interactive psql session (`\i apply.sql`); `psql -f` rolls back at exit. It leaves
 -- the transaction open: COMMIT when the UPDATE's row count equals the dry run's `tier1_to_fix` + `tier2_to_fix`, otherwise
 -- ROLLBACK. Then re-run dry-run.sql: expect 0 to fix.
 BEGIN;
 
+-- shared CTE: identical in dry-run.sql and apply.sql (the backfill test checks)
 WITH ruled AS (
   SELECT id, "imageId", "resolvedValue"
   FROM "KnightsQueueItem"
@@ -25,8 +26,10 @@ votes AS (
 classified AS (
   SELECT
     r.id,
+    r."imageId",
     r."resolvedValue",
     v.correct_answers,
+    v.failed_answers,
     img."nsfwLevel",
     CASE
       WHEN cardinality(v.correct_answers) = 1 THEN 'tier1'
@@ -50,11 +53,11 @@ classified AS (
 ),
 targeted AS (
   SELECT
-    id,
-    "resolvedValue",
+    *,
     CASE tier WHEN 'tier1' THEN correct_answers[1] WHEN 'tier2' THEN "nsfwLevel"::text END AS truth
   FROM classified
 )
+-- end of shared CTE
 UPDATE "KnightsQueueItem" i
 SET "resolvedValue" = t.truth, "updatedAt" = now() AT TIME ZONE 'utc'
 FROM targeted t

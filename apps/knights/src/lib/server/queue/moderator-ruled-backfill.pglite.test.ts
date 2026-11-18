@@ -5,7 +5,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
-import { seedImage } from '../../../test/seed';
+import { lockImage, seedImage, seedSettledVote } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from './queue.service';
 
 const NOW = new Date('2026-12-15T12:00:00Z');
@@ -30,12 +30,7 @@ async function closedItem(
   }
 ) {
   await seedImage(pg, imageId);
-  if (o.lock) {
-    await pg.query(
-      `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
-      [imageId, o.lock.level, o.lock.reason]
-    );
-  }
+  if (o.lock) await lockImage(pg, imageId, o.lock);
   const id = await enqueueItem(
     db,
     { questionKey: 'knights.image.nsfwLevel', imageId, source: 'test', expiresAt: null },
@@ -46,11 +41,7 @@ async function closedItem(
     [id, o.reason, o.resolvedValue]
   );
   for (const [index, [answer, verdict]] of o.votes.entries()) {
-    await pg.query(
-      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
-       VALUES ($1,$2,$3,'knights.image.nsfwLevel',$4,'Knight',$5,1,$6)`,
-      [id, index + 1, NOW, imageId, answer, verdict]
-    );
+    await seedSettledVote(pg, { itemId: id, playerId: index + 1, imageId, answer, verdict });
   }
   return id;
 }
@@ -82,6 +73,18 @@ afterAll(async () => {
 });
 
 describe('backfill-moderator-ruled-verdict', () => {
+  it('classifies rows with the same CTE in the dry run and the apply', () => {
+    const sharedCte = (name: string) => {
+      const text = script(name);
+      const start = text.indexOf('-- shared CTE:');
+      const end = text.indexOf('-- end of shared CTE');
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      return text.slice(start, end);
+    };
+    expect(sharedCte('apply.sql')).toBe(sharedCte('dry-run.sql'));
+  });
+
   it('sets the graded level on contradicted rows only, and a second run changes nothing', async () => {
     const tier1 = await closedItem(10, {
       reason: 'moderator-ruled',
