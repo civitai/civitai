@@ -95,6 +95,8 @@ describe('readKnightsSourcesConfig game settings', () => {
       apprenticeSmites: false,
       shopDisabled: true,
       conversionDisabled: false,
+      harvest: false,
+      harvestHiddenCheckShare: 0.25,
     };
     expect(readKnightsSourcesConfig(JSON.stringify({ enabled: true, game })).config).toEqual({
       enabled: true,
@@ -118,6 +120,9 @@ describe('readKnightsSourcesConfig game settings', () => {
     ['apprenticeSmites', 'off'],
     ['shopDisabled', 1],
     ['conversionDisabled', null],
+    ['harvest', 'on'],
+    ['harvestHiddenCheckShare', 1.5],
+    ['harvestHiddenCheckShare', -0.1],
   ])('leaves out %s = %j, so the Knights default applies', (key, value) => {
     // A valid neighbour shows that only the bad field is dropped.
     const other = key === 'yesNoMaxAgeDays' ? 'yesNoStretch' : 'yesNoMaxAgeDays';

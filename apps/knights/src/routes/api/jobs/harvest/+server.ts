@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { db } from '$lib/server/db';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { metrics } from '$lib/server/metrics';
+import { storedSettings } from '$lib/server/settings/runtime';
 import { harvestSettings } from '$lib/server/trials/config';
 import { runHarvestJob } from '$lib/server/trials/harvest.service';
 import type { RequestHandler } from './$types';
@@ -10,8 +11,8 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ request }) => {
   if (!isJobRequest(request)) return new Response(null, { status: 401 });
   try {
-    // Read per run so a changed environment is picked up without a rebuild.
-    const settings = harvestSettings(env);
+    // Read per run so a changed environment or a value saved on the moderator Config page is picked up without a rebuild.
+    const settings = harvestSettings(env, await storedSettings());
     if (settings.unrecognized !== undefined) {
       console.warn(
         `knights: KNIGHTS_HARVEST="${settings.unrecognized}" is not on/true/1 or off/false/0; paused`

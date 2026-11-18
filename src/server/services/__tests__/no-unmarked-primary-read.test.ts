@@ -168,7 +168,7 @@ const BASELINE: Counts = {
   'src/server/services/buzz-withdrawal-request.service.ts': 5,
   'src/server/services/buzz.service.ts': 3,
   'src/server/services/challenge.service.ts': 4,
-  'src/server/services/chat.service.ts': 9,
+  'src/server/services/chat.service.ts': 8,
   'src/server/services/collection-collaborator.service.ts': 4,
   'src/server/services/collection.service.ts': 9,
   'src/server/services/contest-collection-items.cache.ts': 1,
