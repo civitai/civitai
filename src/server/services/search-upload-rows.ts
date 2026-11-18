@@ -14,12 +14,21 @@ export function isSearchUploadRow(metadata: unknown): boolean {
 }
 
 export async function writeSearchUploadFaceScan(imageId: number, faceScan: SearchUploadFaceScan) {
+  // Built from scalars in SQL, so the write can only ever add this one server-owned key.
+  const ran = faceScan.ran ? 1 : 0;
+  const scores = faceScan.faces.map((face) => face.animeProbability);
   await dbWrite.$executeRaw`
     UPDATE "Image"
-    SET metadata = COALESCE(metadata, '{}'::jsonb)
-      || jsonb_build_object(${SEARCH_UPLOAD_FACE_SCAN_META_KEY}::text, ${JSON.stringify(
-    faceScan
-  )}::jsonb)
+    SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+      ${SEARCH_UPLOAD_FACE_SCAN_META_KEY}::text,
+      jsonb_build_object(
+        'ran', ${ran}::int = 1,
+        'faces', (
+          SELECT COALESCE(jsonb_agg(jsonb_build_object('animeProbability', s.p) ORDER BY s.i), '[]'::jsonb)
+          FROM unnest(${scores}::float8[]) WITH ORDINALITY AS s(p, i)
+        )
+      )
+    )
     WHERE id = ${imageId}
   `;
 }

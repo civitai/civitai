@@ -143,6 +143,31 @@ describe('search-upload rows', () => {
     `);
   });
 
+  it('records each face in order, a missing score as null, and no faces as an empty list', async () => {
+    await writeSearchUploadFaceScan(21, {
+      ran: false,
+      faces: [{ animeProbability: 0.25 }, { animeProbability: null }, { animeProbability: 0.75 }],
+    });
+    await writeSearchUploadFaceScan(22, { ran: true, faces: [] });
+    const { rows } = await db.query<{ id: number; scan: unknown }>(
+      `SELECT id, metadata->'searchUploadFaceScan' AS scan FROM "Image" WHERE id IN (21, 22) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      {
+        id: 21,
+        scan: {
+          ran: false,
+          faces: [
+            { animeProbability: 0.25 },
+            { animeProbability: null },
+            { animeProbability: 0.75 },
+          ],
+        },
+      },
+      { id: 22, scan: { ran: true, faces: [] } },
+    ]);
+  });
+
   it("adds the face record without dropping the row's other keys", async () => {
     await writeSearchUploadFaceScan(21, { ran: true, faces: [{ animeProbability: 0.5 }] });
     const { rows } = await db.query<{ metadata: Record<string, unknown> }>(
