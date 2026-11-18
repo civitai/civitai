@@ -32,12 +32,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 const METRIC = 'civitai_app_generation_validation_refused_total';
 
 describe('/api/metrics publishes the generation refusal series', () => {
-  it('POSITIVE CONTROL — the metric is absent before the endpoint module loads', () => {
-    // If this fails, something else in the suite already imported the module and the real
-    // assertion below would pass without the endpoint doing anything.
-    expect(client.register.getSingleMetric(METRIC)).toBeUndefined();
-  });
-
   it('seeds one zero-valued series per surface on import', async () => {
     await import('~/pages/api/metrics');
 

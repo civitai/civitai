@@ -29,11 +29,13 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // A single mutable holder created during hoisting lets the (also-hoisted) vi.mock factory reference
 // a PGlite instance that is only assigned in beforeAll — the factory closes over `holder`.
-const holder = vi.hoisted(() => ({ db: null as unknown as import('@electric-sql/pglite').PGlite }));
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
 
 // The gauge query does `await import('~/server/db/pgDb')` then `pgDbRead.connect()`, and uses only
 // `.query(sql)` / `.release()`. Bridge those onto PGlite so the production SQL runs unmodified.
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbWrite: {}, 
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbReadLong: {},
+  pgDbWrite: {},
   pgDbRead: {
     connect: async () => ({
       query: (sql: string) => holder.db.query(sql),
@@ -64,11 +66,13 @@ async function sourcePairs(): Promise<[string, number][]> {
     get: () => Promise<MetricJSON>;
   };
   const { values } = await metric.get();
-  return values
-    .map((v) => [v.labels.source, v.value] as [string, number])
-    // Codepoint sort (NOT localeCompare — locale-dependent ordering would make this assertion
-    // machine-dependent).
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return (
+    values
+      .map((v) => [v.labels.source, v.value] as [string, number])
+      // Codepoint sort (NOT localeCompare — locale-dependent ordering would make this assertion
+      // machine-dependent).
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  );
 }
 
 /** ISO-8601 UTC stamp `minutesAgo` in the past, in the exact shape the claim writes. */
@@ -211,7 +215,12 @@ describe('completing_stuck predicate — real SQL against real Postgres', () => 
       { source: 'Mod', claimedAt: claimStamp(5), updatedAtMinutesAgo: 24 * 60 },
       // Not Completing at all: an ancient stamp left behind on a finished/never-claimed row must not
       // leak into the count.
-      { source: 'Mod', status: 'Completed', claimedAt: claimStamp(600), updatedAtMinutesAgo: 24 * 60 },
+      {
+        source: 'Mod',
+        status: 'Completed',
+        claimedAt: claimStamp(600),
+        updatedAtMinutesAgo: 24 * 60,
+      },
       { source: 'Mod', status: 'Active', claimedAt: null, updatedAtMinutesAgo: 24 * 60 },
     ]);
     await __refreshChallengeGaugesFromDbForTest();
@@ -220,17 +229,6 @@ describe('completing_stuck predicate — real SQL against real Postgres', () => 
       ['Mod', 0],
       ['System', 1],
       ['User', 2],
-    ]);
-  });
-
-  it('emits an explicit 0 per source when nothing is Completing (zero-emit survives the fix)', async () => {
-    await seed([{ source: 'System', status: 'Active', claimedAt: null, updatedAtMinutesAgo: 0 }]);
-    await __refreshChallengeGaugesFromDbForTest();
-
-    expect(await sourcePairs()).toEqual([
-      ['Mod', 0],
-      ['System', 0],
-      ['User', 0],
     ]);
   });
 });

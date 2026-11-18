@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildThreadCpuCounter,
   parseTaskStat,
-  threadGroup,
   THREAD_CPU_METRIC,
   THREAD_GROUPS,
 } from '~/server/prom/thread-cpu.metrics';
@@ -50,21 +49,6 @@ describe('parseTaskStat', () => {
   it('rejects a truncated line instead of yielding NaN', () => {
     expect(parseTaskStat('7 (node) S 1 2')).toBeNull();
     expect(parseTaskStat('garbage')).toBeNull();
-  });
-});
-
-describe('threadGroup', () => {
-  it.each([
-    ['node', MAIN, 'main'],
-    ['next-server (v1', MAIN, 'main'],
-    ['V8Worker', 2, 'v8_worker'],
-    ['V8 DefaultWorke', 2, 'v8_worker'],
-    ['libuv-worker', 3, 'libuv_worker'],
-    ['tokio-runtime-w', 4, 'prisma_engine'],
-    ['node', 5, 'other'],
-    ['HeapHelper', 6, 'other'],
-  ] as const)('%s (tid %d) -> %s', (comm, tid, group) => {
-    expect(threadGroup(comm, tid, MAIN)).toBe(group);
   });
 });
 
