@@ -25,6 +25,9 @@ import {
   newRun,
   nextImgId,
   numberInputValue,
+  labelModeForCard,
+  sweepLabelMode,
+  labelOptions,
   optimizerLrParams,
   teLocked,
   paramDeviations,
@@ -1047,5 +1050,69 @@ describe('per-image repeats on the submit', () => {
       repeatExt({ name: 'image 3', blobId: 'urn:air:a:b:c:blob@K.webp', mediaType: 'image' })
     ).toBe('webp');
     expect(repeatExt({ name: 'image 3', blobId: 'K', mediaType: 'video' })).toBe('mp4');
+  });
+});
+
+describe('Krea 2 label modes', () => {
+  it('offers captions and tags, with captions as the default', () => {
+    const krea = cardByType('krea2')!;
+    expect(labelOptions(krea)).toEqual(['caption', 'tag']);
+    expect(krea.label).toBe('caption');
+  });
+
+  it('opens a model on its own default label, but keeps a pick made on the same model', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    // the flow's labelMode starts as 'tag'
+    expect(labelModeForCard(null, krea, 'tag', false)).toBe('caption');
+    expect(labelModeForCard(krea, krea, 'tag', false)).toBe('tag');
+    expect(labelModeForCard(krea, anima, 'caption', false)).toBe('tag');
+  });
+
+  it('keeps the mode when a labeled dataset moves to another model that offers it', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    expect(labelModeForCard(krea, anima, 'caption', true)).toBe('caption');
+    expect(labelModeForCard(anima, cardByType('sdxl')!, 'caption', true)).toBe('tag');
+  });
+
+  it("refuses a caption-only model in a sweep once the lead is on Krea 2's tag mode", () => {
+    const krea = cardByType('krea2')!;
+    const flux = cardByType('flux')!;
+    const sdxl = cardByType('sdxl')!;
+    // Krea 2 on tags (kept: same model), then the caption-only Flux
+    expect(sweepLabelMode([krea, flux], krea, 'tag', false)).toBeNull();
+    expect(sweepLabelMode([krea, sdxl], krea, 'tag', false)).toBe('tag');
+    // fresh on captions
+    expect(sweepLabelMode([krea, flux], null, 'tag', false)).toBe('caption');
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('refuses to mix pairs and single-image models', () => {
+    const krea = cardByType('krea2')!;
+    const pairsCard = MODEL_CARDS.find((c) => c.pairs)!;
+    expect(sweepLabelMode([krea, pairsCard], null, 'caption', false)).toBeNull();
+    expect(sweepLabelMode([pairsCard, krea], null, 'caption', false)).toBeNull();
+  });
+
+  it("refuses the selection left by removing run 1 when the next lead would re-pick a mode a later run can't take", () => {
+    const anima = cardByType('anima')!;
+    const krea = cardByType('krea2')!;
+    const sdxl = cardByType('sdxl')!;
+    expect(sweepLabelMode([anima, krea, sdxl], null, 'tag', false)).toBe('tag');
+    // Krea 2 leading a fresh dataset opens on captions, which SDXL can't take
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('checks every run against the mode a new first run would set', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    const flux = cardByType('flux')!;
+    // swapping run 1 from Krea 2 to Anima would flip a fresh dataset to tags, which Flux can't take
+    expect(sweepLabelMode([anima, flux], null, 'tag', false)).toBeNull();
+    // a swap that stays valid is allowed: Krea 2 on tags -> Flux leads, mode follows to captions
+    expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
+    // a labeled dataset keeps its format across the swap
+    expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
   });
 });

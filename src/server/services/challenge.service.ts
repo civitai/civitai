@@ -588,36 +588,43 @@ export async function getDailyChallenges(
 
 // Who may see challenge `c` in a public list: the feed and event listings share these, so one
 // can't drift from the other.
-async function challengeVisibilityConditions({
+export async function challengeVisibilityConditions({
   isGreen,
   viewerId,
   canAccessUserChallenges,
   browsingLevel,
+  ownRowsExempt = true,
 }: {
   isGreen: boolean;
   viewerId: number | undefined;
   canAccessUserChallenges: boolean;
   browsingLevel?: number;
+  /**
+   * The creator exemptions below (visibility window, scans, currency, level) apply only while
+   * true; false holds the viewer's own challenges to every gate (a narrowed search).
+   */
+  ownRowsExempt?: boolean;
 }): Promise<Prisma.Sql[]> {
   const conditions: Prisma.Sql[] = [];
+  const own = ownRowsExempt ? viewerId : undefined;
 
-  // Only show challenges past their visibility window — except to their own creator, so a creator
+  // Only show challenges past their visibility window — except to an exempt creator, so a creator
   // can see (and manage) a not-yet-visible challenge they made. Mirrors the scan gates below.
   conditions.push(
-    viewerId
-      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${viewerId})`
+    own
+      ? Prisma.sql`(c."visibleAt" <= now() OR c."createdById" = ${own})`
       : Prisma.sql`c."visibleAt" <= now()`
   );
 
-  conditions.push(...challengeScanGates(viewerId));
+  conditions.push(...challengeScanGates(own));
 
   // Domain-currency gate: green user challenges surface only on the green site, yellow only
   // off-green. Scoped to user challenges — System/mod/event (prize-only, no entry fee) are
   // universal and show on both domains, mirroring the scan/POI gates.
   const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
-    viewerId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${viewerId})`
+    own
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${own})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
@@ -635,9 +642,8 @@ async function challengeVisibilityConditions({
   // `allowedNsfwLevel` permits) must intersect the viewer's effective browsing level. The REAL
   // cover level is required to intersect too, so a challenge that under-declares its rating can't
   // leak an NSFW cover into an SFW feed. On green the level is capped server-side (see
-  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. Creator
-  // always sees their own. A challenge with no cover is already excluded by the IS NOT NULL gate
-  // above.
+  // getEffectiveBrowsingLevel) so a client can't bypass it by omitting `browsingLevel`. A challenge
+  // with no cover is already excluded by the IS NOT NULL gate above.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: viewerId != null,
@@ -645,9 +651,7 @@ async function challengeVisibilityConditions({
   });
   if (effectiveBrowsingLevel > 0) {
     const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
-    conditions.push(
-      viewerId ? Prisma.sql`(c."createdById" = ${viewerId} OR ${levelSql})` : levelSql
-    );
+    conditions.push(own ? Prisma.sql`(c."createdById" = ${own} OR ${levelSql})` : levelSql);
   }
 
   return conditions;
@@ -660,6 +664,8 @@ export async function getInfiniteChallenges(
     canAccessUserChallenges?: boolean;
     /** Server-only: only these challenges, e.g. the semantic search's candidates. */
     ids?: number[];
+    /** Server-only: see challengeVisibilityConditions. */
+    ownRowsExempt?: boolean;
   }
 ) {
   const {
@@ -680,6 +686,7 @@ export async function getInfiniteChallenges(
     currentUserId,
     isGreen,
     canAccessUserChallenges = false,
+    ownRowsExempt,
   } = input;
 
   // Build WHERE conditions using parameterized queries (SQL injection safe)
@@ -691,6 +698,7 @@ export async function getInfiniteChallenges(
       viewerId: currentUserId,
       canAccessUserChallenges,
       browsingLevel,
+      ownRowsExempt,
     }))
   );
 
@@ -4240,6 +4248,8 @@ export async function getCompletedChallengesWithWinners(
     isGreen: boolean;
     currentUserId?: number;
     canAccessUserChallenges?: boolean;
+    /** Server-only: as on challengeVisibilityConditions (scans, currency, level here). */
+    ownRowsExempt?: boolean;
   }
 ) {
   const {
@@ -4252,14 +4262,16 @@ export async function getCompletedChallengesWithWinners(
     isGreen,
     currentUserId,
     canAccessUserChallenges = false,
+    ownRowsExempt = true,
   } = input;
+  const own = ownRowsExempt ? currentUserId : undefined;
 
   // Phase 1: Query completed challenges with cursor pagination
   const conditions: Prisma.Sql[] = [
     Prisma.sql`c."visibleAt" <= now()`,
     Prisma.sql`c.status = 'Completed'::"ChallengeStatus"`,
     Prisma.sql`EXISTS (SELECT 1 FROM "ChallengeWinner" cw WHERE cw."challengeId" = c.id)`,
-    ...challengeScanGates(currentUserId),
+    ...challengeScanGates(own),
   ];
 
   // User challenges stay behind the `userChallenges` flag, as on the feed and the detail page.
@@ -4279,11 +4291,12 @@ export async function getCompletedChallengesWithWinners(
   }
 
   // Domain-currency gate — parity with the feed: a user challenge only appears on its own domain
-  // (green on green, yellow off-green). System/mod/event challenges are universal. Creator exempt.
+  // (green on green, yellow off-green). System/mod/event challenges are universal. An exempt
+  // creator sees their own.
   const domainCurrency = deriveDomainCurrency(isGreen);
   conditions.push(
-    currentUserId
-      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${currentUserId})`
+    own
+      ? Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency} OR c."createdById" = ${own})`
       : Prisma.sql`(c.source <> 'User'::"ChallengeSource" OR c."buzzType" = ${domainCurrency})`
   );
 
@@ -4292,8 +4305,7 @@ export async function getCompletedChallengesWithWinners(
   if (blockSql) conditions.push(blockSql);
 
   // Content level filter — parity with the feed: the challenge's own rating and its REAL cover
-  // level must both intersect the viewer's effective (green-capped) browsing level. Creator sees
-  // their own.
+  // level must both intersect the viewer's effective (green-capped) browsing level.
   const effectiveBrowsingLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: currentUserId != null,
@@ -4301,9 +4313,7 @@ export async function getCompletedChallengesWithWinners(
   });
   if (effectiveBrowsingLevel > 0) {
     const levelSql = Prisma.sql`((c."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0 AND EXISTS (SELECT 1 FROM "Image" i WHERE i.id = c."coverImageId" AND (i."nsfwLevel" & ${effectiveBrowsingLevel}) <> 0))`;
-    conditions.push(
-      currentUserId ? Prisma.sql`(c."createdById" = ${currentUserId} OR ${levelSql})` : levelSql
-    );
+    conditions.push(own ? Prisma.sql`(c."createdById" = ${own} OR ${levelSql})` : levelSql);
   }
 
   if (query) {

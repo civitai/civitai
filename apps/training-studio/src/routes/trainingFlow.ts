@@ -82,6 +82,19 @@ export function labelOptions(card: ModelCard): LabelType[] {
   return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
 }
 
+/** The label mode to carry into the Data step. The flow's `labelMode` starts as 'tag', so a first pick of a
+ *  caption-default `bothLabels` card must not inherit it; but labels already typed in the current mode, or a
+ *  pick on the same model, are kept. */
+export function labelModeForCard(
+  previous: ModelCard | null,
+  card: ModelCard,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType {
+  if (!labelOptions(card).includes(current)) return card.label;
+  return previous?.type === card.type || datasetLabeled ? current : card.label;
+}
+
 // Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
 // prepended to a label that doesn't already contain it, and highlighted in place where it does. Matching
 // is case-insensitive.
@@ -826,10 +839,17 @@ export function submittedPrompts(texts: string[]): string[] {
  *  Select step won't mix them, since the two datasets don't share a shape. */
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
-/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
- *  its label format and on whether it is pairs. */
-export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
-  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+/** The label mode one dataset can use for every run in `cards`, or null when they can't share one. */
+export function sweepLabelMode(
+  cards: ModelCard[],
+  previous: ModelCard | null,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType | null {
+  const lead = cards[0];
+  if (!lead || cards.some((c) => !!c.pairs !== !!lead.pairs)) return null;
+  const mode = labelModeForCard(previous, lead, current, datasetLabeled);
+  return cards.every((c) => labelOptions(c).includes(mode)) ? mode : null;
 }
 
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to
