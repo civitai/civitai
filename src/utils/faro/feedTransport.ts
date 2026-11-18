@@ -7,12 +7,12 @@ import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
 /**
  * One Faro `feed_transport` measurement per request of a ported feed procedure
  * (`GO_TRANSPORT_PROCEDURES`): `feed_transport_ms`, context `procedure`, `transport`, `outcome`,
- * `authed`, and `status` on an `http_error` whose status is known.
+ * and `status` on an `http_error` whose status is known.
  *
  * `transport` is STRUCTURAL: `~/utils/trpc` puts this link inside each branch of its
  * `shouldUseGoTransport` split, so the tag is the link the request left on, never a re-derived
- * predicate. `authed` separates signed-out traffic, which can never take the Go path, from the
- * comparable arm. An aborted request is not recorded: a cancel is neither arm's latency.
+ * predicate. Not recorded: a signed-out request (it can never take the Go path, so it is in
+ * neither arm), and an aborted one (a cancel is neither arm's latency).
  */
 
 /** Faro measurement type (→ Loki `type=feed_transport`). */
@@ -67,6 +67,14 @@ function defaultPushMeasurement(): PushMeasurement | undefined {
   return faro?.api?.pushMeasurement?.bind(faro.api) as PushMeasurement | undefined;
 }
 
+function signedIn(isAuthed: () => boolean): boolean {
+  try {
+    return isAuthed() === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The timing link for ONE transport branch. Passes every other operation straight through; never
  * throws into the request (a telemetry fault is swallowed) and never changes what the next link
@@ -80,16 +88,15 @@ export function feedTransportTimingLink(options: FeedTransportTimingOptions): TR
       if (
         typeof window === 'undefined' ||
         op.type !== 'query' ||
-        !GO_TRANSPORT_PROCEDURES.has(op.path)
+        !GO_TRANSPORT_PROCEDURES.has(op.path) ||
+        !signedIn(isAuthed)
       ) {
         return next(op);
       }
       return observable((observer) => {
         let start = 0;
-        let authed = 'false';
         try {
           start = now();
-          authed = String(isAuthed() === true);
         } catch {
           // Telemetry only.
         }
@@ -104,7 +111,6 @@ export function feedTransportTimingLink(options: FeedTransportTimingOptions): TR
               procedure: op.path,
               transport,
               outcome,
-              authed,
             };
             if (status !== undefined) context.status = String(status);
             push(

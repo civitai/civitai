@@ -14,7 +14,6 @@ import {
 } from '~/server/prom/feed-go-shadow.metrics';
 import { pickSessionCookies } from '~/server/utils/session-cookies';
 import { createCachedFlagGate, readFliptSwitch } from '~/server/utils/otel-withspan-gate';
-import { setActiveSpanAttributes, traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler';
 
 /**
@@ -62,10 +61,6 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  * request the shadow sampler already sampled (so it is inside that sample's per-second token), for
  * a further `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE` fraction of them (default 0: off), takes its own
  * slot under the shared in-flight cap, and has the shadow timeout.
- *
- * Trace context: the request's `traceparent` is captured in `begin` / `beginRest`, because the shadow
- * POST runs from `setImmediate`, outside the request's context. The request span gets
- * `feed_go.shadow_sampled`, `feed_go.endpoint` and, once probed, `feed_go.probed`.
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
@@ -305,8 +300,6 @@ export type FeedGoShadowSample = {
   headers: Record<string, string>;
   /** When the route began the request, epoch milliseconds (fractional); the probe sends it. */
   startedAt?: number;
-  /** The sampled request's trace-context headers, sent on its POSTs. */
-  traceHeaders?: Record<string, string>;
   /** Whether the Go-first probe was already started for this sample (at most once). */
   probed?: boolean;
   captured?: Captured;
@@ -438,19 +431,12 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         holdsSlot: true,
         input: input ?? '',
         headers,
-        traceHeaders: traceSampled(route.endpoint),
         startedAt,
         done: false,
       };
     } catch {
       return undefined;
     }
-  }
-
-  /** Reads the ACTIVE context: call it on the request path. */
-  function traceSampled(endpoint: FeedGoShadowEndpoint): Record<string, string> {
-    setActiveSpanAttributes({ 'feed_go.shadow_sampled': true, 'feed_go.endpoint': endpoint });
-    return traceContextHeaders();
   }
 
   /** The bounds: the shared in-flight cap, then the endpoint's per-second bucket. Counts a drop. */
@@ -498,7 +484,6 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         input,
         path: path || undefined,
         headers,
-        traceHeaders: traceSampled(endpoint),
         done: false,
       };
     } catch {
@@ -556,7 +541,6 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
         startedAt: sample.startedAt,
       });
       inFlight++;
-      setActiveSpanAttributes({ 'feed_go.probed': true });
       let settled = false;
       const done = () => {
         if (settled) return;
@@ -567,7 +551,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
       try {
         pending = doFetch(url, {
           method: 'POST',
-          headers: { ...sample.traceHeaders, 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json' },
           body,
           signal: AbortSignal.timeout(config.timeoutMs),
         });
@@ -647,7 +631,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     try {
       pending = doFetch(urlOf(endpoint)!, {
         method: 'POST',
-        headers: { ...sample.traceHeaders, 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json' },
         body,
         signal: AbortSignal.timeout(config.timeoutMs),
       });
