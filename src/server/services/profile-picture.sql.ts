@@ -18,17 +18,20 @@ export const servableProfilePictureSql = Prisma.sql`
 
 const heldReviewList = OWNER_HIDDEN_REVIEWS.map((review) => `'${review}'`).join(', ');
 
+/** Whether `User.image` (aliased `u`) names the user's profile picture while it is under an owner-hidden hold. */
+export const userImageNamesHeldPicture = `EXISTS (
+    SELECT 1 FROM "Image" held
+    WHERE held.id = u."profilePictureId"
+      AND held."needsReview" IN (${heldReviewList})
+      AND strpos(replace(lower(u.image), '%2d', '-'), lower(held.url)) > 0
+  )`;
+
 /**
  * `User.image` over `User` aliased `u`, for reads that fall back to it when there is no profile
  * picture: null when it names the user's profile picture and that picture is under an owner-hidden
  * review hold, so the fallback follows the same holds. A raw column for `SELECT` lists built as text.
  */
-export const fallbackUserImageColumn = `CASE WHEN EXISTS (
-    SELECT 1 FROM "Image" held
-    WHERE held.id = u."profilePictureId"
-      AND held."needsReview" IN (${heldReviewList})
-      AND strpos(replace(lower(u.image), '%2d', '-'), lower(held.url)) > 0
-  ) THEN NULL ELSE u.image END`;
+export const fallbackUserImageColumn = `CASE WHEN ${userImageNamesHeldPicture} THEN NULL ELSE u.image END`;
 
 export type RawQueryClient = {
   $queryRaw<T = unknown>(

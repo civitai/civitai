@@ -6,6 +6,7 @@ import { constants } from '~/server/common/constants';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import {
+  fallbackUserImage,
   servableProfilePicture,
   withoutHeldPicture,
 } from '~/server/services/profile-picture.servable';
@@ -83,6 +84,14 @@ type CreatorRow = NonNullable<Awaited<ReturnType<typeof getUserCreatorRow>>>;
  * under an owner-hidden review hold; also used by the user profile read (`getUserWithProfileRow`), which selects the
  * same columns.
  */
+/** The picture fields `fallbackUserImage` compares a row's `User.image` against. */
+export const heldPictureOf = (
+  row: Pick<CreatorRow, 'profilePictureUrl' | 'profilePictureNeedsReview'>
+) => ({
+  url: row.profilePictureUrl,
+  needsReview: row.profilePictureNeedsReview,
+});
+
 export function profilePictureOf(
   row: Pick<CreatorRow, Extract<keyof CreatorRow, `profilePicture${string}`>>
 ) {
@@ -135,7 +144,7 @@ export async function readUserCreatorViaKysely(
 
   const user = {
     id: row.id,
-    image: row.image,
+    image: fallbackUserImage(row.image, heldPictureOf(row)),
     username: row.username,
     muted: row.muted,
     bannedAt: row.bannedAt,

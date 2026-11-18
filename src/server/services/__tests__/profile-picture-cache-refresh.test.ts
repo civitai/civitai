@@ -14,6 +14,14 @@ import { refreshSession } from '~/server/auth/session-invalidation';
  */
 
 const refreshPicture = vi.fn(async (_ids: number | number[]) => undefined);
+const refreshBasic = vi.fn(async (_ids: number | number[]) => undefined);
+const queueUserUpdate = vi.fn(async (_items: unknown[]) => undefined);
+const clearImages = vi.fn(async (_db: unknown, _ids: number[]) => [] as number[]);
+
+vi.mock('~/server/services/held-image-keys', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  clearHeldUserImages: (db: unknown, ids: number[]) => clearImages(db, ids),
+}));
 
 vi.mock('~/server/services/blocks/app-listing-rating-rederive.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReDerive>()),
@@ -29,6 +37,10 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
     profilePictureCache: {
       ...actual.profilePictureCache,
       refresh: (ids: number | number[]) => refreshPicture(ids),
+    },
+    userBasicCache: {
+      ...actual.userBasicCache,
+      refresh: (ids: number | number[]) => refreshBasic(ids),
     },
   };
 });
@@ -60,6 +72,7 @@ vi.mock('~/env/server', () => ({
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
+  usersSearchIndex: { queueUpdate: (items: unknown[]) => queueUserUpdate(items) },
 }));
 vi.mock('~/server/games/new-order/utils', async (importOriginal) => {
   const reset = { reset: vi.fn(() => Promise.resolve()) };
@@ -120,6 +133,24 @@ beforeEach(() => {
 });
 
 describe('a bulk picture refresh', () => {
+  it("clears a User.image naming a held picture, then refreshes the basic-user cache and the users' search documents", async () => {
+    const { refreshProfilePicturesForUsers } = await import('../user.service');
+    clearImages.mockRejectedValueOnce(new Error('clear failed'));
+
+    await refreshProfilePicturesForUsers([3, 4, 3]);
+    expect(refreshBasic).toHaveBeenCalledWith([3, 4]);
+
+    await refreshProfilePicturesForUsers([3, 4]);
+    expect(clearImages).toHaveBeenLastCalledWith(expect.anything(), [3, 4]);
+    expect(clearImages.mock.invocationCallOrder[1]).toBeLessThan(
+      refreshBasic.mock.invocationCallOrder[1]
+    );
+    expect(queueUserUpdate).toHaveBeenLastCalledWith([
+      { id: 3, action: 'Update' },
+      { id: 4, action: 'Update' },
+    ]);
+  });
+
   it('refreshes every session, never more than the cap at once', async () => {
     const { refreshProfilePicturesForUsers, PROFILE_PICTURE_SESSION_REFRESH_CONCURRENCY } =
       await import('../user.service');

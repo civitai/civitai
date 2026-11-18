@@ -69,6 +69,17 @@ describe('creator card profile picture', () => {
     }
   );
 
+  it.each([
+    ['csam', 'https://cdn.example/AVATAR-SCANNED/width=96', null],
+    ['minor', 'avatar-Scanned', null],
+    ['minor', 'legacy', 'legacy'],
+    [null, 'avatar-Scanned', 'avatar-Scanned'],
+  ])('a picture held %s drops a User.image %s naming it', async (hold, image, expected) => {
+    row.current = { ...creatorRow('Scanned'), image, profilePictureNeedsReview: hold };
+    const read = await readUserCreatorViaKysely(db, { id: 5 });
+    expect(read?.user.image).toBe(expected);
+  });
+
   it('carries a Scanned picture', async () => {
     row.current = creatorRow('Scanned');
     const read = await readUserCreatorViaKysely(db, { id: 5 });

@@ -291,6 +291,25 @@ describe('a legacy avatar image', () => {
     expect(mockUpdateUserById).not.toHaveBeenCalled();
   });
 
+  it('is refused as a new profile picture upload too', async () => {
+    await expect(
+      updateUserHandler({
+        ctx: { user: { id: CALLER_ID } },
+        input: { id: CALLER_ID, profilePicture: { id: OTHER_USERS_IMAGE_ID, url: HELD_KEY } },
+      } as never)
+    ).rejects.toThrow('Invalid avatar URL');
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it("is checked only once the caller may use the key, so another user's hold is not told apart", async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      imageUrlOwnersFake([{ url: HELD_KEY, userId: OTHER_USER_ID }])
+    );
+    await expect(saveImage(HELD_KEY)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    await expect(saveImage(HELD_KEY)).rejects.not.toThrow('Invalid avatar URL');
+    expect(mockAnyImageHeld).not.toHaveBeenCalled();
+  });
+
   it('is saved when its key names none', async () => {
     await saveImage(AVATAR_KEY);
     expect(mockAnyImageHeld).toHaveBeenCalledWith(expect.anything(), [AVATAR_KEY]);

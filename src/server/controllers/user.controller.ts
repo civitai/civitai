@@ -705,14 +705,15 @@ export const updateUserHandler = async ({
         ? { ...profilePicture, id: undefined }
         : undefined;
     const newPictureUrls = [newPicture?.url, data.image !== user.image ? data.image : null];
-    if (
-      data.image &&
-      data.image !== user.image &&
-      (await anyImageHeldForReview(dbWrite, keysIn(data.image)))
-    )
-      throw throwBadRequestError('Invalid avatar URL');
     await assertClientImageUrlsUsable({ urls: newPictureUrls, userId: id });
     await assertClientKeysIssuedToCaller({ urls: newPictureUrls, userId: id });
+    if (
+      await anyImageHeldForReview(
+        dbWrite,
+        newPictureUrls.flatMap((url) => keysIn(url))
+      )
+    )
+      throw throwBadRequestError('Invalid avatar URL');
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];

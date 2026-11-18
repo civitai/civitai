@@ -11,6 +11,7 @@ import {
   fallbackUserImageColumn,
   servableProfilePictureSql,
 } from '~/server/services/profile-picture.sql';
+import { clearHeldUserImages } from '~/server/services/held-image-keys';
 import {
   heldEntryOnBountySql,
   keepHeldReviewsCte,
@@ -2437,16 +2438,32 @@ function logProfilePictureRefreshError(error: unknown, meta: Record<string, unkn
 
 /**
  * Re-reads these users' cached profile pictures after a write changed or removed one, and refreshes
- * their sessions, whose shape carries the picture's url. Never throws: the write it follows has
- * committed, and a moderation action must not fail on a cache refill.
+ * their sessions, whose shape carries the picture's url. A `User.image` naming a held picture is
+ * cleared first (`clearHeldUserImages`), so the basic-user cache and the search documents are
+ * refreshed too. Never throws: the write it follows has committed, and a moderation action must
+ * not fail on a cache refill.
  */
 export async function refreshProfilePicturesForUsers(userIds: number[]) {
   const ids = [...new Set(userIds)];
   if (!ids.length) return;
-  try {
-    await profilePictureCache.refresh(ids);
-  } catch (error) {
-    logProfilePictureRefreshError(error, { userIds: ids.join(',') });
+  const steps: [string, () => Promise<unknown>][] = [
+    ['clear-image', () => clearHeldUserImages(dbWrite, ids)],
+    ['picture-cache', () => profilePictureCache.refresh(ids)],
+    ['basic-cache', () => userBasicCache.refresh(ids)],
+    [
+      'search-index',
+      () =>
+        usersSearchIndex.queueUpdate(
+          ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        ),
+    ],
+  ];
+  for (const [step, run] of steps) {
+    try {
+      await run();
+    } catch (error) {
+      logProfilePictureRefreshError(error, { userIds: ids.join(','), step });
+    }
   }
   // Bulk moderation (an adjust-tag-level batch, a bulk block) can pass many users.
   await limitConcurrency(
