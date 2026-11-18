@@ -1,15 +1,10 @@
 -- `semanticSearchAudit.searchPath` — ClickHouse DDL.
 --
--- 🔴 MANUAL. Apply this by hand, BEFORE the release that writes it. We do not auto-run DDL.
+-- 🔴 MANUAL. Apply by hand BEFORE the release that writes it. Every row carries the key, so an
+-- app live before the column exists fails whole batches (see 2026-11-08-user-activities-source.sql).
 --
--- Which path wrote the row: served | narrowed | refused_query | refused_correction |
--- refused_own_images. Empty on every row written before this column.
---
--- Every row carries the key, so the column must exist before the app that sends it is live: a row
--- carrying an unknown column fails its whole batch (as 2026-11-08-user-activities-source.sql records).
---
--- Additive and metadata-only: ADD COLUMN with a constant DEFAULT on a MergeTree table writes no data
--- and schedules no mutation.
+-- Values: served | narrowed | refused_query | refused_correction | refused_own_images.
+-- Empty on rows written before this column.
 --
 -- Verify, AFTER applying:
 --
@@ -28,6 +23,5 @@
 
 -- No trailing semicolon and nothing after the statement: ClickHouse rejects the file as a
 -- multi-statement query otherwise, so it can be run as-is.
---
 ALTER TABLE default.semanticSearchAudit
-  ADD COLUMN IF NOT EXISTS `searchPath` LowCardinality(String) DEFAULT '' AFTER `resultsServed`
+  ADD COLUMN IF NOT EXISTS `searchPath` LowCardinality(String) DEFAULT ''

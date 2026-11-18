@@ -66,6 +66,13 @@ describe('buildSemanticAuditRow', () => {
     expect(r.searchPath).toBe('narrowed');
   });
 
+  it.each(['served', 'refused_query', 'refused_own_images'] as const)(
+    'stores no ids for a minor verdict on the %s path',
+    (searchPath) => {
+      expect(row(entry({ wordVerdict: 'minor', searchPath })).resultIds).toEqual([]);
+    }
+  );
+
   it.each(['minor-safe', 'poi-minor', 'not-yet-a-verdict' as QueryRefusal] as const)(
     'stores no ids for a search a %s verdict narrowed',
     (wordVerdict) => {

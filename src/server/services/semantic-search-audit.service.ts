@@ -27,9 +27,8 @@ export const AUDIT_RESULT_IDS = 20;
 // a client repeating refused queries cannot drive the extra search calls.
 export const REFUSED_RUNS_PER_MINUTE = 30;
 const MAX_QUERY_LENGTH = 1_000;
-// A query the audit passed keeps what was served, and so does one a minor verdict narrowed, so a read
-// can check what the narrowed level let through. Every other verdict withholds the ids, including any
-// added later; its row keeps the query, rule and level.
+// Only a passed query or a minor-narrowed one keeps what was served. Every other verdict withholds
+// the ids, including any added later; its row keeps the query, rule and level.
 export function verdictKeepsServedIds(verdict: QueryRefusal) {
   return verdict === false || verdict === 'minor';
 }
@@ -113,6 +112,7 @@ export function buildSemanticAuditRow(
   const withheldByGuard = withheldRules
     ? guard.rules.some((r) => withheldRules.has(r))
     : guard.rules.length > 0;
+  // A minor verdict keeps ids only on the narrowed path, never on a refused one.
   const idsAllowed = entry.resultsServed
     ? !entry.withholdIds &&
       verdictKeepsServedIds(entry.wordVerdict) &&

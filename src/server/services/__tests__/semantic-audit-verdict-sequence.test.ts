@@ -5,12 +5,16 @@ import type {
   SemanticAuditRow,
 } from '~/server/services/semantic-search-audit.service';
 import { beginSemanticAudit, type QueryRefusal } from '~/server/services/semantic-query-guard';
-import { createSemanticSearchAudit } from '~/server/services/semantic-search-audit.service';
+import {
+  buildSemanticAuditRow,
+  createSemanticSearchAudit,
+} from '~/server/services/semantic-search-audit.service';
 
-const h = vi.hoisted(() => ({ recordRefused: vi.fn() }));
+const h = vi.hoisted(() => ({ record: vi.fn(), recordRefused: vi.fn() }));
 
 vi.mock('~/server/services/semantic-search-audit.service', async (importOriginal) => ({
   ...(await importOriginal<typeof AuditService>()),
+  recordSemanticAudit: h.record,
   recordRefusedSemanticAudit: h.recordRefused,
 }));
 
@@ -59,5 +63,33 @@ describe('a refused search stores candidate ids only when no verdict is minor-cl
 
   it('blocked alone: ids stored', async () => {
     expect(await storedIds(['blocked'])).toEqual([5, 6, 7]);
+  });
+});
+
+function servedIds(sequence: QueryRefusal[]) {
+  h.record.mockClear();
+  const audit = beginSemanticAudit({
+    index: 'images',
+    viewer: { id: 7, isModerator: false },
+    query: 'fox',
+    firstPage: true,
+  });
+  for (const v of sequence) audit.verdict(v);
+  audit.done({ items: [{ id: 5 }, { id: 6 }] }, 1);
+  const [entry] = h.record.mock.calls[0] as [SemanticAuditEntry];
+  return buildSemanticAuditRow(entry, 0, 'trace-1', new Set()).resultIds;
+}
+
+describe('a served search stores its ids only when every verdict keeps them', () => {
+  it.each<[string, QueryRefusal[]]>([
+    ['minor then minor-safe', ['minor', 'minor-safe']],
+    ['minor then poi', ['minor', 'poi']],
+    ['minor-safe alone', ['minor-safe']],
+  ])('%s: no ids stored', (_, sequence) => {
+    expect(servedIds(sequence)).toEqual([]);
+  });
+
+  it('minor alone: ids stored', () => {
+    expect(servedIds(['minor'])).toEqual([5, 6]);
   });
 });
