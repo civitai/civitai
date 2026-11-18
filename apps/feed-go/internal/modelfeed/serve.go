@@ -138,7 +138,7 @@ func Serve(ctx context.Context, d *Deps, req Request) (*Answer, error) {
 	var pinned []any
 	loaded := false
 	if len(pinnedIDs) > 0 && in.Cursor == "" {
-		page, err := servePage(ctx, d, in, level, "", req.Viewer, now, pageScope{take: len(pinnedIDs), only: pinnedIDs})
+		page, err := servePage(ctx, d, in, level, "", req.Viewer, now, pageScope{take: in.Limit, only: pinnedIDs})
 		if err != nil {
 			return nil, err
 		}

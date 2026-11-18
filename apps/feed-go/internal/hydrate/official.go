@@ -63,7 +63,7 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 		now = s.Packed.Now()
 	}
 	// `Date.now() - ttl * 1000 > cachedAt` is expired.
-	if hasEntry && !(float64(now.UnixMilli())-float64(officialModelsTTL/time.Millisecond) > cachedAt) {
+	if hasEntry && !(float64(now.UnixMilli())-float64(officialModelsTTL/time.Millisecond) >= cachedAt) {
 		return cached, nil
 	}
 	lockKey := s.Packed.Prefix + "cache-lock:" + key
@@ -81,8 +81,6 @@ func (s *Sources) OfficialModels(ctx context.Context) ([]OfficialModel, error) {
 			return s.officialFetch(ctx)
 		case !got && hasEntry:
 			return cached, nil
-		case !got:
-			return []OfficialModel{}, nil
 		}
 		defer s.releaseLocks(context.WithoutCancel(ctx), []string{lockKey})
 		list, err := s.officialFetch(ctx)
