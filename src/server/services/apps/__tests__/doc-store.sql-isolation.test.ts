@@ -402,6 +402,9 @@ describe('only the doc-store module touches the appdata tables', () => {
     // Reads back the rating columns a publish under content levels left on each copy.
     'server/services/apps/__tests__/doc-store.publish.levels.pglite.test.ts',
     'server/services/apps/__tests__/doc-store.publish.pg.test.ts',
+    // Reads back the record_id the column default gave each write, and seeds rows with none for
+    // the backfill.
+    'server/services/apps/__tests__/doc-store.record-id.pglite.test.ts',
     // Deletes a usage_app row directly to stand in for a write that overlapped a purge.
     'server/services/apps/__tests__/doc-store.review-namespaces.test.ts',
     'server/services/apps/__tests__/doc-store.rls.ts',
