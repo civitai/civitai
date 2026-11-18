@@ -13,7 +13,14 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
     <Group className={classes.filtersWrapper} gap={8} wrap="nowrap" {...groupProps}>
       {currentUser && <FollowedFilter type="videos" variant="button" />}
       <SortFilter type="videos" />
-      <MediaFiltersDropdown w="100%" filterType="videos" hideMediaTypes size="compact-sm" isFeed />
+      <MediaFiltersDropdown
+        w="100%"
+        filterType="videos"
+        hideMediaTypes
+        size="compact-sm"
+        isFeed
+        showTags
+      />
     </Group>
   );
 }

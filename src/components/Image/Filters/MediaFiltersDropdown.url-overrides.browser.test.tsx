@@ -17,6 +17,14 @@ vi.mock('~/components/Technique/TechniqueMultiSelect', () => ({
 vi.mock('~/components/SfwOnlyBadge/BaseModelFilterSelect', () => ({
   BaseModelFilterSelect: () => null,
 }));
+// The picker looks names up over trpc; a stand-in shows the ids it holds and adds one.
+vi.mock('~/components/Image/Filters/FeedTagFilter', () => ({
+  FeedTagFilter: ({ value, onChange }: { value: number[]; onChange: (ids: number[]) => void }) => (
+    <button type="button" onClick={() => onChange([...value, 42])}>
+      tags:{value.join(',')}
+    </button>
+  ),
+}));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useIsMobile: () => false,
@@ -116,6 +124,53 @@ describe('a dropdown backed by its own query', () => {
     await page.getByRole('button', { name: 'Apply filters' }).click();
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ period: 'Day' }));
+    expect(Router.replace).not.toHaveBeenCalled();
+  });
+});
+
+// `?tags=` has no store field: the dropdown stages it with the rest and writes it back to the URL,
+// where the feed, the tag bar and the feed's search all read it.
+describe("the main feed dropdown's tag filter", () => {
+  const renderFeed = (showTags = true) =>
+    renderWithProviders(
+      <FiltersProvider>
+        <MediaFiltersDropdown filterType="images" isFeed showTags={showTags} />
+      </FiltersProvider>
+    );
+
+  beforeEach(() => {
+    Router.query = { tags: ['5'], query: 'cats' };
+  });
+
+  test('starts from the tags the URL filters by and writes the change back on Apply', async () => {
+    renderFeed();
+    await openFilters();
+    await page.getByRole('button', { name: 'tags:5' }).click();
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+
+    expect(Router.replace).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(Router.replace).mock.calls[0][0]).toMatchObject({
+      query: { tags: [5, 42], query: 'cats' },
+    });
+  });
+
+  test('Clear drops the tags from the URL and keeps the search', async () => {
+    renderFeed();
+    await openFilters();
+    await page.getByRole('button', { name: 'Clear all filters' }).click();
+
+    const { query } = vi.mocked(Router.replace).mock.calls[0][0] as { query: object };
+    expect(query).toMatchObject({ query: 'cats' });
+    expect(query).not.toHaveProperty('tags');
+  });
+
+  test('is not offered, and the URL tags are left alone, without showTags', async () => {
+    renderFeed(false);
+    await openFilters();
+    await page.getByRole('radio', { name: 'Day' }).click();
+    await page.getByRole('button', { name: 'Apply filters' }).click();
+
+    expect(page.getByRole('button', { name: /^tags:/ }).query()).toBeNull();
     expect(Router.replace).not.toHaveBeenCalled();
   });
 });
