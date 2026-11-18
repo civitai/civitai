@@ -61,8 +61,7 @@ export const COM_VERSION_TEXT_STEPS_PER_WORKFLOW = 20;
 export const COM_VERSION_TEXT_WORKFLOWS_PER_RUN = 20;
 /** So one model with many strings cannot take a whole run from the others. */
 export const COM_VERSION_TEXT_WORKFLOWS_PER_MODEL_RUN = 5;
-/** One rating per burst of edits: a model is rated once its owner has stopped editing this long
- * (same pacing as the .com face restore check). */
+/** One rating per burst of edits: rated once the owner has stopped editing this long. */
 export const COM_VERSION_TEXT_QUIET_MS = COM_FACE_RESTORE_QUIET_MS;
 export const COM_VERSION_TEXT_RUN_BUDGET_MS = COM_FACE_RUN_BUDGET_MS;
 export const COM_VERSION_TEXT_SWEEP_LIMIT = 500;
@@ -500,7 +499,10 @@ export const comVersionTextPruneSql = () => Prisma.sql`
       SELECT 1
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.id::text = substr(kv.key, ${VERDICT_PREFIX.length + 1})
+      WHERE mv.id = CASE
+          WHEN substr(kv.key, ${VERDICT_PREFIX.length + 1}) ~ '^[0-9]{1,18}$'
+          THEN substr(kv.key, ${VERDICT_PREFIX.length + 1})::bigint
+        END
         AND m."sfwName" IS NOT NULL
         AND m."deletedAt" IS NULL
         AND mv.status = 'Published'

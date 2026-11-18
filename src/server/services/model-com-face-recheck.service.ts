@@ -363,7 +363,7 @@ export async function processComFaceRestores(now = new Date(), budgetMs = COM_FA
 }
 
 export const comFaceRecheckRetryKey = (modelId: number) => `${RETRY_KEY_PREFIX}${modelId}`;
-/** The backoff after a run that made no progress; the version text queue paces the same way. */
+/** The backoff after a run that made no progress. */
 export const comFaceRetryDelay = (attempt: number) =>
   backoffDelay(attempt - 1, {
     baseMs: COM_FACE_RECHECK_FIRST_DELAY_MS,

@@ -757,9 +757,14 @@ describe('sweepComFaceVersionText', () => {
     });
     await rateComFaceVersionText(MODEL_ID);
     await db.query(`UPDATE "ModelVersion" SET status = 'Unpublished' WHERE id = 2`);
+    // A malformed key in the namespace is dropped, and does not fail the cast.
+    await db.query(`INSERT INTO "KeyValue" VALUES ('com-face-version-text:v:1x', '{}')`);
     await sweepComFaceVersionText();
     expect(await verdicts(1)).toBeDefined();
     expect(await verdicts(2)).toBeUndefined();
+    expect(
+      await rows(`SELECT key FROM "KeyValue" WHERE key = 'com-face-version-text:v:1x'`)
+    ).toEqual([]);
   });
 
   it('drops every verdict of a deleted model', async () => {
