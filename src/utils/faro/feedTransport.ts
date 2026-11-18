@@ -5,30 +5,14 @@ import type { AppRouter } from '~/server/routers';
 import { GO_TRANSPORT_PROCEDURES } from '~/utils/trpc-go-transport';
 
 /**
- * Real-user latency of the ported feed procedures (`GO_TRANSPORT_PROCEDURES`), per transport, so
- * the Go service and Node can be compared on what users actually wait for across the ramp cohort.
+ * One Faro `feed_transport` measurement per request of a ported feed procedure
+ * (`GO_TRANSPORT_PROCEDURES`): `feed_transport_ms`, context `procedure`, `transport`, `outcome`,
+ * `authed`, and `status` on an `http_error` whose status is known.
  *
- * WHAT: one Faro measurement per request of a ported procedure —
- *   `type=feed_transport`, value `feed_transport_ms` (link start → result or error), context
- *   `procedure`, `transport` (`go` | `node`), `outcome` (`ok` | `http_error` | `network_error`),
- *   `authed` (`true` | `false`), and `status` on an `http_error` whose status is known.
- *
- * `transport` is STRUCTURAL, not re-derived: `~/utils/trpc` puts this link inside each branch of
- * its `shouldUseGoTransport` split, `go` in the `/api/trpc-go` branch and `node` in the other, so
- * the tag is the link the request left on. `go` means "sent to the Go path"; which service the
- * edge hands it to is the edge's cohort. Requests of the same procedures that stay on `/api/trpc`
- * (flag off, signed out, an input sent as POST) are the `node` arm. `authed` separates the
- * signed-out node traffic, which can never be on the Go path, from the comparable arm.
- *
- * NOT recorded: an aborted request (the query was cancelled; neither arm's latency), any other
- * procedure, anything outside the browser. No input, URL or user value is in the beacon. Volume:
- * the measurement rides Faro's own session sampling and `beforeSend` scrub; `skipDedupe` keeps two
- * identical timings from being collapsed into one by Faro's consecutive-payload dedupe.
- *
- * WHERE IT LANDS — a Faro measurement is a `kind=measurement` logfmt line on the faro-rum stream:
- * `type=feed_transport value_feed_transport_ms=<ms> context_procedure=<p> context_transport=<t>
- * context_outcome=<o> context_authed=<a>`, plus the session's `session_attr_exp_feed_go_*` cohort
- * (`~/utils/faro/experimentFlags`).
+ * `transport` is STRUCTURAL: `~/utils/trpc` puts this link inside each branch of its
+ * `shouldUseGoTransport` split, so the tag is the link the request left on, never a re-derived
+ * predicate. `authed` separates signed-out traffic, which can never take the Go path, from the
+ * comparable arm. An aborted request is not recorded: a cancel is neither arm's latency.
  */
 
 /** Faro measurement type (→ Loki `type=feed_transport`). */
@@ -125,6 +109,7 @@ export function feedTransportTimingLink(options: FeedTransportTimingOptions): TR
             if (status !== undefined) context.status = String(status);
             push(
               { type: FEED_TRANSPORT_MEASUREMENT, values: { feed_transport_ms: now() - start } },
+              // skipDedupe: two equal timings are two requests, not one repeated beacon.
               { skipDedupe: true, context }
             );
           } catch {

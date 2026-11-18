@@ -63,15 +63,9 @@ import { createPerSecondBuckets, envNumber } from '~/server/utils/shadow-sampler
  * a further `FEED_GO_GOFIRST_PROBE_SAMPLE_RATE` fraction of them (default 0: off), takes its own
  * slot under the shared in-flight cap, and has the shadow timeout.
  *
- * Trace context: every POST (shadow and probe) carries the W3C `traceparent` of the request that was
- * sampled (`traceContextHeaders`), so feed-go's spans join the request's trace. It is read once, in
- * `begin` / `beginRest`, inside the request's context, and kept on the sample: the shadow POST is
- * sent from `setImmediate` after the response, and the probe and the shadow POST of one request name
- * the same parent (under suppressed tracing `traceContextHeaders` mints a fresh unsampled one per
- * call). No active span: no header, exactly as before. The request's span is marked
- * `feed_go.shadow_sampled=true` + `feed_go.endpoint=<endpoint>` when the request is selected (a REST
- * sample can still be dropped by the bounds in `finish`; the outcome counter has that), and
- * `feed_go.probed=true` when its probe POST is started, so a trace query can find mirrored requests.
+ * Trace context: the request's `traceparent` is captured in `begin` / `beginRest`, because the shadow
+ * POST runs from `setImmediate`, outside the request's context. The request span gets
+ * `feed_go.shadow_sampled`, `feed_go.endpoint` and, once probed, `feed_go.probed`.
  */
 
 export const FEED_GO_SHADOW_PROCEDURE = 'image.getImagesAsPostsInfinite';
@@ -311,7 +305,7 @@ export type FeedGoShadowSample = {
   headers: Record<string, string>;
   /** When the route began the request, epoch milliseconds (fractional); the probe sends it. */
   startedAt?: number;
-  /** The W3C trace-context headers of the sampled request, sent on its POSTs (see the module doc). */
+  /** The sampled request's trace-context headers, sent on its POSTs. */
   traceHeaders?: Record<string, string>;
   /** Whether the Go-first probe was already started for this sample (at most once). */
   probed?: boolean;
@@ -453,11 +447,7 @@ export function createFeedGoShadow(deps: FeedGoShadowDeps) {
     }
   }
 
-  /**
-   * For a request just selected: mark its span (`feed_go.shadow_sampled`, `feed_go.endpoint`) and
-   * return its trace-context headers for the POSTs. Both read the ACTIVE context, so call it from
-   * `begin` / `beginRest`, on the request path. Never throws (both helpers are total).
-   */
+  /** Reads the ACTIVE context: call it on the request path. */
   function traceSampled(endpoint: FeedGoShadowEndpoint): Record<string, string> {
     setActiveSpanAttributes({ 'feed_go.shadow_sampled': true, 'feed_go.endpoint': endpoint });
     return traceContextHeaders();

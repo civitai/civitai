@@ -28,7 +28,14 @@ vi.mock('@grafana/faro-web-sdk', async (importOriginal) => ({
 type Sent = { url: string; method: string };
 let sent: Sent[] = [];
 /** What the stubbed fetch answers; `elapsedMs` is how far the fake clock moves while it "waits". */
-let reply: { status: number; body: string; elapsedMs: number; reject?: Error } = {
+let reply: {
+  status: number;
+  body: string;
+  elapsedMs: number;
+  reject?: Error;
+  /** Never answer; reject with the signal's reason once the request is aborted (as fetch does). */
+  hang?: boolean;
+} = {
   status: 200,
   body: '',
   elapsedMs: 0,
@@ -68,6 +75,13 @@ beforeEach(() => {
       sent.push({ url: String(url), method: (init?.method ?? 'GET').toUpperCase() });
       vi.advanceTimersByTime(reply.elapsedMs);
       if (reply.reject) throw reply.reject;
+      if (reply.hang) {
+        const signal = init?.signal;
+        await new Promise((_, reject) => {
+          if (!signal) return;
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      }
       return new Response(reply.body, {
         status: reply.status,
         headers: { 'content-type': 'application/json' },
@@ -85,12 +99,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function callQuery(path: string, input: Record<string, unknown>): Promise<void> {
+async function callQuery(
+  path: string,
+  input: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let node: any = trpcVanilla;
   for (const segment of path.split('.')) node = node[segment];
   try {
-    await node.query(input);
+    await node.query(input, signal ? { signal } : undefined);
   } catch {
     // Only the request and the measurement matter.
   }
@@ -272,6 +290,23 @@ describe('feed_transport measurement: outcome', () => {
         },
       ],
     ]);
+  });
+
+  it('a query aborted while its fetch is pending is NOT recorded (the cancel is no latency)', async () => {
+    browser(true);
+    setFeedGoTransportModelGetAllEnabled(true);
+    reply = { status: 0, body: '', elapsedMs: 31, hang: true };
+    const ac = new AbortController();
+    const pending = callQuery(MODELS, MODELS_INPUT, ac.signal);
+    // Abort only once the request is on the wire (tRPC resolves headers before calling fetch).
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    ac.abort();
+    await pending;
+
+    expect(sent[0].url).toContain('/api/trpc-go/model.getAll?');
+    expect(pushes()).toHaveLength(0);
+    // Negative control for this case: a fetch that rejects WITHOUT an abort is recorded
+    // (`network_error`, the case above), so the zero here is the abort rule, not a dead link.
   });
 });
 

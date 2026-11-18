@@ -402,8 +402,7 @@ function terminatingLink({
     }),
     false: httpLinkWithLargeQuerySupport({ url, headers }),
   });
-  // `feed_transport` RUM timing (`~/utils/faro/feedTransport`): one timing link INSIDE each branch,
-  // so the transport tag is the branch the request actually took, never a re-derived predicate.
+  // A timing link inside each branch: its transport tag is the branch taken (feedTransport.ts).
   return splitLink({
     condition: shouldUseGoTransport,
     true: [
