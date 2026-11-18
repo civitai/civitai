@@ -27,14 +27,24 @@ ordinary vote in every way a player can see.
   It changes only `status`, never deletes, and is a dry run without `--apply` (local database only). For a run
   elsewhere, `--print-sql` prints the SELECT of the ids to retire, and `--print-sql --ids <ids>` a transaction that retires exactly
   those ids and commits only if it retired all of them, both with their values written in.
+- Probation (`trials/agreement-intake.service.ts`, `trials/probation.service.ts`, both run by the harvest job): a
+  Knight-stage verdict that 3 or more players gave unanimously, was written back, was not re-rated by a moderator since, and
+  whose image is still servable and locked at that level becomes a `probation` check (source `agreement`), newest first, up
+  to `AGREEMENT_INTAKE.probationPerLevel` live agreement checks per level bucket; intake pauses with `KNIGHTS_HARVEST`. A
+  probation check grades nobody: its answer is settled `inconclusive` when it is cast. Once `KEEP_MIN_PLAYERS` players
+  answered it (not counting anyone who also voted on its image in the queue) it becomes `active` if most of them gave its
+  answer, else it is retired; the same review retires an active harvested or agreement check most of its players disagree
+  with. It runs even while the harvest is paused. `core` is exempt (`EXEMPT_SOURCES`).
 
 - The draw (`pickHiddenCheck`) is balanced across level buckets: each bucket (the reference's `answer`: PG, PG-13, R, X,
   XXX, with any other answer as a group of its own) that still has a check the player can take is equally likely, whatever
   its size, so a mostly-PG pool does not mean mostly-PG checks. Inside the bucket it takes the first eligible check from a
   per-player point in the pool's id range. Whether a slot holds a check at all is the same rate roll as before
   (a rate saved on the moderator Config page, else `KNIGHTS_HIDDEN_CHECK_RATE`; every `KNIGHTS_HIDDEN_CHECK_*` setting
-  works this way, see [game settings](knights-sources.md#game-settings)). The bucket order, start point and roll all come from one per-player digest (no random
-  numbers), so the same player and slot always get the same offer.
+  but the probation share works this way, see [game settings](knights-sources.md#game-settings)). The bucket order, start point and roll all come from one per-player digest (no random
+  numbers), so the same player and slot always get the same offer. A second digest from the same seed picks whether
+  probation or active checks are tried first (`KNIGHTS_HIDDEN_CHECK_PROBATION_SHARE`, environment only, default 0: never
+  probation), taking the other when the first has none for the player.
 - Every feed item, check or queue item, is addressed by a sealed token (`feed-token.ts`, key `FEED_TOKEN_SECRET`). The vote action
   opens the token and routes to `castVote` or `answerHiddenCheck`.
 - Both write the same `KnightsVote` row through `insertVote` and `creditVote` (`queue/vote-record.ts`), so XP, pending gold, the

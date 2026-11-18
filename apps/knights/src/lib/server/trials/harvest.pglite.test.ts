@@ -266,7 +266,7 @@ describe('harvest defaults and the job switch', () => {
       now: NOW,
       settings: { paused: true, hiddenCheckShare: 1 },
     });
-    expect(paused).toEqual({ paused: true, retired: 0 });
+    expect(paused).toEqual({ paused: true, retired: 0, probation: { promoted: 0, retired: 0 } });
     expect(await references()).toEqual([]);
     expect(await cursor()).toEqual([]);
 
@@ -333,7 +333,7 @@ describe('the paused harvest job', () => {
       settings: { paused: true, hiddenCheckShare: 0 },
     });
 
-    expect(result).toEqual({ paused: true, retired: 1 });
+    expect(result).toEqual({ paused: true, retired: 1, probation: { promoted: 0, retired: 0 } });
     expect(await references()).toMatchObject([
       { imageId: 1, status: 'retired' },
       { imageId: 2, status: 'active' },
