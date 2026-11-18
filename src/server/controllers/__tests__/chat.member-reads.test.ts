@@ -152,7 +152,7 @@ describe('isTyping', () => {
         { userId: ME, isOwner: false, status, user: { username: 'me', isModerator: false } },
       ],
     } as never);
-    return isTypingHandler({ input: { chatId: 3, isTyping: true }, ctx });
+    return isTypingHandler({ input: { chatId: 3, userId: ME, isTyping: true }, ctx });
   };
 
   it.each([ChatMemberStatus.Kicked, ChatMemberStatus.Left, ChatMemberStatus.Ignored])(
