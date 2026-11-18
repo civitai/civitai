@@ -55,7 +55,7 @@
     runVersion,
     runVersionLabel,
     selectionFromTotal,
-    sweepCompatible,
+    sweepLabelMode,
     versionOptions,
     type Run,
     type Selection,
@@ -182,21 +182,24 @@
   const selectedInOthers = $derived(otherCards.some((c) => c.type === focused.cardType));
   const modelsExpanded = $derived(showAllModels || selectedInOthers);
   const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
+  const previousCard = $derived(initial ? runCard(initial.runs[0]!) : null);
+  // The mode the Data step will open on for these runs; the flow computes it the same way on Continue.
   const labelMode = $derived(
-    labelModeForCard(
-      initial ? runCard(initial.runs[0]!) : null,
-      runCard(primary),
-      flowLabelMode,
-      datasetLabeled
-    )
+    sweepLabelMode(runs.map(runCard), previousCard, flowLabelMode, datasetLabeled) ??
+      labelModeForCard(previousCard, runCard(primary), flowLabelMode, datasetLabeled)
   );
-  const labelModeNoun = $derived(labelMode === 'tag' ? 'tags' : 'captions');
+  /** Whether `card` could take run `index`'s place with the other runs staying: the whole selection must
+   *  still share a dataset shape and label mode. */
+  function sweepAllows(card: ModelCard, index: number): boolean {
+    const cards = runs.map((r, i) => (i === index ? card : runCard(r)));
+    return sweepLabelMode(cards, previousCard, flowLabelMode, datasetLabeled) !== null;
+  }
   const primaryPairs = $derived(runCard(primary).pairs === true);
   /** Why `card` can't join this sweep — the dataset is shared, so its shape must match. */
   function sweepLockReason(card: ModelCard): string {
     if (!!card.pairs !== primaryPairs)
       return `${card.name} ${card.pairs ? 'trains on before/after pairs' : 'trains on single images'}; your other run doesn't. One dataset can't mix — remove the other run to switch.`;
-    return `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`;
+    return `${card.name} can't train on ${labelMode === 'tag' ? 'tags' : 'captions'} like your other run. One dataset can't mix — remove the other run to switch.`;
   }
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
@@ -275,7 +278,7 @@
   }
 
   function pickBase(card: ModelCard) {
-    if (multi && !sweepCompatible(card, runCard(primary), labelMode)) return; // dataset-shape lock
+    if (multi && !sweepAllows(card, focus)) return; // dataset-shape lock
     if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
     runs = runs.map((r, i) => {
       if (i !== focus) return r;
@@ -301,7 +304,7 @@
   const kohyaFallbackCard = $derived(
     kohyaCards.find(
       (c) =>
-        (!multi || sweepCompatible(c, runCard(primary), labelMode)) &&
+        (!multi || sweepAllows(c, focus)) &&
         !cardUnavailability(c, enabledFlags, serviceStatus.value)
     )
   );
@@ -705,7 +708,7 @@
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
-          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary), labelMode)}
+          {@const locked = multi && !selected && !sweepAllows(card, focus)}
           {@const disabled = locked || (!!down && !selected)}
           {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
           {@const cardPrice = price(card.type)}

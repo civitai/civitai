@@ -20,6 +20,7 @@
     repeatsOf,
     selectionTakesRepeats,
     labelModeForCard,
+    sweepLabelMode,
     labelString,
     runCard,
     runParamsKey,
@@ -430,12 +431,10 @@
         if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
           presetType = sel.loraType;
         selection = sel;
-        labelMode = labelModeForCard(
-          previous,
-          runCard(sel.runs[0]!),
-          labelMode,
-          images.some(isLabeled)
-        );
+        const labeled = images.some(isLabeled);
+        labelMode =
+          sweepLabelMode(sel.runs.map(runCard), previous, labelMode, labeled) ??
+          labelModeForCard(previous, runCard(sel.runs[0]!), labelMode, labeled);
         step = 2;
       }}
     />

@@ -834,15 +834,20 @@ export function submittedPrompts(texts: string[]): string[] {
  *  Select step won't mix them, since the two datasets don't share a shape. */
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
-/** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
- *  its label format and on whether it is pairs. `mode` is the format the dataset is actually in — a
- *  `bothLabels` lead can sit on its non-default format, which a caption-only model can't take. */
-export function sweepCompatible(
-  card: ModelCard,
-  primary: ModelCard,
-  mode: LabelType = primary.label
-): boolean {
-  return labelOptions(card).includes(mode) && !!card.pairs === !!primary.pairs;
+/** The label mode one dataset can use for every run in `cards` (the sweep), or null when they can't share
+ *  one: pairs and single-image models don't mix, and a caption-only model can't take tags (nor a tag-only
+ *  model captions). The lead decides the mode as `labelModeForCard` would. Select calls it on the selection a
+ *  pick or removal WOULD produce, so a change to the first run is checked against every other run. */
+export function sweepLabelMode(
+  cards: ModelCard[],
+  previous: ModelCard | null,
+  current: LabelType,
+  datasetLabeled: boolean
+): LabelType | null {
+  const lead = cards[0];
+  if (!lead || cards.some((c) => !!c.pairs !== !!lead.pairs)) return null;
+  const mode = labelModeForCard(previous, lead, current, datasetLabeled);
+  return cards.every((c) => labelOptions(c).includes(mode)) ? mode : null;
 }
 
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to

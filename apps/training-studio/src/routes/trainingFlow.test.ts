@@ -26,7 +26,7 @@ import {
   nextImgId,
   numberInputValue,
   labelModeForCard,
-  sweepCompatible,
+  sweepLabelMode,
   labelOptions,
   optimizerLrParams,
   teLocked,
@@ -1042,11 +1042,30 @@ describe('Krea 2 label modes', () => {
     const krea = cardByType('krea2')!;
     const flux = cardByType('flux')!;
     const sdxl = cardByType('sdxl')!;
-    expect(sweepCompatible(flux, krea, 'tag')).toBe(false);
-    expect(sweepCompatible(sdxl, krea, 'tag')).toBe(true);
-    expect(sweepCompatible(flux, krea, 'caption')).toBe(true);
-    expect(sweepCompatible(sdxl, krea, 'caption')).toBe(false);
-    // no mode given: the lead's default
-    expect(sweepCompatible(flux, krea)).toBe(true);
+    // Krea 2 on tags (kept: same model), then the caption-only Flux
+    expect(sweepLabelMode([krea, flux], krea, 'tag', false)).toBeNull();
+    expect(sweepLabelMode([krea, sdxl], krea, 'tag', false)).toBe('tag');
+    // fresh on captions
+    expect(sweepLabelMode([krea, flux], null, 'tag', false)).toBe('caption');
+    expect(sweepLabelMode([krea, sdxl], null, 'tag', false)).toBeNull();
+  });
+
+  it('refuses to mix pairs and single-image models', () => {
+    const krea = cardByType('krea2')!;
+    const pairsCard = MODEL_CARDS.find((c) => c.pairs)!;
+    expect(sweepLabelMode([krea, pairsCard], null, 'caption', false)).toBeNull();
+    expect(sweepLabelMode([pairsCard, krea], null, 'caption', false)).toBeNull();
+  });
+
+  it('checks every run against the mode a new first run would set', () => {
+    const krea = cardByType('krea2')!;
+    const anima = cardByType('anima')!;
+    const flux = cardByType('flux')!;
+    // swapping run 1 from Krea 2 to Anima would flip a fresh dataset to tags, which Flux can't take
+    expect(sweepLabelMode([anima, flux], null, 'tag', false)).toBeNull();
+    // a swap that stays valid is allowed: Krea 2 on tags -> Flux leads, mode follows to captions
+    expect(sweepLabelMode([flux, krea], krea, 'tag', false)).toBe('caption');
+    // a labeled dataset keeps its format across the swap
+    expect(sweepLabelMode([anima, krea], krea, 'caption', true)).toBe('caption');
   });
 });
