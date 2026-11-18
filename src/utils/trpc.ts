@@ -252,6 +252,7 @@ export const CACHEABLE_PROCEDURES: ReadonlySet<string> = new Set([
   'hatTurf.getFlagRaceTotals',
   'hatTurf.getFlags',
   'hatTurf.getOpenFlagCrucible',
+  'hatTurf.getPastFlags',
   'hatTurf.getStickersForImages',
   'generation.getStatus',
   'homeBlock.getHomeBlock',

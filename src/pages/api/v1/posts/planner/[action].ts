@@ -56,8 +56,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
 
 // One wrapper per method so an action's CORS allow-methods names only its own.
 const byMethod = {
-  GET: AuthedEndpoint(handler, ['GET']),
-  POST: AuthedEndpoint(handler, ['POST']),
+  GET: AuthedEndpoint(handler, ['GET'], { scope: 'defer' }),
+  POST: AuthedEndpoint(handler, ['POST'], { scope: 'defer' }),
 };
 
 export default function plannerRoute(req: NextApiRequest, res: NextApiResponse) {
