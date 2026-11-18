@@ -57,7 +57,26 @@ function emit(name: string, source: string) {
   );
 }
 
+/** The client build, for what server rendering cannot show: a promise that has settled. */
+function clientEntry(spec: string): string {
+  let e = pkg.exports['.' + spec.slice('svelte'.length)];
+  while (e && typeof e === 'object') e = e.browser ?? e.default;
+  return pathToFileURL(path.join(SVELTE, e)).href;
+}
+
+function emitClient(name: string, source: string) {
+  const { js } = compile(source, { generate: 'client', filename: `${name}.svelte` });
+  writeFileSync(
+    path.join(work, 'client', `${name}.js`),
+    js.code.replace(
+      /(from |import )['"](svelte[^'"]*)['"]/g,
+      (_: string, k: string, s: string) => `${k}'${clientEntry(s)}'`
+    )
+  );
+}
+
 let Actions: unknown;
+let ClientActions: unknown;
 let render: (c: unknown, o: { props: unknown }) => { body: string };
 
 beforeAll(async () => {
@@ -71,6 +90,14 @@ beforeAll(async () => {
     source = source.replace(from, to);
   }
   emit('ReviewActions', source);
+  mkdirSync(path.join(work, 'client'));
+  for (const [name, stub] of Object.entries(STUBS)) emitClient(name, stub);
+  emitClient('ReviewActions', source);
+  ClientActions = (
+    await import(
+      /* @vite-ignore */ pathToFileURL(path.join(work, 'client', 'ReviewActions.js')).href
+    )
+  ).default;
   Actions = (
     await import(/* @vite-ignore */ pathToFileURL(path.join(work, 'ReviewActions.js')).href)
   ).default;
@@ -109,6 +136,27 @@ describe('the version review actions', () => {
     const page = show({ state: 'unknown', reason: 'The orchestrator did not answer.' });
     expect(page).toMatchObject({ approve: false, deny: false });
     expect(page.text).toContain('The orchestrator did not answer.');
+  });
+
+  it('keeps Approve and Deny, and says so, when the gate check rejects', async () => {
+    const { mount, unmount, tick } = await import(/* @vite-ignore */ clientEntry('svelte'));
+    const gate = Promise.reject(new Error('read failed'));
+    gate.catch(() => {});
+    document.body.innerHTML = '';
+    const app = mount(ClientActions, {
+      target: document.body,
+      props: { gate, modelHref: '/models/1', csamContents: {}, canReportCsam: false },
+    });
+    await gate.catch(() => {});
+    await tick();
+    const button = (label: string) =>
+      [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
+    expect({ approve: button('Approve')?.disabled, deny: button('Deny')?.disabled }).toEqual({
+      approve: false,
+      deny: false,
+    });
+    expect(document.body.textContent).toContain('The gate could not be checked.');
+    unmount(app);
   });
 
   it('holds Approve and Deny while the check is in flight', () => {

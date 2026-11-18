@@ -73,7 +73,7 @@
 {#if data.closed.length}
   <details class="mt-6">
     <summary class="cursor-pointer text-sm text-dark-2">
-      Gate closed, no action ({data.closed.length.toLocaleString()})
+      Not under review, no action ({data.closed.length.toLocaleString()})
     </summary>
     <ul class="mt-3 flex flex-col gap-3">
       {#each data.closed as item (item.id)}

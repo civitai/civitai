@@ -112,13 +112,13 @@ describe('the training data review page', () => {
     expect(page).toContain('may have no workflow left, or be under review');
   });
 
-  it('lists a row whose gate is closed apart, with its reason and no Review button', () => {
+  it('lists a row not under review apart, with its reason and no Review button', () => {
     const { underReview: _u, checked: _c, ...closedRow } = row(3, false, true);
     const page = header({
       unanswered: false,
       closed: [{ ...closedRow, reason: 'The gate is not under review (run: succeeded).' }],
     });
-    expect(page).toContain('Gate closed, no action (1)');
+    expect(page).toContain('Not under review, no action (1)');
     expect(page).toContain('The gate is not under review (run: succeeded).');
     expect(page).toMatch(/href="\/audit\/training-data\/3"[^>]*>View</);
     expect(page.match(/>Review</g)).toHaveLength(2);
