@@ -31,7 +31,12 @@
   class:calm={tone === 'calm'}
   role="status"
   aria-label="The Order's ruling"
-  use:autoHide={{ ms: RULING_AUTO_HIDE_MS, onhide: () => form?.requestSubmit(), focus: 'button[type="submit"]' }}
+  use:autoHide={{
+    ms: RULING_AUTO_HIDE_MS,
+    onhide: () => form?.requestSubmit(),
+    focus: 'button[type="submit"]',
+    held: !!message,
+  }}
 >
   <div class="toast-body">
     {#each notices as notice (notice.key)}

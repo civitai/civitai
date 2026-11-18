@@ -2,6 +2,7 @@ import { applyAction } from '$app/forms';
 import { untrack } from 'svelte';
 import {
   dismissFailedOn,
+  dismissHolding,
   dismissShowing,
   optimisticDismiss,
   syncDismiss,
@@ -23,6 +24,10 @@ export function dismissible(key: () => string | null, failure: Record<string, un
   return {
     get showing() {
       return dismissShowing(current, state);
+    },
+    /** Showing, or hidden with its dismissal still unanswered. */
+    get holding() {
+      return dismissHolding(current, state);
     },
     get failed() {
       return dismissFailedOn(state, current);

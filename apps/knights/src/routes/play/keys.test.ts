@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RULING_AUTO_HIDE_MS, createAutoHide } from '$lib/auto-hide';
 import { closeDismiss, dismissShowing, type DismissState } from '$lib/optimistic-dismiss';
-import { answerForKey, answerForKeyPress, keyHints, optionsOnScreen, spaceSkips } from './keys';
+import {
+  answerForKey,
+  answerForKeyPress,
+  keyHints,
+  optionsOnScreen,
+  spaceSkips,
+  swallowsSpace,
+} from './keys';
 
 const options = [
   { value: '1', label: 'PG' },
@@ -141,5 +148,13 @@ describe('a ruling left alone', () => {
     expect(keys()).toBeNull();
     vi.advanceTimersByTime(1);
     expect(keys()).toBe(options);
+  });
+});
+
+describe('Space with a ruling up', () => {
+  it('is swallowed, so it does not press the focused Understood; Enter is left to dismiss it', () => {
+    expect(swallowsSpace({ question: { options }, rulingPending: true }, ' ')).toBe(true);
+    expect(swallowsSpace({ question: { options }, rulingPending: true }, 'Enter')).toBe(false);
+    expect(swallowsSpace({ question: { options }, rulingPending: false }, ' ')).toBe(false);
   });
 });

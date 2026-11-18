@@ -21,7 +21,7 @@
   import { heartsLeft, landVote, pendingVotes, watchStrip, withVotesSent } from '$lib/chrome';
   import { leaveAction, watchInProgress } from '$lib/leave-guard';
   import PlayRail from './PlayRail.svelte';
-  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips } from './keys';
+  import { answerForKey, answerForKeyPress, optionsOnScreen, spaceSkips, swallowsSpace } from './keys';
   import { votesSent } from '$lib/votes-sent.svelte';
   import { whatsNewView } from '$lib/whats-new-dismiss.svelte';
   import { dismissible } from '$lib/optimistic-dismiss.svelte';
@@ -79,7 +79,7 @@
     () => (data.notices.length > 0 ? data.notices.map((notice) => notice.key).join(' ') : null),
     { noticeFailed: true }
   );
-  let rulingPending = $derived(rulingNotice.showing);
+  let rulingPending = $derived(rulingNotice.holding);
   const careerReset = dismissible(() => (data.resetNotice ? 'reset' : null), { resetNoticeFailed: true });
   // A dialog is up: it owns the keyboard, so the answer keys and Space do nothing behind it.
   const whatsNew = whatsNewView();
@@ -121,6 +121,10 @@
       rulingPending,
     };
     const options = optionsOnScreen(screen);
+    if (!dialogOpen && swallowsSpace(screen, event.key)) {
+      event.preventDefault();
+      return;
+    }
     if (event.repeat || dialogOpen || !options || submitting) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
@@ -614,7 +618,8 @@
 {/snippet}
 
 {#snippet ruling(anchored: boolean)}
-  {#if rulingPending}
+  <!-- Not drawn under a dialog, so its auto-hide never runs unseen; the answers stay held meanwhile. -->
+  {#if rulingNotice.showing && !dialogOpen}
     <RulingToast
       notices={data.notices}
       message={form?.noticeFailed && rulingNotice.failed ? form.message : null}

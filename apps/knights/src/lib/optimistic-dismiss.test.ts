@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DISMISS_FAILED } from './notice-copy';
 import {
   dismissFailedOn,
+  dismissHolding,
   dismissShowing,
   optimisticDismiss,
   type DismissState,
@@ -65,5 +66,23 @@ describe('optimisticDismiss', () => {
       status: 500,
       data: { message: DISMISS_FAILED, noticeFailed: true },
     });
+  });
+
+  it('keeps holding until the server answers: hidden at once, released on success', async () => {
+    const { state, submit } = setup();
+    const { answer } = post(submit);
+    expect(dismissShowing('ruling', state)).toBe(false);
+    expect(dismissHolding('ruling', state)).toBe(true);
+    await answer({ type: 'success' });
+    expect(dismissHolding('ruling', state)).toBe(false);
+  });
+
+  it('a refused dismissal shows the notice again and keeps holding', async () => {
+    const { state, submit } = setup();
+    const { answer, update } = post(submit);
+    update.mockResolvedValue(undefined);
+    await answer({ type: 'failure' });
+    expect(dismissShowing('ruling', state)).toBe(true);
+    expect(dismissHolding('ruling', state)).toBe(true);
   });
 });

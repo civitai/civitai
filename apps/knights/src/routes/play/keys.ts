@@ -29,6 +29,10 @@ export function optionsOnScreen({ question, apprentice, rulingPending }: Screen)
   return apprentice?.kind === 'question' ? apprentice.options ?? null : null;
 }
 
+/** With a ruling up, Space would press its focused Understood; only Enter (or a click) dismisses it. */
+export const swallowsSpace = ({ rulingPending }: Screen, key: string): boolean =>
+  !!rulingPending && key === ' ';
+
 /** Space skips a queue item; in the apprenticeship (no skip) it stays the browser's, pressing a focused button. */
 export const spaceSkips = ({ question, rulingPending }: Screen): boolean =>
   !!question && !rulingPending;

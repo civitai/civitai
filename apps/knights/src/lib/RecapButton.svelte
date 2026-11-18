@@ -14,6 +14,8 @@
   let loading = $state(false);
   // Closed at once; `loaded` is kept until the day is recorded, so a refused post brings the same recap back.
   const dismiss = $state<DismissState>({ closed: null, failed: null });
+  // Bumped on every open and post, so a late answer to an earlier post cannot close or fault a recap opened since.
+  let request = 0;
   let message = $state<string | null>(null);
   let failed = $state(false);
 
@@ -21,6 +23,7 @@
   async function show() {
     if (loading) return;
     loading = true;
+    request += 1;
     syncDismiss(dismiss, null);
     message = null;
     failed = false;
@@ -48,15 +51,18 @@
       return;
     }
     closeDismiss(dismiss, 'recap');
+    const mine = ++request;
     fetch('/recap', { method: 'POST', body: formData })
       .then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
+        if (mine !== request) return;
         settleDismiss(dismiss, 'recap', true);
         loaded = null;
         await invalidate('app:recap');
         if (begin && page.url.pathname !== '/play') await goto('/play');
       })
       .catch(() => {
+        if (mine !== request) return;
         settleDismiss(dismiss, 'recap', false);
         message = 'Could not save that. Try again.';
       });

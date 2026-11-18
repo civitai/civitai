@@ -33,7 +33,7 @@
   class:floating
   role="status"
   aria-label="Level up"
-  use:autoHide={{ ms: LEVEL_AUTO_HIDE_MS, onhide: () => form?.requestSubmit() }}
+  use:autoHide={{ ms: LEVEL_AUTO_HIDE_MS, onhide: () => form?.requestSubmit(), held: !!message }}
 >
   <span class="ov-crest crest">{level}</span>
   <div class="body">
