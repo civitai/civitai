@@ -2400,6 +2400,7 @@ const getAllImagesUncaptured = async (
     hidden,
     followed,
     fromPlatform,
+    requiringMeta,
     user,
     pending,
     publishedOnly,
@@ -3042,9 +3043,15 @@ const getAllImagesUncaptured = async (
         AND.push(Prisma.sql`(i."acceptableMinor" = FALSE OR i."userId" = ${ownerId})`);
       } else AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     }
-    if (browsingLevel)
-      AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
-    AND.push(imageReviewedSql());
+    if (requiringMeta) {
+      // Blocked until the owner verifies them: ingestion and level read Blocked, so the gates below
+      // would drop every one. `imageBlockedForConditions` keeps them to their owner and moderators.
+      AND.push(Prisma.sql`i."blockedFor" = ${BlockedReason.AiNotVerified}`);
+    } else {
+      if (browsingLevel)
+        AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+      AND.push(imageReviewedSql());
+    }
   }
 
   // TODO: Adjust ImageMetric

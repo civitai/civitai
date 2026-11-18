@@ -90,3 +90,37 @@ describe('getAllImages blockedFor exclusion', () => {
     expect(await blockedForClauses({ id: STRANGER, isModerator: true })).toEqual([]);
   });
 });
+
+describe('getAllImages requiringMeta', () => {
+  async function statement(requiringMeta: boolean) {
+    await getAllImages({
+      asModerator: true,
+      asOwner: true,
+      limit: 20,
+      period: 'AllTime',
+      periodMode: 'published',
+      sort: 'Newest',
+      browsingLevel: 1,
+      include: [],
+      user: { id: OWNER, isModerator: false },
+      userId: OWNER,
+      requiringMeta,
+    } as unknown as Parameters<typeof getAllImages>[0]).catch(() => undefined);
+    return queryWithTimeoutMock.mock.calls[0][2] as { text: string; values: unknown[] };
+  }
+
+  // A metadata-blocked image is stored Blocked at the Blocked level, so the feed's own level and
+  // ingestion gates would answer this filter with nothing.
+  it("lists the owner's images blocked for missing metadata, past the level and ingestion gates", async () => {
+    const stmt = await statement(true);
+    const match = stmt.text.match(/i\."blockedFor" = \$(\d+)/);
+    expect(match).not.toBeNull();
+    expect(stmt.values[Number(match![1]) - 1]).toBe('AiNotVerified');
+    expect(stmt.text).not.toContain('"nsfwLevel" != 0');
+    expect(stmt.text).not.toMatch(/"ingestion" = \$\d+::"ImageIngestionStatus"/);
+  });
+
+  it('keeps the level gate without the filter', async () => {
+    expect((await statement(false)).text).toContain('"nsfwLevel" != 0');
+  });
+});

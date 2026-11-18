@@ -434,9 +434,12 @@ export function requiresImageDbPath(input: {
   publishedOnly?: boolean | null;
   userId?: number | null;
   hidden?: boolean | null;
+  requiringMeta?: boolean | null;
 }) {
   return (
     !!input.hidden ||
+    // The feed service has no filter for images blocked until their metadata is verified.
+    (!!input.requiringMeta && !!input.userId) ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
