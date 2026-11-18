@@ -7,6 +7,8 @@ export type Skipped = Record<ItemKind, number[]>;
 export type SkipStore = {
   add: (userId: number, ref: ItemRef, now: Date) => Promise<void>;
   list: (userId: number) => Promise<ItemRef[]>;
+  /** Adds the item only when it is not there yet; true when this call added it. */
+  claim: (userId: number, ref: ItemRef, now: Date) => Promise<boolean>;
 };
 
 const KIND_BYTE: Record<ItemKind, string> = { queue: 'q', hidden: 'h', yesno: 'y' };
@@ -31,6 +33,12 @@ redis.call('ZREMRANGEBYRANK', KEYS[1], 0, -(tonumber(ARGV[3]) + 1))
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 return 1`;
 const LIST = `return redis.call('ZRANGE', KEYS[1], 0, -1)`;
+// As ADD, but only for a member not there yet; answers 1 when it added it.
+const CLAIM = `
+local added = redis.call('ZADD', KEYS[1], 'NX', ARGV[2], ARGV[1])
+redis.call('ZREMRANGEBYRANK', KEYS[1], 0, -(tonumber(ARGV[3]) + 1))
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+return added`;
 
 const keyOf = (userId: number) => `knights:skipped:${userId}`;
 
@@ -41,6 +49,13 @@ export function redisSkipStore(client: () => EvalClient): SkipStore {
         keys: [keyOf(userId)],
         arguments: [memberOf(ref), String(now.getTime()), String(KEEP), String(TTL_SECONDS)],
       });
+    },
+    async claim(userId, ref, now) {
+      const added = await client().eval(CLAIM, {
+        keys: [keyOf(userId)],
+        arguments: [memberOf(ref), String(now.getTime()), String(KEEP), String(TTL_SECONDS)],
+      });
+      return Number(added) === 1;
     },
     async list(userId) {
       const members = await client().eval(LIST, { keys: [keyOf(userId)], arguments: [] });
@@ -60,6 +75,12 @@ export function memorySkipStore(): SkipStore {
     },
     async list(userId) {
       return byPlayer.get(userId) ?? [];
+    },
+    async claim(userId, ref) {
+      const refs = byPlayer.get(userId) ?? [];
+      if (refs.some((r) => r.kind === ref.kind && r.id === ref.id)) return false;
+      byPlayer.set(userId, [...refs, ref]);
+      return true;
     },
   };
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   accuracyLine,
   goldToday,
+  pendingGoldVotes,
   neverBelowToday,
   belowBarCue,
   headerDaily,
@@ -389,5 +390,19 @@ describe('neverBelowToday', () => {
   it('starts again on a new UTC day', () => {
     const seen = neverBelowToday({ day: '2026-11-18', value: 900 }, 4, '2026-11-19');
     expect(seen).toEqual({ day: '2026-11-19', value: 4 });
+  });
+});
+
+describe('a vote that counts toward the Watch but pays no gold', () => {
+  it('stays on the Watch once landed, and leaves the gold count', () => {
+    const sent = { count: 2, landed: 0, landedOn: null as number | null, goldless: 0 };
+    const shown = { votes: 4 };
+    landVote(sent, shown, { paysGold: false });
+    landVote(sent, shown);
+
+    expect(pendingVotes(sent, shown)).toBe(2);
+    expect(pendingGoldVotes(sent, shown)).toBe(1);
+    // A refreshed daily holds both; neither is added again.
+    expect(pendingGoldVotes(sent, { votes: 6 })).toBe(0);
   });
 });

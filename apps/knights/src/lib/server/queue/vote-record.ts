@@ -1,4 +1,4 @@
-import { sql, type Transaction } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { asksBlockReason, blockReasonProblem } from '../../block-reasons';
@@ -213,4 +213,39 @@ export async function creditVote(
       .where('userId', '=', input.userId)
       .execute();
   }
+}
+
+/**
+ * Counts a judgment toward the Daily Watch when its item settled before the judgment arrived: no ledger row, no gold, no
+ * XP, but the day's tally moves and the vote that completes the Watch still pays the streak bonus. The caller makes sure
+ * each item is credited once per player. Takes the player row lock `recordVoteDay` relies on.
+ */
+export async function creditWatchOnly(
+  db: Kysely<DB>,
+  { userId, now }: { userId: number; now: Date }
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    const player = await trx
+      .selectFrom('NewOrderPlayer')
+      .select(['rankType', 'exp', 'startAt'])
+      .where('userId', '=', userId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!player) return;
+    const day = await recordVoteDay(trx, {
+      playerId: userId,
+      rank: player.rankType,
+      level: levelForExp(player.exp),
+      gold: 0,
+      now,
+      startAt: player.startAt,
+    });
+    metrics.goldEarned('streak_bonus', day.bonus);
+    if (day.bonus > 0)
+      await trx
+        .updateTable('NewOrderPlayer')
+        .set({ goldEarned: sql<number>`"goldEarned" + ${day.bonus}` })
+        .where('userId', '=', userId)
+        .execute();
+  });
 }

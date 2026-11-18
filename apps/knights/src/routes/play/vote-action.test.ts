@@ -6,6 +6,8 @@ const answerHiddenCheck = vi.hoisted(() => vi.fn());
 const castYesNoVote = vi.hoisted(() => vi.fn());
 const getStanding = vi.hoisted(() => vi.fn());
 const voteRefused = vi.hoisted(() => vi.fn());
+const creditWatchOnly = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/queue/vote-record', () => ({ creditWatchOnly }));
 vi.mock('$lib/server/metrics', async (original) => {
   const real = await original<typeof import('$lib/server/metrics')>();
   return { ...real, metrics: { ...real.metrics, voteRefused } };
@@ -14,8 +16,8 @@ vi.mock('$lib/server/standing', async (original) => ({
   ...(await original<typeof import('$lib/server/standing')>()),
   getStanding,
 }));
-vi.mock('$lib/server/skip-runtime', () => ({
-  skipStore: { add: vi.fn(), list: vi.fn(async () => []) },
+vi.mock('$lib/server/skip-runtime', async () => ({
+  skipStore: (await import('$lib/server/skips')).memorySkipStore(),
 }));
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const guard = vi.hoisted(() => vi.fn());
@@ -64,6 +66,7 @@ beforeEach(() => {
   answerHiddenCheck.mockReset();
   castYesNoVote.mockReset();
   voteRefused.mockReset();
+  creditWatchOnly.mockReset();
 });
 
 describe('vote action on a yes/no question', () => {
@@ -359,5 +362,31 @@ describe('vote action for a muted player', () => {
     getStanding.mockResolvedValue({ banned: false, muted: false });
     castVote.mockResolvedValue({ status: 'recorded' });
     expect(await submit({ item: queueItem(3), answer: '4' })).toEqual({ success: true });
+  });
+});
+
+describe('a judgment on an item that settled before it arrived', () => {
+  it('counts toward the Daily Watch once per item and says so, however often it is sent', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'not-open' });
+
+    expect(await submit({ item: queueItem(501), answer: '4' })).toMatchObject({
+      status: 409,
+      data: { reason: 'not-open', watchCounted: true },
+    });
+    expect(creditWatchOnly).toHaveBeenCalledWith(expect.anything(), {
+      userId: 7,
+      now: expect.any(Date),
+    });
+
+    const again = await submit({ item: queueItem(501), answer: '4' });
+    expect(again).toMatchObject({ status: 409, data: { reason: 'not-open' } });
+    expect((again as { data: Record<string, unknown> }).data).not.toHaveProperty('watchCounted');
+    expect(creditWatchOnly).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count a refusal that is not about the item moving on', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
+    await submit({ item: queueItem(502), answer: '4' });
+    expect(creditWatchOnly).not.toHaveBeenCalled();
   });
 });

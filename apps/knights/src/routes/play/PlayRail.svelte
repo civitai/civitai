@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { page } from '$app/state';
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
   import { belowBarCue, goldToday, heartBackShort, neverBelowToday, watchStrip, withArticle } from '$lib/chrome';
@@ -133,7 +134,7 @@
   </section>
 
   <section aria-labelledby={id('rail-fervor')}>
-    <h2 id={id('rail-fervor')} class="with-icon"><Icon name="sparkles" size={13} />This week's fervor</h2>
+    <h2 id={id('rail-fervor')} class="with-icon"><Icon name="sparkles" size={13} />Fervor · last {page.data.fervorWindowDays} days</h2>
     <p class="big">{count(status.fervor)}</p>
     {#if standing}
       <p class="sub">Board position #{count(standing.position)} of {count(standing.total)}</p>

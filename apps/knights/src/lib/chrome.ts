@@ -61,7 +61,7 @@ export function watchStrip(daily: Watch) {
  * moment a vote is cast rather than when the page's data is next read. The vote that completes the Watch moves the streak
  * by one, which is what the server stores in every case (a first Watch, yesterday's kept, a shielded gap, a lapse).
  */
-export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
+export function withVotesSent<T extends Watch>(daily: T, sent: number, goldSent = sent): T {
   if (sent <= 0) return daily;
   const votes = daily.votes + sent;
   const completes = !daily.watchDone && votes >= daily.watchSize;
@@ -71,7 +71,7 @@ export function withVotesSent<T extends Watch>(daily: T, sent: number): T {
   const gold =
     goldRecorded !== undefined && goldCap && goldPerVote
       ? (() => {
-          const next = Math.min(goldCap, goldRecorded + sent * goldPerVote);
+          const next = Math.min(goldCap, goldRecorded + Math.max(0, goldSent) * goldPerVote);
           return { goldRecorded: next, capReached: next >= goldCap };
         })()
       : {};
@@ -93,7 +93,13 @@ export function goldToday({ goldRecorded, goldCap }: { goldRecorded: number; gol
  * screen. The refreshed daily holds a landed vote, so keying it to the object means it is never counted twice in the frame
  * where the new data replaces the old (which rang the Watch bell a vote early).
  */
-export type PendingVotes = { count: number; landed: number; landedOn: number | null };
+export type PendingVotes = {
+  count: number;
+  landed: number;
+  landedOn: number | null;
+  /** Of `landed`, the votes that count toward the Watch but pay no gold (an item that settled first). */
+  goldless?: number;
+};
 
 // The daily is named by a number, not held: a Svelte `$state` wraps a plain object assigned into it in a proxy, which is
 // never `===` the page's own daily, so a landed vote dropped off the Watch until the refreshed data arrived.
@@ -109,10 +115,21 @@ const dailyId = (daily: object | null | undefined): number | null => {
 export const pendingVotes = (sent: PendingVotes, daily: object | null | undefined): number =>
   sent.count + (daily != null && sent.landedOn === dailyId(daily) ? sent.landed : 0);
 
+/** The votes on their way or landed on this daily that still add gold: those that pay none are left out. */
+export const pendingGoldVotes = (sent: PendingVotes, daily: object | null | undefined): number =>
+  pendingVotes(sent, daily) -
+  (daily != null && sent.landedOn === dailyId(daily) ? sent.goldless ?? 0 : 0);
+
 /** Moves one vote from in flight to landed on `daily`, in one step, so the total does not dip. */
-export function landVote(sent: PendingVotes, daily: object | null | undefined): void {
+export function landVote(
+  sent: PendingVotes,
+  daily: object | null | undefined,
+  { paysGold = true }: { paysGold?: boolean } = {}
+): void {
   const id = dailyId(daily);
-  sent.landed = id !== null && sent.landedOn === id ? sent.landed + 1 : 1;
+  const same = id !== null && sent.landedOn === id;
+  sent.landed = same ? sent.landed + 1 : 1;
+  sent.goldless = (same ? sent.goldless ?? 0 : 0) + (paysGold ? 0 : 1);
   sent.landedOn = id;
   sent.count = Math.max(0, sent.count - 1);
 }

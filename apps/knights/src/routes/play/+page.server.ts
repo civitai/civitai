@@ -30,6 +30,10 @@ import {
 import { seenStore } from '$lib/server/seen-runtime';
 import { skipStore } from '$lib/server/skip-runtime';
 import { recordSkip, skippedFor } from '$lib/server/skips';
+import { REDIS_TIMEOUT_MS, within } from '$lib/server/redis-timeout';
+import { creditWatchOnly } from '$lib/server/queue/vote-record';
+import type { ItemRef } from '$lib/server/feed-token';
+import { STALE_REASONS } from './optimistic';
 import { railFor } from '$lib/server/rail-runtime';
 import { castVote, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -285,6 +289,22 @@ function refused(reason: string, vote: Pick<ParsedVote, 'ref' | 'itemId'> | null
   );
 }
 
+/**
+ * A judgment on an item that moved on before it arrived still counts toward the Daily Watch (no gold, no XP), once per
+ * item: the item is claimed in the player's skip list, which also keeps it from being served to them again.
+ */
+async function creditStaleJudgment(userId: number, ref: ItemRef): Promise<boolean> {
+  try {
+    if (!(await within(skipStore.claim(userId, ref, queueDeps.now()), REDIS_TIMEOUT_MS)))
+      return false;
+    await creditWatchOnly(db, { userId, now: queueDeps.now() });
+    return true;
+  } catch (error) {
+    console.error('knights: could not count a stale judgment toward the Watch', { userId, error });
+    return false;
+  }
+}
+
 async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { locals }: VoteEvent) {
   try {
     const result =
@@ -324,9 +344,12 @@ async function recordVote({ ref, answer, blockReason, itemId }: ParsedVote, { lo
     }
     if (result.status === 'rejected') {
       refused(result.reason, { ref, itemId }, locals.user.id);
+      const watchCounted =
+        STALE_REASONS.has(result.reason) && (await creditStaleJudgment(locals.user.id, ref));
       return fail(result.reason === 'bad-block-reason' ? 400 : 409, {
         message: REJECTION_TEXT[result.reason],
         reason: result.reason,
+        ...(watchCounted ? { watchCounted } : {}),
       });
     }
     return 'check' in result && result.check

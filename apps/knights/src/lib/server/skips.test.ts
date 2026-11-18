@@ -21,6 +21,9 @@ describe('skippedFor', () => {
       list: async () => {
         throw new Error('down');
       },
+      claim: async () => {
+        throw new Error('down');
+      },
     };
 
     expect(await skippedFor(down, 7)).toEqual({ queue: [], hidden: [], yesno: [] });
@@ -33,6 +36,7 @@ describe('a store that never answers', () => {
   const silent: SkipStore = {
     add: () => new Promise<void>(() => undefined),
     list: () => new Promise(() => undefined),
+    claim: () => new Promise(() => undefined),
   };
 
   it('is read as nothing skipped, and a skip is moved on from but not recorded', async () => {
@@ -61,5 +65,34 @@ describe('redisSkipStore', () => {
       { kind: 'queue', id: 3 },
       { kind: 'hidden', id: 9 },
     ]);
+  });
+});
+
+describe('claim', () => {
+  it('is true only the first time an item is claimed for a player, and the item counts as skipped', async () => {
+    const store = memorySkipStore();
+    expect(await store.claim(7, { kind: 'queue', id: 3 }, new Date(1))).toBe(true);
+    expect(await store.claim(7, { kind: 'queue', id: 3 }, new Date(2))).toBe(false);
+    expect(await store.claim(8, { kind: 'queue', id: 3 }, new Date(3))).toBe(true);
+    expect(await store.claim(7, { kind: 'yesno', id: 3 }, new Date(4))).toBe(true);
+    expect(await skippedFor(store, 7)).toEqual({ queue: [3], hidden: [], yesno: [3] });
+  });
+
+  it('is false for an item the player already skipped', async () => {
+    const store = memorySkipStore();
+    await recordSkip(store, 7, { kind: 'queue', id: 3 }, new Date(1));
+    expect(await store.claim(7, { kind: 'queue', id: 3 }, new Date(2))).toBe(false);
+  });
+
+  it('asks Redis to add the member only when absent, and reads its answer', async () => {
+    const evalFn = vi.fn(async () => 1);
+    const store = redisSkipStore(() => ({ eval: evalFn }));
+    expect(await store.claim(7, { kind: 'queue', id: 3 }, new Date(5))).toBe(true);
+    expect(evalFn).toHaveBeenCalledWith(expect.stringContaining('ZADD'), {
+      keys: ['knights:skipped:7'],
+      arguments: ['q:3', '5', expect.any(String), expect.any(String)],
+    });
+    evalFn.mockResolvedValueOnce(0);
+    expect(await store.claim(7, { kind: 'queue', id: 3 }, new Date(6))).toBe(false);
   });
 });

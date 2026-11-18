@@ -12,6 +12,7 @@ import {
   ensureVotePartitions,
   type QueueDeps,
 } from '../queue/queue.service';
+import { creditWatchOnly } from '../queue/vote-record';
 import { expForLevel } from '../progression/levels';
 import { DAILY, dailyGoldCapOf } from './config';
 import {
@@ -222,6 +223,31 @@ describe('the Daily Watch', () => {
 
     expect(await wallet(1)).toMatchObject({ goldEarned: DAILY.watchBonusGold, goldPending: 0 });
     expect((await dayRow(1, D1)).goldRecorded).toBe(cap);
+  });
+});
+
+describe('a judgment on an item that settled first', () => {
+  it('counts toward the Watch with no gold or XP, and can complete it with the streak bonus', async () => {
+    await seedPlayer(pg, 1);
+    await seedDay(1, D1, { votes: DAILY.watchSize - 2 });
+
+    await creditWatchOnly(db, { userId: 1, now: NOON(D1) });
+    expect(await dayRow(1, D1)).toMatchObject({ votes: DAILY.watchSize - 1, goldRecorded: 0 });
+    expect(await wallet(1)).toEqual({ exp: 0, goldPending: 0, goldEarned: 0 });
+
+    await creditWatchOnly(db, { userId: 1, now: NOON(D1) });
+    expect(await dayRow(1, D1)).toMatchObject({
+      votes: DAILY.watchSize,
+      bonusGold: DAILY.watchBonusGold,
+    });
+    expect((await dayRow(1, D1)).watchCompletedAt).not.toBeNull();
+    expect(await wallet(1)).toEqual({ exp: 0, goldPending: 0, goldEarned: DAILY.watchBonusGold });
+    expect((await keeper(1)).streak).toBe(1);
+  });
+
+  it('credits nothing for someone who is not a player', async () => {
+    await creditWatchOnly(db, { userId: 99, now: NOON(D1) });
+    expect(await dayRow(99, D1)).toBeUndefined();
   });
 });
 
