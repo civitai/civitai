@@ -550,10 +550,19 @@
     else if (action === 'confirm' && !confirm('Leave your Watch? Your votes so far are kept.')) cancel();
   });
   let hearts = $derived(heartsLeft(data.status));
-  // The ruling sits directly above the stage when there is one, so it never covers the image.
-  let stageShown = $derived(
-    data.mode === 'apprentice' ? data.apprentice.kind === 'question' : !data.muted && !data.lockoutSeconds && Boolean(view)
-  );
+  // Which body the page shows: the template branches on it, and the ruling sits directly above the stage when there is one.
+  let screen = $derived.by(() => {
+    if (data.mode === 'apprentice') {
+      const apprentice = data.apprentice;
+      if (apprentice.kind === 'question') return { kind: 'apprentice-question' as const, apprentice };
+      if (apprentice.kind === 'checkpoint') return { kind: 'checkpoint' as const, apprentice };
+      return { kind: 'no-practice' as const };
+    }
+    if (data.muted) return { kind: 'muted' as const };
+    if (data.lockoutSeconds) return { kind: 'lockout' as const, seconds: data.lockoutSeconds };
+    if (view) return { kind: 'queue-stage' as const, view };
+    return { kind: data.resetPending ? ('none' as const) : ('clear' as const), daily: data.daily };
+  });
   let formMessage = $derived(
     form?.message && !form.resetNoticeFailed && !form.noticeFailed && !form.guideFailed && !form.progressFailed
       ? form.message
@@ -625,33 +634,35 @@
 {/snippet}
 
 {#snippet ruling()}
-  <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
-    <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
-    <div class="toast-body">
-      {#each data.notices as notice (notice.key)}
-        <div class="check-notice" class:close={notice.consequence === 'close'}>
-          {#if notice.imageSrc}
-            <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
-          {/if}
-          <p>
-            <strong>{notice.title}</strong>
-            {notice.message}
-            {#if notice.consequence === 'smite'}
-              <span class="check-answers">
-                You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
-              </span>
+  {#if data.notices.length > 0}
+    <section class="toast" class:calm={toastTone === 'calm'} role="status" aria-label="The Order's ruling">
+      <Icon name={toastTone === 'calm' ? 'info' : 'triangle-alert'} size={18} />
+      <div class="toast-body">
+        {#each data.notices as notice (notice.key)}
+          <div class="check-notice" class:close={notice.consequence === 'close'}>
+            {#if notice.imageSrc}
+              <img class="check-thumb" src={notice.imageSrc} alt="What you judged" loading="lazy" />
             {/if}
-          </p>
-        </div>
-      {/each}
-      {#if form?.noticeFailed}
-        <p>{form.message}</p>
-      {/if}
-    </div>
-    <form method="POST" action="?/dismissNotices" use:enhance={submit}>
-      <button type="submit" disabled={submitting}>Understood</button>
-    </form>
-  </section>
+            <p>
+              <strong>{notice.title}</strong>
+              {notice.message}
+              {#if notice.consequence === 'smite'}
+                <span class="check-answers">
+                  You judged {notice.answerLabel}{#if notice.correctLabel}; the Order judged it {notice.correctLabel}{/if}.
+                </span>
+              {/if}
+            </p>
+          </div>
+        {/each}
+        {#if form?.noticeFailed}
+          <p>{form.message}</p>
+        {/if}
+      </div>
+      <form method="POST" action="?/dismissNotices" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Understood</button>
+      </form>
+    </section>
+  {/if}
 {/snippet}
 
 {#snippet levelToast(floating: boolean)}
@@ -713,7 +724,7 @@
 
   <div class="body">
   <div class="main">
-  {#if data.notices.length > 0 && !stageShown}
+  {#if data.notices.length > 0 && screen.kind !== 'apprentice-question' && screen.kind !== 'queue-stage'}
     <div class="rulingwrap">{@render ruling()}</div>
   {/if}
 
@@ -721,113 +732,113 @@
     <p class="notice flat" role="alert">Your career is being reset. Return in a moment.</p>
   {/if}
 
-  {#if data.mode === 'apprentice'}
-    {#if data.apprentice.kind === 'question'}
-      <div class="column">
-        <div class="qrow">
-          <p class="question" title={data.apprentice.prompt}>
-            <span class="eyebrow">Question</span>
-            <span class="text">{data.apprentice.prompt}</span>
-          </p>
-          {@render questionTools()}
-        </div>
-        {#if data.notices.length > 0}{@render ruling()}{/if}
-        <div class="stagewrap">
-          {#key `${data.apprentice.item.kind}:${data.apprentice.item.referenceId}`}
-            <ImageStage
-              src={data.apprentice.item.src}
-              width={data.apprentice.item.width}
-              height={data.apprentice.item.height}
-              alt="The subject of this question"
-            />
-          {/key}
-          {@render levelToast(true)}
-        </div>
-        <div class="controls" class:yesno={yesNo}>
-          <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
-            <input type="hidden" name="kind" value={data.apprentice.item.kind} />
-            <input type="hidden" name="referenceId" value={data.apprentice.item.referenceId} />
-            <input type="hidden" name="version" value={data.apprentice.item.version ?? ''} />
-            {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
-            {#each data.apprentice.options as option, index (option.value)}
-              {@render pill(option, index, false, false)}
-            {/each}
-          </form>
-          {#if !yesNo}
-            <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
-          {/if}
-          <span class="rowtool">{@render soundToggle()}</span>
-        </div>
-        {#if formMessage}
-          <p class="notice flat" role="alert">{formMessage}</p>
+  {#if screen.kind === 'apprentice-question'}
+    {@const apprentice = screen.apprentice}
+    <div class="column">
+      <div class="qrow">
+        <p class="question" title={apprentice.prompt}>
+          <span class="eyebrow">Question</span>
+          <span class="text">{apprentice.prompt}</span>
+        </p>
+        {@render questionTools()}
+      </div>
+      {@render ruling()}
+      <div class="stagewrap">
+        {#key `${apprentice.item.kind}:${apprentice.item.referenceId}`}
+          <ImageStage
+            src={apprentice.item.src}
+            width={apprentice.item.width}
+            height={apprentice.item.height}
+            alt="The subject of this question"
+          />
+        {/key}
+        {@render levelToast(true)}
+      </div>
+      <div class="controls" class:yesno={yesNo}>
+        <form class="answers" method="POST" action="?/apprentice" use:enhance={submitApprentice} bind:this={answers}>
+          <input type="hidden" name="kind" value={apprentice.item.kind} />
+          <input type="hidden" name="referenceId" value={apprentice.item.referenceId} />
+          <input type="hidden" name="version" value={apprentice.item.version ?? ''} />
+          {#if levelNotice}<input type="hidden" name="noticeShown" value="1" />{/if}
+          {#each apprentice.options as option, index (option.value)}
+            {@render pill(option, index, false, false)}
+          {/each}
+        </form>
+        {#if !yesNo}
+          <span class="rowtool"><button type="button" class="quiet guide" onclick={() => openGuide(guide)}>Rating guide</button></span>
         {/if}
+        <span class="rowtool">{@render soundToggle()}</span>
       </div>
-    {:else if data.apprentice.kind === 'checkpoint'}
+      {#if formMessage}
+        <p class="notice flat" role="alert">{formMessage}</p>
+      {/if}
+    </div>
+  {:else if screen.kind === 'checkpoint'}
+    {@render levelToast(false)}
+    <CheckpointRecap
+      recap={screen.apprentice}
+      noticeShown={!!levelNotice}
+      message={formMessage}
+      {submitting}
+      submit={submitCheckpoint}
+      onguide={() => openGuide(guide)}
+    />
+  {:else if screen.kind === 'no-practice'}
+    <div class="panel">
       {@render levelToast(false)}
-      <CheckpointRecap
-        recap={data.apprentice}
-        noticeShown={!!levelNotice}
-        message={formMessage}
-        {submitting}
-        submit={submitCheckpoint}
-        onguide={() => openGuide(guide)}
-      />
-    {:else}
-      <div class="panel">
-        {@render levelToast(false)}
-        <section class="lockout" role="status" aria-label="No more practice items">
-          <h2>No more practice items right now</h2>
-          <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
-        </section>
-      </div>
-    {/if}
-  {:else if data.mode === 'queue' && data.muted}
+      <section class="lockout" role="status" aria-label="No more practice items">
+        <h2>No more practice items right now</h2>
+        <p>Check back soon. New ones are added from time to time, and your progress is kept.</p>
+      </section>
+    </div>
+  {:else if screen.kind === 'muted'}
     <div class="panel">
       <section class="lockout" role="status" aria-label="Judging unavailable">
         <h2>Judging is closed to you</h2>
         <p>Your account is muted, so you can't judge right now. You can still view your record and your gold.</p>
       </section>
     </div>
-  {:else if data.mode === 'queue' && data.lockoutSeconds}
+  {:else if screen.kind === 'lockout'}
     <div class="panel">
       {@render levelToast(false)}
       <section class="lockout" role="status" aria-label="Judging paused">
         <h2>A moment of rest</h2>
         <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
-        <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+        <Countdown seconds={screen.seconds} label="Time until judging resumes" />
         <p class="muted">Judging resumes by itself.</p>
       </section>
     </div>
-  {:else if view}
+  {:else if screen.kind === 'queue-stage'}
+    {@const shown = screen.view}
     <div class="column">
       <div class="qrow">
-      <p class="question" title={view.question.prompt}>
+      <p class="question" title={shown.question.prompt}>
         <span class="eyebrow">
           Question
-          {#if view.category}
+          {#if shown.category}
             <!-- Re-keyed (and glows once) only when the category changes; the text is part of the question for screen readers. -->
-            {#key view.category.heading}
-              <span class="category" class:glow={view.banner !== null}>
-                <span aria-hidden="true">·</span><span class="vh">Category: </span>{view.category.heading}
+            {#key shown.category.heading}
+              <span class="category" class:glow={shown.banner !== null}>
+                <span aria-hidden="true">·</span><span class="vh">Category: </span>{shown.category.heading}
               </span>
             {/key}
           {/if}
         </span>
-        <span class="text">{view.question.prompt}</span>
+        <span class="text">{shown.question.prompt}</span>
       </p>
       {@render questionTools()}
       </div>
       <span class="vh" role="status" aria-live="polite"
-        >{view.banner ? `New questions: ${view.banner.heading}` : ''}</span
+        >{shown.banner ? `New questions: ${shown.banner.heading}` : ''}</span
       >
-      {#if data.notices.length > 0}{@render ruling()}{/if}
+      {@render ruling()}
       <div class="stagewrap">
-        {#key view.item.key}
-          {@const itemKey = view.item.key}
+        {#key shown.item.key}
+          {@const itemKey = shown.item.key}
           <ImageStage
-            src={view.item.src}
-            width={view.item.width}
-            height={view.item.height}
+            src={shown.item.src}
+            width={shown.item.width}
+            height={shown.item.height}
             alt="The subject of this judgment"
             failed={imageFailed}
             onfail={() => (failedItem = itemKey)}
@@ -847,13 +858,13 @@
       </div>
       <div class="controls" class:yesno={yesNo} class:failed={imageFailed}>
         <form class="answers" method="POST" action="?/vote" use:enhance={submitJudgment} bind:this={answers}>
-          <input type="hidden" name="item" value={view.item.id} />
-          {#each view.question.options as option, index (option.value)}
-            {@render pill(option, index, imageFailed, asksBlockReason(view.question.key))}
+          <input type="hidden" name="item" value={shown.item.id} />
+          {#each shown.question.options as option, index (option.value)}
+            {@render pill(option, index, imageFailed, asksBlockReason(shown.question.key))}
           {/each}
         </form>
         <form class="skip" method="POST" action="?/skip" use:enhance={submitJudgment} bind:this={skipForm}>
-          <input type="hidden" name="item" value={view.item.id} />
+          <input type="hidden" name="item" value={shown.item.id} />
           <button type="submit" class="quiet" disabled={submitting} aria-label="Skip" title="Skip (Space)">
             <Icon name="skip-forward" size={14} /><span class="skiplabel">Skip</span><span class="space">&nbsp;·&nbsp;Space</span>
           </button>
@@ -870,9 +881,9 @@
         <p class="notice flat" role="alert">{formMessage}</p>
       {/if}
     </div>
-  {:else if !data.resetPending}
+  {:else if screen.kind === 'clear'}
     {@render levelToast(false)}
-    <QueueClear daily={data.daily} />
+    <QueueClear daily={screen.daily} />
   {/if}
   </div>
   {#if data.mode === 'queue' && !data.apprenticeMeter}
@@ -1345,6 +1356,25 @@
     }
     .rulingwrap {
       padding: 4px 16px 0;
+    }
+    /* Text takes the full width and Understood drops to its own line; the title's own glyph stands in for the icon. */
+    .toast {
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px 12px;
+    }
+    .toast > :global(svg) {
+      display: none;
+    }
+    .toast form {
+      display: flex;
+      flex-basis: 100%;
+      justify-content: flex-end;
+    }
+    .check-thumb {
+      width: 36px;
+      height: 36px;
     }
     .eyebrow {
       font-size: 12px;
