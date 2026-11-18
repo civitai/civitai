@@ -1682,7 +1682,7 @@ const parseExternalMetadata = async (src: string | undefined, user: number) => {
 const UPLOAD_METADATA_READ_BYTES = 8 * 1024 * 1024;
 
 /** Whether an upload may stay at the index its client sent (`addPostImage`). */
-async function keepSentIndex(postId: number, index: number) {
+export async function keepSentIndex(postId: number, index: number) {
   if (!Number.isInteger(index) || index < 0) return false;
   const [holder, hiddenEnd] = await Promise.all([
     // primary: decides the index this upload is written at
@@ -1796,10 +1796,8 @@ export const addPostImage = async ({
 
   const { generationWorkflowId, ...imageProps } = props;
   // On a post with storyline text items, a new image goes after the last item whatever index the
-  // client sent: an editor without text items counts only images. Without text, the client's index
-  // stands only when it is free and after every image an editor may not be served (held for review,
-  // or rated above the strictest cap), so an upload cannot move ahead of one; otherwise the image
-  // goes last. The editor does not count images it is not served, so its index can repeat theirs.
+  // client sent. Without text, a sent index may repeat an image's the editor is not served and so
+  // does not count: `keepSentIndex` decides, and otherwise the image goes last.
   const lastText = await dbWrite.postText.findFirst({
     where: { postId: props.postId },
     orderBy: { index: 'desc' },

@@ -218,14 +218,14 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
   });
 
   it('puts a new image last when another image already holds the index the client sent', async () => {
-    // Visible A at 0, and images at 1 and 2 the editor is not served: it counts one image and sends 2.
+    // No image that may be hidden sits at or after 2, but a visible image holds index 2 already.
     dbMock.dbRead.post.findFirst.mockResolvedValue({ userId: 5, collection: null } as never);
     dbMock.dbRead.image.findFirst.mockResolvedValue(null);
     dbMock.dbWrite.postText.findFirst.mockResolvedValueOnce(null as never);
     dbMock.dbWrite.image.findFirst.mockResolvedValueOnce({ id: 12 } as never);
     dbMock.dbWrite.image.aggregate
-      .mockResolvedValueOnce({ _max: { index: 2 } } as never) // images that may be hidden
-      .mockResolvedValueOnce({ _max: { index: 2 } } as never); // every image
+      .mockResolvedValueOnce({ _max: { index: 0 } } as never) // images that may be hidden
+      .mockResolvedValueOnce({ _max: { index: 5 } } as never); // every image
     const { createImage } = await import('~/server/services/image.service');
 
     await addPostImage({ url: KEY, type: 'image', postId: 1, user, index: 2 } as never).catch(
@@ -233,7 +233,7 @@ describe('addPostImage — metadata of an upload sent without meta', () => {
     );
 
     expect(vi.mocked(createImage)).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ index: 3 })
+      expect.objectContaining({ index: 6 })
     );
   });
 

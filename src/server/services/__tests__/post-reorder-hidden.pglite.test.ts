@@ -14,7 +14,7 @@ import type { SessionUser } from '~/types/session';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { reorderPostImages } = await import('~/server/services/post.service');
+const { reorderPostImages, keepSentIndex } = await import('~/server/services/post.service');
 const { imageDerivedVersionLevels } = await import('~/server/services/nsfwLevels.service');
 
 const OWNER = 7;
@@ -56,6 +56,12 @@ beforeAll(async () => {
   dbMock.dbWrite.postText.findMany.mockImplementation(((
     ...args: Parameters<typeof prisma.postText.findMany>
   ) => prisma.postText.findMany(...args)) as never);
+  dbMock.dbWrite.image.findFirst.mockImplementation(((
+    ...args: Parameters<typeof prisma.image.findFirst>
+  ) => prisma.image.findFirst(...args)) as never);
+  dbMock.dbWrite.image.aggregate.mockImplementation(((
+    ...args: Parameters<typeof prisma.image.aggregate>
+  ) => prisma.image.aggregate(...args)) as never);
   dbMock.dbWrite.postText.count.mockImplementation(((
     ...args: Parameters<typeof prisma.postText.count>
   ) => prisma.postText.count(...args)) as never);
@@ -441,4 +447,33 @@ describe('reorderPostImages around images the editor does not list', () => {
       expect(await versionLevel()).toBe(XXX | PG);
     }
   );
+});
+
+// The index an upload is written at (addPostImage) against real Postgres: a client index stands only
+// when it is free and after every image an editor may not be served.
+describe('keepSentIndex', () => {
+  it.each([
+    ['held for review', `(2, ${POST}, ${PG}, 2, 'minor')`],
+    ['rated above the strictest cap', `(2, ${POST}, 8, 2, NULL)`],
+  ])('refuses an index at or before an image %s, and keeps one after it', async (_l, row) => {
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (10, ${POST}, ${PG}, 0, NULL), ${row};
+    `);
+    expect(await keepSentIndex(POST, 1)).toBe(false);
+    expect(await keepSentIndex(POST, 2)).toBe(false);
+    expect(await keepSentIndex(POST, 3)).toBe(true);
+  });
+
+  it('refuses an index another image holds, and negative or fractional ones', async () => {
+    await harness.pg.exec(`
+      INSERT INTO "Image" (id, "postId", "nsfwLevel", index, "needsReview") VALUES
+        (10, ${POST}, ${PG}, 0, NULL), (11, ${POST}, ${PG}, 5, NULL), (12, ${POST}, 0, 6, NULL);
+    `);
+    expect(await keepSentIndex(POST, 5)).toBe(false);
+    expect(await keepSentIndex(POST, -1)).toBe(false);
+    expect(await keepSentIndex(POST, 1.5)).toBe(false);
+    // Visible, unrated and other review states do not hold an upload back.
+    expect(await keepSentIndex(POST, 3)).toBe(true);
+  });
 });
