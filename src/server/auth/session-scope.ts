@@ -4,7 +4,7 @@ import { withholdsModerator, type BearerCredential } from '~/server/auth/full-us
 import { logToAxiom } from '~/server/logging/client';
 import { hasScope, TokenScope } from '~/shared/constants/token-scope.constants';
 import type { Session } from '~/types/session';
-import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { routeSegments, type RouteQuery } from '~/server/utils/route-segments';
 
 /**
  * The token scope a caller needs for the session to be returned to it. Omitted, a bearer credential
@@ -27,7 +27,6 @@ type ScopeContext = BearerCredential & {
   apiKeyId?: number | null;
   scopeDecisionsLogged?: Set<string>;
 };
-type RouteQuery = Partial<Record<string, string | string[]>>;
 type ScopeRequest = { url?: string; query?: RouteQuery; context?: Record<string, unknown> };
 
 export const INSUFFICIENT_SCOPE_MESSAGE =
@@ -59,34 +58,29 @@ const WORD_SEGMENT = /^[a-z][a-z0-9-]{0,31}$/;
 const HEX_SEGMENT = /^[0-9a-f]+$/;
 
 /**
- * The route template, e.g. `/api/download/models/[modelVersionId]`: a segment equal to a value in
- * `query` (Next's route params, with the query string) is logged as that param's name. Any other
- * segment that is not a short lowercase word, or is all hex, is logged as `:segment`. Without
- * `query`, a short lowercase segment such as a slug is logged as it is.
+ * The route template, e.g. `/api/download/models/[modelVersionId]`: a segment Next matched to a
+ * route param (`routeSegments`) is logged as the param's name. Any other segment is logged as
+ * `:segment` unless it is a short lowercase word, not all hex, that is not also a query-string
+ * value. Without `query`, a short lowercase segment such as a slug is logged as it is.
  */
 function routeTemplate(url: string | undefined, query: RouteQuery | undefined): string | null {
-  const path = url?.split('?')[0];
-  if (!path) return null;
-  const paramNames = new Map<string, string>();
-  for (const [name, value] of Object.entries(query ?? {})) {
-    if (value === undefined) continue;
-    const label = Array.isArray(value) ? `[...${name}]` : `[${name}]`;
-    for (const v of Array.isArray(value) ? value : [value])
-      if (!paramNames.has(v)) paramNames.set(v, label);
-  }
-  const segments: string[] = [];
-  for (const segment of path.split('/')) {
-    const param = segment === '' ? undefined : paramNames.get(safeDecodeURIComponent(segment));
-    const logged =
-      param ??
-      (segment === '' || (WORD_SEGMENT.test(segment) && !HEX_SEGMENT.test(segment))
-        ? segment
-        : ':segment');
+  if (!url) return null;
+  const route = routeSegments(url, query);
+  if (!route) return null;
+  const logged: string[] = [];
+  for (const { value, param, inQueryString } of route.segments) {
+    const segment = param
+      ? param.catchAll
+        ? `[...${param.name}]`
+        : `[${param.name}]`
+      : !inQueryString && WORD_SEGMENT.test(value) && !HEX_SEGMENT.test(value)
+      ? value
+      : ':segment';
     // A catch-all param spans several segments; log it once.
-    if (logged.startsWith('[...') && segments.at(-1) === logged) continue;
-    segments.push(logged);
+    if (param?.catchAll && logged.at(-1) === segment) continue;
+    logged.push(segment);
   }
-  return segments.join('/');
+  return `/${logged.join('/')}`;
 }
 
 /** Keyed, so the log cannot be mapped back to a key id by hashing the small id range. */

@@ -323,11 +323,20 @@ describe('REST_SCOPE_ENFORCE', () => {
     expect(logged).not.toContain('Bucket_Key');
   });
 
-  it('names a route param the caller repeats in the query string', async () => {
-    const { route } = await loggedRoute('/api/v1/creators/alice?username=alice', {
+  it('logs a route param the caller repeats in the query string as :segment', async () => {
+    const { route, logged } = await loggedRoute('/api/v1/creators/alice?username=alice', {
       username: 'alice',
     });
-    expect(route).toBe('/api/v1/creators/[username]');
+    expect(route).toBe('/api/v1/creators/:segment');
+    expect(logged).not.toContain('alice');
+  });
+
+  it('never names or keeps a segment from a query-string key or value', async () => {
+    const { route, logged } = await loggedRoute('/api/v1/models?evil_key=models', {
+      evil_key: 'models',
+    });
+    expect(route).toBe('/api/v1/:segment');
+    expect(logged).not.toContain('evil_key');
   });
 
   it('does not label the empty leading segment with an empty query value', async () => {
