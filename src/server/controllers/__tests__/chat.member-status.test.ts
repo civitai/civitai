@@ -22,6 +22,7 @@ type Row = {
   status: ChatMemberStatus;
   isOwner: boolean;
   joinedAt: Date | null;
+  filteredAt?: Date | null;
 };
 let rows: Row[];
 let notices: string[];
@@ -139,11 +140,14 @@ describe('modifyUser: a member changing their own status', () => {
 
   it('joins through the shared join: one notice, joinedAt set', async () => {
     member().status = ChatMemberStatus.Invited;
+    // A request sitting in the Requests tab: joining is accepting it.
+    member().filteredAt = new Date(0);
 
     await setStatus(MEMBER, ChatMemberStatus.Joined);
 
     expect(notices).toEqual(['member joined']);
     expect(member().joinedAt).toBeInstanceOf(Date);
+    expect(member().filteredAt).toBeNull();
   });
 
   it('does not overwrite a kick that landed after the read', async () => {
@@ -159,6 +163,22 @@ describe('modifyUser: a member changing their own status', () => {
       'This membership changed'
     );
     expect(member().status).toBe(ChatMemberStatus.Kicked);
+  });
+
+  it('does not report a join as done when a kick landed after the read', async () => {
+    member().status = ChatMemberStatus.Left;
+    const read = dbMock.dbWrite.chatMember.findFirst.getMockImplementation()!;
+    dbMock.dbWrite.chatMember.findFirst.mockImplementationOnce((async (...args: never[]) => {
+      const snapshot = await read(...args);
+      member().status = ChatMemberStatus.Kicked;
+      return snapshot;
+    }) as never);
+
+    await expect(setStatus(MEMBER, ChatMemberStatus.Joined)).rejects.toThrow(
+      'This membership changed'
+    );
+    expect(member().status).toBe(ChatMemberStatus.Kicked);
+    expect(notices).toEqual([]);
   });
 
   it('refuses an unknown membership rather than creating one', async () => {
