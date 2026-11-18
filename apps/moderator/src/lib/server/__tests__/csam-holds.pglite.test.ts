@@ -1072,6 +1072,8 @@ describe('version text hits on Model holds', () => {
         { versionId: 700, field: 'name', hash: sha('alpha') },
         { versionId: 701, field: 'name', hash: sha('v two') },
         { versionId: 701, field: 'trainedWords', index: 2, hash: sha('flagged word') },
+        // 'alpha' is first in scan order on 700, but 702 has it too: 702's own copy wins.
+        { versionId: 702, field: 'trainedWords', index: 5, hash: sha('alpha') },
       ],
       comVersionTextHoldHash: 'h-99',
     });
@@ -1102,6 +1104,14 @@ describe('version text hits on Model holds', () => {
         },
         { versionId: 701, field: 'name', text: 'v two', state: 'unchanged' },
         { versionId: 701, field: 'trainedWords', index: 2, text: null, state: 'gone' },
+        {
+          versionId: 702,
+          field: 'trainedWords',
+          index: 5,
+          text: 'alpha',
+          state: 'moved',
+          movedTo: { versionId: 702, field: 'name' },
+        },
       ],
     });
   });

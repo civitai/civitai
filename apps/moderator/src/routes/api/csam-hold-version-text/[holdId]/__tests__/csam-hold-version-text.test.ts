@@ -19,7 +19,8 @@ const status = (response: unknown) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  canAccess.mockImplementation(() => true);
+  // Only the CSAM text holds page opens this route.
+  canAccess.mockImplementation((_user, path) => path === '/csam/text-holds');
   getHoldVersionTexts.mockResolvedValue({
     hits: [{ versionId: 700, field: 'name', text: 'v one', state: 'unchanged' }],
   });
