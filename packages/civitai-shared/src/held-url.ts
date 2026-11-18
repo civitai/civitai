@@ -88,6 +88,8 @@ export function imageCoveredText(image: string, user: string): string {
  */
 export function heldUrlSql(url: string): string {
   const u = sqlRef(url);
+  if (/^(hx|hp|hmv|hmo|hd|ht|hc|rc|cc)\./.test(u))
+    throw new Error(`Alias taken inside heldUrlSql: ${u}`);
   return `(
     EXISTS (
       SELECT 1 FROM "Image" hx

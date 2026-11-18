@@ -86,6 +86,8 @@ beforeAll(async () => {
     CREATE TABLE "Model" (id int PRIMARY KEY, meta jsonb);
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb);
     CREATE TABLE "ImageCdnAccess" (url text PRIMARY KEY, state text NOT NULL);
+    CREATE TABLE "ImageCdnModeratorDelete" ("imageId" int PRIMARY KEY, url text, "userId" int, "csamReview" boolean);
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, "userId" int);
     CREATE TABLE "TagsOnImageDetails" ("imageId" int, "tagId" int, disabled boolean NOT NULL DEFAULT false);
     CREATE TABLE "BlockedImage" (hash bigint, reason text);
     CREATE TABLE "ScanLabelItem" (id int PRIMARY KEY, "imageId" int, "voidReason" text);

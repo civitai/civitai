@@ -99,26 +99,34 @@ beforeAll(async () => {
       (20, 'key-20', 320, 'Scanned', 20, false),
       (21, 'key-21', 321, 'Scanned', NULL, false),
       (23, 'key-23', 323, 'Scanned', NULL, false),
+      (25, 'key-25', 325, 'Scanned', 25, false),
+      (26, 'key-26', 326, 'Scanned', 26, false),
+      (27, 'key-27', 327, 'Scanned', NULL, false),
       (24, 'key-24', 324, 'Scanned', NULL, false);
     INSERT INTO "ImageCdnAccess" (url, state) VALUES
       ('key-7', 'Retracted'), ('key-8', 'Denied'), ('key-10', 'Retracted'), ('key-11', 'Retracted'),
       ('key-12', 'Retracted'), ('key-13', 'Retracted'), ('key-14', 'Retracted'),
       ('key-15', 'Retracted'), ('key-16', 'Retracted'), ('key-17', 'Retracted'),
       ('key-18', 'Retracted'), ('key-19', 'Retracted'), ('key-20', 'Retracted'),
-      ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted');
-    INSERT INTO "Model" (id, meta) VALUES (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}');
+      ('key-21', 'Retracted'), ('key-23', 'Retracted'), ('key-24', 'Retracted'),
+      ('key-25', 'Retracted'), ('key-26', 'Retracted'), ('key-27', 'Retracted');
+    INSERT INTO "Model" (id, meta) VALUES
+      (15, '{"unpublishedReason": "mature-underage"}'), (99, '{}'),
+      (26, '{"unpublishedReason": "photo-real-underage"}');
     INSERT INTO "ModelVersion" (id, meta, "modelId") VALUES
-      (14, '{"unpublishedReason": "mature-underage"}', 99), (15, '{}', 15);
+      (14, '{"unpublishedReason": "mature-underage"}', 99), (15, '{}', 15),
+      (25, '{"unpublishedReason": "photo-real-underage"}', 99), (26, '{}', 26);
     INSERT INTO "Post" (id, metadata, "modelVersionId") VALUES
       (13, '{"unpublishedReason": "csam-text-hold"}', NULL), (14, '{}', 14), (15, '{}', 15),
-      (20, '{"unpublishedReason": "photo-real-underage"}', NULL);
+      (20, '{"unpublishedReason": "photo-real-underage"}', NULL), (25, '{}', 25), (26, '{}', 26);
     INSERT INTO "User" (id, meta) VALUES (321, '{"banDetails": {"reasonCode": "SexualMinor"}}');
     -- 16: a delete on the url with no owner recorded (held). 17: a delete of a clean owner (not held).
     -- 23 and 24: a CSAM-review delete whose owner is on a sent report that lists it, verified or not.
     INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview") VALUES
       (916, 'key-16', NULL, true), (917, 'key-17', 417, false),
       (923, 'key-23', 423, true), (924, 'key-24', 424, true);
-    INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES ('key-18', 1, NULL);
+    INSERT INTO "ImageCdnShopTakedown" (url, "shopItemId", "userId") VALUES
+      ('key-18', 1, NULL), ('key-27', 2, 427);
     INSERT INTO "CsamReport" ("userId", details, images, "reportSentAt") VALUES
       (423, '{"evidenceVerifiedAt": "2026-10-20T12:00:00Z"}', '[{"id": 923}]', now()),
       (424, '{}', '[{"id": 924}]', now());
@@ -214,12 +222,12 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
       expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
 
-  it('reads a delete on the url as held only when cdn-access would', async () => {
-    // A clean owner's delete; a CSAM-review delete a sent, verified report covers.
-    expect(await tierOf(17)).toBe('plain');
-    expect(await tierOf(23)).toBe('plain');
-    // The same delete, the report not verified.
-    expect(await tierOf(24)).toBe('none');
+  // A deleted or taken-down copy shares the bytes but not this row's signals, so it refuses the url
+  // even when cdn-access would not hold it: a clean owner's delete, a CSAM-review delete that a
+  // sent, verified report covers, and a clean owner's shop takedown.
+  it('refuses a url with a deleted or taken-down copy behind it, held or not', async () => {
+    for (const id of [17, 23, 24, 27])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'none' });
   });
 
   it('refuses a url another image row shares', async () => {
@@ -227,8 +235,15 @@ describe('the CDN-refusal leg (RETRACTED_MEDIA_CDN_LEG)', () => {
   });
 
   it('keeps a minor unpublish reason or a minor-safety ban of the owner to cleared moderators', async () => {
-    expect(await tierOf(20)).toBe('suspect');
-    expect(await tierOf(21)).toBe('suspect');
+    // On the post, on the version, on the model; then the ban.
+    for (const id of [20, 25, 26, 21])
+      expect({ id, tier: await tierOf(id) }).toEqual({ id, tier: 'suspect' });
+  });
+
+  it("reads a scanned image's verdict fresh each time, since a rescan can change it", async () => {
+    expect(await tierOf(7)).toBe('plain');
+    scanner.verdict = 'hit';
+    expect(await getRetractedMedia(7, { csamReview: false })).toBeNull();
   });
 
   it('keeps a blocked image with no reason suspect, and a scanned one with none plain', async () => {

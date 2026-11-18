@@ -3291,6 +3291,17 @@ describe('heldUrlSql parity with loadFacts', () => {
       ),
     ],
     [
+      'a CSAM-review moderator delete a verified report covers',
+      false,
+      async () => (
+        await verifiedReport([1, 901]),
+        await releaseMarkers(),
+        await blockedImage(1),
+        sql`INSERT INTO "ImageCdnModeratorDelete" ("imageId", url, "userId", "csamReview")
+            VALUES (901, ${u(1)}, ${OWNER}, true)`
+      ),
+    ],
+    [
       'a clean moderator delete',
       false,
       async () => (

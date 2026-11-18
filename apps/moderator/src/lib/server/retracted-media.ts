@@ -37,7 +37,7 @@ export async function getRetractedMedia(
 ): Promise<RetractedMedia | typeof NEEDS_CSAM_QUEUE | null> {
   const row = await dbWrite
     .selectFrom('Image as i')
-    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor'])
+    .select(['i.url', 'i.type', 'i.mimeType', 'i.blockedFor', 'i.ingestion'])
     .select(sql<boolean>`${sql.raw(retractedSuspectSql('i'))}`.as('suspect'))
     .where('i.id', '=', imageId)
     .where(
@@ -49,7 +49,11 @@ export async function getRetractedMedia(
   if (!csamReview) {
     if (tier === 'suspect') return null;
     // Refused when the scanner marks it, has no verdict for it, or cannot be read.
-    const verdict = await scannerVerdicts.read(imageId);
+    // A scanned image can be rescanned, so its verdict is read fresh rather than from the cache.
+    const verdict =
+      row.ingestion === 'Scanned'
+        ? await readScannerVerdict(imageId)
+        : await scannerVerdicts.read(imageId);
     if (verdict === 'none') return NEEDS_CSAM_QUEUE;
     if (verdict !== 'clear') return null;
   }

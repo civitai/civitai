@@ -26,8 +26,11 @@ export function retractedImageWhereSql(image: string, { cdnLeg = false } = {}): 
         SELECT 1 FROM "ImageCdnAccess" ca WHERE ca.url = ${image}."url" AND ca.state = 'Retracted'
       )
       AND NOT ${heldUrlSql(`${image}."url"`)}
-      -- Bytes are per url, the tier per row: another row's signal would not reach this one.
+      -- Bytes are per url, the tier per row: another row's signal would not reach this one, so the
+      -- url must be this row's alone, with no deleted or taken-down copy behind it either.
       AND NOT EXISTS (SELECT 1 FROM "Image" so WHERE so.url = ${image}."url" AND so.id <> ${image}.id)
+      AND NOT EXISTS (SELECT 1 FROM "ImageCdnModeratorDelete" sd WHERE sd.url = ${image}."url")
+      AND NOT EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" st WHERE st.url = ${image}."url")
     ))`
     : `${image}.ingestion = 'Blocked'`;
   return `(
