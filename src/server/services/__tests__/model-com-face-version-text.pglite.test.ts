@@ -273,6 +273,42 @@ describe('rateComFaceVersionText', () => {
     });
   });
 
+  it('stores a held string as its hash, never its text, and does not rate it again', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: ok({ minor: { detected: true, reason: '' } }) });
+    await rateComFaceVersionText(MODEL_ID);
+    const stored = await verdicts(1);
+    expect(stored).toMatchObject({ held: [comVersionTextHitHash('alpha')], pending: false });
+    expect(JSON.stringify((stored as { held: string[] }).held)).not.toContain('alpha');
+
+    previewTextScanEach.mockClear();
+    await db.query(`UPDATE "ModelVersion" SET name = 'v1 renamed' WHERE id = 1`);
+    await rateComFaceVersionText(MODEL_ID);
+    expect(ratedTexts()).toEqual(['v1 renamed']);
+    expect(await verdicts(1)).toMatchObject({ held: [comVersionTextHitHash('alpha')] });
+  });
+
+  it('a refused string queues a forced Model scan without a hold', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: { status: 'refused' } });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(applyCsamHold).not.toHaveBeenCalled();
+    expect(scanEntityInBackground).toHaveBeenCalledTimes(1);
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Model',
+      entityId: MODEL_ID,
+      force: true,
+    });
+  });
+
+  it('queues no Model scan when nothing was refused or held (control)', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    rateWith({ alpha: mature });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(await verdicts(1)).toMatchObject({ hidden: ['alpha'] });
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+  });
+
   it('a minor, poi or csam detection holds the string; a missing label leaves it unrated', async () => {
     await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha', 'beta', 'gamma'] }] });
     rateWith({
@@ -283,7 +319,7 @@ describe('rateComFaceVersionText', () => {
     await rateComFaceVersionText(MODEL_ID);
     expect(await verdicts(1)).toMatchObject({
       shown: ['v1'],
-      held: ['alpha', 'beta'],
+      held: ['alpha', 'beta'].map(comVersionTextHitHash),
       pending: true,
     });
   });
@@ -322,7 +358,10 @@ describe('rateComFaceVersionText', () => {
       entityId: MODEL_ID,
       force: true,
     });
-    expect(await verdicts(1)).toMatchObject({ shown: ['v1', 'alpha'], held: ['beta'] });
+    expect(await verdicts(1)).toMatchObject({
+      shown: ['v1', 'alpha'],
+      held: [comVersionTextHitHash('beta')],
+    });
   });
 
   it('names every place a held string sits, version names included, without its text', async () => {
@@ -345,12 +384,14 @@ describe('rateComFaceVersionText', () => {
     });
     expect(hash).toBe(createHash('sha256').update('gamma').digest('hex'));
 
-    // Only the hold carries the hashes: nothing a viewer's read can reach does.
+    // Nothing a viewer's read can reach carries the hashes; the server-only verdict rows hold them
+    // in place of the held text.
     const readable = JSON.stringify([
       await rows(`SELECT meta FROM "ModelVersion"`),
-      await rows(`SELECT value FROM "KeyValue"`),
       await rows(`SELECT * FROM "Model"`),
     ]);
+    expect(await verdicts(1)).toMatchObject({ held: [hash] });
+    expect(await verdicts(2)).toMatchObject({ held: [hash] });
     expect(readable).not.toContain(hash);
     expect(readable).not.toContain(textScanTextHash(modelSubject));
   });
@@ -391,7 +432,7 @@ describe('rateComFaceVersionText', () => {
     });
     await rateComFaceVersionText(MODEL_ID);
     expect(await verdicts(1)).toMatchObject({
-      held: ['alpha', 'beta'],
+      held: ['alpha', 'beta'].map(comVersionTextHitHash),
       shown: ['v1'],
       pending: true,
     });
@@ -411,7 +452,7 @@ describe('rateComFaceVersionText', () => {
     rateWith({ alpha: { status: 'partial', output: { csam: { detected: true, reason: '' } } } });
     await rateComFaceVersionText(MODEL_ID);
     expect(applyCsamHold).toHaveBeenCalledTimes(1);
-    expect(await verdicts(1)).toMatchObject({ held: ['alpha'] });
+    expect(await verdicts(1)).toMatchObject({ held: [comVersionTextHitHash('alpha')] });
   });
 
   it('a hold that fails writes no verdicts, so the strings are rated again', async () => {
@@ -675,6 +716,29 @@ describe('sweepComFaceVersionText', () => {
     await db.query(`UPDATE "ModelVersion" SET "trainedWords" = '{alpha}' WHERE id = 1`);
     await rateComFaceVersionText(MODEL_ID);
     await expect(sweepComFaceVersionText()).resolves.toEqual([MODEL_ID]);
+  });
+
+  it('drops the verdicts of a version .com no longer shows, and keeps the rest', async () => {
+    await seed({
+      versions: [
+        { id: 1, name: 'v1', words: ['alpha'] },
+        { id: 2, name: 'v2', words: ['beta'] },
+      ],
+    });
+    await rateComFaceVersionText(MODEL_ID);
+    await db.query(`UPDATE "ModelVersion" SET status = 'Unpublished' WHERE id = 2`);
+    await sweepComFaceVersionText();
+    expect(await verdicts(1)).toBeDefined();
+    expect(await verdicts(2)).toBeUndefined();
+  });
+
+  it('drops every verdict of a deleted model', async () => {
+    await seed({ versions: [{ id: 1, name: 'v1', words: ['alpha'] }] });
+    await rateComFaceVersionText(MODEL_ID);
+    expect(await verdicts(1)).toBeDefined();
+    await db.query(`UPDATE "Model" SET "deletedAt" = now() WHERE id = $1`, [MODEL_ID]);
+    await sweepComFaceVersionText();
+    expect(await verdicts(1)).toBeUndefined();
   });
 
   it('skips models already queued, without a face, or with only versions .com does not show', async () => {

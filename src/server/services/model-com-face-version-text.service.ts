@@ -33,7 +33,8 @@ export const comVersionTextQueueKey = (modelId: number) => `${QUEUE_PREFIX}${mod
  * The .com verdicts on one version's name and trigger words, each rated on its own. `name` and
  * `words` are the text that was rated; `policy` the prompts and model that rated it. Only `shown`
  * strings may show on .com. `hidden` (rated above PG-13, refused, or too long to rate) and `held`
- * (a minor, poi or csam detection) have verdicts too; a string in no list is unrated.
+ * (a minor, poi or csam detection) have verdicts too; a string in no list is unrated. `held` stores
+ * each string's {@link comVersionTextHitHash}, never its text.
  */
 export type ComVersionTextVerdicts = {
   name: string;
@@ -253,25 +254,29 @@ export async function rateComFaceVersionText(
   ]);
 
   const known = new Map<string, Verdict>();
+  const heldHashes = new Set<string>();
   for (const row of stored.values()) {
     if (row.policy !== policy) continue;
     for (const text of row.shown ?? []) known.set(text, 'shown');
     for (const text of row.hidden ?? []) known.set(text, 'hidden');
-    for (const text of row.held ?? []) known.set(text, 'held');
+    for (const hash of row.held ?? []) heldHashes.add(hash);
   }
+  const verdictFor = (text: string): Verdict | undefined =>
+    known.get(text) ?? (heldHashes.has(comVersionTextHitHash(text)) ? 'held' : undefined);
 
   const unrated = new Map<string, TextScanField>();
   for (const version of versions) {
-    if (!known.has(version.name) && version.name.trim())
+    if (!verdictFor(version.name) && version.name.trim())
       unrated.set(version.name, { heading: 'Version name', text: version.name });
     for (const word of version.trainedWords)
-      if (!known.has(word) && !unrated.has(word) && word.trim())
+      if (!verdictFor(word) && !unrated.has(word) && word.trim())
         unrated.set(word, { heading: 'Trained word', text: word });
   }
 
   const pending = [...unrated.values()];
   let workflows = 0;
   let rated = 0;
+  let refused = 0;
   const csamHits: CsamHit[] = [];
   while (pending.length && workflows < maxWorkflows) {
     const chunk = pending.splice(0, COM_VERSION_TEXT_STEPS_PER_WORKFLOW);
@@ -289,6 +294,7 @@ export async function rateComFaceVersionText(
     });
     results.forEach((result, i) => {
       const verdict = verdictOf(result);
+      if (result.status === 'refused') refused++;
       if (result.status === 'ok' || result.status === 'partial') {
         const { csam } = result.output;
         if (csam?.detected)
@@ -319,19 +325,23 @@ export async function rateComFaceVersionText(
     log('info', 'csam hit', { modelId });
     await holdCsamHits(modelId, versions, csamHits);
     scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
+  } else if (refused) {
+    // A refusal is often the worst input: the whole-model scan decides whether it needs a hold.
+    log('info', 'version text refused', { modelId, count: refused });
+    scanEntityInBackground({ entityType: 'Model', entityId: modelId, force: true });
   }
 
   let anyUnrated = false;
   for (const version of versions) {
     const strings = versionStrings(version);
-    const pick = (verdict: Verdict) => strings.filter((text) => known.get(text) === verdict);
+    const pick = (verdict: Verdict) => strings.filter((text) => verdictFor(text) === verdict);
     const next: ComVersionTextVerdicts = {
       name: version.name,
       words: version.trainedWords,
       shown: pick('shown'),
       hidden: pick('hidden'),
-      held: pick('held'),
-      pending: strings.some((text) => !known.has(text)),
+      held: pick('held').map(comVersionTextHitHash),
+      pending: strings.some((text) => !verdictFor(text)),
       policy,
       at: new Date().toISOString(),
     };
@@ -467,8 +477,31 @@ export const comVersionTextSweepSql = (limit: number, policy: string) => Prisma.
   LIMIT ${limit}
 `;
 
-/** Queues every model {@link comVersionTextSweepSql} finds, up to `limit`. Returns the ids queued. */
+/**
+ * Verdict rows of versions .com no longer shows: deleted or unpublished, private, or on a model that
+ * is deleted or lost its face. A version shown again is rated again.
+ */
+export const comVersionTextPruneSql = () => Prisma.sql`
+  DELETE FROM "KeyValue" kv
+  WHERE kv.key LIKE ${VERDICT_PREFIX} || '%'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      WHERE mv.id::text = substr(kv.key, ${VERDICT_PREFIX.length + 1})
+        AND m."sfwName" IS NOT NULL
+        AND m."deletedAt" IS NULL
+        AND mv.status = 'Published'
+        AND mv.availability <> 'Private'
+    )
+`;
+
+/**
+ * Drops the verdicts of versions .com no longer shows ({@link comVersionTextPruneSql}), then queues
+ * every model {@link comVersionTextSweepSql} finds, up to `limit`. Returns the ids queued.
+ */
 export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIMIT) {
+  const pruned = await dbWrite.$executeRaw(comVersionTextPruneSql());
   // Replica is fine: lag only re-queues a no-op or defers a just-changed model to the next sweep.
   const found = await dbRead.$queryRaw<{ modelId: number }[]>(
     comVersionTextSweepSql(limit, await getComVersionTextPolicy())
@@ -483,7 +516,7 @@ export async function sweepComFaceVersionText(limit = COM_VERSION_TEXT_SWEEP_LIM
         ON CONFLICT (key) DO NOTHING
       `
     );
-  log('info', 'sweep queued', { count: modelIds.length });
+  log('info', 'sweep queued', { count: modelIds.length, pruned });
   return modelIds;
 }
 
