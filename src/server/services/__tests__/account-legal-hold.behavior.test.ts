@@ -103,8 +103,10 @@ beforeAll(async () => {
       "customerId" text,
       image text,
       "profilePictureId" int,
-      "subscriptionId" text
+      "subscriptionId" text,
+      meta jsonb
     );
+    CREATE TABLE "UserReport" ("userId" int, "reportId" int);
     -- What deleteUser's deal-file statement reads; no deals, so it marks nothing.
     CREATE TABLE "ServiceOffering" (id int PRIMARY KEY);
     CREATE TABLE "ServiceDeal" (id int PRIMARY KEY, "offeringId" int, "buyerId" int, "sellerId" int,

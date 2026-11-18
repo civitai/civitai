@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
 import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import {
   SERVICE_DEAL_FILE_RETENTION_CLOSED_MS,
@@ -54,6 +55,15 @@ export const dealFilesHeld = Prisma.sql`(
       OR c."details" ->> 'secondaryUserId' IN (d."buyerId"::text, d."sellerId"::text))
   OR EXISTS (SELECT 1 FROM "ServiceOfferingReport" sr JOIN "Report" r ON r."id" = sr."reportId"
     WHERE sr."serviceOfferingId" = o."id" AND r."status"::text IN ('Pending', 'Processing'))
+  OR EXISTS (SELECT 1 FROM "User" bu
+    WHERE bu."id" IN ${parties} AND (
+      bu."meta" -> 'banDetails' ->> 'reasonCode' IN (${Prisma.join([
+        ...banReasonsAlwaysRemovingMedia,
+      ])})
+      OR concat_ws(' ', bu."meta" -> 'banDetails' ->> 'detailsInternal',
+        bu."meta" -> 'banDetails' ->> 'detailsExternal') ~* '(csam|ncmec)'))
+  OR EXISTS (SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r."id" = ur."reportId"
+    WHERE ur."userId" IN ${parties} AND r."status"::text IN ('Pending', 'Processing'))
   OR EXISTS (SELECT 1 FROM "Appeal" a
     WHERE a."userId" IN ${parties} AND a."status"::text = 'Pending')
   OR EXISTS (SELECT 1 FROM "ModActivity" m

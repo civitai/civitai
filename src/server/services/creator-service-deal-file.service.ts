@@ -630,7 +630,7 @@ const purgeable = (f: Prisma.Sql) => Prisma.sql`(
   AND NOT EXISTS (SELECT 1 FROM "ServiceDealFileEntry" e
     WHERE e."fileId" = ${f}."id" AND e."imageId" IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM "ServiceDeal" d JOIN "ServiceOffering" o ON o."id" = d."offeringId"
-    WHERE d."id" = ${f}."dealId" AND ${dealFilesHeld})
+    WHERE d."id" = ${f}."dealId" AND (${dealFilesHeld}) IS NOT FALSE)
 )`;
 
 export async function purgeRemovedFiles({ limit = 50 } = {}) {

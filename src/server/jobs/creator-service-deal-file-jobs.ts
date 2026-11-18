@@ -7,6 +7,7 @@ import {
   settleMalwareScans,
   unpackFinals,
 } from '~/server/services/creator-service-deal-unpack.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { markExpiredDealFiles } from '~/server/services/creator-service-deal-file-retention';
 import {
   deleteScanCopies,
@@ -65,7 +66,9 @@ export const creatorServiceUnpackJob = createJob(
     jobContext.checkIfCanceled();
     const copiesDeleted = await deleteEntryScanCopies();
     jobContext.checkIfCanceled();
-    const retentionExpired = await markExpiredDealFiles();
+    const retentionExpired = (await isFlipt(FLIPT_FEATURE_FLAGS.SERVICE_DEAL_FILE_RETENTION))
+      ? await markExpiredDealFiles()
+      : 0;
     jobContext.checkIfCanceled();
     const removedPurged = await purgeRemovedFiles();
     return {

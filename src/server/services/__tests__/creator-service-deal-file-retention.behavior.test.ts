@@ -81,7 +81,8 @@ const daysAgo = (days: number) => `now() - interval '${days} days'`;
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false);
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, "bannedAt" timestamp, "deletedAt" timestamp, muted boolean NOT NULL DEFAULT false, meta jsonb);
+    CREATE TABLE "UserReport" ("userId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TYPE "UserEngagementType" AS ENUM ('Hide', 'Follow', 'Block');
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
@@ -110,7 +111,7 @@ beforeEach(async () => {
   s3.send.mockResolvedValue({ ETag: '"abc123"' });
   await holder.db.exec(`
     TRUNCATE "ServiceDealFilePurge", "ServiceDealFileEntry", "ServiceDealFile", "ServiceDeal", "ServiceOfferingReport", "ServiceOffering",
-      "Report", "CsamReport", "EvidenceHold", "Appeal", "ModActivity" RESTART IDENTITY CASCADE;
+      "Report", "UserReport", "CsamReport", "EvidenceHold", "Appeal", "ModActivity" RESTART IDENTITY CASCADE;
     DELETE FROM "User";
     INSERT INTO "User" (id) VALUES (${SELLER}), (${BUYER}), (${OTHER});
     INSERT INTO "ServiceOffering" ("sellerId", title, description, price, "deliveryDays", "revisionsIncluded", "previewKind", status, ingestion, "updatedAt")
@@ -260,6 +261,21 @@ describe('holds', () => {
     ],
     ['a pending appeal', (p) => `INSERT INTO "Appeal" ("userId", status) VALUES (${p}, 'Pending')`],
     [
+      'a minor-safety ban',
+      (p) =>
+        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "SexualMinor"}}' WHERE id = ${p}`,
+    ],
+    [
+      'ban notes naming a child-safety report',
+      (p) =>
+        `UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "NCMEC report filed"}}' WHERE id = ${p}`,
+    ],
+    [
+      'an open report against them',
+      (p) =>
+        `INSERT INTO "Report" (status) VALUES ('Pending'); INSERT INTO "UserReport" ("userId", "reportId") VALUES (${p}, (SELECT max(id) FROM "Report"))`,
+    ],
+    [
       'a lost payment dispute',
       (p) =>
         `INSERT INTO "ModActivity" ("entityType", "entityId", activity) VALUES ('user', ${p}, 'chargeback:dp_1:banned')`,
@@ -317,6 +333,18 @@ describe('holds', () => {
     expect(await removed(finalId)).toBe(true);
   });
 
+  it('a ban for another reason, or a handled report against them, keeps nothing', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await holder.db.exec(`
+      UPDATE "User" SET "bannedAt" = now(), meta = '{"banDetails": {"reasonCode": "Harassment", "detailsInternal": "spam"}}' WHERE id = ${SELLER};
+      INSERT INTO "Report" (status, "createdAt", "statusSetAt") VALUES ('Actioned', ${daysAgo(
+        50
+      )}, ${daysAgo(45)});
+      INSERT INTO "UserReport" ("userId", "reportId") VALUES (${BUYER}, 1);`);
+    await sweep();
+    expect(await removed(finalId)).toBe(true);
+  });
+
   it('a released evidence hold and a resolved appeal keep nothing', async () => {
     const { finalId } = await closedDeal('Cancelled', 40);
     await holder.db.exec(`
@@ -333,6 +361,19 @@ describe('the purge after the sweep', () => {
     await sweep();
     await q(`INSERT INTO "EvidenceHold" ("userId") VALUES (${BUYER})`);
     expect(await files.purgeRemovedFiles()).toBe(0);
+    expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
+    expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
+  });
+
+  it('fails closed: a hold that cannot be read deletes nothing', async () => {
+    const { finalId } = await closedDeal('Cancelled', 40);
+    await sweep();
+    await holder.db.exec(`ALTER TABLE "Appeal" RENAME TO "AppealGone"`);
+    try {
+      await expect(files.purgeRemovedFiles()).rejects.toThrow();
+    } finally {
+      await holder.db.exec(`ALTER TABLE "AppealGone" RENAME TO "Appeal"`);
+    }
     expect(await q(`SELECT id FROM "ServiceDealFile" WHERE id = $1`, [finalId])).toHaveLength(1);
     expect(s3.purgeObjectVersions).not.toHaveBeenCalled();
   });
