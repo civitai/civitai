@@ -30,7 +30,7 @@ const USER = { id: 42, tier: 'free', username: 'u', muted: false, onboarding: 0 
 
 type Credential = {
   apiKeyId?: number;
-  tokenScope?: number;
+  tokenScope?: bigint;
   subject?: { type: 'apiKey'; id: number } | { type: 'oauth'; id: string };
 };
 

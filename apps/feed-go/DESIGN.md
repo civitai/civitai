@@ -205,7 +205,7 @@ internal/fallback    the fallback error and its reasons
 
 ### 3.1 Cache misses this service computes
 
-Six per-entity caches are filled on read by their `createCachedObject` lookup. In serving mode Go
+Eight per-entity caches are filled on read by their `createCachedObject` lookup. In serving mode Go
 runs before Node, so these misses are Go's to answer (in shadow mode Node has just filled them).
 `internal/hydrate/misses.go` runs the Node lookup's own query, once per page and cache for every
 missed id, and builds the entry exactly as the Node lookup builds it; the entry is then packed with
@@ -222,6 +222,8 @@ produce. `FEED_GO_COMPUTE_MISSES=false` restores the fallbacks.
 | `model-frame-miss` | `cosmeticEntityCaches.Model` (`packed:caches:cosmetics2:Model:<modelId>`): model.getAll | the Image cache's lookupFn over `'Model'` | as `image-frame-miss`, `equippedToType = 'Model'`; the same `frame-cache-negative` rule (one flag for every entity) |
 | `model-images-miss` | `imagesForModelVersionsCache` (`packed:caches:images-for-model-version-2:<versionId>`): model.getAll's version showcases | `src/server/services/image.service.ts` lookupFn: `getImagesForModelVersion({modelVersionIds, imagesPerVersion: 20, db})` over `getDbWithoutLagBatch('modelVersion', ids)` (`src/server/db/db-lag-helpers.ts`) | the showcase query as that call builds it (no user, no level, no include): the owner's (or the `-1` system user's) published posts on the version, images rated, reviewed (`imageReviewedSql`), not blocked, not a ToS violation, not awaiting review or `acceptableMinor`, and no R+ image on a `modelRestricted` model; 20 per version in (post, index, id) order, the computed `hasMeta`, `hasPositivePrompt`, `onSite` and `remixOfId` columns. With write-back on it reads the primary when any version carries the lag flag a recent write set (`lag-helper:modelVersion:<id>`, as Node's batch check; a failed flag read counts as unflagged, as Node's guard fails open), else the replica; with it off the replica. The appendFn's image tags are applied on read, as for a hit |
 | `model-decoration-miss` | `eventDecorationEntityCaches.Model` (`packed:caches:cosmetics2:event:v2:Model:<modelId>`): model.getAll | the Image cache's lookupFn over `'Model'` | as `event-decoration-miss`, `equippedToType = 'Model'` (and the entry's `equippedToType: 'Model'`); read only while an event is visible, as Node's `decorationsForEvents` returns before its fetch otherwise |
+| `model-data-miss` | `dataForModelsCache` (`packed:caches:data-for-model-2:<modelId>`): model.getAll | `src/server/redis/caches.ts` lookupFn: a plain fetch's miss reads `getDbWithoutLagBatch('model', ids)` (`fromWrite`, the primary, is `refresh()` only) | the lookupFn's two statements on the database that decides: the versions (`ModelVersion` with the linked-VAE `RecommendedResource` subquery and `GenerationCoverage`, ordered by model and `index`) and the SHA256 model hashes (`ModelHash`); per model with a version `{modelId, hashes, tags: [], versions}`, a model with none left out and nothing written for it (`cacheNotFound: false`). With write-back on it reads the primary when any model carries the lag flag a recent write set (`lag-helper:model:<id>`, as Node's batch check; a failed flag read counts as unflagged), else the replica; with it off the replica. The appendFn's tags (below) are applied on read, as for a hit |
+| `model-tags-miss` | `modelTagCache` (`packed:caches:model-tags:<modelId>`): model.getAll, asked for the models the data cache answered (the data cache's appendFn) | the same file's lookupFn (a plain fetch's `dbRead`) | `TagsOnModels` of the models on the replica (with write-back on too), `{modelId, tagIds}` in row order, a `notFound` marker for a model with none (whose data entry then keeps its own `tags`); the tag records from `basic-tags` as for a hit |
 
 The tag-ids values are `{imageId, tags}` with the tag ids in row order (Node's lookup has no `ORDER
 BY` either; both read the same rows), `tags: []` for an image whose every tag was dropped, and the
@@ -299,7 +301,8 @@ cache before and after); `TestMetricsMissGolden` holds Go to it with write-back 
 ends first): Go is held to the fallback there.
 
 Not computed: on the REST endpoint `image-resources-miss` (Node picks a replica by write lag). On
-model.getAll the other cache misses still fall back (§15.2). `input-techniques` is an input shape, not
+model.getAll the user-cosmetics and creator-membership misses still fall back, and the
+official-models entry is read and refilled as §15.2.2 describes. `input-techniques` is an input shape, not
 a cache miss: it stays an unsupported fallback.
 
 **Write-back** (`FEED_GO_CACHE_WRITEBACK`, default off). Off, nothing is written (the tests assert the
@@ -307,7 +310,8 @@ cache is untouched), and a lagging replica read affects only the one answer it f
 computed entry is written where and as Node's fetch writes it: the same key
 (`CACHE_KEY_NAMESPACE`-prefixed outside production), msgpackr's bytes of `{...result, cachedAt}` or of
 the `{[idKey]: id, notFound: true, cachedAt}` marker, the same expiry (user cosmetics a day, markers a
-day; frames and event decorations, image and model, a day, markers an hour, frame markers only with
+day; model data a day, no marker; model tags and their markers a day; frames and event decorations,
+image and model, a day, markers an hour, frame markers only with
 `frame-cache-negative` on; tag ids and their markers 9 h, the 8 h ttl plus its 1 h stale tail), and
 only for a miss Node writes (no key or an undecodable value; never
 inside a bust's debounce window or after a failed read). Write-back needs `DATABASE_URL` (the primary,
@@ -321,7 +325,9 @@ day. With the primary read, a fill races an equip or unequip exactly as Node's o
 tag-ids value, above) is a second, narrower guard: it never overwrites a key
 that holds a value or a bust's debounce marker at write time. It does not stop a value read before a
 change from landing after the change's debounce marker expired; only the primary read bounds that, to
-the same window Node has. The user-cosmetics and tag-ids lookups read the replica, as Node's do. The
+the same window Node has. The user-cosmetics, tag-ids and model-tags lookups read the replica, as
+Node's do; the version-showcase and model-data lookups read the primary only for an id a recent
+write flagged, as Node's lag-aware reads do. The
 shared caches Go already filled from the replica before this change (basic users, `cosmetics2`,
 `basic-tags`, profile pictures, thumbnails) are still never written.
 
@@ -331,7 +337,8 @@ or "no row") is also kept in process for 10 s (at most 50 000 ids; expired ones 
 once a second, and while it is full of live ones a new id is not kept), so the same miss within seconds
 sends no query: without a write, Node's next fill is the only thing that would otherwise end the
 repeats. With write-back on nothing is kept (the written entry answers repeats). Every computed cache
-is kept but the image meta (§13): the tag ids, model frames and model decorations too, as none depends on the viewer
+is kept but the image meta (§13): the tag ids, model frames, model decorations, model data, model
+tags and the official models too, as none depends on the viewer
 and Node already serves tag ids from a per-process copy for longer than 10 s. The kept answer is a
 §9 divergence.
 
@@ -468,11 +475,26 @@ That holds even when the app's deploy runs ahead of this service's.
   parity gap.
 - **Allowed without being schema keys:** for tRPC, `authed` (added by `authedCacheBypassLink` to every
   object input when signed in) and `direction` (added by an infinite query). The site client sends
-  both and zod strips both. For REST, `token` (the API key, which then falls back as `bearer-token`).
-  The web client builds each input from the filter stores, whose keys are all schema keys. Every
+  both and zod strips both. For `image.getInfinite` only, also `view`, `section`, `query` and
+  `similarTo` (`strippedURLKeys`): the keys of `imagesQueryParamSchema`, the images feeds' URL query,
+  that `getInfiniteImagesSchema` lacks. The site merges that query into the filter-store input, so
+  they arrive and zod strips them (the exception below). For REST, `token` (the API key, which then
+  falls back as `bearer-token`). Every other input key the web client sends is a schema key. Every
   query key seen on `/api/v1/images` is a schema key except a small tail of hand-written requests,
   which now fall back. Before this, `/api/v1/images` kept an unknown key in `nextPage` and answered;
   `nextPageURL` still does so for every key of the query.
+- **Exception: the stripped URL keys.** `view`, `section`, `query` and `similarTo` are
+  `imagesQueryParamSchema` URL keys that `getInfiniteImagesSchema` lacks, so zod strips them, and
+  `image.getInfinite` here ignores them as Node does rather than falling back. This deliberately
+  departs from the rule above that an unknown key falls back even when the app's deploy runs ahead
+  of this service's. The risk is the deploy gap: if one of the four becomes a
+  `getInfiniteImagesSchema` key and the web app deploys before feed-go, the running feed-go still
+  ignores it and answers as though it were absent. That is acceptable while `image.getInfinite` is
+  shadow-only, and must be re-checked before `image.getInfinite` serves. The guard is one-directional:
+  `TestStrippedURLKeysAreStrippedByZod` pins the list as literals and fails when
+  `getInfiniteImagesSchema` gains any of the four, which happens on the web PR that adds the key
+  (it regenerates `schemas.json`); the feed-go change that reads the key must ship first. A key
+  added to `imagesQueryParamSchema` alone is not detected and falls back as `input-unknown-key`.
 
 ## 6. How traffic reaches it
 
@@ -810,13 +832,16 @@ probe path `/internal/probe/model.getAll`), differently: its hydration (`hydrate
 `VersionImages`, the creator memberships) is not the page hydrator `PresenceProbe` stands in for, so
 its probe runs the serving path itself (`prepareModelGetAll` + `modelfeed.Serve`) under
 `hydrate.WithPresence`. A miss Go computes there (the model frames and decorations, the version
-showcases, the showcase images' tag ids) is recorded with its one lookup query and answered as "no
-entry", never looked up or written, with one exception: a showcase miss is looked up, read-only and
-on the replica, because a model without showcase images is dropped from the page, so "no entry"
-would make the probe page on (more page queries, and misses a serve would never meet). Every other
-cache miss falls back, and the probe reports the cache its fallback names (`model-data`,
-`model-tags`, `creator-memberships`, `user-cosmetics`, `version-images`, `model-frames`,
-`model-decorations` and `tag-ids` with the computation off, and the pre-hydration ones) as `would_miss`.
+showcases, the showcase images' tag ids, the model data and tags, the official models) is recorded
+with its one lookup query and answered as "no entry", never looked up or written, with exceptions
+for the misses whose answer decides which rows a page keeps: a showcase miss (a model without
+showcase images is dropped), a model-data miss (a model with no data is dropped), a model-tags miss
+(the tags decide the excluded-tag drop) and the official models (they decide the pinned page) are
+looked up, read-only and on the replica, as "no entry" would make the probe page on (more page
+queries, and misses a serve would never meet). Every other cache miss falls back, and the probe
+reports the cache its fallback names (`creator-memberships`, `user-cosmetics`, and `model-data`,
+`model-tags`, `version-images`, `model-frames`, `model-decorations`, `tag-ids` and `official-models`
+with the computation off, and the pre-hydration ones) as `would_miss`.
 So it sees only the FIRST cold cache Go falls back on, queries the replica as serving does (the page
 query, basic users and profile pictures on a miss), and records no `raced` entries: its served share
 is an upper bound by the race. Each `ModelPage` call counts as a page; its cost figure counts the
@@ -912,6 +937,7 @@ The mirrors default to the fail-safe value (fall back) and must be set to the fl
 | `image-resource-use-write` | model-gallery queries read the primary | not mirrored: off in production; the replica is used |
 | `image-feed-shared-users` | one `user` object per creator on the wire | decoded value unchanged; nothing to do |
 | event decoration flags (flag `birthday-2026` for event `birthday2026`, …) | which event hats are visible to which viewer: `getVisibleDecorationEvents` asks the event engine and the event's Flipt flag per viewer (signed out: the flag's base; signed in: the flag for that user; a moderator session: always on) | `FEED_GO_DECORATION_EVENTS`: comma-separated event names (the event's `name`, e.g. `birthday2026`, not its flag key) whose hats Node shows to **every** viewer now, i.e. the event has started and its flag's base is on. It must name each such event: left empty while one is live, every image wearing that hat is `null` here and an object in Node (`items.*.images.*.eventDecoration` `type` diffs). After the event ends the hats stay visible (`canWearEventDecorations` includes `ended`), so the value does not change at the end date. Base off (the kill switch) → remove the event; then moderators and testers still see hats in Node and not here (a parity gap, §9) |
+| `use-model-version-cache-for-images` | `image.getInfinite` only: a `prioritizedUserIds` request on the Postgres path takes its ids from `imagesForModelVersionsCache` and is re-sorted into that cache's order; off in production (enabled: false, no rollout) | `FEED_GO_PRIORITIZED_VERSION_CACHE` (default off): on, those requests fall back (`prioritized-version-cache`); off, the SQL branch is ported (§14.2) |
 | `frame-cache-negative` | whether the image frame cache's notFound markers are live (read as "no frame", written for an hour on a miss) | `FEED_GO_FRAME_CACHE_NEGATIVE` (default off, as Node reads a flag it cannot evaluate): off, a marker is a miss (looked up, §3.1) and none is written, as in Node |
 | `kysely-image-reactions`, `image-metrics-swr`, cache L1 switches | same results by another route | nothing to do |
 
@@ -1449,7 +1475,10 @@ domain cap.
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId`, `collectionId` and every other key in §2's right-hand column (`input-<key>`); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| Input | the global feed; `modelVersionId` (with or without `modelId`), `model3dId`; a `modelId` alone (Postgres); the creator scope (`userId`, `username`); the post scope (`postId`, Postgres); the tag scope (`tags`); `prioritizedUserIds`, `pending` and an `include` without `cosmetics` (below); every sort, period, browsing level, filter and cursor §2 ports, with the same cursor refusals | Hat Turf keys (`infinite-hat-turf`); `hubId`, `collectionId` and every other key in §2's right-hand column (`input-<key>`); `userId: 0` (`infinite-user-zero`: the feed and the hydrate read it differently) |
+| `prioritizedUserIds` (the model page's showcase carousel: `modelVersionId`, the owner's id, `pending`, `include: []`) | with a `modelId` or `modelVersionId`, the Postgres page of `getAllImages`' prioritizeUser branch with the version cache off: no `ImageResourceNew` join (`p."modelVersionId" = <version>` when there is one, no model scope at all for a model alone), `i."userId" = ANY(<ids>)`, ordered `(i."postId"::bigint * 100) + COALESCE(i."index", 0), i."id"`, the cursor column still the sort's (`nextCursor` is the look-ahead row's id), never cached; without a model, the feed path's empty page (the mapper refuses `input:prioritizedUserIds`) | a truthy cursor (`prioritized-cursor`: Node's BAD_REQUEST); `[-1]` alone (`prioritized-system-user`: one more read, then an `IIF` order over every creator); `FEED_GO_PRIORITIZED_VERSION_CACHE` on (`prioritized-version-cache`) |
+| `pending` | no published-before-now clause; a moderator's view `(nsfwLevel & level) != 0 OR nsfwLevel = 0`, a signed-in viewer's `pendingViewerImageSql` (no `reviewCollectionId`: server-set), signed out the reviewed view; the pending view is never cached; on the feed path the mapper's empty page (`flag:pending`) | |
+| `include` without `cosmetics` | no user-cosmetic, frame or cosmetic read (nor their miss lookups): `user.cosmetics` `[]`, `cosmetic` `null`; the probe checks the same keys | (the gallery still falls back: `input-include-no-cosmetics`) |
 | Viewer | as §4 (signed out, cookie sessions, a banned session as signed out); the session's username for the own-feed rule | as §4 |
 | Gates | withheld, held level, a version or post that cannot be found; moderators exempt | a held model whose settings carry no level (`held-level-unset`), a settings key Node would rebuild (`gallery-settings-miss`) |
 | Tag scope | `system:blocked-browsing-tags` read from the cache cluster | that key absent (`blocked-tags-miss`) or not a `[{id}]` list (`blocked-tags-stale`): Node rebuilds it from the database |
@@ -1462,6 +1491,7 @@ domain cap.
 | Flag | Node effect | Here |
 |---|---|---|
 | `image-index-feed` | the feed path for every shape `requiresImageDbPath` allows | `FEED_GO_IMAGE_INDEX_FEED` (§8) |
+| `use-model-version-cache-for-images` | the prioritizedUserIds page from `imagesForModelVersionsCache` | `FEED_GO_PRIORITIZED_VERSION_CACHE` (§8; default off, as in production) |
 | features `hatTurfFeedCard`, `hatTurfFeedSorts` | the Hat Turf sorts and Show filters | not mirrored: a request carrying a hat key falls back whatever they say |
 | feature `userHubs` | a hub feed | not mirrored: `hubId` falls back |
 | `image-feed-shared-users` (+ `trpc-fast-superjson-shared-refs`) | one shared `user` per creator | no decoded difference; nothing to do |
@@ -1573,19 +1603,19 @@ profile-picture / image-tag cache readers with the gallery port; its own readers
 The ported set was chosen by the input shapes' share of the route's successful answers, read from
 request logs before the port (the figures are not recorded here): base-model filters, cursors, tag
 names and creators are the common shapes and are ported; a collection, the largest fallback measured
-after them, is ported too (§15.2.1); Hot with a base-model filter is the largest left; every other
-unsupported key is rare. A ported shape can still fall back on
+after them, is ported too (§15.2.1), and so is Hot with a base-model filter, the largest left after
+that (the official-checkpoint pin, §15.2.2); every other unsupported key is rare. A ported shape can still fall back on
 a cache miss. In shadow that is not measured: the sample is computed after Node answered the same
 request and filled every key it read, so the shadow's miss fallbacks undercount the misses a Go-first
 read would see. Serving needs a Go-first miss measurement and Go-side miss filling first (§3).
 
 | Area | Ported | Falls back (reason) |
 |---|---|---|
-| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1) | `query` (Meilisearch), `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`); Hot with a base-model filter (`model-official-pin`) |
+| Input | every sort but Recently Added; `period` / `periodMode`; `limit`; the keyset cursor; `types`, `checkpointType`, `baseModels`, `tag` / `tagname`, `username` / `user`, `fileFormats`, `fromPlatform`, `earlyAccess`, `paidAccess`, `hidePaid`, `onSale`, `archived`, the licensing filters, `excludedTagIds`, `excludedUserIds`, `disablePoi`, `disableMinor`, `collectionId` with `collectionTagId` (§15.2.1); Hot with a base-model filter (the official-checkpoint pin, §15.2.2) | `query` (Meilisearch), `hidden`, `followed`, `newCreators`, `ids`, `modelVersionIds`, `status`, `needsReview`, `pending`, `supportsGeneration`, `isFeatured`, `availability`, `publishedFrom` / `publishedTo`, `poiOnly` / `minorOnly`, `page` (`input-<key>`); Recently Added, with or without a collection (`model-sort-recently-added`); a `collectionId` or `collectionTagId` that is not an int4 integer (`model-collection-id`; not a number, `null` included, is `input-invalid`); a cursor Node answers with a 400, or a date token not in Postgres' CONCAT form (`model-cursor`); `ids` present at all, `[]` and `""` included (`input-ids`) |
 | Viewer | as §4 | as §4; a signed-in request with no level (`model-level-absent`: the saved level is not read) |
 | Flags | the state production runs (§15.3) | any model flag mirror off (`flag-off-state`) |
 | Lookups | the tag by name and the creator by name on the replica; the blocked tag list; the collection read permission on the replica | a creator the replica does not hold (`model-username-miss`: Node reads the primary, then 404s); the blocked list absent or unreadable (`blocked-tags-miss`, `blocked-tags-stale`) |
-| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model frames, the model hats, the version showcases and the showcase images' tag ids | misses on the model data, the model tags, user cosmetics, memberships (`model-data-miss`, `model-tags-miss`, `user-cosmetics-miss`, `membership-miss`), and on the model frames, model hats, version showcases and image tags without the computation (`model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
+| Caches | basic users, profile pictures, cosmetics and tags by id on a miss (the replica); privacy defaults on a miss (`User.settings` on the replica); computed misses (§3.1) on the model data, the model tags, the model frames, the model hats, the version showcases and the showcase images' tag ids; the official models (§15.2.2) | misses on user cosmetics and memberships (`user-cosmetics-miss`, `membership-miss`), and on the model data, model tags, model frames, model hats, version showcases, image tags and the official models without the computation (`model-data-miss`, `model-tags-miss`, `model-frame-miss`, `model-decoration-miss`, `model-images-miss`, `tag-ids-miss`, `official-models-miss`); a failed miss computation (`<reason>-failed`); a gallery-settings key Node would rebuild (`gallery-settings-miss`, `gallery-settings-stale`); a held setting with no level (`model-held-level-unset`) |
 
 ### 15.2.1 Collections
 
@@ -1608,6 +1638,37 @@ before the cursor is parsed, as Node orders them (`internal/modelfeed/collection
   `skipEdgeCache` hands the handler, which no header reads (its comment in `model.router.ts`), so a
   signed-out answer stays public and a session's private. A signed-out viewer reads no private
   collection, so nothing private reaches a shared cache.
+
+### 15.2.2 The official-checkpoint pin
+
+`getModelsFeed` with `sort: Hot`, a non-empty `baseModels` and no `query` (a query falls back before
+this) leads the first page with the official checkpoints and drops them from every page
+(`internal/modelfeed/serve.go` `Serve`, `internal/hydrate/official.go`):
+
+- **The ids.** `getOfficialModelIds` (`src/server/services/resource-select.service.ts`):
+  `fetchThroughCache(OFFICIAL_MODELS, …, { ttl: 300, retryCount: 0 })` over
+  `dbRead.model.findMany({ where: { isOfficial: true, status: Published }, select: { id, type } })`,
+  one key `packed:caches:official-models` holding `{data: [{id, type}], cachedAt: <epoch ms>}`, then
+  the controller keeps the `Checkpoint` ones, in the cached order. A fresh entry (`cachedAt` within
+  the 5 min ttl) is used as is. Otherwise feed-go does what `fetchThroughCache` does: with write-back
+  on it takes the same refresh lock (`cache-lock:<key>`, SET NX EX 10), reads the replica, writes the
+  entry (SET EX 600, plain, as Node's under its lock) and releases the lock; a lock held elsewhere
+  serves the expired entry, or with none answers no pin (Node's `retryCount: 0` throws and
+  `getOfficialModelIds`' catch answers `[]`); a failed lock write serves the expired entry or reads
+  the replica without writing; a failed cache read reads the replica without writing (Node's
+  fail-open path). With write-back off (and under the Go-first probe) nothing is written and no lock
+  is taken: the lock is only read (EXISTS) and answered as above, and a free lock means a replica
+  read, kept in process for 10 s (`lookupShared`). A replica read that fails falls back
+  (`official-models-miss-failed`); without the miss computation an entry that would be read falls
+  back (`official-models-miss`).
+- **First page** (no cursor). One `getModelsWithImagesAndModelVersions` call restricted to the
+  pinned ids (`mm."modelId" = ANY(…)`, Node's `IN (…)`), with take = their count and every other
+  filter, the base-model path and the hydration of any page; its lookahead cursor is not read, and
+  its items lead the answer and do not count towards `limit`. A pinned id with no row on this base
+  is simply absent.
+- **Every page of the loop** (the first included) drops the pinned ids (`mm."modelId" != ALL(…)`,
+  Node's `NOT IN (…)`), so a cursor never re-emits them; a later page (a cursor) runs no pinned page.
+  Neither filter relaxes the private-model filter. The answer's `nextCursor` is the main loop's.
 
 ### 15.3 Flags
 
@@ -1674,6 +1735,17 @@ topk(10, sum by (reason) (rate(feed_go_fallback_total{feed_endpoint="model-getal
 - the metric-privacy defaults are read for every row's owner (Node reads the shown models' owners):
   extra reads, the same answer;
 - the creator lookup reads the replica only (Node reads the primary next);
+- the computed model data and model tags (§3.1) read the same statements as Node's lookups, none of
+  which orders the hashes or the tag ids (and the versions only by model and `index`): both sides
+  get the database's order for the same plan, which SQL does not promise, so the `hashes` and `tags`
+  arrays (and versions sharing an `index`) of a computed miss may be ordered differently from a
+  value Node computed at another moment. With write-back on the value Go writes is what both then
+  serve;
+- with write-back off the model-data lookup reads the replica even for a model a recent write
+  flagged (Node would read the primary): only that answer is affected, nothing is written;
+- the official models with write-back off: the refresh lock is read, not taken, so two processes can
+  both read the replica where Node would let one; a failed replica read falls back where Node's
+  catch would answer the page without the pin;
 - the blocked tag list is memoized for 30 s as Node memoizes it per pod, in the one memo image.getInfinite
   reads (`feed.BlockedTags`); the two memos refresh at different moments, so a changed list can reach
   this service and a Node pod up to 30 s apart;
@@ -1835,10 +1907,11 @@ the same statement (text and bound values) from Go.
   - tag names (`basic-tags`): with `FEED_GO_COMPUTE_MISSES` (§3.1) named by tagCache's own lookup on
     the replica (`SELECT id, name FROM "Tag"`), nothing written back; off, it falls back;
   - model data (`data-for-model-2`): falls back. Its lookup is lag-aware (it may read the primary
-    after a recent version change) and assembles versions, hashes and tags from several tables; no
-    Go port exists (model.getAll falls back on it too);
+    after a recent version change); model.getAll computes it with `FEED_GO_COMPUTE_MISSES` (§3.1),
+    this endpoint does not yet;
   - model tags (`model-tags`): falls back. Its lookup reads `TagsOnModels` with no ORDER BY, so the
-    tag order Node writes is the replica's row order, which a second read cannot be held to;
+    tag order Node writes is the replica's row order, which a second read cannot be held to
+    (model.getAll computes it, documenting that order as a divergence, §15.7);
   - version images (`images-for-model-version-2`): falls back here (model.getAll computes it with
     `FEED_GO_COMPUTE_MISSES`, §3.1);
   - version files (`files-for-model-version-2`): falls back. Its lookup joins files, hashes and

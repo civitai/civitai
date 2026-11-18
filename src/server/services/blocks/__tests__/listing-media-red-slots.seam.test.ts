@@ -99,6 +99,7 @@ function img(id: number, url: string, nsfwLevel: number) {
     tosViolation: false,
     acceptableMinor: false,
     blockedFor: null as string | null,
+    modelRestricted: false,
   };
 }
 

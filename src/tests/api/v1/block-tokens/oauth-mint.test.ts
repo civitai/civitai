@@ -376,7 +376,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       // bitmask carried `TokenScope.UserRead`.
       expect(res._body.missingScopes).toContain('user:read:self');
       const mintedWithUserRead = mockHub.mintAppToken.mock.calls.filter(
-        ([args]) => ((args as { scope: number }).scope & TokenScope.UserRead) !== 0
+        ([args]) => ((args as { scope: bigint }).scope & TokenScope.UserRead) !== 0n
       );
       expect(mintedWithUserRead).toEqual([]);
       // …and the platform must not have written the consent record it then validates.
@@ -405,7 +405,7 @@ describe('POST /api/v1/block-tokens — auth: "oauth" manifests', () => {
       expect(res._status).toBe(200);
       expect(res._body.missingScopes).toContain('user:read:self');
       const mintedWithUserRead = mockHub.mintAppToken.mock.calls.filter(
-        ([args]) => ((args as { scope: number }).scope & TokenScope.UserRead) !== 0
+        ([args]) => ((args as { scope: bigint }).scope & TokenScope.UserRead) !== 0n
       );
       expect(mintedWithUserRead).toEqual([]);
       expect(mockDbWrite.oauthConsent.upsert).not.toHaveBeenCalled();

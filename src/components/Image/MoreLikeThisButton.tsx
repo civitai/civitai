@@ -8,12 +8,14 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 
 type MoreLikeThisImage = { id: number; type: MediaType | `${MediaType}` };
 
+type MoreLikeThisFlags = Pick<FeatureAccess, 'imageSearch' | 'feedSearch' | 'moreLikeThis'>;
+
+export const offersMoreLikeThis = (features: MoreLikeThisFlags) =>
+  !!features.moreLikeThis && offersImageSearch(features);
+
 /** Only images are embedded, so videos have no "more like this". */
-export function isMoreLikeThisVisible(
-  features: Pick<FeatureAccess, 'imageSearch' | 'feedSearch'>,
-  image: MoreLikeThisImage
-) {
-  return offersImageSearch(features) && image.type === MediaType.image;
+export function isMoreLikeThisVisible(features: MoreLikeThisFlags, image: MoreLikeThisImage) {
+  return offersMoreLikeThis(features) && image.type === MediaType.image;
 }
 
 /** The images feed answers "more like this" under `feedSearch`; otherwise the image search page. */

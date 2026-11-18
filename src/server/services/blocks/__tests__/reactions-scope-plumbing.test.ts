@@ -43,7 +43,7 @@ describe('social:react:self — registry', () => {
     expect(isKnownBlockScope(SCOPE)).toBe(true);
     expect(BLOCK_SCOPE_TO_OAUTH_BIT[SCOPE]).toBe(SKIP_OAUTH_CHECK);
     // The consequence that decided it: an app declaring only this scope gets a zero bitmask.
-    expect(deriveOauthBitmaskFromBlockScopes([SCOPE])).toBe(0);
+    expect(deriveOauthBitmaskFromBlockScopes([SCOPE])).toBe(0n);
   });
 
   it('is SENSITIVE, so a manifest declaring it must justify it', () => {

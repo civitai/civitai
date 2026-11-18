@@ -184,6 +184,10 @@ And the knob cannot be split: under Turbopack `experimental.serverSourceMaps` is
 single switch covering client _and_ server. There is no "keep server maps, drop the memory"
 setting.
 
+> **Superseded 2026-11-17:** source maps were dropped anyway, for build memory
+> (`productionBrowserSourceMaps: false`). All three consumers above were deleted, along with
+> `check-server-graph-singletons.mjs` and the Dockerfile `maps` artifact target.
+
 **What is left**, therefore, is option 2 (file the hash-space defect upstream — the only real
 fix) plus containment: exempt this error signature from build retry, since the collision is
 deterministic per tree and a retry burns a second and third full build to fail identically.

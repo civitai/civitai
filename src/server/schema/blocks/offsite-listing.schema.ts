@@ -19,7 +19,7 @@ import {
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
 import {
-  ALL_SCOPES,
+  LEGACY_TOKEN_SCOPE_MASK,
   SCOPE_JUSTIFICATION_MAX_LENGTH,
 } from '~/shared/constants/token-scope.constants';
 
@@ -120,22 +120,25 @@ export const submitExternalListingSchema = z
     name: z.string().min(1).max(OFFSITE_NAME_MAX),
     // REQUIRED: every external app links its own OAuth client.
     connectClientId: z.string().min(1).max(64),
-    // Non-negative bitmask, UPPER-BOUNDED at the full defined scope set (`ALL_SCOPES`,
-    // the OR of every TokenScope bit). Without the max, a crafted value beyond int4
-    // (e.g. 2**32, or 2**32 + a real bit) survives the subset check — JS bitwise ToInt32
-    // in `connectScopesSubsetOfCeiling` truncates it away — then the int4 INSERT raises
-    // Postgres 22003, which the service's P2002-only catch surfaces as a raw 500. The
-    // `.max` rejects it at the schema boundary (400) instead. `ALL_SCOPES` (not
-    // `TokenScope.Full`) is the correct ceiling: Full excludes the AppBlocksSubmit /
-    // AppBlocksDevTunnel bits, which a client's `allowedScopes` MAY legitimately carry,
-    // so bounding at Full could reject a valid subset. The per-client subset check still
-    // lives in the service (it needs the client's `allowedScopes`).
+    // Non-negative bitmask, UPPER-BOUNDED at `LEGACY_TOKEN_SCOPE_MASK` (2^31 - 1), the most
+    // the int4 `connect_requested_scopes` column holds. Without the max, a value beyond int4
+    // reaches the INSERT, which raises Postgres 22003, which the service's P2002-only catch
+    // surfaces as a raw 500. The `.max` rejects it at the schema boundary (400) instead. Not
+    // `TokenScope.Full`: Full excludes the opt-in bits, which a client's `allowedScopes` MAY
+    // legitimately carry, so bounding at Full could reject a valid subset. The per-client
+    // subset check still lives in the service (it needs the client's `allowedScopes`).
     // OPTIONAL + IGNORED by the service. The listing's requested scopes are
     // AUTO-DERIVED server-side from the client's CURRENT consentable scopes at submit
     // time (server-authoritative snapshot — a form-supplied mask is never trusted).
-    // Still bounded here (int/nonnegative/≤ALL_SCOPES) so a provided value can't
-    // overflow int4, but the stored value comes from the client, not this field.
-    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES).optional(),
+    // Still bounded here so a provided value can't overflow int4, but the stored value
+    // comes from the client, not this field. A number on the wire, a bigint once parsed.
+    requestedScopes: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number(LEGACY_TOKEN_SCOPE_MASK))
+      .transform((v) => BigInt(v))
+      .optional(),
     // Per-value length bound only; full key/subset validation is in the service
     // (validated against the DERIVED scope set = the client's allowedScopes).
     scopeJustifications: z.record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH)),
@@ -274,9 +277,15 @@ export const updateListingPatchSchema = z
     // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
     // (needs the listing's client `allowedScopes`) and rejects justifications
     // without a `requestedScopes` mask, so a scope change re-enters mod review.
-    // Upper-bounded at `ALL_SCOPES` for the same int4-overflow reason as the submit
-    // schema (a value beyond int4 would 500 on the UPDATE, not 400 at the boundary).
-    requestedScopes: z.number().int().nonnegative().max(ALL_SCOPES).optional(),
+    // Upper-bounded at `LEGACY_TOKEN_SCOPE_MASK` for the same int4-overflow reason as the
+    // submit schema (a value beyond int4 would 500 on the UPDATE, not 400 at the boundary).
+    requestedScopes: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number(LEGACY_TOKEN_SCOPE_MASK))
+      .transform((v) => BigInt(v))
+      .optional(),
     scopeJustifications: z
       .record(z.string(), z.string().max(SCOPE_JUSTIFICATION_MAX_LENGTH))
       .optional(),
@@ -285,6 +294,8 @@ export const updateListingPatchSchema = z
     message: 'patch must change at least one field',
   });
 export type UpdateListingPatch = z.infer<typeof updateListingPatchSchema>;
+/** The patch as the client sends it: `requestedScopes` is a number on the wire. */
+export type UpdateListingPatchInput = z.input<typeof updateListingPatchSchema>;
 
 export const updateListingSchema = z.object({
   listingId: z.string().min(1).max(64),
@@ -360,6 +371,7 @@ export type GetMyListingForAppInput = z.infer<typeof getMyListingForAppSchema>;
  */
 export const getMyListingForEditSchema = z.object({
   listingId: z.string().min(1).max(64),
+  readOnly: z.boolean().optional(),
 });
 export type GetMyListingForEditInput = z.infer<typeof getMyListingForEditSchema>;
 

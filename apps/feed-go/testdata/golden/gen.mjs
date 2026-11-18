@@ -254,6 +254,7 @@ function image(id, postId, opts = {}) {
     minor: opts.minor ?? false,
     poi: false,
     acceptableMinor: false,
+    restricted: false,
   };
   RESOURCES[id] = opts.resources ?? (post.modelVersionId ? [{ modelVersionId: post.modelVersionId, detected: true }] : []);
 }

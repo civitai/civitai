@@ -30,6 +30,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // Enabled: every non-moderator semantic search is held at the safe levels (the containment
   // clamp). DISABLED LIFTS THE CLAMP: non-moderators search at their own browsing level. A missing
   // key, an evaluation error or no Flipt client all keep the clamp ON (`isNonModClampOn`).
+  // Evaluated per viewer (user id): segment rollouts only, never a percentage (threshold) rollout.
   SEMANTIC_SEARCH_NONMOD_CLAMP = 'semantic-search-nonmod-clamp',
   // On: semantic searches send the search service the request id and the viewer's levels and
   // moderator status, and key the candidate cache on the guard's mode and version. Create the key
@@ -440,8 +441,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF: off, absent or Flipt unreachable, the token is ignored and nothing is stored.
   // See `github-actions-oidc.service.ts`.
   APP_BLOCKS_OIDC_VERIFIED_SUBMIT = 'app-blocks-oidc-verified-submit',
-  // Global brake. Off or absent hides all App Block media; see `isBlockMediaServing`
-  // in `block-media-serving.ts` for what happens when Flipt is unreachable.
+  // App Block host media serving, per viewer. See `decideBlockMediaServing` in
+  // `block-media-serving.ts`, including what happens with no flag answer.
   APP_BLOCKS_WORKFLOW_MEDIA_SERVE = 'app-blocks-workflow-media-serve',
   // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
   // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
@@ -768,9 +769,8 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
 //   1. Duplicated work per pod — two wasm engines and two 60s config polls.
 //   2. Any reader that closes over "the" client sees ONE of the two. That is
 //      exactly how `civitai_app_heavy_bulkhead_active`/`_rejects` emitted zero
-//      series for 74 days while looking registered, deployed and healthy (#4173),
-//      and it is why `src/server/utils/request-bulkhead.ts` is enrolled in
-//      scripts/server-graph-watchlist.mjs. `getFliptCacheStats` below is precisely
+//      series for 74 days while looking registered, deployed and healthy (#4173).
+//      `getFliptCacheStats` below is precisely
 //      such a reader, so an unpinned client would make the eval-cache metrics a
 //      confident half-measurement — worse than their absence, because the number
 //      they exist to arbitrate (TTL-bound vs capacity-bound) is biased by the
@@ -778,13 +778,7 @@ const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
 //      far less than one cache holding all of it, which reads as "TTL-bound" and
 //      sends you to the knob that changes nothing.
 //
-// Enrolled as SHARED_STATE on `__civitaiFliptClient` in server-graph-watchlist.mjs,
-// so a future refactor that drops this pin fails that gate. Vitest cannot see this
-// (it loads each module once).
-// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this EXACT shape
-// against comment-stripped source, so an aliased handle
-// (`const g = globalThis as …; g.__civitaiFliptClient ??= …`) does NOT satisfy it —
-// the gate must be able to recognise the pin inside a bundled chunk. `??=`
+// Vitest cannot see a dropped pin (it loads each module once). `??=`
 // specifically, not `=`: `=` makes the second copy REPLACE the first's client
 // instead of adopting it, which is the original bug in one character.
 declare global {

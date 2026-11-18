@@ -62,6 +62,9 @@ function wf(
     id: 'wf_r',
     createdAt: '2026-11-14T00:00:00.000Z',
     status: 'succeeded',
+    // Just finished, so an unrated output is still inside the rating hold
+    // (`isRatingHoldExpired`; its deadline is pinned in rating-hold-compat.test.ts).
+    completedAt: new Date().toISOString(),
     metadata: {},
     tags: [],
     cost: { total: 8 },

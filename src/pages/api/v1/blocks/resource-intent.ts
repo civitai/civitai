@@ -11,7 +11,7 @@ import { matchHostedModels } from '~/server/services/resource-intent-hosted-mode
 import { resourceIntentInputSchema } from '~/server/schema/resource-intent.schema';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { checkBlockLLMRateLimit } from '~/server/utils/block-catalog-rate-limit';
-import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 
@@ -115,7 +115,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   const { needs, ...intentInput } = parsed.data;
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const { browsingLevel, isSfwCeiling } = resolveCatalogViewerMaturity(claims, {
+    regionRestricted,
+  });
 
   try {
     // Coverage is resolved INSIDE the service: in add-on mode on the cache-miss

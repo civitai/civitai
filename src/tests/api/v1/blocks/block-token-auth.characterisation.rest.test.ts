@@ -2649,7 +2649,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
     ),
     'hub OAuth token': X(
       200,
-      { items: [], maturity: { browsingLevel: 3, sfwOnly: true } },
+      // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+      { items: [], maturity: { browsingLevel: 1, sfwOnly: true } },
       true,
       ['checkBlockCatalogRateLimit("page_apb_hubrow")'],
       ['getResourceData([1])'],
@@ -3368,7 +3369,8 @@ const EXPECTED: Record<string, Record<CellName, Exact | Passed>> = {
         noneProbability: null,
         model: 'jev-unavailable',
         criteriaVersion: 2,
-        maturity: { browsingLevel: 3, sfwOnly: true },
+        // The hub claims' viewer level (PG here) held to the SFW domain ceiling.
+        maturity: { browsingLevel: 1, sfwOnly: true },
       },
       true,
       ['checkBlockLLMRateLimit("page_apb_hubrow")'],
