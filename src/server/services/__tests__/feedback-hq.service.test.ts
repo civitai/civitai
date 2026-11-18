@@ -164,6 +164,9 @@ describe('the per-reporter cap', () => {
 
     expect(intakeCalls()).toHaveLength(1);
     expect(loggedStatuses()).toEqual(['filed', 'user-cap']);
+    expect(loggingMock.logToAxiom.mock.calls[1][0]).toEqual(
+      expect.objectContaining({ status: 'user-cap', userId: 42 })
+    );
     expect(redisMock.redis.incrBy).toHaveBeenCalledWith(KEY, 1);
     // A rate limit: it lives on the cache cluster, not in system Redis.
     expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();

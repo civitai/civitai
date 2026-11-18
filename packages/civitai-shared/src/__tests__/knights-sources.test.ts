@@ -53,6 +53,23 @@ describe('readKnightsSourcesConfig', () => {
   });
 });
 
+describe('readKnightsSourcesConfig yesNoShare', () => {
+  it('reads a stored yes/no share between 0 and 1, 0 included', () => {
+    expect(readKnightsSourcesConfig('{"enabled":true,"yesNoShare":0}').config.yesNoShare).toBe(0);
+    expect(readKnightsSourcesConfig('{"enabled":true,"yesNoShare":0.4}').config.yesNoShare).toBe(
+      0.4
+    );
+  });
+
+  it('leaves the share out when missing or unusable, so the Knights default applies', () => {
+    for (const yesNoShare of [undefined, '0.5', -0.1, 1.5, null, Number.NaN]) {
+      expect(
+        readKnightsSourcesConfig(JSON.stringify({ enabled: true, yesNoShare })).config
+      ).not.toHaveProperty('yesNoShare');
+    }
+  });
+});
+
 describe('knightsSourcesMaxOpen', () => {
   it('is the stored cap, or the default when none is stored', () => {
     expect(knightsSourcesMaxOpen(parseKnightsSourcesConfig('{"maxOpen":250}'))).toBe(250);

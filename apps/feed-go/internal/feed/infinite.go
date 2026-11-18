@@ -65,6 +65,30 @@ var infiniteUnsupported = func() []string {
 	return out
 }()
 
+// strippedURLKeys are keys of imagesQueryParamSchema (src/components/Image/image-query-params.ts,
+// the images feeds' URL query) that getInfiniteImagesSchema lacks. The site passes that query into
+// image.getInfinite's input (useImageFilters → ImagesInfinite → useQueryImages): `view` from an
+// /images?view=… link, `section` from a profile's media tabs, `query` and `similarTo` from the image
+// detail's feed context (ImagesInfinite removes those two from its own filters only). Zod strips all
+// four, so Node answers as if they were absent, and so does ParseInfinite. Only image.getInfinite:
+// Parse (the posts gallery) still falls back on them. TestStrippedURLKeysAreStrippedByZod fails when
+// getInfiniteImagesSchema gains one (it must then be read, not ignored). This is a deliberate
+// exception to the unknown-key fallback, with a deploy-gap risk: see DESIGN.md §5.1.
+var strippedURLKeys = []string{"query", "section", "similarTo", "view"}
+
+// infiniteAbsentKeys are the keys outside getInfiniteImagesSchema that ParseInfinite reads as absent:
+// the tRPC client's own and strippedURLKeys.
+var infiniteAbsentKeys = func() map[string]bool {
+	out := make(map[string]bool, len(trpcTransportKeys)+len(strippedURLKeys))
+	for k := range trpcTransportKeys {
+		out[k] = true
+	}
+	for _, k := range strippedURLKeys {
+		out[k] = true
+	}
+	return out
+}()
+
 // hatKeys are the Hat Turf sorts and Show filters. Node acts on them only when its hat-turf flags
 // are on and getHatTurfFeedEvent finds a live event (read from the event engine, per viewer), then
 // pages from the turf rank or drops images by turfHiddenIds; none of that is read here, so a request
@@ -80,7 +104,7 @@ func ParseInfinite(m map[string]any) (*InfiniteInput, error) {
 			return nil, fallback.New("infinite-hat-turf")
 		}
 	}
-	base, err := parseInput(m, infiniteUnsupported)
+	base, err := parseInput(m, infiniteUnsupported, infiniteAbsentKeys)
 	if err != nil {
 		return nil, err
 	}

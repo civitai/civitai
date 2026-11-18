@@ -177,7 +177,8 @@
         <ul>
           <li>
             You have {facts.hearts.max} hearts. Poor judging can cost one. A lost heart comes back after
-            {facts.hearts.returnAfterDays} days, or sooner if you judge well, and restarting your career restores
+            {facts.hearts.returnAfterDays} days, or after {facts.hearts.rightVerdictsBack} right verdicts, whichever
+            comes first, and restarting your career restores
             them all. Lose all {facts.hearts.max} and your career restarts.
           </li>
           <li>Judging very fast pauses you for a short while.</li>

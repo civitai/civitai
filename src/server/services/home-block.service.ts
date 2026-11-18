@@ -537,6 +537,8 @@ export const resolveHomeBlockSource = async (homeBlock: {
 
 export const getHomeBlockData = async ({
   user,
+  asModerator = false,
+  asOwner = false,
   input,
   homeBlock,
   coverage,
@@ -568,6 +570,9 @@ export const getHomeBlockData = async ({
   // poisoning a shared cache entry and leaking one user's view to everyone else. If a
   // personalized variant is ever genuinely needed, it needs its own key, not this one.
   user?: SessionUser;
+  /** The request's views (`credentialViews`), with `user`; without them its reads are a plain viewer's. */
+  asModerator?: boolean;
+  asOwner?: boolean;
   /** See `getModelsRaw`; the same never-from-the-shared-entry rule as `user`. */
   coverage?: CoverageAudience;
 }): Promise<HomeBlockWithData | null> => {
@@ -591,6 +596,8 @@ export const getHomeBlockData = async ({
         ? { items: [], nextCursor: undefined }
         : await getCollectionItemsByCollectionId({
             user,
+            asModerator,
+            asOwner,
             input: {
               collectionId: collection.id,
               // Whichever pool is larger. `input.limit` used to win outright, which made a
@@ -682,6 +689,8 @@ export const getHomeBlockData = async ({
           types: feed.types,
           baseModels,
           user,
+          asModerator,
+          asOwner,
           headers: { src: 'getHomeBlockData:feed' },
         });
 
@@ -791,6 +800,8 @@ export const getHomeBlockData = async ({
             ? { items: [], nextCursor: undefined }
             : await getCollectionItemsByCollectionId({
                 user,
+                asModerator,
+                asOwner,
                 input: {
                   collectionId: id,
                   limit,
