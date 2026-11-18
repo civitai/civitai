@@ -108,6 +108,7 @@ function liveCsamHashes(rows: TableRow[], query: string) {
 }
 
 const { logToAxiom } = await import('~/server/logging/client');
+const { dbMock } = await import('~/__tests__/mocks/db.mock');
 const { addBlockedImage, bulkAddBlockedImages, bulkRemoveBlockedImages } = await import(
   '../image.service'
 );
@@ -350,3 +351,74 @@ describe('a hash with a CSAM entry keeps it', () => {
     expect(capturedQueries).toEqual([]);
   });
 });
+
+describe('a CSAM entry is copied to the table review routing reads', () => {
+  const copies = () =>
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mock.calls.map(([sql]) => String(sql));
+
+  beforeEach(() => {
+    capturedInserts.length = 0;
+    capturedQueries.length = 0;
+    queryResult = [];
+    csamQueryResult = [];
+    csamLookupFails = false;
+    clientAbsent = false;
+    tableRows = undefined;
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockReset();
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockResolvedValue(0);
+  });
+
+  it('a CSAM block copies the exact hash, after the blocklist write', async () => {
+    await bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] });
+
+    expect(capturedInserts).toHaveLength(1);
+    expect(copies()).toHaveLength(1);
+    expect(copies()[0]).toContain(`(${HASH.toString()}, 'CSAM')`);
+    expect(copies()[0]).not.toContain(ROUNDED);
+  });
+
+  it('a block of another reason copies nothing (control)', async () => {
+    await addBlockedImage({ hash: HASH, reason: 'TOS' as any });
+
+    expect(capturedInserts).toHaveLength(1);
+    expect(copies()).toEqual([]);
+  });
+
+  it('a failed copy fails the call, as a failed blocklist write does', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockRejectedValue(new Error('connection reset'));
+
+    await expect(
+      bulkAddBlockedImages({ data: [{ hash: HASH, reason: 'CSAM' as any }] })
+    ).rejects.toThrow('connection reset');
+  });
+
+  it('a failed copy still leaves the other rows of the batch written', async () => {
+    vi.mocked(dbMock.dbWrite.$executeRawUnsafe).mockRejectedValue(new Error('connection reset'));
+
+    await expect(
+      bulkAddBlockedImages({
+        data: [
+          { hash: HASH, reason: 'CSAM' as any },
+          { hash: OTHER_HASH, reason: 'TOS' as any },
+        ],
+      })
+    ).rejects.toThrow('connection reset');
+    expect(capturedInserts.map((i) => i.values)).toEqual([
+      [{ hash: HASH.toString(), reason: 'CSAM' }],
+      [{ hash: OTHER_HASH.toString(), reason: 'TOS' }],
+    ]);
+  });
+
+  // Deliberate: an unblock never removes the copy. It cannot end a live CSAM entry, and a stale copy
+  // only routes an image to the CSAM review tier.
+  it('an unblock writes nothing to the copy', async () => {
+    queryResult = [{ hash: OTHER_HASH.toString(), reason: 'TOS' }];
+
+    await bulkRemoveBlockedImages([HASH, OTHER_HASH]);
+
+    expect(capturedInserts).toHaveLength(1);
+    expect(copies()).toEqual([]);
+  });
+});
+
+const OTHER_HASH = BigInt('1234567890123');
