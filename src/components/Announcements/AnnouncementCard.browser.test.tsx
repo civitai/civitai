@@ -263,6 +263,29 @@ describe('CustomMarkdown without warnOnExternalLinks', () => {
   });
 });
 
+describe('AnnouncementCard onNavigate', () => {
+  test('an in-site button reports it; an off-site button does not', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onNavigate = vi.fn();
+    renderWithProviders(
+      <AnnouncementCard
+        {...base}
+        onNavigate={onNavigate}
+        actions={[
+          { link: '/models/123', linkText: 'In site' },
+          { link: 'https://example.com/x', linkText: 'Off site' },
+        ]}
+      />
+    );
+
+    await withDefaultObserved('click', () => page.getByRole('link', { name: 'Off site' }).click());
+    expect(onNavigate).not.toHaveBeenCalled();
+
+    await withDefaultObserved('click', () => page.getByRole('link', { name: 'In site' }).click());
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('AnnouncementCard banner image', () => {
   // 🔴 The half a node test cannot see. `announcement-media-check` probes
   // `getAnnouncementImageUrl`, and that is only the URL users load while THIS component renders the

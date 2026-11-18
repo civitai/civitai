@@ -17,11 +17,13 @@ export function Announcement({
   announcement,
   dismissible,
   moderatorActions,
+  onNavigate,
   ...props
 }: {
   announcement: AnnouncementDTO;
   dismissible?: boolean;
   moderatorActions?: React.ReactNode;
+  onNavigate?: () => void;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const { actions, image } = announcement.metadata || {};
   const announcementType = announcement.metadata.type ?? 'site';
@@ -42,6 +44,7 @@ export function Announcement({
       // A bare storage key, not an Image row — see AnnouncementCardCover.
       cover={image ? { kind: 'key', src: image } : null}
       actions={actions ?? []}
+      onNavigate={onNavigate}
       controls={moderatorActions}
       overlay={
         canDismiss ? (

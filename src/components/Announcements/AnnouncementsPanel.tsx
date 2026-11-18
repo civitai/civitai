@@ -22,7 +22,14 @@ export type AnnouncementSource = 'civitai' | 'creators';
 // Stable reference so the memo below does not churn when creators are switched off.
 const EMPTY_CREATOR_ITEMS: never[] = [];
 
-export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] }) {
+export function AnnouncementsPanel({
+  sources,
+  onNavigate,
+}: {
+  sources: AnnouncementSource[];
+  /** A button in a card took the viewer to another page. */
+  onNavigate?: () => void;
+}) {
   const creatorAnnouncementsEnabled = useCreatorAnnouncementsFeature();
   const showCivitai = sources.includes('civitai');
   const showCreators = sources.includes('creators') && creatorAnnouncementsEnabled;
@@ -70,6 +77,7 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
         <Announcement
           key={announcement.id}
           announcement={announcement}
+          onNavigate={onNavigate}
           style={announcement.dismissed ? { background: 'transparent' } : undefined}
         />
       ))}
@@ -77,6 +85,7 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
         <CreatorAnnouncement
           key={announcement.id}
           announcement={announcement}
+          onNavigate={onNavigate}
           withAuthor
           actions={
             <div className="flex items-center gap-1">

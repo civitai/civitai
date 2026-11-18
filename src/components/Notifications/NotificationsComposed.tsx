@@ -182,7 +182,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
         </div>
         <ScrollArea className="px-4 pb-4" scrollRestore={{ key: selectedTab ?? 'all' }}>
           {selectedTab === 'announcements' ? (
-            <AnnouncementsPanel sources={announcementSources} />
+            <AnnouncementsPanel sources={announcementSources} onNavigate={onClose} />
           ) : (
             <>
               {loadingNotifications ? (
