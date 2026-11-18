@@ -4,6 +4,10 @@ import { describe, expect, test, vi } from 'vitest';
 import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 import type * as Trpc from '~/utils/trpc';
 import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
+import type * as BrowserSettingsModule from '~/providers/BrowserSettingsProvider';
+import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import Router from 'next/router';
+import { page, userEvent } from 'vitest/browser';
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 
@@ -20,6 +24,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 });
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, isModerator: false, muted: false, filePreferences: {} }),
+}));
+vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowserSettingsModule>()),
+  useBrowsingSettings: <T,>(selector: (state: { autoplayGifs: boolean }) => T) =>
+    selector({ autoplayGifs: false }),
+}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelModule>()),
+  useViewerBrowsingLevelDebounced: () => 1,
 }));
 vi.mock('~/components/Image/Providers/ImagesProvider', () => ({
   useImagesContext: () => ({ getImages: () => [] }),
@@ -48,6 +61,9 @@ vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
 }));
 vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   ...(await importOriginal<object>()),
+  EdgeMedia: ({ alt }: { alt?: string }) => (
+    <div role="img" aria-label={alt} style={{ width: 32, height: 32 }} />
+  ),
   EdgeMedia2: () => (
     <div
       style={{
@@ -104,7 +120,11 @@ function imageData(s: Record<string, number>) {
     poi: false,
     publishedAt: new Date('2026-01-01'),
     reactions: [],
-    user: { id: 2, username: 'someone' },
+    user: {
+      id: 2,
+      username: 'someone',
+      profilePicture: { id: 20, url: 'avatar', type: MediaType.image, nsfwLevel: 1 },
+    },
     stats: {
       likeCountAllTime: s.like,
       dislikeCountAllTime: 0,
@@ -138,10 +158,10 @@ function render(s: Record<string, number>, width = 245) {
   );
 }
 
-async function renderCard(s: Record<string, number>, width: number) {
+async function renderCard(s: Record<string, number>, width: number, onClick?: () => void) {
   renderWithProviders(
     <IntersectionObserverProvider>
-      <div data-testid="shot" style={{ width }}>
+      <div data-testid="shot" style={{ width }} onClick={onClick}>
         <ImagesCard data={imageData(s)} height={width * 1.2} />
       </div>
     </IntersectionObserverProvider>
@@ -173,6 +193,16 @@ function overflowPastCard() {
 }
 
 describe('ImagesCard action row', () => {
+  test('shows the artist name and avatar on an image gallery card', async () => {
+    const outerClick = vi.fn();
+    await renderCard(stats, 245, outerClick);
+    expect(card().textContent).toContain('someone');
+    await expect.element(page.getByRole('img', { name: "someone's Avatar" })).toBeVisible();
+    vi.mocked(Router.push).mockClear();
+    await userEvent.click(page.getByRole('button', { name: /someone/ }));
+    expect(Router.push).toHaveBeenCalledWith('/user/someone');
+    expect(outerClick).not.toHaveBeenCalled();
+  });
   test.each(FEED_CARD_WIDTHS)('never clips a count it draws at %ipx', async (width) => {
     await renderCard(stats, width);
 

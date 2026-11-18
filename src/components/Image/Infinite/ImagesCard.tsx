@@ -49,6 +49,7 @@ import { RetractedMedia } from '~/components/RetractedMedia/RetractedMedia';
 import { retractedMediaUrl } from '~/components/RetractedMedia/retracted-media';
 import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
 import { StorylinePill } from '~/components/Storyline/StorylinePill';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import clsx from 'clsx';
 import {
   getImagesCardFooterHeight,
@@ -308,6 +309,26 @@ function ImagesCardContent({
                   </div>
                 )}
                 {safe && <RemixedCardFlyout imageId={image.id} />}
+
+                <div
+                  className={clsx(
+                    'absolute left-2 z-[2] max-w-[calc(100%_-_3rem)]',
+                    showVotes || isPending || isBlocked ? 'top-10' : 'bottom-2'
+                  )}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                >
+                  <UserAvatarSimple
+                    {...image.user}
+                    classNames={{
+                      avatar: cardClasses.creatorAvatar,
+                      namePill: cardClasses.creatorPill,
+                      namePillPlate: cardClasses.creatorPillPlate,
+                    }}
+                  />
+                </div>
 
                 {showVotes ? (
                   <div className={classes.footer}>

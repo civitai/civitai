@@ -163,6 +163,26 @@ beforeEach(() => {
 });
 
 describe('a stale index cannot surface a hidden image', () => {
+  it('keeps creator profile pictures when hydrating visible matches', async () => {
+    h.fakeGetAllImages = async ({ ids, include }: { ids: number[]; include?: string[] }) => ({
+      items: ids.map((id) => ({
+        id,
+        nsfwLevel: 1,
+        user: {
+          id: 500,
+          username: 'creator',
+          profilePicture: include?.includes('profilePictures') ? { id: 9001, url: 'avatar' } : null,
+        },
+      })),
+    });
+    const { source } = rankedSource([101]);
+    const page = await searchSemanticImages({
+      input: input(),
+      user: VIEWER,
+      candidateSource: source,
+    });
+    expect(page.items[0]?.user.profilePicture?.id).toBe(9001);
+  });
   // The index still holds all of these; Postgres says only the first, third and last are visible.
   const BLOCKED = 102;
   const UNPUBLISHED_POST = 104;

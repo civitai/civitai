@@ -198,7 +198,7 @@ function ImagesFeed({
     searchFailed && !!searchInput?.imageId && search.error?.data?.code === 'NOT_FOUND';
   const searching = !!searchInput && !searchFailed;
   const feed = useQueryImages(
-    { ...filters, browsingLevel, include: ['cosmetics'] },
+    { ...filters, browsingLevel, include: ['cosmetics', 'profilePictures'] },
     { keepPreviousData: true, enabled: !searching && !refusal }
   );
   const { debugRetryActive, debugDelayMs } = feed;
