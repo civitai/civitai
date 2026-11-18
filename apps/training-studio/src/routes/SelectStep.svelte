@@ -28,6 +28,7 @@
     loraTypeById,
     releasedLabel,
     typesForMedia,
+    type LabelType,
     type Media,
     type ModelCard,
   } from '$lib/data/trainingModels';
@@ -37,6 +38,7 @@
     cardFromPrice,
     isCustom,
     isValidAir,
+    labelModeForCard,
     labelNoun,
     newRun,
     nextRunId,
@@ -65,6 +67,8 @@
     enabledModelFlags = [],
     initial = null,
     startInEdit = false,
+    flowLabelMode = 'tag',
+    datasetLabeled = false,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
@@ -76,6 +80,10 @@
     initial?: Selection | null;
     /** Open on the Image edit section (a reused edit dataset) when there is no selection to restore. */
     startInEdit?: boolean;
+    /** The flow's current label mode and whether the dataset already holds labels: with the restored
+     *  selection they give the mode the Data step will open on (`labelModeForCard`), which a sweep must match. */
+    flowLabelMode?: LabelType;
+    datasetLabeled?: boolean;
   } = $props();
 
   // Derived so the seed and lists reflect the prop rather than a captured snapshot.
@@ -174,8 +182,15 @@
   const selectedInOthers = $derived(otherCards.some((c) => c.type === focused.cardType));
   const modelsExpanded = $derived(showAllModels || selectedInOthers);
   const visibleCards = $derived(modelsExpanded ? [...featuredCards, ...otherCards] : featuredCards);
-  const labelMode = $derived(runCard(primary).label);
-  const labelModeNoun = $derived(labelNoun(runCard(primary)));
+  const labelMode = $derived(
+    labelModeForCard(
+      initial ? runCard(initial.runs[0]!) : null,
+      runCard(primary),
+      flowLabelMode,
+      datasetLabeled
+    )
+  );
+  const labelModeNoun = $derived(labelMode === 'tag' ? 'tags' : 'captions');
   const primaryPairs = $derived(runCard(primary).pairs === true);
   /** Why `card` can't join this sweep — the dataset is shared, so its shape must match. */
   function sweepLockReason(card: ModelCard): string {
@@ -260,7 +275,7 @@
   }
 
   function pickBase(card: ModelCard) {
-    if (multi && !sweepCompatible(card, runCard(primary))) return; // dataset-shape lock
+    if (multi && !sweepCompatible(card, runCard(primary), labelMode)) return; // dataset-shape lock
     if (cardUnavailability(card, enabledFlags, serviceStatus.value)) return;
     runs = runs.map((r, i) => {
       if (i !== focus) return r;
@@ -286,7 +301,7 @@
   const kohyaFallbackCard = $derived(
     kohyaCards.find(
       (c) =>
-        (!multi || sweepCompatible(c, runCard(primary))) &&
+        (!multi || sweepCompatible(c, runCard(primary), labelMode)) &&
         !cardUnavailability(c, enabledFlags, serviceStatus.value)
     )
   );
@@ -690,7 +705,7 @@
         {#each visibleCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const down = cardUnavailability(card, enabledFlags, serviceStatus.value)}
-          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary))}
+          {@const locked = multi && !selected && !sweepCompatible(card, runCard(primary), labelMode)}
           {@const disabled = locked || (!!down && !selected)}
           {@const dim = down && !selected && !locked ? 'opacity-40 grayscale' : ''}
           {@const cardPrice = price(card.type)}

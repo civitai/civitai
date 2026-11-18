@@ -82,10 +82,9 @@ export function labelOptions(card: ModelCard): LabelType[] {
   return card.bothLabels ? [card.label, card.label === 'tag' ? 'caption' : 'tag'] : [card.label];
 }
 
-/** The label mode to carry into the Data step. Keeps the current mode when the card offers it and either the
- *  model is unchanged (Back/Continue keeps a tags↔captions pick) or the dataset already holds labels in that
- *  mode (switching would orphan them). Otherwise the card's own default — so a first pick of a caption-default
- *  `bothLabels` card doesn't inherit the flow's initial 'tag'. */
+/** The label mode to carry into the Data step. The flow's `labelMode` starts as 'tag', so a first pick of a
+ *  caption-default `bothLabels` card must not inherit it; but labels already typed in the current mode, or a
+ *  pick on the same model, are kept. */
 export function labelModeForCard(
   previous: ModelCard | null,
   card: ModelCard,
@@ -836,9 +835,14 @@ export function submittedPrompts(texts: string[]): string[] {
 export const runTrainsPairs = (run: Run): boolean => runCard(run).pairs === true;
 
 /** Whether `card` can join a sweep led by `primary`: one dataset feeds every run, so they must agree on
- *  its label format and on whether it is pairs. */
-export function sweepCompatible(card: ModelCard, primary: ModelCard): boolean {
-  return labelOptions(card).includes(primary.label) && !!card.pairs === !!primary.pairs;
+ *  its label format and on whether it is pairs. `mode` is the format the dataset is actually in — a
+ *  `bothLabels` lead can sit on its non-default format, which a caption-only model can't take. */
+export function sweepCompatible(
+  card: ModelCard,
+  primary: ModelCard,
+  mode: LabelType = primary.label
+): boolean {
+  return labelOptions(card).includes(mode) && !!card.pairs === !!primary.pairs;
 }
 
 /** Whether a run's samples can be rendered from input images (edit LoRAs). A Custom run resolves to

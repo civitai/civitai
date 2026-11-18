@@ -422,6 +422,8 @@
       {prices}
       {enabledModelFlags}
       initial={selection}
+      flowLabelMode={labelMode}
+      datasetLabeled={images.some(isLabeled)}
       startInEdit={reusePairItems.length > 0}
       onContinue={(sel) => {
         const previous = selection ? runCard(selection.runs[0]!) : null;
