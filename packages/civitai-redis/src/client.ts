@@ -2735,6 +2735,9 @@ export const REDIS_SYS_KEYS = {
     STUDIO_DATASET_RATING: 'packed:training:studio-dataset-rating',
     // Training Studio dataset rating use per user per UTC day, key :<kind>:<userId>:<yyyy-mm-dd>.
     STUDIO_DATASET_RATING_DAILY: 'training:studio-dataset-rating-daily',
+    // Training Studio dataset blobs already sent to the v2 rater, key :<raterModel>:<blobId lowercased>,
+    // so a failed or unanswered rating is not sent again on every view.
+    STUDIO_DATASET_RATING_SENT: 'training:studio-dataset-rating-sent',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -3173,6 +3176,11 @@ export const REDIS_SYS_KEYS = {
 const REDIS_KEYS_UNPREFIXED = {
   POST_INTENT: {
     RATE_LIMIT: 'post-intent:rate-limit',
+  },
+  TRAINING_STUDIO: {
+    // Images the main app rated for the Training Studio per user per UTC day (system-paid),
+    // key :<userId>:<yyyy-mm-dd>.
+    DATASET_RATING_DAILY: 'training-studio:dataset-rating-daily',
   },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
