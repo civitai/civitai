@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 /**
  * A ruling on a model version's training data is the moderator's only record of having made it, so
@@ -34,6 +35,13 @@ vi.mock('$lib/server/user-actions.service', () => ({ callModEndpoint: vi.fn() })
 
 const { moderateTrainingData, getTrainingReviewQueue, invalidateTrainingReviewQueue } =
   await import('../training-moderation.service');
+
+// The SDK's generated enum, as the main app's webhook imports it; the root module is mocked above.
+const { WorkflowStatus } = await import(
+  '@civitai/orchestration-client/dist/generated/types.gen.js'
+);
+/** The body schema of src/pages/api/webhooks/resource-training-v2/[modelVersionId].ts. */
+const webhookSchema = z.object({ workflowId: z.string(), status: z.enum(WorkflowStatus) });
 
 const VERSION = 42;
 const MODERATOR = 7;
@@ -98,11 +106,28 @@ describe('moderateTrainingData', () => {
     });
   });
 
-  it("posts the webhook the camelCase status it accepts, not the manager API's PascalCase", async () => {
-    serve(204);
-    await moderateTrainingData({ modelVersionId: VERSION, approve: true, moderatorId: MODERATOR });
-    expect(webhookBodies()).toEqual([{ workflowId: WF, status: 'processing' }]);
-  });
+  // The manager API writes PascalCase (`Processing`, `Succeeded`); the main app's
+  // resource-training-v2 webhook parses `status` with z.enum(WorkflowStatus), the SDK's camelCase.
+  // Sent as is, every approval's webhook is a 400 after the gate is already released.
+  it.each(Object.values(WorkflowStatus))(
+    'posts a manager %s status as the webhook schema accepts it',
+    async (status) => {
+      serve(204);
+      const pascal = status[0].toUpperCase() + status.slice(1);
+      managerRead = () => Response.json(managerWorkflow('UnderReview', pascal));
+
+      const result = await moderateTrainingData({
+        modelVersionId: VERSION,
+        approve: true,
+        moderatorId: MODERATOR,
+      });
+
+      expect(result).toEqual({ ok: true });
+      const [body] = webhookBodies();
+      expect(webhookSchema.safeParse(body).success).toBe(true);
+      expect(body).toEqual({ workflowId: WF, status });
+    }
+  );
 
   it('refuses a gate the orchestrator reports already ruled, releasing nothing', async () => {
     serve(204);
@@ -136,6 +161,23 @@ describe('moderateTrainingData', () => {
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain(`does not belong to model version ${VERSION}`);
     expect(gateCalls()).toHaveLength(0);
+  });
+
+  it("refuses a gate whose training file points at another version's run, releasing nothing", async () => {
+    serve(204);
+    managerRead = () =>
+      Response.json({ ...managerWorkflow('UnderReview'), tags: ['modelVersion:43'] });
+
+    const result = await moderateTrainingData({
+      modelVersionId: VERSION,
+      approve: true,
+      moderatorId: MODERATOR,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toContain(`does not belong to model version ${VERSION}`);
+    expect(gateCalls()).toHaveLength(0);
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 
   // Fail-open: only a reading that says closed refuses. The release refuses a closed gate itself.
