@@ -63,7 +63,7 @@ type equippedCosmetic struct {
 // computed every miss (lookupUserCosmetics) into got before this runs.
 func userCosmeticsFrom(ids []int, got map[int]Entry) (map[int][]equippedCosmetic, []int, error) {
 	if miss := Missing(ids, got); len(miss) > 0 {
-		return nil, nil, fallback.Newf("user-cosmetics-miss", "%d ids", len(miss))
+		return nil, nil, fallback.Safef("user-cosmetics-miss", "%d ids", len(miss))
 	}
 	perUser := map[int][]equippedCosmetic{}
 	var cosmeticIDs []int

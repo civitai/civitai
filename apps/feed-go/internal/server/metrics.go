@@ -1,7 +1,10 @@
 package server
 
 import (
+	"net/http"
+
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/auth"
 	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
@@ -71,6 +74,13 @@ type Metrics struct {
 	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
 	// error), per missed id. Not per endpoint: hydration is shared by both.
 	CacheMisses *prometheus.CounterVec
+}
+
+// MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
+// that asks for OpenMetrics in that format, the only one that carries the duration histograms'
+// trace-id exemplars; any other scrape gets the classic text format either way.
+func MetricsHandler(g prometheus.Gatherer, openMetrics bool) http.Handler {
+	return promhttp.HandlerFor(g, promhttp.HandlerOpts{EnableOpenMetrics: openMetrics})
 }
 
 // ObserveCacheMiss is hydrate.MissCompute's Observe.

@@ -64,3 +64,14 @@ samplers for `image.getInfinite` and `model.getAll` are their own Flipt flags,
 are mirrored by the `FEED_GO_*` variables in `.env.example` (DESIGN.md §15.3). The `feed_endpoint`
 label is not called `endpoint` because that is a reserved scrape target label: the scraper's own
 `endpoint` would overwrite it.
+
+Traces, exemplars and the fallback/error log lines are off by default (DESIGN.md §10.3). Tracing
+reads the Node app's variables where they mean the same thing — `OTEL_EXPORTER_OTLP_ENDPOINT`
+(OTLP/HTTP, `<it>/v1/traces`), `OTEL_SERVICE_NAME` (default `feed-go`), `OTEL_TRACES_SAMPLE_RATIO`
+(default 0.1, the same ParentBased trace-id-ratio sampling, so a trace continues Node → feed-go →
+Node) — and is switched on by feed-go's own `FEED_GO_OTEL_ENABLED=true`, not the app's
+`OTEL_ENABLED` (the shared app config is in feed-go's environment). With it on, `/metrics` serves
+OpenMetrics to a scrape that asks, carrying trace-id exemplars on `feed_go_request_duration_seconds`
+and `feed_go_shadow_phase_seconds`. `FEED_GO_FALLBACK_LOG_PER_MIN` (default 0) logs one line per
+fallback with its reason and safe detail, rate-limited per endpoint and reason;
+`FEED_GO_ERROR_LOG_PER_MIN` (default 60) bounds the error lines the same way.

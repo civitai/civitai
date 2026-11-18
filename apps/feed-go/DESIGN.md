@@ -1171,6 +1171,78 @@ The decision input is the ratio of the two CPU-per-call figures, on the same req
 For Go, read the compute-only figure (§10.1) as the serving estimate, with its coverage beside it,
 and the whole-process figure (above) as the upper bound that includes the shadow decode and compare.
 
+### 10.3 Traces, exemplars and fallback logs
+
+Off by default: the merge changes nothing until the deployment sets the variables below.
+
+**Tracing** (`internal/tracing`) mirrors the Node app's setup (`src/instrumentation.node.ts`), so one
+configuration drives both and a trace continues Node → feed-go → Node:
+
+| Variable | Meaning |
+|---|---|
+| `FEED_GO_OTEL_ENABLED` | `true` turns tracing on (with an endpoint). feed-go's own switch, not the app's `OTEL_ENABLED`: feed-go's environment includes the shared app config, and a switch read from there would turn tracing on with no change to feed-go's deployment. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's base URL, as Node's: spans go to `<it>/v1/traces`, OTLP over HTTP/protobuf (Node's `exporter-trace-otlp-proto`). The standard `OTEL_EXPORTER_OTLP_*` headers/timeout variables apply. |
+| `OTEL_SERVICE_NAME` | `service.name` (default `feed-go`). Node's `SERVICE_NAME` fallback is NOT read: the shared app config carries the Node pool's. |
+| `OTEL_TRACES_SAMPLE_RATIO` | Head-sampling ratio, Node's rule: a number in [0, 1], else 0.1. |
+
+- *Sampling* is Node's `buildHeadSampling`: ParentBased over a trace-id ratio, the ratio applied to
+  remote SAMPLED parents too (a public caller cannot force sampling with a `-01` traceparent), a
+  remote unsampled parent dropped, a local parent inherited. The ratio sampler is a port of the JS
+  `TraceIdRatioBasedSampler` (`tracing.NodeRatio`: the trace id's four 32-bit words XORed, kept below
+  `floor(ratio × 0xffffffff)`), NOT the Go SDK's `TraceIDRatioBased`, which reads the low 8 bytes and
+  so keeps a different subset for the same ratio: with it, a trace Node kept would continue in
+  feed-go only at random (its test pins decisions taken from the JS sampler itself).
+- *Spans.* One server span per request, named `<mode> <feed_endpoint>` (`serve as-posts`,
+  `shadow model-getall`, `probe infinite`), a child of the caller's `traceparent` when there is one —
+  the public routes and the internal shadow and probe endpoints all extract it (W3C trace context +
+  baggage, Node's default propagators). Attributes: `feed_endpoint`, `feed_go.mode`,
+  `feed_go.outcome` (the `outcome` / shadow result labels), `feed_go.fallback.reason`,
+  `feed_go.shadow.result`; a fallback adds a `fallback` event (reason, safe detail), an error an
+  `error` event (class, type) and the error status. Children: one per pgx query (`pgx SELECT`:
+  operation and a hash of the SQL text, never a bind value or the text), one per Redis command or
+  pipeline (`redis get`, `redis pipeline`: the command name and count, never a key or argument), and
+  the fallback proxy hop (`fallback-proxy <endpoint>`), whose context the proxy injects as the
+  outbound `traceparent` so the Node request is its child. With tracing off the proxy passes the
+  inbound `traceparent` through unchanged, as before. No span per row or per hydrated entity; the
+  store spans start only under a recording (sampled) request span.
+- *Shadow and probe spans* end when the comparison (probe) does, after the 202. The Node samplers'
+  `traceparent` makes them children of the sampled Node request.
+
+**Exemplars.** `feed_go_request_duration_seconds` and `feed_go_shadow_phase_seconds` carry the trace
+id (`trace_id`) as an exemplar on observations made under a SAMPLED span only. With tracing on,
+`/metrics` answers a scrape that asks for OpenMetrics in that format (the only one with exemplars);
+Prometheus stores them with exemplar storage enabled.
+
+**Logs** (`server.EventLog`, the JSON slog handler on stdout). One line per fallback (`msg`
+`fallback`: `mode`, `endpoint`, `reason`, `detail` when safe, `trace_id`/`span_id` when the request has
+a span), per compute error (`feed compute failed; falling back`, `shadow compute failed`,
+`go-first probe failed`: `err_class`, `err_type`) and per fallback-proxy error (`fallback proxy: the
+Node app did not answer`, Warn for `upstream`, Debug for `canceled`). Each is rate-limited per (kind,
+mode, endpoint, reason) by a token bucket; a line carries `suppressed` (lines that key dropped since
+its last), and once a minute a `log lines suppressed` line reports every key that dropped any.
+
+| Variable | Meaning |
+|---|---|
+| `FEED_GO_FALLBACK_LOG_PER_MIN` | Fallback lines per key per minute (default 0: none). |
+| `FEED_GO_ERROR_LOG_PER_MIN` | Error lines per key per minute (default 60). |
+
+*What is logged.* Never an error's text, the request input, a cookie, a token or an id. A fallback's
+`Detail` (its `Error()` text) is never logged; its loggable detail (`fallback.SafeDetail`) is opt-in
+at the call site: `fallback.Safef` (counts, status codes, the budget, a type name), `fallback.NewfSafe`
+(a fixed field name, or an input key name / enum value through `fallback.Token`, which turns anything
+outside `[A-Za-z0-9_.-]` into `?`), and `fallback.Wrap` (the error's class: `deadline`, `timeout`,
+`pg:<SQLSTATE>`, `redis`, `net:<op>`, `eof`, `other`). `fallback.Newf` details — cursors, ids, user
+values, sponsored data — log nothing but the reason. The `shadow diff` line is unchanged (paths
+only), plus the trace ids.
+
+*Overhead* (an estimate from what runs, not a measurement; the benchmarks do not cover the request
+path). Off: a nil check per request. On, unsampled (1 − ratio of requests): the traceparent parse, a
+non-recording span, one extra request copy (`WithContext`) and, on a fallback, the proxy hop's span —
+a handful of small allocations, single-digit µs; the store hooks then cost one context lookup per
+query or command. On, sampled: one recording span per request plus one per pgx query and per Redis
+command or pipeline (a pipeline is one span), each built in a few µs and exported in batches off the
+request path. Read the real figure from the phase CPU series (§10.1) before and after turning it on.
+
 ## 11. Deploy prerequisites (infrastructure repo, later)
 
 None of this is in this PR.
