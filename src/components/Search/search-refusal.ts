@@ -19,7 +19,7 @@ export function getSearchRefusal({
   disablePoi: boolean;
 }): Exclude<SearchRefusal, 'profanity'> | undefined {
   if (!text) return undefined;
-  if (includesInappropriate({ prompt: auditedText }, includesNsfw(text)) === 'minor')
+  if (includesInappropriate({ prompt: auditedText }, !!includesNsfw(text)) === 'minor')
     return 'illegal';
   if (disablePoi && includesPoi(auditedText)) return 'poi';
   // Raw text on purpose: this reads a different list (blocked NSFW words) which the benign

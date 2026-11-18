@@ -118,7 +118,7 @@ export async function semanticQueryRefusal(
   try {
     const audited = await stripBenignPhrases(query, BlocklistType.PromptBenignPhrase);
     // The raw text decides whether the person and age checks run; the stripped text is what they read.
-    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag) || includesNsfw(query);
+    const nsfw = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag) || !!includesNsfw(query);
     const verdict = includesInappropriate({ prompt: audited }, nsfw);
     if (verdict === 'minor') return 'minor';
     // A 'poi' verdict is returned before the minor check runs, so it can hide one; still refused.
