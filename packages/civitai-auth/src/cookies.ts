@@ -111,7 +111,7 @@ let siteModes: { raw: string; bySite: Map<string, SessionCookieMode> } | undefin
 
 /** The mode AUTH_SESSION_COOKIE_MODE_BY_SITE gives the site of `host` (a Host header; a port is ignored), if any. */
 export function siteCookieMode(host: string | null | undefined): SessionCookieMode | undefined {
-  const raw = process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE ?? '';
+  const raw = process.env.AUTH_SESSION_COOKIE_MODE_BY_SITE ?? 'civitaic.com:host';
   if (!raw || !host) return undefined;
   if (siteModes?.raw !== raw) {
     const bySite = new Map<string, SessionCookieMode>();
