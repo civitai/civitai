@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ApiKeyType } from '~/shared/utils/prisma/enums';
 
@@ -40,4 +41,17 @@ export function credentialViews(
 ) {
   const full = isSessionOrFullUserKey(ctx);
   return { asModerator: !!ctx.user?.isModerator && full, asOwner: full };
+}
+
+/**
+ * Whether a moderator presenting this bearer credential loses moderator rights: they come only
+ * through a full-scope personal key. The internal system account's keys are limited to read scopes
+ * and keep its rights by id.
+ */
+export function withholdsModerator(
+  user: { id: number; isModerator?: boolean | null },
+  credential: BearerCredential | null | undefined
+): boolean {
+  if (!user.isModerator || isFullScopeUserKey(credential)) return false;
+  return !(user.id === constants.system.user.id && credential?.subject?.type === 'apiKey');
 }

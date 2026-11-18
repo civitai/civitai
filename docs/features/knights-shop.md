@@ -54,7 +54,7 @@ Knights never writes `equippedAt`. `POST /api/mod/knights/shop/cosmetics` (`x-we
 
 ## Switches and entry points
 
-`KNIGHTS_SHOP_DISABLED=true` (also `1`, `yes`, `on`) closes the shop and hides its entry points (header gold popover "Visit the shop", the avatar menu and home tile "Shop"); `/shop` then says it is not open. `KNIGHTS_CONVERSION_DISABLED` keeps its meaning for Buzz packs only. The restart-career dialog now lists "Gold you have not yet spent".
+The "Shop closed" switch saved on the moderator Config page, else `KNIGHTS_SHOP_DISABLED=true` (also `1`, `yes`, `on`), closes the shop ([game settings](knights-sources.md#game-settings)) and hides its entry points (header gold popover "Visit the shop", the avatar menu and home tile "Shop"); `/shop` then says it is not open. `KNIGHTS_CONVERSION_DISABLED` keeps its meaning for Buzz packs only. The restart-career dialog now lists "Gold you have not yet spent".
 
 ## Layout and try-on (SH1, SH5)
 

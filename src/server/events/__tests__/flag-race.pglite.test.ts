@@ -448,6 +448,29 @@ describe('the flag freeze', () => {
     await expect(freezeFlagDays(EVENT, FLAGS, SETTLE)).resolves.toBe(0);
   });
 
+  it('every minute, puts what it froze on the live team totals once', async () => {
+    const { liveBucket } = await import('~/server/events/points/keys');
+    const day = await dayWithFlags();
+    await hats(day.id, 11, 201, 'Blue', 1, new Date(day.cutAt.getTime() - 60_000));
+    const bumps = () =>
+      redisMock.sysRedis.hIncrBy.mock.calls.filter((c) => String(c[0]).includes(':live:'));
+    const before = bumps().length;
+    await freezeFlagDays(EVENT, FLAGS, SETTLE, { live: true });
+    expect(bumps().slice(before)).toEqual([
+      [expect.stringContaining(`:live:${liveBucket(day.cutAt)}:team`), 'Blue', 100],
+    ]);
+    await freezeFlagDays(EVENT, FLAGS, SETTLE, { live: true });
+    expect(bumps().length).toBe(before + 1);
+  });
+
+  it('from the settle, freezes without touching the live totals', async () => {
+    const day = await dayWithFlags();
+    await hats(day.id, 11, 201, 'Blue', 1, new Date(day.cutAt.getTime() - 60_000));
+    const before = redisMock.sysRedis.hIncrBy.mock.calls.length;
+    expect(await freezeFlagDays(EVENT, FLAGS, SETTLE)).toBeGreaterThan(0);
+    expect(redisMock.sysRedis.hIncrBy.mock.calls.length).toBe(before);
+  });
+
   it("counts a banned player's hats for nobody", async () => {
     const day = await dayWithFlags();
     const before = new Date(day.cutAt.getTime() - 60_000);
