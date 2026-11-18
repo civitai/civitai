@@ -1,5 +1,7 @@
 import { z } from 'zod';
+import type { VideoUpscalerInput } from '@civitai/orchestration-client';
 import { cachedFactory, defineGraph } from 'form-graph';
+import { enumDef } from '../../defs';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { clampCorrect, optionFallback, VIDEO, sliderDef } from '../defs';
 import {
@@ -19,12 +21,12 @@ const interpolationFactorOutput = z.number().int().min(2).max(4);
  */
 
 const MAX_OUTPUT_RESOLUTION = 2560;
-const VIDEO_UPSCALERS = ['relayvsr', 'flashvsr'] as const;
-type VideoUpscaler = (typeof VIDEO_UPSCALERS)[number];
 const UPSCALE_MULTIPLIERS = {
   relayvsr: [2, 4],
   flashvsr: [2, 3],
-} as const;
+} as const satisfies Record<NonNullable<VideoUpscalerInput['model']>, readonly number[]>;
+type VideoUpscaler = keyof typeof UPSCALE_MULTIPLIERS;
+const ALL_UPSCALE_MULTIPLIERS: readonly number[] = Object.values(UPSCALE_MULTIPLIERS).flat();
 
 const MAX_OUTPUT_FPS = 120;
 const INTERPOLATION_MULTIPLIERS = [2, 3, 4] as const;
@@ -44,8 +46,8 @@ export type ScaleFactorOption = {
   targetHeight: number;
 };
 
-const SCALE_FACTOR_MIN = 2;
-const SCALE_FACTOR_MAX = 4;
+const SCALE_FACTOR_MIN = Math.min(...ALL_UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_MAX = Math.max(...ALL_UPSCALE_MULTIPLIERS);
 const SCALE_FACTOR_INPUT = z.coerce
   .number()
   .int()
@@ -70,18 +72,15 @@ const scaleFactorOutput = cachedFactory((model: VideoUpscaler, ceiling: number |
 
 export const videoUpscale = defineGraph<GenerationCtx>()
   .field('video', VIDEO)
-  .field('videoUpscaler', {
-    input: z.enum(VIDEO_UPSCALERS).optional(),
-    output: z.enum(VIDEO_UPSCALERS),
-    default: 'relayvsr',
-    correct: optionFallback(VIDEO_UPSCALERS, 'relayvsr'),
-    meta: {
+  .field(
+    'videoUpscaler',
+    enumDef({
       options: [
-        { value: 'relayvsr', label: 'RelayVSR' },
-        { value: 'flashvsr', label: 'FlashVSR' },
-      ],
-    },
-  })
+        { label: 'RelayVSR', value: 'relayvsr' },
+        { label: 'FlashVSR', value: 'flashvsr' },
+      ] satisfies { label: string; value: VideoUpscaler }[],
+    })
+  )
   .field('scaleFactor', ({ video, videoUpscaler }) => {
     const width = video?.metadata?.width;
     const height = video?.metadata?.height;

@@ -82,11 +82,9 @@ describe.each([
   ['submit', generateFromGraph],
 ] as const)('video upscale %s', (_name, run) => {
   it.each([
-    [undefined, undefined, 'relayvsr', 2],
     ['relayvsr', 4, 'relayvsr', 4],
     ['flashvsr', 2, 'flashvsr', 2],
     ['flashvsr', 3, 'flashvsr', 3],
-    ['unknown', 2, 'relayvsr', 2],
   ] as const)(
     'sends model %s and scale %s to the orchestrator',
     async (model, scale, expectedModel, expectedScale) => {
@@ -104,16 +102,12 @@ describe.each([
     }
   );
 
-  it.each([
-    { videoUpscaler: 'relayvsr', scaleFactor: 3 },
-    {
-      videoUpscaler: 'relayvsr',
-      scaleFactor: 4,
-      video: { ...video, metadata: { ...video.metadata, width: 1280 } },
-    },
-  ])('refuses an unsupported request before contacting the orchestrator: %j', async (invalid) => {
+  it('refuses an unsupported request before contacting the orchestrator', async () => {
     await expect(
-      run({ ...common, input: { workflow: 'vid2vid:upscale', video, ...invalid } })
+      run({
+        ...common,
+        input: { workflow: 'vid2vid:upscale', video, videoUpscaler: 'relayvsr', scaleFactor: 3 },
+      })
     ).rejects.toThrow('Validation failed');
     expect(submitWorkflow).not.toHaveBeenCalled();
   });

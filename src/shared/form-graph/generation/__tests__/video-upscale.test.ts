@@ -101,9 +101,22 @@ describe('video upscaling', () => {
     expect(store.validate().success).toBe(true);
   });
 
+  it('remixes an upscale stored with a model as that model', () => {
+    const store = generationHub.createStore({ ext: EXT });
+    applyGenerationData(store, {
+      runType: 'remix',
+      params: mapDataToGraphInput({ ...input, videoUpscaler: 'relayvsr', scaleFactor: 4 }, []),
+      resources: [],
+    } as never);
+    expect(store.getField('videoUpscaler')?.value).toBe('relayvsr');
+    expect(store.getField('scaleFactor')?.value).toBe(4);
+    expect(store.validate().success).toBe(true);
+  });
+
   it('does not restore a legacy FlashVSR x3 choice into RelayVSR', () => {
     const store = generationHub.createStore({
       ext: EXT,
+      // `scaleFactor@<maxDimension>` is the storage key from before the model selector.
       storage: { load: () => ({ 'scaleFactor@640': 3 }), save: () => undefined },
     });
     store.set(input);
