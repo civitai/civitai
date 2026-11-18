@@ -36,8 +36,8 @@ const PUSH_WINDOW_DEADLINE_MS = 1_000;
  * open anyway, so starting empty costs at most one window of pushes.
  */
 function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
-  if (family === 'submit') {
-    const key = `${RATE_KEYS.submit}:${subject}` as const;
+  if (family === 'push') {
+    const key = `${RATE_KEYS.push}:${subject}` as const;
     const bounded = <T>(op: () => Promise<T>) =>
       clusterCacheGuard.call('takePushReviewSlot', op, { deadlineMs: PUSH_WINDOW_DEADLINE_MS });
     return {
@@ -48,7 +48,7 @@ function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSecond
       ttl: (): Promise<number> => bounded(() => redis.ttl(key)),
     };
   }
-  const key = `${RATE_KEYS.push}:${subject}` as const;
+  const key = `${RATE_KEYS.submit}:${subject}` as const;
   return {
     take: (): Promise<unknown> =>
       withSysReadDeadline(
