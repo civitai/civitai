@@ -2,9 +2,11 @@ import { sql, type ExpressionBuilder, type Kysely, type SqlBool, type Transactio
 import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
+import { NsfwLevel } from '@civitai/shared';
 import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
   KNIGHTS_STAGE_TTL_HOURS,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
   type KnightsEscalationReason,
 } from '@civitai/shared/new-order';
 import { PROGRESSION } from '../progression/config';
@@ -39,8 +41,10 @@ import { stageDecisionRule, votesNeededAt } from './stage-rules';
 import {
   decideChoice,
   decideWriteback,
+  hasBlockMarker,
   isBlockedLevel,
   isExcessiveDownRating,
+  moderatorRuling,
   type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
@@ -655,15 +659,28 @@ async function readImageState(db: Executor, imageId: number): Promise<ImageState
 
 type Reroute = Exclude<WritebackDecision, { kind: 'apply' }>;
 
-/** Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling. */
+/**
+ * Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling.
+ * With `ifOpen`, it acts only on an item still Open under its row lock (the lock `castVote` takes), and returns whether it did.
+ */
 async function reroute(
   db: Kysely<DB>,
   itemId: number,
   route: Reroute,
   now: Date,
-  mirror?: XpMirror
-) {
-  const xp = await db.transaction().execute(async (trx): Promise<XpDelta[]> => {
+  mirror?: XpMirror,
+  { ifOpen = false }: { ifOpen?: boolean } = {}
+): Promise<boolean> {
+  const xp = await db.transaction().execute(async (trx): Promise<XpDelta[] | null> => {
+    if (ifOpen) {
+      const item = await trx
+        .selectFrom('KnightsQueueItem')
+        .select('status')
+        .where('id', '=', itemId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (item?.status !== 'Open') return null;
+    }
     const left = {
       appliedAt: null,
       nextAttemptAt: null,
@@ -708,7 +725,61 @@ async function reroute(
     );
     return (await settleItemVotes(trx, itemId, now)).xp;
   });
+  if (!xp) return false;
   await mirrorXp(mirror, xp);
+  return true;
+}
+
+/**
+ * Closes Open rating items whose image a moderator has since locked at a level, the way the write-back closes a settled one on
+ * finding that lock (`moderatorRuling`). A blocked image, a lock without a level, and items no longer Open are left to their own paths.
+ */
+export async function closeModeratorRuledItems(
+  db: Kysely<DB>,
+  { now, limit = 200, mirror }: { now: Date; limit?: number; mirror?: XpMirror }
+): Promise<{ closed: number; failed: number }> {
+  // Narrowed to rows the rule closes, so rows it skips cannot fill the limit every tick.
+  const candidates = await db
+    .selectFrom('KnightsQueueItem as i')
+    .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .select([
+      'i.id',
+      'img.nsfwLevel',
+      'img.nsfwLevelLocked as locked',
+      'img.ingestion',
+      'img.blockedFor',
+      sql<string | null>`img."metadata"->>'nsfwLevelReason'`.as('lockReason'),
+    ])
+    .where('i.status', '=', 'Open')
+    .where('i.questionKey', '=', KNIGHTS_NSFW_LEVEL_QUESTION)
+    .where('i.audience', 'is', null)
+    .where('i.isHiddenCheck', '=', false)
+    .where('img.nsfwLevelLocked', '=', true)
+    .where('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked])
+    .where('img.ingestion', '!=', 'Blocked')
+    .where('img.blockedFor', 'is', null)
+    .where(
+      sql<SqlBool>`img."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
+    )
+    .orderBy('i.id', 'asc')
+    .limit(limit)
+    .execute();
+
+  const counts = { closed: 0, failed: 0 };
+  for (const { id, ...image } of candidates) {
+    const ruling = hasBlockMarker(image) ? null : moderatorRuling(image);
+    if (ruling?.kind !== 'moderator') continue;
+    try {
+      if (await reroute(db, id, ruling, now, mirror, { ifOpen: true })) counts.closed++;
+    } catch (error) {
+      counts.failed++;
+      console.error('knights: could not close an item a moderator ruled, it will be retried', {
+        itemId: id,
+        error,
+      });
+    }
+  }
+  return counts;
 }
 
 function rerouteForSkip(

@@ -5,11 +5,13 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { counterValue } from '../../../test/metrics';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { PROGRESSION } from '../progression/config';
 import { listJudgments } from '../progression/judgments';
 import { settleFinalItems } from '../progression/progression';
 import {
   castVote,
   applyPendingResolutions,
+  closeModeratorRuledItems,
   closeWithoutOutcome,
   enqueueItem,
   ensureVotePartitions,
@@ -1436,6 +1438,89 @@ describe('escalation with empty ranks', () => {
       reason: 'expired',
       minRank: 'Templar',
     });
+  });
+});
+
+describe('closeModeratorRuledItems', () => {
+  const lock = (id: number, reason: string, level: number) =>
+    pg.query(
+      `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
+      [id, level, reason]
+    );
+  const exp = async (userId: number) =>
+    (
+      await pg.query<{ exp: number }>(`SELECT exp FROM "NewOrderPlayer" WHERE "userId"=$1`, [
+        userId,
+      ])
+    ).rows[0].exp;
+  const settled = async (id: number) =>
+    (
+      await pg.query<{ settledAt: Date | null }>(
+        `SELECT "settledAt" FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+        [id]
+      )
+    ).rows.map((v) => v.settledAt !== null);
+  const sweep = () => closeModeratorRuledItems(db, { now: NOW });
+
+  it('closes an open item on a moderator-locked image against the moderator level, and pays its votes', async () => {
+    await fiveKnights();
+    await image(10, 2);
+    const id = await item(10);
+    await vote(1, id, '4');
+    await vote(2, id, '8');
+    await lock(10, 'Moderator review', 4);
+    const before = { right: await exp(1), wrong: await exp(2) };
+
+    expect(await sweep()).toEqual({ closed: 1, failed: 0 });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Closed',
+      reason: 'moderator-ruled',
+      resolvedValue: '4',
+    });
+    expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['correct', 'failed']);
+    expect(await settled(id)).toEqual([true, true]);
+    expect(await exp(1)).toBe(before.right + PROGRESSION.correctXp);
+    expect(await exp(2)).toBe(before.wrong);
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 0 });
+    expect(await vote(3, id, '4')).toEqual({ status: 'rejected', reason: 'not-open' });
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+  });
+
+  it('leaves settled items, Knights-locked images, and locks with no level or a block alone', async () => {
+    await fiveKnights();
+    for (const imageId of [11, 12, 13, 14, 15, 16]) await image(imageId, 2);
+    const closed = await item(11);
+    await vote(1, closed, '2');
+    await closeWithoutOutcome(db, closed, NOW);
+    const resolved = await item(12);
+    applyConsensus.mockResolvedValue(APPLIED);
+    for (const u of [1, 2, 3, 4]) await vote(u, resolved, '2');
+    const knightsLocked = await item(13);
+    const noLevel = await item(14);
+    const blocked = await item(15);
+    const otherQuestion = await item(16, { question: 'knights.test.bool' });
+    await lock(11, 'Moderator review', 4);
+    await lock(12, 'Moderator review', 8);
+    await lock(13, 'Knights Vote', 4);
+    await lock(14, 'Moderator review', 0);
+    await lock(15, 'Moderator review', 4);
+    await pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=15`);
+    await lock(16, 'Moderator review', 4);
+    const ids = [closed, resolved, knightsLocked, noLevel, blocked, otherQuestion];
+    const snapshot = async () =>
+      Promise.all(ids.map(async (id) => ({ item: await itemRow(id), votes: await verdicts(id) })));
+    const before = await snapshot();
+    expect(before.map((s) => s.item.status)).toEqual([
+      'Closed',
+      'Resolved',
+      'Open',
+      'Open',
+      'Open',
+      'Open',
+    ]);
+
+    expect(await sweep()).toEqual({ closed: 0, failed: 0 });
+    expect(await snapshot()).toEqual(before);
   });
 });
 

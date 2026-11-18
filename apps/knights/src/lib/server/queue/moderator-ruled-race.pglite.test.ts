@@ -1,0 +1,69 @@
+import type { PGlite } from '@electric-sql/pglite';
+import type { Kysely } from 'kysely';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import type { DB } from '@civitai/db-schema/kysely';
+import { createQueueDb } from '../../../test/pglite-kysely';
+import { seedImage, seedPlayer } from '../../../test/seed';
+import {
+  castVote,
+  closeModeratorRuledItems,
+  enqueueItem,
+  ensureVotePartitions,
+  escalateExpired,
+} from './queue.service';
+
+const NOW = new Date('2026-12-15T12:00:00Z');
+const LATER = new Date('2026-12-15T14:00:00Z');
+
+let pg: PGlite;
+let db: Kysely<DB>;
+
+beforeAll(async () => {
+  ({ pg, db } = await createQueueDb({ serialize: true }));
+  await ensureVotePartitions(db, { now: NOW, monthsAhead: 1 });
+});
+afterAll(async () => {
+  await pg.close();
+});
+
+it('leaves an item another path moved off Open after the sweep read it', async () => {
+  await seedPlayer(pg, 1, 'Paladin');
+  await seedImage(pg, 10, { nsfwLevel: 2 });
+  const id = await enqueueItem(
+    db,
+    {
+      questionKey: 'knights.image.nsfwLevel',
+      imageId: 10,
+      source: 'test',
+      minRank: 'Paladin',
+      expiresAt: new Date('2026-12-15T13:00:00Z'),
+    },
+    NOW
+  );
+  const applyConsensus = vi.fn();
+  await castVote(db, { userId: 1, itemId: id, answer: '2' }, { applyConsensus, now: () => NOW });
+  await pg.query(
+    `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=4, metadata='{"nsfwLevelReason":"Moderator review"}' WHERE id=10`
+  );
+
+  // The connection is handed out in call order: the sweep reads the item Open, the hand-up to the Inquisitors commits, then the sweep's close runs.
+  const [swept, escalated] = await Promise.all([
+    closeModeratorRuledItems(db, { now: LATER }),
+    escalateExpired(db, { now: LATER }),
+  ]);
+
+  expect(escalated).toMatchObject({ toInquisitor: 1 });
+  expect(swept).toEqual({ closed: 0, failed: 0 });
+  const row = (
+    await pg.query<Record<string, unknown>>(
+      `SELECT status, reason, "resolvedValue" FROM "KnightsQueueItem" WHERE id=$1`,
+      [id]
+    )
+  ).rows[0];
+  expect(row).toEqual({ status: 'Inquisitor', reason: null, resolvedValue: null });
+  const votes = await pg.query<{ verdict: string; settledAt: Date | null }>(
+    `SELECT verdict, "settledAt" FROM "KnightsVote" WHERE "itemId"=$1`,
+    [id]
+  );
+  expect(votes.rows).toEqual([{ verdict: 'pending', settledAt: null }]);
+});
