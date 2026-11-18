@@ -439,6 +439,7 @@ export const MODEL_CARDS: ModelCard[] = [
     code: 'K2',
     media: 'image',
     label: 'caption',
+    bothLabels: true,
     description: 'The realism pick — skin, hair and light from real photos.',
     released: '2026-06-22',
     flag: 'latest',
