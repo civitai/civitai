@@ -27,11 +27,8 @@ export function boundedClusterCall<T>(
  * by {@link boundedClusterCall}. A reply that is not a number answers `NaN`. Each caller decides
  * what a throw or `NaN` means (fail open or closed).
  *
- * Not `claimRateLimitAttempt` (rate-limit-bucket.ts): that one buckets a REQUEST's caller (user id
- * or client IP) against configured rules, exempts moderators, dev and preview, refuses with a
- * TRPCError, and decides fail-open or closed by scope. The callers here count their own subject
- * (an app slug, a provider, a credential, a day's spend), choose their own window and failure
- * policy, and some are not requests at all.
+ * Not claimRateLimitAttempt: these callers count their own subject (an app, a provider, a day's
+ * spend), not a request's caller, and pick their own failure policy.
  */
 export async function takeClusterWindowCount(
   fn: string,

@@ -385,8 +385,7 @@ export async function readForkSession(forkSlug: string): Promise<ForkSession | n
 /**
  * Count one fork start against each of the user's windows ({@link FORK_START_LIMITS}). Refuses
  * with TOO_MANY_REQUESTS past any cap, and FAILS CLOSED (SERVICE_UNAVAILABLE) when the counter
- * cannot be read: every start builds and uploads a copy of an app's source. The windows are on
- * the cache cluster, one single-key MULTI each.
+ * cannot be read: every start builds and uploads a copy of an app's source.
  */
 async function consumeForkStart(userId: number): Promise<void> {
   for (const { windowSeconds, max } of FORK_START_LIMITS) {

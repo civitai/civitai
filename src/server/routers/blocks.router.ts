@@ -1956,7 +1956,6 @@ async function readMyConfirmWithinLimit(
   }
 }
 
-// A rate window, so it lives on the cache cluster (one key, so no command spans slots).
 async function checkDailyLimitReadRateLimit(userId: number): Promise<boolean> {
   const key = `${REDIS_KEYS.BLOCKS.DAILY_LIMIT_READ_RATE}:${userId}` as const;
   try {

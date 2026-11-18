@@ -102,8 +102,6 @@ export function previewErrorsKey(userId: number, blockId: string) {
   return `${REDIS_KEYS.BLOCKS.DEV_PREVIEW_ERRORS}:${userId}:${blockId}` as const;
 }
 
-// A 2h log on the cache cluster: every command touches the one list, so none spans slots.
-
 /** Back-to-back repeats in `entries` (oldest first) folded into one entry each. */
 function foldRepeats(entries: ErrorActivity[]): ErrorActivity[] {
   const out: ErrorActivity[] = [];

@@ -41,8 +41,7 @@ function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSecond
     };
   }
   const key = `${RATE_KEYS.submit}:${subject}` as const;
-  // The same MULTI as takeClusterWindowCount, on system Redis and its read deadline: kept apart
-  // deliberately until the submit window moves to the cache cluster.
+  // System Redis on purpose; do not swap in takeClusterWindowCount.
   return {
     take: async (): Promise<number> => {
       const reply = await withSysReadDeadline(

@@ -1177,12 +1177,15 @@ describe('mint limits', () => {
       for (const name of ['set', 'incr', 'incrBy', 'expire']) chain[name] = () => chain;
       return chain;
     });
-    const started = Date.now();
-    await expect(takeMintBudget('user:1', 1, 10, started)).rejects.toMatchObject({
-      name: 'ClusterCacheUnavailableError',
-      reason: 'timeout',
-    });
-    expect(Date.now() - started).toBeLessThan(4_000);
+    const STILL_HUNG = 'takeMintBudget still pending 3s after the cluster stopped answering';
+    const outcome = await Promise.race([
+      takeMintBudget('user:1', 1, 10, Date.now()).then(
+        () => 'takeMintBudget resolved against a hung cluster',
+        (err: unknown) => err
+      ),
+      new Promise((resolve) => setTimeout(() => resolve(STILL_HUNG), 3_000)),
+    ]);
+    expect(outcome).toMatchObject({ name: 'ClusterCacheUnavailableError', reason: 'timeout' });
   });
 });
 

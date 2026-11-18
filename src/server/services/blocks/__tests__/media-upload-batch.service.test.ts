@@ -56,7 +56,7 @@ beforeEach(() => {
     ttls.set(key, ttl);
     return true;
   });
-  // The release: `SET key 0 NX EX ttl` + `DECRBY key n` in one MULTI.
+  // The release: `SET key 0 NX EX ttl` + `INCRBY key -n` in one MULTI.
   redisMock.redis.multi.mockReset().mockImplementation(() => {
     const ops: Array<() => unknown> = [];
     const chain = {
@@ -69,9 +69,9 @@ beforeEach(() => {
         });
         return chain;
       }),
-      decrBy: vi.fn((key: string, n: number) => {
+      incrBy: vi.fn((key: string, n: number) => {
         ops.push(() => {
-          const next = (counters.get(key) ?? 0) - n;
+          const next = (counters.get(key) ?? 0) + n;
           counters.set(key, next);
           return next;
         });

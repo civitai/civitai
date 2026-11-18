@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { ConsumerBlobPresignResponse } from '@civitai/orchestration-client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
 import {
   MEDIA_UPLOAD_BATCH_DAILY_BYTES,
@@ -117,16 +118,14 @@ export async function reserveMediaUploadBatchQuota(
   const itemsKey = `${base}:items:${userId}:${day}` as const;
   const bytesKey = `${base}:bytes:${userId}:${day}` as const;
   const charged: Array<[typeof itemsKey | typeof bytesKey, number]> = [];
-  // A release re-applies the TTL in the same MULTI, so one landing after the key was evicted
-  // leaves a negative count that still expires, never an immortal one.
+  // A release re-applies the TTL, so one landing after the key was evicted leaves a negative count
+  // that still expires, never an immortal one.
   const release = async () => {
     for (const [key, amount] of charged) {
       try {
-        await redis
-          .multi()
-          .set(key, '0', { NX: true, EX: QUOTA_KEY_TTL_S })
-          .decrBy(key, amount)
-          .exec();
+        await takeClusterWindowCount('releaseMediaUploadBatchQuota', key, QUOTA_KEY_TTL_S, {
+          by: -amount,
+        });
       } catch {
         // Best-effort: a counter left high refuses early, never admits more.
       }

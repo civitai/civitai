@@ -11,8 +11,6 @@ const KEY_TTL_S = 2 * 60 * 60;
  * Counts one request for `provider` in the current clock hour and says whether it is within
  * `hourlyCeiling`. A Redis error or timeout allows the download: the counter is a ceiling on a
  * trusted caller, not a credential check.
- *
- * A rate window, so it lives on the cache cluster; the MULTI touches the one hour key.
  */
 export async function takeProviderDownload(
   provider: string,

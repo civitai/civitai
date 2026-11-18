@@ -424,12 +424,7 @@ export async function readAutoBuildBudget(
 /** New-submission alerts per submitter per UTC hour, before they are rolled up. */
 export const SUBMISSION_ALERTS_PER_USER_PER_HOUR = 10;
 
-/**
- * The submission-alert, listing-check-spend and agent-review reservation counters are TTL'd
- * per-hour or per-day windows on the cache cluster, one key per command. Every call throws on
- * failure, which each caller turns into its fail-safe answer. Loaded lazily, like the rest of
- * this module's dependencies.
- */
+/** Every call throws on failure; callers turn that into their fail-safe answer. */
 const clusterCounters = () => import('~/server/utils/cluster-window-count');
 
 /** A UTC-day window's TTL: a day plus slack, so a key outlives the day it counts. */

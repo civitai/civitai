@@ -659,7 +659,7 @@ type FailedScanFile = {
 // Logged, not thrown, so the retry bump already written stands.
 async function bustAfterFailedScan(modelVersionId: number, file: FailedScanFile) {
   try {
-    // A once-an-hour throttle, so it lives on the cache cluster: a lost marker costs one more bust.
+    // A lost marker costs one more bust.
     const prefix = REDIS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_FAILURE_BUST;
     const [bustVersion, bustFile] = await Promise.all([
       redis.setNxKeepTtlWithEx(`${prefix}:${modelVersionId}`, '1', FAILURE_BUST_TTL_SECONDS),

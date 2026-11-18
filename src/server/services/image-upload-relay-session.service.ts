@@ -14,9 +14,8 @@ import { boundedClusterCall as bounded } from '~/server/utils/cluster-window-cou
  * caller's session. A client-supplied key or uploadId would let a caller write parts into, or
  * complete, someone else's upload.
  *
- * Kept on the cache cluster: a session lives an hour at most, and a lost one (a deploy that moved
- * it, an eviction) reads as unknown, so that upload fails and the client starts it again. Every
- * command touches the one session hash.
+ * A session lives an hour at most, and a lost one (a deploy that moved it, an eviction) reads as
+ * unknown, so that upload fails and the client starts it again.
  */
 export type ImageUploadRelaySession = {
   userId: number;
