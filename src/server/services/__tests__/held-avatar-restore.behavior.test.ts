@@ -141,16 +141,18 @@ describe('a User.image naming a blocked profile picture', () => {
         (3, 'key-3', 3, 'Rescan', 1, 'tos'),
         (4, 'key-4', 4, 'Blocked', 1, NULL),
         (5, 'key-5', 5, 'Scanned', 1, NULL),
-        (6, 'key-6', 6, 'Blocked', 1, NULL);
+        (6, 'key-6', 6, 'Blocked', 1, NULL),
+        (7, '', 7, 'Blocked', 1, NULL);
       INSERT INTO "User" VALUES
         (1, 1, 'https://cdn.example/KEY-1/width=96', '{"keep": true}'),
         (2, 2, 'key%2d2', NULL),
         (3, 3, 'key-3', '{}'),
         (4, 4, 'legacy-other', '{}'),
         (5, 5, 'key-5', '{}'),
-        (6, 6, 'key-6', '{}');
+        (6, 6, 'key-6', '{}'),
+        (7, 7, 'any-value', '{}');
     `);
-    expect((await clearHeldUserImages(db, [1, 2, 3, 4, 5])).sort()).toEqual([1, 2, 3, 4]);
+    expect((await clearHeldUserImages(db, [1, 2, 3, 4, 5, 7])).sort()).toEqual([1, 2, 3, 4, 7]);
     expect(await user(1)).toEqual({
       image: null,
       meta: { keep: true, heldImageCleared: { pictureId: 1 } },
@@ -161,6 +163,8 @@ describe('a User.image naming a blocked profile picture', () => {
     expect(await user(4)).toEqual({ image: 'legacy-other', meta: {} });
     expect(await user(5)).toEqual({ image: 'key-5', meta: {} });
     expect(await user(6)).toEqual({ image: 'key-6', meta: {} });
+    // A picture with an empty url names nothing.
+    expect(await user(7)).toEqual({ image: 'any-value', meta: {} });
   });
 
   it('comes back once the block lifts, and not while any marker survives', async () => {

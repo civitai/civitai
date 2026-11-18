@@ -1,15 +1,30 @@
 import { CompiledQuery, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { OWNER_HIDDEN_REVIEWS } from '@civitai/shared/owner-hidden-reviews';
+
+const userIdsParameter = (userIds: number[]) => [...new Set(userIds)].filter(Number.isInteger);
+
+type Statement = { sql: string; parameters: unknown[]; empty: boolean };
+
+const run = async (db: Kysely<DB>, statement: Statement) => {
+  if (statement.empty) return [];
+  const { rows } = await db.executeQuery<{ id: number }>(
+    CompiledQuery.raw(statement.sql, statement.parameters)
+  );
+  return rows.map((row) => row.id);
+};
 
 /** Whether `User.image` (aliased `u`) names the key of the image aliased `alias`, in any url form. */
 export const userImageNamesPicture = (alias: string) =>
-  `strpos(replace(lower(u.image), '%2d', '-'), lower(${alias}.url)) > 0`;
+  `(length(${alias}.url) > 0 AND strpos(replace(lower(u.image), '%2d', '-'), lower(${alias}.url)) > 0)`;
 
 const heldImageMarker = `jsonb_build_object('heldImageCleared', jsonb_build_object('pictureId', u."profilePictureId"))`;
 
-// The block markers are the main app's `hasBlockMarker`: Blocked ingestion, the Blocked level (32),
-// or a block reason.
+/** The main app's `hasBlockMarkerSql` over `Image` aliased `alias`: Blocked ingestion, the Blocked level, or a block reason. */
+export const blockMarkerText = (alias: string) =>
+  `(${alias}.ingestion::text = 'Blocked' OR ${alias}."nsfwLevel" = 32 OR ${alias}."blockedFor" IS NOT NULL)`;
+
 const CLEAR_HELD_USER_IMAGES_SQL = `
   WITH held AS (
     SELECT u.id, (u.image IS NOT NULL AND ${userImageNamesPicture('picture')}) AS "namesPicture"
@@ -18,9 +33,7 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
     WHERE u.id = ANY($1::int[])
       AND (
         picture."needsReview" = ANY($2::text[])
-        OR picture.ingestion::text = 'Blocked'
-        OR picture."nsfwLevel" = 32
-        OR picture."blockedFor" IS NOT NULL
+        OR ${blockMarkerText('picture')}
       )
   ), cleared AS (
     UPDATE "User" u
@@ -47,13 +60,115 @@ const CLEAR_HELD_USER_IMAGES_SQL = `
  */
 export const clearHeldUserImagesStatement = (userIds: number[]) => ({
   sql: CLEAR_HELD_USER_IMAGES_SQL,
-  parameters: [userIds, OWNER_HIDDEN_REVIEWS] as unknown[],
+  parameters: [userIdsParameter(userIds), OWNER_HIDDEN_REVIEWS] as unknown[],
+  empty: !userIdsParameter(userIds).length,
 });
 
 /** `clearHeldUserImagesStatement` on a Kysely client. */
-export async function clearHeldUserImages(db: Kysely<DB>, userIds: number[]): Promise<number[]> {
-  if (!userIds.length) return [];
-  const { sql, parameters } = clearHeldUserImagesStatement(userIds);
-  const { rows } = await db.executeQuery<{ id: number }>(CompiledQuery.raw(sql, parameters));
-  return rows.map((row) => row.id);
-}
+export const clearHeldUserImages = (db: Kysely<DB>, userIds: number[]) =>
+  run(db, clearHeldUserImagesStatement(userIds));
+
+/** The main app's `nsfwBrowsingLevelsFlag` and `ImageScanFailureClass.Permanent`; its tests pin both. */
+export const NSFW_BROWSING_LEVELS_FLAG = 60;
+export const PERMANENT_SCAN_FAILURE = 'permanent';
+
+/**
+ * The main app's `servableProfilePictureSql` over `Image` aliased `i`, plus no block marker, with
+ * $2 the owner-hidden reviews, $3 the Knights vote reason, $4 the permanent scan-failure class and $5
+ * the mature-level flag (`servablePictureParameters`). Main's tests pin it to the Prisma original.
+ */
+export const servablePictureText = `
+  i.ingestion::text <> 'Blocked'
+  AND i."nsfwLevel" != 0
+  AND (i."needsReview" IS NULL OR NOT (i."needsReview" = ANY($2::text[])))
+  AND (
+    i.ingestion::text = 'Scanned'
+    OR (
+      i."nsfwLevelLocked" = TRUE
+      AND i.ingestion::text NOT IN ('Blocked', 'NotFound')
+      AND NOT (
+        i.ingestion::text = 'Error'
+        AND (
+          COALESCE(i.metadata->>'nsfwLevelReason', '') = $3
+          OR COALESCE(i."scanJobs"->'error'->>'failureClass', '') = $4
+          OR COALESCE(i."scanJobs"->'lastFailure'->>'failureClass', '') = $4
+          OR COALESCE(i."scanJobs"->'permanentFailure' = 'true'::jsonb, FALSE)
+        )
+      )
+    )
+  )
+  AND ((i."nsfwLevel" & $5::int) = 0 OR NOT i."modelRestricted")
+  AND NOT ${blockMarkerText('i')}
+`;
+
+export const servablePictureParameters = [
+  OWNER_HIDDEN_REVIEWS,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+  PERMANENT_SCAN_FAILURE,
+  NSFW_BROWSING_LEVELS_FLAG,
+] as unknown[];
+
+const MARKED = `jsonb_typeof(u.meta) = 'object' AND u.meta ? 'heldImageCleared'`;
+// Compared as text, so a marker whose pictureId is not a number never fails the statement.
+const MARKER_IS_CURRENT = `u.meta->'heldImageCleared'->>'pictureId' = u."profilePictureId"::text`;
+
+const RESTORE_CLEARED_USER_IMAGES_SQL = `
+  WITH picture AS (
+    SELECT u.id AS "userId", i.id AS "pictureId", i.url
+    FROM "User" u
+    JOIN "Image" i ON i.id = u."profilePictureId" AND i."userId" = u.id
+    WHERE u.id = ANY($1::int[])
+      AND ${MARKED}
+      AND ${MARKER_IS_CURRENT}
+      AND u.image IS NULL
+      AND ${servablePictureText}
+    FOR SHARE OF i
+  )
+  UPDATE "User" u
+  SET image = picture.url, meta = u.meta - 'heldImageCleared'
+  FROM picture
+  WHERE u.id = picture."userId" AND u.image IS NULL AND u."profilePictureId" = picture."pictureId"
+  RETURNING u.id
+`;
+
+const DROP_STALE_HELD_IMAGE_MARKERS_SQL = `
+  UPDATE "User" u
+  SET meta = u.meta - 'heldImageCleared'
+  WHERE u.id = ANY($1::int[])
+    AND ${MARKED}
+    AND (u.image IS NOT NULL OR u."profilePictureId" IS NULL OR NOT ${MARKER_IS_CURRENT})
+  RETURNING u.id
+`;
+
+/**
+ * For those of `userIds` whose `User.image` the clear emptied, puts it back from the profile
+ * picture's own url once the picture is servable again (`servablePictureText`), is still the user's,
+ * and `User.image` is still empty. A marker whose picture is not servable yet is kept, so a later lift
+ * still restores. The value is rebuilt, never stored. A write that replaces `meta` whole drops the
+ * marker, and then nothing is restored: the avatar stays empty, not wrong. The picture row is locked
+ * for the statement, so a hold or block landing meanwhile waits and its own clear then sees the
+ * restored value. Returns the ids restored.
+ */
+export const restoreClearedUserImagesStatement = (userIds: number[]) => ({
+  sql: RESTORE_CLEARED_USER_IMAGES_SQL,
+  parameters: [userIdsParameter(userIds), ...servablePictureParameters],
+  empty: !userIdsParameter(userIds).length,
+});
+
+/**
+ * Drops `meta.heldImageCleared` where it can no longer apply: the user has another picture or none,
+ * or has set `User.image` since. A marker whose picture is not servable yet is kept.
+ */
+export const dropStaleHeldImageMarkersStatement = (userIds: number[]) => ({
+  sql: DROP_STALE_HELD_IMAGE_MARKERS_SQL,
+  parameters: [userIdsParameter(userIds)],
+  empty: !userIdsParameter(userIds).length,
+});
+
+/** `restoreClearedUserImagesStatement` on a Kysely client. */
+export const restoreClearedUserImages = (db: Kysely<DB>, userIds: number[]) =>
+  run(db, restoreClearedUserImagesStatement(userIds));
+
+/** `dropStaleHeldImageMarkersStatement` on a Kysely client. */
+export const dropStaleHeldImageMarkers = (db: Kysely<DB>, userIds: number[]) =>
+  run(db, dropStaleHeldImageMarkersStatement(userIds));

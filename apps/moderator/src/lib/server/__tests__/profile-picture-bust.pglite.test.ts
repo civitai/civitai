@@ -52,6 +52,7 @@ vi.mock('../image-moderation-effects', () => ({
   notifyAppealResolved: vi.fn(async () => undefined),
   emailAppealResolution: vi.fn(async () => undefined),
   bustPostGalleryCaches: vi.fn(async () => undefined),
+  trackImageRestore: vi.fn(async () => undefined),
 }));
 vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
@@ -67,6 +68,7 @@ vi.mock('../storage', () => ({
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
 const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
+const { bustProfilePictures } = await import('../profile-picture-cache');
 const deleteImages = async (ids: number[]) =>
   finishImageDeletes(
     await (dbHandle.current as Kysely<DB>).transaction().execute((trx) => deleteImageRows(trx, ids))
@@ -87,7 +89,9 @@ CREATE TABLE "Image" (
   "scannedAt" TIMESTAMP(3),
   "updatedAt" TIMESTAMP(3),
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
-  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
+  "scanJobs" JSONB,
+  "modelRestricted" BOOLEAN NOT NULL DEFAULT FALSE
 );
 ${SET_ASIDE_TABLE_SQL}
 ${DEFERRED_BLOCK_EFFECT_TABLE_SQL}
@@ -114,7 +118,12 @@ CREATE TABLE "User" (
   "image" TEXT,
   "meta" JSONB
 );
-CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+-- The rating recompute, standing in for one that rates an unblocked image from its tags.
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$
+  UPDATE "Image" SET "nsfwLevel" = 1
+  WHERE id = ANY(ids) AND "ingestion" IS DISTINCT FROM 'Blocked' AND "blockedFor" IS NULL
+$$;
+CREATE TABLE "TagsOnImageDetails" ("imageId" INTEGER, "tagId" INTEGER, "disabled" BOOLEAN);
 CREATE FUNCTION queue_cdn_access_sync(entity_id INTEGER, entity_type TEXT, payload JSONB)
   RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
@@ -179,6 +188,12 @@ describe('moderator writes to an image that is a profile picture', () => {
       meta: { heldImageCleared: { pictureId: AVATAR_ID } },
     });
     expect(bustedKeys()).toContain(`${REDIS_KEYS.CACHES.BASIC_USERS}:${AVATAR_OWNER}`);
+    expect(del.mock.calls.flat()).toContain(`${REDIS_KEYS.USER.SESSION}:${AVATAR_OWNER}`);
+    expect(syncSearchIndexBulk).toHaveBeenCalledWith({
+      entityType: 'user',
+      entityIds: [AVATAR_OWNER],
+      action: 'update',
+    });
   });
 
   it("blockImage on an image that is not the user's picture leaves User.image alone", async () => {
@@ -188,6 +203,60 @@ describe('moderator writes to an image that is a profile picture', () => {
       image: 'https://cdn.example/avatar-key/width=96',
       meta: {},
     });
+  });
+
+  it('acceptImage after a block puts User.image back from the picture', async () => {
+    await blockImage({ imageId: AVATAR_ID, userId: 1 });
+    await acceptImage({ imageId: AVATAR_ID, userId: 1 });
+
+    expect(await ownerRow()).toEqual({ image: 'avatar-key', meta: {} });
+  });
+
+  it('a partly lifted block keeps User.image empty and the marker in place', async () => {
+    await blockImage({ imageId: AVATAR_ID, userId: 1 });
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1, "blockedFor" = 'tos' WHERE id = $1`,
+      [AVATAR_ID]
+    );
+    await bustProfilePictures({ imageIds: [AVATAR_ID] });
+
+    expect(await ownerRow()).toEqual({
+      image: null,
+      meta: { heldImageCleared: { pictureId: AVATAR_ID } },
+    });
+  });
+
+  it('never restores a picture under a csam or minor hold', async () => {
+    for (const review of ['csam', 'minor']) {
+      await db.query(
+        `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1, "blockedFor" = NULL, "needsReview" = $2 WHERE id = $1`,
+        [AVATAR_ID, review]
+      );
+      await db.query(`UPDATE "User" SET image = NULL, meta = $2 WHERE id = $1`, [
+        AVATAR_OWNER,
+        JSON.stringify({ heldImageCleared: { pictureId: AVATAR_ID } }),
+      ]);
+      await bustProfilePictures({ imageIds: [AVATAR_ID] });
+
+      expect(await ownerRow()).toEqual({
+        image: null,
+        meta: { heldImageCleared: { pictureId: AVATAR_ID } },
+      });
+    }
+  });
+
+  it("restores nothing for a write to an image that is not the user's picture", async () => {
+    await db.query(
+      `UPDATE "Image" SET ingestion = 'Scanned', "nsfwLevel" = 1 WHERE id IN ($1, $2)`,
+      [AVATAR_ID, OTHER_IMAGE_ID]
+    );
+    await db.query(`UPDATE "User" SET image = NULL, meta = $2 WHERE id = $1`, [
+      AVATAR_OWNER,
+      JSON.stringify({ heldImageCleared: { pictureId: AVATAR_ID } }),
+    ]);
+    await blockImage({ imageId: OTHER_IMAGE_ID, userId: 1 });
+
+    expect((await ownerRow()).image).toBeNull();
   });
 
   it('updateImageNsfwLevel evicts it', async () => {
