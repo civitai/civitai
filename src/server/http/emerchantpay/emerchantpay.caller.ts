@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import * as xml2js from 'xml2js';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
+import { lazyInstance } from '~/server/http/lazy-instance';
 import type { EmerchantPay } from '~/server/http/emerchantpay/emerchantpay.schema';
 import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 
@@ -302,6 +303,6 @@ class EmerchantPayCaller extends HttpCaller {
   }
 }
 
-export default EmerchantPayCaller.getInstance();
+export default lazyInstance(() => EmerchantPayCaller.getInstance());
 
 export { EmerchantPayCaller };
