@@ -41,6 +41,10 @@ const ROWS: Array<[number, number, string, string, boolean]> = [
   // User 9: one unseen, but before user 9's own (later) window start.
   [9, 8, 'new-comment', '2026-11-02T10:00:00.000000', false],
   [9, 9, 'new-comment', '2026-11-05T10:00:00.000000', false],
+  // User 12: around a start floor of 2026-11-10T09:00:00.000Z, a millisecond either side and on it.
+  [12, 20, 'new-comment', '2026-11-10T08:59:59.999000', false],
+  [12, 21, 'new-comment', '2026-11-10T09:00:00.000000', false],
+  [12, 22, 'new-comment', '2026-11-10T09:00:00.001000', false],
 ];
 
 beforeAll(async () => {
@@ -100,6 +104,18 @@ describe('unseen notifications for the digest', () => {
     expect(result).toHaveLength(1);
     expect(result[0]!.total).toBe(1);
     expect(ids(result[0]!.items)).toEqual([9]);
+  });
+
+  // The digest passes a user's start floor as `since`: what was created before it, or at it (the
+  // moment the floor was recorded, already covered), is never listed or counted.
+  it('lists only what was created strictly after `since`', async () => {
+    const [user] = await queryUnseenNotifications({
+      users: [{ userId: 12, since: new Date('2026-11-10T09:00:00.000Z') }],
+      excludeTypes: [],
+      limit: 10,
+    });
+    expect(user!.total).toBe(1);
+    expect(ids(user!.items)).toEqual([22]);
   });
 
   it('stops counting at the ceiling and says so', async () => {
