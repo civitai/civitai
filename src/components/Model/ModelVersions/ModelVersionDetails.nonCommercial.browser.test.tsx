@@ -182,7 +182,7 @@ beforeEach(() => {
 });
 
 describe('ModelVersionDetails — non-commercial base hides price and fee', () => {
-  test('gated non-buyer: label, locked disabled Download, no price', async () => {
+  test('gated non-buyer: label, locked disabled button saying not available, no price', async () => {
     mount(paywalled({ baseModel: KLEIN }));
     await expect.element(page.getByTestId('not-commercially-available')).toBeInTheDocument();
     expect(text()).toContain(LABEL);
@@ -192,8 +192,11 @@ describe('ModelVersionDetails — non-commercial base hides price and fee', () =
     expect(
       document.querySelector('[data-testid="not-commercially-available-generate"]')
     ).toBeTruthy();
-    const btn = downloadButton();
+    const btn = Array.from(document.querySelectorAll('a,button')).find(
+      (b) => b.textContent?.trim() === 'Not available for download'
+    ) as HTMLElement | undefined;
     expect(btn).toBeTruthy();
+    expect(downloadButton()).toBeUndefined();
     expect(
       btn!.hasAttribute('disabled') ||
         btn!.getAttribute('aria-disabled') === 'true' ||
