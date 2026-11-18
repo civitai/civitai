@@ -47,6 +47,7 @@ beforeAll(async () => {
     );
     CREATE TABLE "ScanLabelItem" ("imageId" int UNIQUE NOT NULL);
     CREATE TABLE "EvidenceHoldImage" ("imageId" int PRIMARY KEY);
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3));
   `);
   raw = pgliteRaw(db);
 });
@@ -63,7 +64,8 @@ const OLD = `now() - interval '2 hours'`;
 describe('search-upload-sweep', () => {
   beforeEach(async () => {
     await db.exec(`
-      DELETE FROM "ScanLabelItem"; DELETE FROM "EvidenceHoldImage"; DELETE FROM "Image";
+      DELETE FROM "ScanLabelItem"; DELETE FROM "EvidenceHoldImage"; DELETE FROM "CsamReport";
+      DELETE FROM "Image";
       INSERT INTO "Image" (id, "userId", "postId", ingestion, "needsReview", "blockedFor", minor, metadata, "createdAt") VALUES
         (1, 5, NULL, 'Scanned', NULL, NULL, false, ${UPLOAD}, ${OLD}),
         (2, 5, NULL, 'Scanned', NULL, NULL, false, ${UPLOAD}, now()),
@@ -76,17 +78,24 @@ describe('search-upload-sweep', () => {
         (9, 5, NULL, 'Scanned', NULL, NULL, false, '{"blockUploadedAppId": "app"}', ${OLD}),
         (10, 5, 77, 'Scanned', NULL, NULL, false, ${UPLOAD}, ${OLD}),
         (11, 5, NULL, 'Scanned', 'poi', NULL, false, ${UPLOAD}, ${OLD});
+      INSERT INTO "Image" (id, "userId", "postId", ingestion, "tosViolation", poi, metadata, "createdAt") VALUES
+        (13, 5, NULL, 'Scanned', true, false, ${UPLOAD}, ${OLD}),
+        (14, 5, NULL, 'Scanned', false, true, ${UPLOAD}, now() - interval '100 minutes'),
+        (15, 8, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD}),
+        (16, 9, NULL, 'Scanned', false, false, ${UPLOAD}, ${OLD});
+      -- Uploader 8 has an unsent CSAM report; uploader 9's was sent.
+      INSERT INTO "CsamReport" ("userId", "reportSentAt") VALUES (8, NULL), (9, now());
       INSERT INTO "ScanLabelItem" ("imageId") VALUES (6);
       INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (7);
     `);
   });
 
-  it('deletes only a passed upload older than an hour', async () => {
+  it('deletes only a passed upload older than an hour, a POI match included', async () => {
     await createIndex();
     const deleted: number[] = [];
     const result = await sweepSearchUploads({ deleteImage: async (id) => void deleted.push(id) });
-    expect(deleted).toEqual([1]);
-    expect(result).toEqual({ swept: 1 });
+    expect(deleted.sort((a, b) => a - b)).toEqual([1, 14, 16]);
+    expect(result).toEqual({ swept: 3 });
   });
 
   it('skips a row held while the batch was running', async () => {
@@ -99,10 +108,12 @@ describe('search-upload-sweep', () => {
     await sweepSearchUploads({
       deleteImage: async (id) => {
         deleted.push(id);
-        if (id === 1) await db.exec('INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (12)');
+        if (deleted.length === 1)
+          await db.exec('INSERT INTO "EvidenceHoldImage" ("imageId") VALUES (12)');
       },
     });
-    expect(deleted).toEqual([1]);
+    expect(deleted).toContain(1);
+    expect(deleted).not.toContain(12);
   });
 
   it('sweeps nothing until the partial index exists', async () => {

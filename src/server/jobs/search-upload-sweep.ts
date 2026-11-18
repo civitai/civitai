@@ -15,16 +15,19 @@ const SWEEPABLE = Prisma.sql`
   AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i.minor = false
+  AND i."tosViolation" = false
   AND NOT EXISTS (SELECT 1 FROM "ScanLabelItem" s WHERE s."imageId" = i.id)
   AND NOT EXISTS (SELECT 1 FROM "EvidenceHoldImage" e WHERE e."imageId" = i.id)
+  AND NOT EXISTS (
+    SELECT 1 FROM "CsamReport" r WHERE r."userId" = i."userId" AND r."reportSentAt" IS NULL
+  )
 `;
 const BATCH = 500;
 
 /**
- * Deletes search-by-upload rows an hour after they were written, but only those that passed the
- * scan cleanly. A row held or flagged in any way is kept: a minor or CSAM-like flag follows the
- * CSAM path, and deleting the image would cascade its ScanLabelItem (a pending vote) away.
- * Runs whether the feature flag is on or off.
+ * Deletes a search-by-upload row an hour after it passed the scan cleanly. Anything held or flagged
+ * is kept: deleting an image cascades its pending ScanLabelItem vote, a ToS violation may be
+ * moderation evidence, and an uploader with an unsent CSAM report keeps every row.
  */
 export const searchUploadSweepJob = createJob('search-upload-sweep', '*/10 * * * *', () =>
   sweepSearchUploads()
