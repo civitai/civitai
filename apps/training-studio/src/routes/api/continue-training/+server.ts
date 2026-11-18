@@ -1,7 +1,12 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
-import { continueTraining, continueTrainingWhatIf, type ContinueOpts } from '$lib/server/train';
+import {
+  continueTraining,
+  continueTrainingWhatIf,
+  MatureRepriceError,
+  type ContinueOpts,
+} from '$lib/server/train';
 import { TrainingBatchValidationError } from '$lib/train-core';
 import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 import { datasetRatingFor } from '$lib/server/dataset-rating';
@@ -52,6 +57,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     fromEpoch?: number;
     addEpochs?: number;
     currencies?: string[];
+    matureCount?: number;
   } | null;
   if (!body?.workflowId || typeof body.fromEpoch !== 'number' || typeof body.addEpochs !== 'number')
     error(400, 'Bad request.');
@@ -61,6 +67,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
     addEpochs: body.addEpochs,
     // Filtered + defaulted by resolveCurrencies core-side — never trusted from the wire.
     currencies: Array.isArray(body.currencies) ? body.currencies : undefined,
+    quotedMatureCount: typeof body.matureCount === 'number' ? body.matureCount : undefined,
   };
 
   const token = await requireToken(locals, 'Training is unavailable right now.');
@@ -79,6 +86,8 @@ export const POST: RequestHandler = async ({ locals, request }) => {
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
     if (err instanceof RunWithheldError) error(403, err.message);
+    if (err instanceof MatureRepriceError)
+      error(409, { message: err.message, matureCount: err.matureCount });
     throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');

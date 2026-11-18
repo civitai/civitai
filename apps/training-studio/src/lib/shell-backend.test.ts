@@ -23,9 +23,10 @@ describe('keep-training requests carry the picked currencies', () => {
 
   it('submit sends them in the body', async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ workflowId: 'wf-2' }));
-    await shellBackend.continueRun('wf-1', 10, 5, ['blue', 'green']);
+    await shellBackend.continueRun('wf-1', 10, 5, ['blue', 'green'], 2);
     const init = fetchMock.mock.calls[0]![1] as RequestInit;
     expect(JSON.parse(init.body as string).currencies).toEqual(['blue', 'green']);
+    expect(JSON.parse(init.body as string).matureCount).toBe(2);
   });
 });
 
@@ -50,7 +51,7 @@ describe('a submit refused because the server rated the dataset mature', () => {
 
   it('keeps any other failure a plain error with the server message', async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ message: 'busy' }, { status: 502 }));
-    const err = await shellBackend.continueRun('wf-1', 10, 5, ['blue']).catch((e) => e);
+    const err = await shellBackend.continueRun('wf-1', 10, 5, ['blue'], 0).catch((e) => e);
     expect(err).not.toBeInstanceOf(MatureRepriceError);
     expect((err as Error).message).toBe('busy');
   });

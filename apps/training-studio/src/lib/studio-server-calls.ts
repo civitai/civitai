@@ -90,10 +90,10 @@ export function studioServerCalls(
       return (await res.json()) as { cost: number | null; steps?: number; matureCount: number };
     },
 
-    continueRun: async (workflowId, fromEpoch, addEpochs, currencies) => {
+    continueRun: async (workflowId, fromEpoch, addEpochs, currencies, matureCount) => {
       const res = await server(
         '/api/continue-training',
-        postJson({ workflowId, fromEpoch, addEpochs, currencies })
+        postJson({ workflowId, fromEpoch, addEpochs, currencies, matureCount })
       );
       if (!res.ok) throw await startFailure(res, 'Could not start training.');
       return ((await res.json()) as { workflowId: string }).workflowId;

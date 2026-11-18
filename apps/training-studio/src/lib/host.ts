@@ -73,10 +73,10 @@ export interface HostContext {
     /** Where auto-labeling does work, linked from the line that replaces its actions when
      *  `canAutoLabel` is false (`hostLink` URL semantics). Absent => the line renders without a link. */
     autoLabelUrl?: string;
-    /** Whether this user holds a paid membership — without one, Blue Buzz can't pay for a mature
-     *  dataset and the run is charged in full from the chosen account. Absent = unknown. */
+    /** Whether this user holds a paid membership — without one, a mature run's samples are blurred
+     *  when Blue paid any of it, and Review says so. Absent = unknown. */
     isPaidMember?: boolean;
-    /** The host's membership-plans page, linked from the explanation above (`hostLink` URL
+    /** The host's membership-plans page, linked from the membership explanations (`hostLink` URL
      *  semantics). Absent => the explanation renders without a link. */
     pricingUrl?: string;
     /** The host's support ticket portal, offered on a run held for review past the raise threshold.

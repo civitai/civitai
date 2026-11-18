@@ -65,6 +65,7 @@
   import { slugify } from '$lib/slug';
   import { RETENTION_DAYS, type EpochArchive } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
+  import { MatureRepriceError } from '$lib/mature-charge';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -492,9 +493,15 @@
   );
   const quote = $derived(continueQuoteState.value ?? null);
 
-  // A mature dataset's continuation is charged Blue first, then Yellow (never Green); the server rates it
-  // for the quote and the submit alike.
-  const furtherMature = $derived(quote?.matureCount ?? 0);
+  // A mature dataset's continuation is charged Blue first, then Yellow (never Green). The submit's own rating
+  // can find mature images the quote's missed; its refusal sets this, so the price is shown again.
+  let refusedFurther = $state<{ run: string; count: number } | null>(null);
+  const furtherMature = $derived(
+    Math.max(
+      quote?.matureCount ?? 0,
+      refusedFurther?.run === workflowIdKey ? refusedFurther.count : 0
+    )
+  );
   const furtherSpend = $derived(
     quote?.cost != null
       ? nonBlueSpend(quote.cost, buzzMode.value, { mature: furtherMature > 0 })
@@ -511,12 +518,14 @@
         d.workflowId,
         publishTarget.number,
         Number(furtherEpochs) || 5,
-        buzzMode.currencies
+        buzzMode.currencies,
+        furtherMature
       );
       await navigate({ view: 'run', workflowId: id });
     } catch (err) {
       continueError = err instanceof Error ? err.message : 'Could not start training';
-      confirming = false;
+      if (err instanceof MatureRepriceError) refusedFurther = { run: workflowIdKey, count: err.matureCount };
+      else confirming = false;
     } finally {
       continuing = false;
     }

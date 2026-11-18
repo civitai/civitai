@@ -814,7 +814,7 @@ describe('mature charge: Blue first, never Green', () => {
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
       await continueTraining(
         client,
-        { ...opts, workflowId: 'wf-r3', currencies: ['green'] },
+        { ...opts, workflowId: 'wf-r3', currencies: ['green'], quotedMatureCount: 1 },
         { checkText }
       );
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
@@ -870,7 +870,11 @@ describe('mature charge: Blue first, never Green', () => {
       submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
       await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-c1' });
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-      await continueTraining(client, { ...opts, workflowId: 'wf-c1' }, { checkText });
+      await continueTraining(
+        client,
+        { ...opts, workflowId: 'wf-c1', quotedMatureCount: 1 },
+        { checkText }
+      );
       expect(headBlob).toHaveBeenCalledTimes(2);
     });
 
@@ -903,7 +907,7 @@ describe('mature charge: Blue first, never Green', () => {
     });
   });
 
-  // Justin lifted the Blue restriction (2026-11-18): training is SFW infrastructure work, so Blue pays for
+  // Product decision (2026-11-18): training is SFW infrastructure work, so Blue pays for
   // it whatever the dataset, as the Classic trainer did. To whoever is about to add the unlock back:
   // allowMatureContent:true makes the orchestrator drop a non-member's Blue and charge Yellow.
   describe('Blue pays for a mature dataset, member or not', () => {
@@ -949,6 +953,44 @@ describe('mature charge: Blue first, never Green', () => {
       expect(body.currencies).toEqual(['blue', 'yellow']);
     });
 
+    it('refuses a Green-paid continuation the submit rates mature after a quote that was not', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue4'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      const before = submitWorkflow.mock.calls.length;
+      const opts = { fromEpoch: 10, addEpochs: 5, workflowId: 'wf-blue4' };
+      await expect(
+        continueTraining(client, { ...opts, currencies: ['blue', 'green'] }, { checkText })
+      ).rejects.toBeInstanceOf(MatureRepriceError);
+      await expect(
+        continueTraining(
+          client,
+          { ...opts, currencies: ['blue', 'green'], quotedMatureCount: 0 },
+          { checkText }
+        )
+      ).rejects.toMatchObject({ matureCount: 1 });
+      expect(submitWorkflow.mock.calls.length).toBe(before);
+    });
+
+    it('a quote that showed mature keeps the continuation out of Green when the submit lookup fails', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue5'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(async () => ({ response: new Response(null, { status: 503 }) }));
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        {
+          fromEpoch: 10,
+          addEpochs: 5,
+          currencies: ['blue', 'green'],
+          workflowId: 'wf-blue5',
+          quotedMatureCount: 1,
+        },
+        { checkText }
+      );
+      expect(submitWorkflow.mock.calls.at(-1)![0].body.currencies).toEqual(['blue', 'yellow']);
+    });
+
     it('a mature continuation needs no confirm and sends no unlock: Blue first, then Yellow', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-blue3'));
       headBlob.mockReset();
@@ -956,7 +998,13 @@ describe('mature charge: Blue first, never Green', () => {
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
       await continueTraining(
         client,
-        { fromEpoch: 10, addEpochs: 5, currencies: ['blue', 'green'], workflowId: 'wf-blue3' },
+        {
+          fromEpoch: 10,
+          addEpochs: 5,
+          currencies: ['blue', 'green'],
+          workflowId: 'wf-blue3',
+          quotedMatureCount: 1,
+        },
         { checkText }
       );
       const body = submitWorkflow.mock.calls.at(-1)![0].body;

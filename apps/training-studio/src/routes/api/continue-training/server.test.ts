@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MatureRepriceError } from '$lib/mature-charge';
 import { RunWithheldError } from '$lib/server/withheld';
 
 const continueTrainingWhatIf = vi.fn();
@@ -23,6 +24,7 @@ vi.mock('$lib/server/flipt', () => ({
 vi.mock('$lib/server/train', async () => ({
   continueTraining: (...args: unknown[]) => continueTraining(...args),
   continueTrainingWhatIf: (...args: unknown[]) => continueTrainingWhatIf(...args),
+  MatureRepriceError: (await import('$lib/mature-charge')).MatureRepriceError,
 }));
 
 const { GET, POST } = await import('./+server');
@@ -72,6 +74,29 @@ describe('POST /api/continue-training', () => {
       expect(continueTrainingWhatIf.mock.calls.at(-1)![4]).toBe(allowed);
       expect(continueTraining.mock.calls.at(-1)![5]).toBe(allowed);
     }
+  });
+});
+
+describe('POST /api/continue-training, mature reprice', () => {
+  const body = { workflowId: 'wf-1', fromEpoch: 10, addEpochs: 5, currencies: ['blue', 'green'] };
+
+  it('passes the quoted mature count to the submit, numbers only', async () => {
+    continueTraining.mockResolvedValue('wf-2');
+    await post({ ...body, matureCount: 2 });
+    await post({ ...body, matureCount: '2' });
+    expect(continueTraining.mock.calls.slice(-2).map((c) => c[2].quotedMatureCount)).toEqual([
+      2,
+      undefined,
+    ]);
+  });
+
+  it('answers 409 with the count when the submit rates mature after a clean quote', async () => {
+    const refusal = new MatureRepriceError(3);
+    continueTraining.mockRejectedValueOnce(refusal);
+    await expect(post(body)).rejects.toMatchObject({
+      status: 409,
+      body: { message: refusal.message, matureCount: 3 },
+    });
   });
 });
 

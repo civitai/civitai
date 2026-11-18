@@ -102,11 +102,14 @@ export interface StudioBackend {
     addEpochs: number,
     currencies: string[]
   ): Promise<{ cost: number | null; steps?: number; matureCount: number }>;
+  /** `matureCount` is the count the quote showed; refused with `MatureRepriceError`, charging nothing,
+   *  when the server rates the source mature after a quote that was not, on a charge that would spend Green. */
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
-    currencies: string[]
+    currencies: string[],
+    matureCount: number
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;

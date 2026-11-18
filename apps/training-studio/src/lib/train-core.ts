@@ -779,6 +779,9 @@ export interface ContinueOpts {
   /** Clamped to 1–20 at build time — callers pass the raw value. */
   addEpochs: number;
   currencies?: string[];
+  /** The mature count the user's quote showed. A submit that rates the source mature when the quote did
+   *  not, and would spend Green, is refused so the user sees the Yellow price first. */
+  quotedMatureCount?: number;
 }
 
 export { MatureRepriceError };
@@ -872,7 +875,7 @@ function sourceMatureCount(
   return count;
 }
 
-/** Quote and submit share continuation training parameters; mature-content charging fields can differ. */
+/** The continuation body the quote and the submit share. */
 async function buildContinuation(
   client: OrchestratorClient,
   opts: ContinueOpts,
@@ -1018,7 +1021,8 @@ async function buildContinuation(
         : [CIVITAI_TAG, TRAINING_TAG],
       metadata: metadata as Record<string, unknown>,
       steps: [continuedStep],
-      ...chargeFields(opts.currencies, matureCount > 0),
+      // A quote that showed mature keeps it out of Green, even if this count has a failed lookup.
+      ...chargeFields(opts.currencies, matureCount > 0 || (opts.quotedMatureCount ?? 0) > 0),
       ...(callbacks ? { callbacks } : {}),
     },
     steps,
@@ -1088,7 +1092,10 @@ export async function continueTraining(
   opts: ContinueOpts,
   submitOpts: SubmitOptions & { checkText: TrainingTextCheck }
 ): Promise<string> {
-  const { body, triggerWord } = await buildContinuation(client, opts, submitOpts);
+  const { body, triggerWord, matureCount } = await buildContinuation(client, opts, submitOpts);
+  const quotedMature = typeof opts.quotedMatureCount === 'number' && opts.quotedMatureCount > 0;
+  if (matureCount > 0 && !quotedMature && runCurrencies(opts.currencies).includes('green'))
+    throw new MatureRepriceError(matureCount);
   // The source run may predate the check, so its trigger word is checked again before it trains again.
   await submitOpts.checkText({ triggerWord });
   const { data, error, response } = await submitWorkflow({ client, body, query: { wait: 0 } });
