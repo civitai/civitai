@@ -2269,8 +2269,8 @@ type RankedImage = { id: number; index: number | null; nsfwLevel: number; pinned
 
 /**
  * Whether writing `positions` would change, for any pinned image, how many images the version
- * level counts sit ahead of it (or level with it): now, or once unrated images are rated. The
- * reorder refuses such a write.
+ * level counts sit ahead of it (or level with it): now, once unrated images are rated, or if any
+ * Blocked image is later cleared. The reorder refuses such a write.
  */
 export function shiftsPinnedRank(
   images: RankedImage[],
@@ -2282,6 +2282,8 @@ export function shiftsPinnedRank(
   const views = [
     (image: RankedImage) => image.nsfwLevel !== 0 && countsTowardVersionLevel(image.nsfwLevel),
     (image: RankedImage) => countsTowardVersionLevel(image.nsfwLevel),
+    // Every image: a Blocked verdict can be lifted on review, and the image then counts.
+    () => true,
   ];
   return views.some((counts) => {
     const rank = (pin: RankedImage, at: (image: RankedImage) => number) => {

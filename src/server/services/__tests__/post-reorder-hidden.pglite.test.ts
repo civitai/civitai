@@ -306,7 +306,7 @@ describe('reorderPostImages around images the editor does not list', () => {
     expect(await versionLevel()).toBe(XXX | PG);
   });
 
-  it("uncapped, moving a Blocked image cannot shift a held image's rank among rated images", async () => {
+  it('uncapped, refuses moving a Blocked image across a held image, and writes nothing', async () => {
     // Blocked 60 at 0, PG 10..28 at 1..19, held XXX image 1 at 20 (the 20th rated image), PG 50 at 21.
     const pg = Array.from({ length: 19 }, (_, i) => `(${10 + i}, ${POST}, ${PG}, ${i + 1}, NULL)`);
     await harness.pg.exec(`
@@ -316,10 +316,12 @@ describe('reorderPostImages around images the editor does not list', () => {
     `);
     expect(await versionLevel()).toBe(XXX | PG);
     const pgIds = Array.from({ length: 19 }, (_, i) => 10 + i);
-    await reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [50, ...pgIds, 60] });
-    const after = await indexes();
-    expect(after[1]).toBe(20);
-    expect(new Set(Object.values(after)).size).toBe(Object.keys(after).length);
+    const before = await indexes();
+    // A lifted Blocked verdict would make image 60 count ahead of or behind the held image.
+    await expect(
+      reorderPostImages({ ...OWNER_EDITOR, id: POST, imageIds: [50, ...pgIds, 60] })
+    ).rejects.toThrow('This order could not be saved.');
+    expect(await indexes()).toEqual(before);
     expect(await versionLevel()).toBe(XXX | PG);
   });
 

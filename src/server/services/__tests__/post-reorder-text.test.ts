@@ -144,4 +144,13 @@ describe('shiftsPinnedRank', () => {
     ];
     expect(shiftsPinnedRank(unrated, [{ type: 'image', id: 1, index: 2 }])).toBe(true);
   });
+
+  it('flags moving a Blocked image past a pinned one: a lifted verdict makes it count', () => {
+    const blocked = [
+      { id: 1, index: 0, nsfwLevel: 32, pinned: false },
+      { id: 2, index: 1, nsfwLevel: 1, pinned: true },
+    ];
+    expect(shiftsPinnedRank(blocked, [{ type: 'image', id: 1, index: 2 }])).toBe(true);
+    expect(shiftsPinnedRank(blocked, [{ type: 'image', id: 1, index: 0 }])).toBe(false);
+  });
 });
