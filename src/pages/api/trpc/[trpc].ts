@@ -35,7 +35,7 @@ import {
   responseWritesDevalue,
   runWithResponseWriteFormat,
 } from '~/server/trpc/response-write-format';
-import { redactBlockTokens } from '~/server/logging/redact-block-token';
+import { BEARER_KEYS, redactBlockTokens } from '~/server/logging/redact-block-token';
 import { measureJsonLength } from '~/server/schema/blocks/json-length';
 import { recordBlockTokenGetRequest } from '~/server/prom/block-token-transport.metrics';
 import { setTrpcProcedureRegistry } from '~/server/prom/trpc-fast-superjson.metrics';
@@ -238,12 +238,12 @@ const trpcHandler = createNextApiHandler({
           if (measureJsonLength([input], LOGGED_INPUT_MAX_CHARS, { meter }) === 'over') {
             axInput = LOGGED_INPUT_OVER_LIMIT;
           } else {
-            // Bearer fields (`blockToken`, `shareToken`) are replaced, key kept — see redactBlockTokens.
+            // Bearer fields (`BEARER_KEYS`) are replaced, key kept — see redactBlockTokens.
             // Stringify first and redact only when the key appears, so only an input that carries
             // one is serialized twice.
             const raw = JSON.stringify(input);
             axInput =
-              raw?.includes('"blockToken"') || raw?.includes('"shareToken"')
+              raw && [...BEARER_KEYS].some((key) => raw.includes(`"${key}"`))
                 ? JSON.stringify(redactBlockTokens(input))
                 : raw;
           }

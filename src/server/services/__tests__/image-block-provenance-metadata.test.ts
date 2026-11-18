@@ -55,13 +55,12 @@ beforeEach(() => {
 });
 
 describe('block provenance metadata keys', () => {
-  it('lists the published, the uploaded, the private generation-source, the shared-upload and the search-upload key', () => {
+  it('lists the published, the uploaded, the private generation-source and the shared-upload key', () => {
     expect([...BLOCK_PROVENANCE_METADATA_KEYS]).toEqual([
       'blockPublishedAppId',
       'blockUploadedAppId',
       'blockGenerationSourceAppId',
       'blockSharedUploadAppId',
-      'searchUploadAppId',
     ]);
   });
 
