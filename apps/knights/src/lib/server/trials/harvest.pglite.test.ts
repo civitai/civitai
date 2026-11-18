@@ -3,6 +3,7 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { ensureVotePartitions } from '../queue/queue.service';
 import { HARVEST } from './config';
 import { harvestRulings, runHarvestJob } from './harvest.service';
 
@@ -14,11 +15,12 @@ let db: Kysely<DB>;
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
+  await ensureVotePartitions(db, { now: NOW, monthsAhead: 1 });
 });
 afterAll(() => pg.close());
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsReferenceImage","KnightsHarvestCursor","ModActivity","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsHarvestCursor","ModActivity","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -266,7 +268,7 @@ describe('harvest defaults and the job switch', () => {
       now: NOW,
       settings: { paused: true, hiddenCheckShare: 1 },
     });
-    expect(paused).toEqual({ paused: true, retired: 0 });
+    expect(paused).toEqual({ paused: true, retired: 0, probation: { promoted: 0, retired: 0 } });
     expect(await references()).toEqual([]);
     expect(await cursor()).toEqual([]);
 
@@ -333,7 +335,7 @@ describe('the paused harvest job', () => {
       settings: { paused: true, hiddenCheckShare: 0 },
     });
 
-    expect(result).toEqual({ paused: true, retired: 1 });
+    expect(result).toEqual({ paused: true, retired: 1, probation: { promoted: 0, retired: 0 } });
     expect(await references()).toMatchObject([
       { imageId: 1, status: 'retired' },
       { imageId: 2, status: 'active' },
@@ -417,5 +419,105 @@ describe('harvestRulings with the spot-check on', () => {
     await image(1);
 
     expect((await harvestRulings(db, { now: NOW, config: spot })).retired).toBe(1);
+  });
+});
+
+describe('a moderator ruling on an image players agreed on', () => {
+  const agreementRow = (imageId: number, status: string, answers = 0, answer = '4') =>
+    pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status","answers")
+       VALUES ($1,'hiddenCheck',$2,'agreement','knights.image.nsfwLevel',$3,$4)`,
+      [imageId, answer, status, answers]
+    );
+  const row = async (imageId: number) =>
+    (
+      await pg.query<Record<string, unknown>>(
+        `SELECT pool,status,answer,source,"modActivityId",answers,failures FROM "KnightsReferenceImage" WHERE "imageId"=$1`,
+        [imageId]
+      )
+    ).rows;
+
+  const vote = async (imageId: number, playerId: number, verdict: string) => {
+    const { rows } = await pg.query<{ id: number }>(
+      `SELECT id FROM "KnightsReferenceImage" WHERE "imageId"=$1`,
+      [imageId]
+    );
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict")
+       VALUES ($1,$2,$3,'knights.image.nsfwLevel',$4,'Knight','4',1,$5)`,
+      [-rows[0].id, playerId, NOW.toISOString(), imageId, verdict]
+    );
+  };
+
+  it('replaces an agreement reference that never graded anyone, probation or retired from it', async () => {
+    await image(1, { level: 8 });
+    await agreementRow(1, 'probation');
+    await vote(1, 100, 'inconclusive');
+    await image(2, { level: 8 });
+    await agreementRow(2, 'retired');
+    await vote(2, 101, 'inconclusive');
+    const first = await ruling(1);
+    const second = await ruling(2);
+
+    await harvestRulings(db, { now: NOW });
+
+    for (const [imageId, activity] of [
+      [1, first],
+      [2, second],
+    ]) {
+      expect(await row(imageId)).toEqual([
+        {
+          pool: 'trials',
+          status: 'active',
+          answer: '8',
+          source: 'harvested',
+          modActivityId: activity,
+          answers: 0,
+          failures: 0,
+        },
+      ]);
+    }
+  });
+
+  it('leaves a promoted agreement reference that graded players, even only as close, to retire when its image moves', async () => {
+    await image(1, { level: 8 });
+    await agreementRow(1, 'active', 1);
+    await vote(1, 100, 'failed');
+    await image(2, { level: 8 });
+    await agreementRow(2, 'active', 1);
+    await vote(2, 101, 'inconclusive');
+    await ruling(1);
+    await ruling(2);
+
+    const result = await harvestRulings(db, { now: NOW });
+
+    expect(result.retired).toBe(2);
+    for (const imageId of [1, 2]) {
+      expect(await row(imageId)).toEqual([
+        expect.objectContaining({
+          status: 'retired',
+          answer: '4',
+          source: 'agreement',
+          modActivityId: null,
+        }),
+      ]);
+    }
+  });
+
+  it('leaves a ruled reference alone, retired or not', async () => {
+    await image(1, { level: 8 });
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","questionKey","status") VALUES (1,'hiddenCheck','4','harvested','knights.image.nsfwLevel','retired')`
+    );
+    await ruling(1);
+    await harvestRulings(db, { now: NOW });
+    expect(await row(1)).toEqual([
+      expect.objectContaining({
+        status: 'retired',
+        answer: '4',
+        source: 'harvested',
+        modActivityId: null,
+      }),
+    ]);
   });
 });

@@ -11,6 +11,7 @@ import {
   notificationExistsInput,
   queryNotificationsInput,
   sendSystemNoticesInput,
+  unseenNotificationsInput,
 } from '@civitai/notifications';
 import { register, producerRequestsTotal, httpRequestDurationSeconds } from './lib/server/metrics';
 import { isAuthorized, isNoticesAuthorized } from './lib/server/auth';
@@ -25,6 +26,7 @@ import {
   markNotificationsReadByKeys,
   notificationExists,
   queryNotifications,
+  queryUnseenNotifications,
 } from './lib/server/operations';
 import { notifDbRead, notifDbWrite } from './lib/server/clients/db';
 import { health } from './lib/server/health';
@@ -45,6 +47,7 @@ import { logLevel } from './env';
  *   - POST /notifications/mark-read — mark one/all/category read (fire-and-forget).
  *   - POST /notifications/mark-read-by-key — mark the caller's rows for these keys read; returns counts cleared.
  *   - POST /notifications/exists  — producer-side key dedup.
+ *   - POST /notifications/unseen  — per user, unseen notifications since a given instant (the digest).
  *   - POST /notifications/cleanup — delete old UserNotification rows.
  * System notices, gated by their own token (NOTIFICATIONS_NOTICES_TOKEN), never the producer one:
  *   - POST /notifications/notices     — dry-run or send a system notice to a list of users.
@@ -191,6 +194,12 @@ export async function buildServer(): Promise<FastifyInstance> {
     const body = authedBody(markReadByKeysInput, req, reply);
     if (!body) return reply;
     return reply.send(await markNotificationsReadByKeys(body));
+  });
+
+  app.post('/notifications/unseen', async (req, reply) => {
+    const body = authedBody(unseenNotificationsInput, req, reply);
+    if (!body) return reply;
+    return reply.send(await queryUnseenNotifications(body));
   });
 
   app.post('/notifications/exists', async (req, reply) => {
