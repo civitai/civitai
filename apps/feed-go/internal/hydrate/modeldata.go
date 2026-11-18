@@ -93,7 +93,7 @@ func (s *Sources) fillModelTags(ctx context.Context, models []int, got map[int]E
 // lookupModelData is dataForModelsCache's lookupFn. Keep the versions in (modelId, index) order and the
 // hashes in row order: the cache value's order is what Node serves.
 func (s *Sources) lookupModelData(ctx context.Context, ids []int) (map[int]jspack.Obj, error) {
-	db, err := s.lagAwareDB(ctx, "model", ids)
+	db, err := s.lagAwareDB(ctx, MissModelData, "model", ids)
 	if err != nil {
 		return nil, err
 	}

@@ -105,7 +105,7 @@ func joinRace(leaderCtx, joinerCtx context.Context, t *testing.T, c *MissCompute
 // marked (status).
 func TestJoinSpan(t *testing.T) {
 	tracer, rec := spanRecorder(t)
-	c := &MissCompute{WriteBack: true, Tracer: tracer}
+	c := &MissCompute{WriteBack: AllWrites(), Tracer: tracer}
 	lctx, leader := tracer.Start(context.Background(), "serve leader")
 	jctx, joiner := tracer.Start(context.Background(), "serve joiner")
 	joinRace(lctx, jctx, t, c, nil)
@@ -160,14 +160,14 @@ func TestJoinSpanOnlyWhenTraced(t *testing.T) {
 	lctx, leader := tracer.Start(context.Background(), "serve leader")
 	for name, jctx := range map[string]context.Context{"unsampled": unsampled(), "no span": context.Background()} {
 		rec.Reset()
-		joinRace(lctx, jctx, t, &MissCompute{WriteBack: true, Tracer: tracer}, nil)
+		joinRace(lctx, jctx, t, &MissCompute{WriteBack: AllWrites(), Tracer: tracer}, nil)
 		if n := len(named(rec, "miss lookup join")); n != 0 {
 			t.Fatalf("%s: %d join spans, want 0", name, n)
 		}
 	}
 	rec.Reset()
 	jctx, joiner := tracer.Start(context.Background(), "serve joiner")
-	joinRace(lctx, jctx, t, &MissCompute{WriteBack: true}, nil)
+	joinRace(lctx, jctx, t, &MissCompute{WriteBack: AllWrites()}, nil)
 	joiner.End()
 	leader.End()
 	if n := len(named(rec, "miss lookup join")); n != 0 {

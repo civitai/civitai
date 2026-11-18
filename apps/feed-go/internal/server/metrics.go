@@ -80,6 +80,9 @@ type Metrics struct {
 	// CacheMisses counts the per-entity cache misses hydration computed (cache, result: computed |
 	// error), per missed id. Not per endpoint: hydration is shared by both.
 	CacheMisses *prometheus.CounterVec
+	// CacheWrites counts the cache writes of write-back (feed_go_cache_writes_total: cache, result:
+	// written | nx_lost | error), per key. Seeded only for the written-back caches (SeedCacheWrites).
+	CacheWrites *prometheus.CounterVec
 }
 
 // MetricsHandler is the /metrics handler over g. With openMetrics (on with tracing) it answers a scrape
@@ -92,6 +95,22 @@ func MetricsHandler(g prometheus.Gatherer, openMetrics bool) http.Handler {
 // ObserveCacheMiss is hydrate.MissCompute's Observe.
 func (m *Metrics) ObserveCacheMiss(cache, result string, n int) {
 	m.CacheMisses.WithLabelValues(cache, result).Add(float64(n))
+}
+
+// ObserveCacheWrite is hydrate.MissCompute's ObserveWrite.
+func (m *Metrics) ObserveCacheWrite(cache, result string, n int) {
+	m.CacheWrites.WithLabelValues(cache, result).Add(float64(n))
+}
+
+// SeedCacheWrites creates the write counter's series of caches (the written-back ones) for every
+// result, so a write-back cache that has written nothing, or lost no race, reads 0 rather than an
+// absent series.
+func (m *Metrics) SeedCacheWrites(caches []string) {
+	for _, c := range caches {
+		for _, r := range hydrate.WriteResults {
+			m.CacheWrites.WithLabelValues(c, r)
+		}
+	}
 }
 
 // probeLagBuckets resolve the first tens of milliseconds, where the probe races Node's fills.
@@ -191,6 +210,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "feed_go_cache_miss_total",
 			Help: "Per-entity cache miss ids this service computed itself (result=computed) or failed to (result=error, the request falls back), by cache.",
 		}, []string{"cache", "result"}),
+		CacheWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "feed_go_cache_writes_total",
+			Help: "Cache writes of write-back (FEED_GO_CACHE_WRITEBACK), per key, by cache and result: written, nx_lost (a SET NX found the key filled by another writer since the read; nothing written) or error (the write failed). Series exist only for the written-back caches.",
+		}, []string{"cache", "result"}),
 		Errors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "feed_go_errors_total",
 			Help: "Compute errors (mode serve|shadow|probe) and fallback-proxy errors (mode proxy), by the error's class (fallback.ErrorClasses: deadline, canceled, pg_no_rows, pg_<SQLSTATE class>, redis_nil, timeout, conn_refused, http_5xx, ...). Every error is counted, whether or not its log line was rate-limited.",
@@ -254,7 +277,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	reg.MustRegister(m.Requests, m.Fallbacks, m.Duration, m.ShadowResults, m.ShadowDiffs, m.ShadowResponse, m.ShadowDropped,
 		m.ShadowPhase, m.ShadowPhaseCPU, m.ShadowPhaseSolo, m.ShadowPhaseSoloWall,
 		m.GoFirst, m.GoFirstMiss, m.GoFirstDropped, m.GoFirstRaced, m.GoFirstDBReads, m.GoFirstPages, m.GoFirstCheckLag,
-		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.Errors, serveInFlight)
+		m.Panics, m.RevocationDegraded, m.JWKSRefresh, m.JWKSStale, m.FallbackProxyErrors, m.CacheMisses, m.CacheWrites, m.Errors, serveInFlight)
 	return m
 }
 

@@ -37,7 +37,7 @@ const (
 func integMissSetup(t *testing.T) *integEnv {
 	t.Helper()
 	e := integSetup(t, true)
-	e.src.Compute = &MissCompute{WriteBack: true, FrameNegative: true, Primary: e.pool, Now: func() time.Time { return integMissNow }}
+	e.src.Compute = &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Primary: e.pool, Now: func() time.Time { return integMissNow }}
 	// The jsonb literals are written in a member order Postgres does not keep: the lookups must see
 	// the order Postgres prints (key length, then bytes), as Prisma hands it to Node.
 	integtest.Exec(t, e.pool, `DELETE FROM "Cosmetic" WHERE id BETWEEN 1150000 AND 1150999;

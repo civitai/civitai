@@ -2,11 +2,13 @@ package config
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/civitai/civitai/apps/feed-go/internal/browsing"
+	"github.com/civitai/civitai/apps/feed-go/internal/hydrate"
 )
 
 func TestParseRegionRulesEndOfDay(t *testing.T) {
@@ -280,22 +282,25 @@ func TestLoadServingLimits(t *testing.T) {
 	}
 }
 
-// The miss computation is on by default, write-back and the frame negative-cache mirror off; write-back
-// needs the primary (DATABASE_URL), which is read only then.
+// The miss computation is on by default, write-back (no cache) and the frame negative-cache mirror
+// off; a write-back of a cache whose lookup reads the primary needs DATABASE_URL, which is read only
+// then.
 func TestLoadCacheMissSettings(t *testing.T) {
 	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
 		t.Setenv(k, "x://"+k)
 	}
-	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_FRAME_CACHE_NEGATIVE", "DATABASE_URL"} {
+	for _, k := range []string{"FEED_GO_COMPUTE_MISSES", "FEED_GO_CACHE_WRITEBACK", "FEED_GO_FRAME_CACHE_NEGATIVE", "DATABASE_URL",
+		"FEED_GO_CACHE_WRITE_LOG_PER_MIN"} {
 		t.Setenv(k, "")
 	}
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.ComputeMisses || c.CacheWriteBack || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" {
-		t.Fatalf("defaults: compute %v, writeback %v, frame negative %v, primary %q; want true, false, false, unset",
-			c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	if !c.ComputeMisses || c.CacheWriteBack.Any() || c.CacheWriteBackLegacy || c.FrameCacheNegative || c.PrimaryDatabaseURL != "" ||
+		c.CacheWriteLogPerMinute != 0 {
+		t.Fatalf("defaults: compute %v, writeback %v (legacy %v), frame negative %v, primary %q, write log %d; want true, none, false, unset, 0",
+			c.ComputeMisses, c.CacheWriteBack, c.CacheWriteBackLegacy, c.FrameCacheNegative, c.PrimaryDatabaseURL, c.CacheWriteLogPerMinute)
 	}
 	t.Setenv("DATABASE_URL", "x://primary")
 	if c, _ = Load(); c.PrimaryDatabaseURL != "" {
@@ -310,12 +315,94 @@ func TestLoadCacheMissSettings(t *testing.T) {
 	t.Setenv("DATABASE_URL", "x://primary")
 	t.Setenv("FEED_GO_COMPUTE_MISSES", "false")
 	t.Setenv("FEED_GO_FRAME_CACHE_NEGATIVE", "true")
+	t.Setenv("FEED_GO_CACHE_WRITE_LOG_PER_MIN", "5")
 	if c, err = Load(); err != nil {
 		t.Fatal(err)
 	}
-	if c.ComputeMisses || !c.CacheWriteBack || !c.FrameCacheNegative || c.PrimaryDatabaseURL != "x://primary" {
-		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q", c.ComputeMisses, c.CacheWriteBack, c.FrameCacheNegative, c.PrimaryDatabaseURL)
+	if c.ComputeMisses || len(c.CacheWriteBack.Names()) != len(hydrate.WriteCaches) || !c.FrameCacheNegative ||
+		c.PrimaryDatabaseURL != "x://primary" || c.CacheWriteLogPerMinute != 5 {
+		t.Fatalf("set: compute %v, writeback %v, frame negative %v, primary %q, write log %d", c.ComputeMisses, c.CacheWriteBack,
+			c.FrameCacheNegative, c.PrimaryDatabaseURL, c.CacheWriteLogPerMinute)
 	}
+}
+
+// FEED_GO_CACHE_WRITEBACK's forms (hydrate.ParseWriteBack through Load): empty is none; the
+// deprecated bool form maps true/1/yes to every cache and false/0/no to none, flagged legacy (the
+// startup warning); a list writes exactly the caches it names, case and spacing ignored; a name that
+// is not a written cache (a typo, the never-written image meta, the old bool's `on`) fails Load. Only
+// a listed cache whose lookup reads the primary (the frame, event-decoration, version-images and
+// model-data lookups) reads DATABASE_URL, and only it fails without one.
+//
+// Fails on: dropping the legacy mapping (true would be an unknown name), mapping true to none,
+// ignoring unknown names instead of failing, ignoring case/space, reading DATABASE_URL for every
+// list, or requiring it for a replica-only list.
+func TestLoadCacheWriteBackForms(t *testing.T) {
+	for _, k := range []string{"DATAPACKET_DATABASE_RO_URL", "REDIS_URL", "REDIS_SYS_URL", "AUTH_JWKS_URI", "AUTH_JWT_ISSUER"} {
+		t.Setenv(k, "x://"+k)
+	}
+	t.Setenv("DATABASE_URL", "x://primary")
+	all := strings.Join(hydrate.WriteCaches, ",")
+	for _, c := range []struct {
+		raw     string
+		want    string // the sorted names, comma-joined
+		legacy  bool
+		primary bool
+	}{
+		{"", "", false, false},
+		{"false", "", true, false},
+		{"0", "", true, false},
+		{" NO ", "", true, false},
+		{"true", sortedJoin(hydrate.WriteCaches), true, true},
+		{"TRUE", sortedJoin(hydrate.WriteCaches), true, true},
+		{"1", sortedJoin(hydrate.WriteCaches), true, true},
+		{"yes", sortedJoin(hydrate.WriteCaches), true, true},
+		{"metrics", "metrics", false, false},
+		{" Tag-IDs , metrics,,", "metrics,tag-ids", false, false},
+		{"user-cosmetics,model-tags,official-models", "model-tags,official-models,user-cosmetics", false, false},
+		{"image-frames", "image-frames", false, true},
+		{"event-decorations", "event-decorations", false, true},
+		{"model-frames", "model-frames", false, true},
+		{"model-decorations", "model-decorations", false, true},
+		{"version-images", "version-images", false, true},
+		{"metrics,model-data", "metrics,model-data", false, true},
+		{all, sortedJoin(hydrate.WriteCaches), false, true},
+	} {
+		t.Setenv("FEED_GO_CACHE_WRITEBACK", c.raw)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", c.raw, err)
+		}
+		if got := strings.Join(cfg.CacheWriteBack.Names(), ","); got != c.want || cfg.CacheWriteBackLegacy != c.legacy {
+			t.Errorf("%q = %q (legacy %v), want %q (legacy %v)", c.raw, got, cfg.CacheWriteBackLegacy, c.want, c.legacy)
+		}
+		if got := cfg.PrimaryDatabaseURL != ""; got != c.primary {
+			t.Errorf("%q: primary read %v, want %v", c.raw, got, c.primary)
+		}
+	}
+	for _, bad := range []string{"metric", "metrics,frames", "image-meta", "on", "all", "metrics;tag-ids"} {
+		t.Setenv("FEED_GO_CACHE_WRITEBACK", bad)
+		if cfg, err := Load(); err == nil {
+			t.Errorf("%q loaded (%v), want an unknown-cache error", bad, cfg.CacheWriteBack)
+		} else if !strings.Contains(err.Error(), "FEED_GO_CACHE_WRITEBACK: unknown cache") {
+			t.Errorf("%q: error %q, want the unknown-cache error", bad, err)
+		}
+	}
+	// No DATABASE_URL: a list that reads only the replica loads; one with a primary reader does not.
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "metrics,tag-ids,user-cosmetics,model-tags,official-models")
+	if _, err := Load(); err != nil {
+		t.Fatalf("replica-only list without DATABASE_URL: %v", err)
+	}
+	t.Setenv("FEED_GO_CACHE_WRITEBACK", "metrics,version-images")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "version-images") {
+		t.Fatalf("version-images without DATABASE_URL: %v, want an error naming it", err)
+	}
+}
+
+func sortedJoin(names []string) string {
+	s := slices.Clone(names)
+	slices.Sort(s)
+	return strings.Join(s, ",")
 }
 
 // The ClickHouse reader is configured only from feed-go's own variables: the miss computation on and

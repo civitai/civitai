@@ -94,7 +94,7 @@ func modelDataSources(f *modelFixture, c *MissCompute) (*Sources, *testkit.Redis
 	s, r := computedModelSources(f, c)
 	db := s.Replica.(*testkit.DB)
 	db.Routes = append(f.modelDataRoutes("replica", false), db.Routes...)
-	if c.WriteBack {
+	if c.WriteBack.Any() {
 		c.Primary = &testkit.DB{Routes: f.modelDataRoutes("primary", false)}
 	}
 	return s, r
@@ -124,7 +124,7 @@ func TestModelPageComputesModelDataMiss(t *testing.T) {
 			f.del(KeyDataForModel, 5001)
 			f.del(KeyDataForModel, 5002)
 			obs := &observed{}
-			s, r := modelDataSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := modelDataSources(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			p, err := s.ModelPage(context.Background(), modelPageRequest())
 			if err != nil {
 				t.Fatalf("ModelPage: %v (%q)", err, fallback.Reason(err))
@@ -175,7 +175,7 @@ func TestModelPageComputesModelTagsMiss(t *testing.T) {
 			f.put(t, KeyDataForModel, 5002, map[string]any{"modelId": 5002, "hashes": []any{}, "tags": []any{map[string]any{"tagId": 42, "name": "x"}},
 				"versions": []any{map[string]any{"id": 6003, "baseModel": "Pony"}}})
 			obs := &observed{}
-			s, r := modelDataSources(f, &MissCompute{WriteBack: writeBack, FrameNegative: true, Observe: obs.observe})
+			s, r := modelDataSources(f, &MissCompute{WriteBack: writeSet(writeBack), FrameNegative: true, Observe: obs.observe})
 			p, err := s.ModelPage(context.Background(), modelPageRequest())
 			if err != nil {
 				t.Fatalf("ModelPage: %v (%q)", err, fallback.Reason(err))
@@ -237,7 +237,7 @@ func TestModelDataLagFlagReadsPrimary(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f := fullModelFixture(t)
 			f.del(KeyDataForModel, 5001)
-			s, r := modelDataSources(f, &MissCompute{WriteBack: c.writeBack, FrameNegative: true})
+			s, r := modelDataSources(f, &MissCompute{WriteBack: writeSet(c.writeBack), FrameNegative: true})
 			if c.flag != nil {
 				r.SetString(pageNS+"lag-helper:model:5001", []byte(*c.flag))
 			}
@@ -263,7 +263,7 @@ func TestModelDataLookupFailureFallsBack(t *testing.T) {
 	f := fullModelFixture(t)
 	f.del(KeyDataForModel, 5001)
 	obs := &observed{}
-	s, r := computedModelSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	s, r := computedModelSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 	s.Compute.Primary = &testkit.DB{Routes: f.modelDataRoutes("primary", true)}
 	db := s.Replica.(*testkit.DB)
 	db.Routes = append(f.modelDataRoutes("replica", true), db.Routes...)
@@ -286,7 +286,7 @@ func TestModelDataUnderPresenceLooksUpOnTheReplica(t *testing.T) {
 	f.del(KeyDataForModel, 5001)
 	f.del(KeyModelTags, 5001)
 	obs := &observed{}
-	s, r := modelDataSources(f, &MissCompute{WriteBack: true, FrameNegative: true, Observe: obs.observe})
+	s, r := modelDataSources(f, &MissCompute{WriteBack: AllWrites(), FrameNegative: true, Observe: obs.observe})
 	r.SetString(pageNS+"lag-helper:model:5001", []byte("1"))
 	rec := &PresenceProbe{Now: func() time.Time { return pageNow }}
 	p, err := s.ModelPage(WithPresence(context.Background(), rec), modelPageRequest())

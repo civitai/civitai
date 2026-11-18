@@ -47,7 +47,7 @@ func TestIntegrationMetricsMissFromClickHouse(t *testing.T) {
 	}
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	s := &Sources{Cache: cluster, Packed: &PackedReader{Redis: cluster}, Compute: &MissCompute{
-		WriteBack: true, ClickHouse: ch, MetricsTimeout: 20 * time.Second, Now: func() time.Time { return now },
+		WriteBack: AllWrites(), ClickHouse: ch, MetricsTimeout: 20 * time.Second, Now: func() time.Time { return now },
 	}}
 	got, err := s.ImageMetrics(ctx, ids)
 	if err != nil {
