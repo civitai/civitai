@@ -13,7 +13,7 @@ import {
   continueTrainingWhatIf,
   countDatasetMature,
   KOHYA_UNAVAILABLE,
-  MatureAckRequiredError,
+  MatureRepriceError,
   submitTraining,
   submitTrainingBatch,
   TrainingBatchValidationError,
@@ -706,9 +706,9 @@ describe('text encoder on a model that cannot train it', () => {
   });
 });
 
-// Mature training data is charged in Yellow only after the user confirms: every body is `manual`, and only a
-// confirmed mature run carries the unlock.
-describe('mature charge: Yellow only after the user confirms', () => {
+// Every body is `manual` and never carries the unlock; a mature dataset is charged Blue first, then Yellow,
+// never Green.
+describe('mature charge: Blue first, never Green', () => {
   const nsfwHead = (level: string | null) => ({
     response: new Response(null, {
       status: 204,
@@ -762,28 +762,15 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect(body.currencies).toEqual(['blue', 'yellow']);
     });
 
-    it('an acked mature run unlocks at submit and is charged from Blue + Yellow, never Green', async () => {
-      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-c' } });
-      await submitTraining(client, {
-        ...baseRun(),
-        currencies: ['blue', 'green'],
-        matureAck: true,
-      });
-      const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.upgradeMode).toBe('manual');
-      expect(body.allowMatureContent).toBe(true);
-      expect(body.currencies).toEqual(['blue', 'yellow']);
-    });
-
     it('a paid-only mature run is charged in Yellow only — no Blue, never Green', async () => {
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-c2' } });
-      await submitTraining(client, { ...baseRun(), currencies: ['green'], matureAck: true });
+      await submitTraining(client, { ...baseRun(), currencies: ['green'] }, {}, true);
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.allowMatureContent).toBe(true);
+      expect('allowMatureContent' in body).toBe(false);
       expect(body.currencies).toEqual(['yellow']);
     });
 
-    it('refuses an unconfirmed mature dataset before anything is charged, rating a sweep once', async () => {
+    it('refuses a Green-paid sweep priced as not mature that the server rates mature, rating it once', async () => {
       headBlob.mockReset();
       headBlob.mockImplementation(rateSpicy);
       const before = submitWorkflow.mock.calls.length;
@@ -795,52 +782,15 @@ describe('mature charge: Yellow only after the user confirms', () => {
         submitTrainingBatch(
           client,
           [
-            { ...baseRun(), items },
-            { ...baseRun(), epochs: 12, items },
+            { ...baseRun(), items, currencies: ['blue', 'green'] },
+            { ...baseRun(), epochs: 12, items, currencies: ['blue', 'green'] },
           ],
           { checkText }
         )
-      ).rejects.toBeInstanceOf(MatureAckRequiredError);
+      ).rejects.toBeInstanceOf(MatureRepriceError);
       expect(submitWorkflow.mock.calls.length).toBe(before);
       expect(headBlob).toHaveBeenCalledTimes(2);
       for (const [args] of headBlob.mock.calls) expect(args.query?.workflowId).toBeUndefined();
-    });
-
-    it('submits a confirmed mature sweep without re-rating it', async () => {
-      headBlob.mockReset();
-      submitWorkflow
-        .mockResolvedValueOnce({ data: { id: 'wf-s1' } })
-        .mockResolvedValueOnce({ data: { id: 'wf-s2' } });
-      const { workflowIds } = await submitTrainingBatch(
-        client,
-        [
-          { ...baseRun(), matureAck: true },
-          { ...baseRun(), epochs: 12, matureAck: true },
-        ],
-        { checkText }
-      );
-      expect(workflowIds).toEqual(['wf-s1', 'wf-s2']);
-      expect(headBlob).not.toHaveBeenCalled();
-    });
-
-    it('refuses a non-boolean ack before anything is submitted', async () => {
-      const before = submitWorkflow.mock.calls.length;
-      await expect(
-        submitTrainingBatch(client, [{ ...baseRun(), matureAck: 'yes' as unknown as boolean }], {
-          checkText,
-        })
-      ).rejects.toThrow(/matureAck/);
-      expect(submitWorkflow.mock.calls.length).toBe(before);
-    });
-
-    it('names Yellow when an acked mature run is short of it', async () => {
-      submitWorkflow.mockResolvedValueOnce({
-        error: { detail: 'insufficientBuzz' },
-        response: { status: 400 },
-      });
-      await expect(submitTraining(client, { ...baseRun(), matureAck: true })).rejects.toThrow(
-        /Yellow/
-      );
     });
   });
 
@@ -858,55 +808,25 @@ describe('mature charge: Yellow only after the user confirms', () => {
       expect('allowMatureContent' in body).toBe(false);
     });
 
-    it('refuses a mature source without the ack, and submits nothing', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-r1'));
-      headBlob.mockImplementation(rateSpicy);
-      const before = submitWorkflow.mock.calls.length;
-      await expect(
-        continueTraining(client, { ...opts, workflowId: 'wf-r1' }, { checkText })
-      ).rejects.toBeInstanceOf(MatureAckRequiredError);
-      expect(submitWorkflow.mock.calls.length).toBe(before);
-    });
-
-    it('with the ack, unlocks at submit and charges Blue + Yellow, never Green', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-r2'));
-      headBlob.mockImplementation(rateSpicy);
-      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-      await continueTraining(
-        client,
-        { ...opts, workflowId: 'wf-r2', matureAck: true },
-        { checkText }
-      );
-      const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.upgradeMode).toBe('manual');
-      expect(body.allowMatureContent).toBe(true);
-      expect(body.currencies).toEqual(['blue', 'yellow']);
-      expect(body.metadata.matureCount).toBe(1);
-    });
-
     it('a paid-only mature continuation is charged in Yellow only — no Blue, never Green', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-r3'));
       headBlob.mockImplementation(rateSpicy);
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
       await continueTraining(
         client,
-        { ...opts, workflowId: 'wf-r3', currencies: ['green'], matureAck: true },
+        { ...opts, workflowId: 'wf-r3', currencies: ['green'] },
         { checkText }
       );
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
-      expect(body.allowMatureContent).toBe(true);
+      expect('allowMatureContent' in body).toBe(false);
       expect(body.currencies).toEqual(['yellow']);
     });
 
-    it('a non-mature source: manual, no unlock, currencies unchanged, ack or not', async () => {
+    it('a non-mature source: manual, no unlock, currencies unchanged', async () => {
       getWorkflow.mockResolvedValue(matureSource('wf-n1'));
       headBlob.mockImplementation(() => Promise.resolve(nsfwHead('PG13')));
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-      await continueTraining(
-        client,
-        { ...opts, workflowId: 'wf-n1', matureAck: true },
-        { checkText }
-      );
+      await continueTraining(client, { ...opts, workflowId: 'wf-n1' }, { checkText });
       const body = submitWorkflow.mock.calls.at(-1)![0].body;
       expect(body.upgradeMode).toBe('manual');
       expect('allowMatureContent' in body).toBe(false);
@@ -950,32 +870,8 @@ describe('mature charge: Yellow only after the user confirms', () => {
       submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
       await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-c1' });
       submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
-      await continueTraining(
-        client,
-        { ...opts, workflowId: 'wf-c1', matureAck: true },
-        { checkText }
-      );
+      await continueTraining(client, { ...opts, workflowId: 'wf-c1' }, { checkText });
       expect(headBlob).toHaveBeenCalledTimes(2);
-    });
-
-    it('ignores an ack on the quote: it is priced without the unlock', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-qa'));
-      headBlob.mockImplementation(rateSpicy);
-      submitWorkflow.mockResolvedValueOnce({ data: { cost: { total: 900 } } });
-      await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-qa', matureAck: true });
-      expect('allowMatureContent' in submitWorkflow.mock.calls.at(-1)![0].body).toBe(false);
-    });
-
-    it('names Yellow when a confirmed continuation is short of it', async () => {
-      getWorkflow.mockResolvedValue(matureSource('wf-y1'));
-      headBlob.mockImplementation(rateSpicy);
-      submitWorkflow.mockResolvedValueOnce({
-        error: { detail: 'insufficientBuzz' },
-        response: { status: 400 },
-      });
-      await expect(
-        continueTraining(client, { ...opts, workflowId: 'wf-y1', matureAck: true }, { checkText })
-      ).rejects.toThrow(/Yellow/);
     });
 
     it('rates the dataset again after a probe with a failed HEAD', async () => {
@@ -1004,6 +900,70 @@ describe('mature charge: Yellow only after the user confirms', () => {
       const probed = await continueTrainingWhatIf(client, { ...opts, workflowId: 'wf-m0' });
       expect(probed.matureCount).toBe(1);
       expect(headBlob).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // Justin lifted the Blue restriction (2026-11-18): training is SFW infrastructure work, so Blue pays for
+  // it whatever the dataset, as the Classic trainer did. To whoever is about to add the unlock back:
+  // allowMatureContent:true makes the orchestrator drop a non-member's Blue and charge Yellow.
+  describe('Blue pays for a mature dataset, member or not', () => {
+    const items = [
+      { air: 'urn:air:other:blob:civitai:blob@safe-1', caption: 'a' },
+      { air: 'urn:air:other:blob:civitai:blob@spicy-2', caption: 'b' },
+    ];
+
+    it('a fresh mature run needs no confirm and sends no unlock: Blue first, then Yellow', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-blue1' } });
+      const { workflowIds } = await submitTrainingBatch(
+        client,
+        [{ ...baseRun(), items, currencies: ['blue', 'yellow'] }],
+        { checkText }
+      );
+      expect(workflowIds).toEqual(['wf-blue1']);
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('a fresh mature run never charges Green: the paid part moves to Yellow', async () => {
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-blue2' } });
+      await submitTrainingBatch(
+        client,
+        [
+          {
+            ...baseRun(),
+            items,
+            currencies: ['blue', 'green'],
+            meta: { name: 'm', matureCount: 1 },
+          },
+        ],
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+    });
+
+    it('a mature continuation needs no confirm and sends no unlock: Blue first, then Yellow', async () => {
+      getWorkflow.mockResolvedValue(matureSource('wf-blue3'));
+      headBlob.mockReset();
+      headBlob.mockImplementation(rateSpicy);
+      submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+      await continueTraining(
+        client,
+        { fromEpoch: 10, addEpochs: 5, currencies: ['blue', 'green'], workflowId: 'wf-blue3' },
+        { checkText }
+      );
+      const body = submitWorkflow.mock.calls.at(-1)![0].body;
+      expect(body.upgradeMode).toBe('manual');
+      expect('allowMatureContent' in body).toBe(false);
+      expect(body.currencies).toEqual(['blue', 'yellow']);
+      expect(body.metadata.matureCount).toBe(1);
     });
   });
 });
@@ -1438,8 +1398,13 @@ describe('dataset maturity under the v2 rating', () => {
     read:
       read ?? (async (keys) => new Map(keys.flatMap((k) => (stored[k] ? [[k, stored[k]]] : [])))),
   });
+  // Green in the order makes the verdict observable: a run rated mature that was priced as not mature is
+  // refused with its count; one rated not mature keeps Green.
   const submitWith = (rating: DatasetRating | undefined, run: Partial<TrainingRunInput>) =>
-    submitTrainingBatch(client, [{ ...baseRun(), ...run }], { checkText, datasetRating: rating });
+    submitTrainingBatch(client, [{ ...baseRun(), currencies: ['blue', 'green'], ...run }], {
+      checkText,
+      datasetRating: rating,
+    });
   const lastBody = () => submitWorkflow.mock.calls.at(-1)![0].body;
 
   describe.each([1, 2, 3, 4])('mature from level %i', (level) => {
@@ -1451,10 +1416,10 @@ describe('dataset maturity under the v2 rating', () => {
         'outfit-2': { s: 0, r: false },
       });
       await submitWith(rating, { items: items('outfit-1', 'outfit-2') });
-      expect('allowMatureContent' in lastBody()).toBe(false);
+      expect(lastBody().currencies).toEqual(['blue', 'green']);
     });
 
-    it('a nude image rated at the level still needs the confirm', async () => {
+    it('a nude image rated at the level is mature', async () => {
       uploadRatings({ 'nude-1': 'PG' });
       const calls = submitWorkflow.mock.calls.length;
       const rating = ratingAt(level, { 'nude-1': { s: level, r: false } });
@@ -1468,7 +1433,7 @@ describe('dataset maturity under the v2 rating', () => {
       uploadRatings({ 'r-1': 'PG' });
       const rating = ratingAt(level, { 'r-1': { s: 0, r: true } });
       await expect(submitWith(rating, { items: items('r-1') })).rejects.toBeInstanceOf(
-        MatureAckRequiredError
+        MatureRepriceError
       );
     });
 
@@ -1497,7 +1462,7 @@ describe('dataset maturity under the v2 rating', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-theirs' } });
     // Counted as the upload path counts a failed HEAD (not mature), not by the shared cache's entry.
     await submitWith(ratingAt(1, {}, read), { items: items('theirs-1') });
-    expect('allowMatureContent' in lastBody()).toBe(false);
+    expect(lastBody().currencies).toEqual(['blue', 'green']);
   });
 
   it('keep training counts an unstamped source under the v2 rating', async () => {
@@ -1550,33 +1515,34 @@ describe('dataset maturity under the v2 rating', () => {
     }
   );
 
-  it('a confirmed dataset v2 rates mature unlocks at submit', async () => {
+  const pricedMature = { meta: { name: 'test', matureCount: 1 } };
+
+  it('a dataset v2 rates mature, priced as mature, is charged Blue then Yellow with no unlock', async () => {
     uploadRatings({ 'nude-1': 'PG' });
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-v2' } });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-v2' } });
     await submitWith(ratingAt(1, { 'nude-1': { s: 4, r: false } }), {
       items: items('nude-1'),
-      matureAck: true,
-    });
-    expect(lastBody().allowMatureContent).toBe(true);
-  });
-
-  it('a confirm sent for a dataset v2 rates below the level is not charged Yellow', async () => {
-    uploadRatings({ 'outfit-1': 'X' });
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-sfw' } });
-    await submitWith(ratingAt(2, { 'outfit-1': { s: 1, r: false } }), {
-      items: items('outfit-1'),
-      currencies: ['blue', 'green'],
-      matureAck: true,
+      ...pricedMature,
     });
     expect('allowMatureContent' in lastBody()).toBe(false);
+    expect(lastBody().currencies).toEqual(['blue', 'yellow']);
+  });
+
+  it('a dataset priced as mature that v2 rates below the level keeps Green', async () => {
+    uploadRatings({ 'outfit-1': 'X' });
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-sfw' } });
+    await submitWith(ratingAt(2, { 'outfit-1': { s: 1, r: false } }), {
+      items: items('outfit-1'),
+      ...pricedMature,
+    });
     expect(lastBody().currencies).toEqual(['blue', 'green']);
   });
 
-  it('a confirm is kept when a HEAD fails, so the count cannot clear it', async () => {
+  it('a failed HEAD cannot clear a dataset priced as mature: it stays out of Green', async () => {
     headBlob.mockImplementation(async () => ({ response: new Response(null, { status: 503 }) }));
-    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-acked-failed' } });
-    await submitWith(ratingAt(2, {}), { items: items('x-1'), matureAck: true });
-    expect(lastBody().allowMatureContent).toBe(true);
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-priced-failed' } });
+    await submitWith(ratingAt(2, {}), { items: items('x-1'), ...pricedMature });
+    expect(lastBody().currencies).toEqual(['blue', 'yellow']);
   });
 
   describe('keep training quotes', () => {

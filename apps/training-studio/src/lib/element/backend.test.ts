@@ -130,10 +130,10 @@ describe('elementBackend modelLive', () => {
 });
 
 describe('elementBackend keep training', () => {
-  it.each([true, false])("sends the Studio server the panel's confirm (%s)", async (ack) => {
+  it('sends the Studio server the continuation', async () => {
     const studioServer = vi.fn(async () => Response.json({ workflowId: 'wf-next' }));
     await expect(
-      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['blue'], ack)
+      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['blue'])
     ).resolves.toBe('wf-next');
     const [path, init] = studioServer.mock.calls[0] as unknown as [string, RequestInit];
     expect(path).toBe('/api/continue-training');
@@ -142,23 +142,14 @@ describe('elementBackend keep training', () => {
       fromEpoch: 1,
       addEpochs: 2,
       currencies: ['blue'],
-      matureAck: ack,
     });
-  });
-
-  it("turns the server's mature refusal into the confirm", async () => {
-    const studioServer = async () =>
-      Response.json({ message: 'm', matureCount: 3 }, { status: 409 });
-    await expect(
-      elementBackend(host(undefined, studioServer)).continueRun('wf', 1, 2, ['green'], false)
-    ).rejects.toMatchObject({ matureCount: 3 });
   });
 
   it("shows the host's reason for a refusal it made before forwarding", async () => {
     const studioServer = async () =>
       Response.json({ error: 'Verify your email address to do this' }, { status: 403 });
     const backend = elementBackend(host(undefined, studioServer));
-    await expect(backend.continueRun('wf', 1, 2, ['green'], false)).rejects.toThrow(
+    await expect(backend.continueRun('wf', 1, 2, ['green'])).rejects.toThrow(
       'Verify your email address to do this'
     );
     await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(
@@ -169,7 +160,7 @@ describe('elementBackend keep training', () => {
   it('prices and starts nothing on a host page without the Studio server', async () => {
     const backend = elementBackend(host(async () => ({ ok: true })));
     await expect(backend.continueQuote('wf', 1, 2, ['green'])).rejects.toThrow(/unavailable/);
-    await expect(backend.continueRun('wf', 1, 2, ['green'], true)).rejects.toThrow(/unavailable/);
+    await expect(backend.continueRun('wf', 1, 2, ['green'])).rejects.toThrow(/unavailable/);
     expect(backend.datasetRating).toBeUndefined();
   });
 });

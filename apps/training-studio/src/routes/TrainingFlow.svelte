@@ -336,7 +336,6 @@
     prompts: SamplePrompt[],
     name: string,
     currencies: string[],
-    matureAck: boolean,
     reviewedMature: number
   ) {
     if (!selection) return;
@@ -353,7 +352,7 @@
       labelMode,
       edit
     );
-    const keyed = stampMature(runs, matureAck, reviewedMature).map((run, i) => ({
+    const keyed = stampMature(runs, reviewedMature).map((run, i) => ({
       ...run,
       submitKey: `${submitKey}${i.toString(16).padStart(4, '0')}`,
     }));

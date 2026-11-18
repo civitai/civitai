@@ -102,13 +102,11 @@ export interface StudioBackend {
     addEpochs: number,
     currencies: string[]
   ): Promise<{ cost: number | null; steps?: number; matureCount: number }>;
-  /** Refused, charging nothing, when the source dataset is mature and `matureAck` is false. */
   continueRun(
     workflowId: string,
     fromEpoch: number,
     addEpochs: number,
-    currencies: string[],
-    matureAck: boolean
+    currencies: string[]
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;

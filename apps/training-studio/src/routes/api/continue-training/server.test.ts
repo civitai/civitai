@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MatureAckRequiredError } from '$lib/mature-charge';
 import { RunWithheldError } from '$lib/server/withheld';
 
 const continueTrainingWhatIf = vi.fn();
@@ -24,7 +23,6 @@ vi.mock('$lib/server/flipt', () => ({
 vi.mock('$lib/server/train', async () => ({
   continueTraining: (...args: unknown[]) => continueTraining(...args),
   continueTrainingWhatIf: (...args: unknown[]) => continueTrainingWhatIf(...args),
-  MatureAckRequiredError: (await import('$lib/mature-charge')).MatureAckRequiredError,
 }));
 
 const { GET, POST } = await import('./+server');
@@ -59,14 +57,6 @@ describe('GET /api/continue-training', () => {
 describe('POST /api/continue-training', () => {
   const body = { workflowId: 'wf-1', fromEpoch: 10, addEpochs: 5, currencies: ['blue'] };
 
-  it('passes the mature confirm through only when it is literally true', async () => {
-    continueTraining.mockResolvedValue('wf-2');
-    await post({ ...body, matureAck: true });
-    await post({ ...body, matureAck: 'true' });
-    await post(body);
-    expect(continueTraining.mock.calls.map((c) => c[2].matureAck)).toEqual([true, false, false]);
-  });
-
   it("passes the user's Kohya gate to the quote and the submit", async () => {
     continueTrainingWhatIf.mockResolvedValue({ cost: 1400 });
     continueTraining.mockResolvedValue('wf-2');
@@ -82,15 +72,6 @@ describe('POST /api/continue-training', () => {
       expect(continueTrainingWhatIf.mock.calls.at(-1)![4]).toBe(allowed);
       expect(continueTraining.mock.calls.at(-1)![5]).toBe(allowed);
     }
-  });
-
-  it('answers 409 with the reason when the mature confirm is missing', async () => {
-    const refusal = new MatureAckRequiredError(3);
-    continueTraining.mockRejectedValueOnce(refusal);
-    await expect(post(body)).rejects.toMatchObject({
-      status: 409,
-      body: { message: refusal.message, matureCount: 3 },
-    });
   });
 });
 

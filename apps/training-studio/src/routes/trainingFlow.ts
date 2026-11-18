@@ -988,17 +988,9 @@ function num(value: NumericInput, fallback: NumericInput): number {
   return Number.isFinite(n) ? n : Number(fallback);
 }
 
-/** One confirm covers every run of a sweep: they train on the same dataset. */
-export function stampMature(
-  runs: TrainingRunPayload[],
-  matureAck: boolean,
-  matureCount: number
-): TrainingRunPayload[] {
-  return runs.map((run) => ({
-    ...run,
-    ...(matureAck ? { matureAck: true } : {}),
-    meta: { ...run.meta, matureCount },
-  }));
+/** Every run of a sweep trains on the same dataset, so each carries its mature count. */
+export function stampMature(runs: TrainingRunPayload[], matureCount: number): TrainingRunPayload[] {
+  return runs.map((run) => ({ ...run, meta: { ...run.meta, matureCount } }));
 }
 
 export function runTrainingParams(
