@@ -9,7 +9,8 @@ import type * as BuzzUtils from './buzz.utils';
 // CONFIRMATION_TIMEOUT in InteractiveTipBuzzButton.tsx. Not exported, so the two are kept
 // in step by hand. `closes on its own` brackets the deadline from both sides, which catches
 // a constant moved OUTSIDE roughly [3500, 5400]ms — 5000 -> 4000 passes both halves. The
-// bracket is loose on purpose: tightening it trades mutation sensitivity for flake.
+// width was chosen to absorb real-time jitter; these tests now run on a fake clock, so that
+// reason no longer applies and nothing else justifies the width. Tightening it is open.
 const CONFIRMATION_TIMEOUT = 5000;
 const WELL_BEFORE_CLOSE = CONFIRMATION_TIMEOUT - 1500;
 const PAST_CLOSE = CONFIRMATION_TIMEOUT + 400;
