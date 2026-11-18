@@ -2211,9 +2211,10 @@ type Editor = { user: SessionUser; servableLevels: number };
 
 /**
  * The post's images this editor may not move: those it did not list, and those `getPostEditImages`
- * does not serve it (held for review, or outside the request's levels) even if it lists them. They
- * keep their index, so a reorder cannot push a hidden image out of the version's first 20
- * (`imageDerivedVersionLevelSql`).
+ * does not serve it (held for review unless a moderator, or rated outside the request's levels)
+ * even if it lists them. They keep their index, so a reorder cannot push a hidden image out of the
+ * version's first 20 (`imageDerivedVersionLevelSql`). A listed unrated image moves: it is an
+ * upload the editor still shows while its scan runs.
  */
 async function editorHiddenImages(
   postId: number,
@@ -2230,7 +2231,7 @@ async function editorHiddenImages(
     (image) =>
       !listed.has(image.id) ||
       (!user.isModerator && isHeldForReview(image.needsReview)) ||
-      !isServableLevel(image.nsfwLevel, servableLevels)
+      (image.nsfwLevel !== 0 && !isServableLevel(image.nsfwLevel, servableLevels))
   );
   return {
     ids: new Set(hidden.map((image) => image.id)),
