@@ -39,7 +39,7 @@ export function appAssistantClientId(userId: number): string {
  */
 export type AppAssistantTokenPurpose = 'chat' | 'sandbox';
 
-function scopeFor(purpose: AppAssistantTokenPurpose): number {
+function scopeFor(purpose: AppAssistantTokenPurpose): bigint {
   return purpose === 'chat' ? oauthScopeBitsFor([...APP_ASSISTANT_SCOPES]) : TokenScope.UserRead;
 }
 
@@ -269,7 +269,7 @@ export async function enableAppAssistant(userId: number): Promise<void> {
     await writeOauthConsent({
       userId,
       clientId,
-      scope: (existing?.scope ?? 0) | scope,
+      scope: (existing?.scope ?? 0n) | scope,
       buzzLimit: existing
         ? (existing.buzzLimit as BuzzLimit | null)
         : simpleBuzzLimitToBudgets({ limit: APP_ASSISTANT_DAILY_BUZZ_CAP, period: 'day' }),

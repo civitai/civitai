@@ -34,9 +34,11 @@ const SCHEMA = `
   CREATE TYPE "Availability" AS ENUM ('Public', 'Unsearchable', 'Private', 'EarlyAccess');
   CREATE TYPE "CollectionContributorPermission" AS ENUM ('VIEW', 'ADD', 'ADD_REVIEW', 'MANAGE');
   CREATE TABLE "Image" (
+    minor boolean DEFAULT false,
     id int PRIMARY KEY, "userId" int NOT NULL, "postId" int, "nsfwLevel" int DEFAULT 1,
     "needsReview" text, "blockedFor" text, ingestion "ImageIngestionStatus" DEFAULT 'Scanned',
-    "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false
+    "nsfwLevelLocked" boolean DEFAULT false, metadata jsonb NOT NULL DEFAULT '{}', "scanJobs" jsonb, "acceptableMinor" boolean NOT NULL DEFAULT false,
+    "modelRestricted" boolean NOT NULL DEFAULT false
   );
   CREATE TABLE "Post" (
     id int PRIMARY KEY, "userId" int NOT NULL, "publishedAt" timestamp,

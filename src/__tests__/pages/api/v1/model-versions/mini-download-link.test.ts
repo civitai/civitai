@@ -135,7 +135,7 @@ const sessionFor = (
   userId: number,
   isModerator: boolean,
   apiKeyId: number,
-  tokenScope: number = TokenScope.Full
+  tokenScope: bigint = TokenScope.Full
 ) => ({
   user: { id: userId, username: 'someone', bannedAt: null, isModerator },
   apiKeyId,

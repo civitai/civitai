@@ -41,26 +41,32 @@ export const POST: RequestHandler = async ({ request }) => {
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
   );
-  const hidden = await settle('hidden checks', () =>
+  const hidden = await settle('hidden checks', async () =>
     settleHiddenChecks(db, {
       now: new Date(),
-      settings: hiddenSettings(),
+      settings: await hiddenSettings(),
       mirrorXp: queueDeps.mirrorXp,
       ...resetDeps,
     })
   );
-  const yesNo = await settle('yes/no sweep', () =>
+  const yesNo = await settle('yes/no sweep', async () =>
     closeStrandedYesNo(db, {
       now: new Date(),
-      maxAgeDays: yesNoConfig().maxAgeDays,
+      maxAgeDays: (await yesNoConfig()).maxAgeDays,
       mirror: queueDeps.mirrorXp,
     })
   );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
-  const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
-  const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
+  // One read for both steps, so a reset the first leaves due is not lapsed by the second.
+  const acolyteSmites = (await resetDeps.acolyteSmites?.()) ?? true;
+  const resets = await settle('career resets', () =>
+    resetPendingPlayers(db, { ...resetDeps, acolyteSmites: () => acolyteSmites })
+  );
+  const smites = await settle('smite expiry', () =>
+    expireSmites(db, new Date(), { holdAcolyteWrongAnswer: !acolyteSmites })
+  );
   const conversions = await settle('conversion retries', async () => {
-    if (!conversionEnabled()) return { retried: 0, paid: 0, failed: 0 };
+    if (!(await conversionEnabled())) return { retried: 0, paid: 0, failed: 0 };
     if (!buzzConfigured()) {
       logToAxiom({
         type: 'warning',

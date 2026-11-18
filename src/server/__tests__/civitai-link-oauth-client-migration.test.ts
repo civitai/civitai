@@ -34,7 +34,7 @@ function migrationSql(): string {
 
 describe('civitai-link-desktop OAuth client migration', () => {
   it('grants exactly UserRead|VaultRead|VaultWrite|LinkConnect', () => {
-    expect(LINK_DESKTOP_SCOPE).toBe(159383553);
+    expect(LINK_DESKTOP_SCOPE).toBe(159383553n);
     expect(migrationSql()).toContain('159383553');
   });
 

@@ -10,10 +10,8 @@ import {
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { getResourceData } from '~/server/services/generation/generation.service';
-import {
-  resolveCatalogBrowsingLevel,
-  resourceExceedsCatalogCeiling,
-} from '~/server/utils/block-catalog-maturity';
+import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
+import { resolveCatalogViewerMaturity } from '~/server/utils/block-catalog-viewer-level';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -97,7 +95,9 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   }
 
   const regionRestricted = isRegionRestricted(getRegion(req));
-  const { browsingLevel, isSfwCeiling } = resolveCatalogBrowsingLevel(claims, { regionRestricted });
+  const { browsingLevel, isSfwCeiling } = resolveCatalogViewerMaturity(claims, {
+    regionRestricted,
+  });
 
   try {
     // Anon read (like models.ts, the viewer is NOT threaded — the clamp is the

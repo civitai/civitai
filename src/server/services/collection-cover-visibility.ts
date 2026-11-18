@@ -1,21 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { imageNotRestrictedSql, minorMatureImageVisibleSql } from '~/server/common/image-visibility';
 import { dbRead } from '~/server/db/client';
 import { heldGalleryImageSql } from '~/server/utils/held-gallery-level.sql';
 import { isRatingWithinCap } from '~/shared/utils/rating-cap';
-import {
-  nsfwBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-
-/**
- * The same base-model rule as images (`getAllImages`): an image on a restricted base model is not
- * shown at R or above. As SQL over `"Image" i`; the SFW arm comes first, as there.
- */
-const baseModelAllowedSql = Prisma.sql`(
-  (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
-  OR NOT i."modelRestricted"
-)`;
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
  * Scanned, rated, not awaiting review, not removed or a ToS violation, allowed by its base model:
@@ -28,7 +17,8 @@ const servableImageSql = Prisma.sql`(
   AND i."blockedFor" IS NULL
   AND i."tosViolation" IS NOT TRUE
   AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-  AND ${baseModelAllowedSql}
+  AND ${imageNotRestrictedSql()}
+  AND ${minorMatureImageVisibleSql()}
 )`;
 
 /** The post `"Post" p` is on no taken-down model; true for no post or a post on no model. */
@@ -326,8 +316,9 @@ type CoverCandidate = { collectionId: number; collectionOwnerId: number; imageId
 type CoverDb = Pick<typeof dbRead, '$queryRaw'>;
 
 /**
- * The collection ids whose cover may be shown to `viewer`. Staff see any cover; the image's owner
- * sees their own past every rule but the base-model one; everyone else gets
+ * The collection ids whose cover may be shown to `viewer`. Moderators see any cover except a
+ * restricted image someone else uploaded; the image's owner sees their own past every rule except
+ * the gallery level of a minor or SFW-only model they don't own; everyone else gets
  * `servableCollectionCoverSql`. Decided on the image id the caller read,
  * so a cover changed since then can't be judged on the old one. Pass the client the cover was read
  * from, so the image is judged as of that read.
@@ -338,12 +329,20 @@ export async function getServableCoverCollectionIds(
   db: CoverDb = dbRead
 ): Promise<Set<number>> {
   if (candidates.length === 0) return new Set();
-  if (viewer?.isModerator) return new Set(candidates.map((c) => c.collectionId));
 
   const ownImage = viewer?.id ? Prisma.sql`i."userId" = ${viewer.id} OR ` : Prisma.empty;
   // The image's owner sees their own past the rules above, but not past the gallery level of a
   // model they don't own: that is the model owner's alone.
   const modelOwnerSql = viewer?.id ? Prisma.sql`hm."userId" = ${viewer.id}` : Prisma.sql`FALSE`;
+  const servable = viewer?.isModerator
+    ? Prisma.sql`TRUE`
+    : Prisma.sql`(${ownImage}${servableCollectionCoverSql({
+        postlessAllowed: coverUploadSql({
+          collectionId: Prisma.sql`v."collectionId"`,
+          collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
+        }),
+        heldExempt: modelOwnerSql,
+      })}) AND ${withinHeldGallerySql(modelOwnerSql)}`;
   const rows = await db.$queryRaw<{ collectionId: number }[]>`
     SELECT v."collectionId"
     FROM unnest(
@@ -353,15 +352,8 @@ export async function getServableCoverCollectionIds(
     ) AS v("collectionId", "collectionOwnerId", "imageId")
     JOIN "Image" i ON i.id = v."imageId"
     LEFT JOIN "Post" p ON p.id = i."postId"
-    WHERE (${ownImage}${servableCollectionCoverSql({
-    postlessAllowed: coverUploadSql({
-      collectionId: Prisma.sql`v."collectionId"`,
-      collectionOwnerId: Prisma.sql`v."collectionOwnerId"`,
-    }),
-    heldExempt: modelOwnerSql,
-  })})
-      AND ${baseModelAllowedSql}
-      AND ${withinHeldGallerySql(modelOwnerSql)}
+    WHERE ${servable}
+      AND ${imageNotRestrictedSql({ viewerId: viewer?.id })}
   `;
   return new Set(rows.map((r) => r.collectionId));
 }

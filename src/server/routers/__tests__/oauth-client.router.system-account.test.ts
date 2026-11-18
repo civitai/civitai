@@ -22,7 +22,7 @@ vi.mock('~/server/utils/key-generator', () => ({
 const { oauthClientRouter } = await import('../oauth-client.router');
 
 const SYSTEM = { id: -1, isModerator: true, bannedAt: null, muted: false };
-const SYSTEM_APP = { id: 'system-app', userId: -1, isConfidential: true, allowedScopes: 1 };
+const SYSTEM_APP = { id: 'system-app', userId: -1, isConfidential: true, allowedScopes: 1n };
 
 function caller(user: { id: number } = SYSTEM) {
   return oauthClientRouter.createCaller({
@@ -78,7 +78,7 @@ describe('oauthClient router as the system account', () => {
         redirectUris: ['https://x.example/cb'],
         allowedOrigins: [],
         isConfidential: true,
-        allowedScopes: TokenScope.UserRead,
+        allowedScopes: Number(TokenScope.UserRead),
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.oauthClient.create).not.toHaveBeenCalled();
@@ -107,7 +107,7 @@ describe('oauthClient router as an account marked as a system account', () => {
         redirectUris: ['https://x.example/cb'],
         allowedOrigins: [],
         isConfidential: true,
-        allowedScopes: TokenScope.UserRead,
+        allowedScopes: Number(TokenScope.UserRead),
       })
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.oauthClient.create).not.toHaveBeenCalled();
@@ -131,7 +131,7 @@ describe('oauthClient router as an account marked as a system account', () => {
       redirectUris: ['https://x.example/cb'],
       allowedOrigins: [],
       isConfidential: true,
-      allowedScopes: TokenScope.UserRead,
+      allowedScopes: Number(TokenScope.UserRead),
     });
     expect(dbMock.dbWrite.oauthClient.create).toHaveBeenCalledTimes(1);
   });

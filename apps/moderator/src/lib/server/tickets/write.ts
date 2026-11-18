@@ -177,10 +177,7 @@ export function createTicketWriter(deps: WriteDeps) {
       };
     },
 
-    /**
-     * Files a bug report for the dev queue. Nothing about the ticket changes: the moderator replies to
-     * or closes it as usual. The note links the ticket to the report.
-     */
+    /** Files a bug report for the dev queue and leaves the ticket as it is; the note links the two. */
     async fileBug(ticketId: string, note: string, moderator: Moderator): Promise<WriteOutcome> {
       const filed = await deps.fileBug(ticketId, note);
       if (filed.status !== 'ok')
@@ -198,7 +195,7 @@ export function createTicketWriter(deps: WriteDeps) {
       ];
       const noteError = await attribute(ticketId, lines);
       const warnings: string[] = [];
-      // The HQ filing is what puts the report in the dev queue; it can be capped or down.
+      // No hqUrl: the HQ filing was capped or down.
       if (!filed.hqUrl)
         warnings.push(
           `Bug report #${filed.feedbackId} was saved, but it did NOT reach the dev queue in HQ — ask a developer to file it there.`

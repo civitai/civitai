@@ -7,6 +7,7 @@ import {
   type SearchIndexPullBatch,
 } from '~/server/search-index/base.search-index';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
+import { imageNotRestrictedSql } from '~/server/common/image-visibility';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { comicsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { comicsSortableAttributes } from '~/server/search-index/sortable-attributes';
@@ -251,6 +252,7 @@ async function pullComics(db: RawQueryClient, filters: Prisma.Sql[]) {
       FROM "ComicProject" cp
       JOIN "Image" i ON i.id = cp."coverImageId"
       WHERE cp.id IN (SELECT id FROM target)
+      AND ${imageNotRestrictedSql()}
     ), stats AS MATERIALIZED (
       SELECT
         t.id AS "projectId",

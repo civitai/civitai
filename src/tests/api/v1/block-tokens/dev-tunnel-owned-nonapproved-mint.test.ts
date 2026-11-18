@@ -524,7 +524,7 @@ describe('POST /api/v1/block-tokens — dev-tunnel OWNED non-approved mint', () 
         currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
         manifest: { scopes: ['models:read:self'], page: { path: '/', title: 'My App' } },
         approvedScopes: ['models:read:self'],
-        app: { allowedScopes: 4 /* ModelsRead */ },
+        app: { allowedScopes: 4n /* ModelsRead */ },
       },
     });
     mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({

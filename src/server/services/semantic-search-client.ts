@@ -9,8 +9,9 @@ export const MAX_HITS_PER_USER = 3;
 
 const CANDIDATE_MULTIPLIER = 3;
 const MAX_HYDRATION_ROUNDS = 3;
-// Most candidates hydrated per round: each round is one id-list query on the page's fetch path.
-const MAX_HYDRATION_BATCH = 100;
+// The search service's page maximum (a larger `limit` is an error, not a short page), and so the
+// most candidates hydrated per round: each round is one id-list query on the page's fetch path.
+export const MAX_CANDIDATE_LIMIT = 100;
 // The search service's paging cap.
 export const MAX_CANDIDATE_OFFSET = 2000;
 // A filter shape Qdrant has not served recently can take 10 s on its first query (vectors, graph
@@ -226,7 +227,8 @@ function requestIdHeader(): Record<string, string> {
 /**
  * The cluster search service: text through `/v1/search` (embedding and spelling correction are
  * its job), "more like this" through its read-only Qdrant pass-through. Ids only, never payload:
- * the index lags Postgres, so hydration decides what is shown.
+ * the index lags Postgres, so hydration decides what is shown. `limit` is at most
+ * MAX_CANDIDATE_LIMIT; the candidate cache in front of it pages larger ranges in blocks of that size.
  */
 export function searchServiceSource(
   collection: SearchCollection,
@@ -403,7 +405,7 @@ export async function collectPage<T extends { id: number }>({
   for (let round = 0; round < MAX_HYDRATION_ROUNDS && items.length < limit; round++) {
     const batchSize = Math.min(
       (limit - items.length) * CANDIDATE_MULTIPLIER,
-      MAX_HYDRATION_BATCH,
+      MAX_CANDIDATE_LIMIT,
       MAX_CANDIDATE_OFFSET - position
     );
     if (batchSize <= 0) {

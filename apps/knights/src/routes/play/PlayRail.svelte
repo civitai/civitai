@@ -1,7 +1,7 @@
 <script lang="ts">
   import HeartsRow from '$lib/HeartsRow.svelte';
   import Icon from '$lib/Icon.svelte';
-  import { belowBarCue, watchStrip, withArticle } from '$lib/chrome';
+  import { belowBarCue, heartBackShort, watchStrip, withArticle } from '$lib/chrome';
   import { count, percent } from '$lib/format';
   import { nextRankRequirements, pendingSegment } from '$lib/gauge';
   import { bump } from '$lib/motion';
@@ -83,8 +83,10 @@
       </div>
       <div>
         <h3>Hearts</h3>
-        <p class="line"><HeartsRow {hearts} maxHearts={status.maxSmites} /></p>
-        <p class="sub">{hearts} of {status.maxSmites}</p>
+        <p class="line"><HeartsRow {hearts} maxHearts={status.maxSmites} heartBack={status.heartBack} /></p>
+        <p class="sub">
+          {hearts} of {status.maxSmites}{#if status.heartBack}{' · '}{heartBackShort(status.heartBack)} to win a heart back{/if}
+        </p>
       </div>
     </div>
   </section>

@@ -11,7 +11,6 @@ import {
   BountyEntryMode,
   Currency,
   EntityType,
-  ImageIngestionStatus,
   JobQueueType,
   MetricTimeframe,
   TagTarget,
@@ -82,6 +81,7 @@ import type {
 import { createBountyInputSchema, updateBountyInputSchema } from '../schema/bounty.schema';
 import { isNotTag, isTag } from '../schema/tag.schema';
 import { imageSelect } from '../selectors/image.selector';
+import { entityImageVisibilityConditions } from '~/server/services/image-visibility.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -1228,23 +1228,38 @@ export const deleteBountyById = async ({
   return result?.bounty ?? null;
 };
 
+/** The ids of the bounties' images the viewer may see, by the entity image rules. */
+async function getVisibleBountyImageIds({
+  bountyIds,
+  userId,
+  isModerator,
+}: {
+  bountyIds: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  if (bountyIds.length === 0) return [];
+  const AND = entityImageVisibilityConditions({ userId, isModerator });
+  const rows = await dbRead.$queryRaw<{ imageId: number }[]>`
+    SELECT ic."imageId"
+    FROM "ImageConnection" ic
+    JOIN "Image" i ON i.id = ic."imageId"
+    WHERE ic."entityType" = 'Bounty'
+      AND ic."entityId" IN (${Prisma.join(bountyIds)})
+      ${AND.length ? Prisma.sql`AND ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
+  `;
+  return rows.map(({ imageId }) => imageId);
+}
+
 export const getBountyImages = async ({
   id,
   userId,
   isModerator,
 }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-
-  if (userId) imageOr.push({ userId });
+  const imageIds = await getVisibleBountyImageIds({ bountyIds: [id], userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: 'Bounty',
-      image: { OR: imageOr },
-    },
+    where: { entityId: id, entityType: 'Bounty', imageId: { in: imageIds } },
     select: { image: { select: { ...imageSelect, poi: true, minor: true } } },
   });
 
@@ -1386,17 +1401,10 @@ export const getImagesForBounties = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
-  if (userId) imageOr.push({ userId });
+  const imageIds = await getVisibleBountyImageIds({ bountyIds, userId, isModerator });
 
   const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityType: 'Bounty',
-      entityId: { in: bountyIds },
-      image: { OR: imageOr },
-    },
+    where: { entityType: 'Bounty', entityId: { in: bountyIds }, imageId: { in: imageIds } },
     select: {
       entityId: true,
       image: { select: { ...imageSelect, poi: true, minor: true } },

@@ -572,7 +572,7 @@ vi.mock('~/server/services/block-registry.service', () => ({
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     })),
   },
@@ -2415,7 +2415,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -2442,7 +2442,7 @@ describe('blocks.submitWorkflow', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     happySubmit();
@@ -3818,7 +3818,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
   }
@@ -3916,7 +3916,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
         status: 'approved',
         manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
         approvedScopes: ['ai:write:budgeted'],
-        app: { allowedScopes: 33554431 },
+        app: { allowedScopes: 33554431n },
       },
     });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
@@ -4616,7 +4616,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
             status: 'approved',
             manifest: { targets: [{ slotId: 'app.page' }] },
             approvedScopes: ['ai:write:budgeted'],
-            app: { allowedScopes: 33554431 },
+            app: { allowedScopes: 33554431n },
           },
         }
       );

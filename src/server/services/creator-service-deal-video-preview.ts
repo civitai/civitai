@@ -8,6 +8,7 @@ import type {
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { getConsumerBlobUploadUrlService } from '~/server/services/orchestrator/consumerBlobUpload';
+import { outboundFetch } from '~/server/utils/fetch-timeout';
 import { PreviewRejectedError, watermarkTilePng } from '~/server/utils/service-deal-preview';
 import {
   SERVICE_PREVIEW_VIDEO_MAX_SECONDS,
@@ -15,6 +16,7 @@ import {
 } from '~/shared/constants/creator-services.constants';
 
 const TRANSCODE_WAIT_SECONDS = 90;
+const BLOB_UPLOAD_TIMEOUT_MS = 3 * 60_000;
 
 function videoPreviewWorkflow(sourceUrl: string, tile: Buffer): WorkflowTemplate {
   const step: TranscodeStepTemplate = {
@@ -46,10 +48,11 @@ function restrictedAsRejection(error: unknown): never {
 async function uploadSourceBlob(data: Buffer, mimeType: string, sellerId: number) {
   const token = await getOrchestratorToken(sellerId).catch(restrictedAsRejection);
   const presign = await getConsumerBlobUploadUrlService({ token });
-  const response = await fetch(presign.uploadUrl, {
+  const response = await outboundFetch(presign.uploadUrl, {
     method: 'POST',
     headers: { 'Content-Type': mimeType },
     body: new Uint8Array(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength),
+    timeoutMs: BLOB_UPLOAD_TIMEOUT_MS,
   });
   if (response.status === 400 || response.status === 415)
     throw new PreviewRejectedError('This video could not be read. Upload an MP4 or WebM file.');
@@ -59,11 +62,7 @@ async function uploadSourceBlob(data: Buffer, mimeType: string, sellerId: number
   return blob.url;
 }
 
-/**
- * The only thing a buyer sees of a video preview: the first seconds, scaled down, with the mark
- * burned into every frame. A transcode that fails is put on the file (the seller can upload
- * something else); one that has not finished within the wait throws, and the job retries it.
- */
+/** A failed transcode is a PreviewRejectedError; an unfinished one throws so the job retries it. */
 export async function buildWatermarkedVideoPreview(
   original: Buffer,
   mimeType: string,

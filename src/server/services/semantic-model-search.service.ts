@@ -68,7 +68,7 @@ export async function searchSemanticModels({
   let browsingLevel = resolveSemanticBrowsingLevel(
     input.browsingLevel,
     user,
-    await isNonModClampOn()
+    await isNonModClampOn(user)
   );
   const [hidden, addonData, userIds] = await Promise.all([
     getAllHiddenForUser({ userId: user?.id }),
@@ -167,8 +167,8 @@ export async function searchSemanticModels({
     return result.items;
   };
 
-  // Name and keyword matches first (search_text opens with the model's name), then by meaning.
-  const ranked = withWordMatchesFirst(cachedSource, 'search_text');
+  // Name matches first (the collection's `name` word index), then by meaning.
+  const ranked = withWordMatchesFirst(cachedSource, 'name');
   const search = auditedTextCandidates({
     source: (args) => timed('candidates', ranked(args)),
     viewer,

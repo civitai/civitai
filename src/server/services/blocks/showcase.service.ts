@@ -1,4 +1,5 @@
 import { dbRead } from '~/server/db/client';
+import { imageNotRestrictedWhere } from '~/server/common/image-visibility';
 import { publicPostImageWhere } from '~/server/selectors/image.selector';
 import { getImageMetricsObject } from '~/server/services/image.service';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
@@ -127,6 +128,8 @@ export interface ShowcaseImage {
  *     `resolveAllowedBrowsingLevel` / `ShowcaseViewer`). Anon → SFW only.
  *     Images with `nsfwLevel = 0` (unrated / pending) are never in that list
  *     — the same fail-closed stance the feed takes for non-own unrated content.
+ *   - not a restricted mature image (`imageNotRestrictedWhere`), unless the
+ *     viewer uploaded it.
  *   - per row, `classifyGatedImageForViewer`: the moderation flags the other
  *     public block reads hide on.
  *
@@ -200,6 +203,7 @@ export async function getModelShowcaseImages(
         // In SQL, not only after the fetch: past the 50-row cap a SFW viewer of a mostly-NSFW
         // version would otherwise get few or no images.
         nsfwLevel: { in: parseBitwiseBrowsingLevel(allowedBrowsingLevel) },
+        AND: [imageNotRestrictedWhere({ viewerId: viewer?.userId })],
       },
     },
     select: {
@@ -210,6 +214,7 @@ export async function getModelShowcaseImages(
           width: true,
           height: true,
           meta: true,
+          hideMeta: true,
           nsfwLevel: true,
           ingestion: true,
           needsReview: true,
@@ -270,7 +275,7 @@ export async function getModelShowcaseImages(
   const top = flat.slice(0, MAX_SHOWCASE_IMAGES);
 
   return top.map(({ img }) => {
-    const meta = extractMeta(img.meta);
+    const meta = extractMeta(img.hideMeta ? null : img.meta);
     // Prefer the meta-recorded generation dimensions over the image-file
     // dimensions when present. Many showcase images are upscaled offline
     // before upload — Image.width/Image.height reflect the post-upscale

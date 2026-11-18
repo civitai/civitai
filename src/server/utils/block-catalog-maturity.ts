@@ -10,12 +10,11 @@ import { Flags } from '~/shared/utils/flags';
 /**
  * App-Blocks catalog DOMAIN clamp (Phase 3; GA-safety follow-up to PR #2670):
  * the token's color-domain ceiling, with no regard to the viewer's own level.
- * `/api/v1/blocks/images` no longer serves at this level: it serves at the
+ * No block catalog route serves at this level alone: every one serves at the
  * viewer's level held to this cap (`resolveCatalogViewerBrowsingLevel`,
- * `block-catalog-viewer-level.ts`), which reads this function for the cap.
- * The other block catalog routes (models, collections, generation-resources,
- * resource-intent, tools) still clamp here, to the domain alone. Kept in a
- * server-import-free module so the
+ * `block-catalog-viewer-level.ts`), which reads this function for the cap
+ * (`catalog-clamp-ledger.test.ts` pins that). Kept in a server-import-free
+ * module so the
  * security-critical clamp can be unit-tested without dragging the Prisma
  * client (both endpoints statically import a search service → eager Prisma
  * load).
