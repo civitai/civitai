@@ -1,9 +1,7 @@
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
-import {
-  ClusterCacheUnavailableError,
-  clusterCacheGuard,
-} from '~/server/redis/cluster-cache-guard';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { ClusterCacheUnavailableError } from '~/server/redis/cluster-cache-guard';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 const HOUR_MS = 60 * 60 * 1000;
 /** Two hours, so a key outlives the hour it counts. */
@@ -25,13 +23,10 @@ export async function takeProviderDownload(
 ): Promise<boolean> {
   const key = `${REDIS_KEYS.DOWNLOAD.PROVIDER}:${provider}:${Math.floor(now / HOUR_MS)}` as const;
   try {
-    // One MULTI, so the key never exists without its TTL.
-    const reply = await clusterCacheGuard.call(
-      'takeProviderDownload',
-      () => redis.multi().set(key, '0', { NX: true, EX: KEY_TTL_S }).incr(key).exec(),
-      { deadlineMs: COUNTER_DEADLINE_MS, logExtra: { provider } }
-    );
-    const count = Number(reply?.[1]);
+    const count = await takeClusterWindowCount('takeProviderDownload', key, KEY_TTL_S, {
+      deadlineMs: COUNTER_DEADLINE_MS,
+      logExtra: { provider },
+    });
     if (!Number.isFinite(count)) throw new Error('unexpected counter reply');
     return count <= hourlyCeiling;
   } catch (error) {

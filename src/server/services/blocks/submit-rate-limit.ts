@@ -6,6 +6,7 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 
 /**
  * The bundle-submit rate limit, shared by both submit routes (the CLI's token route and the session
@@ -38,22 +39,22 @@ const PUSH_WINDOW_DEADLINE_MS = 1_000;
 function rateStore(family: keyof typeof RATE_KEYS, subject: string, windowSeconds: number) {
   if (family === 'push') {
     const key = `${RATE_KEYS.push}:${subject}` as const;
-    const bounded = <T>(op: () => Promise<T>) =>
-      clusterCacheGuard.call('takePushReviewSlot', op, { deadlineMs: PUSH_WINDOW_DEADLINE_MS });
+    const opts = { deadlineMs: PUSH_WINDOW_DEADLINE_MS };
     return {
-      take: (): Promise<unknown> =>
-        bounded(() =>
-          redis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
-        ),
-      ttl: (): Promise<number> => bounded(() => redis.ttl(key)),
+      take: (): Promise<number> =>
+        takeClusterWindowCount('takePushReviewSlot', key, windowSeconds, opts),
+      ttl: (): Promise<number> =>
+        clusterCacheGuard.call('takePushReviewSlot', () => redis.ttl(key), opts),
     };
   }
   const key = `${RATE_KEYS.submit}:${subject}` as const;
   return {
-    take: (): Promise<unknown> =>
-      withSysReadDeadline(
+    take: async (): Promise<number> => {
+      const reply = await withSysReadDeadline(
         sysRedis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec()
-      ),
+      );
+      return Number((reply as unknown[] | null)?.[1]);
+    },
     ttl: (): Promise<number> => withSysReadDeadline(sysRedis.ttl(key)),
   };
 }
@@ -100,8 +101,7 @@ async function takeRateSlot(
   const store = rateStore(family, subject, limit.windowSeconds);
   let count: number;
   try {
-    const multiResult = (await store.take()) as unknown[] | null;
-    count = Number(multiResult?.[1]);
+    count = await store.take();
   } catch {
     return { ok: false, reason: 'unavailable' };
   }

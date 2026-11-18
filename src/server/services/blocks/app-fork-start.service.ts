@@ -41,14 +41,8 @@ import JSZip from 'jszip';
 import type { NextApiRequest } from 'next';
 import { TRPCError } from '@trpc/server';
 
-import {
-  REDIS_KEYS,
-  REDIS_SYS_KEYS,
-  redis,
-  sysRedis,
-  withSysReadDeadline,
-} from '~/server/redis/client';
-import { clusterCacheGuard } from '~/server/redis/cluster-cache-guard';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { takeClusterWindowCount } from '~/server/utils/cluster-window-count';
 import { forkSeedExclusionReason } from '~/server/services/blocks/fork-seed-exclusions';
 import { logToAxiom } from '~/server/logging/client';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
@@ -402,12 +396,9 @@ async function consumeForkStart(userId: number): Promise<void> {
     const key = `${REDIS_KEYS.BLOCKS.FORK_RATE_LIMIT}:${userId}:${windowSeconds}` as const;
     let count: number;
     try {
-      const result = await clusterCacheGuard.call(
-        'consumeForkStart',
-        () => redis.multi().set(key, '0', { NX: true, EX: windowSeconds }).incr(key).exec(),
-        { deadlineMs: FORK_RATE_DEADLINE_MS }
-      );
-      count = Number((result as unknown[] | null)?.[1]);
+      count = await takeClusterWindowCount('consumeForkStart', key, windowSeconds, {
+        deadlineMs: FORK_RATE_DEADLINE_MS,
+      });
     } catch {
       throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: FORK_BUSY_MESSAGE });
     }
