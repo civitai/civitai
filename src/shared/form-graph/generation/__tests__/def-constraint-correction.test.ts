@@ -236,8 +236,8 @@ describe('def constraint correction', () => {
 
     // The single-slot edge, pinned as a literal: it is the one row where "always truncate
     // to 1" would otherwise be indistinguishable from truncating to the cap.
-    it('MAI keeps exactly its one slot', () => {
-      const store = editStore('MAI');
+    it('Boogu keeps exactly its one slot', () => {
+      const store = editStore('Boogu');
       expect(capOf(store)).toBe(1);
       store.set({ images: [img(0), img(1)] });
 
@@ -271,7 +271,7 @@ describe('def constraint correction', () => {
     });
 
     it('caps a mix of strings and entries to the field max', () => {
-      const store = editStore('MAI');
+      const store = editStore('Boogu');
       store.set({ images: [img(0).url, img(1)] });
 
       expect(state(store).images).toEqual([{ url: img(0).url }]);

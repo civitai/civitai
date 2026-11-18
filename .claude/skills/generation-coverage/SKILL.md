@@ -32,7 +32,7 @@ The full coverage rules are in [docs/features/generator-model-onboarding.md](../
 
 ## Setup and permission
 
-- **Database:** reads and writes go through the `postgres-query` skill (`--prod` by default, plus `--writable` for `add` and `remove`). Its production connection has to be configured.
+- **Database:** reads and writes go through the `postgres-query` skill (`--prod` by default, plus `--writable` for `add` and `remove`). Its production connection has to be configured in its own `.env`: `coverage.mjs` keeps the keys it loaded from the repo-root `.env` out of that child's environment.
 - **Choosing the database:** pass `--db dev` for the dev database. When `CIVITAI_API_URL` isn't civitai.com or civitai.red, the script refuses to guess which database goes with it.
 - **API key:** the cache bust uses `CIVITAI_API_KEY` from `.claude/skills/mod-actions/.env`, and it must belong to a moderator.
 
