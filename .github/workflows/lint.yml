@@ -126,11 +126,8 @@ name: Lint
 # a negative one includes that path again. A change touching ANY file outside
 # the excluded trees still runs everything.
 #
-# Kept (re-included) because a unit test reads it, so editing it alone can turn
-# the suite red: docs/dev/convention-guards.md (no-lint-rules-script-drift
-# checks its "Convention guards run as tests" section against package.json).
-# Found by grepping every test file for paths under docs/ that it opens; that
-# was the only one. Markdown OUTSIDE these trees is deliberately not excluded:
+# No unit test opens a file under docs/ or claudedocs/ today, so nothing is
+# re-included. Markdown OUTSIDE these trees is deliberately not excluded:
 # tests read CLAUDE.md files, .claude/rules/*.md, app READMEs and the ToS
 # markdown under src/. If you add a test that reads a file under docs/ or
 # claudedocs/, add that path below the negations.
@@ -191,14 +188,12 @@ on:
       - '**'
       - '!docs/**'
       - '!claudedocs/**'
-      - 'docs/dev/convention-guards.md'
   push:
     branches: [main]
     paths:
       - '**'
       - '!docs/**'
       - '!claudedocs/**'
-      - 'docs/dev/convention-guards.md'
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
   # does every suite step in a job that hosts several (`component` hosts geometry). On pull_request and push `inputs.only` is empty, so
